@@ -310,3 +310,46 @@ export function navigationTransitionType(
   if (fromIndex < 0 || toIndex < 0) return null;
   return toIndex > fromIndex ? "nav-down" : "nav-up";
 }
+
+/** OpenComms and Appearance sit below the sidebar groups. */
+export const COMMS_NAVIGATION_KEY = "comms";
+export const APPEARANCE_NAVIGATION_KEY = "appearance";
+
+/**
+ * Every place the sidebar can take you, top to bottom, as `group:item` keys
+ * followed by OpenComms and Appearance. Page handoffs read their direction
+ * from this order.
+ */
+export function navigationOrder(): string[] {
+  return [
+    ...workspaceNavigationDefinitions.flatMap((definition) =>
+      definition.items.map((item) => `${definition.id}:${item.id}`),
+    ),
+    COMMS_NAVIGATION_KEY,
+    APPEARANCE_NAVIGATION_KEY,
+  ];
+}
+
+/** The navigation key of the place a URL shows, or null outside the sidebar. */
+export function currentNavigationKey(
+  pathname: string,
+  searchParams: URLSearchParams,
+  hash = "",
+): string | null {
+  if (pathname === "/comms" || pathname.startsWith("/comms/"))
+    return COMMS_NAVIGATION_KEY;
+  if (pathname === "/settings/appearance") return APPEARANCE_NAVIGATION_KEY;
+  const definition = workspaceNavigationDefinitions.find(
+    (candidate) => candidate.pathname === pathname,
+  );
+  if (!definition) return null;
+  return `${definition.id}:${sectionFor(definition, searchParams, hash)}`;
+}
+
+/** The key a workspace's own link opens: its first (default) section. */
+export function workspaceDefaultNavigationKey(href: string): string | null {
+  const definition = workspaceNavigationDefinitions.find(
+    (candidate) => candidate.pathname === href.split("?")[0],
+  );
+  return definition ? `${definition.id}:${definition.defaultItem}` : null;
+}

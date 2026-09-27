@@ -393,7 +393,7 @@ textarea {
 }
 
 /* Navigation motion (React ViewTransition). The shell stays still: only the
-   page body hands off, and the active sidebar item glides to its new place.
+   page body hands off (the active sidebar fill glides in the live page).
    Moving down the sidebar brings the new page up from below; moving up
    brings it down from above. Clicks pass through while it runs. */
 ::view-transition {
@@ -405,10 +405,12 @@ textarea {
   animation: none;
 }
 
+/* The body stays in place: only its old and new images move. (The window
+   scrolls, and Next resets it to the top, so a group morph would swing the
+   page across the screen after a scroll.) */
 ::view-transition-group(.nav-down),
 ::view-transition-group(.nav-up) {
-  animation-duration: var(--motion-base);
-  animation-timing-function: var(--ease-out);
+  animation: none;
 }
 
 ::view-transition-old(.nav-down),
@@ -448,11 +450,6 @@ textarea {
   }
 }
 
-::view-transition-group(.nav-indicator) {
-  animation-duration: var(--motion-base);
-  animation-timing-function: var(--ease-out);
-}
-
 @media (prefers-reduced-motion: reduce) {
   /* Keep the handoff fade; drop the travel and the glide. */
   :root,
@@ -461,14 +458,10 @@ textarea {
     --nav-travel-y: 0px;
   }
 
-  ::view-transition-group(.nav-indicator) {
-    animation-duration: 0s;
-  }
-
   /* Each look's arrival signature (a drawn underline, a sprayed title)
      shows in its finished state. */
-  [data-slot="page-title"],
-  [data-slot="page-title"]::after {
+  :root[data-theme] [data-slot="page-title"],
+  :root[data-theme] [data-slot="page-title"]::after {
     animation: none;
   }
 }

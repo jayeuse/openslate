@@ -13,7 +13,6 @@ import {
   Workflow,
 } from "lucide-react";
 import {
-  ViewTransition,
   addTransitionType,
   startTransition,
   useEffect,
@@ -23,9 +22,11 @@ import {
 } from "react";
 
 import {
+  currentNavigationKey,
   getWorkspaceNavigation,
   isWorkspaceNavigationGroupActive,
   isWorkspaceNavigationItemActive,
+  navigationOrder,
   navigationTransitionType,
   type NavigationTransitionType,
 } from "@/components/workspace-navigation";
@@ -63,11 +64,6 @@ interface AppNavigationProps {
   searchParams: URLSearchParams;
   collapsed?: boolean;
   onExpandSidebar?: () => void;
-  /**
-   * Names the gliding active-item indicator. The desktop sidebar and the
-   * phone menu each render this list, so each needs its own name.
-   */
-  indicatorName?: string;
 }
 
 export function AppNavigation({
@@ -75,7 +71,6 @@ export function AppNavigation({
   searchParams,
   collapsed = false,
   onExpandSidebar,
-  indicatorName = "sidebar-active-item",
 }: AppNavigationProps) {
   const router = useRouter();
   const requestNavigation = useWorkspaceNavigationRequest();
@@ -91,26 +86,47 @@ export function AppNavigation({
   const activeGroupId = groups.find((group) =>
     isWorkspaceNavigationGroupActive(group, pathname),
   )?.id;
-  // Sidebar order, and the current item in it, give each move a direction.
-  const order = groups.flatMap((group) =>
-    group.items.map((item) => `${group.id}:${item.id}`),
-  );
-  const currentKey =
-    groups
-      .flatMap((group) =>
-        group.items
-          .filter((item) =>
-            isWorkspaceNavigationItemActive(
-              group.id,
-              item.id,
-              pathname,
-              searchParams,
-              hash,
-            ),
-          )
-          .map((item) => `${group.id}:${item.id}`),
-      )
-      .at(0) ?? null;
+  // Sidebar order, and the current place in it, give each move a direction.
+  const order = navigationOrder();
+  const currentKey = currentNavigationKey(pathname, searchParams, hash);
+  const navRef = useRef<HTMLElement>(null);
+  const indicatorRef = useRef<HTMLSpanElement>(null);
+
+  // The active item's fill is one element under the list that glides to the
+  // active link. It lives in the page (not in a view transition layer), so
+  // it stays under the labels and inside the sidebar's scroll clipping, and
+  // it follows groups as they open and close.
+  useEffect(() => {
+    const nav = navRef.current;
+    const indicator = indicatorRef.current;
+    if (!nav || !indicator) return;
+    const place = () => {
+      const active = nav.querySelector<HTMLElement>(
+        '[data-slot="sidebar-menu-sub-button"][aria-current="page"]',
+      );
+      if (!active || collapsed) {
+        indicator.style.opacity = "0";
+        return;
+      }
+      const navBox = nav.getBoundingClientRect();
+      const box = active.getBoundingClientRect();
+      indicator.style.opacity = "1";
+      indicator.style.transform = `translate(${box.left - navBox.left}px, ${box.top - navBox.top}px)`;
+      indicator.style.width = `${box.width}px`;
+      indicator.style.height = `${box.height}px`;
+    };
+    place();
+    // Glide only after the first placement, so it never flies in on load.
+    const frame = requestAnimationFrame(() => {
+      indicator.dataset.ready = "true";
+    });
+    const observer = new ResizeObserver(place);
+    observer.observe(nav);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [currentKey, collapsed]);
 
   useEffect(() => {
     const syncHash = () => setHash(window.location.hash);
@@ -175,7 +191,17 @@ export function AppNavigation({
 
   return (
     <SidebarGroup className="p-0">
-      <nav aria-label="Main navigation">
+      <nav
+        ref={navRef}
+        aria-label="Main navigation"
+        className="relative isolate"
+      >
+        <span
+          ref={indicatorRef}
+          aria-hidden="true"
+          data-slot="sidebar-active-indicator"
+          className="bg-sidebar-accent pointer-events-none absolute top-0 left-0 -z-10 rounded-md opacity-0 data-ready:transition-[transform,width,height,opacity] data-ready:duration-(--motion-base) data-ready:ease-(--ease-out) motion-reduce:transition-none"
+        />
         <SidebarMenu className="gap-1.5">
           {groups.map((group) => {
             const Icon = groupIcons[group.id as keyof typeof groupIcons];
@@ -279,23 +305,10 @@ export function AppNavigation({
                             }
                             isActive={itemActive}
                             aria-current={itemActive ? "page" : undefined}
-                            // The active fill is the indicator below, so it
+                            // The active fill is the nav's indicator, so it
                             // can glide from item to item.
-                            className="relative isolate min-h-11 data-active:bg-transparent"
+                            className="min-h-11 data-active:bg-transparent"
                           >
-                            {itemActive ? (
-                              <ViewTransition
-                                name={indicatorName}
-                                share="nav-indicator"
-                                default="none"
-                              >
-                                <span
-                                  aria-hidden="true"
-                                  data-slot="sidebar-active-indicator"
-                                  className="bg-sidebar-accent absolute inset-0 -z-10 rounded-md"
-                                />
-                              </ViewTransition>
-                            ) : null}
                             <span>{item.label}</span>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>

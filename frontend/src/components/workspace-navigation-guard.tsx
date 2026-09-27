@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  currentNavigationKey,
+  navigationOrder,
+  navigationTransitionType,
+  type NavigationTransitionType,
+} from "@/components/workspace-navigation";
 import type { Route } from "next";
 import {
   addTransitionType,
@@ -138,5 +144,25 @@ export function GuardedWorkspaceLink({
         onAcceptedNavigate?.();
       }}
     />
+  );
+}
+
+/**
+ * The page-handoff direction for a link to `target` (a navigation key), from
+ * the place the current URL shows. Null when there is no move to show.
+ */
+export function useNavigationDirection(
+  target: string | null,
+): NavigationTransitionType | null {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  if (!target) return null;
+  return navigationTransitionType(
+    navigationOrder(),
+    currentNavigationKey(
+      pathname,
+      new URLSearchParams(searchParams.toString()),
+    ),
+    target,
   );
 }
