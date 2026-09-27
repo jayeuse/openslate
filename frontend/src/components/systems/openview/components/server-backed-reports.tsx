@@ -74,6 +74,7 @@ import {
   CATALOG_PAGE_SIZE,
   catalogFirstPageOptions,
   fieldsFirstPageOptions,
+  isAuthorizationDenied,
   openViewKeys,
   REPORT_PAGE_SIZE as PAGE_SIZE,
   reportListOptions,
@@ -241,7 +242,9 @@ export default function ServerBackedReports() {
   // loaded with "Load more".
   const listDeleted = showArchived ? "include" : "exclude";
   const listQuery = useQuery(reportListOptions(listDeleted));
-  const listBase = listQuery.data;
+  // A refused refresh hides the retained list until a read succeeds again.
+  const listDenied = isAuthorizationDenied(listQuery.error);
+  const listBase = listDenied ? undefined : listQuery.data;
   const listMore =
     listExtension && listExtension.base === listBase ? listExtension : null;
   const reports = listBase
@@ -268,10 +271,14 @@ export default function ServerBackedReports() {
     ...sharedRunsOptions(sharedOffset, sharedPageSize),
     placeholderData: keepPreviousData,
   });
-  const sharedRuns: OpenViewSharedReportRun[] = sharedQuery.isPlaceholderData
-    ? []
-    : (sharedQuery.data?.items ?? []);
-  const sharedTotal = sharedQuery.data?.pagination.total ?? 0;
+  const sharedDenied = isAuthorizationDenied(sharedQuery.error);
+  const sharedRuns: OpenViewSharedReportRun[] =
+    sharedQuery.isPlaceholderData || sharedDenied
+      ? []
+      : (sharedQuery.data?.items ?? []);
+  const sharedTotal = sharedDenied
+    ? 0
+    : (sharedQuery.data?.pagination.total ?? 0);
   const sharedLoading = sharedQuery.isFetching;
   const sharedError =
     sharedActionError ||

@@ -23,9 +23,14 @@ export function OpenViewQuerySync({ active }: { active: boolean }) {
     // Saved chart settings stay as loaded: reloading them can re-apply
     // settings over a Chart draft being edited, which the stream never did
     // before.
-    const listeningSince = Date.now();
     const notChartPreferences = (query: Query) =>
       query.queryKey[1] !== openViewKeys.chartPreferences()[1];
+    // When each OpenView read last started a request, from now on.
+    const fetchStartedAt = new Map<string, number>();
+    const stopTracking = client.getQueryCache().subscribe((event) => {
+      if (event.type === "updated" && event.action.type === "fetch")
+        fetchStartedAt.set(event.query.queryHash, Date.now());
+    });
     const unsubscribe = subscribeOpenViewInvalidations(
       (event) => {
         if (event.type === "resync") {
@@ -39,11 +44,13 @@ export function OpenViewQuerySync({ active }: { active: boolean }) {
           void client.invalidateQueries({ queryKey });
       },
       () => {
-        // Reads cached before OpenView listened (a hover prefetch) could have
-        // missed a change; refresh them once the stream is connected. Reads
-        // already marked stale or in flight refresh on their own. Choose them
-        // first: invalidateQueries applies its predicate again to pick what
-        // to refetch, when every chosen read is already marked stale.
+        // A read whose request started before the stream connected (a hover
+        // prefetch, or a section read that overlapped the handshake) may
+        // have missed a change, so it reads again. Reads that start after
+        // this moment are covered by the stream. Choose them first:
+        // invalidateQueries applies its predicate again to pick what to
+        // refetch.
+        const connectedAt = Date.now();
         const unprotected = new Set(
           client
             .getQueryCache()
@@ -51,10 +58,9 @@ export function OpenViewQuerySync({ active }: { active: boolean }) {
             .filter(
               (query) =>
                 notChartPreferences(query) &&
-                query.state.dataUpdatedAt > 0 &&
-                query.state.dataUpdatedAt < listeningSince &&
-                !query.state.isInvalidated &&
-                query.state.fetchStatus !== "fetching",
+                (query.state.dataUpdatedAt > 0 ||
+                  query.state.fetchStatus === "fetching") &&
+                (fetchStartedAt.get(query.queryHash) ?? 0) < connectedAt,
             ),
         );
         if (unprotected.size === 0) return;
@@ -65,6 +71,7 @@ export function OpenViewQuerySync({ active }: { active: boolean }) {
       },
     );
     return () => {
+      stopTracking();
       unsubscribe();
       void client.invalidateQueries({
         queryKey: openViewKeys.all,

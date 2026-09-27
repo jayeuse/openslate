@@ -128,8 +128,10 @@ export function useServerViewsResource(requestedModule: string | null) {
   // A settled error counts; a retry in flight clears its message first.
   const settledError = (query: { error: unknown; isFetching: boolean }) =>
     query.isFetching ? null : query.error;
+  // A denial holds until a read succeeds again: the query keeps its error
+  // through a retry, so retained data stays hidden while access is checked.
   const authorizationDenied = [catalogQuery, audienceQuery, moduleQuery].some(
-    (query) => isAuthorizationDenied(settledError(query)),
+    (query) => isAuthorizationDenied(query.error),
   );
 
   const catalog = authorizationDenied ? null : loadedCatalog;

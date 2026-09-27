@@ -65,6 +65,18 @@ type Api = {
   setUser(user: string): void;
   /** Holds Reports list responses until the returned release is called. */
   holdLists(): () => void;
+  /** Refuses (403) Reports list reads while true. */
+  denyLists(denied: boolean): void;
+  /** Refuses (403) catalog reads while true. */
+  denyCatalog(denied: boolean): void;
+  /** Holds catalog reads until the returned release is called. */
+  holdCatalog(): () => void;
+};
+
+const forbidden = {
+  status: 403,
+  contentType: "application/json",
+  body: JSON.stringify({ detail: "Forbidden" }),
 };
 
 // Mocks the reads behind Reports and Charts for one signed-in person at a
@@ -73,6 +85,9 @@ type Api = {
 async function installOpenViewApi(page: Page): Promise<Api> {
   let activeUser = userA;
   let listHold: Promise<void> | null = null;
+  let listDenied = false;
+  let catalogDenied = false;
+  let catalogHold: Promise<void> | null = null;
   const reportLists: string[] = [];
   const catalogReads: string[] = [];
   await installOpenViewEventSource(page);
@@ -103,10 +118,18 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       body: JSON.stringify({ config: null }),
     }),
   );
-  await page.route("**/api/views/data-sources**", (route) => {
+  await page.route("**/api/views/audience-options**", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(pageOf([], 100)),
+    }),
+  );
+  await page.route("**/api/views/data-sources**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/views/data-sources") {
       catalogReads.push(route.request().url());
+      if (catalogHold) await catalogHold;
+      if (catalogDenied) return route.fulfill(forbidden);
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
@@ -149,6 +172,7 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       reportLists.push(request.url());
       const user = activeUser;
       if (listHold) await listHold;
+      if (listDenied) return route.fulfill(forbidden);
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(pageOf(reportsByUser[user] ?? [])),
@@ -161,6 +185,22 @@ async function installOpenViewApi(page: Page): Promise<Api> {
     catalogReads,
     setUser(user) {
       activeUser = user;
+    },
+    denyLists(denied) {
+      listDenied = denied;
+    },
+    denyCatalog(denied) {
+      catalogDenied = denied;
+    },
+    holdCatalog() {
+      let release: () => void = () => {};
+      catalogHold = new Promise<void>((resolve) => {
+        release = () => {
+          catalogHold = null;
+          resolve();
+        };
+      });
+      return release;
     },
     holdLists() {
       let release: () => void = () => {};
@@ -317,6 +357,55 @@ test("a Reports list prefetched before the stream connects refreshes once it con
   ).toBeVisible();
 });
 
+test("a refused Reports refresh hides the reports it had cached", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  await page.goto("/openview?section=reports");
+  const report = page.getByRole("button", { name: "Alpha report" });
+  await expect(report).toBeVisible();
+
+  api.denyLists(true);
+  await page.getByRole("button", { name: "Refresh Reports" }).click();
+  await expect.poll(() => api.reportLists.length).toBe(2);
+  await expect(report).toHaveCount(0);
+});
+
+test("a Views denial stays in force while its Retry is in flight", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  await page.goto("/openview?section=views");
+  const denial = page.getByText(
+    "OpenView data is unavailable. Sign in or ask for access, then retry.",
+  );
+  // The catalog shows as the data-source choice.
+  const source = page.locator("option", { hasText: "Assets" });
+  await expect(source).toHaveCount(1);
+  await sendOpenViewEvent(page, "resync");
+  await expect.poll(() => api.catalogReads.length).toBe(2);
+
+  api.denyCatalog(true);
+  await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
+  await expect(denial.first()).toBeVisible();
+  await expect(source).toHaveCount(0);
+
+  api.denyCatalog(false);
+  const release = api.holdCatalog();
+  const reads = api.catalogReads.length;
+  await page.getByRole("button", { name: "Retry catalog" }).click();
+  await expect.poll(() => api.catalogReads.length).toBe(reads + 1);
+  // Access is not confirmed yet, so the retained catalog stays hidden.
+  await expect(
+    page.getByRole("status").filter({ hasText: "Loading OpenView catalog" }),
+  ).toBeVisible();
+  await expect(source).toHaveCount(0);
+
+  release();
+  await expect(source).toHaveCount(1);
+  await expect(denial).toHaveCount(0);
+});
+
 test("server invalidations and Refresh still reload cached OpenView reads", async ({
   page,
 }) => {
@@ -327,24 +416,27 @@ test("server invalidations and Refresh still reload cached OpenView reads", asyn
   ).toBeVisible();
   await expect.poll(() => api.catalogReads.length).toBe(1);
   expect(api.reportLists).toHaveLength(1);
-  // The server opens every stream with a resync, which the client skips
-  // because it has just loaded; the harness stream does not send it itself.
+  // The server opens every stream with a resync (the harness stream does not
+  // send it itself). Reads that started before it may have missed a change,
+  // so they read once more.
   await sendOpenViewEvent(page, "resync");
+  await expect.poll(() => api.reportLists.length).toBe(2);
+  await expect.poll(() => api.catalogReads.length).toBe(2);
 
   // A saved-view change does not touch the catalog or the Reports list.
   await sendOpenViewEvent(page, "invalidate", { entity: "saved_views" });
   // A catalog change reloads the data-source catalog only.
   await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
-  await expect.poll(() => api.catalogReads.length).toBe(2);
-  expect(api.reportLists).toHaveLength(1);
+  await expect.poll(() => api.catalogReads.length).toBe(3);
+  expect(api.reportLists).toHaveLength(2);
 
   // A resync reloads every cached OpenView read in view.
   await sendOpenViewEvent(page, "resync");
-  await expect.poll(() => api.reportLists.length).toBe(2);
-  await expect.poll(() => api.catalogReads.length).toBe(3);
+  await expect.poll(() => api.reportLists.length).toBe(3);
+  await expect.poll(() => api.catalogReads.length).toBe(4);
 
   await page.getByRole("button", { name: "Refresh Reports" }).click();
-  await expect.poll(() => api.reportLists.length).toBe(3);
+  await expect.poll(() => api.reportLists.length).toBe(4);
   await expect(
     page.getByRole("button", { name: "Alpha report" }),
   ).toBeVisible();
