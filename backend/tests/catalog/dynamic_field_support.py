@@ -146,7 +146,6 @@ def owned_ids(integration_db: Session) -> Generator[set[UUID], None, None]:
 def _seed_committed_module(
     owned_ids: set[UUID],
     *,
-    accepted: bool,
     fields: tuple[FieldSpec, ...] = (),
 ) -> CommittedModule:
     """Commit a visible graph so independent PostgreSQL connections can race it."""
@@ -162,7 +161,6 @@ def _seed_committed_module(
                 module = Module(
                     department=department,
                     module_name=f"Dynamic module QA {token}",
-                    is_schema_accepted=accepted,
                 )
                 field_rows = [
                     Field(

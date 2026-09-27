@@ -93,7 +93,7 @@ def test_board_widgets_persist_order_duplicate_delete_with_board_acl_and_audienc
     department = Department(department_name=f"Widget test {uuid7()}")
     db.add(department)
     db.flush()
-    module = Module(department_id=department.id, module_name="Requests", is_schema_accepted=True)
+    module = Module(department_id=department.id, module_name="Requests")
     board = Board(owner_id=owner.id, name="Operations")
     db.add_all([module, board])
     db.flush()
@@ -210,8 +210,8 @@ def test_board_widgets_reject_invalid_sources_audiences_archives_and_limit(
     department = Department(department_name=f"Widget invalid {uuid7()}")
     db.add(department)
     db.flush()
-    module = Module(department_id=department.id, module_name="Source", is_schema_accepted=True)
-    other = Module(department_id=department.id, module_name="Other", is_schema_accepted=True)
+    module = Module(department_id=department.id, module_name="Source")
+    other = Module(department_id=department.id, module_name="Other")
     board = Board(owner_id=owner.id, name="Source validation")
     db.add_all([module, other, board])
     db.flush()
@@ -257,11 +257,13 @@ def test_board_widgets_reject_invalid_sources_audiences_archives_and_limit(
     assert removed_field.status_code == 409
     field.is_deleted = False
     db.commit()
-    module.is_schema_accepted = False
+    module.is_deleted = True
+    module.deleted_at = datetime.now(UTC)
     db.commit()
-    unaccepted = client.post(root, json={"revision": 1, "widget": _widget(module.id, field.id)})
-    assert unaccepted.status_code == 409
-    module.is_schema_accepted = True
+    closed_module = client.post(root, json={"revision": 1, "widget": _widget(module.id, field.id)})
+    assert closed_module.status_code == 409
+    module.is_deleted = False
+    module.deleted_at = None
     db.commit()
 
     for revision in range(1, 13):

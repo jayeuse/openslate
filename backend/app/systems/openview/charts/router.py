@@ -79,7 +79,6 @@ def _validate_preferences(db: Session, config: ChartPreferenceConfig) -> None:
         .where(
             Module.id == config.module_id,
             Module.is_deleted.is_(False),
-            Module.is_schema_accepted.is_(True),
         )
         .with_for_update()
     )

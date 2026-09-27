@@ -109,7 +109,6 @@ def _subject(
     module = Module(
         department_id=department.id,
         module_name=f"Materializer {uuid7().hex}",
-        is_schema_accepted=True,
     )
     db.add(module)
     db.flush()

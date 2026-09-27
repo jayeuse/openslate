@@ -54,7 +54,6 @@ def _report(db: Session, owner: User) -> tuple[Report, Module]:
     module = Module(
         department_id=department.id,
         module_name=f"Notification {uuid7().hex}",
-        is_schema_accepted=True,
     )
     db.add(module)
     db.flush()

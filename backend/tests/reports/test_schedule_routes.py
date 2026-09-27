@@ -59,7 +59,6 @@ def _report(db: Session, owner: User) -> tuple[Report, Module]:
     module = Module(
         department_id=department.id,
         module_name=f"Schedule {uuid7().hex}",
-        is_schema_accepted=True,
     )
     db.add(module)
     db.flush()
@@ -291,7 +290,8 @@ def test_schedule_owner_capability_source_and_archive_boundaries(
         assert client.post(path, json=_daily()).status_code == 404
     with _client(db, read_only) as client:
         assert client.post(path, json=_daily()).status_code == 403
-    module.is_schema_accepted = False
+    module.is_deleted = True
+    module.deleted_at = datetime(2026, 1, 1, tzinfo=UTC)
     db.flush()
     with _client(db, owner) as client:
         assert client.post(path, json=_daily()).json()["detail"]["code"] == "schedule_ineligible"

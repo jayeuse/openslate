@@ -80,7 +80,6 @@ def _source_board(db: Session, owner: User) -> tuple[Board, Module, Field]:
     module = Module(
         department_id=department.id,
         module_name="Requests",
-        is_schema_accepted=True,
     )
     board = Board(
         owner_id=owner.id,

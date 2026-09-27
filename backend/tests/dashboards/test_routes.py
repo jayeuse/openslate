@@ -67,7 +67,6 @@ def _module(db: Session, *, name: str = "Dashboard records") -> tuple[Module, Fi
     module = Module(
         department_id=department.id,
         module_name=name,
-        is_schema_accepted=True,
     )
     db.add(module)
     db.flush()

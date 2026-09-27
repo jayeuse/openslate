@@ -61,7 +61,7 @@ def test_board_activity_filters_acl_and_widget_audience_before_count_and_page(
     department = Department(department_name=f"Activity {uuid7()}")
     db.add_all([board, other, department])
     db.flush()
-    module = Module(department_id=department.id, module_name="Requests", is_schema_accepted=True)
+    module = Module(department_id=department.id, module_name="Requests")
     db.add(module)
     db.flush()
     record = Record(module_id=module.id, data={})
@@ -172,7 +172,7 @@ def test_board_activity_omits_deleted_widget_history_and_inactive_actor_label(
             permission="view", effect="allow",
         )
     )
-    module = Module(department_id=department.id, module_name="Requests", is_schema_accepted=True)
+    module = Module(department_id=department.id, module_name="Requests")
     db.add(module)
     db.flush()
     set_audit_actor(db, author.id)

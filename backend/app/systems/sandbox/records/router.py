@@ -404,12 +404,10 @@ def create_record(
     db: Annotated[Session, Depends(get_db)],
 ) -> Record:
     _active_module(db, payload.module_id)
-    module = _lock_active_module(db, payload.module_id)
-    if not module.is_schema_accepted:
-        raise _conflict("Module schema is not accepted")
+    _lock_active_module(db, payload.module_id)
     fields = _module_fields(db, payload.module_id)
     if not any(not field.is_deleted for field in fields):
-        raise _conflict("Module schema is not accepted")
+        raise _conflict("Module has no active fields")
     try:
         normalized_data = validate_record_mutation(
             _apply_creation_defaults(payload.data, fields),

@@ -36,7 +36,6 @@ def _closed_module(db) -> tuple[Department, Module]:
     module = Module(
         department_id=department.id,
         module_name=f"Closed module {uuid7().hex}",
-        is_schema_accepted=True,
         is_deleted=True,
         deleted_at=now,
     )
@@ -81,7 +80,6 @@ def test_module_purge_inventory_includes_deleted_widgets_and_archived_dashboards
         id=module_id,
         department_id=uuid7(),
         module_name="Archived source",
-        is_schema_accepted=True,
         is_deleted=True,
         deleted_at=now,
         updated_at=now,
@@ -158,7 +156,6 @@ def test_module_purge_blocks_archived_and_deleted_dashboard_widgets_without_dele
     other_module = Module(
         department_id=other_department.id,
         module_name="Another module",
-        is_schema_accepted=True,
     )
     integration_db.add(other_module)
     integration_db.flush()

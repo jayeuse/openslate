@@ -103,13 +103,12 @@ def _locked_modules(db: Session, ids: set[UUID]) -> dict[UUID, Module]:
             Module.id.in_(sorted(ids)),
             Module.is_deleted.is_(False),
             Module.deleted_at.is_(None),
-            Module.is_schema_accepted.is_(True),
         )
         .order_by(Module.id)
         .with_for_update()
         .execution_options(populate_existing=True)
     ).all()
-    found = {row.id: row for row in rows if _active(row) and row.is_schema_accepted}
+    found = {row.id: row for row in rows if _active(row)}
     if set(found) != ids or len(rows) != len(ids):
         raise _source_unavailable()
     return found

@@ -116,7 +116,6 @@ def list_data_sources(
         db,
         select(Module).where(
             Module.is_deleted.is_(False),
-            Module.is_schema_accepted.is_(True),
         ),
         params,
         DATA_SOURCE_SPEC,
@@ -146,7 +145,6 @@ def list_data_source_fields(
         select(Module.id).where(
             Module.id == module_id,
             Module.is_deleted.is_(False),
-            Module.is_schema_accepted.is_(True),
         )
     )
     if active_module_id is None:
@@ -218,7 +216,6 @@ def list_personal_defaults(
             visible_to(user),
             SavedView.is_deleted.is_(False),
             Module.is_deleted.is_(False),
-            Module.is_schema_accepted.is_(True),
         )
     )
     result = execute_standard_list(
@@ -259,7 +256,6 @@ def set_personal_default(
         .where(
             Module.id == module_id,
             Module.is_deleted.is_(False),
-            Module.is_schema_accepted.is_(True),
         )
         .with_for_update()
     )

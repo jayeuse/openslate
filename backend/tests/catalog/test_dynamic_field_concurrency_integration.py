@@ -8,12 +8,9 @@ from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
 from app.systems.sandbox.fields.models import FieldType
-from app.systems.sandbox.fields.router import create_field
-from app.systems.sandbox.fields.schemas import FieldCreate
 from app.systems.sandbox.lifecycle.exceptions import LifecycleUnavailable
 from app.systems.sandbox.lifecycle.schemas import LifecycleTargetType
 from app.systems.sandbox.lifecycle.service import close_lifecycle
-from app.systems.sandbox.modules.router import accept_module_schema
 from app.systems.sandbox.records.router import create_record
 from app.systems.sandbox.records.schemas import RecordCreate
 from tests.catalog.dynamic_field_support import (
@@ -33,59 +30,12 @@ pytestmark = [
 pytest_plugins = ("tests.catalog.dynamic_field_support",)
 
 
-@pytest.mark.parametrize("operation", ["schema-accept", "field-create"])
-def test_schema_acceptance_and_field_create_fail_nowait_behind_module_lock(
-    operation: str,
-    integration_db: AuditSession,
-    owned_ids: set[UUID],
-) -> None:
-    seeded = _seed_committed_module(
-        owned_ids,
-        accepted=False,
-        fields=(("Existing", FieldType.TEXT, 0, False, {}),),
-    )
-
-    with _hold_module_lock(seeded.module_id):
-        with pytest.raises(HTTPException) as raised:
-            if operation == "schema-accept":
-                accept_module_schema(seeded.module_id, None, integration_db)
-            else:
-                created = create_field(
-                    FieldCreate(
-                        module_id=seeded.module_id,
-                        name="New field",
-                        type=FieldType.TEXT,
-                        position=1,
-                    ),
-                    None,
-                    integration_db,
-                )
-                owned_ids.add(created.id)
-
-        assert raised.value.status_code == 503
-        state = integration_db.connection().execute(
-            text(
-                """
-                SELECT is_schema_accepted,
-                       (SELECT count(*) FROM public.fields
-                        WHERE module_id = modules.id) AS field_count
-                FROM public.modules
-                WHERE id = :module_id
-                """
-            ),
-            {"module_id": seeded.module_id},
-        ).mappings().one()
-        assert state["is_schema_accepted"] is False
-        assert state["field_count"] == 1
-
-
 def test_field_close_and_record_create_serialize_on_parent_module_lock(
     integration_db: AuditSession,
     owned_ids: set[UUID],
 ) -> None:
     seeded = _seed_committed_module(
         owned_ids,
-        accepted=True,
         fields=(("Title", FieldType.TEXT, 0, False, {}),),
     )
     field_id = seeded.fields["Title"]
@@ -103,7 +53,7 @@ def test_field_close_and_record_create_serialize_on_parent_module_lock(
     held_state = integration_db.connection().execute(
         text(
             """
-            SELECT modules.is_schema_accepted, fields.is_deleted
+            SELECT fields.is_deleted
             FROM public.modules
             JOIN public.fields ON fields.module_id = modules.id
             WHERE modules.id = :module_id AND fields.id = :field_id
@@ -111,7 +61,7 @@ def test_field_close_and_record_create_serialize_on_parent_module_lock(
         ),
         {"module_id": seeded.module_id, "field_id": field_id},
     ).mappings().one()
-    assert dict(held_state) == {"is_schema_accepted": True, "is_deleted": False}
+    assert dict(held_state) == {"is_deleted": False}
 
     close_lifecycle(integration_db, LifecycleTargetType.FIELD, field_id, None)
 
@@ -122,7 +72,7 @@ def test_field_close_and_record_create_serialize_on_parent_module_lock(
             integration_db,
         )
     assert raised.value.status_code == 409
-    assert raised.value.detail == "Module schema is not accepted"
+    assert raised.value.detail == "Module has no active fields"
     assert integration_db.connection().execute(
         text("SELECT count(*) FROM public.records WHERE module_id = :module_id"),
         {"module_id": seeded.module_id},

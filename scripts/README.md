@@ -5,7 +5,7 @@ OpenSlate uses names that describe who owns each command:
 | Location | Owner and purpose | Normal entry point |
 | --- | --- | --- |
 | `scripts/` | Repository-wide environment, CI, build, packaging, and test orchestration | Run from the repository root with `python3` or the documented `uv run --directory backend` wrapper. |
-| `backend/operations/` | Administrator, database, recovery, reset, health, and sample-data commands that import backend application code | Run from `backend/` with `uv run python operations/<command>.py`. |
+| `backend/operations/` | Administrator, database, recovery, reset, and health commands that import backend application code | Run from `backend/` with `uv run python operations/<command>.py`. |
 | `frontend/tooling/` | Internal Node launchers for local Next.js development, static builds, and Playwright | Invoke through the named `npm` scripts in `frontend/package.json`. |
 | `tests/tooling/` | Contract tests for root repository commands and CI wiring | Run through the pre-push gate or `uv run --directory backend python -m unittest discover -s ../tests/tooling -t ..`. |
 

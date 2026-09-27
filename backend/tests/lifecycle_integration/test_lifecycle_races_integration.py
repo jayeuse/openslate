@@ -112,7 +112,6 @@ def _seed_committed_scope(ids: set[UUID]) -> _LifecycleRaceFixture:
                 module = Module(
                     department=department,
                     module_name=f"Lifecycle race module {token}",
-                    is_schema_accepted=True,
                 )
                 database.add_all([department, module])
                 database.flush()

@@ -20,12 +20,10 @@ def lifecycle_graph(integration_db: Session) -> Generator[dict[str, object], Non
     module_x = Module(
         department=department_x,
         module_name=f"Module X {token}",
-        is_schema_accepted=True,
     )
     module_y = Module(
         department=department_y,
         module_name=f"Module Y {token}",
-        is_schema_accepted=True,
     )
     integration_db.add_all([department_x, department_y, module_x, module_y])
     integration_db.flush()

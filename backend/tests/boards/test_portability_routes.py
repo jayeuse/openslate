@@ -66,7 +66,6 @@ def _source(db: Session) -> tuple[Department, Module, Field]:
     module = Module(
         department_id=department.id,
         module_name="Requests",
-        is_schema_accepted=True,
     )
     db.add(module)
     db.flush()

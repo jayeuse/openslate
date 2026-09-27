@@ -127,12 +127,12 @@ def test_field_catalog_filters_relationship_fields_before_offset_pagination() ->
     assert result.pagination.total == 1
     assert result.pagination.has_more is False
     assert session.module_statement is not None
-    assert "modules.is_schema_accepted IS true" in str(
+    assert "modules.is_deleted IS false" in str(
         session.module_statement.compile(dialect=postgresql.dialect())  # type: ignore[attr-defined]
     )
 
 
-def test_data_source_catalog_only_lists_active_schema_accepted_modules(monkeypatch) -> None:
+def test_data_source_catalog_lists_every_active_module(monkeypatch) -> None:
     from types import SimpleNamespace
 
     import app.systems.openview.views.catalog as catalog
@@ -155,17 +155,16 @@ def test_data_source_catalog_only_lists_active_schema_accepted_modules(monkeypat
     )
 
     compiled = str(statements[0].compile(dialect=postgresql.dialect()))
-    assert "modules.is_schema_accepted IS true" in compiled
     assert "modules.is_deleted IS false" in compiled
 
 
-def test_create_module_guard_rejects_a_module_with_unaccepted_schema() -> None:
+def test_create_module_guard_rejects_an_inactive_module() -> None:
     from app.systems.openview.views.router import _active_module
 
     class RejectedModuleSession:
         def scalar(self, statement: object) -> None:
             compiled = str(statement.compile(dialect=postgresql.dialect()))  # type: ignore[attr-defined]
-            assert "modules.is_schema_accepted IS true" in compiled
+            assert "modules.is_deleted IS false" in compiled
             return None
 
     with pytest.raises(HTTPException) as error:

@@ -191,7 +191,7 @@ def apply_publication(
         plan.workspace_timezone,
         actor_id,
     )
-    _accept_schemas(db, modules)
+    _validate_schemas(db, modules)
     _assert_no_record_or_edge_changes(db)
     response = PublicationResponse(
         id=publication.id,
@@ -285,7 +285,6 @@ def _apply_modules(
             row = Module(
                 department_id=department.id,
                 module_name=desired.name,
-                is_schema_accepted=False,
                 is_deleted=closed,
                 deleted_at=datetime.now(UTC) if closed else None,
                 performed_by=actor_id,
@@ -299,7 +298,6 @@ def _apply_modules(
             closed = desired.closed or department.is_deleted
             row.is_deleted = closed
             row.deleted_at = datetime.now(UTC) if closed else None
-            row.is_schema_accepted = False
             row.performed_by = actor_id
         result[desired.id] = row
     return result
@@ -401,7 +399,7 @@ def _apply_relationships(
             row.performed_by = actor_id
 
 
-def _accept_schemas(db: Session, modules: dict[str, Module]) -> None:
+def _validate_schemas(db: Session, modules: dict[str, Module]) -> None:
     for module in modules.values():
         if module.is_deleted:
             continue
@@ -411,7 +409,6 @@ def _accept_schemas(db: Session, modules: dict[str, Module]) -> None:
             ).all()
         )
         validate_module_schema(active)
-        module.is_schema_accepted = True
 
 
 def _bind(db: Session, kind: str, sandbox_id: str, actor_id: UUID, **target: UUID) -> None:

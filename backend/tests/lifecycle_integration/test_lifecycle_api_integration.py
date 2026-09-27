@@ -15,7 +15,9 @@ from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.main import create_app
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.lifecycle.exceptions import LifecyclePasswordServiceUnavailable
+from app.systems.sandbox.modules.models import Module
 from tests.api_integration_support import create_owned_admin, delete_owned_admin
 from tests.conftest import _assert_alembic_head, _guard_integration_database
 from tests.conftest import guarded_create_engine as create_engine
@@ -52,16 +54,34 @@ class LifecycleApiClient:
         self.app.dependency_overrides[get_current_user] = lambda: self.actor
         self.app.dependency_overrides[get_db] = lambda: database
         try:
-            response = self.client.request(method, path, json=payload)
-            if response.status_code == 201 and payload is not None:
-                body = response.json()
-                if path == "/api/departments":
-                    self.created_department_ids.add(UUID(body["id"]))
-                if path == "/api/modules":
-                    self.created_module_ids.add(UUID(body["id"]))
-            return response
+            return self.client.request(method, path, json=payload)
         finally:
             self.active_database = None
+            database.close()
+
+    def create_module(self, department_name: str) -> str:
+        """Commit a department and module directly; the Sandbox publish owns schema writes."""
+
+        request_id = uuid7()
+        self.request_ids.add(request_id)
+        database = AuditSession(bind=self.engine)
+        database.info[AUDIT_CONTEXT_KEY] = AuditContext(
+            performed_by=self.actor.id,
+            request_id=request_id,
+            request_method="POST",
+            request_path="/api/test/lifecycle-module",
+        )
+        try:
+            department = Department(department_name=department_name)
+            module = Module(department=department, module_name="Assets")
+            database.add_all([department, module])
+            database.flush()
+            self.created_department_ids.add(department.id)
+            self.created_module_ids.add(module.id)
+            module_id = str(module.id)
+            database.commit()
+            return module_id
+        finally:
             database.close()
 
     def close(self) -> None:
@@ -164,15 +184,7 @@ def test_registered_close_password_callback_starts_without_request_transaction(
     lifecycle_api_client: Callable[[], LifecycleApiClient],
 ) -> None:
     client = lifecycle_api_client()
-    department = client.request("POST", "/api/departments", {"department_name": "API lifecycle"})
-    assert department.status_code == 201
-    module = client.request(
-        "POST",
-        "/api/modules",
-        {"department_id": department.json()["id"], "module_name": "Assets"},
-    )
-    assert module.status_code == 201
-    module_id = module.json()["id"]
+    module_id = client.create_module("API lifecycle")
     preview = client.request("POST", f"/api/modules/{module_id}/close/preview")
     assert preview.status_code == 200
     token = preview.json()["token"]
@@ -206,13 +218,7 @@ def test_registered_close_rejects_invalid_confirmation_without_provider_call(
     lifecycle_api_client: Callable[[], LifecycleApiClient],
 ) -> None:
     client = lifecycle_api_client()
-    department = client.request("POST", "/api/departments", {"department_name": "API invalid"})
-    module = client.request(
-        "POST",
-        "/api/modules",
-        {"department_id": department.json()["id"], "module_name": "Assets"},
-    )
-    module_id = module.json()["id"]
+    module_id = client.create_module("API invalid")
     preview = client.request("POST", f"/api/modules/{module_id}/close/preview")
     calls: list[str] = []
 
@@ -248,13 +254,7 @@ def test_registered_close_maps_provider_failure_and_consumed_token_replay(
     lifecycle_api_client: Callable[[], LifecycleApiClient],
 ) -> None:
     client = lifecycle_api_client()
-    department = client.request("POST", "/api/departments", {"department_name": "API provider"})
-    module = client.request(
-        "POST",
-        "/api/modules",
-        {"department_id": department.json()["id"], "module_name": "Assets"},
-    )
-    module_id = module.json()["id"]
+    module_id = client.create_module("API provider")
     preview = client.request("POST", f"/api/modules/{module_id}/close/preview")
     token = preview.json()["token"]
 
@@ -321,13 +321,7 @@ def test_registered_close_rejects_plan_drift_after_provider_success(
     lifecycle_api_client: Callable[[], LifecycleApiClient],
 ) -> None:
     client = lifecycle_api_client()
-    department = client.request("POST", "/api/departments", {"department_name": "API drift"})
-    module = client.request(
-        "POST",
-        "/api/modules",
-        {"department_id": department.json()["id"], "module_name": "Assets"},
-    )
-    module_id = module.json()["id"]
+    module_id = client.create_module("API drift")
     preview = client.request("POST", f"/api/modules/{module_id}/close/preview")
     token = preview.json()["token"]
 
@@ -368,13 +362,7 @@ def test_registered_module_purge_succeeds_when_enabled(
     lifecycle_api_client: Callable[[], LifecycleApiClient],
 ) -> None:
     client = lifecycle_api_client()
-    department = client.request("POST", "/api/departments", {"department_name": "API purge"})
-    module = client.request(
-        "POST",
-        "/api/modules",
-        {"department_id": department.json()["id"], "module_name": "Assets"},
-    )
-    module_id = module.json()["id"]
+    module_id = client.create_module("API purge")
     close_preview = client.request("POST", f"/api/modules/{module_id}/close/preview")
     observations: list[bool] = []
 
@@ -433,12 +421,7 @@ def test_registered_purge_refuses_when_disabled_before_provider(
     lifecycle_api_client: Callable[[], LifecycleApiClient],
 ) -> None:
     client = lifecycle_api_client()
-    department = client.request("POST", "/api/departments", {"department_name": "API purge off"})
-    module = client.request(
-        "POST",
-        "/api/modules",
-        {"department_id": department.json()["id"], "module_name": "Assets"},
-    )
+    module_id = client.create_module("API purge off")
     calls: list[str] = []
 
     class PasswordClient:
@@ -458,7 +441,7 @@ def test_registered_purge_refuses_when_disabled_before_provider(
             "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
             PasswordClient,
         )
-        response = client.request("POST", f"/api/modules/{module.json()['id']}/purge/preview")
+        response = client.request("POST", f"/api/modules/{module_id}/purge/preview")
 
     assert response.status_code == 403, response.text
     assert response.json()["detail"]["code"] == "purge_disabled"

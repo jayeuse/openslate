@@ -41,16 +41,9 @@ def actor(db, role: Role | None = None):
     return user
 
 
-def accepted_rows(db, kind: str, values: list[object]):
-    module, field, rows = setup_rows(db, kind, values)
-    module.is_schema_accepted = True
-    db.flush()
-    return module, field, rows
-
-
 def test_private_view_is_owner_only_even_for_admin(query_db):
     owner = actor(query_db)
-    module, _, _ = accepted_rows(query_db, "text", [])
+    module, _, _ = setup_rows(query_db, "text", [])
     view = create_view(
         ViewCreate(module_id=module.id, name="Private", definition=QueryDefinition()),
         owner,
@@ -75,7 +68,7 @@ def test_role_audience_is_visible_but_not_mutable_to_another_member(query_db):
     query_db.flush()
     owner = actor(query_db, role)
     viewer = actor(query_db, role)
-    module, _, _ = accepted_rows(query_db, "text", [])
+    module, _, _ = setup_rows(query_db, "text", [])
     view = create_view(
         ViewCreate(
             module_id=module.id,
@@ -96,7 +89,7 @@ def test_role_audience_is_visible_but_not_mutable_to_another_member(query_db):
 
 def test_private_updates_revision_and_archives_without_exposing_predicates(query_db):
     owner = actor(query_db)
-    module, field, _ = accepted_rows(query_db, "text", [])
+    module, field, _ = setup_rows(query_db, "text", [])
     definition = QueryDefinition(
         filters=[
             {"field_id": field.id, "expected_type": "text", "operator": "eq", "value": "sensitive"}
@@ -120,7 +113,7 @@ def test_private_updates_revision_and_archives_without_exposing_predicates(query
 
 def test_same_normalized_view_patch_does_not_commit_or_bump_revision(query_db):
     owner = actor(query_db)
-    module, _, _ = accepted_rows(query_db, "text", [])
+    module, _, _ = setup_rows(query_db, "text", [])
     view = create_view(
         ViewCreate(module_id=module.id, name="Original", definition=QueryDefinition()),
         owner,

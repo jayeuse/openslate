@@ -23,13 +23,7 @@ def test_registered_close_rejects_expired_challenge_before_password_provider(
     stored_status: str,
 ) -> None:
     client = lifecycle_api_client()
-    department = client.request("POST", "/api/departments", {"department_name": "API expired"})
-    module = client.request(
-        "POST",
-        "/api/modules",
-        {"department_id": department.json()["id"], "module_name": "Assets"},
-    )
-    module_id = module.json()["id"]
+    module_id = client.create_module("API expired")
     preview = client.request("POST", f"/api/modules/{module_id}/close/preview")
     token = preview.json()["token"]
     created_at = datetime.now(UTC) - timedelta(minutes=4)

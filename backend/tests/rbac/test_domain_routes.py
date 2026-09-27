@@ -93,9 +93,6 @@ def test_resource_read_routes_require_read_and_not_write(
 @pytest.mark.parametrize(
     ("resource", "read_capability", "write_capability"),
     [
-        ("departments", "departments.read", "departments.write"),
-        ("modules", "modules.read", "modules.write"),
-        ("fields", "fields.read", "fields.write"),
         ("records", "records.read", "records.write"),
         ("relationships", "relationships.read", "relationships.write"),
     ],
@@ -108,29 +105,8 @@ def test_resource_write_routes_require_write_and_not_read(
     write_capability: str,
 ) -> None:
     db = Mock(spec=Session)
-    if resource == "departments":
-        db.scalar.return_value = None
-        db.refresh.side_effect = lambda entity: _persisted(entity)
-        path = "/api/departments"
-        payload = {"department_name": "Operations"}
-    elif resource == "modules":
-        module = make_module(accepted=True)
-        db.get.return_value = module
-        monkeypatch.setattr(modules_router, "_active_fields", lambda *_args: [])
-        monkeypatch.setattr(modules_router, "_lock_module", lambda *_args: module)
-        monkeypatch.setattr(modules_router, "validate_module_schema", lambda _fields: None)
-        path = f"/api/modules/{module.id}/schema/accept"
-        payload = None
-    elif resource == "fields":
-        module = make_module(accepted=True)
-        first = make_field(module.id, position=0, name="Title")
-        second = make_field(module.id, position=1, name="Summary")
-        db.scalars.return_value.all.return_value = [first, second]
-        monkeypatch.setattr(fields_router, "_lock_active_module", lambda *_args: module)
-        path = f"/api/modules/{module.id}/fields/reorder"
-        payload = {"field_ids": [str(second.id), str(first.id)]}
-    elif resource == "records":
-        module = make_module(accepted=True)
+    if resource == "records":
+        module = make_module()
         field = make_field(module.id, position=0, name="Title")
         monkeypatch.setattr(records_router, "_active_module", lambda *_args: module)
         monkeypatch.setattr(records_router, "_lock_active_module", lambda *_args: module)

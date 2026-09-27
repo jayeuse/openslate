@@ -63,7 +63,6 @@ def _eligible_owner(db: Session, report: Report, *, lock: bool) -> User | None:
         module is None
         or module.is_deleted
         or module.deleted_at is not None
-        or not module.is_schema_accepted
     ):
         return None
     user_query = select(User).where(User.id == report.owner_id)
@@ -312,7 +311,6 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
             Report.deleted_at.is_(None),
             Module.is_deleted.is_(False),
             Module.deleted_at.is_(None),
-            Module.is_schema_accepted.is_(True),
         )
     )
     reminder_ids = (

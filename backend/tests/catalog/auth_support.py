@@ -6,18 +6,15 @@ from typing import Any, get_args
 from fastapi import FastAPI
 from uuid6 import uuid7
 
-from app.systems.sandbox.departments.router import DepartmentReadUser, DepartmentWriteUser
-from app.systems.sandbox.fields.router import FieldReadUser, FieldWriteUser
-from app.systems.sandbox.modules.router import ModuleReadUser, ModuleWriteUser
+from app.systems.sandbox.departments.router import DepartmentReadUser
+from app.systems.sandbox.fields.router import FieldReadUser
+from app.systems.sandbox.modules.router import ModuleReadUser
 from app.systems.sandbox.records.router import RecordReadUser, RecordWriteUser
 
 _CATALOG_ACTOR_DEPENDENCIES = (
     DepartmentReadUser,
-    DepartmentWriteUser,
     FieldReadUser,
-    FieldWriteUser,
     ModuleReadUser,
-    ModuleWriteUser,
     RecordReadUser,
     RecordWriteUser,
 )

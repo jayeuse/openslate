@@ -78,7 +78,6 @@ def test_due_announcement_claim_publishes_one_immutable_result(integration_owner
     module = Module(
         department_id=department.id,
         module_name=f"Announcement work {uuid7().hex}",
-        is_schema_accepted=True,
     )
     db.add(module)
     db.flush()

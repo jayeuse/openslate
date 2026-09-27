@@ -63,14 +63,15 @@ def _client(db: Session, user: User) -> TestClient:
     return TestClient(app)
 
 
-def _module(db: Session, *, accepted: bool = True) -> tuple[Module, Field]:
+def _module(db: Session, *, active: bool = True) -> tuple[Module, Field]:
     department = Department(department_name=f"Report source {uuid7()}")
     db.add(department)
     db.flush()
     module = Module(
         department_id=department.id,
         module_name=f"Report source {uuid7()}",
-        is_schema_accepted=accepted,
+        is_deleted=not active,
+        deleted_at=None if active else datetime.now(UTC),
     )
     db.add(module)
     db.flush()
@@ -165,7 +166,7 @@ def test_private_report_owner_and_active_source_are_enforced(integration_owner_d
     assert admin_role is not None
     admin = _actor(db, role=admin_role)
     module, field = _module(db)
-    inactive_module, inactive_field = _module(db, accepted=False)
+    inactive_module, inactive_field = _module(db, active=False)
     set_audit_actor(db, owner.id)
 
     with _client(db, owner) as client:

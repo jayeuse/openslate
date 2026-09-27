@@ -20,7 +20,6 @@ def test_purge_dependency_inventory_tracks_view_defaults_and_reference_changes()
         id=module_id,
         department_id=uuid7(),
         module_name="Inventory",
-        is_schema_accepted=True,
         is_deleted=True,
         deleted_at=now,
         updated_at=now,

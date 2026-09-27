@@ -109,7 +109,6 @@ def _modules(
             Module.module_name.in_(sorted(module_names)),
             Module.is_deleted.is_(False),
             Module.deleted_at.is_(None),
-            Module.is_schema_accepted.is_(True),
         )
         .order_by(Module.id)
         .with_for_update()
@@ -119,7 +118,7 @@ def _modules(
     for row in rows:
         department_name = department_names.get(row.department_id)
         key = (department_name, row.module_name) if department_name is not None else None
-        if not _active(row) or not row.is_schema_accepted or key not in sources or key in found:
+        if not _active(row) or key not in sources or key in found:
             raise PortabilityError("board_source_unavailable")
         assert key is not None
         found[key] = row

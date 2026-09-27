@@ -93,7 +93,6 @@ from app.systems.sandbox.automations.router import router as sandbox_automations
 from app.systems.sandbox.automations.worker import AutomationWorker
 from app.systems.sandbox.departments.router import router as departments_router
 from app.systems.sandbox.designs.router import router as sandbox_designs_router
-from app.systems.sandbox.fields.router import module_fields_router
 from app.systems.sandbox.fields.router import router as fields_router
 from app.systems.sandbox.lifecycle.router import router as lifecycle_router
 from app.systems.sandbox.modules.router import router as modules_router
@@ -353,7 +352,6 @@ def create_app() -> FastAPI:
     app.include_router(sandbox_test_runs_router, prefix="/api")
     app.include_router(modules_router, prefix="/api")
     app.include_router(fields_router, prefix="/api")
-    app.include_router(module_fields_router, prefix="/api")
     app.include_router(record_queries_router, prefix="/api")
     app.include_router(records_router, prefix="/api")
     app.include_router(board_personal_router, prefix="/api")

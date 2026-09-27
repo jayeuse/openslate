@@ -68,7 +68,6 @@ def _catalog() -> tuple[Department, Module, list[Field]]:
         department_id=department.id,
         module_name="Requests",
         is_deleted=False,
-        is_schema_accepted=True,
     )
     fields = [
         Field(
@@ -126,7 +125,6 @@ def test_v2_structure_resolves_exact_active_names_types_without_mutating() -> No
     assert all("FOR UPDATE" in statement for statement in statements)
     assert "departments.department_name" in statements[0]
     assert "modules.module_name" in statements[1]
-    assert "modules.is_schema_accepted" in statements[1]
     assert "fields.name" in statements[2]
     assert all("is_deleted" in statement and "deleted_at" in statement for statement in statements)
     db.add.assert_not_called()
@@ -229,14 +227,14 @@ def test_v2_resolution_rejects_type_or_filter_value_mismatch() -> None:
     assert invalid_filter.value.code == "board_source_unavailable"
 
 
-def test_v2_resolution_rejects_unaccepted_module_and_soft_deleted_field() -> None:
+def test_v2_resolution_rejects_closed_module_and_soft_deleted_field() -> None:
     department, module, fields = _catalog()
-    module.is_schema_accepted = False
+    module.is_deleted = True
     with pytest.raises(PortabilityError):
         resolve_portable_board(
             _database([department], [module], fields), parse_portable_board(_bytes(_bundle()))
         )
-    module.is_schema_accepted = True
+    module.is_deleted = False
     fields[0].is_deleted = True
     with pytest.raises(PortabilityError):
         resolve_portable_board(

@@ -157,7 +157,6 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
                     id=module_id,
                     department_id=department_id,
                     module_name=f"Report run {uuid7().hex}",
-                    is_schema_accepted=True,
                 )
             )
             setup.flush()

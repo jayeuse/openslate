@@ -77,7 +77,6 @@ def test_chart_preferences_are_private_and_saved_by_the_authenticated_owner(
     module = Module(
         department_id=department.id,
         module_name="Preference source",
-        is_schema_accepted=True,
     )
     db.add(module)
     db.flush()
@@ -147,7 +146,6 @@ def test_chart_preferences_reject_stale_field_references(
     module = Module(
         department_id=department.id,
         module_name="Stale preference source",
-        is_schema_accepted=True,
     )
     db.add(module)
     db.flush()
@@ -170,7 +168,6 @@ def test_chart_preferences_reject_stale_field_references(
     other_module = Module(
         department_id=department.id,
         module_name="Unrelated source",
-        is_schema_accepted=True,
     )
     db.add_all([dimension, date_field, other_module])
     db.flush()

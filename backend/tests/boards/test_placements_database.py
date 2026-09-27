@@ -1,5 +1,6 @@
 """Board placement routes against runner-owned PostgreSQL."""
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -63,7 +64,6 @@ def test_placement_create_list_soft_delete_and_remove_are_scoped_and_audited(
     module = Module(
         department_id=department.id,
         module_name="Placement module",
-        is_schema_accepted=True,
     )
     board = Board(owner_id=owner.id, name="Record shortcuts")
     db.add_all([module, board])
@@ -165,7 +165,12 @@ def test_placement_mutations_reject_archived_board_and_unavailable_record(
     department = Department(department_name=f"Placement unavailable {uuid7()}")
     db.add(department)
     db.flush()
-    module = Module(department_id=department.id, module_name="Unaccepted module")
+    module = Module(
+        department_id=department.id,
+        module_name="Closed module",
+        is_deleted=True,
+        deleted_at=datetime.now(UTC),
+    )
     board = Board(owner_id=owner.id, name="Operations")
     db.add_all([module, board])
     db.flush()
@@ -182,7 +187,8 @@ def test_placement_mutations_reject_archived_board_and_unavailable_record(
     )
     assert unavailable.status_code == 409
     assert unavailable.json()["detail"]["code"] == "record_unavailable"
-    module.is_schema_accepted = True
+    module.is_deleted = False
+    module.deleted_at = None
     db.commit()
     board.status = BoardStatus.ARCHIVED
     db.commit()

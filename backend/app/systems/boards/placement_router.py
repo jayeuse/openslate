@@ -80,7 +80,6 @@ def _active_record(db: Session, record_id: UUID) -> Record:
             Module.id == module_id,
             Module.is_deleted.is_(False),
             Module.deleted_at.is_(None),
-            Module.is_schema_accepted.is_(True),
         )
         .with_for_update()
     )
@@ -115,7 +114,6 @@ def _available_modules(db: Session, placements: list[BoardRecordPlacement]) -> d
             Record.deleted_at.is_(None),
             Module.is_deleted.is_(False),
             Module.deleted_at.is_(None),
-            Module.is_schema_accepted.is_(True),
         )
     ).all()
     return {record_id: module_id for record_id, module_id in rows}

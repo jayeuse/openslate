@@ -4,7 +4,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -19,18 +18,10 @@ from app.core.database import get_db
 from app.systems.access.users.models import User
 from app.systems.access.users.permissions import Capability
 from app.systems.sandbox.departments.models import Department
-from app.systems.sandbox.departments.schemas import (
-    DepartmentCreate,
-    DepartmentResponse,
-    DepartmentUpdate,
-)
-from app.systems.sandbox.lifecycle.exceptions import LifecycleError
-from app.systems.sandbox.lifecycle.schemas import LifecycleTargetType
-from app.systems.sandbox.lifecycle.service import reopen_lifecycle
+from app.systems.sandbox.departments.schemas import DepartmentResponse
 
 router = APIRouter(prefix="/departments", tags=["departments"])
 DepartmentReadUser = Annotated[User, Depends(require_capability(Capability.DEPARTMENTS_READ))]
-DepartmentWriteUser = Annotated[User, Depends(require_capability(Capability.DEPARTMENTS_WRITE))]
 
 
 class DepartmentSortField(StrEnum):
@@ -55,46 +46,9 @@ DEPARTMENT_LIST_SPEC = ListQuerySpec(
     deleted_field=cast(ColumnElement[bool], Department.is_deleted),
 )
 
-CLOSE_REQUIRED_RESPONSE: dict[int | str, dict[str, Any]] = {
-    status.HTTP_409_CONFLICT: {
-        "description": "Close the department through the lifecycle workflow.",
-        "content": {"application/json": {
-            "schema": {
-                "type": "object",
-                "required": ["detail"],
-                "properties": {"detail": {
-                    "type": "object",
-                    "required": ["code", "message"],
-                    "properties": {
-                        "code": {"type": "string", "enum": ["close_required"]},
-                        "message": {"type": "string"},
-                    }
-                }},
-            },
-            "example": {"detail": {
-                "code": "close_required", "message": "Use Close to close this department"
-            }},
-        }},
-    }
-}
-
 
 def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Department not found")
-
-
-def _conflict(message: str) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message)
-
-
-def _require_patch(payload: DepartmentUpdate) -> None:
-    if not payload.model_fields_set or any(
-        getattr(payload, field) is None for field in payload.model_fields_set
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="At least one non-null field is required",
-        )
 
 
 def _department(db: Session, department_id: UUID) -> Department:
@@ -102,24 +56,6 @@ def _department(db: Session, department_id: UUID) -> Department:
     if department is None:
         raise _not_found()
     return department
-
-
-def _name_conflict(db: Session, name: str, exclude_id: UUID | None = None) -> bool:
-    statement = select(Department.id).where(
-        Department.department_name == name,
-        Department.is_deleted.is_(False),
-    )
-    if exclude_id is not None:
-        statement = statement.where(Department.id != exclude_id)
-    return db.scalar(statement) is not None
-
-
-def _commit(db: Session, message: str) -> None:
-    try:
-        db.commit()
-    except IntegrityError as error:
-        db.rollback()
-        raise _conflict(message) from error
 
 
 @router.get("", response_model=DepartmentListResponse)
@@ -141,73 +77,4 @@ def get_department(
     _: DepartmentReadUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Department:
-    return _department(db, department_id)
-
-
-@router.post("", response_model=DepartmentResponse, status_code=status.HTTP_201_CREATED)
-def create_department(
-    payload: DepartmentCreate,
-    _: DepartmentWriteUser,
-    db: Annotated[Session, Depends(get_db)],
-) -> Department:
-    if _name_conflict(db, payload.department_name):
-        raise _conflict("Department name unavailable")
-    department = Department(department_name=payload.department_name)
-    db.add(department)
-    _commit(db, "Department name unavailable")
-    db.refresh(department)
-    return department
-
-
-@router.patch("/{department_id}", response_model=DepartmentResponse)
-def update_department(
-    department_id: UUID,
-    payload: DepartmentUpdate,
-    _: DepartmentWriteUser,
-    db: Annotated[Session, Depends(get_db)],
-) -> Department:
-    _require_patch(payload)
-    department = _department(db, department_id)
-    if department.is_deleted:
-        raise _conflict("Department is deleted")
-    if payload.department_name is not None:
-        if _name_conflict(db, payload.department_name, department.id):
-            raise _conflict("Department name unavailable")
-        department.department_name = payload.department_name
-    _commit(db, "Department name unavailable")
-    return department
-
-
-@router.delete(
-    "/{department_id}",
-    status_code=status.HTTP_409_CONFLICT,
-    responses=CLOSE_REQUIRED_RESPONSE,
-)
-def legacy_delete_department(
-    department_id: UUID,
-    _: DepartmentWriteUser,
-    db: Annotated[Session, Depends(get_db)],
-) -> None:
-    # Keep the endpoint for clients that still discover DELETE, but do not
-    # permit it to bypass the close preview and confirmation flow.
-    _department(db, department_id)
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail={"code": "close_required", "message": "Use Close to close this department"},
-    )
-
-
-@router.post("/{department_id}/restore", response_model=DepartmentResponse)
-def restore_department(
-    department_id: UUID,
-    user: DepartmentWriteUser,
-    db: Annotated[Session, Depends(get_db)],
-) -> Department:
-    department = _department(db, department_id)
-    if not department.is_deleted:
-        raise _conflict("Department is not deleted")
-    try:
-        reopen_lifecycle(db, LifecycleTargetType.DEPARTMENT, department_id, user.id)
-    except LifecycleError as error:
-        raise HTTPException(status_code=int(error.status_code), detail=error.detail) from error
     return _department(db, department_id)

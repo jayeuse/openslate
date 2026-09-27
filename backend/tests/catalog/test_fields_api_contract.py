@@ -8,47 +8,87 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database import get_db
+from app.main import app
 from app.systems.sandbox.departments.router import router as departments_router
-from app.systems.sandbox.fields.router import (
-    module_fields_router,
-)
 from app.systems.sandbox.fields.router import router as fields_router
 from app.systems.sandbox.modules.router import router as modules_router
 from app.systems.sandbox.records.router import router as records_router
 from tests.catalog.auth_support import override_catalog_authorization
 
+SCHEMA_ROUTES = {
+    "/api/departments": {"get"},
+    "/api/departments/{department_id}": {"get"},
+    "/api/modules": {"get"},
+    "/api/modules/{module_id}": {"get"},
+    "/api/fields": {"get"},
+    "/api/fields/{field_id}": {"get"},
+}
+REMOVED_SCHEMA_PATHS = (
+    "/api/departments/{department_id}/restore",
+    "/api/modules/{module_id}/restore",
+    "/api/modules/{module_id}/schema/accept",
+    "/api/fields/{field_id}/restore",
+    "/api/modules/{module_id}/fields/reorder",
+)
 
-def test_routers_expose_crud_restore_and_reorder_contract() -> None:
-    app = FastAPI()
-    app.include_router(fields_router, prefix="/api")
-    app.include_router(module_fields_router, prefix="/api")
-    app.include_router(records_router, prefix="/api")
-    client = TestClient(app)
 
-    paths = client.get("/openapi.json").json()["paths"]
-    assert set(paths["/api/fields"]) == {"get", "post"}
-    assert set(paths["/api/fields/{field_id}"]) == {"get", "patch", "delete"}
-    assert set(paths["/api/fields/{field_id}/restore"]) == {"post"}
-    assert set(paths["/api/modules/{module_id}/fields/reorder"]) == {"post"}
+def test_schema_catalog_routes_are_read_only_in_the_application_contract() -> None:
+    paths = app.openapi()["paths"]
+
+    assert {path: set(paths[path]) for path in SCHEMA_ROUTES} == SCHEMA_ROUTES
+    assert not set(REMOVED_SCHEMA_PATHS) & set(paths)
     assert set(paths["/api/records"]) == {"get", "post"}
     assert set(paths["/api/records/{record_id}"]) == {"get", "patch", "delete"}
     assert set(paths["/api/records/{record_id}/restore"]) == {"post"}
 
 
-@pytest.mark.parametrize("resource", ["fields", "records", "modules", "departments"])
-@pytest.mark.parametrize("payload", [{}, {"module_id": None}])
-def test_empty_or_null_catalog_patch_rejected_before_database_lookup(resource, payload) -> None:
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("post", "/api/departments", {"department_name": "Operations"}),
+        ("patch", "/api/departments/{id}", {"department_name": "Operations"}),
+        ("delete", "/api/departments/{id}", None),
+        ("post", "/api/departments/{id}/restore", None),
+        ("post", "/api/modules", {"department_id": "{id}", "module_name": "Assets"}),
+        ("patch", "/api/modules/{id}", {"module_name": "Assets"}),
+        ("delete", "/api/modules/{id}", None),
+        ("post", "/api/modules/{id}/restore", None),
+        ("post", "/api/modules/{id}/schema/accept", None),
+        ("post", "/api/fields", {"module_id": "{id}", "name": "Title", "type": "text"}),
+        ("patch", "/api/fields/{id}", {"name": "Title"}),
+        ("delete", "/api/fields/{id}", None),
+        ("post", "/api/fields/{id}/restore", None),
+    ],
+)
+def test_removed_schema_write_routes_are_not_served(method, path, body) -> None:
     db = Mock(spec=Session)
-    client = _catalog_rejection_client(db)
-    # Use a declared field for each resource so the route enforces null rejection.
-    null_keys = {
-        "fields": "name",
-        "records": "data",
-        "modules": "module_name",
-        "departments": "department_name",
-    }
-    body = {} if not payload else {null_keys[resource]: None}
-    response = client.patch(f"/api/{resource}/{uuid7()}", json=body)
+    identifier = str(uuid7())
+    payload = (
+        None
+        if body is None
+        else {
+            key: (
+                [identifier]
+                if isinstance(value, list)
+                else identifier if value == "{id}" else value
+            )
+            for key, value in body.items()
+        }
+    )
+
+    response = _catalog_rejection_client(db).request(
+        method.upper(), path.replace("{id}", identifier), json=payload
+    )
+
+    assert response.status_code in {404, 405}
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("payload", [{}, {"data": None}])
+def test_empty_or_null_record_patch_rejected_before_database_lookup(payload) -> None:
+    db = Mock(spec=Session)
+    response = _catalog_rejection_client(db).patch(f"/api/records/{uuid7()}", json=payload)
     assert response.status_code == 422
     assert response.json()["detail"] == "At least one non-null field is required"
     db.get.assert_not_called()
@@ -64,27 +104,31 @@ def test_empty_or_null_catalog_patch_rejected_before_database_lookup(resource, p
         ("departments", "Department"),
     ],
 )
-def test_missing_catalog_resource_has_consistent_read_and_mutation_404(resource, singular) -> None:
+def test_missing_catalog_resource_read_returns_404(resource, singular) -> None:
     db = Mock(spec=Session)
     db.get.return_value = None
-    client = _catalog_rejection_client(db)
-    path = f"/api/{resource}/{uuid7()}"
-    for response in (client.get(path), client.delete(path), client.post(f"{path}/restore")):
-        assert response.status_code == 404
-        assert response.json() == {"detail": f"{singular} not found"}
+    response = _catalog_rejection_client(db).get(f"/api/{resource}/{uuid7()}")
+    assert response.status_code == 404
+    assert response.json() == {"detail": f"{singular} not found"}
     db.commit.assert_not_called()
 
 
-@pytest.mark.parametrize("resource", ["fields", "records"])
-def test_child_create_rejects_missing_active_module_before_writes(resource) -> None:
+def test_missing_record_has_consistent_mutation_404() -> None:
+    db = Mock(spec=Session)
+    db.get.return_value = None
+    client = _catalog_rejection_client(db)
+    path = f"/api/records/{uuid7()}"
+    for response in (client.delete(path), client.post(f"{path}/restore")):
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Record not found"}
+    db.commit.assert_not_called()
+
+
+def test_record_create_rejects_missing_active_module_before_writes() -> None:
     db = Mock(spec=Session)
     db.scalar.return_value = None
     client = _catalog_rejection_client(db)
-    body = {"module_id": str(uuid7())}
-    body.update(
-        {"name": "Title", "type": "text", "position": 0} if resource == "fields" else {"data": {}}
-    )
-    response = client.post(f"/api/{resource}", json=body)
+    response = client.post("/api/records", json={"module_id": str(uuid7()), "data": {}})
     assert response.status_code == 409
     assert response.json()["detail"] == "Module is not active"
     db.add.assert_not_called()
@@ -100,36 +144,12 @@ def _catalog_rejection_client(db: Session) -> TestClient:
     return TestClient(app)
 
 
-@pytest.mark.parametrize(
-    "resource,payload,singular",
-    [
-        ("fields", {"name": "Renamed"}, "Field"),
-        ("records", {"data": {}}, "Record"),
-        ("modules", {"module_name": "Renamed"}, "Module"),
-        ("departments", {"department_name": "Renamed"}, "Department"),
-    ],
-)
-def test_closed_catalog_resource_rejects_patch(resource, payload, singular) -> None:
+def test_closed_record_rejects_patch() -> None:
     db = Mock(spec=Session)
     db.get.return_value = SimpleNamespace(is_deleted=True)
-    response = _catalog_rejection_client(db).patch(f"/api/{resource}/{uuid7()}", json=payload)
+    response = _catalog_rejection_client(db).patch(
+        f"/api/records/{uuid7()}", json={"data": {}}
+    )
     assert response.status_code == 409
-    assert response.json()["detail"] == f"{singular} is deleted"
-    db.commit.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    "resource,singular",
-    [
-        ("fields", "Field"),
-        ("modules", "Module"),
-        ("departments", "Department"),
-    ],
-)
-def test_active_catalog_resource_cannot_be_restored(resource, singular) -> None:
-    db = Mock(spec=Session)
-    db.get.return_value = SimpleNamespace(is_deleted=False)
-    response = _catalog_rejection_client(db).post(f"/api/{resource}/{uuid7()}/restore")
-    assert response.status_code == 409
-    assert response.json()["detail"] == f"{singular} is not deleted"
+    assert response.json()["detail"] == "Record is deleted"
     db.commit.assert_not_called()

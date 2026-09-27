@@ -30,7 +30,6 @@ def _closed_module(db) -> Module:
     module = Module(
         department_id=department.id,
         module_name=f"Widget source {uuid7().hex}",
-        is_schema_accepted=True,
         is_deleted=True,
         deleted_at=datetime.now(UTC),
     )

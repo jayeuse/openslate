@@ -41,7 +41,6 @@ def validate_dashboard_widgets(db: Session, widgets: list[DashboardWidgetSpec]) 
             .where(
                 Module.id.in_(module_ids),
                 Module.is_deleted.is_(False),
-                Module.is_schema_accepted.is_(True),
             )
             .order_by(Module.id)
             .with_for_update()

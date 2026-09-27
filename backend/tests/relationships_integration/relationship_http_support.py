@@ -197,10 +197,10 @@ class RelationshipHTTPFixture:
         connection.execute(
             text(
                 "INSERT INTO public.modules "
-                "(id, department_id, module_name, is_schema_accepted, is_deleted) VALUES "
-                "(:source_id, :department_id, :source_name, true, false), "
-                "(:target_id, :department_id, :target_name, true, false), "
-                "(:cross_id, :other_department_id, :cross_name, true, false)"
+                "(id, department_id, module_name, is_deleted) VALUES "
+                "(:source_id, :department_id, :source_name, false), "
+                "(:target_id, :department_id, :target_name, false), "
+                "(:cross_id, :other_department_id, :cross_name, false)"
             ),
             {
                 "source_id": graph.source_module_id,

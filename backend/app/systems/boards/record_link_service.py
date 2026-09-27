@@ -43,7 +43,6 @@ def _available_record(db: Session, record_id: UUID) -> Record:
             Module.id == module_id,
             Module.is_deleted.is_(False),
             Module.deleted_at.is_(None),
-            Module.is_schema_accepted.is_(True),
         )
         .with_for_update()
     )
@@ -129,7 +128,6 @@ def listed_links(
                     Record.deleted_at.is_(None),
                     Module.is_deleted.is_(False),
                     Module.deleted_at.is_(None),
-                    Module.is_schema_accepted.is_(True),
                 )
             ).all()
         }

@@ -188,7 +188,8 @@ def test_unavailable_report_after_capture_cancels_without_output(
             elif change == "source":
                 module = db.get(Module, subject.module_id)
                 assert module is not None
-                module.is_schema_accepted = False
+                module.is_deleted = True
+                module.deleted_at = NOW
             elif change == "permission":
                 user = db.get(User, owner_id)
                 assert user is not None

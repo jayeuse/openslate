@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.sandbox.fields.models import FieldType
-from app.systems.sandbox.fields.schemas import FieldCreate
 from app.systems.sandbox.fields.validation import (
     field_config,
     validate_field_value,
@@ -112,13 +111,7 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         field_config(FieldType.DECIMAL, {"maximum": "1" * 39})
     with pytest.raises(ValueError):
         field_config(FieldType.DECIMAL, {"maximum": "1." + "1" * 19})
-    assert FieldCreate(
-        module_id=uuid7(),
-        name="Amount",
-        type=FieldType.DECIMAL,
-        position=0,
-        config={"minimum": "0.00"},
-    ).config == {"minimum": "0"}
+    assert field_config(FieldType.DECIMAL, {"minimum": "0.00"}) == {"minimum": "0"}
     with pytest.raises(ValueError):
         field_config(FieldType.DECIMAL, {"minimum": 1.0})
     numeric_bound = 10**500

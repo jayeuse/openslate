@@ -73,11 +73,10 @@ def make_user(
     return _persisted(user, deleted=deleted)
 
 
-def make_module(department_id=None, *, accepted: bool = False) -> Module:
+def make_module(department_id=None) -> Module:
     module = Module(
         department_id=department_id or uuid7(),
         module_name="Assets",
-        is_schema_accepted=accepted,
     )
     return _persisted(module)
 

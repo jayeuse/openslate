@@ -16,9 +16,7 @@ def _trim_name(value: Any) -> Any:
     return value.strip() if isinstance(value, str) else value
 
 
-class FieldCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class FieldResponse(BaseModel):
     module_id: UUID
     name: str = Field(min_length=1, max_length=150)
     type: FieldType
@@ -30,13 +28,22 @@ class FieldCreate(BaseModel):
     relationship_multiple_targets: bool | None = None
     relationship_multiple_sources: bool | None = None
 
+    id: UUID
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: datetime | None
+    is_deleted: bool
+    performed_by: UUID | None
+
+    model_config = ConfigDict(from_attributes=True)
+
     @field_validator("name", mode="before")
     @classmethod
     def trim_name(cls, value: Any) -> Any:
         return _trim_name(value)
 
     @model_validator(mode="after")
-    def validate_config(self) -> "FieldCreate":
+    def validate_config(self) -> "FieldResponse":
         metadata = (
             self.relationship_target_module_id,
             self.relationship_multiple_targets,
@@ -53,64 +60,6 @@ class FieldCreate(BaseModel):
             raise ValueError("Primitive fields cannot have relationship metadata")
         self.config = validate_field_config(self.type, self.config)
         return self
-
-
-class FieldUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    module_id: UUID | None = None
-    name: str | None = Field(default=None, min_length=1, max_length=150)
-    type: FieldType | None = None
-    required: bool | None = None
-    position: int | None = Field(default=None, ge=0)
-    audit_redacted: bool | None = None
-    config: dict[str, Any] | None = None
-    relationship_target_module_id: UUID | None = None
-    relationship_multiple_targets: bool | None = None
-    relationship_multiple_sources: bool | None = None
-
-    @field_validator("name", mode="before")
-    @classmethod
-    def trim_name(cls, value: Any) -> Any:
-        return _trim_name(value)
-
-    @model_validator(mode="after")
-    def validate_config_when_type_is_present(self) -> "FieldUpdate":
-        metadata = (
-            self.relationship_target_module_id,
-            self.relationship_multiple_targets,
-            self.relationship_multiple_sources,
-        )
-        if self.type is FieldType.RELATIONSHIP:
-            if self.required is True:
-                raise ValueError("Relationship fields cannot be required")
-            if self.config:
-                raise ValueError("Relationship fields cannot have configuration")
-        elif self.type is not None:
-            if any(value is not None for value in metadata):
-                raise ValueError("Primitive fields cannot have relationship metadata")
-            if self.config is not None:
-                self.config = validate_field_config(self.type, self.config)
-            else:
-                validate_field_config(self.type, {})
-        return self
-
-
-class FieldReorder(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    field_ids: list[UUID] = Field(min_length=1)
-
-
-class FieldResponse(FieldCreate):
-    id: UUID
-    created_at: datetime
-    updated_at: datetime
-    deleted_at: datetime | None
-    is_deleted: bool
-    performed_by: UUID | None
-
-    model_config = ConfigDict(from_attributes=True)
 
     @field_validator("audit_redacted", mode="before")
     @classmethod

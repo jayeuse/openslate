@@ -19,7 +19,6 @@ def make_module(*, deleted: bool = False) -> Module:
         department_id=uuid7(),
         module_name="Assets",
         is_deleted=deleted,
-        is_schema_accepted=True,
     )
     module.id = uuid7()
     return module

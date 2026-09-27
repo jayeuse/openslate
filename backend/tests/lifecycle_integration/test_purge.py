@@ -340,7 +340,6 @@ def test_field_purge_preflights_cross_module_automation_references_including_clo
     referenced_module = Module(
         department_id=module.department_id,
         module_name=f"Automation references {uuid7()}",
-        is_schema_accepted=True,
     )
     integration_db.add(referenced_module)
     integration_db.flush()

@@ -47,7 +47,6 @@ def _sources(db):
     module = Module(
         department_id=department.id,
         module_name=f"Work kind {uuid7().hex}",
-        is_schema_accepted=True,
     )
     db.add_all((board, module))
     db.flush()

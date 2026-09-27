@@ -90,7 +90,6 @@ def _active_module(db: Session, module_id: UUID) -> Module:
         .where(
             Module.id == module_id,
             Module.is_deleted.is_(False),
-            Module.is_schema_accepted.is_(True),
         )
         .with_for_update()
     )

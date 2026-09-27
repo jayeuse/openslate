@@ -47,7 +47,6 @@ def _subject(db: AuditSession) -> tuple[User, Report, Role, Module, Department]:
     module = Module(
         department_id=department.id,
         module_name=f"Report schedule {uuid7().hex}",
-        is_schema_accepted=True,
     )
     db.add(module)
     db.flush()
