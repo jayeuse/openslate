@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { getAuthMe } from "@/lib/auth-api";
+import { denyOpenViewAccess, watchOpenViewAccess } from "./openview-access";
 import { getOpenViewChartPreferences } from "./chart-preferences-api";
 import {
   listOpenViewReports,
@@ -118,21 +119,19 @@ export function moduleFieldKeys(moduleId: string): QueryKey[] {
 }
 
 /**
- * Records a refused "Load more" page on every cached read it extends. A read
- * of the collection already in flight started before the refusal, so it is
- * cancelled: only a read started after the refusal may clear it.
+ * Records a refused "Load more" page: the OpenView access latch hides every
+ * cached read, and the reads this page extends hold the refusal as their
+ * error, so their section says why.
  */
-export async function recordPageDenial(
+export function recordPageDenial(
   client: QueryClient,
   queryKeys: readonly QueryKey[],
   error: ApiError,
-): Promise<void> {
-  const queries = queryKeys.flatMap((queryKey) =>
-    client.getQueryCache().findAll({ queryKey }),
-  );
-  const deny = () => {
-    const now = Date.now();
-    for (const query of queries)
+): void {
+  denyOpenViewAccess(client);
+  const now = Date.now();
+  for (const queryKey of queryKeys)
+    for (const query of client.getQueryCache().findAll({ queryKey }))
       query.setState({
         data: undefined,
         dataUpdatedAt: 0,
@@ -142,18 +141,8 @@ export async function recordPageDenial(
         fetchFailureCount: query.state.fetchFailureCount + 1,
         fetchFailureReason: error,
         status: "error",
-        fetchStatus: "idle",
         isInvalidated: true,
       });
-  };
-  const inFlight = queries.filter(
-    (query) => query.state.fetchStatus === "fetching",
-  );
-  deny();
-  // A cancelled fetch settles as an error, never as a success; record the
-  // refusal again once it has.
-  await Promise.all(inFlight.map((query) => query.cancel({ revert: false })));
-  if (inFlight.length > 0) deny();
 }
 
 export type ModuleWorkspace = {
@@ -320,6 +309,7 @@ export function prefetchOpenViewSection(
   client: QueryClient,
   href: string,
 ): void {
+  watchOpenViewAccess(client);
   const url = new URL(href, "http://openview.invalid");
   if (url.pathname !== "/openview") return;
   const section = url.searchParams.get("section") ?? "views";

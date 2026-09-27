@@ -83,6 +83,7 @@ import {
   reportListOptions,
   sharedRunsOptions,
 } from "../adapters/openview-queries";
+import { useOpenViewAccessDenied } from "../adapters/openview-access";
 import {
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
@@ -179,6 +180,8 @@ function reportAudienceLabel(audience: ReportDraft["audience"]): string {
 
 export default function ServerBackedReports() {
   const queryClient = useQueryClient();
+  // A refusal of any cached OpenView read hides them all (openview-access.ts).
+  const accessDenied = useOpenViewAccessDenied();
   const identityQuery = useQuery(authMeOptions());
   const currentIdentity: AuthMe | null = identityQuery.data ?? null;
   const currentIdentityLoading = identityQuery.isPending;
@@ -262,7 +265,7 @@ export default function ServerBackedReports() {
   const listDeleted = showArchived ? "include" : "exclude";
   const listQuery = useQuery(reportListOptions(listDeleted));
   // A refused refresh hides the retained list until a read succeeds again.
-  const listDenied = isAuthorizationDenied(listQuery.error);
+  const listDenied = accessDenied || isAuthorizationDenied(listQuery.error);
   const listBase = listDenied ? undefined : listQuery.data;
   const listReadAt = listBase ? readStamp(listQuery) : 0;
   const listMore = marksRead(listExtension, listDeleted, listReadAt)
@@ -292,7 +295,7 @@ export default function ServerBackedReports() {
     ...sharedRunsOptions(sharedOffset, sharedPageSize),
     placeholderData: keepPreviousData,
   });
-  const sharedDenied = isAuthorizationDenied(sharedQuery.error);
+  const sharedDenied = accessDenied || isAuthorizationDenied(sharedQuery.error);
   const sharedRuns: OpenViewSharedReportRun[] =
     sharedQuery.isPlaceholderData || sharedDenied
       ? []
@@ -311,7 +314,8 @@ export default function ServerBackedReports() {
   // pages loaded with "Load more".
   const sourcesQuery = useQuery(catalogFirstPageOptions());
   // A refused read hides retained recipe metadata until a read succeeds.
-  const sourcesDenied = isAuthorizationDenied(sourcesQuery.error);
+  const sourcesDenied =
+    accessDenied || isAuthorizationDenied(sourcesQuery.error);
   const sourcesBase = sourcesDenied ? undefined : sourcesQuery.data;
   const sourcesReadAt = sourcesBase ? readStamp(sourcesQuery) : 0;
   const sourcesMore = marksRead(sourcesExtension, "", sourcesReadAt)
@@ -335,7 +339,7 @@ export default function ServerBackedReports() {
       : "";
 
   const fieldsQuery = useQuery(fieldsFirstPageOptions(draft.moduleId));
-  const fieldsDenied = isAuthorizationDenied(fieldsQuery.error);
+  const fieldsDenied = accessDenied || isAuthorizationDenied(fieldsQuery.error);
   const fieldsBase =
     draft.moduleId && !fieldsDenied ? fieldsQuery.data : undefined;
   const fieldsReadAt = fieldsBase ? readStamp(fieldsQuery) : 0;

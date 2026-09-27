@@ -41,14 +41,24 @@ export function OpenViewQuerySync({ active }: { active: boolean }) {
         // Every read that exists now started before the stream connected (a
         // hover prefetch, an earlier visit, or a read that overlapped the
         // handshake), so it may have missed a change: read it again. Reads
-        // that start after this moment are covered by the stream.
-        void client.invalidateQueries({
-          queryKey: openViewKeys.all,
-          predicate: (query) =>
-            notChartPreferences(query) &&
-            (query.state.dataUpdatedAt > 0 ||
-              query.state.fetchStatus === "fetching"),
-        });
+        // that start after this moment are covered by the stream. A read
+        // still in flight with no data would not restart on invalidation,
+        // so it is cancelled first.
+        const overlapping = client
+          .getQueryCache()
+          .findAll({ queryKey: openViewKeys.all, fetchStatus: "fetching" })
+          .filter(
+            (query) =>
+              notChartPreferences(query) && query.state.data === undefined,
+          );
+        void Promise.all(
+          overlapping.map((query) => query.cancel({ revert: true })),
+        ).then(() =>
+          client.invalidateQueries({
+            queryKey: openViewKeys.all,
+            predicate: notChartPreferences,
+          }),
+        );
       },
     );
     return () => {

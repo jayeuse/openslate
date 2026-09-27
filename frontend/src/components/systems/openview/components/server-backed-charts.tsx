@@ -28,6 +28,7 @@ import {
   readStamp,
   recordPageDenial,
 } from "../adapters/openview-queries";
+import { useOpenViewAccessDenied } from "../adapters/openview-access";
 import {
   queryOpenViewAggregateSnapshot,
   type OpenViewAggregateSnapshotRequest,
@@ -88,6 +89,8 @@ type PageExtension<T> = {
 
 export default function ServerBackedCharts() {
   const queryClient = useQueryClient();
+  // A refusal of any cached OpenView read hides them all (openview-access.ts).
+  const accessDenied = useOpenViewAccessDenied();
   const preferencesQuery = useQuery(chartPreferencesOptions());
   const sourcesQuery = useQuery(catalogFirstPageOptions());
   const [sourcesExtension, setSourcesExtension] =
@@ -146,7 +149,8 @@ export default function ServerBackedCharts() {
     ? null
     : preferencesQuery.error;
   // A denial holds through a retry until a read succeeds again.
-  const preferencesLoadDenied = isAuthorizationDenied(preferencesQuery.error);
+  const preferencesLoadDenied =
+    accessDenied || isAuthorizationDenied(preferencesQuery.error);
   const settingsDenied = saveDenied ?? preferencesLoadDenied;
   const preferencesError =
     preferenceMessage ||
@@ -167,7 +171,8 @@ export default function ServerBackedCharts() {
       ? sourcesExtension
       : null;
   const sourcesLoadError = sourcesQuery.isFetching ? null : sourcesQuery.error;
-  const sourcesDenied = isAuthorizationDenied(sourcesQuery.error);
+  const sourcesDenied =
+    accessDenied || isAuthorizationDenied(sourcesQuery.error);
   const sources = sourcesDenied
     ? []
     : [...(sourcesBase?.items ?? []), ...(sourcesMore?.items ?? [])];
@@ -227,7 +232,8 @@ export default function ServerBackedCharts() {
   const fieldsLoadError =
     moduleId && !fieldsQuery.isFetching ? fieldsQuery.error : null;
   const fieldsDenied =
-    Boolean(moduleId) && isAuthorizationDenied(fieldsQuery.error);
+    accessDenied ||
+    (Boolean(moduleId) && isAuthorizationDenied(fieldsQuery.error));
   const fields = fieldsDenied
     ? []
     : [...(fieldsBase?.items ?? []), ...(fieldsMore?.items ?? [])];

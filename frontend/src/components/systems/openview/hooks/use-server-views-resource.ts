@@ -22,6 +22,7 @@ import {
   openViewKeys,
   type ModuleWorkspace,
 } from "../adapters/openview-queries";
+import { useOpenViewAccessDenied } from "../adapters/openview-access";
 import {
   listOpenViewAudienceOptions,
   listOpenViewDataSourceFields,
@@ -75,6 +76,8 @@ type AudienceExtension = {
 
 export function useServerViewsResource(requestedModule: string | null) {
   const queryClient = useQueryClient();
+  // A refusal of any cached OpenView read hides them all (openview-access.ts).
+  const accessDenied = useOpenViewAccessDenied();
   const catalogQuery = useQuery(boundedCatalogOptions());
   const audienceQuery = useQuery(audienceOptions());
   const [catalogExtension, setCatalogExtension] =
@@ -136,9 +139,11 @@ export function useServerViewsResource(requestedModule: string | null) {
     query.isFetching ? null : query.error;
   // A denial holds until a read succeeds again: the query keeps its error
   // through a retry, so retained data stays hidden while access is checked.
-  const authorizationDenied = [catalogQuery, audienceQuery, moduleQuery].some(
-    (query) => isAuthorizationDenied(query.error),
-  );
+  const authorizationDenied =
+    accessDenied ||
+    [catalogQuery, audienceQuery, moduleQuery].some((query) =>
+      isAuthorizationDenied(query.error),
+    );
 
   const catalog = authorizationDenied ? null : loadedCatalog;
   const catalogLoading = catalogQuery.isFetching;

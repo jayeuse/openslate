@@ -611,6 +611,74 @@ test("a refused catalog refresh hides data sources from a new Report recipe", as
   await expect(page.locator("option", { hasText: "Assets" })).toHaveCount(0);
 });
 
+test("a refused Reports list hides the other archive filter's cached list too", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  await page.goto("/openview?section=reports");
+  const report = page.getByRole("button", { name: "Alpha report" });
+  const archived = page.getByRole("checkbox", { name: "Show archived" });
+  await expect(report).toBeVisible();
+  // Both archive-filter lists are cached.
+  await archived.check();
+  await expect(report).toBeVisible();
+  await archived.uncheck();
+  await expect(report).toBeVisible();
+
+  api.denyLists(true);
+  await page.getByRole("button", { name: "Refresh Reports" }).click();
+  await expect(report).toHaveCount(0);
+  await archived.check();
+  await expect(report).toHaveCount(0);
+
+  // A read started after the refusal, and authorized, restores the lists.
+  api.denyLists(false);
+  await page.getByRole("button", { name: "Refresh Reports" }).click();
+  await expect(report).toBeVisible();
+});
+
+test("a refusal in Charts hides cached Reports until an authorized read", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  await page.goto("/openview?section=reports");
+  const report = page.getByRole("button", { name: "Alpha report" });
+  await expect(report).toBeVisible();
+  await sidebarLink(page, "Charts").click();
+  await expect(page.locator("option", { hasText: "Assets" })).toHaveCount(1);
+  await sendOpenViewEvent(page, "resync");
+  await expect.poll(() => api.catalogReads.length).toBeGreaterThan(1);
+
+  api.denyCatalog(true);
+  await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
+  await expect(page.locator("option", { hasText: "Assets" })).toHaveCount(0);
+
+  // The Reports list is still cached as a success, but access was refused.
+  await sidebarLink(page, "Reports").click();
+  await expect(page).toHaveURL(/section=reports/);
+  await expect(report).toHaveCount(0);
+
+  api.denyCatalog(false);
+  await page.getByRole("button", { name: "Refresh Reports" }).click();
+  await expect(report).toBeVisible();
+});
+
+test("a cold read in flight when the stream connects reads again", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  const release = api.holdLists();
+  await page.goto("/openview?section=reports");
+  await expect.poll(() => api.reportLists.length).toBe(1);
+  // The stream connects while the first list read is still out.
+  await sendOpenViewEvent(page, "resync");
+  release();
+  await expect.poll(() => api.reportLists.length).toBeGreaterThanOrEqual(2);
+  await expect(
+    page.getByRole("button", { name: "Alpha report" }),
+  ).toBeVisible();
+});
+
 test("server invalidations and Refresh still reload cached OpenView reads", async ({
   page,
 }) => {
