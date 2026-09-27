@@ -84,6 +84,13 @@ export default function ServerBackedCharts() {
   const sourcesQuery = useQuery(catalogFirstPageOptions());
   const [sourcesExtension, setSourcesExtension] =
     useState<PageExtension<OpenViewDataSource> | null>(null);
+  // A "Load more" denial holds until the first page reads again with
+  // success: its read time must pass the time the denial was recorded.
+  const [sourcesDeniedAt, setSourcesDeniedAt] = useState<number | null>(null);
+  const [fieldsDeniedAt, setFieldsDeniedAt] = useState<{
+    moduleId: string;
+    at: number;
+  } | null>(null);
   const [metadataError, setMetadataError] = useState("");
   const [metadataRetryTarget, setMetadataRetryTarget] = useState<
     "sources" | "fields" | null
@@ -159,7 +166,9 @@ export default function ServerBackedCharts() {
       : null;
   const sourcesLoadError = sourcesQuery.isFetching ? null : sourcesQuery.error;
   const sourcesDenied =
-    isAuthorizationDenied(sourcesQuery.error) || Boolean(sourcesMore?.denied);
+    isAuthorizationDenied(sourcesQuery.error) ||
+    Boolean(sourcesMore?.denied) ||
+    (sourcesDeniedAt !== null && sourcesQuery.dataUpdatedAt <= sourcesDeniedAt);
   const sources = sourcesDenied
     ? []
     : [...(sourcesBase?.items ?? []), ...(sourcesMore?.items ?? [])];
@@ -216,7 +225,9 @@ export default function ServerBackedCharts() {
     moduleId && !fieldsQuery.isFetching ? fieldsQuery.error : null;
   const fieldsDenied =
     (Boolean(moduleId) && isAuthorizationDenied(fieldsQuery.error)) ||
-    Boolean(fieldsMore?.denied);
+    Boolean(fieldsMore?.denied) ||
+    (fieldsDeniedAt?.moduleId === moduleId &&
+      fieldsQuery.dataUpdatedAt <= fieldsDeniedAt.at);
   const fields = fieldsDenied
     ? []
     : [...(fieldsBase?.items ?? []), ...(fieldsMore?.items ?? [])];
@@ -437,6 +448,7 @@ export default function ServerBackedCharts() {
       });
     } catch (error) {
       if (isAuthorizationDenied(error)) {
+        setSourcesDeniedAt(sourcesQuery.dataUpdatedAt);
         setSourcesExtension({
           base,
           items: [],
@@ -476,6 +488,7 @@ export default function ServerBackedCharts() {
       });
     } catch (error) {
       if (isAuthorizationDenied(error)) {
+        setFieldsDeniedAt({ moduleId, at: fieldsQuery.dataUpdatedAt });
         setFieldsExtension({
           base,
           items: [],
@@ -741,7 +754,10 @@ export default function ServerBackedCharts() {
       });
   }, [invalidationRevision, queryLoading]);
 
-  const appliedResult = applied?.result ?? null;
+  // A denied read hides the applied chart in the same render; the effect
+  // above then clears it.
+  const visibleApplied = readDenied ? null : applied;
+  const appliedResult = visibleApplied?.result ?? null;
   // Only a first visit waits for the setup reads; a cached revisit renders
   // the form at once, and a retry after a failure keeps the form and its
   // retry alert in place.
@@ -882,7 +898,7 @@ export default function ServerBackedCharts() {
       ) : null}
 
       <ChartSnapshotResults
-        applied={applied}
+        applied={visibleApplied}
         draftSignature={draftSignature}
         top={top}
         showValues={showValues}

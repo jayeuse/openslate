@@ -71,6 +71,8 @@ type Api = {
   denyCatalog(denied: boolean): void;
   /** Holds catalog reads until the returned release is called. */
   holdCatalog(): () => void;
+  /** Makes the catalog's first page say more pages exist, and refuses them. */
+  refuseLaterCatalogPages(): void;
 };
 
 const forbidden = {
@@ -88,6 +90,7 @@ async function installOpenViewApi(page: Page): Promise<Api> {
   let listDenied = false;
   let catalogDenied = false;
   let catalogHold: Promise<void> | null = null;
+  let laterPagesRefused = false;
   const reportLists: string[] = [];
   const catalogReads: string[] = [];
   await installOpenViewEventSource(page);
@@ -127,9 +130,32 @@ async function installOpenViewApi(page: Page): Promise<Api> {
   await page.route("**/api/views/data-sources**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/views/data-sources") {
+      const offset = Number(
+        new URL(route.request().url()).searchParams.get("offset") ?? 0,
+      );
+      if (offset > 0) {
+        if (laterPagesRefused) return route.fulfill(forbidden);
+        return route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify(pageOf([], 100)),
+        });
+      }
       catalogReads.push(route.request().url());
       if (catalogHold) await catalogHold;
       if (catalogDenied) return route.fulfill(forbidden);
+      if (laterPagesRefused) {
+        const first = pageOf(
+          [{ id: moduleId, name: "Assets", department_id: departmentId }],
+          100,
+        );
+        return route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({
+            ...first,
+            pagination: { ...first.pagination, total: 2, has_more: true },
+          }),
+        });
+      }
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
@@ -191,6 +217,9 @@ async function installOpenViewApi(page: Page): Promise<Api> {
     },
     denyCatalog(denied) {
       catalogDenied = denied;
+    },
+    refuseLaterCatalogPages() {
+      laterPagesRefused = true;
     },
     holdCatalog() {
       let release: () => void = () => {};
@@ -426,6 +455,29 @@ test("a Charts denial stays in force while its catalog Retry is in flight", asyn
   await page.getByRole("button", { name: "Retry catalog" }).click();
   await expect.poll(() => api.catalogReads.length).toBe(reads + 1);
   // Access is not confirmed yet, so the retained catalog stays hidden.
+  await expect(source).toHaveCount(0);
+
+  release();
+  await expect(source).toHaveCount(1);
+});
+
+test("a refused Charts catalog page stays in force while the catalog retries", async ({
+  page,
+}) => {
+  const api = await installOpenViewApi(page);
+  api.refuseLaterCatalogPages();
+  await page.goto("/openview?section=charts");
+  const source = page.locator("option", { hasText: "Assets" });
+  await expect(source).toHaveCount(1);
+
+  await page.getByRole("button", { name: "Load more data sources" }).click();
+  await expect(source).toHaveCount(0);
+
+  const release = api.holdCatalog();
+  const reads = api.catalogReads.length;
+  await page.getByRole("button", { name: "Retry catalog" }).click();
+  await expect.poll(() => api.catalogReads.length).toBe(reads + 1);
+  // The first page has not read again yet, so its names stay hidden.
   await expect(source).toHaveCount(0);
 
   release();
