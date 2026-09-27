@@ -8,10 +8,12 @@ import {
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import {
   getAccessInvitationSettings,
+  getAccessUserAccess,
   listAccessDepartments,
   listAccessGroups,
   listAccessMemberCandidates,
   listAccessModules,
+  listAccessUserSessions,
   listAccessUsers,
   type AccessDeletedFilter,
   type AccessInvitationSettings,
@@ -21,8 +23,10 @@ import { loadAllAccessPages } from "../state/pagination";
 // Section-level Access reads share the per-account client cache. Every key
 // starts with "access", so one prefix marks the area stale. Access lists are
 // complete collections: the directory, the group editor pickers and the
-// overview health counts all need every row, not a first page. Sessions and
-// single-row detail reads stay in their components.
+// overview health counts all need every row, not a first page. A person's
+// effective access and sessions are cached under the users key, so a change
+// to that person (a disable revokes sessions) marks them stale. Single-row
+// detail reads stay in their components.
 //
 // The signed-in identity (`authMeOptions`, key ["auth", "me"]) is shared with
 // OpenView and the navigation; Access does not define a second identity key.
@@ -32,6 +36,11 @@ export const accessKeys = {
   users: ["access", "users"] as const,
   userList: (deleted: AccessDeletedFilter) =>
     ["access", "users", "list", deleted] as const,
+  userAccessAll: ["access", "users", "access"] as const,
+  userAccess: (userId: string) =>
+    ["access", "users", "access", userId] as const,
+  userSessions: (userId: string) =>
+    ["access", "users", "sessions", userId] as const,
   groups: ["access", "groups"] as const,
   groupList: (deleted: AccessDeletedFilter) =>
     ["access", "groups", "list", deleted] as const,
@@ -53,6 +62,23 @@ export const userListOptions = (deleted: AccessDeletedFilter) =>
         (page) => listAccessUsers({ ...page, deleted, sort_by: "username" }),
         { signal },
       ),
+  });
+
+/** One person's effective access and the groups that give it. */
+export const userAccessOptions = (userId: string) =>
+  queryOptions({
+    queryKey: accessKeys.userAccess(userId),
+    queryFn: ({ signal }) => getAccessUserAccess(userId, { signal }),
+  });
+
+/** One person's sign-in sessions. */
+export const userSessionsOptions = (userId: string) =>
+  queryOptions({
+    queryKey: accessKeys.userSessions(userId),
+    queryFn: ({ signal }) =>
+      loadAllAccessPages((page) => listAccessUserSessions(userId, page), {
+        signal,
+      }),
   });
 
 /** Every group the caller may change: all for administrators (D14). */
@@ -129,11 +155,16 @@ export function afterAccessUserChange(client: QueryClient): Promise<void> {
 
 /**
  * A group was created, renamed, deleted, or had its access or members
- * replaced. The signed-in person may be a member, so their effective access
- * (and with it the navigation) is read again.
+ * replaced. Every person's effective access may change, and the signed-in
+ * person may be a member, so their access (and with it the navigation) is
+ * read again.
  */
 export function afterAccessGroupChange(client: QueryClient): Promise<void> {
-  return invalidateAll(client, [accessKeys.groups, authMeOptions().queryKey]);
+  return invalidateAll(client, [
+    accessKeys.groups,
+    accessKeys.userAccessAll,
+    authMeOptions().queryKey,
+  ]);
 }
 
 /** Store the accepted invitation settings; the response is the new state. */

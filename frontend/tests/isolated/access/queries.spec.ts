@@ -12,7 +12,9 @@ import {
   invitationSettingsOptions,
   memberCandidateListOptions,
   moduleListOptions,
+  userAccessOptions,
   userListOptions,
+  userSessionsOptions,
 } from "../../../src/components/systems/access/adapters/access-queries";
 import { installFetch, pagination, user } from "./fixtures";
 
@@ -77,6 +79,7 @@ test("confirmed commands mark only the reads they change as stale", async () => 
   seed(accessKeys.groupList("exclude"));
   seed(accessKeys.memberCandidates());
   seed(accessKeys.departments("include"));
+  seed(accessKeys.userAccess(user.id));
   queries.setQueryData(authMeOptions().queryKey, {
     id: user.id,
     role: "admin",
@@ -92,11 +95,12 @@ test("confirmed commands mark only the reads they change as stale", async () => 
   await afterAccessGroupChange(queries);
   expect(stale()).toEqual([
     accessKeys.groupList("exclude"),
+    accessKeys.userAccess(user.id),
     authMeOptions().queryKey,
   ]);
 
   await afterAccessUserChange(queries);
-  expect(stale()).toHaveLength(4);
+  expect(stale()).toHaveLength(5);
   expect(stale()).not.toContainEqual(accessKeys.departments("include"));
 });
 
@@ -112,4 +116,19 @@ test("saved invitation settings replace the cached settings at once", () => {
     guest_duration_days: 30,
     revision: 5,
   });
+});
+
+test("a person's access and sessions sit under the users key", () => {
+  expect(userAccessOptions("u1").queryKey).toEqual([
+    "access",
+    "users",
+    "access",
+    "u1",
+  ]);
+  expect(userSessionsOptions("u1").queryKey).toEqual([
+    "access",
+    "users",
+    "sessions",
+    "u1",
+  ]);
 });

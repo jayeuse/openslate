@@ -518,7 +518,7 @@ export function BoardToolsSheet({
           </p>
           <Link
             className="text-primary inline-flex min-h-11 items-center underline underline-offset-4"
-            href={`/access?view=identities&user=${encodeURIComponent(controller.actorId)}`}
+            href={`/access?view=people&user=${encodeURIComponent(controller.actorId)}`}
           >
             Review {controller.viewer?.name ?? "identity"} in Access
           </Link>

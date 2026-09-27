@@ -1,0 +1,584 @@
+import { ApiContractError, ApiError } from "@/lib/api";
+
+import type {
+  AccessDepartment,
+  AccessGroup,
+  AccessInvitationSettings,
+  AccessLevel,
+  AccessModule,
+  AccessUser,
+  AccessUserAccess,
+  AccessUserPatch,
+  AccessUserRole,
+} from "../state/api-contracts";
+import {
+  hasThreeWayConflict,
+  resolveThreeWayValue,
+  type ConflictChoice,
+  type FieldConflict,
+} from "./editor-helpers";
+
+// Pure rules for the People screens: the directory rows and filters, guest
+// expiry, the person editor's draft and patch, and the effective-access view.
+
+export const roleLabels: Record<AccessUserRole, string> = {
+  admin: "Administrator",
+  member: "Member",
+  guest: "Guest",
+};
+
+export const levelLabels: Record<AccessLevel, string> = {
+  read: "Read",
+  write: "Write",
+  manage: "Manage",
+};
+
+const levelRank: Record<AccessLevel, number> = { read: 1, write: 2, manage: 3 };
+
+/** A guest whose access ends within this many days is flagged. */
+export const EXPIRING_SOON_DAYS = 14;
+const DAY_MS = 86_400_000;
+
+export function personName(
+  user: Pick<AccessUser, "display_name" | "username">,
+) {
+  return user.display_name?.trim() || user.username;
+}
+
+export type PersonStateId =
+  "pending" | "active" | "disabled" | "expired" | "deleted";
+export type PersonState = {
+  id: PersonStateId;
+  label: string;
+  tone: "success" | "warning" | "secondary" | "outline";
+  expiresSoon: boolean;
+};
+
+const stateLabels: Record<PersonStateId, string> = {
+  pending: "Pending",
+  active: "Active",
+  disabled: "Disabled",
+  expired: "Expired",
+  deleted: "Deleted",
+};
+const stateTones: Record<PersonStateId, PersonState["tone"]> = {
+  pending: "warning",
+  active: "success",
+  disabled: "secondary",
+  expired: "outline",
+  deleted: "outline",
+};
+
+function expiryTime(user: Pick<AccessUser, "expires_at">): number | null {
+  if (!user.expires_at) return null;
+  const time = Date.parse(user.expires_at);
+  return Number.isFinite(time) ? time : null;
+}
+
+/** The one status a person shows: deleted and expired win over the stored status. */
+export function personState(
+  user: Pick<AccessUser, "status" | "is_deleted" | "expires_at">,
+  now: number,
+): PersonState {
+  const expiry = expiryTime(user);
+  const id: PersonStateId = user.is_deleted
+    ? "deleted"
+    : expiry !== null && expiry <= now
+      ? "expired"
+      : user.status;
+  const expiresSoon =
+    (id === "active" || id === "pending") &&
+    expiry !== null &&
+    expiry - now <= EXPIRING_SOON_DAYS * DAY_MS;
+  return { id, label: stateLabels[id], tone: stateTones[id], expiresSoon };
+}
+
+export type NamedItem = { id: string; name: string };
+
+export type DirectoryRow = {
+  user: AccessUser;
+  name: string;
+  state: PersonState;
+  groups: NamedItem[];
+  /** Departments reached through the person's groups, by name. */
+  departments: NamedItem[];
+  /** Administrators reach every department without groups. */
+  allDepartments: boolean;
+};
+
+function byName(left: { name: string }, right: { name: string }): number {
+  return left.name.localeCompare(right.name, undefined, {
+    sensitivity: "base",
+  });
+}
+
+export function groupsOf(
+  userId: string,
+  groups: readonly AccessGroup[],
+): AccessGroup[] {
+  return groups
+    .filter((group) => group.member_ids.includes(userId))
+    .sort((left, right) => byName(left, right));
+}
+
+/** Departments a set of groups reaches. Unknown departments are left out. */
+export function departmentsOf(
+  groups: readonly AccessGroup[],
+  departments: readonly AccessDepartment[],
+): NamedItem[] {
+  const names = new Map(
+    departments.map((department) => [
+      department.id,
+      department.department_name,
+    ]),
+  );
+  const reached = new Map<string, string>();
+  for (const group of groups)
+    for (const entry of group.access) {
+      const name = names.get(entry.department_id);
+      if (name !== undefined) reached.set(entry.department_id, name);
+    }
+  return [...reached].map(([id, name]) => ({ id, name })).sort(byName);
+}
+
+export function directoryRows(
+  users: readonly AccessUser[],
+  groups: readonly AccessGroup[],
+  departments: readonly AccessDepartment[],
+  now: number,
+): DirectoryRow[] {
+  return users.map((user) => {
+    const admin = user.role === "admin";
+    const memberOf = admin ? [] : groupsOf(user.id, groups);
+    return {
+      user,
+      name: personName(user),
+      state: personState(user, now),
+      groups: memberOf.map((group) => ({ id: group.id, name: group.name })),
+      departments: admin ? [] : departmentsOf(memberOf, departments),
+      allDepartments: admin,
+    };
+  });
+}
+
+export type DirectorySort = "name" | "email" | "newest" | "expiry";
+export type DirectoryStatusFilter = "current" | "all" | PersonStateId;
+export type DirectoryFilters = {
+  query: string;
+  role: "all" | AccessUserRole;
+  status: DirectoryStatusFilter;
+  /** A group id, "none" for people in no group, or "all". */
+  groupId: string;
+  departmentId: string;
+  sort: DirectorySort;
+};
+
+export const defaultDirectoryFilters: DirectoryFilters = {
+  query: "",
+  role: "all",
+  status: "current",
+  groupId: "all",
+  departmentId: "all",
+  sort: "name",
+};
+
+function matchesStatus(row: DirectoryRow, status: DirectoryStatusFilter) {
+  if (status === "all") return true;
+  if (status === "current") return row.state.id !== "deleted";
+  return row.state.id === status;
+}
+
+function compareRows(sort: DirectorySort) {
+  return (left: DirectoryRow, right: DirectoryRow): number => {
+    if (sort === "email")
+      return left.user.email.localeCompare(right.user.email);
+    if (sort === "newest")
+      return right.user.created_at.localeCompare(left.user.created_at);
+    if (sort === "expiry") {
+      const a = expiryTime(left.user) ?? Number.POSITIVE_INFINITY;
+      const b = expiryTime(right.user) ?? Number.POSITIVE_INFINITY;
+      if (a !== b) return a < b ? -1 : 1;
+    }
+    return (
+      left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) ||
+      left.user.username.localeCompare(right.user.username)
+    );
+  };
+}
+
+/** Filter and sort the complete directory; paging happens afterwards. */
+export function filterDirectory(
+  rows: readonly DirectoryRow[],
+  filters: DirectoryFilters,
+): DirectoryRow[] {
+  const query = filters.query.trim().toLocaleLowerCase();
+  return rows
+    .filter(
+      (row) =>
+        matchesStatus(row, filters.status) &&
+        (filters.role === "all" || row.user.role === filters.role) &&
+        (filters.groupId === "all" ||
+          (filters.groupId === "none"
+            ? row.groups.length === 0
+            : row.groups.some((group) => group.id === filters.groupId))) &&
+        (filters.departmentId === "all" ||
+          row.departments.some(
+            (department) => department.id === filters.departmentId,
+          )) &&
+        (!query ||
+          [
+            row.name,
+            row.user.email,
+            row.user.username,
+            row.user.job_title ?? "",
+          ]
+            .join("\n")
+            .toLocaleLowerCase()
+            .includes(query)),
+    )
+    .sort(compareRows(filters.sort));
+}
+
+export function activeFilterCount(filters: DirectoryFilters): number {
+  return [
+    filters.role !== "all",
+    filters.status !== "current",
+    filters.groupId !== "all",
+    filters.departmentId !== "all",
+  ].filter(Boolean).length;
+}
+
+// Guest expiry
+
+export const GUEST_DAYS_MIN = 1;
+export const GUEST_DAYS_MAX = 365;
+
+/** The invitation form's starting value: the workspace's guest duration. */
+export function defaultGuestDays(
+  settings: Pick<AccessInvitationSettings, "guest_duration_days"> | undefined,
+): string {
+  return settings ? String(settings.guest_duration_days) : "";
+}
+
+function guestDays(value: string): number | null {
+  if (!/^\d+$/.test(value.trim())) return null;
+  const days = Number(value.trim());
+  return days >= GUEST_DAYS_MIN && days <= GUEST_DAYS_MAX ? days : null;
+}
+
+export function guestDaysError(value: string): string | null {
+  if (!value.trim()) return "Enter the number of days.";
+  return guestDays(value) === null
+    ? `Enter a whole number from ${GUEST_DAYS_MIN} to ${GUEST_DAYS_MAX}.`
+    : null;
+}
+
+/** The expiry sent with a guest invitation: now plus the chosen days. */
+export function guestExpiryFromDays(value: string, now: Date): string | null {
+  const days = guestDays(value);
+  return days === null
+    ? null
+    : new Date(now.valueOf() + days * DAY_MS).toISOString();
+}
+
+/** `YYYY-MM-DD` of an instant in local time, for a date input. */
+export function dateInputValue(value: string | null): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.valueOf())) return "";
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** The end of a local calendar day, so a chosen day is still in the future. */
+export function endOfDateInput(value: string): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const date = new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    23,
+    59,
+    59,
+  );
+  return Number.isFinite(date.valueOf()) ? date.toISOString() : null;
+}
+
+export function formatDate(value: string | null): string {
+  if (!value) return "None";
+  const date = new Date(value);
+  if (!Number.isFinite(date.valueOf())) return "Unavailable";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
+    date,
+  );
+}
+
+export function formatDateTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.valueOf())) return "Unavailable";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+// The person editor
+
+/** The editable details of a person, as form values. */
+export type PersonDraft = {
+  username: string;
+  display_name: string;
+  job_title: string;
+  role: AccessUserRole;
+  sponsor_user_id: string;
+  expires_on: string;
+};
+export type PersonDraftField = keyof PersonDraft;
+
+export const personFieldLabels: Record<PersonDraftField, string> = {
+  username: "Username",
+  display_name: "Name",
+  job_title: "Job title",
+  role: "Role",
+  sponsor_user_id: "Sponsor",
+  expires_on: "Access ends",
+};
+const personFields = Object.keys(personFieldLabels) as PersonDraftField[];
+
+export function draftFromUser(user: AccessUser): PersonDraft {
+  return {
+    username: user.username,
+    display_name: user.display_name ?? "",
+    job_title: user.job_title ?? "",
+    role: user.role,
+    sponsor_user_id: user.sponsor_user_id ?? "",
+    expires_on: dateInputValue(user.expires_at),
+  };
+}
+
+export function samePersonDraft(left: PersonDraft, right: PersonDraft) {
+  return personFields.every((field) => left[field] === right[field]);
+}
+
+function optionalText(value: string): string | null {
+  return value.trim() ? value.trim() : null;
+}
+
+/** The PATCH body for the fields that differ from `baseline`. */
+export function personPatch(
+  baseline: PersonDraft,
+  draft: PersonDraft,
+): AccessUserPatch {
+  const patch: AccessUserPatch = {};
+  const changed = (field: PersonDraftField) => baseline[field] !== draft[field];
+  if (changed("username")) patch.username = draft.username.trim();
+  if (changed("display_name"))
+    patch.display_name = optionalText(draft.display_name);
+  if (changed("job_title")) patch.job_title = optionalText(draft.job_title);
+  if (changed("role") && draft.role !== "guest" && baseline.role !== "guest")
+    patch.role = draft.role;
+  if (draft.role === "guest") {
+    if (changed("sponsor_user_id") && draft.sponsor_user_id)
+      patch.sponsor_user_id = draft.sponsor_user_id;
+    if (changed("expires_on")) {
+      const expiresAt = endOfDateInput(draft.expires_on);
+      if (expiresAt) patch.expires_at = expiresAt;
+    }
+  }
+  return patch;
+}
+
+/** Fields where the saved person and the draft both moved away from the baseline. */
+export function personConflicts(
+  current: PersonDraft,
+  baseline: PersonDraft,
+  draft: PersonDraft,
+  describe: (field: PersonDraftField, value: string) => string = (_, value) =>
+    value,
+): FieldConflict[] {
+  return personFields
+    .filter((field) =>
+      hasThreeWayConflict(current[field], baseline[field], draft[field]),
+    )
+    .map((field) => ({
+      id: field,
+      label: personFieldLabels[field],
+      current: describe(field, current[field]),
+      draft: describe(field, draft[field]),
+    }));
+}
+
+/** Merge the draft onto the saved person, using the chosen side on a conflict. */
+export function resolvePersonDraft(
+  current: PersonDraft,
+  baseline: PersonDraft,
+  draft: PersonDraft,
+  choices: Record<string, ConflictChoice | undefined>,
+): PersonDraft {
+  const resolved = { ...current };
+  for (const field of personFields) {
+    const value = resolveThreeWayValue(
+      current[field],
+      baseline[field],
+      draft[field],
+      choices[field],
+    );
+    Object.assign(resolved, { [field]: value });
+  }
+  return resolved;
+}
+
+// Effective access
+
+export type AccessSource = {
+  groupId: string;
+  name: string;
+  level: AccessLevel;
+  levelLabel: string;
+};
+export type AccessRow = {
+  key: string;
+  departmentName: string;
+  /** Null for an entry that covers the whole department. */
+  moduleName: string | null;
+  level: AccessLevel;
+  levelLabel: string;
+  sources: AccessSource[];
+  /** A guest whose groups give more than the read limit. */
+  capped: boolean;
+};
+export type AccessPresentation =
+  | { kind: "full"; inactive: boolean }
+  | {
+      kind: "entries";
+      inactive: boolean;
+      guestCapped: boolean;
+      rows: AccessRow[];
+    };
+
+export function presentAccess(
+  access: AccessUserAccess,
+  user: Pick<AccessUser, "status" | "is_deleted" | "expires_at">,
+  departments: readonly AccessDepartment[],
+  modules: readonly AccessModule[],
+  now: number,
+): AccessPresentation {
+  const inactive = personState(user, now).id !== "active";
+  if (access.unrestricted || access.role === "admin")
+    return { kind: "full", inactive };
+  const departmentNames = new Map(
+    departments.map((department) => [
+      department.id,
+      department.department_name,
+    ]),
+  );
+  const moduleNames = new Map(
+    modules.map((module) => [module.id, module.module_name]),
+  );
+  const rows = access.entries.map((entry): AccessRow => {
+    const sources = entry.groups
+      .map((group) => ({
+        groupId: group.group_id,
+        name: group.name,
+        level: group.level,
+        levelLabel: levelLabels[group.level],
+      }))
+      .sort(byName);
+    return {
+      key: `${entry.department_id}:${entry.module_id ?? "*"}`,
+      departmentName:
+        departmentNames.get(entry.department_id) ?? "Unavailable department",
+      moduleName:
+        entry.module_id === null
+          ? null
+          : (moduleNames.get(entry.module_id) ?? "Unavailable module"),
+      level: entry.level,
+      levelLabel: levelLabels[entry.level],
+      sources,
+      capped:
+        access.role === "guest" &&
+        sources.some(
+          (source) => levelRank[source.level] > levelRank[entry.level],
+        ),
+    };
+  });
+  rows.sort(
+    (left, right) =>
+      left.departmentName.localeCompare(right.departmentName, undefined, {
+        sensitivity: "base",
+      }) ||
+      (left.moduleName === null ? -1 : 0) -
+        (right.moduleName === null ? -1 : 0) ||
+      (left.moduleName ?? "").localeCompare(right.moduleName ?? ""),
+  );
+  return {
+    kind: "entries",
+    inactive,
+    guestCapped: rows.some((row) => row.capped),
+    rows,
+  };
+}
+
+// Command errors
+
+/**
+ * Safe copy for a failed People command. A 409 carries the backend's short
+ * reason ("A guest keeps the guest role; invite a member instead"), which is
+ * written for people; every other failure gets fixed copy.
+ */
+export function peopleErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) {
+    if (error.status === 403)
+      return "Only administrators can change people. Reload the page to check your access.";
+    if (error.status === 404)
+      return "This person no longer exists. Close the panel to refresh the list.";
+    if (error.status === 409 && typeof error.details === "string")
+      return error.details.endsWith(".") ? error.details : `${error.details}.`;
+  }
+  return fallback;
+}
+
+/** True when a request failed before the server answered it. */
+export function isUnansweredRequest(error: unknown): boolean {
+  return !(error instanceof ApiError) && !(error instanceof ApiContractError);
+}
+
+/** A username suggestion from an email address. */
+export function usernameFromEmail(email: string): string {
+  const local = email.split("@")[0] ?? "";
+  return local
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 100)
+    .toLowerCase();
+}
+
+export const USERNAME_PATTERN = /^[a-zA-Z0-9_-]{3,100}$/;
+export const usernameHint =
+  "3 to 100 letters, numbers, hyphens, or underscores.";
+
+export function usernameError(value: string): string | null {
+  if (!value.trim()) return "Enter a username.";
+  return USERNAME_PATTERN.test(value.trim()) ? null : `Use ${usernameHint}`;
+}
+
+export function emailError(value: string): string | null {
+  const email = value.trim();
+  if (!email) return "Enter an email address.";
+  return /^[^\s@]+@[^\s@]+$/.test(email) && email.length <= 320
+    ? null
+    : "Enter a valid email address.";
+}
+
+/** Active, non-guest people who can sponsor a guest. */
+export function sponsorOptions(users: readonly AccessUser[], now: number) {
+  return users
+    .filter(
+      (user) => user.role !== "guest" && personState(user, now).id === "active",
+    )
+    .map((user) => ({ value: user.id, label: personName(user) }))
+    .sort((left, right) =>
+      left.label.localeCompare(right.label, undefined, { sensitivity: "base" }),
+    );
+}

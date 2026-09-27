@@ -10,6 +10,7 @@ import {
   moduleSchema,
   pageSchema,
   sessionSchema,
+  userAccessSchema,
   userPatchSchema,
   userSchema,
 } from "../../../src/components/systems/access/state/api-contracts";
@@ -130,4 +131,47 @@ test("commands accept only the fields the backend accepts", () => {
   ).toBe(false);
   expect(userPatchSchema.safeParse({ status: "pending" }).success).toBe(false);
   expect(userPatchSchema.safeParse({ role: "member" }).success).toBe(true);
+});
+
+test("a person's effective access names the level and the groups that give it", () => {
+  const response = {
+    user_id: ids.guest,
+    role: "guest",
+    unrestricted: false,
+    entries: [
+      {
+        department_id: ids.department,
+        module_id: null,
+        level: "read",
+        groups: [
+          { group_id: ids.group, name: "Inventory clerks", level: "write" },
+        ],
+      },
+    ],
+  };
+  expect(userAccessSchema.parse(response)).toEqual(response);
+  expect(
+    userAccessSchema.parse({
+      ...response,
+      role: "admin",
+      unrestricted: true,
+      entries: [],
+    }).unrestricted,
+  ).toBe(true);
+  expect(userAccessSchema.safeParse({ ...response, extra: 1 }).success).toBe(
+    false,
+  );
+  expect(
+    userAccessSchema.safeParse({
+      ...response,
+      entries: [{ ...response.entries[0], level: "admin" }],
+    }).success,
+  ).toBe(false);
+  // A missing module id or source list is a contract change.
+  expect(
+    userAccessSchema.safeParse({
+      ...response,
+      entries: [{ department_id: ids.department, level: "read", groups: [] }],
+    }).success,
+  ).toBe(false);
 });

@@ -7,6 +7,7 @@ import {
   deleteAccessUser,
   getAccessGroup,
   getAccessInvitationSettings,
+  getAccessUserAccess,
   inviteAccessUser,
   listAccessDepartments,
   listAccessGroups,
@@ -308,5 +309,35 @@ test("invitation settings read the workspace and save with its revision in the b
   } finally {
     mock.restore();
     restoreCookie();
+  }
+});
+
+test("a person's effective access is read from the user route and parsed strictly", async () => {
+  const controller = new AbortController();
+  const body = {
+    user_id: ids.guest,
+    role: "guest",
+    unrestricted: false,
+    entries: [],
+  };
+  const mock = installFetch(() => Response.json(body));
+  try {
+    await expect(
+      getAccessUserAccess(ids.guest, { signal: controller.signal }),
+    ).resolves.toEqual(body);
+    expect(sent(mock.requests)).toEqual([
+      [`/api/users/${ids.guest}/access`, undefined],
+    ]);
+    expect(mock.requests[0]?.init?.signal).toBe(controller.signal);
+  } finally {
+    mock.restore();
+  }
+  const extra = installFetch(() => Response.json({ ...body, permissions: [] }));
+  try {
+    await expect(getAccessUserAccess(ids.guest)).rejects.toBeInstanceOf(
+      ApiContractError,
+    );
+  } finally {
+    extra.restore();
   }
 });

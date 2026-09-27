@@ -2,10 +2,17 @@
 
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, type ReactNode } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, ShieldCheck } from "lucide-react";
 
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -15,7 +22,10 @@ import {
 } from "@/components/ui/empty";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
-import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
+import {
+  GuardedWorkspaceLink,
+  useWorkspaceNavigationGuard,
+} from "@/components/workspace-navigation-guard";
 import {
   accessNavigationFor,
   type AccessNavigation,
@@ -23,7 +33,12 @@ import {
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import { authMeOptions } from "./adapters/access-queries";
-import { AccessDraftNavigationProvider } from "./state/draft-navigation";
+import { DiscardChangesDialog } from "./components/people-fields";
+import { PeopleView } from "./components/people-view";
+import {
+  AccessDraftNavigationProvider,
+  useAccessDraftNavigation,
+} from "./state/draft-navigation";
 
 const accessViews = {
   overview: {
@@ -75,6 +90,7 @@ function AccessControlCenter() {
   const identity = useQuery(authMeOptions());
   const access = identity.data ? accessNavigationFor(identity.data) : null;
   const requestedView = searchParams.get("view");
+  const navigationBlock = useUnsavedDraftGuard();
 
   // A manager's links always name the Groups tab, so the sidebar and the
   // breadcrumb agree with what the page shows.
@@ -131,9 +147,79 @@ function AccessControlCenter() {
         label="Loading Access…"
         skeleton={<Skeleton className="h-40 w-full" />}
       >
-        {view === null ? null : <AccessPlaceholder view={view} />}
+        {view === "people" ? (
+          <PeopleView />
+        ) : view === null ? null : (
+          <AccessPlaceholder view={view} />
+        )}
       </LoadingRegion>
+      {navigationBlock}
     </AccessFrame>
+  );
+}
+
+type PendingNavigation = { resume: () => void };
+
+/**
+ * Holds workspace navigation while an Access editor has unsaved changes and
+ * asks before discarding them. A reload or tab close gets the browser's own
+ * warning.
+ */
+function useUnsavedDraftGuard(): ReactNode {
+  const { hasUnsavedDraft, discardUnsavedDrafts } = useAccessDraftNavigation();
+  const [pending, setPending] = useState<PendingNavigation | null>(null);
+  const [notice, setNotice] = useState("");
+
+  const guard = useCallback(
+    (href: string, resume: () => void) => {
+      if (!hasUnsavedDraft) return true;
+      if (new URL(href, window.location.origin).href === window.location.href)
+        return true;
+      setNotice("");
+      setPending({ resume });
+      return false;
+    },
+    [hasUnsavedDraft],
+  );
+  useWorkspaceNavigationGuard(guard);
+
+  useEffect(() => {
+    if (!hasUnsavedDraft) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasUnsavedDraft]);
+
+  return (
+    <>
+      {notice ? (
+        <Alert role="status" variant="warning">
+          {notice}
+        </Alert>
+      ) : null}
+      <DiscardChangesDialog
+        open={pending !== null}
+        title="Discard unsaved changes?"
+        description="You have changes in Access that are not saved. Leaving this page discards them."
+        onKeep={() => setPending(null)}
+        onDiscard={() => {
+          const next = pending;
+          if (!next) return;
+          if (!discardUnsavedDrafts()) {
+            setNotice(
+              "Your draft could not be cleared from this browser. Keep editing, or try again.",
+            );
+            setPending(null);
+            return;
+          }
+          setPending(null);
+          next.resume();
+        }}
+      />
+    </>
   );
 }
 
@@ -185,8 +271,7 @@ function AccessFrame({
   );
 }
 
-// Temporary: the Access screens are rebuilt on the groups model in the next
-// sub-slices (3e-2 People, 3e-3 Groups and Overview).
+// Temporary: Groups and Overview are rebuilt on the groups model in 3e-3.
 function AccessPlaceholder({ view }: { view: AccessView }) {
   return (
     <Empty className="border">

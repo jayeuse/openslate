@@ -98,6 +98,33 @@ export const sessionSchema = z.strictObject({
   current: z.boolean(),
 });
 
+/**
+ * `GET /api/users/{user_id}/access` (administrators only): a person's
+ * effective access. A null module means the whole department. `groups` are
+ * the groups whose row gives the entry; an entry's level already applies the
+ * guest read limit, while each group keeps the level it grants. An active
+ * administrator is `unrestricted` and has no entries.
+ */
+export const userAccessSchema = z.strictObject({
+  user_id: uuid,
+  role: userRoleSchema,
+  unrestricted: z.boolean(),
+  entries: z.array(
+    z.strictObject({
+      department_id: uuid,
+      module_id: uuid.nullable(),
+      level: accessLevelSchema,
+      groups: z.array(
+        z.strictObject({
+          group_id: uuid,
+          name: z.string().min(1),
+          level: accessLevelSchema,
+        }),
+      ),
+    }),
+  ),
+});
+
 /** `policy/schemas.py` GroupAccessEntry: a null module means the whole department. */
 export const groupAccessEntrySchema = z.strictObject({
   department_id: uuid,
@@ -223,6 +250,7 @@ export type AccessInvitationResponse = z.output<typeof invitationSchema>;
 export type AccessInvitationCreate = z.input<typeof invitationCreateSchema>;
 export type AccessUserPatch = z.input<typeof userPatchSchema>;
 export type AccessSession = z.output<typeof sessionSchema>;
+export type AccessUserAccess = z.output<typeof userAccessSchema>;
 export type AccessGroupAccessEntry = z.output<typeof groupAccessEntrySchema>;
 export type AccessGroup = z.output<typeof groupSchema>;
 export type AccessGroupCreate = z.input<typeof groupCreateSchema>;

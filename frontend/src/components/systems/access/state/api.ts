@@ -20,6 +20,7 @@ import {
   moduleSchema,
   pageSchema,
   sessionSchema,
+  userAccessSchema,
   userPatchSchema,
   userSchema,
   type AccessDepartment,
@@ -41,6 +42,7 @@ import {
   type AccessSession,
   type AccessSessionListOptions,
   type AccessUser,
+  type AccessUserAccess,
   type AccessUserListOptions,
   type AccessUserPatch,
   type AccessVersioned,
@@ -193,7 +195,18 @@ export function revokeAccessInvitation(
   });
 }
 
-// Sessions of one user (detail reads; not cached)
+/** A person's effective access per department and module. Administrators only. */
+export function getAccessUserAccess(
+  userId: string,
+  options: RequestOptions = {},
+): Promise<AccessUserAccess> {
+  return apiFetch(`${userPath(userId)}/access`, userAccessSchema, {
+    cache: "no-store",
+    signal: options.signal,
+  });
+}
+
+// Sessions of one user
 
 export function listAccessUserSessions(
   userId: string,
