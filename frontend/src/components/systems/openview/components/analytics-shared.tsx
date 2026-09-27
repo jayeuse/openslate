@@ -277,7 +277,10 @@ export function Workbench({
 }) {
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(17rem,20rem)_minmax(0,1fr)]">
-      <aside className="bg-card flex h-fit flex-col gap-5 rounded-[var(--radius)] border p-5">
+      <aside
+        data-slot="card"
+        className="bg-card border-card-edge shadow-card flex h-fit flex-col gap-5 rounded-[var(--radius)] border p-5"
+      >
         {controls}
       </aside>
       <div className="min-w-0">{children}</div>

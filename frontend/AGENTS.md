@@ -40,14 +40,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Authenticated pages live under `src/app/(app)/`, whose layout mounts `AppPage` (auth gate + shell) once for the group; do not wrap pages individually or implement a second cookie/auth gate.
 - When a feature uses authorized backend integration, domain requests go through `apiFetch()` to the same-origin `/api` gateway. It sends the CSRF header for cookie-authenticated mutations and performs the documented FastAPI refresh flow. Never bypass the same-origin API boundary from pages.
 - Sessions use HttpOnly `openslate_access`/`openslate_refresh` cookies issued by FastAPI; the browser never sees tokens. Next has no proxy file, route handler, server action, request-header, or request-cookie boundary. Its development-only rewrite forwards same-origin `/api/*` to loopback FastAPI.
-- Feature adapters own typed reads and confirmed commands. Local sample screens use the shared runtime, `useSampleResource`, and `useSampleCommands`; keep ephemeral drafts local and await acceptance before clearing or navigating. Preserve loading/retry, last-good refresh data, cancellation, and pending guards. Future authorized backend adapters use schema-required `apiFetch`; do not add a second state or form library without demonstrated need.
+- Feature adapters own typed reads and confirmed commands. Local sample screens use the shared runtime, `useSampleResource`, and `useSampleCommands`; keep ephemeral drafts local and await acceptance before clearing or navigating. Preserve loading/retry, last-good refresh data, cancellation, and pending guards. Authorized backend adapters use schema-required `apiFetch`. Server-backed reads that a revisit needs at once are cached with TanStack Query per `.agents/skills/query-cache-patterns/SKILL.md` (OpenView is the reference); do not add another state or form library without demonstrated need.
 
 ## Features
 
 - Current workspace routes are `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`; their screens live under `src/components/systems/`. Inspect the target screen and state provider before choosing a pattern.
 - Retired module, department, administration, workspace, onboarding, and workspace-settings routes are absent and return the exported 404 page. Do not restore them as redirects or aliases.
 - Use explicit `CompleteCollection` and `PageResult` boundaries. Filter/sort before paging; complete exports and aggregates cannot use a visible page. Render a prepared page without a second table slice. Future backend pagination must preserve the frontend feature contract; retired list helpers are not an integration template.
-- Workspace screens currently do not subscribe to server events. Any explicitly requested integration must preserve authenticated SSE invalidation without row snapshots and avoid discarding in-progress form state.
+- OpenView Views, Charts, and Reports subscribe to authenticated SSE through one shared stream and a cache bridge (`openview-query-sync.tsx`); other workspace screens do not. Any new subscription must use that shared stream, carry invalidations without row snapshots, and avoid discarding in-progress form state.
 
 ## Styling
 

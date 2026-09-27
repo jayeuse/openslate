@@ -967,6 +967,50 @@ test("a rejected password is reported beside Publish, not above the list", async
   );
 });
 
+test("a successful Publish plays the look's title signature once", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, {
+    ...configuredSandboxDesign,
+    rules: [],
+  });
+  await page.route("**/api/sandbox/publications", (route) =>
+    route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "00000000-0000-4000-8000-000000000701",
+        version: {
+          id: "00000000-0000-4000-8000-000000000702",
+          sequence: 1,
+          kind: "published",
+          label: "Published",
+        },
+        documentRevision: 1,
+        documentHash: "b".repeat(64),
+        impactDigest: "c".repeat(64),
+        publishedAt: "2026-09-27T00:00:00Z",
+      }),
+    }),
+  );
+  const title = page.getByRole("heading", {
+    level: 1,
+    name: "Organization builder",
+  });
+  // Opening the Sandbox is not an earned moment.
+  await expect(title).not.toHaveAttribute("data-signature");
+
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  const dialog = page.getByRole("dialog", { name: "Review and publish" });
+  await dialog.getByLabel("Your password").fill("local password");
+  await dialog.getByRole("button", { name: "Publish changes" }).click();
+
+  await expect(
+    page.getByText("Your changes are now published to the live workspace."),
+  ).toBeVisible();
+  await expect(title).toHaveAttribute("data-signature", "play");
+});
+
 test("hovering a module or relationship traces its connections", async ({
   page,
 }) => {

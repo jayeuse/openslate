@@ -75,6 +75,9 @@ export default defineConfig({
   testDir: "./tests",
   outputDir: "test-results/playwright",
   fullyParallel: true,
+  // CI runners for this private repository have 2 CPUs, where Playwright's
+  // default (half the CPUs) is 1 worker and the suite outgrows the job.
+  workers: isCI ? 2 : undefined,
   timeout: 30_000,
   expect: { timeout: 5_000 },
   forbidOnly: isCI,
@@ -93,6 +96,7 @@ export default defineConfig({
         }))
       : []),
   ],
+  globalSetup: testLayer === "isolated" ? undefined : "./tests/warm-routes.ts",
   webServer:
     testLayer === "isolated"
       ? undefined

@@ -138,7 +138,9 @@ export function ServerBoardReminders({
       className="border-border min-w-0 space-y-4 rounded-xl border p-4"
     >
       <div>
-        <h3 className="font-semibold">Your reminders</h3>
+        <h3 data-slot="section-title" className="font-semibold">
+          Your reminders
+        </h3>
         <p className="text-muted-foreground text-sm">
           Reminders are private and arrive in your OpenSlate inbox.
         </p>

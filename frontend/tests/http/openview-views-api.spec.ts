@@ -988,6 +988,9 @@ async function installViewsApi(
     denyRecordQueries() {
       denyRecordQueries = true;
     },
+    allowRecordQueries() {
+      denyRecordQueries = false;
+    },
     denyRecordId: (id: string) => {
       deniedRecordId = id;
     },
@@ -3042,11 +3045,21 @@ test("OpenView invalidations refresh Views while preserving dirty edits and clea
   await expect
     .poll(() => api.recordQueryRequests.length)
     .toBeGreaterThan(deniedQueriesBefore);
+  // A refused read hides every OpenView name and row, the editor included,
+  // behind one message; the typed draft stays in state.
   await expect(page.getByText("Compressor 01")).toHaveCount(0);
-  await expect(search).toHaveValue("compressor");
+  await expect(search).toHaveCount(0);
   await expect(
-    page.getByRole("alert").filter({ hasText: /no longer have access/i }),
-  ).toBeVisible();
+    page
+      .getByRole("alert")
+      .filter({ hasText: /unavailable|no longer have access/i }),
+  ).toHaveCount(1);
+
+  // After an authorized read, the editor returns with the draft intact.
+  api.allowRecordQueries();
+  await page.getByRole("button", { name: "Retry catalog" }).click();
+  await expect(search).toHaveValue("compressor");
+  await expect(page.getByText("Compressor 01")).toBeVisible();
 });
 
 test("default invalidation keeps an implicit selected view and its dirty draft anchored", async ({

@@ -84,7 +84,11 @@ export function SavedViewAdvancedControls({
         className="flex flex-col gap-4"
       >
         <div>
-          <h3 id="openview-advanced-settings-heading" className="font-medium">
+          <h3
+            data-slot="section-title"
+            id="openview-advanced-settings-heading"
+            className="font-medium"
+          >
             Advanced query settings
           </h3>
           <p className="text-muted-foreground text-sm">
@@ -95,7 +99,9 @@ export function SavedViewAdvancedControls({
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="font-medium">Sort order</h3>
+                <h3 data-slot="section-title" className="font-medium">
+                  Sort order
+                </h3>
                 <p className="text-muted-foreground text-xs">
                   The first rule has the highest priority. Use up to three
                   rules.

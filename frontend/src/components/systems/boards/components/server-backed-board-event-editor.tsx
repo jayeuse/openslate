@@ -426,13 +426,14 @@ export function ServerBoardEventEditorForm({
   return (
     <form
       aria-label={draft.eventId ? "Edit Board event" : "Create Board event"}
-      className="border-border bg-card flex min-w-0 flex-col gap-5 rounded-xl border p-4 sm:p-5"
+      data-slot="card"
+      className="border-card-edge bg-card shadow-card flex min-w-0 flex-col gap-5 rounded-xl border p-4 sm:p-5"
       onSubmit={(event) => {
         event.preventDefault();
         onSave();
       }}
     >
-      <h3 className="text-base font-semibold">
+      <h3 data-slot="section-title" className="text-base font-semibold">
         {draft.eventId
           ? draft.recurrence === "none"
             ? "Edit event"

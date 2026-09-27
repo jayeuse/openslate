@@ -2326,6 +2326,35 @@ test("unsaved Dashboard drafts require an explicit keep or discard before naviga
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
+test("switching to archived Dashboards cannot restore stale active rows", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page, dashboard({ widgets: [] }));
+  const gate = requestGate();
+  await page.route("**/api/dashboards?**", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("deleted") === "only") {
+      gate.signalStarted();
+      await gate.wait;
+    }
+    await route.fallback();
+  });
+  await page.goto("/openview?section=dashboards");
+  await selectDashboard(page, dashboardId);
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
+  try {
+    await page.getByRole("button", { name: "Show archived" }).click();
+    await gate.started;
+    await expect(
+      page.getByRole("button", { name: "Restore Operations" }),
+    ).toHaveCount(0);
+    expect(api.writes).toHaveLength(0);
+    gate.release();
+    await expect(page.getByText("No archived Dashboards.")).toBeVisible();
+  } finally {
+    gate.release();
+  }
+});
+
 test("a delayed active Dashboard page cannot enter the archived list", async ({
   page,
 }) => {
@@ -2890,6 +2919,34 @@ for (const requestPath of ["initial load", "manual refresh"] as const) {
     }
   });
 }
+
+test("a refused Dashboard read hides the retained Dashboard and offers Retry", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page, dashboard());
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  const table = page.getByRole("table", {
+    name: "Complete data for Count by Category",
+  });
+  await expect(table.locator("tbody tr")).toHaveCount(25);
+
+  const pending = api.holdNextSnapshot(403);
+  await page.getByRole("button", { name: "Refresh now" }).click();
+  await pending.started;
+  pending.release();
+  await expect(
+    page.getByText(
+      "OpenView data is unavailable. Sign in or ask for access, then retry.",
+    ),
+  ).toBeVisible();
+  await expect(table).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Operations" })).toHaveCount(
+    0,
+  );
+  // Retry reads the refused widget again, not only the list and catalog.
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(table.locator("tbody tr")).toHaveCount(25);
+});
 
 test("duplicating a Dashboard creates an independent copy and keeps the source default", async ({
   page,

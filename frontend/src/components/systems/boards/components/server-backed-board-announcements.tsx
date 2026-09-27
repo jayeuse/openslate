@@ -5,6 +5,7 @@ import { ChevronDown, Search, SlidersHorizontal } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -119,9 +120,9 @@ function ScopedServerBackedBoardAnnouncements({
       className="flex w-full min-w-0 flex-col gap-4"
       aria-busy={state.status === "loading"}
     >
-      <section
+      <Card
         aria-label="Announcement search and filters"
-        className="bg-card min-w-0 overflow-hidden rounded-lg border"
+        className="min-w-0 self-auto overflow-hidden rounded-lg"
       >
         <form
           role="search"
@@ -251,7 +252,7 @@ function ScopedServerBackedBoardAnnouncements({
             />
           </div>
         </div>
-      </section>
+      </Card>
       {authors.state.error && (
         <Alert variant={choices ? "warning" : "destructive"}>
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -312,7 +313,10 @@ function ScopedServerBackedBoardAnnouncements({
         />
       )}
       {page && page.pagination.total > 0 && (
-        <div className="bg-card flex min-w-0 flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div
+          data-slot="card"
+          className="border-card-edge bg-card shadow-card flex min-w-0 flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+        >
           <p className="text-muted-foreground text-sm" role="status">
             {page.pagination.count > 0
               ? `Showing ${page.pagination.offset + 1}–${page.pagination.offset + page.pagination.count} of ${page.pagination.total}`

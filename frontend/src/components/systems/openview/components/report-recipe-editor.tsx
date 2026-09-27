@@ -439,7 +439,7 @@ export function ReportRecipeEditor({
             </TabsContent>
             <TabsContent value="advanced" keepMounted className="mt-4">
               <div className="flex flex-col gap-5">
-                <h3 className="text-sm font-semibold">
+                <h3 data-slot="section-title" className="text-sm font-semibold">
                   Filters, sorting, and grouping
                 </h3>
                 <FieldSet>

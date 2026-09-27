@@ -202,7 +202,9 @@ export function VersionComparison({
 
       <section aria-label="Change details" className="mt-7">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="font-semibold">What changed</h3>
+          <h3 data-slot="section-title" className="font-semibold">
+            What changed
+          </h3>
           <Badge variant="secondary" className="px-2 py-1 tabular-nums">
             {changes.length} {changes.length === 1 ? "entry" : "entries"}
           </Badge>

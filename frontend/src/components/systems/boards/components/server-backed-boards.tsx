@@ -2,11 +2,11 @@
 
 import {
   Suspense,
-  createElement,
   useCallback,
   useEffect,
   useState,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -37,6 +37,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { LoadingRegion } from "@/components/ui/loading-region";
 import {
   Popover,
   PopoverContent,
@@ -53,6 +55,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { BoardManagementBoard } from "../adapters/board-management-api";
 import {
   listBoardDepartments,
@@ -152,27 +155,136 @@ export function boardSearchEmptyCopy(
       };
 }
 
-export function ServerBackedBoardsLoading() {
-  return createElement(
-    "div",
-    {
-      className: "flex flex-col gap-3 p-6",
-      role: "status",
-      "aria-live": "polite",
-    },
-    createElement("div", {
-      className:
-        "bg-muted h-8 w-48 animate-pulse rounded-lg motion-reduce:animate-none",
-    }),
-    createElement("div", {
-      className:
-        "bg-muted h-24 w-full animate-pulse rounded-xl motion-reduce:animate-none",
-    }),
-    createElement(
-      "p",
-      { className: "text-muted-foreground text-sm" },
-      "Loading Boards…",
-    ),
+const boardsTitleButtonClass =
+  "-ml-3 min-h-11 max-w-full justify-start text-xl font-semibold";
+const boardsRegionClass = "min-w-0 *:flex *:min-w-0 *:flex-col *:gap-5";
+
+function BoardsHeader({
+  heading,
+  switcher,
+  archived = false,
+  description,
+  actions,
+}: {
+  heading: string;
+  switcher: ReactNode;
+  archived?: boolean;
+  description: string;
+  actions: ReactNode;
+}) {
+  return (
+    <header
+      className="border-border flex min-w-0 flex-wrap items-center justify-between gap-3 border-b pb-4"
+      aria-label="Current board"
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="bg-muted border-border hidden size-11 shrink-0 items-center justify-center rounded-lg border sm:flex">
+          <LayoutDashboard className="size-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <h1
+              data-slot="page-title"
+              className="min-w-0 flex-1"
+              aria-label={heading}
+            >
+              {" "}
+              {switcher}
+            </h1>
+            {archived && <Badge variant="outline">Archived</Badge>}
+          </div>
+          {/* min-h-5 holds the line while the description is still unknown. */}
+          <p className="text-muted-foreground min-h-5 text-sm break-words">
+            {description}
+          </p>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">{actions}</div>
+    </header>
+  );
+}
+
+/** The switcher and actions while Boards load: in place, but inert. */
+function BoardsLoadingHeader() {
+  return (
+    <BoardsHeader
+      heading="Boards"
+      switcher={
+        <Button
+          variant="ghost"
+          className={boardsTitleButtonClass}
+          aria-label="Switch board"
+          disabled
+        >
+          <span className="truncate">Boards</span>
+          <ChevronDown className="size-4 shrink-0" aria-hidden="true" />
+        </Button>
+      }
+      description=""
+      actions={
+        <>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-11"
+            aria-label="Refresh"
+            title="Refresh board"
+            disabled
+          >
+            <RefreshCw aria-hidden="true" />
+          </Button>
+          <Button type="button" variant="outline" className="min-h-11" disabled>
+            Board menu <ChevronDown data-icon="inline-end" />
+          </Button>
+        </>
+      }
+    />
+  );
+}
+
+/**
+ * Matches the section a loaded Board opens on: the section in the link when
+ * there is one, otherwise the overview.
+ */
+function BoardsSkeleton({ section }: { section: BoardSection | null }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="mt-1 h-5 w-72 max-w-full" />
+        </div>
+        <Skeleton className="h-11 w-36" />
+      </div>
+      {section === "calendar" ? (
+        <Skeleton className="h-[28rem] rounded-xl" />
+      ) : section === "announcements" ? (
+        <div className="flex min-w-0 flex-col gap-4">
+          <Skeleton className="h-32 rounded-xl" />
+          <Skeleton className="h-32 rounded-xl" />
+        </div>
+      ) : (
+        <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+          <Skeleton className="h-44 rounded-xl" />
+          <Skeleton className="h-44 rounded-xl" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ServerBackedBoardsLoading() {
+  return (
+    <div className="flex min-w-0 flex-col gap-5">
+      <BoardsLoadingHeader />
+      <LoadingRegion
+        loading
+        label="Loading Boards"
+        skeleton={<BoardsSkeleton section={null} />}
+        className={boardsRegionClass}
+      />
+    </div>
   );
 }
 
@@ -399,8 +511,7 @@ function ServerBackedBoardsContent() {
     resource.candidate !== null &&
     board === null &&
     (resource.detail.status === "idle" || resource.detail.status === "loading");
-  if (awaitingPersonal || awaitingList || awaitingDetail)
-    return <ServerBackedBoardsLoading />;
+  const loading = awaitingPersonal || awaitingList || awaitingDetail;
 
   const choices = currentListPage?.items ?? [];
   const selectedOutsidePage =
@@ -470,362 +581,346 @@ function ServerBackedBoardsContent() {
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
-      <header
-        className="border-border flex min-w-0 flex-wrap items-center justify-between gap-3 border-b pb-4"
-        aria-label="Current board"
-      >
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <div className="bg-muted border-border hidden size-11 shrink-0 items-center justify-center rounded-lg border sm:flex">
-            <LayoutDashboard className="size-5" aria-hidden="true" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <h1
-                className="min-w-0 flex-1"
-                aria-label={board?.name ?? "Boards"}
+      {loading ? (
+        <BoardsLoadingHeader />
+      ) : (
+        <BoardsHeader
+          heading={board?.name ?? "Boards"}
+          switcher={
+            <Popover open={browsing} onOpenChange={setBrowsing}>
+              <PopoverTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    className={boardsTitleButtonClass}
+                    aria-label="Switch board"
+                  />
+                }
               >
-                {" "}
-                <Popover open={browsing} onOpenChange={setBrowsing}>
-                  <PopoverTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        className="-ml-3 min-h-11 max-w-full justify-start text-xl font-semibold"
-                        aria-label="Switch board"
-                      />
+                <span className="truncate">
+                  {board?.name ?? (noBoards ? "Boards" : "Choose a board")}
+                </span>
+                <ChevronDown className="size-4 shrink-0" aria-hidden="true" />
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                className="w-[min(26rem,calc(100vw-2rem))] gap-4 p-4"
+              >
+                <PopoverHeader>
+                  <PopoverTitle>Find a board</PopoverTitle>
+                  <PopoverDescription>
+                    Only Boards available to your account appear here.
+                  </PopoverDescription>
+                </PopoverHeader>
+                <form
+                  className="space-y-2"
+                  onSubmit={(event: FormEvent<HTMLFormElement>) => {
+                    event.preventDefault();
+                    setAppliedSearch(searchDraft.trim() || null);
+                    setOffset(0);
+                  }}
+                >
+                  <label
+                    htmlFor="board-switch-search"
+                    className="text-sm font-medium"
+                  >
+                    Search accessible Boards
+                  </label>
+                  <Input
+                    id="board-switch-search"
+                    type="search"
+                    maxLength={100}
+                    value={searchDraft}
+                    onChange={(event) =>
+                      setSearchDraft(event.currentTarget.value)
                     }
-                  >
-                    <span className="truncate">
-                      {board?.name ?? (noBoards ? "Boards" : "Choose a board")}
-                    </span>
-                    <ChevronDown
-                      className="size-4 shrink-0"
-                      aria-hidden="true"
-                    />
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="start"
-                    className="w-[min(26rem,calc(100vw-2rem))] gap-4 p-4"
-                  >
-                    <PopoverHeader>
-                      <PopoverTitle>Find a board</PopoverTitle>
-                      <PopoverDescription>
-                        Only Boards available to your account appear here.
-                      </PopoverDescription>
-                    </PopoverHeader>
-                    <form
-                      className="space-y-2"
-                      onSubmit={(event: FormEvent<HTMLFormElement>) => {
-                        event.preventDefault();
-                        setAppliedSearch(searchDraft.trim() || null);
-                        setOffset(0);
-                      }}
+                    className="bg-background text-foreground min-h-11 rounded-md focus-visible:outline-offset-2"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      className="min-h-11"
                     >
-                      <label
-                        htmlFor="board-switch-search"
-                        className="text-sm font-medium"
-                      >
-                        Search accessible Boards
-                      </label>
-                      <input
-                        id="board-switch-search"
-                        type="search"
-                        maxLength={100}
-                        value={searchDraft}
-                        onChange={(event) =>
-                          setSearchDraft(event.currentTarget.value)
-                        }
-                        className="border-input bg-background text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2"
-                      />
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          type="submit"
-                          variant="outline"
-                          className="min-h-11"
-                        >
-                          Search boards
-                        </Button>
-                        {appliedSearch && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            className="min-h-11"
-                            onClick={() => {
-                              setSearchDraft("");
-                              setAppliedSearch(null);
-                              setOffset(0);
-                            }}
-                          >
-                            Clear search
-                          </Button>
-                        )}
-                      </div>
-                    </form>
-                    <SearchSelect
-                      label="Board"
-                      value={board?.id ?? ""}
-                      placeholder="Choose a board"
-                      options={options}
-                      onValueChange={(id) => {
-                        const target = [
-                          ...choices,
-                          ...(board ? [board] : []),
-                        ].find((choice) => choice.id === id);
-                        if (target) navigateToBoard(target);
-                      }}
-                    />
-                    <SearchSelect
-                      label="Board status"
-                      value={statusFilter}
-                      options={[
-                        { value: "active", label: "Active" },
-                        { value: "archived", label: "Archived" },
-                        { value: "all", label: "All Boards" },
-                      ]}
-                      onValueChange={changeStatus}
-                    />
-                    <SearchSelect
-                      label="Department"
-                      value={departmentFilter ?? ""}
-                      placeholder="All departments"
-                      options={[
-                        { value: "", label: "All departments" },
-                        ...departmentChoices.map((department) => ({
-                          value: department.id,
-                          label: department.name,
-                        })),
-                      ]}
-                      onValueChange={(departmentId) => {
-                        setDepartmentFilter(departmentId || null);
-                        setOffset(0);
-                      }}
-                    />
-                    <div className="flex flex-wrap items-center gap-2">
+                      Search boards
+                    </Button>
+                    {appliedSearch && (
                       <Button
                         type="button"
-                        variant={favoritesOnly ? "default" : "outline"}
+                        variant="ghost"
                         className="min-h-11"
-                        aria-pressed={favoritesOnly}
                         onClick={() => {
-                          setFavoritesOnly((value) => !value);
+                          setSearchDraft("");
+                          setAppliedSearch(null);
                           setOffset(0);
                         }}
                       >
-                        <Star data-icon="inline-start" /> Favorites only
+                        Clear search
                       </Button>
+                    )}
+                  </div>
+                </form>
+                <SearchSelect
+                  label="Board"
+                  value={board?.id ?? ""}
+                  placeholder="Choose a board"
+                  options={options}
+                  onValueChange={(id) => {
+                    const target = [...choices, ...(board ? [board] : [])].find(
+                      (choice) => choice.id === id,
+                    );
+                    if (target) navigateToBoard(target);
+                  }}
+                />
+                <SearchSelect
+                  label="Board status"
+                  value={statusFilter}
+                  options={[
+                    { value: "active", label: "Active" },
+                    { value: "archived", label: "Archived" },
+                    { value: "all", label: "All Boards" },
+                  ]}
+                  onValueChange={changeStatus}
+                />
+                <SearchSelect
+                  label="Department"
+                  value={departmentFilter ?? ""}
+                  placeholder="All departments"
+                  options={[
+                    { value: "", label: "All departments" },
+                    ...departmentChoices.map((department) => ({
+                      value: department.id,
+                      label: department.name,
+                    })),
+                  ]}
+                  onValueChange={(departmentId) => {
+                    setDepartmentFilter(departmentId || null);
+                    setOffset(0);
+                  }}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant={favoritesOnly ? "default" : "outline"}
+                    className="min-h-11"
+                    aria-pressed={favoritesOnly}
+                    onClick={() => {
+                      setFavoritesOnly((value) => !value);
+                      setOffset(0);
+                    }}
+                  >
+                    <Star data-icon="inline-start" /> Favorites only
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="min-h-11"
+                    disabled={!hasBoardFilters}
+                    onClick={resetBoardFilters}
+                  >
+                    Reset filters
+                  </Button>
+                  {departmentChoicesStatus === "loading" && (
+                    <span
+                      className="text-muted-foreground text-sm"
+                      role="status"
+                    >
+                      Loading departments…
+                    </span>
+                  )}
+                  {departmentChoicesStatus === "error" && (
+                    <span
+                      className="flex items-center gap-2 text-sm"
+                      role="alert"
+                    >
+                      Department choices are unavailable.
                       <Button
                         type="button"
-                        variant="ghost"
+                        variant="outline"
                         className="min-h-11"
-                        disabled={!hasBoardFilters}
-                        onClick={resetBoardFilters}
+                        onClick={() => {
+                          setDepartmentChoicesStatus("idle");
+                          setDepartmentChoicesRetry((value) => value + 1);
+                        }}
                       >
-                        Reset filters
+                        Retry departments
                       </Button>
-                      {departmentChoicesStatus === "loading" && (
-                        <span
-                          className="text-muted-foreground text-sm"
-                          role="status"
-                        >
-                          Loading departments…
-                        </span>
-                      )}
-                      {departmentChoicesStatus === "error" && (
-                        <span
-                          className="flex items-center gap-2 text-sm"
-                          role="alert"
-                        >
-                          Department choices are unavailable.
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="min-h-11"
-                            onClick={() => {
-                              setDepartmentChoicesStatus("idle");
-                              setDepartmentChoicesRetry((value) => value + 1);
-                            }}
-                          >
-                            Retry departments
-                          </Button>
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-muted-foreground text-sm">
-                        {currentListPage
-                          ? `${currentListPage.items.length} on this page · ${currentListPage.pagination.total} accessible${appliedSearch ? " matching search" : ""}`
-                          : "Board list unavailable"}
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-muted-foreground text-sm">
+                    {currentListPage
+                      ? `${currentListPage.items.length} on this page · ${currentListPage.pagination.total} accessible${appliedSearch ? " matching search" : ""}`
+                      : "Board list unavailable"}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      disabled={
+                        offset === 0 || resource.list.status === "loading"
+                      }
+                      onClick={() =>
+                        setOffset((value) => Math.max(0, value - PAGE_SIZE))
+                      }
+                    >
+                      Previous
+                    </Button>
+                    <span className="text-muted-foreground text-sm">
+                      Page {Math.floor(offset / PAGE_SIZE) + 1}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      disabled={
+                        !currentListPage?.pagination.hasMore ||
+                        resource.list.status === "loading"
+                      }
+                      onClick={() => setOffset((value) => value + PAGE_SIZE)}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          }
+          archived={board?.status === "archived"}
+          description={
+            board?.description ||
+            (board
+              ? "Your team's updates, events, and records."
+              : noBoards
+                ? "Create your first Board to share updates with your team."
+                : "Choose a Board to get started.")
+          }
+          actions={
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-11"
+                aria-label="Refresh"
+                title="Refresh board"
+                onClick={resource.refresh}
+              >
+                <RefreshCw aria-hidden="true" />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={<Button variant="outline" className="min-h-11" />}
+                >
+                  Board menu <ChevronDown data-icon="inline-end" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-56">
+                  {board && (
+                    <>
+                      <DropdownMenuItem
+                        className="min-h-11"
+                        onClick={() => setManagementMode("manage")}
+                      >
+                        <Settings2 />
+                        Manage Board
+                      </DropdownMenuItem>
+                      <DropdownMenuGroup>
+                        <DropdownMenuItem
                           className="min-h-11"
                           disabled={
-                            offset === 0 || resource.list.status === "loading"
+                            !resource.personal.data ||
+                            resource.preferencePending
                           }
-                          onClick={() =>
-                            setOffset((value) => Math.max(0, value - PAGE_SIZE))
-                          }
+                          onClick={() => {
+                            void resource.saveFavorite(board.id, !isFavorite);
+                          }}
                         >
-                          Previous
-                        </Button>
-                        <span className="text-muted-foreground text-sm">
-                          Page {Math.floor(offset / PAGE_SIZE) + 1}
-                        </span>
-                        <Button
-                          type="button"
-                          variant="outline"
+                          <Star />
+                          {isFavorite
+                            ? "Remove from favorites"
+                            : "Add to favorites"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
                           className="min-h-11"
                           disabled={
-                            !currentListPage?.pagination.hasMore ||
-                            resource.list.status === "loading"
+                            !resource.personal.data ||
+                            resource.preferencePending ||
+                            (board.status === "archived" && !isHome)
                           }
-                          onClick={() =>
-                            setOffset((value) => value + PAGE_SIZE)
-                          }
+                          onClick={() => {
+                            void resource.saveHome(isHome ? null : board.id);
+                          }}
                         >
-                          Next
-                        </Button>
-                      </div>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </h1>
-              {board?.status === "archived" && (
-                <Badge variant="outline">Archived</Badge>
-              )}
-            </div>
-            <p className="text-muted-foreground text-sm break-words">
-              {board?.description ||
-                (board
-                  ? "Your team's updates, events, and records."
-                  : noBoards
-                    ? "Create your first Board to share updates with your team."
-                    : "Choose a Board to get started.")}
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-11"
-            aria-label="Refresh"
-            title="Refresh board"
-            onClick={resource.refresh}
-          >
-            <RefreshCw aria-hidden="true" />
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={<Button variant="outline" className="min-h-11" />}
-            >
-              Board menu <ChevronDown data-icon="inline-end" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-56">
-              {board && (
-                <>
-                  <DropdownMenuItem
-                    className="min-h-11"
-                    onClick={() => setManagementMode("manage")}
-                  >
-                    <Settings2 />
-                    Manage Board
-                  </DropdownMenuItem>
+                          <Home />
+                          {isHome ? "Clear home board" : "Set as home board"}
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="min-h-11"
+                        onClick={() =>
+                          setGrantsSelection({
+                            boardId: board.id,
+                            detailSequence: resource.detail.sequence,
+                          })
+                        }
+                      >
+                        Manage access
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="min-h-11"
+                        onClick={() =>
+                          setPreviewSelection({
+                            boardId: board.id,
+                            detailSequence: resource.detail.sequence,
+                          })
+                        }
+                      >
+                        <Eye /> Preview access
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="min-h-11"
+                        onClick={() =>
+                          setActivitySelection({
+                            boardId: board.id,
+                            detailSequence: resource.detail.sequence,
+                          })
+                        }
+                      >
+                        <History /> View activity
+                      </DropdownMenuItem>
+
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
                   <DropdownMenuGroup>
                     <DropdownMenuItem
                       className="min-h-11"
-                      disabled={
-                        !resource.personal.data || resource.preferencePending
-                      }
-                      onClick={() => {
-                        void resource.saveFavorite(board.id, !isFavorite);
-                      }}
+                      onClick={() => setManagementMode("create")}
                     >
-                      <Star />
-                      {isFavorite
-                        ? "Remove from favorites"
-                        : "Add to favorites"}
+                      New Board
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       className="min-h-11"
-                      disabled={
-                        !resource.personal.data ||
-                        resource.preferencePending ||
-                        (board.status === "archived" && !isHome)
-                      }
-                      onClick={() => {
-                        void resource.saveHome(isHome ? null : board.id);
-                      }}
+                      onClick={() => setTemplatesOpen(true)}
                     >
-                      <Home />
-                      {isHome ? "Clear home board" : "Set as home board"}
+                      Templates
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="min-h-11"
+                      onClick={() => setPortabilityOpen(true)}
+                    >
+                      Configurations
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="min-h-11"
-                    onClick={() =>
-                      setGrantsSelection({
-                        boardId: board.id,
-                        detailSequence: resource.detail.sequence,
-                      })
-                    }
-                  >
-                    Manage access
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className="min-h-11"
-                    onClick={() =>
-                      setPreviewSelection({
-                        boardId: board.id,
-                        detailSequence: resource.detail.sequence,
-                      })
-                    }
-                  >
-                    <Eye /> Preview access
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className="min-h-11"
-                    onClick={() =>
-                      setActivitySelection({
-                        boardId: board.id,
-                        detailSequence: resource.detail.sequence,
-                      })
-                    }
-                  >
-                    <History /> View activity
-                  </DropdownMenuItem>
-
-                  <DropdownMenuSeparator />
-                </>
-              )}
-              <DropdownMenuGroup>
-                <DropdownMenuItem
-                  className="min-h-11"
-                  onClick={() => setManagementMode("create")}
-                >
-                  New Board
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="min-h-11"
-                  onClick={() => setTemplatesOpen(true)}
-                >
-                  Templates
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="min-h-11"
-                  onClick={() => setPortabilityOpen(true)}
-                >
-                  Configurations
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </header>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          }
+        />
+      )}
       <ServerBackedBoardManagement
         mode="create"
         open={managementMode === "create"}
@@ -868,44 +963,6 @@ function ServerBackedBoardsContent() {
             if (requestNavigation(href, resume)) resume();
           }}
         />
-      )}
-
-      {resource.list.error && (
-        <Alert variant="warning">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>
-              {currentListPage ? "Showing the last loaded Board list. " : ""}
-              {resource.list.error}
-            </span>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={resource.refresh}
-            >
-              Retry
-            </Button>
-          </div>
-        </Alert>
-      )}
-      {resource.personal.error && (
-        <Alert variant="warning">{resource.personal.error}</Alert>
-      )}
-      {resource.preferenceError && (
-        <Alert variant="destructive">{resource.preferenceError}</Alert>
-      )}
-      {board && resource.detail.error && (
-        <Alert variant="warning">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>Showing the last loaded Board. {resource.detail.error}</span>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={resource.refresh}
-            >
-              Retry
-            </Button>
-          </div>
-        </Alert>
       )}
 
       <Sheet open={templatesOpen} onOpenChange={setTemplatesOpen}>
@@ -977,325 +1034,380 @@ function ServerBackedBoardsContent() {
         </SheetContent>
       </Sheet>
 
-      {!board ? (
-        <BoardEmpty
-          title={
-            unavailable
-              ? "Board unavailable"
-              : resource.list.error
-                ? "Boards could not be loaded"
-                : emptyCopy.title
-          }
-          description={
-            unavailable
-              ? resource.detail.error ||
-                "This Board may have been removed or your account may not have access. Choose another Board above or retry."
-              : resource.list.error
-                ? "The Board list could not be loaded. Retry to see your Boards."
-                : emptyCopy.description
-          }
-          icon={<LayoutDashboard aria-hidden="true" />}
-        >
-          {unavailable && (
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={resource.refresh}
-            >
-              <RefreshCw data-icon="inline-start" /> Retry Board
-            </Button>
-          )}
-          {/* The same actions as the Board menu, so an empty workspace has a
-              first step in view. The server still decides who may create. */}
-          {!unavailable &&
-            !resource.list.error &&
-            !appliedSearch &&
-            noBoards && (
-              <div className="flex flex-wrap justify-center gap-2">
-                <Button
-                  className="min-h-11"
-                  onClick={() => setManagementMode("create")}
-                >
-                  New Board
-                </Button>
-                <Button
-                  variant="outline"
-                  className="min-h-11"
-                  onClick={() => setTemplatesOpen(true)}
-                >
-                  Use a template
-                </Button>
-              </div>
-            )}
-        </BoardEmpty>
-      ) : (
-        <>
-          {board.status === "archived" && (
-            <Alert>This Board is archived and read-only.</Alert>
-          )}
-
-          {section === "calendar" ? (
-            <ServerBackedBoardCalendar
-              key={board.id}
-              boardId={board.id}
-              boardActive={board.status === "active"}
-              refreshKey={resource.detail.sequence}
-              onDraftStateChange={onCalendarDraftStateChange}
-            />
-          ) : section === "announcements" ? (
-            <div className="flex min-w-0 flex-col gap-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-2xl font-semibold tracking-tight">
-                    Announcements
-                  </h2>
-                  <p className="text-muted-foreground mt-1 text-sm">
-                    Stay up to date with your team.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {board.status === "active" && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      onClick={() => setAnnouncementManagerSelection(board.id)}
-                    >
-                      Manage announcements
-                    </Button>
-                  )}
-                  <ServerBackedBoardAnnouncementEditor
-                    key={`editor:${board.id}`}
-                    boardId={board.id}
-                    boardRevision={board.revision}
-                    boardStatus={board.status}
-                    refreshKey={resource.detail.sequence}
-                    onPublished={() => resource.refresh()}
-                    onDraftStateChange={onAnnouncementDraftStateChange}
-                  />
-                </div>
-              </div>
-              <ServerBackedBoardAnnouncements
-                key={board.id}
-                boardId={board.id}
-                refreshKey={resource.detail.sequence}
-              />
-
-              <Sheet
-                open={announcementManagerOpen}
-                onOpenChange={(open) => {
-                  if (!open) closeAnnouncementManager();
-                }}
+      <LoadingRegion
+        loading={loading}
+        label="Loading Boards"
+        skeleton={<BoardsSkeleton section={route.section} />}
+        className={boardsRegionClass}
+      >
+        {resource.list.error && (
+          <Alert variant="warning">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                {currentListPage ? "Showing the last loaded Board list. " : ""}
+                {resource.list.error}
+              </span>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                onClick={resource.refresh}
               >
-                <SheetContent
-                  side="right"
-                  className="w-full overflow-y-auto sm:max-w-2xl"
-                >
-                  <SheetHeader>
-                    <SheetTitle>Manage announcements</SheetTitle>
-                    <SheetDescription>
-                      Archive, restore, or permanently delete announcements you
-                      are allowed to manage.
-                    </SheetDescription>
-                  </SheetHeader>
-                  {announcementManagerOpen && (
-                    <ServerBackedBoardAnnouncementLifecycle
-                      key={`lifecycle:${board.id}`}
-                      boardId={board.id}
-                      boardStatus={board.status}
-                      refreshKey={resource.detail.sequence}
-                      onChanged={() => resource.refresh()}
-                      onAccessDenied={(boardId) => {
-                        if (board.id !== boardId) return;
-                        closeAnnouncementManager();
-                        resource.revokeAccess();
-                      }}
-                    />
-                  )}
-                </SheetContent>
-              </Sheet>
+                Retry
+              </Button>
             </div>
-          ) : (
-            <div className="flex min-w-0 flex-col gap-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-2xl font-semibold tracking-tight">
-                    Board overview
-                  </h2>
-                  <p className="text-muted-foreground mt-1 text-sm">
-                    Record summaries and shortcuts for your team.
-                  </p>
+          </Alert>
+        )}
+        {resource.personal.error && (
+          <Alert variant="warning">{resource.personal.error}</Alert>
+        )}
+        {resource.preferenceError && (
+          <Alert variant="destructive">{resource.preferenceError}</Alert>
+        )}
+        {board && resource.detail.error && (
+          <Alert variant="warning">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                Showing the last loaded Board. {resource.detail.error}
+              </span>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                onClick={resource.refresh}
+              >
+                Retry
+              </Button>
+            </div>
+          </Alert>
+        )}
+
+        {!board ? (
+          <BoardEmpty
+            title={
+              unavailable
+                ? "Board unavailable"
+                : resource.list.error
+                  ? "Boards could not be loaded"
+                  : emptyCopy.title
+            }
+            description={
+              unavailable
+                ? resource.detail.error ||
+                  "This Board may have been removed or your account may not have access. Choose another Board above or retry."
+                : resource.list.error
+                  ? "The Board list could not be loaded. Retry to see your Boards."
+                  : emptyCopy.description
+            }
+            icon={<LayoutDashboard aria-hidden="true" />}
+          >
+            {unavailable && (
+              <Button
+                variant="outline"
+                className="min-h-11"
+                onClick={resource.refresh}
+              >
+                <RefreshCw data-icon="inline-start" /> Retry Board
+              </Button>
+            )}
+            {/* The same actions as the Board menu, so an empty workspace has a
+                first step in view. The server still decides who may create. */}
+            {!unavailable &&
+              !resource.list.error &&
+              !appliedSearch &&
+              noBoards && (
+                <div className="flex flex-wrap justify-center gap-2">
+                  <Button
+                    className="min-h-11"
+                    onClick={() => setManagementMode("create")}
+                  >
+                    New Board
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => setTemplatesOpen(true)}
+                  >
+                    Use a template
+                  </Button>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  onClick={() => setWidgetSelection(board.id)}
-                >
-                  Manage widgets
-                </Button>
-              </div>
-              <ServerBackedBoardWidgets
+              )}
+          </BoardEmpty>
+        ) : (
+          <>
+            {board.status === "archived" && (
+              <Alert>This Board is archived and read-only.</Alert>
+            )}
+
+            {section === "calendar" ? (
+              <ServerBackedBoardCalendar
                 key={board.id}
-                boardId={board.id}
-                refreshKey={resource.detail.sequence}
-              />
-              <ServerBackedBoardPlacements
-                key={`placements:${board.id}`}
                 boardId={board.id}
                 boardActive={board.status === "active"}
                 refreshKey={resource.detail.sequence}
-                onAccessDenied={resource.revokeAccess}
+                onDraftStateChange={onCalendarDraftStateChange}
               />
-            </div>
-          )}
-          <Sheet
-            open={activityOpen}
-            onOpenChange={(open) => {
-              if (!open) closeActivity();
-            }}
-          >
-            <SheetContent className="w-full gap-6 sm:w-[min(92vw,40rem)]">
-              <SheetHeader className="pr-10">
-                <SheetTitle>Board activity</SheetTitle>
-                <SheetDescription>
-                  Changes to this Board that are available to your account.
-                </SheetDescription>
-              </SheetHeader>
-              <Button
-                variant="ghost"
-                size="icon"
-                type="button"
-                aria-label="Close Board activity"
-                className="absolute top-3 right-3 size-11"
-                onClick={closeActivity}
-              >
-                <X />
-              </Button>
-              {activityOpen && (
-                <ServerBackedBoardActivity
-                  key={board.id}
-                  boardId={board.id}
-                  refreshKey={resource.detail.sequence}
-                  onAccessDenied={closeActivity}
-                />
-              )}
-            </SheetContent>
-          </Sheet>
-          <Sheet
-            open={previewOpen}
-            onOpenChange={(open) => {
-              if (!open) closePreview();
-            }}
-          >
-            <SheetContent className="w-full gap-6 sm:w-[min(92vw,40rem)]">
-              <SheetHeader className="pr-10">
-                <SheetTitle>Preview Board access</SheetTitle>
-                <SheetDescription>
-                  Check Board-level permissions for an active person without
-                  changing your own access.
-                </SheetDescription>
-              </SheetHeader>
-              <Button
-                variant="ghost"
-                size="icon"
-                type="button"
-                aria-label="Close Board access preview"
-                className="absolute top-3 right-3 size-11"
-                onClick={closePreview}
-              >
-                <X />
-              </Button>
-              {previewOpen && (
-                <ServerBackedBoardAccessPreview
+            ) : section === "announcements" ? (
+              <div className="flex min-w-0 flex-col gap-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2
+                      data-slot="section-title"
+                      className="text-2xl font-semibold tracking-tight"
+                    >
+                      Announcements
+                    </h2>
+                    <p className="text-muted-foreground mt-1 text-sm">
+                      Stay up to date with your team.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {board.status === "active" && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="min-h-11"
+                        onClick={() =>
+                          setAnnouncementManagerSelection(board.id)
+                        }
+                      >
+                        Manage announcements
+                      </Button>
+                    )}
+                    <ServerBackedBoardAnnouncementEditor
+                      key={`editor:${board.id}`}
+                      boardId={board.id}
+                      boardRevision={board.revision}
+                      boardStatus={board.status}
+                      refreshKey={resource.detail.sequence}
+                      onPublished={() => resource.refresh()}
+                      onDraftStateChange={onAnnouncementDraftStateChange}
+                    />
+                  </div>
+                </div>
+                <ServerBackedBoardAnnouncements
                   key={board.id}
                   boardId={board.id}
                   refreshKey={resource.detail.sequence}
                 />
-              )}
-            </SheetContent>
-          </Sheet>
-          <Sheet
-            open={grantsOpen}
-            onOpenChange={(open) => {
-              if (!open) closeGrants();
-            }}
-          >
-            <SheetContent className="w-full gap-6 overflow-y-auto sm:w-[min(92vw,44rem)]">
-              <SheetHeader className="pr-10">
-                <SheetTitle>Manage Board access</SheetTitle>
-                <SheetDescription>
-                  Grant rules affect Board permissions. Content audiences may
-                  narrow what a person can see further.
-                </SheetDescription>
-              </SheetHeader>
-              <Button
-                variant="ghost"
-                size="icon"
-                type="button"
-                aria-label="Close Board access rules"
-                className="absolute top-3 right-3 size-11"
-                onClick={closeGrants}
-              >
-                <X />
-              </Button>
-              {grantsOpen && (
-                <ServerBackedBoardGrants
+
+                <Sheet
+                  open={announcementManagerOpen}
+                  onOpenChange={(open) => {
+                    if (!open) closeAnnouncementManager();
+                  }}
+                >
+                  <SheetContent
+                    side="right"
+                    className="w-full overflow-y-auto sm:max-w-2xl"
+                  >
+                    <SheetHeader>
+                      <SheetTitle>Manage announcements</SheetTitle>
+                      <SheetDescription>
+                        Archive, restore, or permanently delete announcements
+                        you are allowed to manage.
+                      </SheetDescription>
+                    </SheetHeader>
+                    {announcementManagerOpen && (
+                      <ServerBackedBoardAnnouncementLifecycle
+                        key={`lifecycle:${board.id}`}
+                        boardId={board.id}
+                        boardStatus={board.status}
+                        refreshKey={resource.detail.sequence}
+                        onChanged={() => resource.refresh()}
+                        onAccessDenied={(boardId) => {
+                          if (board.id !== boardId) return;
+                          closeAnnouncementManager();
+                          resource.revokeAccess();
+                        }}
+                      />
+                    )}
+                  </SheetContent>
+                </Sheet>
+              </div>
+            ) : (
+              <div className="flex min-w-0 flex-col gap-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2
+                      data-slot="section-title"
+                      className="text-2xl font-semibold tracking-tight"
+                    >
+                      Board overview
+                    </h2>
+                    <p className="text-muted-foreground mt-1 text-sm">
+                      Record summaries and shortcuts for your team.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => setWidgetSelection(board.id)}
+                  >
+                    Manage widgets
+                  </Button>
+                </div>
+                <ServerBackedBoardWidgets
                   key={board.id}
+                  boardId={board.id}
+                  refreshKey={resource.detail.sequence}
+                />
+                <ServerBackedBoardPlacements
+                  key={`placements:${board.id}`}
                   boardId={board.id}
                   boardActive={board.status === "active"}
                   refreshKey={resource.detail.sequence}
-                  onAccessDenied={() => {
-                    closeGrants();
-                    resource.refresh();
-                  }}
+                  onAccessDenied={resource.revokeAccess}
                 />
-              )}
-            </SheetContent>
-          </Sheet>
-          <Sheet
-            open={widgetsOpen}
-            onOpenChange={(open) => {
-              if (!open) closeWidgets();
-            }}
-          >
-            <SheetContent className="w-full gap-6 overflow-y-auto sm:w-[min(92vw,44rem)]">
-              <SheetHeader className="pr-10">
-                <SheetTitle>Manage Board widgets</SheetTitle>
-                <SheetDescription>
-                  Add and arrange widgets visible to you. Widget audiences still
-                  control who can see each one.
-                </SheetDescription>
-              </SheetHeader>
-              <Button
-                variant="ghost"
-                size="icon"
-                type="button"
-                aria-label="Close widget management"
-                className="absolute top-3 right-3 size-11"
-                onClick={closeWidgets}
-              >
-                <X />
-              </Button>
-              {widgetsOpen && (
-                <ServerBoardWidgetManagement
-                  key={board.id}
-                  boardId={board.id}
-                  boardActive={board.status === "active"}
-                  refreshKey={resource.detail.sequence}
-                  onChanged={resource.refresh}
-                  onBoardRefresh={resource.refresh}
-                  onAccessDenied={(boardId) => {
-                    if (board.id !== boardId) return;
-                    closeWidgets();
-                    resource.revokeAccess();
-                  }}
-                />
-              )}
-            </SheetContent>
-          </Sheet>
-        </>
-      )}
+              </div>
+            )}
+            <Sheet
+              open={activityOpen}
+              onOpenChange={(open) => {
+                if (!open) closeActivity();
+              }}
+            >
+              <SheetContent className="w-full gap-6 sm:w-[min(92vw,40rem)]">
+                <SheetHeader className="pr-10">
+                  <SheetTitle>Board activity</SheetTitle>
+                  <SheetDescription>
+                    Changes to this Board that are available to your account.
+                  </SheetDescription>
+                </SheetHeader>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  type="button"
+                  aria-label="Close Board activity"
+                  className="absolute top-3 right-3 size-11"
+                  onClick={closeActivity}
+                >
+                  <X />
+                </Button>
+                {activityOpen && (
+                  <ServerBackedBoardActivity
+                    key={board.id}
+                    boardId={board.id}
+                    refreshKey={resource.detail.sequence}
+                    onAccessDenied={closeActivity}
+                  />
+                )}
+              </SheetContent>
+            </Sheet>
+            <Sheet
+              open={previewOpen}
+              onOpenChange={(open) => {
+                if (!open) closePreview();
+              }}
+            >
+              <SheetContent className="w-full gap-6 sm:w-[min(92vw,40rem)]">
+                <SheetHeader className="pr-10">
+                  <SheetTitle>Preview Board access</SheetTitle>
+                  <SheetDescription>
+                    Check Board-level permissions for an active person without
+                    changing your own access.
+                  </SheetDescription>
+                </SheetHeader>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  type="button"
+                  aria-label="Close Board access preview"
+                  className="absolute top-3 right-3 size-11"
+                  onClick={closePreview}
+                >
+                  <X />
+                </Button>
+                {previewOpen && (
+                  <ServerBackedBoardAccessPreview
+                    key={board.id}
+                    boardId={board.id}
+                    refreshKey={resource.detail.sequence}
+                  />
+                )}
+              </SheetContent>
+            </Sheet>
+            <Sheet
+              open={grantsOpen}
+              onOpenChange={(open) => {
+                if (!open) closeGrants();
+              }}
+            >
+              <SheetContent className="w-full gap-6 overflow-y-auto sm:w-[min(92vw,44rem)]">
+                <SheetHeader className="pr-10">
+                  <SheetTitle>Manage Board access</SheetTitle>
+                  <SheetDescription>
+                    Grant rules affect Board permissions. Content audiences may
+                    narrow what a person can see further.
+                  </SheetDescription>
+                </SheetHeader>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  type="button"
+                  aria-label="Close Board access rules"
+                  className="absolute top-3 right-3 size-11"
+                  onClick={closeGrants}
+                >
+                  <X />
+                </Button>
+                {grantsOpen && (
+                  <ServerBackedBoardGrants
+                    key={board.id}
+                    boardId={board.id}
+                    boardActive={board.status === "active"}
+                    refreshKey={resource.detail.sequence}
+                    onAccessDenied={() => {
+                      closeGrants();
+                      resource.refresh();
+                    }}
+                  />
+                )}
+              </SheetContent>
+            </Sheet>
+            <Sheet
+              open={widgetsOpen}
+              onOpenChange={(open) => {
+                if (!open) closeWidgets();
+              }}
+            >
+              <SheetContent className="w-full gap-6 overflow-y-auto sm:w-[min(92vw,44rem)]">
+                <SheetHeader className="pr-10">
+                  <SheetTitle>Manage Board widgets</SheetTitle>
+                  <SheetDescription>
+                    Add and arrange widgets visible to you. Widget audiences
+                    still control who can see each one.
+                  </SheetDescription>
+                </SheetHeader>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  type="button"
+                  aria-label="Close widget management"
+                  className="absolute top-3 right-3 size-11"
+                  onClick={closeWidgets}
+                >
+                  <X />
+                </Button>
+                {widgetsOpen && (
+                  <ServerBoardWidgetManagement
+                    key={board.id}
+                    boardId={board.id}
+                    boardActive={board.status === "active"}
+                    refreshKey={resource.detail.sequence}
+                    onChanged={resource.refresh}
+                    onBoardRefresh={resource.refresh}
+                    onAccessDenied={(boardId) => {
+                      if (board.id !== boardId) return;
+                      closeWidgets();
+                      resource.revokeAccess();
+                    }}
+                  />
+                )}
+              </SheetContent>
+            </Sheet>
+          </>
+        )}
+      </LoadingRegion>
       <ConfirmAction
         open={pendingNavigation !== null}
         title="Discard unsaved Board changes?"

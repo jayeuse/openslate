@@ -60,7 +60,11 @@ export function SavedViewColumnControls({
       className="flex min-w-0 flex-col gap-3"
     >
       <div>
-        <h3 id="openview-presentation-fields-heading" className="font-medium">
+        <h3
+          data-slot="section-title"
+          id="openview-presentation-fields-heading"
+          className="font-medium"
+        >
           {isTable
             ? "Visible columns and order"
             : hasCardSettings

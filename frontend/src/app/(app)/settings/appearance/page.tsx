@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Check, Moon, Sun } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import {
   applyAppearancePreferences,
   DEFAULT_APPEARANCE_PREFERENCES,
@@ -23,9 +24,18 @@ export default function AppearancePage() {
   const [preferences, setPreferences] = useState<AppearancePreferences>(
     DEFAULT_APPEARANCE_PREFERENCES,
   );
+  // The device's own reduced-motion setting always applies; say so.
+  const [deviceReducesMotion, setDeviceReducesMotion] = useState(false);
+  const motionLabelId = useId();
+  const motionDescriptionId = useId();
 
   useEffect(() => {
     setPreferences(readBrowserAppearancePreferences());
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setDeviceReducesMotion(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
   }, []);
 
   function apply(next: Partial<AppearancePreferences>) {
@@ -38,9 +48,9 @@ export default function AppearancePage() {
     <>
       <PageHeader
         title="Appearance"
-        description="Choose light or dark for your workspace. This setting applies to you on this device. The organization look is set in Manage, under Organization."
+        description="Choose light or dark, and how much the workspace moves. These settings apply to you on this device. The organization look is set in Manage, under Organization."
       />
-      <div className="max-w-md">
+      <div className="grid max-w-md gap-4">
         <Card>
           <CardHeader>
             <CardTitle>Color mode</CardTitle>
@@ -77,6 +87,37 @@ export default function AppearancePage() {
                 </RadioGroupItem>
               ))}
             </RadioGroup>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Motion</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p id={motionLabelId} className="text-sm font-medium">
+                  Reduce motion
+                </p>
+                <p
+                  id={motionDescriptionId}
+                  className="text-muted-foreground mt-1 text-sm"
+                >
+                  Highlights, tabs, and panels move at once instead of gliding,
+                  and loading placeholders hold still.{" "}
+                  {deviceReducesMotion
+                    ? "Your device already asks for reduced motion, so OpenSlate reduces it either way."
+                    : "When off, OpenSlate follows your device setting."}
+                </p>
+              </div>
+              <Switch
+                aria-labelledby={motionLabelId}
+                aria-describedby={motionDescriptionId}
+                checked={preferences.reduceMotion}
+                onCheckedChange={(checked) => apply({ reduceMotion: checked })}
+                className="mt-0.5"
+              />
+            </div>
           </CardContent>
         </Card>
       </div>

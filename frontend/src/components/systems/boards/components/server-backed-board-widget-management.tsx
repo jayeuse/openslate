@@ -80,7 +80,9 @@ export function ServerBoardWidgetManagement({
     <section aria-label="Manage Board widgets" className="min-w-0 space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Manage widgets</h2>
+          <h2 data-slot="section-title" className="text-lg font-semibold">
+            Manage widgets
+          </h2>
           <p className="text-muted-foreground text-sm">
             Only widgets visible to you can be edited or reordered.
           </p>
@@ -235,10 +237,13 @@ export function ServerBoardWidgetManagement({
 
       {canEdit && state.draft && (
         <form
+          data-slot="card"
           onSubmit={onSave}
-          className="border-border bg-card space-y-4 rounded-xl border p-4"
+          className="border-card-edge bg-card shadow-card space-y-4 rounded-xl border p-4"
         >
-          <h3 className="font-medium">Widget settings</h3>
+          <h3 data-slot="section-title" className="font-medium">
+            Widget settings
+          </h3>
           <p className="text-muted-foreground text-sm">
             Audience: {audienceLabel(state.draft.source)}. These settings keep
             the widget’s existing audience.
@@ -263,6 +268,7 @@ export function ServerBoardWidgetManagement({
               Size
             </label>
             <select
+              data-slot="select"
               id={sizeId}
               value={state.draft.size}
               disabled={mutationBlocked}
@@ -324,11 +330,14 @@ export function ServerBoardWidgetManagement({
 
       {canEdit && (
         <form
+          data-slot="card"
           onSubmit={onCreate}
-          className="border-border bg-card space-y-4 rounded-xl border p-4"
+          className="border-card-edge bg-card shadow-card space-y-4 rounded-xl border p-4"
         >
           <div>
-            <h3 className="font-medium">Add summary widget</h3>
+            <h3 data-slot="section-title" className="font-medium">
+              Add summary widget
+            </h3>
             <p className="text-muted-foreground text-sm">
               New widgets start private. Share with everyone on this Board only
               if you choose it below.
@@ -354,6 +363,7 @@ export function ServerBoardWidgetManagement({
               Active record source
             </label>
             <select
+              data-slot="select"
               id={moduleId}
               value={
                 sources.items.some((item) => item.id === state.summary.moduleId)

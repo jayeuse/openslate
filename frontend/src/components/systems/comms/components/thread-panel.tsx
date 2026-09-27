@@ -130,7 +130,10 @@ export function ThreadPanel({
       </p>
       <header className="flex min-h-14 shrink-0 items-center gap-2 border-b px-4">
         <MessagesSquare className="size-4" />
-        <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">
+        <h3
+          data-slot="section-title"
+          className="min-w-0 flex-1 truncate text-sm font-semibold"
+        >
           {threadName || "Thread"}
         </h3>
         <Action

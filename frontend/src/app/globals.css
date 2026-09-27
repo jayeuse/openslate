@@ -2,6 +2,17 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Reduced motion comes from the device setting or from Appearance, which
+   sets data-motion="reduced" on <html> (lib/appearance-preferences.ts). */
+@custom-variant motion-reduce {
+  @media (prefers-reduced-motion: reduce) {
+    @slot;
+  }
+  &:where([data-motion="reduced"], [data-motion="reduced"] *) {
+    @slot;
+  }
+}
+
 @import "./themes/whiteboard.css";
 @import "./themes/triplicate.css";
 @import "./themes/stockroom.css";
@@ -93,6 +104,15 @@
   --sandbox-node-border: var(--rule-strong);
   --sandbox-field-stripe: var(--ground);
   --radius: 0.5rem;
+  /* Motion. Durations name the job, not a speed: fast for feedback, base
+     for routine state, slow for layout and authored moments. Each look sets
+     its own timing. Pages swap at once; nothing animates a navigation. */
+  --motion-fast: 140ms;
+  --motion-base: 220ms;
+  --motion-slow: 360ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --font-ui: var(--font-geist-sans);
   --font-code: var(--font-geist-mono);
   /* Card material. Themes set these instead of overriding Card, so a card's
@@ -207,6 +227,7 @@
 }
 
 @theme inline {
+  --animate-content-in: content-in var(--motion-fast) var(--ease-out) both;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -391,6 +412,19 @@ textarea {
   }
 }
 
+[data-motion="reduced"]
+  .sandbox-ui
+  :is(button, a[href], summary, input, select, textarea, [role="separator"]) {
+  transition: none;
+}
+
+[data-motion="reduced"]
+  .openview-ui
+  :is(button, a[href], input, select, textarea, [role="separator"]) {
+  transition: none;
+  scroll-behavior: auto;
+}
+
 .sandbox-ui
   [data-sandbox-pressed="true"]
   :is([data-sandbox-body], [data-sandbox-line]) {
@@ -439,6 +473,14 @@ textarea {
 
 .sandbox-minimap .x6-widget-minimap-viewport-zoom {
   display: none;
+}
+
+/* Data that replaces a loading state fades in; cached data appears at once
+   (LoadingRegion in components/ui/loading-region.tsx). */
+@keyframes content-in {
+  from {
+    opacity: 0;
+  }
 }
 
 @keyframes sandbox-relationship-flow {
@@ -507,6 +549,14 @@ textarea {
   .sandbox-ui .x6-cell[data-trace] {
     transition: none;
   }
+}
+
+[data-motion="reduced"] .sandbox-ui [data-sandbox-line="true"] {
+  animation: none;
+}
+
+[data-motion="reduced"] .sandbox-ui .x6-cell[data-trace] {
+  transition: none;
 }
 
 /* Resizing follows the pointer instead of the sidebar toggle transition. */

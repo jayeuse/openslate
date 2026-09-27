@@ -9,13 +9,26 @@ import {
 } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { ApiError } from "@/lib/api";
+import { LoadingRegion } from "@/components/ui/loading-region";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  getOpenViewChartPreferences,
   putOpenViewChartPreferences,
   type OpenViewChartPreferenceConfig,
 } from "../adapters/chart-preferences-api";
 import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
+import {
+  catalogFirstPageOptions,
+  chartPreferencesOptions,
+  extendsRead,
+  fieldsFirstPageOptions,
+  invalidatesRecords,
+  isAuthorizationDenied,
+  moduleFieldKeys,
+  openViewKeys,
+  readStamp,
+  recordPageDenial,
+} from "../adapters/openview-queries";
+import { useOpenViewAccessDenied } from "../adapters/openview-access";
 import {
   queryOpenViewAggregateSnapshot,
   type OpenViewAggregateSnapshotRequest,
@@ -29,6 +42,7 @@ import {
 } from "../adapters/views-api";
 import type { AppliedSnapshot } from "./chart-snapshot-results";
 import { ChartDefinitionForm } from "./chart-definition-form";
+import { ChartFormSkeleton } from "./openview-skeletons";
 import { ChartSnapshotResults } from "./chart-snapshot-results";
 import {
   EMPTY_OPERATORS,
@@ -49,10 +63,6 @@ function messageFor(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-function isAuthorizationDenied(error: unknown): boolean {
-  return error instanceof ApiError && [401, 403].includes(error.status);
-}
-
 const AUTHORIZATION_ERROR =
   "Chart data is unavailable. Sign in or ask for access, then retry.";
 
@@ -64,35 +74,40 @@ function formatError(error: unknown, fallback: string): string {
   return messageFor(error, fallback);
 }
 
+// Pages loaded with "Load more" extend the cached first page of one read
+// (`readAt`, see readStamp; `scope` names the data source for fields). Any
+// later read of that page drops them, like the former reload did. A refused
+// page is recorded on the shared cached reads (recordPageDenial), so the
+// refusal holds here and in every other section until a read succeeds.
+type PageExtension<T> = {
+  scope: string;
+  readAt: number;
+  items: T[];
+  hasMore: boolean;
+  nextOffset: number;
+};
+
 export default function ServerBackedCharts() {
-  const [sources, setSources] = useState<OpenViewDataSource[]>([]);
-  const [sourcesLoading, setSourcesLoading] = useState(true);
-  const [sourcesError, setSourcesError] = useState("");
-  const [sourcesHasMore, setSourcesHasMore] = useState(false);
-  const [sourcesNextOffset, setSourcesNextOffset] = useState(0);
-  const [catalogRetry, setCatalogRetry] = useState(0);
+  const queryClient = useQueryClient();
+  // A refusal of any cached OpenView read hides them all (openview-access.ts).
+  const accessDenied = useOpenViewAccessDenied();
+  const preferencesQuery = useQuery(chartPreferencesOptions());
+  const sourcesQuery = useQuery(catalogFirstPageOptions());
+  const [sourcesExtension, setSourcesExtension] =
+    useState<PageExtension<OpenViewDataSource> | null>(null);
   const [metadataError, setMetadataError] = useState("");
   const [metadataRetryTarget, setMetadataRetryTarget] = useState<
     "sources" | "fields" | null
   >(null);
   const [metadataLoading, setMetadataLoading] = useState(false);
-  const [moduleId, setModuleId] = useState("");
-  const [fields, setFields] = useState<OpenViewDataSourceField[]>([]);
-  const [fieldsForModule, setFieldsForModule] = useState("");
-  const [fieldsLoading, setFieldsLoading] = useState(false);
-  const [fieldsError, setFieldsError] = useState("");
-  const [fieldsHasMore, setFieldsHasMore] = useState(false);
-  const [fieldsNextOffset, setFieldsNextOffset] = useState(0);
-  const [fieldsRetry, setFieldsRetry] = useState(0);
-  const [preferenceConfig, setPreferenceConfig] =
-    useState<OpenViewChartPreferenceConfig | null>(null);
-  const [preferencesLoading, setPreferencesLoading] = useState(true);
-  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
-  const [preferencesRetry, setPreferencesRetry] = useState(0);
-  const [preferencesError, setPreferencesError] = useState("");
+  const [chosenModuleId, setChosenModuleId] = useState<string | null>(null);
+  const [preferredSourceResolved, setPreferredSourceResolved] = useState(false);
+  const [fieldsExtension, setFieldsExtension] =
+    useState<PageExtension<OpenViewDataSourceField> | null>(null);
+  const [preferenceMessage, setPreferenceMessage] = useState("");
   const [preferencesSaving, setPreferencesSaving] = useState(false);
   const [preferencesNotice, setPreferencesNotice] = useState("");
-  const [settingsDenied, setSettingsDenied] = useState(false);
+  const [saveDenied, setSaveDenied] = useState<boolean | null>(null);
   const [invalidationRevision, setInvalidationRevision] = useState(0);
   const [chartType, setChartType] = useState<ChartType>("bar");
   const [dimensionId, setDimensionId] = useState("");
@@ -116,93 +131,157 @@ export default function ServerBackedCharts() {
   const appliedRequestSequence = useRef(0);
   const consumedInvalidationRevision = useRef(0);
   const hydratedPreferenceKey = useRef("");
-  const preferredSourceResolved = useRef(false);
+  // A confirmed save asks the form to re-apply the saved settings. The cache
+  // keeps one identity for equal settings, so a repeated Reset needs this
+  // explicit request to restore controls edited since the last one.
+  const [preferenceHydration, setPreferenceHydration] = useState(0);
 
   useEffect(() => {
     appliedRef.current = applied;
   }, [applied]);
 
-  useEffect(() => {
-    let active = true;
-    setPreferencesLoading(true);
-    setPreferencesError("");
-    void getOpenViewChartPreferences()
-      .then(({ config }) => {
-        if (!active) return;
-        setPreferencesLoaded(true);
-        setPreferenceConfig(config);
-      })
-      .catch((error: unknown) => {
-        if (!active) return;
-        setPreferencesLoaded(false);
-        if (isAuthorizationDenied(error)) {
-          setSettingsDenied(true);
-          setApplied(null);
-          appliedRef.current = null;
-          setQueryError(AUTHORIZATION_ERROR);
-          setPreferencesError(
-            "Chart settings are unavailable. Sign in or ask for access, then retry.",
-          );
-        } else {
-          setPreferencesError(
-            formatError(error, "Saved chart settings could not be loaded."),
-          );
-        }
-      })
-      .finally(() => {
-        if (active) setPreferencesLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [preferencesRetry]);
+  // Saved settings. A retry in flight clears the last failure message.
+  const preferencesLoading =
+    preferencesQuery.isFetching && preferencesQuery.data === undefined;
+  const preferencesLoaded = preferencesQuery.data !== undefined;
+  const preferenceConfig = preferencesQuery.data?.config ?? null;
+  const preferencesLoadError = preferencesQuery.isFetching
+    ? null
+    : preferencesQuery.error;
+  // A denial holds through a retry until a read succeeds again.
+  const preferencesLoadDenied =
+    accessDenied || isAuthorizationDenied(preferencesQuery.error);
+  const settingsDenied = saveDenied ?? preferencesLoadDenied;
+  const preferencesError =
+    preferenceMessage ||
+    (preferencesLoadError
+      ? preferencesLoadDenied
+        ? "Chart settings are unavailable. Sign in or ask for access, then retry."
+        : formatError(
+            preferencesLoadError,
+            "Saved chart settings could not be loaded.",
+          )
+      : "");
 
+  // The data-source catalog: the cached first page plus loaded pages.
+  const sourcesBase = sourcesQuery.data;
+  const sourcesReadAt = readStamp(sourcesQuery);
+  const sourcesMore =
+    sourcesExtension && extendsRead(sourcesExtension.readAt, sourcesQuery)
+      ? sourcesExtension
+      : null;
+  const sourcesLoadError = sourcesQuery.isFetching ? null : sourcesQuery.error;
+  const sourcesDenied =
+    accessDenied || isAuthorizationDenied(sourcesQuery.error);
+  const sources = sourcesDenied
+    ? []
+    : [...(sourcesBase?.items ?? []), ...(sourcesMore?.items ?? [])];
+  const sourcesHasMore = sourcesDenied
+    ? false
+    : sourcesMore
+      ? sourcesMore.hasMore
+      : (sourcesBase?.pagination.hasMore ?? false);
+  const sourcesNextOffset = sourcesMore
+    ? sourcesMore.nextOffset
+    : (sourcesBase?.pagination.count ?? 0);
+  const sourcesLoading = sourcesQuery.isFetching;
+  const sourcesError = sourcesDenied
+    ? AUTHORIZATION_ERROR
+    : sourcesLoadError
+      ? formatError(
+          sourcesLoadError,
+          "The OpenView data-source catalog could not be loaded.",
+        )
+      : "";
+
+  // Saved settings choose the first data source once both reads settle,
+  // during render so a cached revisit never loads another source first.
+  if (
+    !preferredSourceResolved &&
+    !preferencesLoading &&
+    !preferencesQuery.isPending &&
+    !sourcesQuery.isPending
+  ) {
+    setPreferredSourceResolved(true);
+    if (
+      preferenceConfig &&
+      sources.some((source) => source.id === preferenceConfig.moduleId)
+    )
+      setChosenModuleId(preferenceConfig.moduleId);
+    else if (preferenceConfig && !sourcesDenied)
+      setPreferenceMessage(
+        "Saved chart settings refer to a data source you can no longer access.",
+      );
+  }
+  const moduleId =
+    chosenModuleId && sources.some((source) => source.id === chosenModuleId)
+      ? chosenModuleId
+      : (sources[0]?.id ?? "");
+
+  // Fields of the chosen data source: the cached first page plus loaded pages.
+  const fieldsQuery = useQuery(fieldsFirstPageOptions(moduleId));
+  const fieldsBase = moduleId ? fieldsQuery.data : undefined;
+  const fieldsReadAt = moduleId ? readStamp(fieldsQuery) : 0;
+  const fieldsMore =
+    fieldsExtension &&
+    moduleId &&
+    fieldsExtension.scope === moduleId &&
+    extendsRead(fieldsExtension.readAt, fieldsQuery)
+      ? fieldsExtension
+      : null;
+  const fieldsLoadError =
+    moduleId && !fieldsQuery.isFetching ? fieldsQuery.error : null;
+  const fieldsDenied =
+    accessDenied ||
+    (Boolean(moduleId) && isAuthorizationDenied(fieldsQuery.error));
+  const fields = fieldsDenied
+    ? []
+    : [...(fieldsBase?.items ?? []), ...(fieldsMore?.items ?? [])];
+  const fieldsReady = Boolean(fieldsBase) && !fieldsDenied;
+  const fieldsHasMore = fieldsMore
+    ? fieldsMore.hasMore
+    : (fieldsBase?.pagination.hasMore ?? false);
+  const fieldsNextOffset = fieldsMore
+    ? fieldsMore.nextOffset
+    : (fieldsBase?.pagination.count ?? 0);
+  const fieldsLoading = Boolean(moduleId) && fieldsQuery.isFetching;
+  // While data sources are refused, their alert carries the one message.
+  const fieldsError = sourcesDenied
+    ? ""
+    : fieldsDenied
+      ? AUTHORIZATION_ERROR
+      : fieldsLoadError
+        ? formatError(
+            fieldsLoadError,
+            "The data-source fields could not be loaded.",
+          )
+        : "";
+
+  // A denied read withdraws the applied chart, as every read did before.
+  const readDenied = preferencesLoadDenied || sourcesDenied || fieldsDenied;
+  useEffect(() => {
+    if (!readDenied) return;
+    setApplied(null);
+    appliedRef.current = null;
+    setQueryError(AUTHORIZATION_ERROR);
+  }, [readDenied]);
+
+  // Applied snapshots are not cached reads; they refresh through this
+  // counter. The catalog and fields refresh through OpenViewQuerySync.
   useEffect(() => {
     return subscribeOpenViewInvalidations((event) => {
-      const relevant =
-        event.type === "resync" ||
-        [
-          "records",
-          "relationships",
-          "fields",
-          "modules",
-          "departments",
-          "workspace_profiles",
-        ].includes(event.entity);
-      if (!relevant) return;
-      setInvalidationRevision((value) => value + 1);
-      if (
-        event.type === "resync" ||
-        ["fields", "modules", "departments", "workspace_profiles"].includes(
-          event.entity,
-        )
-      ) {
-        setCatalogRetry((value) => value + 1);
-        setFieldsRetry((value) => value + 1);
-      }
+      if (event.type === "resync" || invalidatesRecords(event.entity))
+        setInvalidationRevision((value) => value + 1);
     });
   }, []);
 
-  useEffect(() => {
-    if (preferencesLoading || sourcesLoading || preferredSourceResolved.current)
-      return;
-    preferredSourceResolved.current = true;
-    const preferredSource = preferenceConfig
-      ? sources.find((source) => source.id === preferenceConfig.moduleId)
-      : undefined;
-    if (preferredSource) setModuleId(preferenceConfig!.moduleId);
-    else if (preferenceConfig)
-      setPreferencesError(
-        "Saved chart settings refer to a data source you can no longer access.",
-      );
-  }, [preferenceConfig, preferencesLoading, sources, sourcesLoading]);
-
-  useEffect(() => {
+  // Layout effect: a cached revisit paints the saved settings, not defaults.
+  useLayoutEffect(() => {
     if (
       preferencesLoading ||
       !preferenceConfig ||
       preferenceConfig.moduleId !== moduleId ||
-      fieldsForModule !== moduleId
+      !fieldsReady
     )
       return;
     const key = JSON.stringify(preferenceConfig);
@@ -230,101 +309,17 @@ export default function ServerBackedCharts() {
       })),
     );
     setFilterSequence(preferenceConfig.filters.length);
-  }, [fieldsForModule, moduleId, preferenceConfig, preferencesLoading]);
-
-  useEffect(() => {
-    let active = true;
-    setSourcesLoading(true);
-    setSourcesError("");
-    void listOpenViewDataSources({ limit: 100, offset: 0 })
-      .then((page) => {
-        if (!active) return;
-        setSources(page.items);
-        setSourcesHasMore(page.pagination.hasMore);
-        setSourcesNextOffset(page.pagination.count);
-        setModuleId((current) =>
-          page.items.some((source) => source.id === current)
-            ? current
-            : (page.items[0]?.id ?? ""),
-        );
-      })
-      .catch((error: unknown) => {
-        if (active && isAuthorizationDenied(error)) {
-          setSources([]);
-          setSourcesHasMore(false);
-          setSourcesNextOffset(0);
-          setFields([]);
-          setFieldsForModule("");
-          setApplied(null);
-          appliedRef.current = null;
-          setQueryError(AUTHORIZATION_ERROR);
-          setSourcesError(AUTHORIZATION_ERROR);
-          return;
-        }
-        if (active)
-          setSourcesError(
-            formatError(
-              error,
-              "The OpenView data-source catalog could not be loaded.",
-            ),
-          );
-      })
-      .finally(() => {
-        if (active) setSourcesLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [catalogRetry]);
-
-  useEffect(() => {
-    if (!moduleId) {
-      setFields([]);
-      setFieldsForModule("");
-      setFieldsHasMore(false);
-      return;
-    }
-    let active = true;
-    setFieldsLoading(true);
-    setFieldsError("");
-    setFields([]);
-    setFieldsForModule("");
-    setFieldsHasMore(false);
-    setFieldsNextOffset(0);
-    void listOpenViewDataSourceFields(moduleId, { limit: 100, offset: 0 })
-      .then((page) => {
-        if (!active) return;
-        setFields(page.items);
-        setFieldsForModule(moduleId);
-        setFieldsHasMore(page.pagination.hasMore);
-        setFieldsNextOffset(page.pagination.count);
-      })
-      .catch((error: unknown) => {
-        if (active && isAuthorizationDenied(error)) {
-          setFields([]);
-          setFieldsForModule("");
-          setApplied(null);
-          appliedRef.current = null;
-          setQueryError(AUTHORIZATION_ERROR);
-          setFieldsError(AUTHORIZATION_ERROR);
-          return;
-        }
-        if (active)
-          setFieldsError(
-            formatError(error, "The data-source fields could not be loaded."),
-          );
-      })
-      .finally(() => {
-        if (active) setFieldsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [moduleId, fieldsRetry]);
+  }, [
+    fieldsReady,
+    moduleId,
+    preferenceConfig,
+    preferenceHydration,
+    preferencesLoading,
+  ]);
 
   const sourceName =
     sources.find((source) => source.id === moduleId)?.name ?? "Data source";
-  const moduleFields = fieldsForModule === moduleId ? fields : [];
+  const moduleFields = fieldsReady ? fields : [];
   const categoryFields = moduleFields.filter(isCategoricalField);
   const dateFields = moduleFields.filter((field) =>
     ["date", "datetime"].includes(field.type),
@@ -379,7 +374,7 @@ export default function ServerBackedCharts() {
   const preferenceConfigDraft: OpenViewChartPreferenceConfig | null =
     moduleId &&
     sources.some((source) => source.id === moduleId) &&
-    fieldsForModule === moduleId &&
+    fieldsReady &&
     !filterValidation &&
     dateWindowReady &&
     (dateSeries ? selectedDateField && dateWindowValid : selectedDimension) &&
@@ -446,24 +441,23 @@ export default function ServerBackedCharts() {
     setMetadataLoading(true);
     setMetadataError("");
     setMetadataRetryTarget(null);
+    const readAt = sourcesReadAt;
+    const loaded = sourcesMore?.items ?? [];
     try {
       const page = await listOpenViewDataSources({
         limit: 100,
         offset: sourcesNextOffset,
       });
-      setSources((current) => [...current, ...page.items]);
-      setSourcesHasMore(page.pagination.hasMore);
-      setSourcesNextOffset((current) => current + page.pagination.count);
+      setSourcesExtension({
+        scope: "",
+        readAt,
+        items: [...loaded, ...page.items],
+        hasMore: page.pagination.hasMore,
+        nextOffset: sourcesNextOffset + page.pagination.count,
+      });
     } catch (error) {
       if (isAuthorizationDenied(error)) {
-        setSources([]);
-        setSourcesHasMore(false);
-        setFields([]);
-        setFieldsForModule("");
-        setApplied(null);
-        appliedRef.current = null;
-        setQueryError(AUTHORIZATION_ERROR);
-        setSourcesError(AUTHORIZATION_ERROR);
+        void recordPageDenial(queryClient, [openViewKeys.catalog], error);
       } else {
         setMetadataError(
           formatError(error, "More data sources could not be loaded."),
@@ -480,22 +474,23 @@ export default function ServerBackedCharts() {
     setMetadataLoading(true);
     setMetadataError("");
     setMetadataRetryTarget(null);
+    const readAt = fieldsReadAt;
+    const loaded = fieldsMore?.items ?? [];
     try {
       const page = await listOpenViewDataSourceFields(moduleId, {
         limit: 100,
         offset: fieldsNextOffset,
       });
-      setFields((current) => [...current, ...page.items]);
-      setFieldsHasMore(page.pagination.hasMore);
-      setFieldsNextOffset((current) => current + page.pagination.count);
+      setFieldsExtension({
+        scope: moduleId,
+        readAt,
+        items: [...loaded, ...page.items],
+        hasMore: page.pagination.hasMore,
+        nextOffset: fieldsNextOffset + page.pagination.count,
+      });
     } catch (error) {
       if (isAuthorizationDenied(error)) {
-        setFields([]);
-        setFieldsForModule("");
-        setApplied(null);
-        appliedRef.current = null;
-        setQueryError(AUTHORIZATION_ERROR);
-        setFieldsError(AUTHORIZATION_ERROR);
+        void recordPageDenial(queryClient, moduleFieldKeys(moduleId), error);
       } else {
         setMetadataError(
           formatError(error, "More data-source fields could not be loaded."),
@@ -626,7 +621,7 @@ export default function ServerBackedCharts() {
     if (preferencesSaving) return;
     const submittedDraftSignature = draftSignatureRef.current;
     setPreferencesSaving(true);
-    setPreferencesError("");
+    setPreferenceMessage("");
     setPreferencesNotice("");
     try {
       const response = await putOpenViewChartPreferences(config);
@@ -635,21 +630,23 @@ export default function ServerBackedCharts() {
         draftSignatureRef.current === submittedDraftSignature
           ? ""
           : JSON.stringify(confirmedConfig);
-      setPreferenceConfig(confirmedConfig);
-      setPreferencesLoaded(true);
-      setSettingsDenied(false);
+      queryClient.setQueryData(chartPreferencesOptions().queryKey, {
+        config: confirmedConfig,
+      });
+      setPreferenceHydration((value) => value + 1);
+      setSaveDenied(false);
       setPreferencesNotice(successMessage);
     } catch (error) {
       if (isAuthorizationDenied(error)) {
-        setSettingsDenied(true);
+        setSaveDenied(true);
         setApplied(null);
         appliedRef.current = null;
         setQueryError(AUTHORIZATION_ERROR);
-        setPreferencesError(
+        setPreferenceMessage(
           "Chart settings could not be saved without current access.",
         );
       } else {
-        setPreferencesError(
+        setPreferenceMessage(
           formatError(error, "Chart settings could not be saved."),
         );
       }
@@ -752,7 +749,16 @@ export default function ServerBackedCharts() {
       });
   }, [invalidationRevision, queryLoading]);
 
-  const appliedResult = applied?.result ?? null;
+  // A denied read hides the applied chart in the same render; the effect
+  // above then clears it.
+  const visibleApplied = readDenied ? null : applied;
+  const appliedResult = visibleApplied?.result ?? null;
+  // Only a first visit waits for the setup reads; a cached revisit renders
+  // the form at once, and a retry after a failure keeps the form and its
+  // retry alert in place.
+  const chartSetupColdLoad =
+    (sourcesQuery.isPending && sourcesQuery.isFetching) ||
+    (preferencesQuery.isPending && preferencesQuery.isFetching);
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
@@ -770,84 +776,101 @@ export default function ServerBackedCharts() {
         </div>
       </header>
 
-      <ChartDefinitionForm
-        catalog={{
-          sources,
-          sourcesLoading,
-          sourcesError,
-          sourcesHasMore,
-          fieldsLoading,
-          fieldsError,
-          fieldsHasMore,
-          metadataError,
-          metadataRetryTarget,
-          metadataLoading,
-          sourceName,
-          categoryFields,
-          dateFields,
-          numericFields,
-          filterFields,
-        }}
-        draft={{
-          moduleId,
-          chartType,
-          dateSeries,
-          selectedDateField,
-          selectedDimension,
-          dateFieldId,
-          aggregation,
-          selectedMeasure,
-          fromDate,
-          toDate,
-          dateWindowValid,
-          top,
-          filters,
-          filterLogic,
-          filterValidation,
-          showLegend,
-          showValues,
-          queryLoading,
-          canRunQuery,
-        }}
-        preferences={{
-          preferencesError,
-          preferencesNotice,
-          preferencesLoading,
-          preferencesLoaded,
-          preferencesSaving,
-          settingsDenied,
-          preferenceConfigDraft,
-        }}
-        actions={{
-          retryPreferences: () => setPreferencesRetry((value) => value + 1),
-          retryCatalog: () => setCatalogRetry((value) => value + 1),
-          retryFields: () => setFieldsRetry((value) => value + 1),
-          loadMoreSources,
-          loadMoreFields,
-          setModuleId: (nextModuleId) => {
-            setModuleId(nextModuleId);
-            setFilters([]);
-          },
-          setChartType,
-          setDateFieldId,
-          setDimensionId,
-          setAggregation,
-          setMeasureId,
-          setFromDate,
-          setToDate,
-          setTop,
-          setFilters,
-          setFilterLogic,
-          setShowLegend,
-          setShowValues,
-          addFilter,
-          saveSettings,
-          resetSettings,
-          applySnapshot,
-        }}
-      />
+      <LoadingRegion
+        loading={chartSetupColdLoad}
+        label="Loading the authorized data-source catalog…"
+        skeleton={<ChartFormSkeleton />}
+      >
+        <ChartDefinitionForm
+          catalog={{
+            sources,
+            sourcesLoading,
+            sourcesError,
+            sourcesHasMore,
+            fieldsLoading,
+            fieldsError,
+            fieldsHasMore,
+            metadataError,
+            metadataRetryTarget,
+            metadataLoading,
+            sourceName,
+            categoryFields,
+            dateFields,
+            numericFields,
+            filterFields,
+          }}
+          draft={{
+            moduleId,
+            chartType,
+            dateSeries,
+            selectedDateField,
+            selectedDimension,
+            dateFieldId,
+            aggregation,
+            selectedMeasure,
+            fromDate,
+            toDate,
+            dateWindowValid,
+            top,
+            filters,
+            filterLogic,
+            filterValidation,
+            showLegend,
+            showValues,
+            queryLoading,
+            canRunQuery,
+          }}
+          preferences={{
+            preferencesError,
+            preferencesNotice,
+            preferencesLoading,
+            preferencesLoaded,
+            preferencesSaving,
+            settingsDenied,
+            preferenceConfigDraft,
+          }}
+          actions={{
+            retryPreferences: () => {
+              setPreferenceMessage("");
+              void preferencesQuery.refetch();
+            },
+            retryCatalog: () => {
+              setSourcesExtension(null);
+              void sourcesQuery.refetch();
+            },
+            retryFields: () => {
+              setFieldsExtension(null);
+              void fieldsQuery.refetch();
+            },
+            loadMoreSources,
+            loadMoreFields,
+            setModuleId: (nextModuleId) => {
+              setChosenModuleId(nextModuleId);
+              setFilters([]);
+            },
+            setChartType,
+            setDateFieldId,
+            setDimensionId,
+            setAggregation,
+            setMeasureId,
+            setFromDate,
+            setToDate,
+            setTop,
+            setFilters,
+            setFilterLogic,
+            setShowLegend,
+            setShowValues,
+            addFilter,
+            saveSettings,
+            resetSettings,
+            applySnapshot,
+          }}
+        />
+      </LoadingRegion>
 
-      {queryError ? (
+      {/* While a read is refused, the data-source alert already says so
+          and offers Retry; one message, not two. */}
+      {queryError && !(readDenied && queryError === AUTHORIZATION_ERROR) ? (
         <Alert
           role="alert"
           variant="warning"
@@ -872,7 +895,7 @@ export default function ServerBackedCharts() {
       ) : null}
 
       <ChartSnapshotResults
-        applied={applied}
+        applied={visibleApplied}
         draftSignature={draftSignature}
         top={top}
         showValues={showValues}

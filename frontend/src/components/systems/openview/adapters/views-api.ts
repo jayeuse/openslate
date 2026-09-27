@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ApiError, apiFetch } from "@/lib/api";
+import { openViewReadFetch } from "./openview-access";
 import {
   archiveSchema,
   audienceOptionKindSchema,
@@ -71,7 +72,7 @@ export async function listOpenViewDataSources(
   options: { limit?: number; offset?: number } = {},
 ): Promise<OpenViewPage<OpenViewDataSource>> {
   const page = pageQuery(options);
-  return apiFetch(
+  return openViewReadFetch(
     `/views/data-sources?${queryString(page)}`,
     dataSourceListSchema,
   );
@@ -83,7 +84,7 @@ export async function listOpenViewDataSourceFields(
 ): Promise<OpenViewPage<OpenViewDataSourceField>> {
   const validModuleId = uuidSchema.parse(moduleId);
   const page = pageQuery(options);
-  const result = await apiFetch(
+  const result = await openViewReadFetch(
     `/views/data-sources/${encodeURIComponent(validModuleId)}/fields?${queryString(page)}`,
     listSchema(fieldSchema).superRefine((fields, context) => {
       if (fields.items.some((field) => field.moduleId !== validModuleId)) {
@@ -103,7 +104,7 @@ export async function listOpenViewAudienceOptions(
 ): Promise<OpenViewPage<OpenViewAudienceOption>> {
   const validKind = audienceOptionKindSchema.parse(kind);
   const page = pageQuery(options);
-  return apiFetch(
+  return openViewReadFetch(
     `/views/audience-options?${queryString({ kind: validKind, ...page })}`,
     audienceOptionListSchema,
   );
@@ -123,14 +124,17 @@ export async function listOpenViewSavedViews(options: {
     offset,
   };
   if (deleted !== undefined) parameters.deleted = deleted;
-  return apiFetch(`/views?${queryString(parameters)}`, savedViewListSchema);
+  return openViewReadFetch(
+    `/views?${queryString(parameters)}`,
+    savedViewListSchema,
+  );
 }
 
 export async function getOpenViewSavedView(
   id: string,
 ): Promise<OpenViewSavedView> {
   const viewId = uuidSchema.parse(id);
-  return apiFetch(
+  return openViewReadFetch(
     `/views/${encodeURIComponent(viewId)}`,
     savedViewResponseSchema,
   );
@@ -201,7 +205,10 @@ export async function listOpenViewPersonalDefaults(
   options: { limit?: number; offset?: number } = {},
 ): Promise<OpenViewPage<OpenViewPersonalDefault>> {
   const page = pageQuery(options);
-  return apiFetch(`/views/defaults?${queryString(page)}`, defaultListSchema);
+  return openViewReadFetch(
+    `/views/defaults?${queryString(page)}`,
+    defaultListSchema,
+  );
 }
 
 export async function setOpenViewPersonalDefault(raw: {
@@ -237,7 +244,7 @@ export async function queryOpenViewRecords(raw: {
   offset?: number;
 }): Promise<OpenViewPage<OpenViewRecord>> {
   const input = recordQuerySchema.parse(raw);
-  return apiFetch("/records/query", recordListSchema, {
+  return openViewReadFetch("/records/query", recordListSchema, {
     method: "POST",
     body: JSON.stringify({
       module_id: input.moduleId,

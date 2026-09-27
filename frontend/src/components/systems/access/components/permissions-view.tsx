@@ -445,7 +445,7 @@ function PermissionsDirectory({
       >
         <aside className="min-w-0 space-y-5 xl:border-r xl:pr-5">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="font-semibold">
+            <h3 data-slot="section-title" className="font-semibold">
               {entry?.kind === "identity" ? "Person or service" : "Members"}
               {entry && entry.kind !== "identity"
                 ? ` (${entry.members.length})`

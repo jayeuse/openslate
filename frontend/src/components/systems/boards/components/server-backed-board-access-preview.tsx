@@ -102,7 +102,9 @@ function AccessPreviewForBoard({
       className="flex min-w-0 flex-col gap-4"
     >
       <div>
-        <h2 className="text-lg font-semibold">Preview Board access</h2>
+        <h2 data-slot="section-title" className="text-lg font-semibold">
+          Preview Board access
+        </h2>
         <p className="text-muted-foreground mt-1 text-sm">
           Check a person&apos;s effective Board permissions. This does not act
           as that person.

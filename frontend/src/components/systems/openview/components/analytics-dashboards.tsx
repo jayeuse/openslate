@@ -514,7 +514,11 @@ export function Dashboards({
             className="border-border mb-5 border-y py-4"
             aria-labelledby="dashboard-attention-question"
           >
-            <h3 id="dashboard-attention-question" className="font-semibold">
+            <h3
+              data-slot="section-title"
+              id="dashboard-attention-question"
+              className="font-semibold"
+            >
               What needs attention now?
             </h3>
             <p className="text-muted-foreground mt-1 max-w-3xl text-sm">
@@ -525,7 +529,9 @@ export function Dashboards({
           </section>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="font-semibold">Widgets</h3>
+              <h3 data-slot="section-title" className="font-semibold">
+                Widgets
+              </h3>
               <p className="text-muted-foreground text-sm">
                 Add a catalog item, then tune its source, fields, filters, and
                 display. {draft.widgets.length} of 12 widgets used.

@@ -261,7 +261,9 @@ export function Charts({
       controls={
         <FieldGroup>
           <div>
-            <h2 className="font-semibold">Chart builder</h2>
+            <h2 data-slot="section-title" className="font-semibold">
+              Chart builder
+            </h2>
             <p className="text-muted-foreground mt-1 text-sm">
               Compose a small, readable summary from one module.
             </p>

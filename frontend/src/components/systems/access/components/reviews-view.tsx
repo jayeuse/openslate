@@ -260,7 +260,11 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
   if (!controller.availability.reviews) {
     return (
       <section aria-labelledby="reviews-title" className="flex flex-col gap-3">
-        <h2 id="reviews-title" className="text-xl font-semibold tracking-tight">
+        <h2
+          data-slot="section-title"
+          id="reviews-title"
+          className="text-xl font-semibold tracking-tight"
+        >
           Access reviews
         </h2>
         <Alert role="status" variant="warning">
@@ -279,6 +283,7 @@ export function ReviewsView({ controller }: ReviewsViewProps) {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h2
+            data-slot="section-title"
             id="reviews-title"
             className="text-xl font-semibold tracking-tight"
           >

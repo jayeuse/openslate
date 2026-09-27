@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ApiError, apiFetch } from "@/lib/api";
+import { openViewReadFetch } from "./openview-access";
 import type { OpenViewAggregateSnapshotRequest } from "./analytics-api";
 import type {
   OpenViewQueryDefinition,
@@ -910,14 +911,14 @@ export async function listOpenViewDashboards(
       }
     },
   );
-  return apiFetch(path, responseSchema, { cache: "no-store" });
+  return openViewReadFetch(path, responseSchema, { cache: "no-store" });
 }
 
 export async function getOpenViewDashboard(
   id: string,
 ): Promise<OpenViewDashboard> {
   const dashboardId = uuidSchema.parse(id);
-  return apiFetch(
+  return openViewReadFetch(
     `/dashboards/${encodeURIComponent(dashboardId)}`,
     dashboardSchema,
     { cache: "no-store" },
@@ -925,7 +926,7 @@ export async function getOpenViewDashboard(
 }
 
 export async function getOpenViewDashboardDefault(): Promise<OpenViewDashboardDefault> {
-  return apiFetch("/dashboards/default", dashboardDefaultSchema, {
+  return openViewReadFetch("/dashboards/default", dashboardDefaultSchema, {
     cache: "no-store",
   });
 }

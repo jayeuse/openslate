@@ -22,7 +22,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("npm run check", source)
         self.assertIn("npm test", source)
         self.assertIn("npm run build", source)
-        self.assertIn("timeout-minutes: 12", source)
+        self.assertIn("timeout-minutes: 25", source)
 
     def test_frontend_installs_the_locked_playwright_chromium_browser(self):
         source = self.source("frontend.yml")

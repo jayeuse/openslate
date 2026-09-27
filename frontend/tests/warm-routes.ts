@@ -1,0 +1,36 @@
+import type { FullConfig } from "@playwright/test";
+
+// The HTTP tests run against `next dev`, which compiles each route on its
+// first request. On a loaded CI runner a cold compile can outlast a test's
+// 5s expectation (a sign-in that lands on /openview or /sandbox), so every
+// route the tests open is compiled once before they start.
+const routes = [
+  "/login",
+  "/setup",
+  "/auth/setup",
+  "/auth/recovery",
+  "/access-restricted",
+  "/openview",
+  "/sandbox",
+  "/boards",
+  "/comms",
+  "/access",
+  "/manage",
+  "/platform",
+  "/settings/appearance",
+];
+
+export default async function warmRoutes(config: FullConfig): Promise<void> {
+  const baseURL = config.projects.find((project) => project.use.baseURL)?.use
+    .baseURL;
+  if (!baseURL || !config.webServer) return;
+  for (const route of routes) {
+    try {
+      await fetch(new URL(route, baseURL), {
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch {
+      // A route that fails to warm still compiles on first use in its test.
+    }
+  }
+}

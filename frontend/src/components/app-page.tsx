@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { AppQueryProvider } from "@/components/query-provider";
 import {
   clearAccessDraftsForAccountChange,
   clearVerifiedWorkspaceSessionSnapshot,
@@ -325,7 +326,9 @@ export function AppPage({ children }: AppPageProps) {
           key={verifiedUserId}
           userId={verifiedUserId}
         >
-          <AppShell verifiedUserId={verifiedUserId}>{children}</AppShell>
+          <AppQueryProvider>
+            <AppShell verifiedUserId={verifiedUserId}>{children}</AppShell>
+          </AppQueryProvider>
           {unavailable && !checking && (
             <div
               className="bg-destructive text-destructive-foreground fixed right-4 bottom-4 z-[80] flex max-w-sm items-center gap-3 rounded-md px-4 py-3 text-sm shadow-lg"

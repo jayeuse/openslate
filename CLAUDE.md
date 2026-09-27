@@ -43,6 +43,27 @@ Required for every change that affects rendered UI. Code review alone is not ver
 Correct: `Screenshots at 1440 and 390 show the toolbar wraps on mobile; moved actions into the overflow menu; second round clean; ui-reviewer: ship.`
 Wrong: `Updated the toolbar styles; should look good on mobile now.`
 
+## Advisor (Fable)
+
+The advisor is Fable, set with `/advisor fable` in user settings. Subagents inherit it. Fable has its own weekly limit, separate from the normal limit, so consult it at real decision points; do not ration it to zero, and do not call it on routine turns. Each call reads the full transcript again, so a call late in a long session costs more.
+
+Consult the advisor:
+
+1. Before committing to a design direction, layout approach, or component structure for a new or redesigned surface.
+2. After two screenshot rounds that still show a material problem, or when the same error repeats after a fix.
+3. Before reporting a large UI change as done, after `ui-reviewer` or `impeccable-finish-reviewer` has returned. Give it the reviewer's findings and your fixes.
+4. When a reviewer and your own evidence disagree.
+
+Do not consult it for token or copy tweaks, lint and format fixes, single-component styling changes, or questions that the design files already answer.
+
+If the advisor is unavailable or declines, continue and state it in one line in the final report.
+
+Correct: `Three layout options for /boards: dense table, card grid, split view. Consulting the advisor before choosing.`
+Wrong: `Changed the button padding from 8 to 10; consulting the advisor to confirm.`
+
+Correct: `Mobile toolbar still overflows after two rounds. Consulting the advisor with both screenshots and the two attempted fixes.`
+Wrong: `Toolbar still overflows. Trying a third and fourth variation.`
+
 ## Impeccable hook
 
 The impeccable design hook runs after each Edit/Write on UI files and again at Stop (configured in `.claude/settings.json`). Treat its findings with the triage rules in `.agents/skills/impeccable/reference/hooks.md`: fix real problems, never add an ignore to skip a fix, and ask before `ignore-file` or `ignore-rule`.

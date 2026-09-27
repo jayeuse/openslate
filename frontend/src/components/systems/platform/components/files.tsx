@@ -79,7 +79,9 @@ export default function Files({
             <p className="text-muted-foreground text-sm">
               Example attachment metadata. No real file was uploaded.
             </p>
-            <h3 className="text-sm font-medium">Attached to</h3>
+            <h3 data-slot="section-title" className="text-sm font-medium">
+              Attached to
+            </h3>
             <Link
               className="block min-h-11 rounded-lg border p-3 text-sm underline"
               href={`/openview?record=${encodeURIComponent(file.recordId)}`}

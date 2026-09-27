@@ -101,7 +101,9 @@ function AccessReadError({
     <div className="flex h-full items-center justify-center p-5" role="alert">
       <div className="w-full max-w-lg space-y-4 rounded-lg border p-6">
         <div>
-          <h1 className="text-xl font-semibold">Access data is unavailable</h1>
+          <h1 data-slot="page-title" className="text-xl font-semibold">
+            Access data is unavailable
+          </h1>
           <p className="text-muted-foreground mt-2 text-sm">{message}</p>
         </div>
         <Button className="min-h-11" onClick={onRetry}>

@@ -368,6 +368,7 @@ export function BackupPanel({ snapshots, actions }: BackupPanelProps) {
           <header className="flex flex-wrap items-start justify-between gap-3 border-b p-4">
             <div className="min-w-0">
               <h2
+                data-slot="section-title"
                 id={`${id}-snapshots-heading`}
                 className="text-lg font-semibold"
               >
@@ -601,7 +602,10 @@ export function BackupPanel({ snapshots, actions }: BackupPanelProps) {
                   <X aria-hidden="true" />
                 </Button>
               </div>
-              <h2 className="min-w-0 text-lg font-semibold break-words">
+              <h2
+                data-slot="section-title"
+                className="min-w-0 text-lg font-semibold break-words"
+              >
                 {selectedSnapshot.name}
               </h2>
               <time
@@ -619,7 +623,9 @@ export function BackupPanel({ snapshots, actions }: BackupPanelProps) {
 
             <div className="flex min-w-0 flex-col gap-4 p-4">
               <div className="flex min-w-0 items-center justify-between gap-3">
-                <h3 className="font-semibold">Saved configuration</h3>
+                <h3 data-slot="section-title" className="font-semibold">
+                  Saved configuration
+                </h3>
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={

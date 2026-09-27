@@ -554,6 +554,7 @@ export function AnnouncementFeed({
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h2
+            data-slot="section-title"
             id="announcements-title"
             className="text-xl font-semibold tracking-tight"
           >

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
@@ -278,6 +279,7 @@ export function ServerBoardRecordLinks(props: Props) {
           <label className="block space-y-1 text-sm">
             <span>Data source</span>
             <select
+              data-slot="select"
               aria-label="Record data source"
               className="border-input bg-background min-h-11 w-full rounded-md border px-3"
               value={moduleId}
@@ -318,8 +320,8 @@ export function ServerBoardRecordLinks(props: Props) {
             <>
               <label className="block space-y-1 text-sm">
                 <span>Search Records</span>
-                <input
-                  className="border-input bg-background min-h-11 w-full rounded-md border px-3"
+                <Input
+                  className="bg-background text-foreground min-h-11 rounded-md"
                   maxLength={240}
                   value={search}
                   onChange={(event) => {
@@ -340,6 +342,7 @@ export function ServerBoardRecordLinks(props: Props) {
                   <label className="block space-y-1 text-sm">
                     <span>Record</span>
                     <select
+                      data-slot="select"
                       aria-label="Record to link"
                       className="border-input bg-background min-h-11 w-full rounded-md border px-3"
                       value={recordId}
@@ -391,8 +394,8 @@ export function ServerBoardRecordLinks(props: Props) {
           )}
           <label className="block space-y-1 text-sm">
             <span>Link label</span>
-            <input
-              className="border-input bg-background min-h-11 w-full rounded-md border px-3"
+            <Input
+              className="bg-background text-foreground min-h-11 rounded-md"
               maxLength={100}
               value={label}
               disabled={!selectedRecord || pending}

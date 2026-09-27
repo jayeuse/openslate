@@ -1,6 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../../src/lib/api";
 import type { BoardManagementBoard } from "../../src/components/systems/boards/adapters/board-management-api";
 import {
@@ -15,7 +13,6 @@ import {
   type ResourceState,
 } from "../../src/components/systems/boards/hooks/use-server-boards";
 import {
-  ServerBackedBoardsLoading,
   boardSearchEmptyCopy,
   isSelectedBoardAnnouncementManagerOpen,
   isSelectedBoardWidgetManagerOpen,
@@ -377,12 +374,4 @@ test("transient errors do not globally clear retained Board resources", () => {
     "Favorite and home IDs",
     "Selected Board outside page",
   ]);
-});
-
-test("initial server-backed shell renders a loading state without sample Board content", () => {
-  const html = renderToStaticMarkup(createElement(ServerBackedBoardsLoading));
-  expect(html).toContain('role="status"');
-  expect(html).toContain("Loading Boards");
-  expect(html).not.toContain("Organization board");
-  expect(html).not.toContain("sample-board");
 });

@@ -832,6 +832,7 @@ export function PermissionRules({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2
+              data-slot="section-title"
               id="rules-title"
               tabIndex={-1}
               className="text-base font-semibold tracking-tight"
@@ -1564,7 +1565,7 @@ export function PermissionRules({
       {uncertainDraft ? (
         <Card>
           <CardContent className="space-y-3 p-3">
-            <h3 className="font-semibold">
+            <h3 data-slot="section-title" className="font-semibold">
               Current policy and saved Rules choices
             </h3>
             <p className="text-muted-foreground text-sm">

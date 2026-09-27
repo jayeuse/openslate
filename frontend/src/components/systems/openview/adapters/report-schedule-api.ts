@@ -6,6 +6,7 @@ import {
   apiRequest,
   type ApiRequestInit,
 } from "@/lib/api";
+import { isReadRequest, openViewReadFetch } from "./openview-access";
 
 const uuidSchema = z.string().uuid();
 const canonicalUuidSchema = uuidSchema.transform((value) =>
@@ -204,7 +205,11 @@ async function safeScheduleJson(
   init: ApiRequestInit,
 ): Promise<OpenViewReportSchedule> {
   try {
-    return await apiFetch(path, wireScheduleSchema, init);
+    return await (isReadRequest(init) ? openViewReadFetch : apiFetch)(
+      path,
+      wireScheduleSchema,
+      init,
+    );
   } catch (error) {
     if (error instanceof ApiError)
       return safeScheduleError(error.status, error.details);

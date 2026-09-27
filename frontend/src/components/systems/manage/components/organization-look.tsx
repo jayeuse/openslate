@@ -86,7 +86,11 @@ export function OrganizationLook() {
 
   return (
     <section aria-labelledby={headingId} className="min-w-0 lg:col-span-2">
-      <h2 id={headingId} className="text-lg font-semibold tracking-tight">
+      <h2
+        data-slot="section-title"
+        id={headingId}
+        className="text-lg font-semibold tracking-tight"
+      >
         Organization look
       </h2>
       <p className="text-muted-foreground mt-1 max-w-prose text-sm leading-6">

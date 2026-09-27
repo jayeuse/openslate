@@ -29,6 +29,9 @@ try {
   };
   const mode = preference("openslate-theme", "light", ["light", "dark"]);
   root.classList.toggle("dark", mode === "dark");
+  // Reduce motion chosen in Appearance (lib/appearance-preferences.ts).
+  if (localStorage.getItem("openslate-motion") === "reduced")
+    root.dataset.motion = "reduced";
   // Organization look (lib/appearance-preferences.ts). Slate is the default.
   const theme = preference("openslate-org-theme", "slate", [
     "slate",

@@ -4,6 +4,7 @@ import {
   getWorkspaceLocation,
   getWorkspaceNavigation,
   isWorkspaceNavigationItemActive,
+  currentNavigationKey,
 } from "../../src/components/workspace-navigation";
 
 function item(
@@ -321,4 +322,14 @@ test("every workspace describes what it holds in one short line", () => {
     ["manage", "Organization settings and audit"],
     ["platform", "Account, files, and alerts"],
   ]);
+});
+
+test("the current navigation key follows the route and its section", () => {
+  const key = (path: string, search = "") =>
+    currentNavigationKey(path, new URLSearchParams(search));
+  expect(key("/sandbox", "section=history")).toBe("sandbox:history");
+  expect(key("/sandbox")).toBe("sandbox:build");
+  expect(key("/comms")).toBe("comms");
+  expect(key("/settings/appearance")).toBe("appearance");
+  expect(key("/login")).toBeNull();
 });

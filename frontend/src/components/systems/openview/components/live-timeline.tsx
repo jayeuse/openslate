@@ -19,6 +19,7 @@ import type { OpenViewWindowQueryRequest } from "../adapters/window-api";
 import type { OpenViewDataSourceField } from "../adapters/views-api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import {
   Empty,
   EmptyDescription,
@@ -185,12 +186,12 @@ export function LiveTimeline({
   };
 
   return (
-    <section
-      className="bg-card min-w-0 overflow-hidden rounded-[var(--radius)] border"
+    <Card
+      className="min-w-0 self-auto overflow-hidden"
       aria-label="Timeline records"
     >
-      <header className="border-b px-4 py-3">
-        <h2 className="font-medium">
+      <header data-slot="card-header" className="border-b px-4 py-3">
+        <h2 data-slot="section-title" className="font-medium">
           Timeline · {startField.name} through {endField.name}
         </h2>
         <p className="text-muted-foreground text-sm">
@@ -444,6 +445,6 @@ export function LiveTimeline({
           }
         />
       ) : null}
-    </section>
+    </Card>
   );
 }

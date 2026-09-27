@@ -8,6 +8,8 @@ import { ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { LoadingRegion } from "@/components/ui/loading-region";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import type { SandboxCanvasLayout } from "@/lib/sandbox/model";
 import {
@@ -29,7 +31,10 @@ import type { SandboxOrganizationTemplate } from "./domain/templates";
 import { openingModuleId } from "./domain/opening-module";
 import { summarizeTestRun, testTraceSteps } from "./domain/test-run-summary";
 import { canvasFieldId } from "./helpers/bridge";
-import { clearSandboxViewPreferences } from "./helpers/view-preferences";
+import {
+  SANDBOX_WORKBENCH_DEFAULT_WIDTH,
+  clearSandboxViewPreferences,
+} from "./helpers/view-preferences";
 import { Designer } from "./components/designer";
 import type {
   SandboxCommandFailure,
@@ -168,6 +173,70 @@ function emptyDocument(): SandboxDocumentV2 {
   });
 }
 
+// LoadingRegion wraps its content in one unstyled element, so the section's
+// spacing and the Build section's wide-screen column carry through `*:`.
+const sandboxRegionClass = "*:space-y-5";
+const sandboxBuildRegionClass =
+  "*:space-y-5 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:*:flex xl:*:min-h-0 xl:*:flex-1 xl:*:flex-col xl:*:gap-5 xl:*:space-y-0";
+
+/**
+ * The Build canvas and its properties panel (phones and tablets: the pane
+ * tabs over the canvas), or one panel for the other sections, then the
+ * footer line.
+ */
+function SandboxSkeleton({ build }: { build: boolean }) {
+  return (
+    <>
+      {build ? (
+        <div className="flex flex-col gap-3 xl:min-h-0 xl:flex-1">
+          <Skeleton className="h-13 w-full xl:hidden" />
+          <div className="sandbox-ui border-card-edge bg-card shadow-card flex overflow-hidden rounded-xl border xl:min-h-0 xl:flex-1">
+            <div className="border-border flex min-w-0 flex-1 flex-col xl:border-r">
+              <div className="flex items-center gap-2 border-b px-4 py-1">
+                <Skeleton className="hidden h-4 w-24 sm:block" />
+                <div className="flex flex-1 items-center gap-1 py-1">
+                  <Skeleton className="size-11" />
+                  <Skeleton className="h-4 w-12" />
+                  <Skeleton className="size-11" />
+                  <Skeleton className="h-11 w-16" />
+                  <Skeleton className="h-11 w-16" />
+                </div>
+              </div>
+              <div className="flex h-[420px] flex-wrap content-start gap-6 overflow-hidden p-6 xl:h-auto xl:min-h-0 xl:flex-1">
+                <Skeleton className="h-36 w-56 rounded-xl" />
+                <Skeleton className="h-36 w-56 rounded-xl" />
+                <Skeleton className="h-36 w-56 rounded-xl" />
+              </div>
+            </div>
+            <div className="bg-border hidden w-px shrink-0 xl:block" />
+            <div
+              className="hidden shrink-0 flex-col gap-4 p-4 xl:flex"
+              style={{ width: SANDBOX_WORKBENCH_DEFAULT_WIDTH }}
+            >
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-5 w-32" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-5 w-40" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="border-card-edge bg-card shadow-card flex flex-col gap-4 rounded-xl border p-4">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-3/4" />
+        </div>
+      )}
+      <div className="border-border flex justify-between gap-2 border-t pt-3">
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-4 w-12" />
+      </div>
+    </>
+  );
+}
+
 export default function SandboxPage() {
   const search = useSearchParams();
   const router = useRouter();
@@ -185,6 +254,8 @@ export default function SandboxPage() {
   const [loadError, setLoadError] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
+  // Bumped by each successful Publish; the look's title signature plays once.
+  const [publishCount, setPublishCount] = useState(0);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -686,12 +757,6 @@ export default function SandboxPage() {
     }
   }, [conflict, persist]);
 
-  if (loading)
-    return (
-      <section data-sandbox-page aria-busy="true">
-        <p role="status">Opening Sandbox…</p>
-      </section>
-    );
   if (loadError && !session)
     return (
       <section data-sandbox-page>
@@ -737,12 +802,14 @@ export default function SandboxPage() {
         <div className="flex flex-col gap-3 xl:contents">
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
             <h1
+              key={publishCount}
               data-slot="page-title"
+              data-signature={publishCount > 0 ? "play" : undefined}
               className="text-xl font-semibold tracking-tight sm:text-2xl"
             >
               Organization builder
             </h1>
-            <Badge variant="outline">{status.label}</Badge>
+            {loading ? null : <Badge variant="outline">{status.label}</Badge>}
           </div>
           <div className="flex shrink-0 gap-2">
             {section === "Build" ? (
@@ -751,7 +818,7 @@ export default function SandboxPage() {
                   variant="outline"
                   aria-label="Undo"
                   className="max-xl:size-11 max-xl:p-0"
-                  disabled={!session?.history.past.length || pending}
+                  disabled={loading || !session?.history.past.length || pending}
                   onClick={() => void undo()}
                 >
                   <Undo2 data-icon="inline-start" />
@@ -761,7 +828,9 @@ export default function SandboxPage() {
                   variant="outline"
                   aria-label="Redo"
                   className="max-xl:size-11 max-xl:p-0"
-                  disabled={!session?.history.future.length || pending}
+                  disabled={
+                    loading || !session?.history.future.length || pending
+                  }
                   onClick={() => void redo()}
                 >
                   <Redo2 data-icon="inline-start" />
@@ -771,6 +840,7 @@ export default function SandboxPage() {
             ) : null}
             <Button
               disabled={
+                loading ||
                 pending ||
                 testPending ||
                 !status.publishable ||
@@ -783,6 +853,7 @@ export default function SandboxPage() {
             </Button>
             <SandboxHeaderActions
               pending={
+                loading ||
                 pending ||
                 testPending ||
                 automationDraft.dirty ||
@@ -802,211 +873,229 @@ export default function SandboxPage() {
           </div>
         </div>
       </header>
-      {message ? <Alert role="status">{message}</Alert> : null}
-      {issues.length ? (
-        <Alert variant="warning" role="status">
-          <p>
-            {issues.length} item{issues.length === 1 ? "" : "s"} need attention.
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {issues.slice(0, 3).map((issue) => (
-              <Button
-                key={`${issue.code}-${issue.targetId ?? ""}`}
-                variant="outline"
-                size="sm"
-                onClick={() => selectIssue(issue)}
-              >
-                Review: {issue.message}
-              </Button>
-            ))}
-          </div>
-        </Alert>
-      ) : null}
-      {section === "Build" ? (
-        <Designer
-          key={`${requestedSelection}-${sandboxGeneration}`}
-          initialSelected={requestedSelection}
-          inspectOnOpen={linkedSelection !== null && traceTarget === null}
-          focusTargetId={requestedFocusTarget}
-          traceTargetId={traceTarget}
-          traceSteps={traceSteps}
-          onBackToTest={() => {
-            // Return to the same result: keep the run, drop the trace.
-            const params = new URLSearchParams(search.toString());
-            params.delete("trace");
-            params.set("section", "test");
-            router.push(`/sandbox?${params.toString()}`, { scroll: false });
-          }}
-          design={design}
-          change={change}
-          initializeLayout={initializeLayout}
-          notify={setMessage}
-          onViewPreferenceChange={() => undefined}
-          createRequest={null}
-          onCreateRequestHandled={() => undefined}
-          onStartFromTemplate={() => setTemplatesOpen(true)}
-          pending={pending}
-        />
-      ) : null}
-      {section === "Automations" && session ? (
-        <AutomationStudio
-          design={session.document.design}
-          automations={session.document.automations}
-          runs={automationRuns}
-          activity={automationActivity}
-          initialSelectedId={search.get("rule") ?? undefined}
-          onRefreshActivity={refreshAutomationActivity}
-          onChange={(automations) =>
-            saveDocument({ ...session.document, automations })
-          }
-          onStateChange={setAutomationDraft}
-        />
-      ) : null}
-      {section === "Test" && session ? (
-        <TestWorkspace
-          design={session.document.design}
-          automations={session.document.automations}
-          runs={testRuns}
-          onRun={async (input) => {
-            const run = await createSandboxTest({
-              expectedRevision: session.revision,
-              ...input,
-            });
-            setTestRuns((current) => [
-              run,
-              ...current.filter((item) => item.id !== run.id),
-            ]);
-          }}
-          onClear={async () => {
-            await clearSandboxTests();
-            setTestRuns([]);
-          }}
-          onPendingChange={setTestPending}
-          draftRevision={session.revision}
-          initialRunId={search.get("run")}
-          onShowOnCanvas={(run) => {
-            const params = new URLSearchParams(search.toString());
-            for (const key of ["inspect", "module", "department", "rule"])
-              params.delete(key);
-            params.set("trace", run.input.moduleId);
-            params.set("run", run.id);
-            params.set("section", "build");
-            router.push(`/sandbox?${params.toString()}`, { scroll: false });
-          }}
-        />
-      ) : null}
-      {section === "History" ? (
-        <VersionsWorkspace
-          versions={versions}
-          getVersion={async (id) => {
-            try {
-              return { ok: true as const, value: await getSandboxVersion(id) };
-            } catch (error) {
-              return commandFailure(error);
+      <LoadingRegion
+        // Only the first load shows the skeleton; a refresh (after Publish,
+        // Retry, or a restore) keeps the builder on screen.
+        loading={loading && session === null}
+        label="Opening Sandbox"
+        skeleton={<SandboxSkeleton build={section === "Build"} />}
+        className={
+          section === "Build" ? sandboxBuildRegionClass : sandboxRegionClass
+        }
+      >
+        {message ? <Alert role="status">{message}</Alert> : null}
+        {issues.length ? (
+          <Alert variant="warning" role="status">
+            <p>
+              {issues.length} item{issues.length === 1 ? "" : "s"} need
+              attention.
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {issues.slice(0, 3).map((issue) => (
+                <Button
+                  key={`${issue.code}-${issue.targetId ?? ""}`}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => selectIssue(issue)}
+                >
+                  Review: {issue.message}
+                </Button>
+              ))}
+            </div>
+          </Alert>
+        ) : null}
+        {section === "Build" ? (
+          <Designer
+            key={`${requestedSelection}-${sandboxGeneration}`}
+            initialSelected={requestedSelection}
+            inspectOnOpen={linkedSelection !== null && traceTarget === null}
+            focusTargetId={requestedFocusTarget}
+            traceTargetId={traceTarget}
+            traceSteps={traceSteps}
+            onBackToTest={() => {
+              // Return to the same result: keep the run, drop the trace.
+              const params = new URLSearchParams(search.toString());
+              params.delete("trace");
+              params.set("section", "test");
+              router.push(`/sandbox?${params.toString()}`, { scroll: false });
+            }}
+            design={design}
+            change={change}
+            initializeLayout={initializeLayout}
+            notify={setMessage}
+            onViewPreferenceChange={() => undefined}
+            createRequest={null}
+            onCreateRequestHandled={() => undefined}
+            onStartFromTemplate={() => setTemplatesOpen(true)}
+            pending={pending}
+          />
+        ) : null}
+        {section === "Automations" && session ? (
+          <AutomationStudio
+            design={session.document.design}
+            automations={session.document.automations}
+            runs={automationRuns}
+            activity={automationActivity}
+            initialSelectedId={search.get("rule") ?? undefined}
+            onRefreshActivity={refreshAutomationActivity}
+            onChange={(automations) =>
+              saveDocument({ ...session.document, automations })
             }
-          }}
-          updateVersion={async (id, label) => {
-            if (!session) return sandboxStillLoading();
-            setPending(true);
-            try {
-              const version = await updateSandboxVersion({
-                versionId: id,
+            onStateChange={setAutomationDraft}
+          />
+        ) : null}
+        {section === "Test" && session ? (
+          <TestWorkspace
+            design={session.document.design}
+            automations={session.document.automations}
+            runs={testRuns}
+            onRun={async (input) => {
+              const run = await createSandboxTest({
                 expectedRevision: session.revision,
-                label,
+                ...input,
               });
-              await syncVersionMetadata();
-              return { ok: true as const, value: version };
-            } catch (error) {
-              return commandFailure(error);
-            } finally {
-              setPending(false);
+              setTestRuns((current) => [
+                run,
+                ...current.filter((item) => item.id !== run.id),
+              ]);
+            }}
+            onClear={async () => {
+              await clearSandboxTests();
+              setTestRuns([]);
+            }}
+            onPendingChange={setTestPending}
+            draftRevision={session.revision}
+            initialRunId={search.get("run")}
+            onShowOnCanvas={(run) => {
+              const params = new URLSearchParams(search.toString());
+              for (const key of ["inspect", "module", "department", "rule"])
+                params.delete(key);
+              params.set("trace", run.input.moduleId);
+              params.set("run", run.id);
+              params.set("section", "build");
+              router.push(`/sandbox?${params.toString()}`, { scroll: false });
+            }}
+          />
+        ) : null}
+        {section === "History" ? (
+          <VersionsWorkspace
+            versions={versions}
+            getVersion={async (id) => {
+              try {
+                return {
+                  ok: true as const,
+                  value: await getSandboxVersion(id),
+                };
+              } catch (error) {
+                return commandFailure(error);
+              }
+            }}
+            updateVersion={async (id, label) => {
+              if (!session) return sandboxStillLoading();
+              setPending(true);
+              try {
+                const version = await updateSandboxVersion({
+                  versionId: id,
+                  expectedRevision: session.revision,
+                  label,
+                });
+                await syncVersionMetadata();
+                return { ok: true as const, value: version };
+              } catch (error) {
+                return commandFailure(error);
+              } finally {
+                setPending(false);
+              }
+            }}
+            restoreVersion={async (id) => {
+              if (!session) return sandboxStillLoading();
+              setPending(true);
+              try {
+                const response = await restoreSandboxVersion({
+                  versionId: id,
+                  expectedRevision: session.revision,
+                });
+                setSession(openSandboxDocumentSession(response));
+                await refreshVersions();
+                return { ok: true as const, value: response };
+              } catch (error) {
+                return commandFailure(error);
+              } finally {
+                setPending(false);
+              }
+            }}
+            deleteVersion={async (id) => {
+              if (!session) return sandboxStillLoading();
+              setPending(true);
+              try {
+                await deleteSandboxVersion({
+                  versionId: id,
+                  expectedRevision: session.revision,
+                });
+                await syncVersionMetadata();
+                return { ok: true as const, value: null };
+              } catch (error) {
+                return commandFailure(error);
+              } finally {
+                setPending(false);
+              }
+            }}
+            notify={setMessage}
+            pending={pending}
+          />
+        ) : null}
+        <footer className="border-border text-muted-foreground flex flex-wrap justify-between gap-2 border-t pt-3 text-xs">
+          <span>{counts(design)}</span>
+          <span>
+            Draft
+            {session?.history.past.length
+              ? ` · ${session.history.past.length} ${session.history.past.length === 1 ? "change" : "changes"} you can undo`
+              : ""}
+          </span>
+        </footer>
+        {session ? (
+          <ReviewPublishDialog
+            open={reviewOpen}
+            expectedRevision={session.revision}
+            design={session.document.design}
+            disabled={
+              pending ||
+              Boolean(conflict) ||
+              automationDraft.dirty ||
+              automationDraft.pending
             }
-          }}
-          restoreVersion={async (id) => {
-            if (!session) return sandboxStillLoading();
-            setPending(true);
-            try {
-              const response = await restoreSandboxVersion({
-                versionId: id,
+            localBlockers={automationPublicationBlockers(
+              session.document.automations,
+              session.document.design,
+            )}
+            onOpenChange={setReviewOpen}
+            onPendingChange={setPublicationPending}
+            onPreview={() =>
+              createSandboxPublicationPreview({
                 expectedRevision: session.revision,
-              });
-              setSession(openSandboxDocumentSession(response));
-              await refreshVersions();
-              return { ok: true as const, value: response };
-            } catch (error) {
-              return commandFailure(error);
-            } finally {
-              setPending(false);
+              })
             }
-          }}
-          deleteVersion={async (id) => {
-            if (!session) return sandboxStillLoading();
-            setPending(true);
-            try {
-              await deleteSandboxVersion({
-                versionId: id,
+            onPublish={({ preview, password, note, idempotencyKey }) =>
+              publishSandbox({
                 expectedRevision: session.revision,
-              });
-              await syncVersionMetadata();
-              return { ok: true as const, value: null };
-            } catch (error) {
-              return commandFailure(error);
-            } finally {
-              setPending(false);
+                previewToken: preview.previewToken,
+                impactDigest: preview.impactDigest,
+                password,
+                ...(note ? { note } : {}),
+                idempotencyKey,
+              })
             }
-          }}
-          notify={setMessage}
-          pending={pending}
-        />
-      ) : null}
-      <footer className="border-border text-muted-foreground flex flex-wrap justify-between gap-2 border-t pt-3 text-xs">
-        <span>{counts(design)}</span>
-        <span>
-          Draft
-          {session?.history.past.length
-            ? ` · ${session.history.past.length} ${session.history.past.length === 1 ? "change" : "changes"} you can undo`
-            : ""}
-        </span>
-      </footer>
-      {session ? (
-        <ReviewPublishDialog
-          open={reviewOpen}
-          expectedRevision={session.revision}
-          design={session.document.design}
-          disabled={
-            pending ||
-            Boolean(conflict) ||
-            automationDraft.dirty ||
-            automationDraft.pending
-          }
-          localBlockers={automationPublicationBlockers(
-            session.document.automations,
-            session.document.design,
-          )}
-          onOpenChange={setReviewOpen}
-          onPendingChange={setPublicationPending}
-          onPreview={() =>
-            createSandboxPublicationPreview({
-              expectedRevision: session.revision,
-            })
-          }
-          onPublish={({ preview, password, note, idempotencyKey }) =>
-            publishSandbox({
-              expectedRevision: session.revision,
-              previewToken: preview.previewToken,
-              impactDigest: preview.impactDigest,
-              password,
-              ...(note ? { note } : {}),
-              idempotencyKey,
-            })
-          }
-          onPublished={async () => {
-            await refresh();
-            if (section === "Automations") await refreshAutomationActivity();
-            setMessage("Your changes are now published to the live workspace.");
-          }}
-        />
-      ) : null}
+            onPublished={async () => {
+              await refresh();
+              if (section === "Automations") await refreshAutomationActivity();
+              setMessage(
+                "Your changes are now published to the live workspace.",
+              );
+              setPublishCount((count) => count + 1);
+            }}
+          />
+        ) : null}
+      </LoadingRegion>
     </section>
   );
 }

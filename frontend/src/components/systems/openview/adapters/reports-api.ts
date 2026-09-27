@@ -6,6 +6,11 @@ import {
   apiRequest,
   type ApiRequestInit,
 } from "@/lib/api";
+import {
+  isReadRequest,
+  openViewReadFetch,
+  trackOpenViewRead,
+} from "./openview-access";
 import type { OpenViewPage } from "./views-api";
 import {
   serializeOpenViewQueryDefinition,
@@ -583,7 +588,11 @@ async function safeReportJson<Schema extends z.ZodType>(
   init?: ApiRequestInit,
 ): Promise<z.output<Schema>> {
   try {
-    return await apiFetch(path, schema, init);
+    return await (isReadRequest(init) ? openViewReadFetch : apiFetch)(
+      path,
+      schema,
+      init,
+    );
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
     return throwSafeResponseError(error.status, { detail: error.details });
@@ -825,11 +834,15 @@ export async function downloadOpenViewReportRunCsv(
     reportId: rawReportId,
     runId: rawRunId,
   });
-  const response = await apiRequest(
-    `/reports/${encodeURIComponent(input.reportId)}/runs/${encodeURIComponent(input.runId)}/csv`,
-    { cache: "no-store" },
-  );
-  if (!response.ok) return throwCsvResponseError(response);
+  // The CSV output needs records.read like every Report read.
+  const response = await trackOpenViewRead(async () => {
+    const reply = await apiRequest(
+      `/reports/${encodeURIComponent(input.reportId)}/runs/${encodeURIComponent(input.runId)}/csv`,
+      { cache: "no-store" },
+    );
+    if (!reply.ok) return throwCsvResponseError(reply);
+    return reply;
+  });
 
   const contentType = response.headers
     .get("Content-Type")

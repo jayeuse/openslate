@@ -291,3 +291,23 @@ export function isWorkspaceNavigationGroupActive(
 ): boolean {
   return group.href.split("?")[0] === pathname;
 }
+
+/** OpenComms and Appearance sit below the sidebar groups. */
+const COMMS_NAVIGATION_KEY = "comms";
+const APPEARANCE_NAVIGATION_KEY = "appearance";
+
+/** The navigation key of the place a URL shows, or null outside the sidebar. */
+export function currentNavigationKey(
+  pathname: string,
+  searchParams: URLSearchParams,
+  hash = "",
+): string | null {
+  if (pathname === "/comms" || pathname.startsWith("/comms/"))
+    return COMMS_NAVIGATION_KEY;
+  if (pathname === "/settings/appearance") return APPEARANCE_NAVIGATION_KEY;
+  const definition = workspaceNavigationDefinitions.find(
+    (candidate) => candidate.pathname === pathname,
+  );
+  if (!definition) return null;
+  return `${definition.id}:${sectionFor(definition, searchParams, hash)}`;
+}

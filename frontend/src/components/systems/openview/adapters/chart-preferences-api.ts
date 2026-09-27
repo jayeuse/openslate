@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { apiFetch } from "@/lib/api";
+import { openViewReadFetch } from "./openview-access";
 import type { OpenViewQueryDefinition } from "./views-api";
 
 const uuidSchema = z.string().uuid();
@@ -229,7 +230,7 @@ function wireConfig(config: OpenViewChartPreferenceConfig) {
 }
 
 export async function getOpenViewChartPreferences(): Promise<OpenViewChartPreferences> {
-  return apiFetch("/charts/preferences", wireResponseSchema);
+  return openViewReadFetch("/charts/preferences", wireResponseSchema);
 }
 
 export async function putOpenViewChartPreferences(

@@ -15,6 +15,7 @@ import type {
 import type { RecordInspectionPage } from "./live-record-inspector";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import {
   Empty,
@@ -552,12 +553,14 @@ export function LiveCalendar({
   const monthLayout = scope === "window" && scale === "month";
 
   return (
-    <section
-      className="bg-card min-w-0 overflow-hidden rounded-[var(--radius)] border"
+    <Card
+      className="min-w-0 self-auto overflow-hidden"
       aria-label={scale === "list" ? "Calendar list view" : "Calendar"}
     >
-      <header className="border-b px-4 py-3">
-        <h2 className="font-medium">Calendar · {dateFieldTitle}</h2>
+      <header data-slot="card-header" className="border-b px-4 py-3">
+        <h2 data-slot="section-title" className="font-medium">
+          Calendar · {dateFieldTitle}
+        </h2>
         <p className="text-muted-foreground text-sm">
           Live records grouped by their selected schedule date.
         </p>
@@ -894,6 +897,6 @@ export function LiveCalendar({
           }
         />
       ) : null}
-    </section>
+    </Card>
   );
 }

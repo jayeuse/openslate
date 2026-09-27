@@ -150,7 +150,9 @@ export function ModerationFields({
         </div>
       </FieldSet>
       <Separator />
-      <h3 className="font-medium">Message reports</h3>
+      <h3 data-slot="section-title" className="font-medium">
+        Message reports
+      </h3>
       {!config.reports.length && (
         <Empty>
           <EmptyHeader>
@@ -202,7 +204,9 @@ export function ModerationFields({
         );
       })}
       <Separator />
-      <h3 className="font-medium">Recoverable messages</h3>
+      <h3 data-slot="section-title" className="font-medium">
+        Recoverable messages
+      </h3>
       {!Object.keys(config.tombstones).length && (
         <Empty>
           <EmptyHeader>

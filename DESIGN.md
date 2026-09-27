@@ -249,7 +249,7 @@ Density is calm and practical: 14px body text, 36px buttons, hairline rules, and
 - Four signals with one meaning each: action, flow, warn, danger.
 - Department identity color is always beside the department name, never alone.
 - Every look passes WCAG AA in light and dark, checked by `npm run check`.
-- Motion is small and functional: color and opacity only, and none under reduced motion.
+- Motion explains where things came from and went: short, directional, and token-timed per look. Reduced motion keeps fades and color but removes travel.
 
 ### The four looks
 
@@ -273,7 +273,7 @@ Wrong: `{theme === "triplicate" && <span>Stamped</span>}` (theme-only markup, an
 **The Skin Place Rule.** A look restyles only through tokens and the named hooks. A new skin place is a shared hook that every look can use, added to the component once. The hooks are:
 
 - **Shell:** `data-skin="page"` on `main#main-content`, `data-skin="topbar"` on the app header, and `data-slot="sidebar"`, `data-slot="sidebar-container"`, and `data-slot="sidebar-inner"` on the sidebar.
-- **Type:** `data-slot="page-title"` (PageHeader), `card-title`, `field-label`, and `table-head`.
+- **Type:** `data-slot="page-title"` (one per page, on its h1), `section-title` (a heading for a part of a page that is not a card), `card-title`, `empty-title`, `field-label`, and `table-head`. A hand-made title or panel without its hook does not change with the look, so use the shared component or add the hook.
 - **Containers:** `data-slot="card"`, `card-header`, `dialog-content`, `sheet-content`, and `dropdown-menu-content`.
 - **Controls:** `data-slot="button"` (with `data-variant` and `data-size`), `input`, `select`, and `textarea`.
 - **Status and navigation:** `data-slot="badge"` (with `data-variant`), `alert` (with `data-variant`), `tabs-list`, and `tabs-trigger` (with `data-active`).
@@ -393,7 +393,7 @@ Wrong: a new chip tint that is checked only in Slate light.
 ### Hierarchy
 
 - **Headline** (600, 24px, 30px from 640px up, line height 1.25, -0.035em): page titles only, through `PageHeader` (`data-slot="page-title"`). One per page.
-- **Title Large** (600, 18px, 28px line, tight tracking): section headings inside a page, such as "Organization look".
+- **Title Large** (600, 18px, 28px line, tight tracking): section headings inside a page, such as "Organization look" (`data-slot="section-title"`).
 - **Title** (600, 16px): card titles (`data-slot="card-title"`).
 - **Body** (400, 14px, 20px line; descriptions use a 24px line and a 672px maximum width): the default text size for content, tables, and descriptions.
 - **Control** (500, 14px): buttons, tabs, field labels, table heads.
@@ -402,9 +402,9 @@ Wrong: a new chip tint that is checked only in Slate light.
 
 ### Skin places for type
 
-- Whiteboard: page titles at weight 700 with -0.01em tracking; card titles, buttons, chips, field labels, table heads, and the open tab at weight 700.
-- Triplicate: page titles at 88% width, weight 800, -0.01em tracking; card titles at 90% width, weight 700; field labels and table heads at 12px, 78% width, weight 700, 0.06em tracking, in `--ink-muted`; chips at 80% width, weight 800, 0.05em tracking; buttons at weight 650 with 0.01em tracking; ledger line numbers at 12px, 75% width, weight 700.
-- Stockroom: page titles in the stencil face, uppercase, weight 800, 0.03em tracking; card titles at 85% width, weight 800; field labels and table heads at 75% width, weight 800, 0.05em tracking; buttons at 88% width, weight 700; chips in the code face at 75% width, weight 600, 0.04em tracking.
+- Whiteboard: page titles at weight 700 with -0.01em tracking; card, section, and empty-state titles, buttons, chips, field labels, table heads, and the open tab at weight 700.
+- Triplicate: page titles at 88% width, weight 800, -0.01em tracking; card, section, and empty-state titles at 90% width, weight 700; field labels and table heads at 12px, 78% width, weight 700, 0.06em tracking, in `--ink-muted`; chips at 80% width, weight 800, 0.05em tracking; buttons at weight 650 with 0.01em tracking; ledger line numbers at 12px, 75% width, weight 700.
+- Stockroom: page titles in the stencil face, uppercase, weight 800, 0.03em tracking; card, section, and empty-state titles at 85% width, weight 800; field labels and table heads at 75% width, weight 800, 0.05em tracking; buttons at 88% width, weight 700; chips in the code face at 75% width, weight 600, 0.04em tracking.
 
 ### Named Rules
 
@@ -506,6 +506,56 @@ Correct: `[data-theme="triplicate"] [data-skin="page"] { background-image: repea
 
 Wrong: `[data-theme="whiteboard"] [data-skin="page"] { background: url(board-photo.jpg), linear-gradient(135deg, #fff, #dfe6ec); }` (a photo texture and a glossy sheen), or `backdrop-filter: blur(12px)` on a dialog.
 
+## Motion
+
+Motion answers what a person did; it never decorates and never makes them wait. Pages swap at once. Motion is timed by tokens that each look sets, so a look changes how things move without changing what moves.
+
+### Tokens
+
+`--motion-fast` (feedback and exits), `--motion-base` (routine state), `--motion-slow` (layout and authored moments), with `--ease-out` (arrivals), `--ease-in` (exits), and `--ease-in-out` (even strokes).
+
+| Look       | fast / base / slow | Signature (after a successful Publish)                |
+| ---------- | ------------------ | ----------------------------------------------------- |
+| Slate      | 140 / 220 / 360ms  | none                                                  |
+| Whiteboard | 110 / 180 / 320ms  | the page-title marker underline draws from the left   |
+| Triplicate | 120 / 200 / 340ms  | the page-title rule is written in one even stroke     |
+| Stockroom  | 160 / 260 / 420ms  | the stencilled page title is sprayed on from the left |
+
+### Navigation
+
+- **Instant swap.** A sidebar move, crumb, or link replaces the page body at once, with no view transition. A view transition makes the page body ignore clicks while it runs and makes React hold the next navigation, so rapid moves felt stuck (measured: 380–514ms per move with the old handoff, 25–27ms without).
+- **Active item.** The active section's fill is one element under the list (`data-slot="sidebar-active-indicator"`) that moves to the active link over `--motion-base` and follows groups as they open and close. It stays under the labels and inside the sidebar's scroll clipping.
+- **Groups and panels.** Sidebar groups open and close by height over `--motion-base`, with the chevron turning; the sidebar collapses over `--motion-base`; the phone menu sheet enters over `--motion-slow` and leaves over `--motion-base`.
+- **Signatures.** Each look's title signature plays once when Publish succeeds (`data-signature="play"` on the Sandbox page title), never on load or navigation.
+
+### Loading
+
+- **Frame first.** A page renders its title, description, and actions at once. Only the part that waits for data loads.
+- **One pattern.** Data regions use `LoadingRegion` (`components/ui/loading-region.tsx`) with a skeleton built from `Skeleton` that matches the real layout: the same rows, panes, and heights, so nothing moves when data arrives.
+- **No flash.** For the first 300ms the skeleton holds the space but stays invisible, so a fast load shows no placeholder. After that it shows for at least 300ms. Data that replaces a loading state fades in over `--motion-fast`; cached data appears at once.
+- **Screen readers.** The region is `aria-busy` while it loads, and a `role="status"` label speaks only once the skeleton shows.
+- **Reduced motion.** The skeleton stops pulsing and content appears without the fade.
+
+### Named Rules
+
+**The Still Shell Rule.** Navigation changes the page body, never the frame around it. The sidebar, top bar, and page ground are the fixed reference that tells a person only the content changed.
+
+**The No Choreography Rule.** Never animate a navigation. Motion belongs to the element a person acted on or to the state that changed, and it never blocks the next click.
+
+Correct: the sidebar fill glides to the clicked item while the new page body is already in place.
+
+Wrong: wrapping the page body in a `ViewTransition` so every sidebar click slides the page.
+
+### Reduce motion setting
+
+Appearance has a **Reduce motion** switch (per person, per browser, stored as `openslate-motion`). On, it sets `data-motion="reduced"` on `<html>` before first paint (`public/theme-init.js`), and every reduced-motion rule answers to that attribute as well as to the device's `prefers-reduced-motion`: the Tailwind `motion-reduce:` variant is redefined in `globals.css` to cover both, and each hand-written reduced rule has a `[data-motion="reduced"]` twin. Off, OpenSlate follows the device setting; when the device already asks for reduced motion, the page says so.
+
+**The Signal Not Travel Rule.** Reduced motion stops glides, height changes, and signatures, but keeps the color and state changes that say something changed.
+
+Correct: under reduced motion, the sidebar fill jumps to the new item.
+
+Wrong: hiding the active fill under reduced motion, so a move gives no sign of where you are.
+
 ## Components
 
 ### Buttons
@@ -543,10 +593,12 @@ Quiet and direct. A button is text first, with a 16px icon when it helps.
 
 ### Tabs
 
-- **Slate:** a sunken rail (`--surface-sunken`, 4px pad) with the active tab lifted onto `--surface`.
-- **Whiteboard:** no rail (transparent, no pad, 4px gaps). Tabs have a 6px top-only corner; the open tab is transparent with a 4px inset `--action` marker underline at weight 700.
-- **Triplicate:** form sections. The list has no fill and a 1px `--ink` rule under it; tabs are square; the open tab is transparent with a 3px `--ink` underline at weight 700.
-- **Stockroom:** a steel rail (`--sr-steel-lite`, 2px corner, 2px `--sr-steel` inset at the bottom). The open tab keeps the surface lift and adds a 3px `--action` underline at weight 700.
+The open-tab mark is one element, `data-slot="tabs-indicator"` (Base UI's tab indicator), that glides between tabs over `--motion-base`; the open tab itself only changes its ink and weight. Each look styles the indicator:
+
+- **Slate:** a sunken rail (`--surface-sunken`, 4px pad); the indicator is the lifted `--surface` pill.
+- **Whiteboard:** no rail (transparent, no pad, 4px gaps). Tabs have a 6px top-only corner; the indicator is a 4px inset `--action` marker stroke, and the open tab is weight 700.
+- **Triplicate:** form sections. The list has no fill and a 1px `--ink` rule under it; tabs are square; the indicator is a 3px `--ink` rule, and the open tab is weight 700.
+- **Stockroom:** a steel rail (`--sr-steel-lite`, 2px corner, 2px `--sr-steel` inset at the bottom). The indicator is a surface tab with a 3px `--action` edge on a 1px steel lip, and the open tab is weight 700.
 
 ### Notices (Alert)
 
@@ -562,7 +614,7 @@ Card surface (popover surface for menus), a `--border` edge, and a large shadow;
 
 ### Navigation
 
-The sidebar holds workspaces and their sections. Each closed workspace row shows a one-line description of its job under its name in `text-xs` sidebar-muted ink ("Who can see and change what"); an open row shows its sections instead, and the collapsed rail shows the description in the tooltip. The name alone stays the row's accessible name. Items are at least 44px tall with 1.65-weight line icons. The active item uses `--action-text` at weight 600 and no fill. The scrollbar is 6px, thin, in muted ink. The breadcrumbs read Workspace › workspace › section.
+The sidebar holds workspaces and their sections. Each closed workspace row shows a one-line description of its job under its name in `text-xs` sidebar-muted ink ("Who can see and change what"); an open row shows its sections instead, and the collapsed rail shows the description in the tooltip. The name alone stays the row's accessible name. Items are at least 44px tall with 1.65-weight line icons. The active section uses `--action-text` at weight 600 on the gliding `--sidebar-accent` fill; the active workspace row keeps its own fill. The scrollbar is 6px, thin, in muted ink. The breadcrumbs read Workspace › workspace › section.
 
 The top bar (`data-skin="topbar"`) and sidebar carry the look's frame. Whiteboard puts a 1px frame rule under the top bar. Triplicate prints the top bar as a form header with a double `--ink` rule and rules the sidebar edge in `--ink`. Stockroom paints the sidebar steel through the `--sidebar` token (so the pinned OpenComms block matches) with a 1px `--sr-steel` edge on `sidebar-container`, and sets the top bar on a 3px `--sr-steel` rail.
 
@@ -591,7 +643,7 @@ An ERD-style canvas of the owner's own structure. Departments are named frames o
 - **Do** restyle a look only through tokens and the named skin places, and keep `theme-parity.spec.ts` passing.
 - **Do** keep each signal to its one meaning: action acts, flow shows movement and success, warn asks for attention, danger destroys.
 - **Do** put a department's identity color beside its name every time it appears.
-- **Do** keep canvas motion to color and opacity, and turn it off under `prefers-reduced-motion`.
+- **Do** time every transition with the motion tokens and give it a `prefers-reduced-motion` path that keeps meaning (fades, color) and drops travel.
 - **Do** show `SampleDataNote` on every screen that runs on sample data, and name the real publish state in the Sandbox header.
 
 ### Don't:

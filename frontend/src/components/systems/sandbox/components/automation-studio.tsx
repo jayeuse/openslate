@@ -823,7 +823,11 @@ export function AutomationStudio({
               className="bg-card border-border min-w-0 border-b p-4 @min-[1100px]/studio:h-full @min-[1100px]/studio:overflow-y-auto @min-[1100px]/studio:border-b-0"
             >
               <div className="mb-4 flex items-center justify-between gap-2">
-                <h2 id="automation-studio-title" className="font-semibold">
+                <h2
+                  data-slot="section-title"
+                  id="automation-studio-title"
+                  className="font-semibold"
+                >
                   Automations
                 </h2>
                 <span className="text-muted-foreground text-xs">
@@ -888,7 +892,10 @@ export function AutomationStudio({
                 <>
                   <div className="border-border mb-5 flex items-start justify-between gap-3 border-b pb-5">
                     <div className="min-w-0">
-                      <h2 className="text-lg font-semibold [overflow-wrap:anywhere] break-words">
+                      <h2
+                        data-slot="section-title"
+                        className="text-lg font-semibold [overflow-wrap:anywhere] break-words"
+                      >
                         {selected.name || "Untitled automation"}
                       </h2>
                       <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
@@ -1038,7 +1045,9 @@ export function AutomationStudio({
               className="bg-card @container/settings flex min-w-0 flex-col @min-[1100px]/studio:h-full @min-[1100px]/studio:min-h-0"
             >
               <div className="border-border border-b px-5 py-4">
-                <h2 className="font-semibold">Automation settings</h2>
+                <h2 data-slot="section-title" className="font-semibold">
+                  Automation settings
+                </h2>
               </div>
               <div
                 ref={settingsRef}
@@ -1186,7 +1195,9 @@ function AutomationEditor({
         tabIndex={-1}
         className={`border-border grid grid-cols-1 gap-3 rounded-xl border p-4 @min-[450px]/settings:grid-cols-3 ${selectedStep === "trigger" ? "ring-ring ring-1" : ""}`}
       >
-        <h3 className="col-span-full font-semibold">When</h3>
+        <h3 data-slot="section-title" className="col-span-full font-semibold">
+          When
+        </h3>
         <p className="text-muted-foreground col-span-full text-sm">
           Choose what starts this automation.
         </p>

@@ -221,6 +221,7 @@ export function SecurityPanel({ sessions, actions }: SecurityPanelProps) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2
+            data-slot="section-title"
             id="manage-sessions-heading"
             className="text-xl font-semibold tracking-tight"
           >

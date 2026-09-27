@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
   ChevronRight,
@@ -15,11 +16,13 @@ import {
 import { useEffect, useId, useRef, useState } from "react";
 
 import {
+  currentNavigationKey,
   getWorkspaceNavigation,
   isWorkspaceNavigationGroupActive,
   isWorkspaceNavigationItemActive,
 } from "@/components/workspace-navigation";
 import { useWorkspaceNavigationRequest } from "@/components/workspace-navigation-guard";
+import { prefetchOpenViewSection } from "@/components/systems/openview/adapters/openview-queries";
 import {
   Collapsible,
   CollapsibleContent,
@@ -47,6 +50,9 @@ const groupIcons = {
 
 const PREFETCH_INTENT_DELAY_MS = 120;
 const MAX_PREFETCHED_ROUTES = 12;
+// How long after a change of place the fill keeps gliding (covers a group
+// opening in the same move); outside it, the fill tracks its label directly.
+const INDICATOR_GLIDE_WINDOW_MS = 450;
 
 interface AppNavigationProps {
   pathname: string;
@@ -62,6 +68,7 @@ export function AppNavigation({
   onExpandSidebar,
 }: AppNavigationProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const requestNavigation = useWorkspaceNavigationRequest();
   const descriptionIdPrefix = useId();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -75,6 +82,72 @@ export function AppNavigation({
   const activeGroupId = groups.find((group) =>
     isWorkspaceNavigationGroupActive(group, pathname),
   )?.id;
+  const currentKey = currentNavigationKey(pathname, searchParams, hash);
+  const navRef = useRef<HTMLElement>(null);
+  const indicatorRef = useRef<HTMLSpanElement>(null);
+
+  // The active section's fill is one element under the list. It lives in the
+  // page (not in a view-transition layer), so it stays under the labels and
+  // inside the sidebar's scroll clipping. It glides when the place changes;
+  // when groups open or close around it, it moves with its label frame by
+  // frame, and a closing group clips it like it clips the label.
+  const placedKey = useRef<string | null>(null);
+  const glideUntil = useRef(0);
+  const lastTarget = useRef("");
+  useEffect(() => {
+    const nav = navRef.current;
+    const indicator = indicatorRef.current;
+    if (!nav || !indicator) return;
+    if (placedKey.current !== null && placedKey.current !== currentKey)
+      glideUntil.current = performance.now() + INDICATOR_GLIDE_WINDOW_MS;
+    placedKey.current = currentKey;
+    const place = () => {
+      const active = nav.querySelector<HTMLElement>(
+        '[data-slot="sidebar-menu-sub-button"][aria-current="page"]',
+      );
+      if (!active || collapsed) {
+        indicator.style.opacity = "0";
+        lastTarget.current = "";
+        return;
+      }
+      const navBox = nav.getBoundingClientRect();
+      const box = active.getBoundingClientRect();
+      const panel = active
+        .closest('[data-slot="collapsible-content"]')
+        ?.getBoundingClientRect();
+      const top = Math.max(box.top, panel?.top ?? box.top);
+      const height = Math.max(
+        0,
+        Math.min(box.bottom, panel?.bottom ?? box.bottom) - top,
+      );
+      const x = box.left - navBox.left;
+      const y = top - navBox.top;
+      const target = `${x},${y},${box.width},${height}`;
+      // ResizeObserver also reports the size it starts with; an unchanged
+      // target must not restart (or cut short) a glide.
+      if (target === lastTarget.current) return;
+      lastTarget.current = target;
+      const glide =
+        indicator.dataset.ready === "true" &&
+        performance.now() < glideUntil.current;
+      indicator.style.transition = glide ? "" : "none";
+      indicator.style.opacity = height > 0 ? "1" : "0";
+      indicator.style.transform = `translate(${x}px, ${y}px)`;
+      indicator.style.width = `${box.width}px`;
+      indicator.style.height = `${height}px`;
+    };
+    place();
+    // Glide only after the first placement, so it never flies in on load.
+    const frame = requestAnimationFrame(() => {
+      indicator.dataset.ready = "true";
+    });
+    const observer = new ResizeObserver(place);
+    observer.observe(nav);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [currentKey, collapsed]);
 
   useEffect(() => {
     const syncHash = () => setHash(window.location.hash);
@@ -99,10 +172,12 @@ export function AppNavigation({
   }, []);
 
   function schedulePrefetch(href: string) {
-    if (prefetchedRoutes.current.has(href) || prefetchTimers.current.has(href))
-      return;
+    if (prefetchTimers.current.has(href)) return;
     const timer = setTimeout(() => {
       prefetchTimers.current.delete(href);
+      // Data can go stale between visits, so each intent may refresh it;
+      // the cache skips reads that are still fresh.
+      prefetchOpenViewSection(queryClient, href);
       if (prefetchedRoutes.current.has(href)) return;
       prefetchedRoutes.current.add(href);
       if (prefetchedRoutes.current.size > MAX_PREFETCHED_ROUTES) {
@@ -128,7 +203,17 @@ export function AppNavigation({
 
   return (
     <SidebarGroup className="p-0">
-      <nav aria-label="Main navigation">
+      <nav
+        ref={navRef}
+        aria-label="Main navigation"
+        className="relative isolate"
+      >
+        <span
+          ref={indicatorRef}
+          aria-hidden="true"
+          data-slot="sidebar-active-indicator"
+          className="bg-sidebar-accent pointer-events-none absolute top-0 left-0 -z-10 rounded-md opacity-0 data-ready:transition-[transform,width,height,opacity] data-ready:duration-(--motion-base) data-ready:ease-(--ease-out) motion-reduce:transition-none"
+        />
         <SidebarMenu className="gap-1.5">
           {groups.map((group) => {
             const Icon = groupIcons[group.id as keyof typeof groupIcons];
@@ -191,12 +276,12 @@ export function AppNavigation({
                   <ChevronRight
                     aria-hidden="true"
                     className={cn(
-                      "ml-auto size-4 transition-transform motion-reduce:transition-none",
+                      "ml-auto size-4 transition-transform duration-(--motion-base) ease-(--ease-out) motion-reduce:transition-none",
                       open && "rotate-90",
                     )}
                   />
                 </CollapsibleTrigger>
-                <CollapsibleContent>
+                <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--motion-base) ease-(--ease-out) data-ending-style:h-0 data-starting-style:h-0 motion-reduce:transition-none">
                   <SidebarMenuSub>
                     {group.items.map((item) => {
                       const itemActive = isWorkspaceNavigationItemActive(
@@ -226,7 +311,9 @@ export function AppNavigation({
                             }
                             isActive={itemActive}
                             aria-current={itemActive ? "page" : undefined}
-                            className="min-h-11"
+                            // The active fill is the nav's indicator, so it
+                            // can glide from item to item.
+                            className="min-h-11 data-active:bg-transparent"
                           >
                             <span>{item.label}</span>
                           </SidebarMenuSubButton>

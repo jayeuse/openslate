@@ -56,7 +56,11 @@ export function SavedViewFilterControls({
       className="flex flex-col gap-4"
     >
       <div>
-        <h2 id="openview-filter-controls-heading" className="font-medium">
+        <h2
+          data-slot="section-title"
+          id="openview-filter-controls-heading"
+          className="font-medium"
+        >
           Filter conditions
         </h2>
         <p className="text-muted-foreground text-sm">

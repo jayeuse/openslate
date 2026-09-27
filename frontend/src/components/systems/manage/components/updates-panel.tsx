@@ -44,6 +44,7 @@ export function UpdatesPanel({
     <section className="min-w-0 p-6" aria-labelledby="manage-updates-heading">
       <div className="flex flex-col gap-5">
         <h2
+          data-slot="section-title"
           id="manage-updates-heading"
           className="text-xl font-semibold tracking-tight"
         >
@@ -131,7 +132,9 @@ export function UpdatesPanel({
           </Button>
           {showChangelog ? (
             <div className="w-full border-t pt-4">
-              <h3 className="font-semibold">1.5.0 release notes</h3>
+              <h3 data-slot="section-title" className="font-semibold">
+                1.5.0 release notes
+              </h3>
               <ul className="text-muted-foreground mt-3 list-inside list-disc space-y-2 text-sm">
                 <li>Six-pillar workspace navigation</li>
                 <li>Mobile-friendly report inspectors</li>
@@ -142,7 +145,9 @@ export function UpdatesPanel({
         </div>
 
         <div className="border-border border-t pt-5">
-          <h3 className="font-semibold">Release history</h3>
+          <h3 data-slot="section-title" className="font-semibold">
+            Release history
+          </h3>
           <ol className="mt-3 flex flex-col gap-3">
             {history.map((item, index) => (
               <li key={`${item}-${index}`} className="flex gap-3 text-sm">

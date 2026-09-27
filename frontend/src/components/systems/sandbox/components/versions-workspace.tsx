@@ -331,6 +331,7 @@ export function VersionsWorkspace({
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <h2
+                  data-slot="section-title"
                   ref={versionsHeading}
                   tabIndex={-1}
                   className="focus-visible:outline-ring font-semibold focus-visible:outline-2"
@@ -500,7 +501,9 @@ export function VersionsWorkspace({
             className="bg-background border-border min-w-0 border-b p-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:border-r xl:border-b-0"
           >
             <div>
-              <h2 className="font-semibold">Compare versions</h2>
+              <h2 data-slot="section-title" className="font-semibold">
+                Compare versions
+              </h2>
               <p className="text-muted-foreground mt-1 text-sm">
                 See how two saved versions differ.
               </p>
@@ -585,7 +588,10 @@ export function VersionsWorkspace({
                     <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                       {versionKindLabel(selectedVersion)}
                     </p>
-                    <h2 className="mt-1 text-lg font-semibold break-words">
+                    <h2
+                      data-slot="section-title"
+                      className="mt-1 text-lg font-semibold break-words"
+                    >
                       {selectedVersion.label}
                     </h2>
                   </div>
@@ -693,7 +699,9 @@ export function VersionsWorkspace({
                 {selectedVersion.kind === "checkpoint" &&
                 checkpointLabelEdit?.id !== selectedVersion.id ? (
                   <div className="border-border mt-5 border-b pb-5">
-                    <h3 className="font-medium">Version label</h3>
+                    <h3 data-slot="section-title" className="font-medium">
+                      Version label
+                    </h3>
                     <Button
                       className="mt-3"
                       variant="outline"
@@ -712,7 +720,9 @@ export function VersionsWorkspace({
                 ) : null}
 
                 <div className="mt-5">
-                  <h3 className="font-medium">Restore this version</h3>
+                  <h3 data-slot="section-title" className="font-medium">
+                    Restore this version
+                  </h3>
                   <p className="text-muted-foreground mt-1 text-sm">
                     Restore it to the draft. A recovery checkpoint is added to
                     history.
