@@ -456,7 +456,10 @@ export async function mockAccessApi(
       const user = users.get(id ?? "");
       if (!user)
         return route.fulfill({ status: 404, json: { detail: "Not found" } });
-      if (rest === "" && method === "GET") return route.fulfill({ json: user });
+      if (rest === "" && method === "GET")
+        return user.is_deleted
+          ? route.fulfill({ status: 404, json: { detail: "User not found" } })
+          : route.fulfill({ json: user });
       if (rest === "" && method === "PATCH") {
         const next = { ...user, ...(body as Partial<User>) };
         users.set(user.id, next);

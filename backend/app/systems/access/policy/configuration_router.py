@@ -271,7 +271,7 @@ def update_group_route(
     responses={
         200: {"headers": ETAG_HEADERS},
         403: {"description": "Not an administrator or a manager of every department it reaches"},
-        409: {"description": "A member is an administrator, or not an active or pending user"},
+        409: {"description": "A new member is an administrator, or not an active or pending user"},
         **CONDITIONAL_RESPONSES,
     },
 )
@@ -303,7 +303,11 @@ def list_member_candidates(
     visible = _visible_groups(db, user)
     _private(response)
     try:
-        if db.scalar(select(Group.id).where(Group.is_deleted.is_(False), visible).limit(1)) is None:
+        if (
+            user.role != UserRole.ADMIN.value
+            and db.scalar(select(Group.id).where(Group.is_deleted.is_(False), visible).limit(1))
+            is None
+        ):
             raise forbidden()
         result = execute_standard_list(
             db,

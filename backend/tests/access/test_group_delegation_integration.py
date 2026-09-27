@@ -7,6 +7,7 @@ administrator-only.
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -243,6 +244,42 @@ def test_manager_cannot_add_an_administrator(world: _World) -> None:
     assert world.members(group) == {world.plain.id}
 
 
+def test_manager_keeps_members_who_became_disabled_or_expired(world: _World) -> None:
+    group = world.inventory_group
+    expired = add_user(world.db, "delegation-expired", role=UserRole.GUEST)
+    world.db.add(GroupMember(group_id=group.id, user_id=expired.id))
+    world.plain.status = UserStatus.DISABLED
+    expired.expires_at = datetime.now(UTC) - timedelta(days=1)
+    world.db.commit()
+
+    response = _put_members(
+        world, world.manager, group, [world.plain.id, expired.id, world.guest.id], _etag(group)
+    )
+
+    assert response.status_code == 200, response.text
+    assert world.members(group) == {world.plain.id, expired.id, world.guest.id}
+
+
+def test_manager_cannot_add_a_disabled_or_expired_user(world: _World) -> None:
+    group = world.inventory_group
+    disabled = add_user(world.db, "delegation-disabled", status=UserStatus.DISABLED)
+    expired = add_user(
+        world.db,
+        "delegation-expired",
+        role=UserRole.GUEST,
+        expires_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    world.db.commit()
+
+    responses = [
+        _put_members(world, world.manager, group, [world.plain.id, item.id], _etag(group))
+        for item in (disabled, expired)
+    ]
+
+    assert [item.status_code for item in responses] == [409, 409]
+    assert world.members(group) == {world.plain.id}
+
+
 @pytest.mark.parametrize(("etag", "status_code"), [('"stale:1"', 412), (None, 428)])
 def test_member_replacement_requires_the_current_version(
     world: _World, etag: str | None, status_code: int
@@ -302,3 +339,18 @@ def test_member_candidates_are_the_non_administrator_accounts(world: _World) -> 
     }
     assert items[str(world.pending.id)]["status"] == "pending"
     assert world.client(world.admin).get("/api/access/member-candidates").status_code == 200
+
+
+def test_administrator_lists_member_candidates_when_no_group_exists(world: _World) -> None:
+    for group in world.db.scalars(select(Group).where(Group.is_deleted.is_(False))).all():
+        group.is_deleted = True
+    world.db.commit()
+
+    response = world.client(world.admin).get(
+        "/api/access/member-candidates", params={"search": "delegation-plain"}
+    )
+    refused = world.client(world.manager).get("/api/access/member-candidates")
+
+    assert response.status_code == 200, response.text
+    assert [item["id"] for item in response.json()["items"]] == [str(world.plain.id)]
+    assert refused.status_code == 403

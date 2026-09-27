@@ -32,6 +32,10 @@ class _Api:
         self._actor[:] = [caller]
         return self._client.get(f"/api/users/{user_id}/access")
 
+    def get_path(self, caller: User, path: str) -> Any:
+        self._actor[:] = [caller]
+        return self._client.get(path)
+
 
 @pytest.fixture
 def api(integration_owner_db: Session) -> Iterator[_Api]:
@@ -169,6 +173,8 @@ def test_unknown_or_deleted_user_is_not_found(api: _Api, admin: User) -> None:
     api.db.flush()
 
     for user_id in (uuid7(), deleted.id):
-        response = api.get(admin, user_id)
-        assert response.status_code == 404
-        assert response.json() == {"detail": "User not found"}
+        for path in (f"/api/users/{user_id}", f"/api/users/{user_id}/access"):
+            response = api.get_path(admin, path)
+            assert response.status_code == 404
+            assert response.json() == {"detail": "User not found"}
+    assert api.get_path(admin, f"/api/users/{admin.id}").status_code == 200

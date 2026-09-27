@@ -183,10 +183,12 @@ def replace_group_members(
     )
     desired = _unique_ids(member_ids)
     existing_ids = {item.user_id for item in existing}
-    inactive_ids = set(desired) - _active_users(db, desired)
-    if inactive_ids != _pending_users(db, inactive_ids):
-        raise conflict("Members must be active or pending, unexpired users")
     added_ids = set(desired) - existing_ids
+    # Lock every desired user as before; only new members must be usable. A member
+    # who became disabled or expired may stay so the rest of the list can be saved.
+    inactive_ids = set(desired) - _active_users(db, desired)
+    if (inactive_ids - _pending_users(db, inactive_ids)) & added_ids:
+        raise conflict("New members must be active or pending, unexpired users")
     if added_ids and db.scalar(
         select(func.count())
         .select_from(User)

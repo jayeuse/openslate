@@ -93,7 +93,10 @@ def get_user(
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> User:
-    return load_user(db, user_id)
+    user = load_user(db, user_id)
+    if user.is_deleted:
+        raise not_found("User")
+    return user
 
 
 @router.get("/{user_id}/access", response_model=UserAccessResponse)
