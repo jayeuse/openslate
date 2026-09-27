@@ -562,9 +562,7 @@ export function GroupEditor({
               id: item.departmentId,
               label: summaryLabel(item),
             }))
-          : section === "members"
-            ? memberNames(members)
-            : [],
+          : memberNames(members),
     };
   }
 
@@ -760,21 +758,23 @@ export function GroupEditor({
               </section>
             </div>
           ) : (
-            <dl className="space-y-4 text-sm">
-              <div>
-                <dt className="text-muted-foreground">Name</dt>
-                <dd className="mt-1 break-words">{shown.name}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Description</dt>
-                <dd className="mt-1 break-words whitespace-pre-wrap">
-                  {shown.description || "None"}
-                </dd>
-              </div>
+            <div className="space-y-4 text-sm">
+              <dl className="space-y-4">
+                <div>
+                  <dt className="text-muted-foreground">Name</dt>
+                  <dd className="mt-1 break-words">{shown.name}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Description</dt>
+                  <dd className="mt-1 break-words whitespace-pre-wrap">
+                    {shown.description || "None"}
+                  </dd>
+                </div>
+              </dl>
               <p className="text-muted-foreground">
                 Only administrators can rename a group or change its access.
               </p>
-            </dl>
+            </div>
           )}
         </TabsContent>
 
