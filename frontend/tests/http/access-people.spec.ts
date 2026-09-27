@@ -1,345 +1,10 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-// The People tab against a mocked Access API. Every response matches the
-// strict frontend contracts, and every list answers with the 100-item pages
-// the complete-collection loader expects.
+import { DAY, ids, mockAccessApi } from "./helpers/access-api";
 
-const DAY = 86_400_000;
-const at = (offset: number) => new Date(Date.now() + offset).toISOString();
-const created = "2026-01-10T09:00:00Z";
+// The People tab against the mocked Access API (see helpers/access-api.ts).
 
-const ids = {
-  rosa: "00000000-0000-4000-8000-000000000101",
-  ana: "00000000-0000-4000-8000-000000000102",
-  ben: "00000000-0000-4000-8000-000000000103",
-  cy: "00000000-0000-4000-8000-000000000104",
-  dee: "00000000-0000-4000-8000-000000000105",
-  eli: "00000000-0000-4000-8000-000000000106",
-  clerks: "00000000-0000-4000-8000-0000000000a1",
-  readers: "00000000-0000-4000-8000-0000000000a2",
-  inventory: "00000000-0000-4000-8000-0000000000d1",
-  finance: "00000000-0000-4000-8000-0000000000d2",
-  prices: "00000000-0000-4000-8000-0000000000e1",
-  laptop: "00000000-0000-4000-8000-0000000000f1",
-  phone: "00000000-0000-4000-8000-0000000000f2",
-};
-
-type User = {
-  id: string;
-  email: string;
-  username: string;
-  status: "pending" | "active" | "disabled";
-  role: "admin" | "member" | "guest";
-  display_name: string | null;
-  job_title: string | null;
-  sponsor_user_id: string | null;
-  expires_at: string | null;
-  invitation_sent_at: string | null;
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-  is_deleted: boolean;
-  performed_by: string | null;
-};
-
-function person(fields: Partial<User> & Pick<User, "id" | "username">): User {
-  return {
-    email: `${fields.username}@example.com`,
-    status: "active",
-    role: "member",
-    display_name: null,
-    job_title: null,
-    sponsor_user_id: null,
-    expires_at: null,
-    invitation_sent_at: created,
-    created_at: created,
-    updated_at: created,
-    deleted_at: null,
-    is_deleted: false,
-    performed_by: ids.rosa,
-    ...fields,
-  };
-}
-
-function group(id: string, name: string, members: string[], access: object[]) {
-  return {
-    id,
-    name,
-    description: "",
-    revision: 1,
-    member_ids: members,
-    access,
-    created_at: created,
-    updated_at: created,
-    deleted_at: null,
-    is_deleted: false,
-    performed_by: ids.rosa,
-  };
-}
-
-const catalogFields = {
-  created_at: created,
-  updated_at: created,
-  deleted_at: null,
-  is_deleted: false,
-  performed_by: ids.rosa,
-};
-
-function listPage(items: object[], url: URL) {
-  const offset = Number(url.searchParams.get("offset") ?? 0);
-  const slice = items.slice(offset, offset + 100);
-  return {
-    items: slice,
-    pagination: {
-      limit: 100,
-      offset,
-      count: slice.length,
-      total: items.length,
-      has_more: offset + slice.length < items.length,
-    },
-  };
-}
-
-type Call = { method: string; path: string; body: unknown };
-type Handler = (
-  route: Route,
-  call: Call,
-) => Promise<void | "next"> | void | "next";
-
-type Api = {
-  users: Map<string, User>;
-  calls: Call[];
-  /** Override one method and path; return "next" to use the default. */
-  on: (method: string, path: string, handler: Handler) => void;
-  sent: (method: string, path: string) => Call[];
-};
-
-async function mockPeopleApi(page: Page): Promise<Api> {
-  const users = new Map<string, User>(
-    [
-      person({
-        id: ids.rosa,
-        username: "rosa",
-        role: "admin",
-        display_name: "Rosa Reyes",
-      }),
-      person({
-        id: ids.ana,
-        username: "ana",
-        role: "guest",
-        display_name: "Ana Santos",
-        job_title: "Auditor",
-        sponsor_user_id: ids.rosa,
-        expires_at: at(5 * DAY),
-      }),
-      person({
-        id: ids.ben,
-        username: "ben",
-        display_name: "Ben Cruz",
-        job_title: "Clerk",
-      }),
-      person({
-        id: ids.cy,
-        username: "cy",
-        status: "pending",
-        invitation_sent_at: null,
-      }),
-      person({
-        id: ids.dee,
-        username: "dee",
-        role: "admin",
-        display_name: "Dee Lim",
-      }),
-      person({
-        id: ids.eli,
-        username: "eli",
-        display_name: "Eli Tan",
-        status: "disabled",
-        is_deleted: true,
-        deleted_at: created,
-      }),
-    ].map((user) => [user.id, user]),
-  );
-  const groups = [
-    group(
-      ids.clerks,
-      "Inventory clerks",
-      [ids.ana, ids.ben],
-      [{ department_id: ids.inventory, module_id: null, level: "write" }],
-    ),
-    group(
-      ids.readers,
-      "Finance readers",
-      [ids.ben],
-      [{ department_id: ids.finance, module_id: null, level: "read" }],
-    ),
-  ];
-  const departments = [
-    { id: ids.inventory, department_name: "Inventory", ...catalogFields },
-    { id: ids.finance, department_name: "Finance", ...catalogFields },
-  ];
-  const modules = [
-    {
-      id: ids.prices,
-      department_id: ids.inventory,
-      module_name: "Prices",
-      ...catalogFields,
-    },
-  ];
-  const sessions = [
-    {
-      id: ids.laptop,
-      created_at: created,
-      refreshed_at: at(-DAY),
-      expires_at: at(20 * DAY),
-      user_agent: "Laptop browser",
-      current: false,
-    },
-    {
-      id: ids.phone,
-      created_at: created,
-      refreshed_at: at(-2 * DAY),
-      expires_at: at(20 * DAY),
-      user_agent: "Phone browser",
-      current: false,
-    },
-  ];
-  const access: Record<string, object> = {
-    [ids.ana]: {
-      user_id: ids.ana,
-      role: "guest",
-      unrestricted: false,
-      entries: [
-        {
-          department_id: ids.inventory,
-          module_id: null,
-          level: "read",
-          groups: [
-            { group_id: ids.clerks, name: "Inventory clerks", level: "write" },
-          ],
-        },
-      ],
-    },
-    [ids.ben]: {
-      user_id: ids.ben,
-      role: "member",
-      unrestricted: false,
-      entries: [
-        {
-          department_id: ids.inventory,
-          module_id: ids.prices,
-          level: "write",
-          groups: [
-            { group_id: ids.clerks, name: "Inventory clerks", level: "write" },
-          ],
-        },
-      ],
-    },
-    [ids.dee]: {
-      user_id: ids.dee,
-      role: "admin",
-      unrestricted: true,
-      entries: [],
-    },
-  };
-  const calls: Call[] = [];
-  const handlers = new Map<string, Handler>();
-
-  await page.route("**/api/**", async (route) => {
-    const request = route.request();
-    const url = new URL(request.url());
-    const path = url.pathname;
-    const method = request.method();
-    let body: unknown = null;
-    try {
-      body = request.postDataJSON();
-    } catch {
-      body = request.postData();
-    }
-    const call = { method, path, body };
-    calls.push(call);
-    const override = handlers.get(`${method} ${path}`);
-    if (override && (await override(route, call)) !== "next") return;
-
-    if (path === "/api/auth/session")
-      return route.fulfill({
-        json: { authenticated: true, user_id: ids.rosa, setup_required: false },
-      });
-    if (path === "/api/auth/me")
-      return route.fulfill({
-        json: { id: ids.rosa, role: "admin", access: [] },
-      });
-    if (path === "/api/users" && method === "GET")
-      return route.fulfill({ json: listPage([...users.values()], url) });
-    if (path === "/api/access/groups")
-      return route.fulfill({ json: listPage(groups, url) });
-    if (path === "/api/departments")
-      return route.fulfill({ json: listPage(departments, url) });
-    if (path === "/api/modules")
-      return route.fulfill({ json: listPage(modules, url) });
-    if (path === "/api/workspace")
-      return route.fulfill({
-        json: {
-          invitation_expiry_days: 7,
-          guest_duration_days: 45,
-          revision: 3,
-          display_name: "Northwind",
-        },
-      });
-    if (path === "/api/auth/invitations" && method === "POST") {
-      const input = body as Partial<User>;
-      const invited = person({
-        id: "00000000-0000-4000-8000-000000000199",
-        username: String(input.username),
-        email: String(input.email),
-        role: input.role ?? "member",
-        status: "pending",
-      });
-      users.set(invited.id, invited);
-      return route.fulfill({
-        status: 201,
-        json: { user: invited, delivery: "email" },
-      });
-    }
-    const userMatch = /^\/api\/users\/([^/]+)(\/.*)?$/.exec(path);
-    if (userMatch) {
-      const [, id, rest = ""] = userMatch;
-      const user = users.get(id ?? "");
-      if (!user)
-        return route.fulfill({ status: 404, json: { detail: "Not found" } });
-      if (rest === "" && method === "GET") return route.fulfill({ json: user });
-      if (rest === "" && method === "PATCH") {
-        const next = { ...user, ...(body as Partial<User>) };
-        users.set(user.id, next);
-        return route.fulfill({ json: next });
-      }
-      if (rest === "/access")
-        return route.fulfill({
-          json: access[user.id] ?? {
-            user_id: user.id,
-            role: user.role,
-            unrestricted: false,
-            entries: [],
-          },
-        });
-      if (rest === "/sessions" && method === "GET")
-        return route.fulfill({
-          json: listPage(user.id === ids.ben ? sessions : [], url),
-        });
-      if (rest.startsWith("/sessions") && method === "DELETE")
-        return route.fulfill({ status: 204, body: "" });
-    }
-    return route.fulfill({ status: 404, json: { detail: "Not found" } });
-  });
-
-  return {
-    users,
-    calls,
-    on: (method, path, handler) => handlers.set(`${method} ${path}`, handler),
-    sent: (method, path) =>
-      calls.filter((call) => call.method === method && call.path === path),
-  };
-}
+const mockPeopleApi = (page: Page) => mockAccessApi(page);
 
 function panel(page: Page, name: string) {
   return page.getByRole("dialog", { name });
@@ -393,6 +58,30 @@ test("a person link opens their panel, and the old identities link still works",
   // The open panel hides the page from the accessibility tree.
   await expect(page.locator('[data-slot="page-title"]')).toHaveText("People");
   await expect(panel(page, "Ana Santos")).toBeVisible();
+});
+
+test("the whole row opens a person, and the name reads as body text, not a link", async ({
+  page,
+}) => {
+  await mockPeopleApi(page);
+  await page.goto("/access?view=people");
+  const row = page
+    .getByRole("table", { name: "People" })
+    .getByRole("row", { name: /Ben Cruz/ });
+  const name = row.getByText("Ben Cruz", { exact: true });
+  await name.hover();
+  const ink = await name.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.color, underline: style.textDecorationLine };
+  });
+  const email = await row
+    .getByText("ben@example.com")
+    .evaluate((element) => getComputedStyle(element).color);
+  expect(ink).toEqual({ color: email, underline: "none" });
+
+  // The open button's hit area covers the row, so click by position.
+  await row.getByText("ben@example.com").click({ force: true });
+  await expect(panel(page, "Ben Cruz")).toBeVisible();
 });
 
 test("inviting a member sends the chosen groups", async ({ page }) => {

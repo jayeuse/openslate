@@ -162,7 +162,9 @@ export function directoryRows(
 }
 
 export type DirectorySort = "name" | "email" | "newest" | "expiry";
-export type DirectoryStatusFilter = "current" | "all" | PersonStateId;
+/** "ending": active or pending people whose access ends soon. */
+export type DirectoryStatusFilter =
+  "current" | "all" | "ending" | PersonStateId;
 export type DirectoryFilters = {
   query: string;
   role: "all" | AccessUserRole;
@@ -185,6 +187,7 @@ export const defaultDirectoryFilters: DirectoryFilters = {
 function matchesStatus(row: DirectoryRow, status: DirectoryStatusFilter) {
   if (status === "all") return true;
   if (status === "current") return row.state.id !== "deleted";
+  if (status === "ending") return row.state.expiresSoon;
   return row.state.id === status;
 }
 
@@ -219,7 +222,8 @@ export function filterDirectory(
         (filters.role === "all" || row.user.role === filters.role) &&
         (filters.groupId === "all" ||
           (filters.groupId === "none"
-            ? row.groups.length === 0
+            ? // Administrators need no group, so they are never "in no group".
+              row.user.role !== "admin" && row.groups.length === 0
             : row.groups.some((group) => group.id === filters.groupId))) &&
         (filters.departmentId === "all" ||
           row.departments.some(
@@ -237,6 +241,50 @@ export function filterDirectory(
             .includes(query)),
     )
     .sort(compareRows(filters.sort));
+}
+
+const directorySorts: readonly DirectorySort[] = [
+  "name",
+  "email",
+  "newest",
+  "expiry",
+];
+const directoryStatuses: readonly DirectoryStatusFilter[] = [
+  "current",
+  "all",
+  "ending",
+  "pending",
+  "active",
+  "disabled",
+  "expired",
+  "deleted",
+];
+
+function oneOf<T extends string>(
+  values: readonly T[],
+  value: string | null,
+  fallback: T,
+): T {
+  return values.find((item) => item === value) ?? fallback;
+}
+
+/**
+ * The directory filters a link asks for (`role`, `status`, `group`,
+ * `department`, `sort`). Unknown values keep the default.
+ */
+export function directoryFiltersFromParams(
+  params: URLSearchParams,
+): DirectoryFilters {
+  const role = params.get("role");
+  return {
+    ...defaultDirectoryFilters,
+    role:
+      role === "admin" || role === "member" || role === "guest" ? role : "all",
+    status: oneOf(directoryStatuses, params.get("status"), "current"),
+    groupId: params.get("group") ?? "all",
+    departmentId: params.get("department") ?? "all",
+    sort: oneOf(directorySorts, params.get("sort"), "name"),
+  };
 }
 
 export function activeFilterCount(filters: DirectoryFilters): number {

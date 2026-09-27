@@ -34,6 +34,8 @@ import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/
 
 import { authMeOptions } from "./adapters/access-queries";
 import { DiscardChangesDialog } from "./components/people-fields";
+import { GroupsView } from "./components/groups-view";
+import { OverviewView } from "./components/overview-view";
 import { PeopleView } from "./components/people-view";
 import {
   AccessDraftNavigationProvider,
@@ -135,11 +137,15 @@ function AccessControlCenter() {
 
   const view = access === null ? null : viewFor(access, searchParams);
   const copy = view === null ? null : accessViews[view];
+  const description =
+    access === "groups"
+      ? "Change who is in the groups you manage."
+      : (copy?.description ?? "");
 
   return (
     <AccessFrame
       title={copy?.title ?? "Access"}
-      description={copy?.description ?? ""}
+      description={description}
       showSecurityLink={access === "all"}
     >
       <LoadingRegion
@@ -149,9 +155,11 @@ function AccessControlCenter() {
       >
         {view === "people" ? (
           <PeopleView />
-        ) : view === null ? null : (
-          <AccessPlaceholder view={view} />
-        )}
+        ) : view === "groups" ? (
+          <GroupsView mode={access === "all" ? "admin" : "manager"} />
+        ) : view === "overview" ? (
+          <OverviewView />
+        ) : null}
       </LoadingRegion>
       {navigationBlock}
     </AccessFrame>
@@ -268,17 +276,5 @@ function AccessFrame({
         {children}
       </div>
     </div>
-  );
-}
-
-// Temporary: Groups and Overview are rebuilt on the groups model in 3e-3.
-function AccessPlaceholder({ view }: { view: AccessView }) {
-  return (
-    <Empty className="border">
-      <EmptyHeader>
-        <EmptyTitle>{accessViews[view].title}</EmptyTitle>
-        <EmptyDescription>Rebuilt in the next step.</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
   );
 }

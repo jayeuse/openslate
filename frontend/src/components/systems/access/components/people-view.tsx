@@ -37,6 +37,7 @@ import {
 import {
   activeFilterCount,
   defaultDirectoryFilters,
+  directoryFiltersFromParams,
   directoryRows,
   filterDirectory,
   formatDate,
@@ -49,6 +50,7 @@ import { AccessSearchToolbar } from "./access-search-toolbar";
 import { InvitePersonDialog } from "./invite-person-dialog";
 import { SelectField } from "./people-fields";
 import { PersonPanel } from "./person-panel";
+import { openRowClassName, RowOpenButton } from "./row-open-button";
 
 const sortOptions: readonly { value: DirectorySort; label: string }[] = [
   { value: "name", label: "Name" },
@@ -63,6 +65,7 @@ const statusOptions = [
   { value: "pending", label: "Pending" },
   { value: "disabled", label: "Disabled" },
   { value: "expired", label: "Expired" },
+  { value: "ending", label: "Access ends soon" },
   { value: "deleted", label: "Deleted" },
   { value: "all", label: "Everyone" },
 ] as const;
@@ -121,18 +124,11 @@ function OpenPersonButton({
   onOpen: (id: string) => void;
 }) {
   return (
-    <button
-      type="button"
-      className="hover:text-primary focus-visible:outline-ring -mx-1 min-h-11 max-w-72 min-w-0 rounded-md px-1 text-left focus-visible:outline-2"
-      onClick={() => onOpen(row.user.id)}
-    >
-      <span className="block font-medium break-words underline-offset-4 hover:underline">
-        {row.name}
-      </span>
-      <span className="text-muted-foreground block text-xs break-words">
-        {row.user.username}
-      </span>
-    </button>
+    <RowOpenButton
+      title={row.name}
+      subtitle={row.user.username}
+      onOpen={() => onOpen(row.user.id)}
+    />
   );
 }
 
@@ -157,8 +153,9 @@ export function PeopleView() {
   const users = useQuery(userListOptions("include"));
   const groups = useQuery(groupListOptions("exclude"));
   const departments = useQuery(departmentListOptions("exclude"));
-  const [filters, setFilters] = useState<DirectoryFilters>(
-    defaultDirectoryFilters,
+  // An Overview link can open the directory already filtered.
+  const [filters, setFilters] = useState<DirectoryFilters>(() =>
+    directoryFiltersFromParams(searchParams),
   );
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_TABLE_PAGE_SIZE);
@@ -421,6 +418,7 @@ export function PeopleView() {
                 data={[...page.items]}
                 cellClassName="py-2 align-top whitespace-normal"
                 getRowId={(row) => row.user.id}
+                rowClassName={() => openRowClassName}
               />
             </div>
             <ul
@@ -429,7 +427,7 @@ export function PeopleView() {
             >
               {page.items.map((row) => (
                 <li key={row.user.id} className="min-w-0">
-                  <Card className="min-w-0">
+                  <Card className={`min-w-0 ${openRowClassName}`}>
                     <CardContent className="min-w-0 space-y-3 p-4">
                       <div className="flex min-w-0 items-start justify-between gap-3">
                         <OpenPersonButton row={row} onOpen={replaceUserParam} />

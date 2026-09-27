@@ -162,7 +162,8 @@ test("the directory searches, filters by role, status, group and department, and
   expect(names({ query: "BEN@" })).toEqual(["ben"]);
   expect(names({ role: "admin" })).toEqual(["Rosa Admin"]);
   expect(names({ groupId: inventory.id })).toEqual(["Ana Santos"]);
-  expect(names({ groupId: "none" })).toEqual(["Rosa Admin"]);
+  // Administrators need no group, so "In no group" never lists them.
+  expect(names({ groupId: "none" })).toEqual([]);
   expect(names({ departmentId: department.id })).toEqual(["Ana Santos"]);
   expect(names({ sort: "email" })).toEqual(["Ana Santos", "ben", "Rosa Admin"]);
   expect(names({ sort: "expiry" })[0]).toBe("Ana Santos");
