@@ -24,7 +24,7 @@ function fixture(): Fixture {
 
 async function applyTemplate(page: Page, name: string) {
   await page.getByRole("button", { name: "More Sandbox actions" }).click();
-  await page.getByRole("menuitem", { name: "Start from template" }).click();
+  await page.getByRole("menuitem", { name: "Start from a template" }).click();
   await page.getByRole("button", { name: `Select ${name}` }).click();
   await page.getByRole("button", { name: `Use ${name}` }).click();
   await expect(
@@ -33,7 +33,6 @@ async function applyTemplate(page: Page, name: string) {
 }
 
 async function publishDraft(page: Page, password: string) {
-  await page.getByRole("button", { name: "Review & Publish" }).click();
   const preview = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname ===
@@ -42,7 +41,8 @@ async function publishDraft(page: Page, password: string) {
       response.status() !== 401,
     { timeout: 45_000 },
   );
-  await page.getByRole("button", { name: "Review changes" }).click();
+  // Opening the dialog starts the review; no second click is needed.
+  await page.getByRole("button", { name: "Review & Publish" }).click();
   expect((await preview).status()).toBe(200);
   await expect(page.getByRole("heading", { name: "Changes" })).toBeVisible();
   await page.getByLabel("Your password").fill(password);
@@ -1394,7 +1394,7 @@ test("Sandbox exposes the simplified Build, Automations, Test, and History journ
   await page.getByLabel("Email", { exact: true }).fill(credentials.email);
   await page.getByLabel("Password").fill(credentials.password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/openview$/);
+  await expect(page).toHaveURL(/\/(openview|sandbox)$/);
   await page.goto("/sandbox?section=designer");
 
   await expect(

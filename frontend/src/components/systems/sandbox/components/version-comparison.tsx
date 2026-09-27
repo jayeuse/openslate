@@ -13,7 +13,6 @@ import {
   Minus,
   Plus,
   SlidersHorizontal,
-  Workflow,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -40,8 +39,7 @@ const areas: { prefix: string; label: string; icon: LucideIcon }[] = [
   { prefix: "Module", label: "Modules", icon: Boxes },
   { prefix: "Field", label: "Fields", icon: FileText },
   { prefix: "Relationship", label: "Relationships", icon: GitBranch },
-  { prefix: "Rule", label: "Rules", icon: Zap },
-  { prefix: "Automation", label: "Automations", icon: Workflow },
+  { prefix: "Automation", label: "Automations", icon: Zap },
   { prefix: "Scenario", label: "Scenarios", icon: Layers },
 ];
 

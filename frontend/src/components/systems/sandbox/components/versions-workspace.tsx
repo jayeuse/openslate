@@ -77,22 +77,28 @@ function canonicalEntityChanges(
   return changes;
 }
 
-/** Compares canonical v2 documents without reducing automation content to Designer rules. */
+/**
+ * Compares canonical v2 documents without reducing automation content to
+ * Designer rules. The projected design and the canonical automations can
+ * report the same automation, so identical entries appear once.
+ */
 export function canonicalVersionChanges(
   before: SandboxDocumentV2,
   after: SandboxDocumentV2,
 ): string[] {
   return [
-    ...changesFrom(
-      projectSandboxDocument(before),
-      projectSandboxDocument(after),
-    ),
-    ...canonicalEntityChanges(
-      "Automation",
-      before.automations,
-      after.automations,
-    ),
-    ...canonicalEntityChanges("Scenario", before.scenarios, after.scenarios),
+    ...new Set([
+      ...changesFrom(
+        projectSandboxDocument(before),
+        projectSandboxDocument(after),
+      ),
+      ...canonicalEntityChanges(
+        "Automation",
+        before.automations,
+        after.automations,
+      ),
+      ...canonicalEntityChanges("Scenario", before.scenarios, after.scenarios),
+    ]),
   ];
 }
 
@@ -186,6 +192,19 @@ export function validVersionSelection(
 ): string {
   if (versions.some((version) => version.id === selected)) return selected;
   return (fallback === "first" ? versions[0] : versions.at(-1))?.id ?? "";
+}
+
+export function versionCompareHint(
+  versions: SandboxVersion[],
+  first: string,
+  second: string,
+): string {
+  if (versions.length < 2) return "Save at least two versions to compare them.";
+  const a = versions.find((version) => version.id === first);
+  const b = versions.find((version) => version.id === second);
+  if (!a || !b || a.id === b.id)
+    return "Choose two different versions to compare.";
+  return `Ready to compare ${a.label} (v${a.sequence}) with ${b.label} (v${b.sequence}).`;
 }
 
 export function VersionsWorkspace({
@@ -426,18 +445,18 @@ export function VersionsWorkspace({
                                       {version.label}
                                     </span>
                                     {isComparedFirst ? (
-                                      <span className="border-primary/30 bg-primary/10 text-primary shrink-0 rounded border px-1 py-0.5 text-[10px] leading-none font-semibold">
+                                      <span className="border-primary/30 bg-primary/10 text-primary shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold">
                                         A
                                       </span>
                                     ) : null}
                                     {isComparedSecond ? (
-                                      <span className="border-primary/30 bg-primary/10 text-primary shrink-0 rounded border px-1 py-0.5 text-[10px] leading-none font-semibold">
+                                      <span className="border-primary/30 bg-primary/10 text-primary shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold">
                                         B
                                       </span>
                                     ) : null}
                                     <Badge
                                       variant="outline"
-                                      className="shrink-0 px-1 py-0 text-[10px]"
+                                      className="shrink-0 px-1 py-0 text-xs"
                                     >
                                       {versionKindLabel(version)}
                                     </Badge>
@@ -450,8 +469,7 @@ export function VersionsWorkspace({
                                     <time dateTime={version.createdAt}>
                                       {formatVersionDate(version.createdAt)}
                                     </time>{" "}
-                                    · v{version.sequence} · {version.byteCount}{" "}
-                                    bytes
+                                    · v{version.sequence}
                                   </span>
                                   {version.note ? (
                                     <span className="text-muted-foreground mt-1 block truncate text-xs">
@@ -544,7 +562,13 @@ export function VersionsWorkspace({
             ) : (
               <Empty className="border-border mt-6 border-t px-2 py-8">
                 <EmptyHeader>
-                  <EmptyTitle>Select two versions, then compare.</EmptyTitle>
+                  <EmptyTitle>
+                    {versionCompareHint(
+                      versions,
+                      selectedCompareA,
+                      selectedCompareB,
+                    )}
+                  </EmptyTitle>
                 </EmptyHeader>
               </Empty>
             )}
@@ -577,12 +601,6 @@ export function VersionsWorkspace({
                       <span className="text-muted-foreground ml-2 text-xs">
                         Version {selectedVersion.sequence}
                       </span>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground text-xs">Size</dt>
-                    <dd className="mt-1 tabular-nums">
-                      {selectedVersion.byteCount} bytes
                     </dd>
                   </div>
                   <div>

@@ -1,7 +1,10 @@
+import type { Metadata } from "next";
 import { ArrowRight, CircleAlert, Terminal } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+export const metadata: Metadata = { title: "Setup guide" };
 
 export default function SetupPage() {
   return (

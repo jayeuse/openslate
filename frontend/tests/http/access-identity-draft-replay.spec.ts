@@ -209,9 +209,9 @@ test("identity submission blocks before the API when its safety marker cannot be
     creates += 1;
   });
   await page.goto("/access?view=identities");
-  await page.getByRole("button", { name: "Add identity" }).click();
-  await page.getByRole("menuitem", { name: "Internal identity" }).click();
-  const editor = page.getByRole("dialog", { name: /Add internal identity/ });
+  await page.getByRole("button", { name: "Add person or service" }).click();
+  await page.getByRole("menuitem", { name: "Internal person" }).click();
+  const editor = page.getByRole("dialog", { name: /Add internal person/ });
   await editor.getByLabel("Name", { exact: true }).fill("Alex Ops");
   await editor.getByLabel("Email", { exact: true }).fill("alex@example.test");
   await page.evaluate(() => {
@@ -222,7 +222,7 @@ test("identity submission blocks before the API when its safety marker cannot be
       return setItem.call(this, key, value);
     };
   });
-  await editor.getByRole("button", { name: "Add identity" }).click();
+  await editor.getByRole("button", { name: "Add person" }).click();
   await page.getByRole("button", { name: "Create identity" }).click();
 
   expect(creates).toBe(0);
@@ -241,9 +241,9 @@ test("an accepted identity remains read only after both draft cleanup operations
     true,
   );
   await page.goto("/access?view=identities");
-  await page.getByRole("button", { name: "Add identity" }).click();
-  await page.getByRole("menuitem", { name: "Internal identity" }).click();
-  const editor = page.getByRole("dialog", { name: /Add internal identity/ });
+  await page.getByRole("button", { name: "Add person or service" }).click();
+  await page.getByRole("menuitem", { name: "Internal person" }).click();
+  const editor = page.getByRole("dialog", { name: /Add internal person/ });
   await editor.getByLabel("Name", { exact: true }).fill("Alex Ops");
   await editor.getByLabel("Email", { exact: true }).fill("alex@example.test");
   await page.evaluate(() => {
@@ -267,7 +267,7 @@ test("an accepted identity remains read only after both draft cleanup operations
       return removeItem.call(this, key);
     };
   });
-  await editor.getByRole("button", { name: "Add identity" }).click();
+  await editor.getByRole("button", { name: "Add person" }).click();
   await page.getByRole("button", { name: "Create identity" }).click();
   await expect(editor.getByText(/may have completed/i)).toBeVisible();
   await expect(
@@ -289,7 +289,7 @@ test("an accepted identity remains read only after both draft cleanup operations
     "Alex Ops",
   );
   await expect(
-    editor.getByRole("button", { name: "Add identity" }),
+    editor.getByRole("button", { name: "Add person" }),
   ).toBeDisabled();
   await editor.getByRole("button", { name: "Discard saved draft" }).click();
   await page
@@ -317,8 +317,8 @@ test("identity deletion does not dispatch when its safety marker cannot be store
     .getByRole("button", { name: "View details for Alex Ops", exact: true })
     .click();
   await page
-    .getByRole("dialog", { name: "Identity details", exact: true })
-    .getByRole("button", { name: "Manage identity", exact: true })
+    .getByRole("dialog", { name: "Access details", exact: true })
+    .getByRole("button", { name: "Edit access", exact: true })
     .click();
   const editor = page.getByRole("dialog", { name: "Alex Ops" });
   await page.evaluate(() => {
@@ -335,7 +335,7 @@ test("identity deletion does not dispatch when its safety marker cannot be store
     .click();
   await page
     .getByRole("dialog", { name: "Delete identity?" })
-    .getByLabel("Identity name")
+    .getByLabel("Type the name to confirm")
     .fill("Alex Ops");
   await page
     .getByRole("dialog", { name: "Delete identity?" })
@@ -363,8 +363,8 @@ test("administrator role confirmation blocks before mutation when storage fails"
     .getByRole("button", { name: "View details for Alex Ops", exact: true })
     .click();
   await page
-    .getByRole("dialog", { name: "Identity details", exact: true })
-    .getByRole("button", { name: "Manage identity", exact: true })
+    .getByRole("dialog", { name: "Access details", exact: true })
+    .getByRole("button", { name: "Edit access", exact: true })
     .click();
   const editor = page.getByRole("dialog", { name: "Alex Ops" });
   await editor.getByLabel("Role").selectOption(adminRoleId);
@@ -381,7 +381,7 @@ test("administrator role confirmation blocks before mutation when storage fails"
   const confirmation = page.getByRole("dialog", {
     name: "Change administrator access?",
   });
-  await confirmation.getByLabel("Identity name").fill("Alex Ops");
+  await confirmation.getByLabel("Type the name to confirm").fill("Alex Ops");
   await confirmation
     .getByRole("button", { name: "Confirm access change" })
     .click();
@@ -418,8 +418,8 @@ test("uncertain identity edit compares saved title with freshly loaded current t
     .getByRole("button", { name: "View details for Alex Ops", exact: true })
     .click();
   await page
-    .getByRole("dialog", { name: "Identity details", exact: true })
-    .getByRole("button", { name: "Manage identity", exact: true })
+    .getByRole("dialog", { name: "Access details", exact: true })
+    .getByRole("button", { name: "Edit access", exact: true })
     .click();
   const editor = page.getByRole("dialog", { name: "Alex Ops" });
   await editor.getByLabel("Job title").fill("Shift lead");

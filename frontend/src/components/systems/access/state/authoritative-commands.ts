@@ -112,10 +112,19 @@ export async function checkAuthoritativeAccess({
   return result;
 }
 
+// Built-in roles display as "Administrator" and "Member", so a custom role
+// with either name would look like a second built-in role.
+const BUILT_IN_ROLE_NAME_ERROR =
+  "Administrator and Member are built-in role names. Choose another name.";
+
+function isBuiltInRoleName(name: string): boolean {
+  return ["administrator", "member"].includes(name.trim().toLowerCase());
+}
+
 export function getAuthoritativeAdminRoleId(
   snapshot: AccessControllerSnapshot,
 ): string | null {
-  return snapshot.roles.find((role) => role.name === "admin")?.id ?? null;
+  return snapshot.roles.find((role) => role.system === "admin")?.id ?? null;
 }
 
 export type AuthoritativeAccessCommandAdapters = {
@@ -760,6 +769,8 @@ export async function executeAuthoritativeAccessCommand(
     case "create-role": {
       if (command.input.id)
         return rejected("Client-provided role IDs are not supported.");
+      if (isBuiltInRoleName(command.input.name))
+        return rejected(BUILT_IN_ROLE_NAME_ERROR);
       const permissions = capabilityPermissions(command.input.grants ?? []);
       if (!permissions)
         return rejected(
@@ -781,8 +792,11 @@ export async function executeAuthoritativeAccessCommand(
           "This role is unavailable. Reload Access and try again.",
         );
       const patch: AccessRolePatch = {};
-      if ("name" in command.patch && command.patch.name)
+      if ("name" in command.patch && command.patch.name) {
+        if (isBuiltInRoleName(command.patch.name))
+          return rejected(BUILT_IN_ROLE_NAME_ERROR);
         patch.role = command.patch.name;
+      }
       if ("description" in command.patch)
         patch.description = command.patch.description?.trim() || null;
       if ("grants" in command.patch) {
@@ -808,7 +822,7 @@ export async function executeAuthoritativeAccessCommand(
         );
       const source = await adapters.getRole(command.roleId, { signal });
       const permissions =
-        displayedRole.builtin && displayedRole.name === "admin"
+        displayedRole.system === "admin"
           ? capabilityPermissions(displayedRole.grants)
           : source.permissions;
       if (!permissions)
@@ -816,7 +830,7 @@ export async function executeAuthoritativeAccessCommand(
           "This role includes permissions that the server does not support.",
         );
       await adapters.createRole({
-        role: command.name ?? `${source.role} copy`,
+        role: command.name ?? `${displayedRole.name} copy`,
         ...(source.description ? { description: source.description } : {}),
         permissions,
         signal,

@@ -38,6 +38,13 @@ import { OrganizationTemplateDialog } from "./organization-template-dialog";
 
 type Props = {
   pending: boolean;
+  /** The page owns the template dialog so the empty canvas can open it too. */
+  templatesOpen: boolean;
+  onTemplatesOpenChange: (open: boolean) => void;
+  /** A checkpoint of an empty design would save nothing. */
+  canCheckpoint: boolean;
+  /** Discard only acts when the draft differs from what was published. */
+  canDiscard: boolean;
   onCreateCheckpoint: (
     label: string,
     note: string,
@@ -66,13 +73,16 @@ function download(name: string, document: SandboxDocumentV2) {
 
 export function SandboxHeaderActions({
   pending,
+  templatesOpen,
+  onTemplatesOpenChange,
+  canCheckpoint,
+  canDiscard,
   onCreateCheckpoint,
   onImport,
   onApplyTemplate,
   onDiscard,
 }: Props) {
   const input = useRef<HTMLInputElement | null>(null);
-  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [checkpointOpen, setCheckpointOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -164,12 +174,13 @@ export function SandboxHeaderActions({
         <DropdownMenuContent align="end">
           <DropdownMenuItem
             className="min-h-11"
-            onClick={() => setTemplatesOpen(true)}
+            onClick={() => onTemplatesOpenChange(true)}
           >
-            Start from template
+            Start from a template
           </DropdownMenuItem>
           <DropdownMenuItem
             className="min-h-11"
+            disabled={!canCheckpoint}
             onClick={() => setCheckpointOpen(true)}
           >
             Save checkpoint
@@ -182,6 +193,7 @@ export function SandboxHeaderActions({
           </DropdownMenuItem>
           <DropdownMenuItem
             className="min-h-11"
+            disabled={!canDiscard}
             onClick={() => setDiscardOpen(true)}
           >
             Discard draft changes
@@ -191,7 +203,7 @@ export function SandboxHeaderActions({
       <OrganizationTemplateDialog
         open={templatesOpen}
         pending={pending || busy}
-        onOpenChange={setTemplatesOpen}
+        onOpenChange={onTemplatesOpenChange}
         onApply={onApplyTemplate}
       />
       <Dialog

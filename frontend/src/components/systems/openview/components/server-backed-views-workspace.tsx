@@ -70,7 +70,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import {
+  GuardedWorkspaceLink,
+  useWorkspaceNavigationGuard,
+} from "@/components/workspace-navigation-guard";
 import { serializeOpenViewUrl, type AudienceRef } from "../domain/model";
 import {
   audienceValue,
@@ -244,6 +247,9 @@ export default function ServerBackedViewsWorkspace({
     catalogLoading,
     catalogError,
     audiences,
+    audienceError,
+    audienceLoading,
+    retryAudiences,
     roleOptionsHasMore,
     userOptionsHasMore,
     moduleId,
@@ -290,6 +296,15 @@ export default function ServerBackedViewsWorkspace({
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
   const [saveOpen, setSaveOpen] = useState(false);
+  // After a successful retry the retry button is gone, so focus moves to
+  // the Audience choice it restored.
+  const focusAudienceAfterRetry = useRef(false);
+  useEffect(() => {
+    if (audienceLoading || !focusAudienceAfterRetry.current) return;
+    focusAudienceAfterRetry.current = false;
+    if (!audienceError)
+      document.getElementById("openview-save-audience")?.focus();
+  }, [audienceError, audienceLoading]);
   const [openViewPanel, setOpenViewPanel] = useState<
     "columns" | "layout" | null
   >(null);
@@ -1921,12 +1936,21 @@ export default function ServerBackedViewsWorkspace({
         <OpenViewHeader />
         <Empty>
           <EmptyHeader>
-            <EmptyTitle>No active data sources</EmptyTitle>
+            <EmptyTitle role="heading" aria-level={2}>
+              Nothing published yet
+            </EmptyTitle>
             <EmptyDescription>
-              OpenView needs an active catalog module before it can query
-              records or save a view.
+              OpenView shows records from published modules. Design your modules
+              in the Sandbox and publish them to see records here.
             </EmptyDescription>
           </EmptyHeader>
+          <EmptyContent>
+            <Button asChild className="min-h-11">
+              <GuardedWorkspaceLink href={"/sandbox" as Route}>
+                Open Sandbox
+              </GuardedWorkspaceLink>
+            </Button>
+          </EmptyContent>
         </Empty>
       </div>
     );
@@ -3025,6 +3049,30 @@ export default function ServerBackedViewsWorkspace({
               </Select>
             </Field>
           </FieldGroup>
+          {audienceError ? (
+            <Alert
+              role="status"
+              variant="warning"
+              className="flex flex-wrap items-center justify-between gap-3"
+            >
+              <span>{audienceError}</span>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={Boolean(pendingAction)}
+                // aria-disabled keeps focus here if the retry fails again.
+                aria-disabled={audienceLoading}
+                onClick={() => {
+                  if (audienceLoading) return;
+                  focusAudienceAfterRetry.current = true;
+                  retryAudiences();
+                }}
+              >
+                {audienceLoading ? "Retrying…" : "Retry roles and people"}
+              </Button>
+            </Alert>
+          ) : null}
           {roleOptionsHasMore || userOptionsHasMore ? (
             <Button
               type="button"
@@ -3242,7 +3290,10 @@ function OpenViewHeader() {
   return (
     <header className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+        <h1
+          data-slot="page-title"
+          className="text-2xl font-semibold tracking-tight sm:text-3xl"
+        >
           Views
         </h1>
         <p className="text-muted-foreground mt-2 max-w-2xl text-sm">

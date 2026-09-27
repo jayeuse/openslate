@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   appendVersion,
   changesFrom,
+  counts,
   normalizeField,
   type Design,
   type Version,
@@ -77,7 +78,7 @@ test("semantic version changes distinguish every supported design category", () 
     "Field removed: Equipment · Status",
     "Field removed: Equipment · Location",
     "Relationship changed: Uses assigned equipment",
-    "Rule changed: Urgent request alert",
+    "Automation changed: Urgent request alert",
     "Canvas layout changed",
   ]);
 });
@@ -124,9 +125,9 @@ test("semantic version changes report reopen, removal, and reorder without false
     "Module reopened: Service requests",
     "Field reopened: Service requests · Request number",
     "Field removed: Service requests · Title",
-    "Rule added: Third rule",
-    "Rule removed: Removed rule",
-    "Rule order changed",
+    "Automation added: Third rule",
+    "Automation removed: Removed rule",
+    "Automation order changed",
   ]);
   expect(changesFrom(after, structuredClone(after))).toEqual([
     "No structural changes since the last publication.",
@@ -213,4 +214,16 @@ test("semantic version changes ignore equivalent normalized field storage", () =
   expect(changesFrom(before, after)).toEqual([
     "No structural changes since the last publication.",
   ]);
+});
+
+test("the design summary names automations and counts one of each in the singular", () => {
+  const design = fixture();
+  expect(counts({ ...design, rules: design.rules.slice(0, 1) })).toMatch(
+    / · 1 automation$/,
+  );
+  expect(
+    counts({ departments: [], modules: [], relationships: [], rules: [] }),
+  ).toBe(
+    "0 departments · 0 modules · 0 fields · 0 relationships · 0 automations",
+  );
 });

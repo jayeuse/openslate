@@ -1,6 +1,13 @@
 import { CSPProvider } from "@base-ui/react/csp-provider";
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import {
+  Archivo,
+  Atkinson_Hyperlegible_Next,
+  Big_Shoulders_Stencil,
+  Geist,
+  Geist_Mono,
+  Martian_Mono,
+} from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
@@ -16,9 +23,36 @@ const geistMono = Geist_Mono({
   preload: false,
 });
 
+// Organization themes (src/app/themes). Without preload, a browser fetches a
+// face only when rendered text uses it, so Slate pages load none of these.
+const atkinson = Atkinson_Hyperlegible_Next({
+  variable: "--font-atkinson",
+  subsets: ["latin"],
+  preload: false,
+});
+
+const archivo = Archivo({
+  variable: "--font-archivo",
+  subsets: ["latin"],
+  axes: ["wdth"],
+  preload: false,
+});
+
+const bigShouldersStencil = Big_Shoulders_Stencil({
+  variable: "--font-stencil",
+  subsets: ["latin"],
+  preload: false,
+});
+
+const martianMono = Martian_Mono({
+  variable: "--font-martian-mono",
+  subsets: ["latin"],
+  preload: false,
+});
+
 export const metadata: Metadata = {
   title: {
-    default: "OpenSlate Operations",
+    default: "OpenSlate",
     template: "%s | OpenSlate",
   },
   description: "A focused workspace for departments, modules, and records.",
@@ -35,7 +69,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       // differs from this render. Suppress the warning and keep React
       // from patching those attributes back.
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${atkinson.variable} ${archivo.variable} ${martianMono.variable} ${bigShouldersStencil.variable} h-full antialiased`}
     >
       <head>
         {/* eslint-disable-next-line @next/next/no-sync-scripts */}

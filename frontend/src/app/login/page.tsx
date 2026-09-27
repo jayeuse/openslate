@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { workspaceStartRoute } from "@/components/workspace-start";
 import {
   Field as FormField,
   FieldControl,
@@ -31,11 +32,11 @@ export default function LoginPage() {
         setError("Finish setup using the link in your invitation email.");
         return;
       }
-      router.push("/openview");
+      router.push(await workspaceStartRoute());
     } catch (error) {
       setError(
         error instanceof ApiError && error.status === 401
-          ? "Invalid email or password."
+          ? "That email or password is not right."
           : "Unable to sign in. Check your connection and try again.",
       );
     } finally {

@@ -93,8 +93,8 @@ export function Avatar({
             presence === "Offline"
               ? "bg-muted-foreground"
               : presence === "Busy"
-                ? "bg-destructive"
-                : "bg-primary",
+                ? "bg-warn"
+                : "bg-flow",
           )}
         />
       )}

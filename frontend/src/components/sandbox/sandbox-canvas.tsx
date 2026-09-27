@@ -22,6 +22,7 @@ import {
   MODULE_TABLE,
   SANDBOX_GRID_MAJOR_SIZE,
   SANDBOX_GRID_SIZE,
+  SANDBOX_ZOOM,
   snapSandboxPosition,
 } from "@/lib/sandbox/x6-adapter";
 import type { SandboxCommandResult } from "@/components/systems/sandbox/state/commands";
@@ -42,6 +43,10 @@ import { synchronizeSandboxCanvas } from "./sandbox-canvas-sync";
 import { createSandboxCanvasRuntime } from "./sandbox-canvas-runtime";
 import { bindSandboxCanvasPortInteractions } from "./sandbox-canvas-ports";
 import { bindSandboxCanvasResizeInteractions } from "./sandbox-canvas-resize";
+import {
+  bindSandboxCanvasTrace,
+  type SandboxCanvasTrace,
+} from "./sandbox-canvas-trace";
 
 type SandboxCommand =
   | void
@@ -68,7 +73,21 @@ export interface SandboxCanvasApi {
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
-  fit: () => void;
+  /** Fits the design; false when it is larger than the view at the floor. */
+  fit: () => boolean;
+  /**
+   * The opening view: 100% zoom on one department, 24px in, so table and
+   * field names are readable. The minimap and Fit show the rest. With a
+   * focus id, it opens on that module's (or department's) department and
+   * keeps the module in view; with `trace`, it also pins the module's
+   * connections, for "Show on canvas". Without one, it opens on the
+   * busiest department.
+   */
+  start: (options?: { focusId?: string | null; trace?: boolean }) => void;
+  /** Clears a trace pinned by `start({ trace: true })`, and its field marks. */
+  clearTrace: () => void;
+  /** Marks field rows (canvas field id → "trigger" | "changed") for a Test run. */
+  markFields: (marks: Readonly<Record<string, string>> | null) => void;
   center: () => void;
   /** Places a newly-created node, or queues its position until it is rendered. */
   placeNode: (nodeId: string, position: { x: number; y: number }) => void;
@@ -100,6 +119,8 @@ export interface SandboxCanvasProps {
   ) => SandboxCommand;
   onConnect: (sourceModuleId: string, targetModuleId: string) => void;
   onMove: (nodeId: string, parentId: string | null) => void;
+  /** A click on empty canvas cleared a pinned "Show on canvas" trace. */
+  onTraceCleared?: () => void;
   graphRef?: MutableRefObject<SandboxCanvasApi | null>;
   pending?: boolean;
 }
@@ -119,6 +140,7 @@ interface SandboxCanvasCallbacks {
   onDrop: SandboxCanvasProps["onDrop"];
   onConnect: (sourceModuleId: string, targetModuleId: string) => void;
   onMove: (nodeId: string, parentId: string | null) => void;
+  onTraceCleared?: () => void;
 }
 
 const CANVAS_BACKGROUND =
@@ -131,10 +153,16 @@ interface CanvasEditor {
   property: "name" | "type";
   id: string;
   value: string;
+  nodeId: string;
+  rowIndex?: number;
   left: number;
   top: number;
   width: number;
 }
+
+// The inline editor is a fixed 28px control centred on the text it edits.
+const CANVAS_EDITOR_HEIGHT = 28;
+const CANVAS_EDITOR_MIN_WIDTH = 160;
 
 export function SandboxCanvas({
   state,
@@ -150,11 +178,13 @@ export function SandboxCanvas({
   onDrop,
   onConnect,
   onMove,
+  onTraceCleared,
   graphRef,
   pending = false,
 }: SandboxCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const minimapRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<SandboxCanvasRuntime | null>(null);
   const pendingPositionsRef = useRef<Map<string, CanvasPosition>>(new Map());
   const freeMoveRef = useRef(false);
@@ -181,8 +211,10 @@ export function SandboxCanvas({
     onDrop,
     onConnect,
     onMove,
+    onTraceCleared,
   });
   const stateRef = useRef(state);
+  const traceRef = useRef<SandboxCanvasTrace | null>(null);
   function closeEditor(): void {
     editorRef.current = null;
     setEditor(null);
@@ -202,6 +234,7 @@ export function SandboxCanvas({
       onDrop,
       onConnect,
       onMove,
+      onTraceCleared,
     };
     stateRef.current = state;
   });
@@ -231,6 +264,7 @@ export function SandboxCanvas({
     const { graph, history } = createSandboxCanvasRuntime(
       container,
       snapEnabledRef.current ? SANDBOX_GRID_SIZE : 1,
+      minimapRef.current,
     );
     if (gridRef.current)
       gridRef.current.dataset.snapSize = `${graph.getGridSize()}`;
@@ -289,27 +323,43 @@ export function SandboxCanvas({
       const offsetY = matrix.f || 0;
       grid.style.backgroundSize = [
         `${SANDBOX_GRID_SIZE * scaleX}px ${SANDBOX_GRID_SIZE * scaleY}px`,
-        `${SANDBOX_GRID_SIZE * scaleX}px ${SANDBOX_GRID_SIZE * scaleY}px`,
-        `${SANDBOX_GRID_MAJOR_SIZE * scaleX}px ${SANDBOX_GRID_MAJOR_SIZE * scaleY}px`,
         `${SANDBOX_GRID_MAJOR_SIZE * scaleX}px ${SANDBOX_GRID_MAJOR_SIZE * scaleY}px`,
       ].join(", ");
+      const minorHalf = (SANDBOX_GRID_SIZE * scaleX) / 2;
+      const majorHalf = (SANDBOX_GRID_MAJOR_SIZE * scaleX) / 2;
       grid.style.backgroundPosition = [
-        `${offsetX}px ${offsetY}px`,
-        `${offsetX}px ${offsetY}px`,
-        `${offsetX}px ${offsetY}px`,
-        `${offsetX}px ${offsetY}px`,
+        `${offsetX - minorHalf}px ${offsetY - minorHalf}px`,
+        `${offsetX - majorHalf}px ${offsetY - majorHalf}px`,
       ].join(", ");
       grid.dataset.scale = `${scaleX}`;
       grid.dataset.translate = `${offsetX},${offsetY}`;
     };
     updateGridVisual();
     emitViewState();
+    // Keep an open inline editor on its text while the view zooms or pans.
+    const reanchorEditor = (): void => {
+      const current = editorRef.current;
+      if (current === null) return;
+      const node = graph.getCellById(current.nodeId);
+      if (node === null || !node.isNode()) return;
+      const next = {
+        ...current,
+        ...editorAnchor(node, current.property, current.rowIndex),
+      };
+      editorRef.current = next;
+      setEditor(next);
+    };
     const updateScale = (): void => {
       updateGridVisual();
       emitViewState();
+      reanchorEditor();
+    };
+    const updateTranslate = (): void => {
+      updateGridVisual();
+      reanchorEditor();
     };
     graph.on("scale", updateScale);
-    graph.on("translate", updateGridVisual);
+    graph.on("translate", updateTranslate);
 
     const updateDragSnap = (freeMove: boolean): void => {
       if (freeMoveRef.current === freeMove) {
@@ -373,8 +423,11 @@ export function SandboxCanvas({
         ? box.y +
           MODULE_TABLE.headerHeight +
           rowIndex * MODULE_TABLE.rowHeight +
-          2
-        : box.y + (nodeKindOf(node) === "department" ? 5 : 3);
+          MODULE_TABLE.rowHeight / 2
+        : box.y +
+          (nodeKindOf(node) === "department"
+            ? 18
+            : MODULE_TABLE.headerHeight / 2);
       const width = isField
         ? property === "type"
           ? MODULE_TABLE.width - MODULE_TABLE.splitX - 8
@@ -386,8 +439,8 @@ export function SandboxCanvas({
       const bounds = container.getBoundingClientRect();
       return {
         left: Math.max(4, clientPoint.x - bounds.left),
-        top: Math.max(4, clientPoint.y - bounds.top),
-        width,
+        top: Math.max(4, clientPoint.y - bounds.top - CANVAS_EDITOR_HEIGHT / 2),
+        width: Math.max(CANVAS_EDITOR_MIN_WIDTH, width * graph.zoom()),
       };
     };
 
@@ -412,12 +465,28 @@ export function SandboxCanvas({
         return;
       }
       callbacksRef.current.onSelect(id);
+      // Pan only when the editor would not fit in view (the anchor clamps to
+      // the 4px edge), so editing inside a large visible table never jumps.
+      // The editor's width scales with zoom, so the whole width must fit.
+      let anchor = editorAnchor(node, property, rowIndex);
+      const view = container.getBoundingClientRect();
+      if (
+        anchor.left <= 4 ||
+        anchor.top <= 4 ||
+        anchor.top + CANVAS_EDITOR_HEIGHT > view.height ||
+        anchor.left + anchor.width > view.width
+      ) {
+        graph.centerCell(node);
+        anchor = editorAnchor(node, property, rowIndex);
+      }
       const nextEditor: CanvasEditor = {
         target,
         property,
         id,
         value,
-        ...editorAnchor(node, property, rowIndex),
+        nodeId: node.id,
+        rowIndex,
+        ...anchor,
       };
       editorRef.current = nextEditor;
       setEditor(nextEditor);
@@ -468,19 +537,140 @@ export function SandboxCanvas({
           snapEnabled: snapEnabledRef.current,
         }),
         zoomIn: () => {
-          graph.zoom(0.1, { minScale: 0.25, maxScale: 2 });
+          graph.zoom(0.1, {
+            minScale: SANDBOX_ZOOM.min,
+            maxScale: SANDBOX_ZOOM.max,
+          });
         },
         zoomOut: () => {
-          graph.zoom(-0.1, { minScale: 0.25, maxScale: 2 });
+          graph.zoom(-0.1, {
+            minScale: SANDBOX_ZOOM.min,
+            maxScale: SANDBOX_ZOOM.max,
+          });
         },
         resetZoom: () => {
           graph.zoom(1, { absolute: true });
         },
+        start: (options) => {
+          graph.zoom(1, { absolute: true });
+          const focusCell = options?.focusId
+            ? graph.getCellById(options.focusId)
+            : null;
+          const focusNode =
+            focusCell !== null && focusCell.isNode() ? focusCell : null;
+          const focusModule =
+            focusNode !== null && nodeKindOf(focusNode) === "module"
+              ? focusNode
+              : null;
+          const focusDepartment =
+            focusModule !== null
+              ? (() => {
+                  const parent = focusModule.getParent();
+                  return parent !== null && parent.isNode() ? parent : null;
+                })()
+              : focusNode !== null && nodeKindOf(focusNode) === "department"
+                ? focusNode
+                : null;
+          traceRef.current?.pin(
+            options?.trace && focusModule !== null ? focusModule.id : null,
+          );
+          const departments = graph
+            .getNodes()
+            .filter((node) => nodeKindOf(node) === "department");
+          const modulesOf = (department: Node) =>
+            (department.getChildren() ?? []).filter(
+              (cell): cell is Node =>
+                cell.isNode() && nodeKindOf(cell) === "module",
+            );
+          // Open on the busiest department, so the first view shows tables
+          // and the lines between them rather than one card in a frame.
+          const busyness = (department: Node) => {
+            const ids = new Set(modulesOf(department).map((item) => item.id));
+            const lines = graph
+              .getEdges()
+              .filter(
+                (edge) =>
+                  ids.has(edge.getSourceCellId()) ||
+                  ids.has(edge.getTargetCellId()),
+              ).length;
+            return ids.size + lines;
+          };
+          const anchor =
+            focusDepartment ??
+            departments.reduce<Node | null>(
+              (best, department) =>
+                best === null || busyness(department) > busyness(best)
+                  ? department
+                  : best,
+              null,
+            );
+          const box = anchor?.getBBox() ?? graph.getCellsBBox(graph.getNodes());
+          if (box === null) return;
+          if (anchor === null || box.width + 48 <= container.clientWidth) {
+            // Keep a focused module in view: when it sits below the fold,
+            // lift the department so the module's top is 72px down.
+            const moduleBox = focusModule?.getBBox();
+            const dy =
+              moduleBox &&
+              moduleBox.y + moduleBox.height - box.y + 24 >
+                container.clientHeight
+                ? 72 - moduleBox.y
+                : 24 - box.y;
+            graph.translate(24 - box.x, dy);
+            return;
+          }
+          // A narrow canvas cannot hold the department, so show one table
+          // whole (the focused one, or the first), with the department head
+          // above it when it fits.
+          const first =
+            focusModule ??
+            [...modulesOf(anchor)].sort(
+              (a, b) =>
+                a.getBBox().y - b.getBBox().y || a.getBBox().x - b.getBBox().x,
+            )[0];
+          const target = first?.getBBox() ?? box;
+          const top =
+            target.y + target.height - box.y + 16 > container.clientHeight
+              ? target.y - 16
+              : box.y;
+          // Keep the department's left edge (and its name) in view when the
+          // table still fits beside it.
+          const left =
+            target.x + target.width - box.x + 32 <= container.clientWidth
+              ? box.x
+              : target.x;
+          graph.translate(16 - left, 16 - top);
+        },
         fit: () => {
-          graph.zoomToFit({ padding: 24, maxScale: 1 });
+          graph.zoomToFit({
+            padding: 24,
+            minScale: SANDBOX_ZOOM.fitMin,
+            maxScale: 1,
+          });
+          if (graph.zoom() > SANDBOX_ZOOM.fitMin + 0.001) return true;
+          // At the floor the design is larger than the view: show its start,
+          // 24px in from the top-left, measured from the department frames.
+          const departments = graph
+            .getNodes()
+            .filter((node) => nodeKindOf(node) === "department");
+          const box = graph.getCellsBBox(
+            departments.length > 0 ? departments : graph.getNodes(),
+          );
+          if (box !== null) {
+            const scale = graph.zoom();
+            graph.translate(24 - box.x * scale, 24 - box.y * scale);
+          }
+          return false;
         },
         center: () => {
           graph.centerContent();
+        },
+        clearTrace: () => {
+          traceRef.current?.pin(null);
+          traceRef.current?.markFields(null);
+        },
+        markFields: (marks) => {
+          traceRef.current?.markFields(marks);
         },
         placeNode: (nodeId, position) => {
           const snappedPosition = position;
@@ -501,6 +691,13 @@ export function SandboxCanvas({
       container,
       state: stateRef,
     });
+
+    const trace = bindSandboxCanvasTrace({
+      graph,
+      state: stateRef,
+      onPinCleared: () => callbacksRef.current.onTraceCleared?.(),
+    });
+    traceRef.current = trace;
 
     const cleanupResizeInteractions = bindSandboxCanvasResizeInteractions({
       graph,
@@ -751,6 +948,8 @@ export function SandboxCanvas({
       for (const timer of feedbackTimers.values()) clearTimeout(timer);
       cleanupResizeInteractions();
       cleanupPortInteractions();
+      trace.dispose();
+      traceRef.current = null;
       container.removeEventListener("mousedown", preparePointer, true);
       window.removeEventListener("keydown", updateModifier);
       window.removeEventListener("keyup", updateModifier);
@@ -780,6 +979,7 @@ export function SandboxCanvas({
       appliedLayout: appliedLayoutRef,
       syncing: syncingRef,
     });
+    traceRef.current?.refresh();
   }, [dropTargetId, layout, movingNodeId, state]);
 
   async function commitEditor(value: string): Promise<void> {
@@ -919,19 +1119,18 @@ export function SandboxCanvas({
         hidden={!gridVisible}
         className="pointer-events-none absolute inset-0"
         style={{
+          // Dots, not lines: the grid guides placement without competing
+          // with the diagram.
           backgroundImage: [
-            `linear-gradient(to right, ${CANVAS_GRID} 1px, transparent 1px)`,
-            `linear-gradient(to bottom, ${CANVAS_GRID} 1px, transparent 1px)`,
-            `linear-gradient(to right, ${CANVAS_GRID_MAJOR} 1px, transparent 1px)`,
-            `linear-gradient(to bottom, ${CANVAS_GRID_MAJOR} 1px, transparent 1px)`,
+            `radial-gradient(circle, ${CANVAS_GRID} 1px, transparent 1.2px)`,
+            `radial-gradient(circle, ${CANVAS_GRID_MAJOR} 1.2px, transparent 1.6px)`,
           ].join(", "),
           backgroundSize: [
             `${SANDBOX_GRID_SIZE}px ${SANDBOX_GRID_SIZE}px`,
-            `${SANDBOX_GRID_SIZE}px ${SANDBOX_GRID_SIZE}px`,
-            `${SANDBOX_GRID_MAJOR_SIZE}px ${SANDBOX_GRID_MAJOR_SIZE}px`,
             `${SANDBOX_GRID_MAJOR_SIZE}px ${SANDBOX_GRID_MAJOR_SIZE}px`,
           ].join(", "),
-          backgroundPosition: "0 0, 0 0, 0 0, 0 0",
+          // Shift by half a cell so each dot sits on a snap point.
+          backgroundPosition: `${-SANDBOX_GRID_SIZE / 2}px ${-SANDBOX_GRID_SIZE / 2}px, ${-SANDBOX_GRID_MAJOR_SIZE / 2}px ${-SANDBOX_GRID_MAJOR_SIZE / 2}px`,
         }}
       />
       <div
@@ -942,6 +1141,75 @@ export function SandboxCanvas({
         tabIndex={0}
         className="focus:ring-ring absolute inset-0 outline-none focus:ring-2 focus:ring-inset"
       />
+      {/* Pointer navigation aid; Fit and the Structure tab are the keyboard
+          equivalents, so the minimap stays out of the accessibility tree. */}
+      <div
+        ref={minimapRef}
+        aria-hidden="true"
+        className="sandbox-minimap border-border bg-card pointer-events-auto absolute right-3 bottom-3 z-10 hidden overflow-hidden rounded-md border shadow-sm sm:block"
+      />
+      {state.modules.length > 0 ? (
+        // Closed by default so the key never covers tables; it opens upward.
+        <details className="group absolute bottom-3 left-3 z-10">
+          <summary className="border-border bg-card text-muted-foreground hover:text-foreground flex min-h-6 cursor-pointer list-none items-center rounded-md border px-2.5 text-xs shadow-sm [&::-webkit-details-marker]:hidden">
+            Key
+          </summary>
+          <ul
+            aria-label="Canvas key"
+            className="border-border bg-card text-muted-foreground absolute bottom-full left-0 mb-1 grid w-max grid-cols-2 gap-x-4 gap-y-1 rounded-md border px-2.5 py-2 text-xs shadow-sm"
+          >
+            {(
+              [
+                ["Relationship", "line", "relationship"],
+                ["Handoff to another department", "line", "handoff"],
+                ["Required field", "filled", null],
+                ["Optional field", "hollow", null],
+              ] as const
+            ).map(([label, sample, kind]) => (
+              <li key={label} className="flex items-center gap-2">
+                <svg
+                  aria-hidden="true"
+                  width="24"
+                  height="8"
+                  className="shrink-0"
+                >
+                  {sample === "line" ? (
+                    <line
+                      // The same hooks as canvas lines, so each theme styles
+                      // the sample like the real line; "key" skips the flow
+                      // animation.
+                      data-sandbox-line="key"
+                      data-sandbox-edge-kind={kind ?? undefined}
+                      x1="0"
+                      y1="4"
+                      x2="24"
+                      y2="4"
+                      stroke="var(--canvas-edge)"
+                      strokeWidth="1.5"
+                    />
+                  ) : (
+                    <circle
+                      cx="12"
+                      cy="4"
+                      r="3"
+                      fill={
+                        sample === "filled" ? "var(--canvas-type-ink)" : "none"
+                      }
+                      stroke="var(--canvas-type-ink)"
+                      strokeWidth="1.25"
+                    />
+                  )}
+                </svg>
+                <span>{label}</span>
+              </li>
+            ))}
+            <li className="border-border col-span-2 max-w-72 border-t pt-1">
+              A module is a list of one kind of record. A line links records in
+              two modules.
+            </li>
+          </ul>
+        </details>
+      ) : null}
       <p id="sandbox-canvas-keyboard-alternative" className="sr-only">
         Select canvas items with a pointer or their field controls. Use the
         Structure panel for complete keyboard editing.
@@ -974,7 +1242,7 @@ export function SandboxCanvas({
               aria-label="Canvas field type"
               autoFocus
               disabled={pending}
-              className="border-primary bg-card text-foreground ring-ring/30 h-7 w-full rounded border px-1 text-[10px] font-semibold uppercase shadow-md ring-2 outline-none"
+              className="border-primary bg-card text-foreground ring-ring/30 h-7 w-full rounded border px-1 text-xs shadow-md ring-2 outline-none"
               value={editor.value}
               onChange={(event) => {
                 setEditor((current) =>

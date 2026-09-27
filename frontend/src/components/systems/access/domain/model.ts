@@ -71,7 +71,10 @@ export const initialPeople: Person[] = [
 
 export type Role = {
   id: string;
+  /** Display name. Built-in roles show "Administrator" and "Member". */
   name: string;
+  /** The built-in role this is, for logic that must not read display text. */
+  system?: "admin" | "member";
   description?: string;
   builtin: boolean;
   grants: string[];
@@ -104,12 +107,14 @@ export const initialRoles: Role[] = [
   {
     id: "sample-admin",
     name: "Administrator",
+    system: "admin",
     builtin: true,
     grants: [...permissions],
   },
   {
     id: "sample-member",
     name: "Member",
+    system: "member",
     builtin: true,
     grants: [
       "Department · Operations",

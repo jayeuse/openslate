@@ -225,7 +225,7 @@ test("the same-origin gateway authenticates, serves the session, and revokes it 
   await page.getByLabel("Password").fill(credentials.password);
   await page.getByRole("button", { name: "Sign in" }).click();
 
-  await expect(page).toHaveURL(/\/openview$/);
+  await expect(page).toHaveURL(/\/(openview|sandbox)$/);
   await expect(page.getByLabel("OpenSlate workspace")).toBeVisible();
   await expect
     .poll(() =>
@@ -281,7 +281,7 @@ test("a returning tab conceals the old account until the shared cookie session i
   await tabA.getByLabel("Email", { exact: true }).fill(admin.email);
   await tabA.getByLabel("Password").fill(admin.password);
   await tabA.getByRole("button", { name: "Sign in" }).click();
-  await expect(tabA).toHaveURL(/\/openview$/);
+  await expect(tabA).toHaveURL(/\/(openview|sandbox)$/);
   await tabA.goto("/platform?section=search");
   const search = tabA.getByRole("searchbox", { name: "Search workspace" });
   await search.fill("admin-only in-progress draft");
@@ -318,7 +318,7 @@ test("a returning tab conceals the old account until the shared cookie session i
   await tabB.getByLabel("Email", { exact: true }).fill(member.email);
   await tabB.getByLabel("Password").fill(member.password);
   await tabB.getByRole("button", { name: "Sign in" }).click();
-  await expect(tabB).toHaveURL(/\/openview$/);
+  await expect(tabB).toHaveURL(/\/(openview|sandbox)$/);
 
   let releaseSession = () => {};
   let signalSession = () => {};

@@ -1021,7 +1021,10 @@ export function AutomationStudio({
             </div>
           </ResizablePanel>
           {wide && (
-            <ResizableHandle withHandle aria-label="Resize rule settings" />
+            <ResizableHandle
+              withHandle
+              aria-label="Resize automation settings"
+            />
           )}
           <ResizablePanel
             id="automation-settings"
@@ -1031,11 +1034,11 @@ export function AutomationStudio({
             className="min-w-0 overflow-visible! @min-[1100px]/studio:h-full @min-[1100px]/studio:overflow-hidden!"
           >
             <section
-              aria-label="Rule settings"
+              aria-label="Automation settings"
               className="bg-card @container/settings flex min-w-0 flex-col @min-[1100px]/studio:h-full @min-[1100px]/studio:min-h-0"
             >
               <div className="border-border border-b px-5 py-4">
-                <h2 className="font-semibold">Rule settings</h2>
+                <h2 className="font-semibold">Automation settings</h2>
               </div>
               <div
                 ref={settingsRef}

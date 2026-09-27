@@ -15,7 +15,10 @@ const buttonVariants = cva(
         ghost: "text-foreground hover:bg-muted",
         destructive:
           "bg-destructive text-destructive-foreground hover:opacity-90",
-        outline: "border border-border bg-card text-foreground hover:bg-muted",
+        // Themes set --button-edge and --button-ink; a call site's own
+        // border or text classes still win.
+        outline:
+          "border border-[color:var(--button-edge,var(--border))] bg-card text-[color:var(--button-ink)] hover:bg-muted",
       },
       size: {
         default: "h-9 px-4 py-2",
@@ -47,6 +50,9 @@ export function Button({
 
   return (
     <Component
+      data-slot="button"
+      data-variant={variant ?? "default"}
+      data-size={size ?? "default"}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
     />

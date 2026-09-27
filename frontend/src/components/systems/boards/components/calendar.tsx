@@ -1043,7 +1043,7 @@ function CalendarMonth({
               {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
                 <div
                   key={day}
-                  className="text-muted-foreground px-2 py-2 text-center text-[0.6875rem] font-semibold tracking-wide uppercase"
+                  className="text-muted-foreground px-2 py-2 text-center text-xs font-semibold tracking-wide uppercase"
                 >
                   {day}
                 </div>
@@ -1090,7 +1090,7 @@ function CalendarMonth({
                       {date === today && (
                         <Badge
                           variant="secondary"
-                          className="px-1.5 py-0 text-[0.625rem]"
+                          className="px-1.5 py-0 text-xs"
                         >
                           Today
                         </Badge>
@@ -1123,7 +1123,7 @@ function CalendarMonth({
                             <span className="line-clamp-2 font-medium">
                               {occurrence.event.title}
                             </span>
-                            <span className="text-muted-foreground mt-0.5 block text-[0.6875rem]">
+                            <span className="text-muted-foreground mt-0.5 block text-xs">
                               {occurrence.event.allDay
                                 ? "All day"
                                 : occurrence.date < date

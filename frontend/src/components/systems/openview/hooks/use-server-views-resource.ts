@@ -88,6 +88,11 @@ export function useServerViewsResource(requestedModule: string | null) {
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState("");
   const [catalogRetry, setCatalogRetry] = useState(0);
+  // Role and person choices only feed sharing, so their failure stays scoped
+  // to the save dialog instead of blocking the catalog.
+  const [audienceError, setAudienceError] = useState("");
+  const [audienceLoading, setAudienceLoading] = useState(true);
+  const [audienceRetry, setAudienceRetry] = useState(0);
   const [moduleWorkspace, setModuleWorkspace] =
     useState<ModuleWorkspace | null>(null);
   const [moduleLoading, setModuleLoading] = useState(false);
@@ -96,15 +101,17 @@ export function useServerViewsResource(requestedModule: string | null) {
   const [metadataLoadingMore, setMetadataLoadingMore] = useState(false);
   const [metadataError, setMetadataError] = useState("");
   const [metadataRetryTarget, setMetadataRetryTarget] = useState<
-    "catalog" | "module" | "audience" | null
+    "catalog" | "module" | null
   >(null);
   const [recordInvalidation, setRecordInvalidation] = useState(0);
   const [authorizationDenied, setAuthorizationDenied] = useState(false);
   const catalogRequest = useRef(0);
+  const audienceRequest = useRef(0);
   const moduleRequest = useRef(0);
 
   const markAuthorizationDenied = useCallback(() => {
     catalogRequest.current += 1;
+    audienceRequest.current += 1;
     moduleRequest.current += 1;
     setAuthorizationDenied(true);
     setCatalog(null);
@@ -112,6 +119,7 @@ export function useServerViewsResource(requestedModule: string | null) {
     setCatalogHasMore(false);
     setCatalogNextOffset(0);
     setAudiences([]);
+    setAudienceError("");
     setModuleWorkspace(null);
     setModuleLoading(false);
     setCatalogError(
@@ -150,54 +158,22 @@ export function useServerViewsResource(requestedModule: string | null) {
     const request = ++catalogRequest.current;
     setCatalogLoading(true);
     setCatalogError("");
-    void Promise.allSettled([
-      boundedItems((options) => listOpenViewDataSources(options)),
-      boundedItems((options) => listOpenViewAudienceOptions("role", options)),
-      boundedItems((options) => listOpenViewAudienceOptions("user", options)),
-    ])
-      .then((results) => {
+    void boundedItems((options) => listOpenViewDataSources(options))
+      .then((sources) => {
         if (request !== catalogRequest.current) return;
-        if (
-          results.some(
-            (result) =>
-              result.status === "rejected" &&
-              isAuthorizationDenied(result.reason),
-          )
-        ) {
+        setAuthorizationDenied(false);
+        setCatalog(sources.items);
+        setCatalogHasMore(sources.hasMore);
+        setCatalogNextOffset(sources.nextOffset);
+      })
+      .catch((error: unknown) => {
+        if (request !== catalogRequest.current) return;
+        if (isAuthorizationDenied(error)) {
           markAuthorizationDenied();
           return;
         }
-        setAuthorizationDenied(false);
-        const [sources, roles, people] = results;
-        if (sources.status === "fulfilled") {
-          setCatalog(sources.value.items);
-          setCatalogHasMore(sources.value.hasMore);
-          setCatalogNextOffset(sources.value.nextOffset);
-        }
-        if (roles.status === "fulfilled") {
-          setAudiences((current) => [
-            ...current.filter((item) => item.kind !== "role"),
-            ...roles.value.items,
-          ]);
-          setRoleOptionsHasMore(roles.value.hasMore);
-          setRoleOptionsNextOffset(roles.value.nextOffset);
-        }
-        if (people.status === "fulfilled") {
-          setAudiences((current) => [
-            ...current.filter((item) => item.kind !== "identity"),
-            ...people.value.items,
-          ]);
-          setUserOptionsHasMore(people.value.hasMore);
-          setUserOptionsNextOffset(people.value.nextOffset);
-        }
-        const failed = results.find((result) => result.status === "rejected");
         setCatalogError(
-          failed?.status === "rejected"
-            ? messageFor(
-                failed.reason,
-                "The OpenView catalog could not be loaded.",
-              )
-            : "",
+          messageFor(error, "The OpenView catalog could not be loaded."),
         );
       })
       .finally(() => {
@@ -207,6 +183,59 @@ export function useServerViewsResource(requestedModule: string | null) {
       catalogRequest.current += 1;
     };
   }, [catalogRetry, markAuthorizationDenied]);
+
+  useEffect(() => {
+    const request = ++audienceRequest.current;
+    // A retry keeps the current message until the lists load or fail again.
+    setAudienceLoading(true);
+    void Promise.allSettled([
+      boundedItems((options) => listOpenViewAudienceOptions("role", options)),
+      boundedItems((options) => listOpenViewAudienceOptions("user", options)),
+    ]).then(([roles, people]) => {
+      if (request !== audienceRequest.current) return;
+      if (
+        [roles, people].some(
+          (result) =>
+            result.status === "rejected" &&
+            isAuthorizationDenied(result.reason),
+        )
+      ) {
+        setAudienceLoading(false);
+        markAuthorizationDenied();
+        return;
+      }
+      if (roles.status === "fulfilled") {
+        setAudiences((current) => [
+          ...current.filter((item) => item.kind !== "role"),
+          ...roles.value.items,
+        ]);
+        setRoleOptionsHasMore(roles.value.hasMore);
+        setRoleOptionsNextOffset(roles.value.nextOffset);
+      }
+      if (people.status === "fulfilled") {
+        setAudiences((current) => [
+          ...current.filter((item) => item.kind !== "identity"),
+          ...people.value.items,
+        ]);
+        setUserOptionsHasMore(people.value.hasMore);
+        setUserOptionsNextOffset(people.value.nextOffset);
+      }
+      setAudienceError(
+        roles.status === "rejected" || people.status === "rejected"
+          ? "Roles and people could not be loaded. You can still share with Only me or Everyone."
+          : "",
+      );
+      setAudienceLoading(false);
+    });
+    return () => {
+      audienceRequest.current += 1;
+    };
+  }, [audienceRetry, catalogRetry, markAuthorizationDenied]);
+
+  const retryAudiences = useCallback(
+    () => setAudienceRetry((value) => value + 1),
+    [],
+  );
 
   const moduleId = useMemo(() => {
     if (!catalog?.length) return undefined;
@@ -359,8 +388,7 @@ export function useServerViewsResource(requestedModule: string | null) {
     if (metadataLoadingMore || (!roleOptionsHasMore && !userOptionsHasMore))
       return;
     setMetadataLoadingMore(true);
-    setMetadataError("");
-    setMetadataRetryTarget(null);
+    setAudienceError("");
     try {
       const [roles, users] = await Promise.all([
         roleOptionsHasMore
@@ -393,10 +421,9 @@ export function useServerViewsResource(requestedModule: string | null) {
           userOptionsNextOffset + users.pagination.count,
         );
       }
-    } catch (error) {
-      setMetadataRetryTarget("audience");
-      setMetadataError(
-        messageFor(error, "More audience options could not be loaded."),
+    } catch {
+      setAudienceError(
+        "More roles and people could not be loaded. You can still share with the choices shown.",
       );
     } finally {
       setMetadataLoadingMore(false);
@@ -420,13 +447,7 @@ export function useServerViewsResource(requestedModule: string | null) {
   const retryMetadata = useCallback(() => {
     if (metadataRetryTarget === "catalog") void loadMoreCatalog();
     if (metadataRetryTarget === "module") void loadMoreModuleMetadata();
-    if (metadataRetryTarget === "audience") void loadMoreAudienceOptions();
-  }, [
-    loadMoreAudienceOptions,
-    loadMoreCatalog,
-    loadMoreModuleMetadata,
-    metadataRetryTarget,
-  ]);
+  }, [loadMoreCatalog, loadMoreModuleMetadata, metadataRetryTarget]);
 
   return {
     catalog,
@@ -434,6 +455,9 @@ export function useServerViewsResource(requestedModule: string | null) {
     catalogLoading,
     catalogError,
     audiences,
+    audienceError,
+    audienceLoading,
+    retryAudiences,
     roleOptionsHasMore,
     userOptionsHasMore,
     moduleId,

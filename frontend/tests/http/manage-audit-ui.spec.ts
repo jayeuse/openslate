@@ -24,10 +24,14 @@ test("Audit filters reset paging, row size, empty recovery, and details stay acc
     exact: true,
   });
   await expect(table).toBeVisible();
-  await expect(table.locator("tbody tr")).toHaveCount(5);
+  await expect(table.locator("tbody tr")).toHaveCount(10);
   await expect(
-    table.getByText("Example", { exact: true }).first(),
+    table.getByText("Preloaded", { exact: true }).first(),
   ).toBeVisible();
+  await expect(
+    page.getByText("Showing 1–10 of 10", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("combobox", { name: "Rows per page" }).selectOption("5");
   await expect(
     page.getByText("Showing 1–5 of 10", { exact: true }),
   ).toBeVisible();
@@ -104,7 +108,7 @@ test("Audit export downloads every entry matching dates, across visible pages", 
   await page.getByLabel("From", { exact: true }).fill("2026-09-02");
   await page.getByLabel("To", { exact: true }).fill("2026-09-08");
   await expect(
-    page.getByText("Showing 1–5 of 7", { exact: true }),
+    page.getByText("Showing 1–7 of 7", { exact: true }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Export audit preview" }).click();
@@ -114,7 +118,7 @@ test("Audit export downloads every entry matching dates, across visible pages", 
   });
   await expect(preview).toContainText("7 filtered entries");
   await expect(preview.getByLabel("CSV preview")).toContainText("Tomas Yu");
-  await expect(preview.getByLabel("CSV preview")).toContainText("Example");
+  await expect(preview.getByLabel("CSV preview")).toContainText("Preloaded");
 
   const downloadStarted = page.waitForEvent("download");
   await preview

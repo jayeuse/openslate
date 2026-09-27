@@ -20,6 +20,7 @@ export function SheetContent({
     <DialogPrimitive.Portal>
       <DialogPrimitive.Backdrop className="bg-foreground/20 fixed inset-0 z-50 transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-none" />
       <DialogPrimitive.Popup
+        data-slot="sheet-content"
         className={cn(
           "border-border bg-card text-card-foreground fixed inset-y-0 z-50 flex w-[min(85vw,22rem)] flex-col gap-4 overflow-y-auto p-5 shadow-lg transition-transform duration-200 outline-none motion-reduce:transition-none",
           side === "left"

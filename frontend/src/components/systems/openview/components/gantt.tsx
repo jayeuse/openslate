@@ -318,7 +318,7 @@ export function GanttView({
                   >
                     <span
                       className={cn(
-                        "text-foreground absolute text-[0.6875rem] font-medium whitespace-nowrap",
+                        "text-foreground absolute text-xs font-medium whitespace-nowrap",
                         compact ? "top-1" : "top-2",
                         samplePosition > 70 ? "right-2" : "left-2",
                       )}
@@ -395,7 +395,7 @@ export function GanttView({
                               variant={
                                 item.attentionReason ? "warning" : "outline"
                               }
-                              className="shrink-0 text-[0.6875rem]"
+                              className="shrink-0 text-xs"
                             >
                               {timingLabel(item.timingState)}
                             </Badge>
@@ -582,14 +582,14 @@ export function GanttView({
                             </span>
                           </Button>
                           <span
-                            className="text-muted-foreground pointer-events-none absolute top-2 text-[0.6875rem] font-medium whitespace-nowrap tabular-nums"
+                            className="text-muted-foreground pointer-events-none absolute top-2 text-xs font-medium whitespace-nowrap tabular-nums"
                             style={{ left: `${startPosition}%` }}
                             aria-hidden="true"
                           >
                             {formatShortDate(item.start)}
                           </span>
                           <span
-                            className="text-muted-foreground pointer-events-none absolute right-0 bottom-2 text-[0.6875rem] font-medium whitespace-nowrap tabular-nums"
+                            className="text-muted-foreground pointer-events-none absolute right-0 bottom-2 text-xs font-medium whitespace-nowrap tabular-nums"
                             style={{ left: `${endPosition}%` }}
                             aria-hidden="true"
                           >
@@ -606,7 +606,7 @@ export function GanttView({
                           <span className="bg-foreground border-background block size-3 rotate-45 border-2" />
                           <span
                             className={cn(
-                              "text-foreground text-[0.6875rem] font-semibold whitespace-nowrap tabular-nums",
+                              "text-foreground text-xs font-semibold whitespace-nowrap tabular-nums",
                               deadlinePosition > 76
                                 ? "-translate-x-full pr-4"
                                 : "pl-2",

@@ -1,5 +1,6 @@
 import { Point, routerPresets } from "@antv/x6";
 import type { Graph, History, Node } from "@antv/x6";
+import { placeEdgeLabels } from "./sandbox-canvas-labels";
 import {
   fieldsForModule,
   type SandboxCanvasLayout,
@@ -74,6 +75,7 @@ export function synchronizeSandboxCanvas({
     const departmentNodes = new Map<string, Node>();
     const moduleNodes = new Map<string, Node>();
     for (const [index, department] of state.departments.entries()) {
+      const departmentIndex = index;
       const departmentModules = state.modules.filter(
         (sandboxModule) => sandboxModule.departmentId === department.id,
       );
@@ -95,6 +97,7 @@ export function synchronizeSandboxCanvas({
         height,
         departmentSelected,
         departmentFeedback,
+        departmentIndex,
       );
       const existing = graph.getCellById(department.id);
       const departmentNode =
@@ -109,6 +112,8 @@ export function synchronizeSandboxCanvas({
               height,
               markup: [
                 { tagName: "rect", selector: "body" },
+                { tagName: "rect", selector: "band" },
+                { tagName: "rect", selector: "mark" },
                 { tagName: "text", selector: "heading" },
                 { tagName: "text", selector: "subheading" },
                 { tagName: "rect", selector: "resizeGrip" },
@@ -139,7 +144,7 @@ export function synchronizeSandboxCanvas({
       departmentNodes.set(department.id, departmentNode);
     }
 
-    for (const department of state.departments) {
+    for (const [departmentIndex, department] of state.departments.entries()) {
       const departmentNode = departmentNodes.get(department.id);
       if (departmentNode === undefined) {
         continue;
@@ -189,6 +194,7 @@ export function synchronizeSandboxCanvas({
                 : dropTargetId === sandboxModule.id
                   ? "drop"
                   : null,
+              departmentIndex,
             ),
             ports: {
               ...getModulePorts(state.selectedCellId === sandboxModule.id),
@@ -225,6 +231,7 @@ export function synchronizeSandboxCanvas({
               : dropTargetId === sandboxModule.id
                 ? "drop"
                 : null,
+            departmentIndex,
           ),
         );
         moduleNode.setData({
@@ -271,6 +278,9 @@ export function synchronizeSandboxCanvas({
     }
     if (movingNodeId === null) fitDepartmentFrames(graph);
 
+    const moduleDepartment = new Map(
+      state.modules.map((item) => [item.id, item.departmentId]),
+    );
     for (const link of state.links) {
       const sourceNode = moduleNodes.get(link.sourceModuleId);
       const targetNode = moduleNodes.get(link.targetModuleId);
@@ -304,8 +314,11 @@ export function synchronizeSandboxCanvas({
         cell: link.targetModuleId,
         port: `${link.targetModuleId}-in`,
       };
+      const handoff =
+        moduleDepartment.get(link.sourceModuleId) !==
+        moduleDepartment.get(link.targetModuleId);
       const linkAttrs = {
-        line: relationshipLineAttrs(state.selectedCellId === link.id),
+        line: relationshipLineAttrs(state.selectedCellId === link.id, handoff),
       };
       const linkLabels =
         link.label.trim() === ""
@@ -318,15 +331,15 @@ export function synchronizeSandboxCanvas({
                 ],
                 attrs: {
                   label: {
-                    fontSize: 10,
-                    fill: "var(--card-foreground, #20242c)",
+                    fontSize: 12,
+                    fill: "var(--canvas-label-ink, #20242c)",
                     pointerEvents: "none",
                     text: link.label,
                   },
                   body: {
                     ref: "label",
-                    fill: "var(--card, #ffffff)",
-                    stroke: "var(--border, #e4e7ec)",
+                    fill: "var(--canvas-label-fill, #ffffff)",
+                    stroke: "var(--canvas-label-frame, #e4e7ec)",
                     strokeWidth: 1,
                     rx: 3,
                     ry: 3,
@@ -347,7 +360,7 @@ export function synchronizeSandboxCanvas({
               source,
               target,
               router: relationshipRouter,
-              connector: { name: "normal" },
+              connector: { name: "rounded", args: { radius: 8 } },
               attrs: linkAttrs,
               labels: linkLabels,
               data: { kind: "link", linkId: link.id },
@@ -358,7 +371,7 @@ export function synchronizeSandboxCanvas({
       edge.setSource(source);
       edge.setTarget(target);
       edge.setRouter(relationshipRouter);
-      edge.setConnector({ name: "normal" });
+      edge.setConnector({ name: "rounded", args: { radius: 8 } });
       edge.setAttrs(linkAttrs);
       edge.setLabels(linkLabels);
       edge.setData({ kind: "link", linkId: link.id });
@@ -374,6 +387,7 @@ export function synchronizeSandboxCanvas({
         graph.select(selectedId);
       }
     }
+    placeEdgeLabels(graph);
   } finally {
     history.enable();
     syncing.current = false;

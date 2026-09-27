@@ -82,12 +82,16 @@ test("Security and recovery keeps policy drafts and protects the current session
   await expect(
     policy.getByLabel("Session timeout", { exact: true }),
   ).toHaveValue("30 minutes");
-  await policy
-    .getByRole("button", { name: "Save settings", exact: true })
-    .click();
+  const saveSettings = policy.getByRole("button", {
+    name: "Save settings",
+    exact: true,
+  });
+  await expect(saveSettings).toBeEnabled();
+  await saveSettings.click();
   await expect(
     policy.getByRole("button", { name: "Discard changes", exact: true }),
   ).toBeDisabled();
+  await expect(saveSettings).toBeDisabled();
   await policy
     .getByRole("button", { name: "Preview MFA setup", exact: true })
     .click();

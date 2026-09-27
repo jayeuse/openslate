@@ -1,0 +1,354 @@
+/*
+ * Whiteboard: the back-office planning board. Marker ink on white board,
+ * an aluminium frame around the canvas, bold marker lines. Dark is the
+ * slate chalkboard after hours. Look only: layout and words never change.
+ * Every token the light block sets, the dark block sets too, so no light
+ * value leaks into dark mode.
+ */
+:root[data-theme="whiteboard"],
+[data-theme-preview="whiteboard"] {
+  --ground: #e4e8eb;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eef1f3;
+  --surface-hover: #e7ebee;
+  --ink: #1b1f23;
+  --ink-muted: #434b53;
+  --rule: #cbd2d8;
+  --rule-strong: #9aa4ad;
+  --control-edge: #6f7a83;
+  --action: #1d5fb8;
+  --action-ink: #ffffff;
+  --action-text: #1d5fb8;
+  --action-tint: #e4edf9;
+  --flow: #1b7340;
+  --flow-ink: #ffffff;
+  --flow-text: #1b7340;
+  --flow-tint: #e3f1e8;
+  --flow-rule: #a9d3b7;
+  --warn: #8f5a00;
+  --warn-ink: #ffffff;
+  --warn-text: #7a4b00;
+  --warn-tint: #fbf1dc;
+  --warn-rule: #e0c48c;
+  --danger: #b42f27;
+  --danger-text: #9a261f;
+  --danger-tint: #fcedeb;
+  --danger-rule: #f0b8b3;
+  --danger-ink: #ffffff;
+  --focus: #1d5fb8;
+  --lift: 0 1px 0 rgb(27 31 35 / 0.3);
+  --lift-raised: 0 1px 0 rgb(27 31 35 / 0.3), 0 6px 14px rgb(27 31 35 / 0.1);
+  --lift-filter: drop-shadow(0 1px 0 rgb(27 31 35 / 0.3))
+    drop-shadow(0 6px 10px rgb(27 31 35 / 0.12));
+  --sidebar: #f3f5f6;
+  --canvas-background: #fafbfc;
+  --canvas-grid: #e3e7ea;
+  --canvas-grid-major: #cfd5da;
+  --radius: 0.375rem;
+  --font-ui: var(--font-atkinson), system-ui, sans-serif;
+  --font-code: var(--font-geist-mono);
+  --card-edge: transparent;
+  --card-lift: var(--lift-raised);
+  /* Materials, private to this theme's skin rules. */
+  --wb-tape: #2a2f34;
+  --wb-frame: #aeb7bf;
+  --wb-frame-hi: #eef1f3;
+  /* Canvas skin. */
+  --canvas-dept-fill: #fafbfc;
+  --canvas-dept-frame: #2a2f34;
+  --canvas-dept-ink: #1b1f23;
+  --canvas-module-fill: #ffffff;
+  --canvas-module-ink: #1b1f23;
+  --canvas-row-rule: #e3e7ea;
+  --canvas-row-stripe: #ffffff;
+  --canvas-type-ink: #434b53;
+  --canvas-edge: #30373d;
+  --canvas-label-fill: #fafbfc;
+  --canvas-label-frame: #fafbfc;
+  --canvas-label-ink: #1b1f23;
+  /* Department colors keep Slate's order (violet, teal, amber, rose) in
+     marker pastels, so a department is recognizable in every look. */
+  --dept-1: #bbade0;
+  --dept-2: #8fcfc6;
+  --dept-3: #edbb8f;
+  --dept-4: #e8a9b8;
+  --dept-1-band: var(--dept-1);
+  --dept-2-band: var(--dept-2);
+  --dept-3-band: var(--dept-3);
+  --dept-4-band: var(--dept-4);
+  --dept-1-card: #e9e3f6;
+  --dept-2-card: #dcf1ee;
+  --dept-3-card: #f9e6d4;
+  --dept-4-card: #f8e3e8;
+  /* Full-strength materials. Modules are cards in their department's
+     tint on the white board. */
+  --data-ink: var(--ink);
+  --button-edge: #7f8a93;
+  --button-ink: var(--ink);
+  --canvas-field-ink: var(--canvas-module-ink);
+  --canvas-module-frame: transparent;
+  --dept-1-sheet: var(--canvas-dept-fill);
+  --dept-2-sheet: var(--canvas-dept-fill);
+  --dept-3-sheet: var(--canvas-dept-fill);
+  --dept-4-sheet: var(--canvas-dept-fill);
+  --dept-1-module: var(--dept-1-card);
+  --dept-2-module: var(--dept-2-card);
+  --dept-3-module: var(--dept-3-card);
+  --dept-4-module: var(--dept-4-card);
+  --dept-1-stripe: var(--dept-1-card);
+  --dept-2-stripe: var(--dept-2-card);
+  --dept-3-stripe: var(--dept-3-card);
+  --dept-4-stripe: var(--dept-4-card);
+  --wb-board: #fafbfc;
+  --wb-grid: #eef1f3;
+}
+
+.dark[data-theme="whiteboard"],
+.dark [data-theme-preview="whiteboard"] {
+  --ground: #1b2224;
+  --surface: #222a2d;
+  --surface-raised: #283135;
+  --surface-sunken: #1e2629;
+  --surface-hover: #2c3639;
+  --ink: #eff2ee;
+  --ink-muted: #aeb9b8;
+  --rule: #34403f;
+  --rule-strong: #4d5b5a;
+  --control-edge: #7a8887;
+  --action: #86b5f2;
+  --action-ink: #0d1b2e;
+  --action-text: #9fc4f6;
+  --action-tint: #1c2c40;
+  --flow: #72c492;
+  --flow-ink: #0c2215;
+  --flow-text: #8bd2a6;
+  --flow-tint: #15301f;
+  --flow-rule: #2c5a3d;
+  --warn: #e8ad52;
+  --warn-ink: #2a1a03;
+  --warn-text: #f0c27a;
+  --warn-tint: #33260f;
+  --warn-rule: #6a4c18;
+  --danger: #f28b82;
+  --danger-text: #f5a29a;
+  --danger-tint: #3a1715;
+  --danger-rule: #6e2a25;
+  --danger-ink: #2a0906;
+  --focus: #86b5f2;
+  --lift: 0 1px 0 rgb(0 0 0 / 0.45);
+  --lift-raised: 0 1px 0 rgb(0 0 0 / 0.45), 0 6px 14px rgb(0 0 0 / 0.35);
+  --lift-filter: drop-shadow(0 1px 0 rgb(0 0 0 / 0.45))
+    drop-shadow(0 6px 10px rgb(0 0 0 / 0.4));
+  --sidebar: #192022;
+  --canvas-background: #1f2729;
+  --canvas-grid: color-mix(in srgb, #3a4745 55%, transparent);
+  --canvas-grid-major: color-mix(in srgb, #4f5f5d 60%, transparent);
+  --radius: 0.375rem;
+  --font-ui: var(--font-atkinson), system-ui, sans-serif;
+  --font-code: var(--font-geist-mono);
+  --card-edge: var(--rule);
+  --card-lift: var(--lift-raised);
+  --wb-tape: #d7dcd8;
+  --wb-frame: #4a5553;
+  --wb-frame-hi: #2c3639;
+  /* Canvas skin. */
+  --canvas-dept-fill: #1f2729;
+  --canvas-dept-frame: #d7dcd8;
+  --canvas-dept-ink: #111416;
+  --canvas-module-fill: #283135;
+  --canvas-module-ink: #eff2ee;
+  --canvas-row-rule: #34403f;
+  --canvas-row-stripe: #283135;
+  --canvas-type-ink: #aeb9b8;
+  --canvas-edge: #d7dcd8;
+  --canvas-label-fill: #1f2729;
+  --canvas-label-frame: #1f2729;
+  --canvas-label-ink: #eff2ee;
+  --dept-1: #a497cf;
+  --dept-2: #6fb3aa;
+  --dept-3: #d4a273;
+  --dept-4: #cf8e9e;
+  --dept-1-band: var(--dept-1);
+  --dept-2-band: var(--dept-2);
+  --dept-3-band: var(--dept-3);
+  --dept-4-band: var(--dept-4);
+  --dept-1-card: #302c40;
+  --dept-2-card: #233634;
+  --dept-3-card: #3d3024;
+  --dept-4-card: #3b2a30;
+  --data-ink: var(--ink);
+  --button-edge: #7a8887;
+  --button-ink: var(--ink);
+  --canvas-field-ink: var(--canvas-module-ink);
+  --canvas-module-frame: transparent;
+  --dept-1-sheet: var(--canvas-dept-fill);
+  --dept-2-sheet: var(--canvas-dept-fill);
+  --dept-3-sheet: var(--canvas-dept-fill);
+  --dept-4-sheet: var(--canvas-dept-fill);
+  --dept-1-module: var(--dept-1-card);
+  --dept-2-module: var(--dept-2-card);
+  --dept-3-module: var(--dept-3-card);
+  --dept-4-module: var(--dept-4-card);
+  --dept-1-stripe: var(--dept-1-card);
+  --dept-2-stripe: var(--dept-2-card);
+  --dept-3-stripe: var(--dept-3-card);
+  --dept-4-stripe: var(--dept-4-card);
+  --wb-board: #1f2729;
+  --wb-grid: #263033;
+}
+
+/* Skin places. Whiteboard is the back-office planning board: a gridded
+   white board in an aluminium frame, lifted cards on it, tape on
+   department heads, and thick marker strokes. */
+
+/* The page is the board: a faint marker grid inside an aluminium frame. */
+[data-theme="whiteboard"] [data-skin="page"] {
+  background-color: var(--wb-board);
+  background-image:
+    linear-gradient(var(--wb-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--wb-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  box-shadow:
+    inset 0 0 0 4px var(--wb-frame),
+    inset 0 0 0 5px var(--wb-frame-hi);
+}
+
+[data-theme="whiteboard"] [data-skin="topbar"] {
+  border-bottom: 1px solid var(--wb-frame);
+}
+
+/* Page titles get a hand-drawn marker underline. */
+[data-theme="whiteboard"] [data-slot="page-title"] {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+[data-theme="whiteboard"] [data-slot="page-title"]::after {
+  content: "";
+  display: block;
+  width: 4rem;
+  height: 4px;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  background: var(--action);
+}
+
+[data-theme="whiteboard"] [data-slot="card-title"] {
+  font-weight: 700;
+}
+
+/* Marker weights: buttons, fields, and chips use thicker strokes. */
+[data-theme="whiteboard"] [data-slot="button"] {
+  font-weight: 700;
+}
+
+[data-theme="whiteboard"] [data-slot="button"][data-variant="outline"] {
+  border-width: 2px;
+}
+
+[data-theme="whiteboard"]
+  :is([data-slot="input"], [data-slot="select"], [data-slot="textarea"]) {
+  border-width: 2px;
+}
+
+[data-theme="whiteboard"] [data-slot="badge"] {
+  font-weight: 700;
+  border-radius: 4px;
+}
+
+[data-theme="whiteboard"] [data-slot="field-label"] {
+  font-weight: 700;
+}
+
+[data-theme="whiteboard"] [data-slot="tabs-list"] {
+  background: transparent;
+  padding: 0;
+  gap: 0.25rem;
+}
+
+[data-theme="whiteboard"] [data-slot="tabs-trigger"] {
+  border-radius: 6px 6px 0 0;
+}
+
+[data-theme="whiteboard"] [data-slot="tabs-trigger"][data-active] {
+  background: transparent;
+  box-shadow: inset 0 -4px 0 var(--action);
+  font-weight: 700;
+}
+
+[data-theme="whiteboard"] [data-slot="table-head"] {
+  font-weight: 700;
+  border-bottom: 2px solid var(--wb-tape);
+}
+
+[data-theme="whiteboard"] [data-slot="alert"] {
+  border-width: 2px;
+  border-radius: 6px;
+}
+
+[data-theme="whiteboard"]
+  :is([data-slot="dialog-content"], [data-slot="sheet-content"]) {
+  border: 3px solid var(--wb-frame);
+  box-shadow:
+    inset 0 0 0 1px var(--wb-frame-hi),
+    var(--lift-raised);
+}
+
+/* The canvas is the board inside its frame. */
+[data-theme="whiteboard"] [data-skin="canvas-frame"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 4px var(--wb-frame),
+    inset 0 0 0 5px var(--wb-frame-hi);
+}
+
+/* Department heads are taped strips; modules are cards with a lift.
+   Idle strokes skip selected, moving, and pressed cells, because CSS
+   outranks SVG attributes; state strokes stay heavier than idle ones. */
+[data-theme="whiteboard"]
+  .sandbox-ui
+  .x6-cell:not([data-sandbox-pressed="true"])
+  [data-sandbox-kind="department"][data-selected="false"][data-feedback=""] {
+  stroke-width: 2.5px;
+}
+
+[data-theme="whiteboard"]
+  .sandbox-ui
+  [data-sandbox-kind][data-selected="true"] {
+  stroke-width: 3.5px;
+}
+
+[data-theme="whiteboard"] .sandbox-ui [data-sandbox-kind="module"] {
+  filter: var(--lift-filter);
+}
+
+[data-theme="whiteboard"] .sandbox-ui [data-sandbox-line] {
+  stroke-width: 2.6px;
+  stroke-linecap: round;
+  animation: none;
+}
+
+/* Marker lines: a relationship is one solid stroke, a handoff is dashed. */
+[data-theme="whiteboard"]
+  .sandbox-ui
+  [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
+  stroke-dasharray: none;
+}
+
+[data-theme="whiteboard"]
+  .sandbox-ui
+  [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
+  stroke-dasharray: 10 6;
+}
+
+[data-theme="whiteboard"]
+  .sandbox-ui
+  .x6-edge[data-trace="on"]
+  [data-sandbox-line] {
+  stroke-width: 3.4px;
+}

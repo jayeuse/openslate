@@ -9,6 +9,8 @@ import { PaginationControls } from "@/components/ui/pagination-controls";
 import { cn } from "@/lib/utils";
 
 export const TABLE_PAGE_SIZE_OPTIONS = [5, 10, 25, 50] as const;
+// Ten rows fit a laptop screen and keep paging rare in small directories.
+export const DEFAULT_TABLE_PAGE_SIZE = 10;
 
 type TablePaginationProps = {
   ariaLabel: string;

@@ -296,8 +296,8 @@ function ActionError({ message }: { message: string }) {
 }
 
 function impactCopy(count: number, subject: string): string {
-  if (count === 0) return `No identities currently use this ${subject}.`;
-  return `${count} ${count === 1 ? "identity" : "identities"} will be affected.`;
+  if (count === 0) return `No people or services use this ${subject} yet.`;
+  return `${count} ${count === 1 ? "person or service" : "people or services"} will be affected.`;
 }
 
 function controlId(prefix: string, value: string): string {
@@ -469,7 +469,7 @@ export function RoleEditor({
     if (hasThreeWayConflict(original.grants, draft.grants, grants, sameList))
       roleConflicts.push({
         id: "grants",
-        label: "Baseline grants",
+        label: "Standard permissions",
         current: original.grants.join(", "),
         draft: grants.join(", "),
       });
@@ -673,8 +673,8 @@ export function RoleEditor({
               {isBuiltin && <Badge variant="secondary">Built-in</Badge>}
             </div>
             <SheetDescription>
-              Set the role baseline. More specific policy rules can override
-              these grants.
+              Choose the standard permissions for this role. Custom rules can
+              change them for specific people or places.
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5">
@@ -706,10 +706,10 @@ export function RoleEditor({
                       }
                     : null
                 }
-                entriesLabel="Baseline grants"
+                entriesLabel="Standard permissions"
                 currentSummary={
                   currentRole
-                    ? `Current Access role: ${currentRole.name}; ${currentRole.grants.length} baseline grants.`
+                    ? `Current role: ${currentRole.name}, with ${currentRole.grants.length} standard ${currentRole.grants.length === 1 ? "permission" : "permissions"}.`
                     : `Current Access has no role named ${name || "this draft"}.`
                 }
                 canResolve={canResolveAfterReview}
@@ -725,11 +725,11 @@ export function RoleEditor({
                 <Alert>
                   <ShieldCheck />
                   <div className="mt-2">
-                    <p className="font-medium">Protected baseline</p>
+                    <p className="font-medium">Protected role</p>
                     <p className="mt-1">
-                      Built-in roles are immutable. Duplicate this role to
-                      create an editable baseline.
-                      {original?.name.toLowerCase() === "admin"
+                      Built-in roles cannot be changed. Duplicate this role to
+                      create an editable copy.
+                      {original?.system === "admin"
                         ? " A copy receives the data permissions shown below, not protected administrator powers."
                         : ""}
                     </p>
@@ -784,11 +784,11 @@ export function RoleEditor({
                   />
                 </Field>
                 <FieldSet disabled={isBuiltin}>
-                  <FieldLegend>Baseline grants</FieldLegend>
+                  <FieldLegend>Standard permissions</FieldLegend>
                   <p className="text-muted-foreground text-sm">
-                    {original?.name.toLowerCase() === "admin"
-                      ? "Administrator always has these data permissions and protected management access, regardless of scoped rules."
-                      : "Selected grants apply before scoped allow and deny rules."}
+                    {original?.system === "admin"
+                      ? "Administrator always has these data permissions and protected management access, whatever custom rules say."
+                      : "Selected permissions apply first. Custom rules can then allow or deny access for specific people or places."}
                   </p>
                   <div className="grid gap-1 sm:grid-cols-2">
                     {permissions.map((permission) => (
@@ -937,14 +937,15 @@ export function RoleEditor({
           <AlertDialogHeader>
             <AlertDialogTitle>Apply role changes?</AlertDialogTitle>
             <AlertDialogDescription>
-              Review how the role baseline will change before applying it.
+              Review how the standard permissions will change before applying
+              them.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="flex flex-col gap-3 text-sm">
             <div className="rounded-md border p-3">
               <p className="font-medium">
-                {currentGrants.length} → {resultingGrants.length} baseline
-                grants
+                {currentGrants.length} → {resultingGrants.length} standard
+                permissions
               </p>
               <p className="text-muted-foreground mt-1">
                 {impactCopy(memberCount, "role")}
@@ -991,8 +992,8 @@ export function RoleEditor({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {original?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the role baseline. Enter the exact role name to
-              confirm.
+              This removes the role and its standard permissions. Enter the
+              exact role name to confirm.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Field>

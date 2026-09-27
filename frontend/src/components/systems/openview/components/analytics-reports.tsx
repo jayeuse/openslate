@@ -981,7 +981,7 @@ function ReportTable({
           {report.fields.map((field) => (
             <TableHead
               key={field}
-              className="px-4 text-[0.6875rem] font-semibold tracking-wide uppercase"
+              className="px-4 text-xs font-semibold tracking-wide uppercase"
             >
               {fieldLabel(report.moduleId, field)}
             </TableHead>

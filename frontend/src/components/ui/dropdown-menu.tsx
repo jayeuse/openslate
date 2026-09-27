@@ -27,6 +27,7 @@ export function DropdownMenuContent({
         className="z-50 outline-none"
       >
         <Menu.Popup
+          data-slot="dropdown-menu-content"
           className={cn(
             "border-border bg-popover text-popover-foreground min-w-40 rounded-[var(--radius)] border p-1 shadow-md transition-opacity duration-100 outline-none data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-none",
             className,

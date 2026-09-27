@@ -260,7 +260,7 @@ export function ServerBoardManagementDisplay({
   const controlClass =
     "border-input bg-card text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50";
   const warningClass =
-    "border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100 rounded-md border p-4 text-sm";
+    "border-warn-rule bg-warn-tint text-foreground rounded-md border p-4 text-sm";
   if (view.mode === "create" && view.access === "denied")
     return e(
       "div",

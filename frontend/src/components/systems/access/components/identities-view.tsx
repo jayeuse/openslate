@@ -4,6 +4,10 @@ import { AccessSearchToolbar } from "./access-search-toolbar";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  DEFAULT_TABLE_PAGE_SIZE,
+  TABLE_PAGE_SIZE_OPTIONS,
+} from "@/components/ui/table-pagination";
+import {
   ArrowDownAZ,
   Bot,
   Search,
@@ -75,7 +79,7 @@ type ExpiryFilter = "all" | "expired" | "next-30-days" | "no-expiry";
 type SortOption = "name" | "kind" | "status" | "role" | "expiry";
 type BulkAction = "disable" | "restore" | "role" | "add-group" | "remove-group";
 
-const PAGE_SIZE_OPTIONS = [3, 5, 8] as const;
+const PAGE_SIZE_OPTIONS = TABLE_PAGE_SIZE_OPTIONS;
 
 const kindLabels: Record<AccessIdentity["kind"], string> = {
   internal: "Internal",
@@ -147,7 +151,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
   const [expiry, setExpiry] = useState<ExpiryFilter>("all");
   const [sort, setSort] = useState<SortOption>("name");
   const [pageIndex, setPageIndex] = useState(0);
-  const [pageSize, setPageSize] = useState<number>(3);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_TABLE_PAGE_SIZE);
   const [selected, setSelected] = useState<string[]>([]);
   const [editorIdentityId, setEditorIdentityId] = useState<string | null>(null);
   const [previewIdentityId, setPreviewIdentityId] = useState<string | null>(
@@ -383,7 +387,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
       },
       {
         id: "identity",
-        header: "Identity",
+        header: "Name",
         cell: ({ row }) => {
           const identity = row.original;
           const KindIcon =
@@ -469,7 +473,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
     setDepartment("all");
     setExpiry("all");
     setSort("name");
-    setPageSize(PAGE_SIZE_OPTIONS[0]);
+    setPageSize(DEFAULT_TABLE_PAGE_SIZE);
     setPageIndex(0);
   }
 
@@ -550,7 +554,7 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
     department !== "all",
     expiry !== "all",
     sort !== "name",
-    pageSize !== PAGE_SIZE_OPTIONS[0],
+    pageSize !== DEFAULT_TABLE_PAGE_SIZE,
   ].filter((isActive) => isActive).length;
   const hasNonDefaultDirectorySettings = activeDirectorySettingsCount > 0;
 
@@ -569,26 +573,26 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
           <DropdownMenuTrigger
             render={<Button className="min-h-11 w-full sm:w-auto" />}
           >
-            <UserRoundPlus /> Add identity
+            <UserRoundPlus /> Add person or service
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem
               className="min-h-11"
               onClick={() => openCreate("internal")}
             >
-              <UserRound /> Internal identity
+              <UserRound /> Internal person
             </DropdownMenuItem>
             <DropdownMenuItem
               className="min-h-11"
               onClick={() => openCreate("guest")}
             >
-              <UsersRound /> Guest identity
+              <UsersRound /> Guest
             </DropdownMenuItem>
             <DropdownMenuItem
               className="min-h-11"
               onClick={() => openCreate("service")}
             >
-              <Bot /> Service metadata
+              <Bot /> Service
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -808,13 +812,13 @@ export function IdentitiesView({ controller }: IdentitiesViewProps) {
                 </EmptyMedia>
                 <EmptyTitle>
                   {directoryIdentities.length === 0
-                    ? "No identities yet"
-                    : "No identities match"}
+                    ? "No people or services yet"
+                    : "No people or services match"}
                 </EmptyTitle>
                 <EmptyDescription>
                   {directoryIdentities.length === 0
-                    ? "Add an internal person, guest, or service metadata entry."
-                    : "Change the search or filters to see more identities."}
+                    ? "Add an internal person, a guest, or a service."
+                    : "Change the search or filters to see more."}
                 </EmptyDescription>
               </EmptyHeader>
               <EmptyContent>

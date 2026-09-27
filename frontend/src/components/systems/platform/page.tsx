@@ -8,6 +8,7 @@ import {
 } from "@/components/systems/shared/runtime/sample-async";
 import { useSampleRuntime } from "@/components/systems/shared/runtime/sample-state";
 import { PageHeader } from "@/components/page-header";
+import { SampleDataNote } from "@/components/sample-data-note";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import { Action } from "../shared/components/ui";
 import ImportExport from "./components/import-export";
@@ -34,6 +35,11 @@ const PLATFORM_SECTIONS = {
 
 type PlatformSection =
   (typeof PLATFORM_SECTIONS)[keyof typeof PLATFORM_SECTIONS];
+
+// Search results list message text, so formatting markers are removed.
+function plainMessageText(text: string): string {
+  return text.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1");
+}
 
 function platformSectionFromSearch(
   requestedSection: string | null,
@@ -117,7 +123,7 @@ export default function SamplePlatform() {
   const file = files.find((item) => item.id === fileId);
   const searchGroups: PlatformSearchGroup[] = [
     {
-      type: "Users",
+      type: "People",
       items: people.map((person) => ({
         id: person.id,
         title: person.name,
@@ -136,7 +142,7 @@ export default function SamplePlatform() {
       type: "Messages",
       items: messages.map((message) => ({
         id: message.id,
-        title: message.text,
+        title: plainMessageText(message.text),
         href: `/comms?conversation=${encodeURIComponent(message.conversation)}&message=${encodeURIComponent(message.id)}`,
       })),
     },
@@ -295,7 +301,7 @@ export default function SamplePlatform() {
     try {
       const result =
         await platformCommands.updateNotificationPreferences(patch);
-      if (!result.ok) setNotice(result.error);
+      setNotice(result.ok ? "Notification preferences saved." : result.error);
     } catch (error) {
       setNotice(
         commandError(error, "Notification preferences could not be saved."),
@@ -396,7 +402,7 @@ export default function SamplePlatform() {
         className="flex min-h-64 items-center justify-center p-6"
       >
         <p role="status" className="text-muted-foreground text-sm">
-          Loading workspace tools…
+          Loading Platform…
         </p>
       </section>
     );
@@ -427,8 +433,8 @@ export default function SamplePlatform() {
         <div className="bg-muted/50 flex items-center gap-3 rounded-lg border p-3 text-sm">
           <p role="status" className="text-muted-foreground flex-1">
             {platformResource.refreshing
-              ? "Refreshing workspace tools…"
-              : `Showing the last saved workspace tools. ${platformResource.error}`}
+              ? "Refreshing Platform…"
+              : `Showing the last saved Platform data. ${platformResource.error}`}
           </p>
           {!platformResource.refreshing && (
             <Action
@@ -444,8 +450,13 @@ export default function SamplePlatform() {
       )}
       <PageHeader
         title="Platform"
-        description="Search, notifications and workspace tools."
+        description="Search, notifications, files, and your account."
       />
+      {tab !== "Notifications" ? (
+        <SampleDataNote className="-mt-4">
+          Records, files, and people here are examples.
+        </SampleDataNote>
+      ) : null}
       {notice && (
         <p role="status" className="bg-muted rounded-lg border p-3 text-sm">
           {notice}

@@ -312,7 +312,10 @@ function AccessControlCenter() {
         }
       >
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          <h1
+            data-slot="page-title"
+            className="text-2xl font-semibold tracking-tight sm:text-3xl"
+          >
             {activeView === "overview"
               ? "Access overview"
               : activeView === "identities"
@@ -323,7 +326,7 @@ function AccessControlCenter() {
             {activeView === "overview"
               ? "Manage who has access and what they can do."
               : activeView === "identities"
-                ? "Manage internal people, sponsored guests, and service metadata."
+                ? "Manage internal people, sponsored guests, and services."
                 : "Choose who, see their members, and set what they can do."}
           </p>
         </div>

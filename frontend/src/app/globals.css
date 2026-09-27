@@ -1,149 +1,209 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #202124;
-  --card: #ffffff;
-  --card-foreground: #202124;
-  --popover: #ffffff;
-  --popover-foreground: #202124;
-  --primary: #242527;
-  --primary-foreground: #ffffff;
-  --secondary: #f1f1f2;
-  --secondary-foreground: #353638;
-  --muted: #f5f5f6;
-  --muted-foreground: #686b72;
-  --accent: #eeeeef;
-  --accent-foreground: #242527;
-  --destructive: #dc2626;
-  --destructive-foreground: #ffffff;
-  --success: #15803d;
-  --warning: #b45309;
-  --border: #e5e5e7;
-  --input: #d2d3d5;
-  --ring: #777b83;
+@custom-variant dark (&:where(.dark, .dark *));
+
+@import "./themes/whiteboard.css";
+@import "./themes/triplicate.css";
+@import "./themes/stockroom.css";
+
+/*
+ * Theme contract. A theme sets the semantic tokens below (surfaces, ink,
+ * signals, focus, elevation, type, radius, canvas) for light and dark; the
+ * shadcn names are aliases of them. Slate is the default theme on :root and
+ * .dark. Other themes live in ./themes and override the same names on
+ * :root[data-theme="…"]; [data-theme-preview="…"] renders a theme's tokens
+ * inside one element, for the look picker. Signals keep one meaning each:
+ * action acts, flow shows movement and success, warn asks for attention,
+ * danger marks destructive actions.
+ */
+:root,
+[data-theme-preview="slate"] {
+  --ground: #f7f8fa;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f1f3f5;
+  --surface-hover: #eef0f3;
+  --ink: #0f1115;
+  --ink-muted: #555e6c;
+  --rule: #e4e7ec;
+  --rule-strong: #d0d5dd;
+  --control-edge: #858e9b;
+  --action: #2563eb;
+  --action-ink: #ffffff;
+  --action-text: #1d4ed8;
+  --action-tint: #eef3fe;
+  --flow: #0f766e;
+  --flow-ink: #ffffff;
+  --flow-text: #0f766e;
+  --flow-tint: #e7f5f3;
+  --warn: #a36600;
+  --warn-ink: #ffffff;
+  --warn-text: #8a5300;
+  --warn-tint: #fff7e8;
+  --danger: #d92d20;
+  --flow-rule: #b7dfd9;
+  --warn-rule: #f2d3a0;
+  --danger-text: #b42318;
+  --danger-tint: #fef3f2;
+  --danger-rule: #fecdca;
+  --danger-ink: #ffffff;
+  --focus: #2563eb;
+  --lift: 0 1px 2px rgb(16 24 40 / 0.06);
+  --lift-raised:
+    0 2px 4px rgb(16 24 40 / 0.04), 0 12px 32px rgb(16 24 40 / 0.1);
+  /* --lift-raised as SVG filter steps, for canvas nodes. */
+  --lift-filter: drop-shadow(0 2px 3px rgb(16 24 40 / 0.06))
+    drop-shadow(0 8px 18px rgb(16 24 40 / 0.12));
+
+  --background: var(--ground);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface-raised);
+  --popover-foreground: var(--ink);
+  --primary: var(--action);
+  --primary-foreground: var(--action-ink);
+  --secondary: var(--surface-sunken);
+  --secondary-foreground: var(--ink);
+  --muted: var(--surface-sunken);
+  --muted-foreground: var(--ink-muted);
+  --accent: var(--surface-hover);
+  --accent-foreground: var(--ink);
+  --destructive: var(--danger);
+  --destructive-foreground: var(--danger-ink);
+  --success: var(--flow-text);
+  --warning: var(--warn-text);
+  --border: var(--rule);
+  --input: var(--control-edge);
+  --ring: var(--focus);
   --chart-1: #6382b6;
   --chart-2: #c08b48;
   --chart-3: #5f936d;
   --chart-4: #8b70a2;
   --chart-5: #b96f66;
-  --sidebar: #f5f5f6;
-  --sidebar-foreground: #292b2f;
-  --sidebar-muted: #686b72;
-  --sidebar-accent: #e7e7e9;
-  --density-space: 1rem;
-  --density-control-height: 2.5rem;
-  --canvas-background: #ffffff;
-  --canvas-moving: #fff8eb;
-  --canvas-drop: #edf3ff;
-  --canvas-grid: #d8dde5;
-  --canvas-grid-major: #bac3cf;
-  --sandbox-node-border: #9da8b8;
-  --sandbox-field-stripe: #f1f1f2;
-  --radius: 0.65rem;
+  --sidebar: var(--ground);
+  --sidebar-foreground: var(--ink);
+  --sidebar-muted: var(--ink-muted);
+  --sidebar-accent: var(--surface-hover);
+  --canvas-background: #f5f6f8;
+  --canvas-moving: var(--warn-tint);
+  --canvas-drop: var(--action-tint);
+  --canvas-grid: #dde1e7;
+  --canvas-grid-major: #c3c9d2;
+  --sandbox-node-border: var(--rule-strong);
+  --sandbox-field-stripe: var(--ground);
+  --radius: 0.5rem;
+  --font-ui: var(--font-geist-sans);
+  --font-code: var(--font-geist-mono);
+  /* Card material. Themes set these instead of overriding Card, so a card's
+     own border or ring classes still win. Slate leaves --card-edge unset;
+     it falls back to --border where it is read. */
+  --card-lift: 0 0 #0000;
+  /* Canvas skin. Departments, module cards, field rows, lines, and line
+     labels; themes restyle the canvas here, not with new markup. */
+  --canvas-dept-fill: var(--surface);
+  --canvas-dept-frame: var(--rule-strong);
+  --canvas-dept-ink: var(--ink-muted);
+  --canvas-module-fill: var(--surface);
+  --canvas-module-frame: var(--rule-strong);
+  --canvas-module-ink: var(--ink);
+  --canvas-row-rule: var(--rule);
+  --canvas-row-stripe: var(--ground);
+  --canvas-type-ink: var(--ink-muted);
+  --canvas-edge: #7d8694;
+  --canvas-label-fill: var(--surface);
+  --canvas-label-frame: var(--rule);
+  --canvas-label-ink: var(--ink);
+  /* Department identity, always shown beside the department name. Slate
+     keeps it to a mark and a card edge. */
+  --dept-1: #8e79b8;
+  --dept-2: #3e8f8a;
+  --dept-3: #c08a3e;
+  --dept-4: #c0677e;
+  --dept-1-band: var(--canvas-dept-fill);
+  --dept-2-band: var(--canvas-dept-fill);
+  --dept-3-band: var(--canvas-dept-fill);
+  --dept-4-band: var(--canvas-dept-fill);
+  --dept-1-card: var(--surface-sunken);
+  --dept-2-card: var(--surface-sunken);
+  --dept-3-card: var(--surface-sunken);
+  --dept-4-card: var(--surface-sunken);
+  /* Department sheet (frame fill) and module body fill, per department. */
+  --dept-1-sheet: var(--canvas-dept-fill);
+  --dept-2-sheet: var(--canvas-dept-fill);
+  --dept-3-sheet: var(--canvas-dept-fill);
+  --dept-4-sheet: var(--canvas-dept-fill);
+  --dept-1-module: var(--canvas-module-fill);
+  --dept-2-module: var(--canvas-module-fill);
+  --dept-3-module: var(--canvas-module-fill);
+  --dept-4-module: var(--canvas-module-fill);
+  --dept-1-stripe: var(--canvas-row-stripe);
+  --dept-2-stripe: var(--canvas-row-stripe);
+  --dept-3-stripe: var(--canvas-row-stripe);
+  --dept-4-stripe: var(--canvas-row-stripe);
+  --canvas-field-ink: var(--canvas-module-ink);
+  /* Rows a Test run changed (sandbox-canvas-trace.ts). */
+  --canvas-test-fill: color-mix(
+    in srgb,
+    var(--action) 18%,
+    var(--canvas-module-fill)
+  );
+  /* Values people type into inputs and text areas. */
+  --data-ink: var(--ink);
+  /* Outline button material. --button-edge falls back to --border where
+     it is read, so scoped --border overrides (.sandbox-ui) still apply. */
+  --button-ink: var(--foreground);
 }
 
-.dark {
-  --background: #111315;
-  --foreground: #f1f3f5;
-  --card: #181a1d;
-  --card-foreground: #f1f3f5;
-  --popover: #1d2024;
-  --popover-foreground: #f1f3f5;
-  --primary: #f1f1f2;
-  --primary-foreground: #171819;
-  --secondary: #272b30;
-  --secondary-foreground: #e5e7eb;
-  --muted: #22262b;
-  --muted-foreground: #aeb6c0;
-  --accent: #2c2e31;
-  --accent-foreground: #f1f1f2;
-  --destructive: #ff9292;
-  --destructive-foreground: #080808;
-  --success: #4ade80;
-  --warning: #fbbf24;
+.dark,
+.dark [data-theme-preview="slate"] {
+  --ground: #0d1014;
+  --surface: #151920;
+  --surface-raised: #1b2028;
+  --surface-sunken: #1a1e25;
+  --surface-hover: #232933;
+  --ink: #eceff3;
+  --ink-muted: #9ea7b3;
+  --rule: #262c35;
+  --rule-strong: #3a424e;
+  --control-edge: #636c79;
+  --action: #6ea2ff;
+  --action-ink: #0b1220;
+  --action-text: #8db6ff;
+  --action-tint: #17243b;
+  --flow: #3cc0ae;
+  --flow-ink: #06201c;
+  --flow-text: #5ed0bf;
+  --flow-tint: #0f2a27;
+  --warn: #e5b250;
+  --warn-ink: #231302;
+  --warn-text: #f6b870;
+  --warn-tint: #2b1d0c;
+  --danger: #ff8a7a;
+  --flow-rule: #1e4a45;
+  --warn-rule: #5a3d14;
+  --danger-text: #ff9c8f;
+  --danger-tint: #2c1210;
+  --danger-rule: #5c2320;
+  --danger-ink: #2a0703;
+  --focus: #6ea2ff;
+  --lift: 0 1px 2px rgb(0 0 0 / 0.4);
+  --lift-raised: 0 2px 4px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.45);
+  --lift-filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.3))
+    drop-shadow(0 8px 18px rgb(0 0 0 / 0.45));
   --chart-1: #89a6d0;
   --chart-2: #d2aa70;
   --chart-3: #83b58e;
   --chart-4: #ad93c1;
   --chart-5: #d3948c;
-  --border: #30343b;
-  --input: #3a414b;
-  --ring: #aeb1b8;
-  --sidebar: #17191c;
-  --sidebar-foreground: #eef1f4;
-  --sidebar-muted: #a8b0ba;
-  --sidebar-accent: #292d33;
-  --canvas-background: #181b1f;
-  --canvas-moving: #3d311b;
-  --canvas-drop: #253653;
-  --canvas-grid: color-mix(in srgb, #343941 45%, transparent);
-  --canvas-grid-major: color-mix(in srgb, #4b535d 55%, transparent);
-  --sandbox-node-border: var(--border);
-  --sandbox-field-stripe: #22262b;
-}
-
-[data-accent="cobalt"] {
-  --primary: #2563eb;
-  --primary-foreground: #fff;
-  --accent: #edf3ff;
-  --accent-foreground: #1d4ed8;
-}
-.dark[data-accent="cobalt"] {
-  --primary: #77a9ff;
-  --primary-foreground: #111827;
-  --accent: #253653;
-  --accent-foreground: #c6d8ff;
-}
-[data-accent="indigo"] {
-  --primary: #4f46e5;
-  --accent: #eef2ff;
-  --accent-foreground: #4338ca;
-}
-.dark[data-accent="indigo"] {
-  --primary: #9aa5ff;
-  --primary-foreground: #15152b;
-  --accent: #30345a;
-  --accent-foreground: #d0d4ff;
-}
-[data-accent="emerald"] {
-  --primary: #046c4e;
-  --accent: #ecfdf5;
-  --accent-foreground: #047857;
-}
-.dark[data-accent="emerald"] {
-  --primary: #5ee0b0;
-  --primary-foreground: #08251b;
-  --accent: #1d493c;
-  --accent-foreground: #a9f3d3;
-}
-[data-accent="neutral"] {
-  --primary: #242527;
-  --accent: #eeeeef;
-  --accent-foreground: #242527;
-}
-.dark[data-accent="neutral"] {
-  --primary: #f1f1f2;
-  --primary-foreground: #171819;
-  --accent: #2c2e31;
-  --accent-foreground: #f1f1f2;
-}
-[data-density="compact"] {
-  --density-space: 0.75rem;
-  --density-control-height: 2.25rem;
-}
-[data-density="comfortable"] {
-  --density-space: 1rem;
-  --density-control-height: 2.5rem;
-}
-[data-radius="square"] {
-  --radius: 0.2rem;
-}
-[data-radius="subtle"] {
-  --radius: 0.45rem;
-}
-[data-radius="rounded"] {
-  --radius: 0.8rem;
+  --canvas-background: #12161b;
+  --canvas-edge: #7a8391;
+  --dept-1: #a693d0;
+  --dept-2: #5fb3ad;
+  --dept-3: #d6a45c;
+  --dept-4: #d88aa0;
+  --canvas-grid: color-mix(in srgb, #343b46 45%, transparent);
+  --canvas-grid-major: color-mix(in srgb, #4a5360 55%, transparent);
 }
 
 @theme inline {
@@ -170,6 +230,21 @@
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-muted: var(--sidebar-muted);
   --color-sidebar-accent: var(--sidebar-accent);
+  --color-card-edge: var(--card-edge, var(--border));
+  --shadow-card: var(--card-lift);
+  --color-action-text: var(--action-text);
+  --color-action-tint: var(--action-tint);
+  --color-flow: var(--flow);
+  --color-flow-text: var(--flow-text);
+  --color-flow-tint: var(--flow-tint);
+  --color-flow-rule: var(--flow-rule);
+  --color-warn: var(--warn);
+  --color-warn-text: var(--warn-text);
+  --color-warn-tint: var(--warn-tint);
+  --color-warn-rule: var(--warn-rule);
+  --color-danger-text: var(--danger-text);
+  --color-danger-tint: var(--danger-tint);
+  --color-danger-rule: var(--danger-rule);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-chart-1: var(--chart-1);
@@ -177,16 +252,19 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
 }
 
-* {
-  border-color: var(--border);
-  box-sizing: border-box;
+/* Layered so border-color utilities (border-input, border-primary, …) win. */
+@layer base {
+  * {
+    border-color: var(--border);
+    box-sizing: border-box;
+  }
 }
 
 html {
@@ -201,7 +279,7 @@ html.dark {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), sans-serif;
+  font-family: var(--font-ui), sans-serif;
 }
 
 button,
@@ -227,31 +305,24 @@ textarea:focus-visible {
 }
 
 ::selection {
-  background: var(--accent);
-  color: var(--accent-foreground);
+  background: color-mix(in srgb, var(--action) 22%, transparent);
+  color: var(--ink);
+}
+
+input,
+textarea {
+  caret-color: var(--action);
 }
 
 /* Keep canvas editor contrast and interaction feedback local to the sandbox. */
 .sandbox-ui {
-  --background: #f3f3f4;
-  --card: #f8f8f9;
-  --popover: #f8f8f9;
-  --muted: #ebebed;
-  --secondary: #ebebed;
-  --sandbox-field-stripe: #eeeeef;
-  --border: #d0d1d3;
-  --input: #b7b9bc;
-}
-
-.dark .sandbox-ui {
-  --background: #111315;
-  --card: #181a1d;
-  --popover: #1d2024;
-  --muted: #22262b;
-  --secondary: #272b30;
-  --sandbox-field-stripe: #272e37;
-  --border: #30343b;
-  --input: #3a414b;
+  --background: var(--surface-sunken);
+  --card: var(--surface);
+  --popover: var(--surface-raised);
+  --muted: var(--surface-hover);
+  --secondary: var(--surface-hover);
+  --sandbox-field-stripe: var(--ground);
+  --border: var(--rule-strong);
 }
 
 .sandbox-ui .sandbox-field-list > li {
@@ -327,6 +398,49 @@ textarea:focus-visible {
   stroke-width: 2px;
 }
 
+/* Minimap overview for the Sandbox canvas. X6 would inject these rules at
+ * runtime, which the production CSP blocks, so they live here, themed. */
+.sandbox-minimap .x6-widget-minimap {
+  position: relative;
+  overflow: hidden;
+  background: var(--canvas-background);
+  user-select: none;
+}
+
+.sandbox-minimap .x6-widget-minimap .x6-graph {
+  display: inline-block;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+/* Dark card fills sit too close to the dark canvas to read at minimap scale. */
+.dark .sandbox-minimap [data-sandbox-body] {
+  fill: var(--rule-strong);
+}
+
+/* At minimap scale, text and edges are noise; frames and tables carry it. */
+.sandbox-minimap :is(text, .x6-edge) {
+  display: none;
+}
+
+.sandbox-minimap .x6-widget-minimap .x6-graph > svg {
+  pointer-events: none;
+  shape-rendering: optimizespeed;
+}
+
+.sandbox-minimap .x6-widget-minimap-viewport {
+  position: absolute;
+  box-sizing: content-box;
+  margin: -2px 0 0 -2px;
+  border: 2px solid var(--action);
+  border-radius: 2px;
+  cursor: move;
+}
+
+.sandbox-minimap .x6-widget-minimap-viewport-zoom {
+  display: none;
+}
+
 @keyframes sandbox-relationship-flow {
   to {
     stroke-dashoffset: -24;
@@ -337,9 +451,61 @@ textarea:focus-visible {
   animation: sandbox-relationship-flow 2.4s linear infinite;
 }
 
+/* A handoff to another department is dashed in every look; themes may
+   change the dash but never make it match a relationship. */
+.sandbox-ui [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
+  stroke-dasharray: 6 4;
+}
+
+/* Canvas lettering follows the theme's type. */
+.sandbox-ui svg text {
+  font-family: var(--font-ui), sans-serif;
+}
+
+/* The selected module or department lifts off the canvas. */
+.sandbox-ui [data-sandbox-body][data-selected="true"] {
+  filter: var(--lift-filter);
+}
+
+/* Hovering a module or relationship traces its connections
+   (sandbox-canvas-trace.ts). Only opacity animates. */
+.sandbox-ui .x6-cell[data-trace] {
+  transition: opacity 150ms ease-out;
+}
+
+.sandbox-ui .x6-cell[data-trace="dim"] {
+  opacity: 0.35;
+}
+
+.sandbox-ui .x6-edge[data-trace="on"] [data-sandbox-line] {
+  stroke: var(--action);
+  stroke-width: 2px;
+}
+
+/* A Test run shown on the canvas marks its trigger field with a solid
+   action outline and the fields it changed with an action fill and a dashed
+   action outline, so the two marks differ by pattern, not only by hue
+   (sandbox-canvas-trace.ts). A field can carry both. */
+.sandbox-ui [data-field-id][data-test-mark~="changed"] {
+  fill: var(--canvas-test-fill);
+  stroke: var(--action);
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 3;
+}
+
+.sandbox-ui [data-field-id][data-test-mark~="trigger"] {
+  stroke: var(--action);
+  stroke-width: 2.5px;
+  stroke-dasharray: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sandbox-ui [data-sandbox-line="true"] {
     animation: none;
+  }
+
+  .sandbox-ui .x6-cell[data-trace] {
+    transition: none;
   }
 }
 
@@ -359,8 +525,12 @@ textarea:focus-visible {
 }
 
 @media (max-width: 1279px) {
-  [data-sandbox-page] button,
-  body:has([data-sandbox-page]) [role="dialog"] button {
+  /* Inline toggles inside a list row (such as a field count) keep the 24px
+     minimum so rows keep one rhythm. */
+  [data-sandbox-page] button:not([data-inline-toggle]),
+  body:has([data-sandbox-page])
+    [role="dialog"]
+    button:not([data-inline-toggle]) {
     min-width: 44px;
     min-height: 44px;
   }
@@ -393,7 +563,12 @@ textarea:focus-visible {
 .app-shell [data-slot="sidebar-menu-button"] {
   min-height: 2.75rem;
 }
-.app-shell [data-slot="sidebar-menu-button"][data-active="true"] {
+.app-shell
+  :is(
+    [data-slot="sidebar-menu-button"],
+    [data-slot="sidebar-menu-sub-button"]
+  ):not([aria-expanded])[data-active]:not([data-active="false"]) {
+  color: var(--action-text);
   font-weight: 600;
 }
 .app-shell [data-slot="sidebar-menu-button"] svg {

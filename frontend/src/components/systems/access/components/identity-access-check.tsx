@@ -371,7 +371,7 @@ export function IdentityAccessCheck({
           {result ? (
             <Card aria-label="Access check result" className="overflow-hidden">
               <CardHeader
-                className={`flex-row items-center gap-4 border-b px-5 py-6 sm:px-6 [&>svg]:size-8 ${serviceRuntimeUnavailable ? "bg-amber-500/5" : result.policy_decision === "allow" ? "bg-success/5" : "bg-destructive/5"}`}
+                className={`flex-row items-center gap-4 border-b px-5 py-6 sm:px-6 [&>svg]:size-8 ${serviceRuntimeUnavailable ? "bg-warn-tint" : result.policy_decision === "allow" ? "bg-success/5" : "bg-destructive/5"}`}
               >
                 {serviceRuntimeUnavailable ? (
                   <ShieldQuestion aria-hidden="true" />

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type CSSProperties,
@@ -350,7 +351,7 @@ export function AppShell({
                   pathname={pathname}
                   searchParams={navigationSearchParams}
                 />
-                <div className="bg-background sticky bottom-0 z-10 -mx-4 mt-auto px-4 pt-3 pb-2">
+                <div className="bg-card sticky bottom-0 z-10 -mx-4 mt-auto px-4 pt-3 pb-2">
                   <AppCommsLink collapsed={false} />
                 </div>
               </div>
@@ -364,7 +365,10 @@ export function AppShell({
               isComms || isAccess ? "h-screen min-h-0" : "min-h-screen",
             )}
           >
-            <header className="border-border bg-background sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5">
+            <header
+              data-skin="topbar"
+              className="border-border bg-background sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5"
+            >
               <div className="flex min-w-0 items-center gap-2.5">
                 <Button
                   variant="ghost"
@@ -387,6 +391,7 @@ export function AppShell({
             </header>
             <main
               id="main-content"
+              data-skin="page"
               className={cn(
                 isComms || isAccess
                   ? "flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden"
@@ -426,10 +431,13 @@ function AppSidebarHeader({ collapsed }: { collapsed: boolean }) {
   );
 }
 
+const commsDescription = "Messages and channels";
+
 function AppCommsLink({ collapsed }: { collapsed: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
   const active = pathname === "/comms" || pathname.startsWith("/comms/");
+  const descriptionId = useId();
 
   return (
     <SidebarMenu>
@@ -446,11 +454,22 @@ function AppCommsLink({ collapsed }: { collapsed: boolean }) {
           isActive={active}
           aria-current={active ? "page" : undefined}
           aria-label="OpenComms"
-          title={collapsed ? "OpenComms" : undefined}
-          className="min-h-11"
+          aria-describedby={collapsed ? undefined : descriptionId}
+          title={collapsed ? `OpenComms — ${commsDescription}` : undefined}
+          className={cn("min-h-11", !collapsed && "h-auto py-1.5")}
         >
           <MessageSquare aria-hidden="true" />
-          <span>OpenComms</span>
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate">OpenComms</span>
+            {!collapsed ? (
+              <span
+                id={descriptionId}
+                className="text-sidebar-muted truncate text-xs font-normal"
+              >
+                {commsDescription}
+              </span>
+            ) : null}
+          </span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>
@@ -595,7 +614,7 @@ function AppHeaderActions({
 function WorkspaceMark() {
   return (
     <span
-      className="bg-foreground text-background grid size-8 shrink-0 place-items-center rounded-md text-[10px] font-bold"
+      className="bg-foreground text-background grid size-8 shrink-0 place-items-center rounded-md text-xs font-bold"
       aria-hidden="true"
     >
       OS

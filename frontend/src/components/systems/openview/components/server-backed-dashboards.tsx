@@ -1546,7 +1546,11 @@ export default function ServerBackedDashboards() {
     <div className="flex min-w-0 flex-col gap-5">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <h1 id="dashboard-page-title" className="text-2xl font-semibold">
+          <h1
+            data-slot="page-title"
+            id="dashboard-page-title"
+            className="text-2xl font-semibold"
+          >
             Private dashboards
           </h1>
           <p className="text-muted-foreground mt-1 max-w-3xl text-sm">

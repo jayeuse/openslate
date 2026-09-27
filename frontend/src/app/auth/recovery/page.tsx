@@ -121,7 +121,7 @@ export default function RecoveryPage() {
           <p className="text-muted-foreground mt-2 text-sm">
             {completingRecovery
               ? "Choose a strong password for your OpenSlate account."
-              : "Enter your email to request recovery instructions."}
+              : "Enter your email to get recovery instructions."}
           </p>
         </div>
         {!hydrated ? (
@@ -216,8 +216,8 @@ export default function RecoveryPage() {
           <>
             {requestState === "sent" ? (
               <Alert role="status" variant="success" className="mb-5">
-                If an eligible account matches that email, recovery instructions
-                will be sent.
+                If an account matches that email, we will send recovery
+                instructions.
               </Alert>
             ) : null}
             {requestState === "error" ? (

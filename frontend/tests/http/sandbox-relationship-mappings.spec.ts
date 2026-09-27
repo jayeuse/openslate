@@ -6,6 +6,7 @@ import {
   initialDesign,
   type Design,
 } from "../../src/components/systems/sandbox/domain/model";
+import { publicationFieldKey } from "../../src/components/systems/sandbox/components/publish-change-groups";
 import { configuredSandboxDesign } from "../helpers/sandbox-fixtures";
 
 type SandboxOptions = {
@@ -17,11 +18,14 @@ type SandboxOptions = {
   hasUnpublishedChanges?: boolean;
   publishedHash?: string | null;
   testRuns?: unknown[];
+  /** The draft revision the session starts at. */
+  revision?: number;
   saveDelay?: Promise<void>;
   publicationDelay?: Promise<void>;
   issues?: Array<{ code: string; message: string; targetId: string | null }>;
   versionMutationDelay?: Promise<void>;
   versions?: Array<Record<string, unknown>>;
+  previewChanges?: Array<Record<string, string>>;
 };
 
 function configuredDesignWithLegacyMapping(): Design {
@@ -57,7 +61,7 @@ async function openAuthenticatedSandbox(
   designFixture: Design = configuredSandboxDesign,
   options: SandboxOptions = {},
 ) {
-  let revision = 1;
+  let revision = options.revision ?? 1;
   let documentReads = 0;
   let documentWrites = 0;
   let versions = options.versions ?? [];
@@ -216,7 +220,7 @@ async function openAuthenticatedSandbox(
         documentRevision: revision,
         documentHash: "a".repeat(64),
         expiresAt: "2026-09-22T12:00:00Z",
-        changes: [],
+        changes: options.previewChanges ?? [],
         counts: {
           departments: 0,
           modules: 0,
@@ -246,7 +250,7 @@ test("an organization template replaces the empty draft only after confirmation"
   const sandbox = await openAuthenticatedSandbox(page, initialDesign);
 
   await page.getByRole("button", { name: "More Sandbox actions" }).click();
-  await page.getByRole("menuitem", { name: "Start from template" }).click();
+  await page.getByRole("menuitem", { name: "Start from a template" }).click();
   const dialog = page.getByRole("dialog", { name: "Organization templates" });
   await expect(
     dialog.getByRole("button", { name: "Select Inventory & procurement" }),
@@ -286,7 +290,7 @@ test("a detailed template remains usable when moving from Automations to Test", 
   await openAuthenticatedSandbox(page, initialDesign);
 
   await page.getByRole("button", { name: "More Sandbox actions" }).click();
-  await page.getByRole("menuitem", { name: "Start from template" }).click();
+  await page.getByRole("menuitem", { name: "Start from a template" }).click();
   await page
     .getByRole("button", { name: "Use Inventory & procurement" })
     .click();
@@ -318,7 +322,7 @@ test("a rejected template replacement stays open with its recoverable error", as
   });
 
   await page.getByRole("button", { name: "More Sandbox actions" }).click();
-  await page.getByRole("menuitem", { name: "Start from template" }).click();
+  await page.getByRole("menuitem", { name: "Start from a template" }).click();
   const dialog = page.getByRole("dialog", { name: "Organization templates" });
   await dialog
     .getByRole("button", { name: "Use Inventory & procurement" })
@@ -337,7 +341,7 @@ test("an empty Sandbox renders no placeholder entities and can create its first 
 
   await expect(
     page.getByText(
-      "0 departments · 0 modules · 0 fields · 0 relationships · 0 rules",
+      "0 departments · 0 modules · 0 fields · 0 relationships · 0 automations",
     ),
   ).toHaveCount(2);
   await expect(page.getByText("Service requests", { exact: true })).toHaveCount(
@@ -351,6 +355,170 @@ test("an empty Sandbox renders no placeholder entities and can create its first 
   await expect(
     page.getByText("Finance", { exact: true }).first(),
   ).toBeVisible();
+});
+
+test("the Build canvas owns most of a wide screen and one workbench switches Structure and Properties", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page);
+
+  const workbench = page.getByRole("complementary", {
+    name: "Design workbench",
+  });
+  const tabs = workbench.getByRole("tablist", { name: "Workbench view" });
+  await expect(tabs.getByRole("tab", { name: "Properties" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByRole("complementary", { name: "Design inspector" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Organization structure" }),
+  ).toBeHidden();
+
+  const canvas = await page.getByLabel("Module design canvas").boundingBox();
+  const side = await workbench.boundingBox();
+  if (!canvas || !side) throw new Error("Build layout is not rendered");
+  expect(canvas.width / (canvas.width + side.width)).toBeGreaterThanOrEqual(
+    0.65,
+  );
+
+  await tabs.getByRole("tab", { name: "Structure" }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Organization structure" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Design inspector" }),
+  ).toBeHidden();
+});
+
+test("the canvas zoom range keeps a spread design legible", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const spreadDesign = structuredClone(configuredSandboxDesign);
+  spreadDesign.layout = {
+    "sample-commercial": { x: 4000, y: 0, width: 600, height: 400 },
+  };
+  await openAuthenticatedSandbox(page, spreadDesign);
+  const zoom = async () =>
+    Number.parseInt(
+      await page.getByRole("status", { name: "Canvas zoom" }).innerText(),
+      10,
+    );
+
+  await page.getByRole("tab", { name: "Canvas" }).click();
+  await page.getByRole("button", { name: "Fit canvas" }).click();
+  await expect.poll(zoom).toBe(50);
+
+  await expect(page.getByRole("button", { name: "Zoom out" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await expect(page.getByRole("status", { name: "Canvas action" })).toHaveText(
+    "Canvas at 50%. Part of the design is out of view.",
+  );
+});
+
+test("an empty, never-published Sandbox offers one start and nothing to publish", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, initialDesign);
+  const publish = page.getByRole("button", { name: "Review & Publish" });
+  const canvas = page.getByLabel("Module design canvas");
+
+  await expect(
+    page.getByText("Nothing to publish yet", { exact: true }),
+  ).toBeVisible();
+  await expect(publish).toBeDisabled();
+  await expect(
+    canvas.getByRole("heading", { name: "Design your organization" }),
+  ).toBeVisible();
+  await expect(page.getByText("No departments yet")).toHaveCount(0);
+  await expect(
+    page.getByRole("searchbox", { name: "Search structure" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "More Sandbox actions" }).click();
+  for (const name of ["Save checkpoint", "Discard draft changes"])
+    await expect(page.getByRole("menuitem", { name })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  await page.keyboard.press("Escape");
+
+  await canvas.getByRole("button", { name: "Start from a template" }).click();
+  const templates = page.getByRole("dialog", {
+    name: "Organization templates",
+  });
+  await expect(templates).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(templates).toBeHidden();
+
+  await canvas
+    .getByRole("button", { name: "Add your first department" })
+    .click();
+  await expect(page.getByLabel("Department name")).toBeFocused();
+  await page.getByLabel("Department name").fill("Operations");
+  await page.getByRole("button", { name: "Create department" }).click();
+
+  await expect(
+    canvas.getByRole("heading", { name: "Design your organization" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Unpublished changes", { exact: true }),
+  ).toBeVisible();
+  await expect(publish).toBeEnabled();
+});
+
+test("emptying the design clears a leftover Structure search", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, initialDesign);
+  await page.getByRole("button", { name: "Add department" }).click();
+  await page.getByLabel("Department name").fill("Operations");
+  await page.getByRole("button", { name: "Create department" }).click();
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
+  const search = page.getByRole("searchbox", { name: "Search structure" });
+  await search.fill("no such item");
+  await expect(page.getByText("No structure items match.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Undo" }).click();
+
+  await expect(search).toBeDisabled();
+  await expect(page.getByText("No structure items match.")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Add department" }),
+  ).toBeVisible();
+});
+
+test("a published Sandbox with no new changes has nothing to publish", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    publishedHash: "a".repeat(64),
+    hasUnpublishedChanges: false,
+  });
+
+  await expect(page.getByText("Published", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Review & Publish" }),
+  ).toBeDisabled();
+});
+
+test("a phone opens the Sandbox on the canvas", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openAuthenticatedSandbox(page);
+
+  await expect(page.getByRole("tab", { name: "Canvas" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByLabel("Module design canvas")).toBeVisible();
 });
 
 test("an empty Sandbox authors and persists a complete connected organization", async ({
@@ -373,6 +541,10 @@ test("an empty Sandbox authors and persists a complete connected organization", 
   await page.getByRole("checkbox", { name: "Required field" }).click();
   await page.getByRole("button", { name: "Create field" }).click();
 
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
   await page.getByRole("button", { name: /^Add relationship$/i }).click();
   const relationshipDialog = page.getByRole("dialog", {
     name: "Connect modules",
@@ -621,6 +793,201 @@ test("Build undo preserves an automation that was saved afterward", async ({
     .toBe("Saved urgent request alert");
 });
 
+test("the publish review groups changes and keeps Publish in reach", async ({
+  page,
+}) => {
+  const change = (
+    kind: string,
+    action: string,
+    sandboxId: string,
+    label: string,
+  ) => ({ kind, action, sandboxId, label });
+  await openAuthenticatedSandbox(
+    page,
+    { ...configuredSandboxDesign, rules: [] },
+    {
+      previewChanges: [
+        ...Array.from({ length: 6 }, (_, index) =>
+          change("department", "create", `dept-${index}`, `Team ${index + 1}`),
+        ),
+        change("module", "create", "sample-requests", "Service requests"),
+        ...["Request number", "Title", "Status", "Priority"].map((name) =>
+          change(
+            "field",
+            "create",
+            publicationFieldKey("sample-requests", `sample-field-${name}`),
+            name,
+          ),
+        ),
+        change(
+          "field",
+          "update",
+          publicationFieldKey("sample-equipment", "sample-field-Asset tag"),
+          "Asset tag",
+        ),
+        change("field", "close", "retired-field", "Old notes"),
+        change("relationship", "create", "sample-uses", "Uses equipment"),
+      ],
+    },
+  );
+
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  const dialog = page.getByRole("dialog", { name: "Review and publish" });
+  await expect(dialog.getByRole("heading", { name: "Changes" })).toBeVisible();
+  await expect(
+    dialog.getByText(
+      "14 changes: 6 departments, 1 module, 6 fields, 1 relationship",
+    ),
+  ).toBeVisible();
+
+  const departments = dialog.getByRole("region", { name: "Departments" });
+  await expect(departments.getByRole("listitem")).toHaveCount(5);
+  await departments
+    .getByRole("button", { name: "Show all 6 departments" })
+    .click();
+  await expect(departments.getByRole("listitem")).toHaveCount(6);
+
+  const modules = dialog.getByRole("region", { name: "Modules" });
+  await expect(
+    modules.getByRole("list", { name: "Fields in Service requests" }),
+  ).toHaveCount(0);
+  await modules
+    .getByRole("button", { name: "Show 4 fields in Service requests" })
+    .click();
+  await modules
+    .getByRole("button", { name: "Show 1 field in Equipment" })
+    .click();
+  await expect(
+    modules
+      .getByRole("list", { name: "Fields in Service requests" })
+      .getByRole("listitem"),
+  ).toHaveCount(4);
+  const assetTag = modules
+    .getByRole("list", { name: "Fields in Equipment" })
+    .getByRole("listitem");
+  await expect(assetTag).toHaveText(/Changed\s*Asset tag/);
+  await expect(
+    dialog.getByRole("region", { name: "Other", exact: true }),
+  ).toContainText("Old notes");
+  await expect(
+    dialog.getByRole("region", { name: "Relationships" }),
+  ).toContainText("Uses equipment");
+
+  await expect(dialog.getByLabel("Your password")).toBeInViewport();
+  await expect(
+    dialog.getByRole("button", { name: "Publish changes" }),
+  ).toBeInViewport();
+});
+
+test("a line to another department is drawn as a handoff", async ({ page }) => {
+  const design = structuredClone(configuredSandboxDesign);
+  design.relationships.push({
+    id: "sample-billing",
+    name: "Bills customer",
+    source: "sample-requests",
+    target: "sample-customers",
+    cardinality: "One-to-many",
+    fieldMappings: [],
+  });
+  await openAuthenticatedSandbox(page, design);
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const line = (id: string) =>
+    canvas.locator(`.x6-cell[data-cell-id="${id}"] [data-sandbox-line]`);
+
+  await expect(line("sample-uses")).toHaveAttribute(
+    "data-sandbox-edge-kind",
+    "relationship",
+  );
+  await expect(line("sample-billing")).toHaveAttribute(
+    "data-sandbox-edge-kind",
+    "handoff",
+  );
+  await page.getByText("Key", { exact: true }).click();
+  await expect(page.getByRole("list", { name: "Canvas key" })).toContainText(
+    "Handoff to another department",
+  );
+
+  // Every look keeps the two line kinds apart, on the canvas and in the key.
+  for (const theme of ["slate", "whiteboard", "triplicate", "stockroom"]) {
+    const dashes = await page.evaluate((id) => {
+      if (id === "slate") delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = id;
+      const dash = (selector: string) =>
+        getComputedStyle(document.querySelector(selector)!).strokeDasharray;
+      return {
+        relationship: dash('[data-cell-id="sample-uses"] [data-sandbox-line]'),
+        handoff: dash('[data-cell-id="sample-billing"] [data-sandbox-line]'),
+        keyRelationship: dash(
+          '[data-sandbox-line="key"][data-sandbox-edge-kind="relationship"]',
+        ),
+        keyHandoff: dash(
+          '[data-sandbox-line="key"][data-sandbox-edge-kind="handoff"]',
+        ),
+      };
+    }, theme);
+    expect(dashes.handoff, theme).not.toBe(dashes.relationship);
+    expect(dashes.keyRelationship, theme).toBe(dashes.relationship);
+    expect(dashes.keyHandoff, theme).toBe(dashes.handoff);
+  }
+});
+
+test("a rejected password is reported beside Publish, not above the list", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, {
+    ...configuredSandboxDesign,
+    rules: [],
+  });
+  await page.route("**/api/sandbox/publications", (route) =>
+    route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({
+        detail: { code: "invalid_password", message: "Invalid password." },
+      }),
+    }),
+  );
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  const dialog = page.getByRole("dialog", { name: "Review and publish" });
+  const password = dialog.getByLabel("Your password");
+  await expect(
+    dialog.getByText("Enter your password to publish."),
+  ).toBeVisible();
+
+  await password.fill("not the password");
+  await dialog.getByRole("button", { name: "Publish changes" }).click();
+
+  const message = dialog.getByRole("alert").filter({
+    hasText: "That password was not accepted.",
+  });
+  await expect(message).toBeInViewport();
+  await expect(password).toHaveAttribute("aria-invalid", "true");
+  await expect(password).toHaveAccessibleDescription(
+    /That password was not accepted/,
+  );
+});
+
+test("hovering a module or relationship traces its connections", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page);
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const cell = (id: string) => canvas.locator(`.x6-cell[data-cell-id="${id}"]`);
+  await page.getByRole("button", { name: "Fit canvas" }).click();
+
+  await cell("sample-requests").hover();
+  await expect(cell("sample-customers")).toHaveAttribute("data-trace", "dim");
+  await expect(cell("sample-equipment")).not.toHaveAttribute(
+    "data-trace",
+    "dim",
+  );
+  await expect(cell("sample-uses")).toHaveAttribute("data-trace", "on");
+
+  await page.mouse.move(5, 5);
+  await expect(canvas.locator('.x6-cell[data-trace="dim"]')).toHaveCount(0);
+});
+
 test("a pending publication review protects browser exits", async ({
   page,
 }) => {
@@ -628,9 +995,14 @@ test("a pending publication review protects browser exits", async ({
   const publicationDelay = new Promise<void>((resolve) => {
     releasePreview = resolve;
   });
-  await openAuthenticatedSandbox(page, initialDesign, {
-    publicationDelay,
-  });
+  await openAuthenticatedSandbox(
+    page,
+    {
+      ...initialDesign,
+      departments: [{ id: "operations", name: "Operations", closed: false }],
+    },
+    { publicationDelay },
+  );
 
   await expect
     .poll(() =>
@@ -643,7 +1015,6 @@ test("a pending publication review protects browser exits", async ({
     .toBe(false);
 
   await page.getByRole("button", { name: "Review & Publish" }).click();
-  await page.getByRole("button", { name: "Review changes" }).click();
 
   try {
     await expect
@@ -789,12 +1160,16 @@ test("the Designer saves offset Date/Time bounds in chronological order", async 
 test("a failed structural save remains visibly unsaved until the shared draft is reloaded", async ({
   page,
 }) => {
-  await openAuthenticatedSandbox(page, initialDesign, {
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
     saveFailure: "Sandbox storage is unavailable.",
     hasUnpublishedChanges: false,
   });
   await expect(page.getByText("Draft saved", { exact: true })).toBeVisible();
 
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
   await page.getByRole("button", { name: "Add department" }).click();
   await page.getByLabel("Department name").fill("Operations");
   await page.getByRole("button", { name: "Create department" }).click();
@@ -836,9 +1211,13 @@ test("a failed structural save remains visibly unsaved until the shared draft is
 test("discard refresh failure leaves the dialog open and allows a retry", async ({
   page,
 }) => {
-  const sandbox = await openAuthenticatedSandbox(page, initialDesign, {
-    discardRefreshFailure: "The shared Sandbox could not be refreshed.",
-  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    {
+      discardRefreshFailure: "The shared Sandbox could not be refreshed.",
+    },
+  );
   await page.route("**/api/sandbox/versions", async (route) => {
     if (route.request().method() !== "POST") return route.fallback();
     await route.fulfill({
@@ -884,9 +1263,13 @@ test("discard keeps browser exits guarded throughout its composite request", asy
   const discardRefreshDelay = new Promise<void>((resolve) => {
     releaseRefresh = resolve;
   });
-  const sandbox = await openAuthenticatedSandbox(page, initialDesign, {
-    discardRefreshDelay,
-  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    {
+      discardRefreshDelay,
+    },
+  );
   await page.route("**/api/sandbox/versions", async (route) => {
     if (route.request().method() !== "POST") return route.fallback();
     await route.fulfill({
@@ -993,8 +1376,8 @@ test("automation flow preview and summary follow the unsaved rule draft", async 
   await page.getByRole("link", { name: "Automations", exact: true }).click();
 
   const flow = page.getByRole("region", { name: "Flow preview" });
-  const summary = page.getByRole("region", { name: "Rule summary" });
-  const settings = page.getByRole("region", { name: "Rule settings" });
+  const summary = page.getByRole("region", { name: "Automation summary" });
+  const settings = page.getByRole("region", { name: "Automation settings" });
   await expect(settings).toBeVisible();
   await expect(
     flow.getByRole("button", { name: "Edit trigger" }),
@@ -1091,7 +1474,7 @@ test("Automation Studio layout screenshots can be captured for theme and viewpor
   await page
     .getByLabel("Trigger", { exact: true })
     .selectOption("field-changed");
-  const settings = page.getByRole("region", { name: "Rule settings" });
+  const settings = page.getByRole("region", { name: "Automation settings" });
   await settings
     .getByLabel("Trigger module")
     .selectOption({ label: "Service requests" });
@@ -1146,12 +1529,12 @@ test("automation panels resize with their requested minimum widths and remain us
   await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Automations", exact: true }).click();
   const list = page.getByRole("complementary", { name: "Automation list" });
-  const settings = page.getByRole("region", { name: "Rule settings" });
+  const settings = page.getByRole("region", { name: "Automation settings" });
   const listHandle = page.getByRole("separator", {
     name: "Resize automation list",
   });
   const settingsHandle = page.getByRole("separator", {
-    name: "Resize rule settings",
+    name: "Resize automation settings",
   });
   await expect(listHandle).toBeVisible();
   const width = async (locator: typeof list) =>
@@ -1495,7 +1878,7 @@ test("Test comparisons use saved inputs, preserve typed values, and distinguish 
     .getByRole("button", { name: "All result fields", exact: true })
     .click();
   await expect(comparison.getByRole("row", { name: /Priority/ })).toContainText(
-    "Not returned",
+    "No value",
   );
   await page
     .getByRole("region", { name: "Recent test results", exact: true })
@@ -1940,4 +2323,112 @@ test("History change groups keep large comparisons scannable without hiding acce
       });
     }
   }
+});
+
+test("a Test result from an older draft says so and can show its module on the canvas", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const repeated = {
+    code: "automation_invalid",
+    message: "A set field action has an invalid value.",
+    targetId: null,
+  };
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    revision: 2,
+    testRuns: [
+      {
+        id: "00000000-0000-4000-8000-000000000009",
+        createdAt: "2026-09-21T00:01:00Z",
+        documentRevision: 1,
+        input: { moduleId: "sample-requests", values: {} },
+        event: { kind: "record-created" },
+        automationIds: null,
+        result: {
+          values: {},
+          routes: [],
+          automationTraces: [],
+          issues: [repeated, repeated, repeated],
+        },
+      },
+    ],
+  });
+  await page.goto("/sandbox?section=test");
+  const outcome = page.getByRole("region", { name: "Test outcome" });
+  await expect(
+    outcome.getByText("This result is from an older draft."),
+  ).toBeVisible();
+  await expect(
+    outcome.getByRole("button", { name: "Run again" }),
+  ).toBeVisible();
+  await expect(outcome.getByRole("listitem")).toHaveCount(1);
+  await expect(outcome.getByRole("listitem")).toContainText("(3 times)");
+
+  await outcome.getByRole("button", { name: "Show test on canvas" }).click();
+  await expect(page).toHaveURL(/section=build/);
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const cell = (id: string) => canvas.locator(`.x6-cell[data-cell-id="${id}"]`);
+  await expect(cell("sample-requests")).toHaveAttribute("data-trace", "on");
+  await expect(cell("sample-uses")).toHaveAttribute("data-trace", "on");
+  await expect(cell("sample-requests")).toBeInViewport();
+  await expect(
+    page.getByRole("complementary", { name: "Design inspector" }),
+  ).toContainText("Service requests");
+});
+
+test("a Test run plays out on the canvas in three still steps", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    testRuns: [
+      {
+        id: "00000000-0000-4000-8000-000000000010",
+        createdAt: "2026-09-21T00:02:00Z",
+        documentRevision: 1,
+        input: {
+          moduleId: "sample-requests",
+          values: { "sample-field-Status": "Open" },
+        },
+        event: { kind: "field-changed", fieldId: "sample-field-Status" },
+        automationIds: null,
+        result: {
+          values: {
+            "sample-field-Status": "Open",
+            "sample-field-Priority": "High",
+          },
+          routes: [],
+          automationTraces: [],
+          issues: [],
+        },
+      },
+    ],
+  });
+  await page.goto("/sandbox?section=test");
+  await page
+    .getByRole("region", { name: "Test outcome" })
+    .getByRole("button", { name: "Show test on canvas" })
+    .click();
+
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const row = (field: string) =>
+    canvas.locator(
+      `[data-field-id="sandbox-field:sample-requests:${encodeURIComponent(`sample-field-${field}`)}"]`,
+    );
+  await expect(page.getByText("Step 1 of 3: What happened")).toBeVisible();
+  await expect(page.getByText("Status changes", { exact: true })).toBeVisible();
+  await expect(row("Status")).toHaveAttribute("data-test-mark", "trigger");
+  await expect(row("Priority")).not.toHaveAttribute("data-test-mark");
+
+  await page.getByRole("button", { name: "Next step" }).click();
+  await expect(page.getByText("Step 2 of 3: Automations")).toBeVisible();
+  await page.getByRole("button", { name: "Next step" }).click();
+  await expect(page.getByText("Step 3 of 3: Result")).toBeVisible();
+  await expect(page.getByText("Priority: Not provided → High")).toBeVisible();
+  await expect(row("Priority")).toHaveAttribute("data-test-mark", "changed");
+  await expect(page.getByRole("button", { name: "Next step" })).toBeDisabled();
+
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(row("Status")).not.toHaveAttribute("data-test-mark");
+  await expect(page.getByText("Step 3 of 3: Result")).toBeHidden();
 });

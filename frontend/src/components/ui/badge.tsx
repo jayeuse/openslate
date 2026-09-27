@@ -13,15 +13,15 @@ export function Badge({
   const styles = {
     default: "bg-accent text-accent-foreground",
     secondary: "bg-secondary text-secondary-foreground",
-    success:
-      "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300",
-    warning:
-      "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
-    destructive: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+    success: "bg-flow-tint text-flow-text",
+    warning: "bg-warn-tint text-warn-text",
+    destructive: "bg-danger-tint text-danger-text",
     outline: "border border-border text-muted-foreground",
   };
   return (
     <span
+      data-slot="badge"
+      data-variant={variant}
       className={cn(
         "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium",
         styles[variant],

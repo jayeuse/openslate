@@ -72,14 +72,18 @@ function ruleOperator(value: unknown, label: string): RuleOperator {
 }
 
 function parseRuleTrigger(value: unknown): RuleTrigger {
-  const source = record(value, "rule trigger config");
-  const kind = string(source.kind, "rule trigger kind");
+  const source = record(value, "automation trigger config");
+  const kind = string(source.kind, "automation trigger kind");
   if (kind === "new-record") {
-    exactKeys(source, ["kind", "moduleId"], "rule trigger config");
+    exactKeys(source, ["kind", "moduleId"], "automation trigger config");
     return { kind, moduleId: string(source.moduleId, "trigger moduleId") };
   }
   if (kind === "field-change") {
-    exactKeys(source, ["kind", "moduleId", "fieldId"], "rule trigger config");
+    exactKeys(
+      source,
+      ["kind", "moduleId", "fieldId"],
+      "automation trigger config",
+    );
     return {
       kind,
       moduleId: string(source.moduleId, "trigger moduleId"),
@@ -90,7 +94,7 @@ function parseRuleTrigger(value: unknown): RuleTrigger {
     exactKeys(
       source,
       ["kind", "moduleId", "fieldId", "operator", "value"],
-      "rule trigger config",
+      "automation trigger config",
     );
     return {
       kind,
@@ -104,7 +108,7 @@ function parseRuleTrigger(value: unknown): RuleTrigger {
     exactKeys(
       source,
       ["kind", "frequency", "time", "weekday"],
-      "rule trigger config",
+      "automation trigger config",
     );
     const frequency = string(source.frequency, "schedule frequency");
     if (frequency !== "daily" && frequency !== "weekly")
@@ -117,21 +121,21 @@ function parseRuleTrigger(value: unknown): RuleTrigger {
       ...(weekday === undefined ? {} : { weekday }),
     };
   }
-  throw new Error("rule trigger kind is invalid");
+  throw new Error("automation trigger kind is invalid");
 }
 
 function parseRuleCondition(value: unknown): RuleCondition {
-  const source = record(value, "rule condition config");
-  const kind = string(source.kind, "rule condition kind");
+  const source = record(value, "automation condition config");
+  const kind = string(source.kind, "automation condition kind");
   if (kind === "always") {
-    exactKeys(source, ["kind"], "rule condition config");
+    exactKeys(source, ["kind"], "automation condition config");
     return { kind };
   }
   if (kind === "field-comparison") {
     exactKeys(
       source,
       ["kind", "moduleId", "fieldId", "operator", "value"],
-      "rule condition config",
+      "automation condition config",
     );
     return {
       kind,
@@ -141,29 +145,29 @@ function parseRuleCondition(value: unknown): RuleCondition {
       value: string(source.value, "condition value"),
     };
   }
-  throw new Error("rule condition kind is invalid");
+  throw new Error("automation condition kind is invalid");
 }
 
 function parseRuleAction(value: unknown): RuleAction {
-  const source = record(value, "rule action config");
-  const kind = string(source.kind, "rule action kind");
+  const source = record(value, "automation action config");
+  const kind = string(source.kind, "automation action kind");
   if (kind === "notification") {
-    exactKeys(source, ["kind", "message"], "rule action config");
+    exactKeys(source, ["kind", "message"], "automation action config");
     return { kind, message: string(source.message, "notification message") };
   }
   if (kind === "channel-message") {
-    exactKeys(source, ["kind", "channel"], "rule action config");
+    exactKeys(source, ["kind", "channel"], "automation action config");
     return { kind, channel: string(source.channel, "message channel") };
   }
   if (kind === "assign-task") {
-    exactKeys(source, ["kind", "assignee"], "rule action config");
+    exactKeys(source, ["kind", "assignee"], "automation action config");
     return { kind, assignee: string(source.assignee, "task assignee") };
   }
   if (kind === "create-record" || kind === "update-field") {
     exactKeys(
       source,
       ["kind", "moduleId", "fieldId", "value"],
-      "rule action config",
+      "automation action config",
     );
     return {
       kind,
@@ -172,12 +176,12 @@ function parseRuleAction(value: unknown): RuleAction {
       value: string(source.value, "action value"),
     };
   }
-  throw new Error("rule action kind is invalid");
+  throw new Error("automation action kind is invalid");
 }
 
 function parseRuleConfig(value: unknown): RuleConfig {
-  const source = record(value, "rule config");
-  exactKeys(source, ["trigger", "condition", "action"], "rule config");
+  const source = record(value, "automation config");
+  exactKeys(source, ["trigger", "condition", "action"], "automation config");
   return {
     trigger: parseRuleTrigger(source.trigger),
     condition: parseRuleCondition(source.condition),
@@ -380,19 +384,19 @@ function parseRelationship(value: unknown): Relationship {
 }
 
 function parseRule(value: unknown): Rule {
-  const source = record(value, "rule");
+  const source = record(value, "automation");
   exactKeys(
     source,
     ["id", "name", "trigger", "condition", "action", "enabled", "config"],
-    "rule",
+    "automation",
   );
   return {
-    id: string(source.id, "rule id"),
-    name: string(source.name, "rule name"),
-    trigger: string(source.trigger, "rule trigger"),
-    condition: string(source.condition, "rule condition"),
-    action: string(source.action, "rule action"),
-    enabled: boolean(source.enabled, "rule enabled"),
+    id: string(source.id, "automation id"),
+    name: string(source.name, "automation name"),
+    trigger: string(source.trigger, "automation trigger"),
+    condition: string(source.condition, "automation condition"),
+    action: string(source.action, "automation action"),
+    enabled: boolean(source.enabled, "automation enabled"),
     ...(source.config === undefined
       ? {}
       : { config: parseRuleConfig(source.config) }),
@@ -436,7 +440,7 @@ function parseDesign(value: unknown): Design {
   if (relationships.length > SANDBOX_LIMITS.relationships)
     throw new Error("Relationship limit exceeded");
   if (rules.length > SANDBOX_LIMITS.rules)
-    throw new Error("Rule limit exceeded");
+    throw new Error("Automation limit exceeded");
   const design: Design = {
     departments: departments.map(parseDepartment),
     modules: modules.map(parseModule),

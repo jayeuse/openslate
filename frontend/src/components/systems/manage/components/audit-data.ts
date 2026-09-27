@@ -101,7 +101,7 @@ export function buildActivityCsv(
     entry.target,
     entry.before,
     entry.after,
-    entry.source === "manage" ? "Manage change" : "Example",
+    entry.source === "manage" ? "Your change" : "Preloaded",
   ]);
   return serializeCsv([header, ...rows]);
 }

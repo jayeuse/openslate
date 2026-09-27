@@ -17,6 +17,7 @@ import {
   SettingActions,
   type SettingsPanelForm,
 } from "./panel-ui";
+import { OrganizationLook } from "./organization-look";
 
 type OrganizationPanelProps = {
   form: SettingsPanelForm;
@@ -167,7 +168,7 @@ export function OrganizationPanel({
           <CardContent className="space-y-6 p-5 sm:p-7">
             <div className="border-border flex min-w-0 flex-col items-center gap-4 border-b pb-7 text-center">
               <div
-                className="bg-primary text-primary-foreground flex size-28 shrink-0 items-center justify-center rounded-2xl text-4xl font-semibold sm:size-32"
+                className="bg-foreground text-background flex size-28 shrink-0 items-center justify-center rounded-2xl text-4xl font-semibold sm:size-32"
                 role="img"
                 aria-label={`${organizationName} mark: ${current.logo}`}
               >
@@ -254,6 +255,8 @@ export function OrganizationPanel({
           </Button>
         </nav>
       </aside>
+
+      <OrganizationLook />
     </section>
   );
 }

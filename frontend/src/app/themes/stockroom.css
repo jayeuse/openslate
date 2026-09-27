@@ -1,0 +1,362 @@
+/*
+ * Stockroom: steel shelving and kraft boxes. Condensed uppercase titles,
+ * steel-grey rails, kraft-edged cards, and a shelf beam on each department.
+ * Dark is the stockroom after hours. Look only: layout and words never
+ * change. The dark block sets every token the light block sets.
+ */
+:root[data-theme="stockroom"],
+[data-theme-preview="stockroom"] {
+  --ground: #f2f2ee;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eeeeea;
+  --surface-hover: #e8e8e3;
+  --ink: #1c1e21;
+  --ink-muted: #474c53;
+  --rule: #cdd0d2;
+  --rule-strong: #8d959d;
+  --control-edge: #737b82;
+  --action: #1d5ac4;
+  --action-ink: #ffffff;
+  --action-text: #1d5ac4;
+  --action-tint: #e4ecfa;
+  --flow: #2c7a4b;
+  --flow-ink: #ffffff;
+  --flow-text: #276d43;
+  --flow-tint: #e3f0e7;
+  --flow-rule: #a9cfb6;
+  --warn: #9a5b00;
+  --warn-ink: #ffffff;
+  --warn-text: #7d4a00;
+  --warn-tint: #fbf1dd;
+  --warn-rule: #e2c58e;
+  --danger: #b42318;
+  --danger-text: #9b1d14;
+  --danger-tint: #fcebe8;
+  --danger-rule: #efb4ac;
+  --danger-ink: #ffffff;
+  --focus: #1d5ac4;
+  --lift: 0 2px 0 rgb(28 30 33 / 0.14);
+  --lift-raised: 0 2px 0 rgb(28 30 33 / 0.14), 0 8px 18px rgb(28 30 33 / 0.1);
+  --lift-filter: drop-shadow(0 2px 0 rgb(28 30 33 / 0.16))
+    drop-shadow(0 8px 12px rgb(28 30 33 / 0.12));
+  --sidebar: #dee2e5;
+  --sidebar-accent: #eceeef;
+  --canvas-background: #e6e5e0;
+  --canvas-grid: #dad9d3;
+  --canvas-grid-major: #cbcac3;
+  --radius: 0.125rem;
+  --font-ui: var(--font-archivo), system-ui, sans-serif;
+  --font-code: var(--font-martian-mono), ui-monospace, monospace;
+  /* Materials, private to this theme's skin rules. */
+  --sr-steel: #8d959d;
+  --card-edge: var(--rule-strong);
+  --card-lift: var(--lift);
+  /* Canvas skin. */
+  --canvas-dept-fill: #deddd6;
+  --canvas-dept-frame: #8d959d;
+  --canvas-dept-ink: #1c1e21;
+  --canvas-module-fill: #d9bc92;
+  --canvas-module-frame: #b08c60;
+  --canvas-module-ink: #1c1e21;
+  --canvas-row-rule: #c4a174;
+  --canvas-row-stripe: #d4b588;
+  --canvas-type-ink: #553819;
+  --canvas-edge: #6f757c;
+  --canvas-label-fill: #ffffff;
+  --canvas-label-frame: #8d959d;
+  --canvas-label-ink: #1c1e21;
+  /* Identity marks keep Slate's department order (violet, teal, amber,
+     rose), muted like paint on steel. */
+  --dept-1: #7d6f9a;
+  --dept-2: #4f7a74;
+  --dept-3: #9a6b3f;
+  --dept-4: #8a5d66;
+  --dept-1-band: #c8cdd2;
+  --dept-2-band: #c8cdd2;
+  --dept-3-band: #c8cdd2;
+  --dept-4-band: #c8cdd2;
+  /* Full-strength materials. */
+  --button-edge: var(--ink-muted);
+  --button-ink: var(--ink);
+  --canvas-field-ink: var(--canvas-module-ink);
+  --dept-1-card: #ffffff;
+  --dept-2-card: #ffffff;
+  --dept-3-card: #ffffff;
+  --dept-4-card: #ffffff;
+  --dept-1-sheet: var(--canvas-dept-fill);
+  --dept-2-sheet: var(--canvas-dept-fill);
+  --dept-3-sheet: var(--canvas-dept-fill);
+  --dept-4-sheet: var(--canvas-dept-fill);
+  --dept-1-module: var(--canvas-module-fill);
+  --dept-2-module: var(--canvas-module-fill);
+  --dept-3-module: var(--canvas-module-fill);
+  --dept-4-module: var(--canvas-module-fill);
+  --dept-1-stripe: var(--canvas-row-stripe);
+  --dept-2-stripe: var(--canvas-row-stripe);
+  --dept-3-stripe: var(--canvas-row-stripe);
+  --dept-4-stripe: var(--canvas-row-stripe);
+  --data-ink: var(--ink);
+  --sr-steel-lite: #dee2e5;
+  --sr-tape: #1c1e21;
+  --sr-tape-ink: #ffffff;
+  --sr-wall: #e6e5e0;
+}
+
+.dark[data-theme="stockroom"],
+.dark [data-theme-preview="stockroom"] {
+  --ground: #16181b;
+  --surface: #1e2124;
+  --surface-raised: #24282c;
+  --surface-sunken: #191b1e;
+  --surface-hover: #272b2f;
+  --ink: #ecedea;
+  --ink-muted: #a9aeb3;
+  --rule: #30353a;
+  --rule-strong: #4a5157;
+  --control-edge: #737b82;
+  --action: #7aa7f0;
+  --action-ink: #0b1426;
+  --action-text: #97baf4;
+  --action-tint: #17253d;
+  --flow: #62bd86;
+  --flow-ink: #0b2014;
+  --flow-text: #7fcb9c;
+  --flow-tint: #132a1c;
+  --flow-rule: #2b5a3c;
+  --warn: #e8ad52;
+  --warn-ink: #2a1703;
+  --warn-text: #f5b56e;
+  --warn-tint: #2f200d;
+  --warn-rule: #634314;
+  --danger: #f2877c;
+  --danger-text: #f59c92;
+  --danger-tint: #381512;
+  --danger-rule: #6c2923;
+  --danger-ink: #2a0805;
+  --focus: #7aa7f0;
+  --lift: 0 2px 0 rgb(0 0 0 / 0.45);
+  --lift-raised: 0 2px 0 rgb(0 0 0 / 0.45), 0 8px 18px rgb(0 0 0 / 0.35);
+  --lift-filter: drop-shadow(0 2px 0 rgb(0 0 0 / 0.5))
+    drop-shadow(0 8px 12px rgb(0 0 0 / 0.4));
+  --sidebar: #2a2f34;
+  --sidebar-accent: #363c42;
+  --canvas-background: #1b1e21;
+  --canvas-grid: color-mix(in srgb, #353a40 55%, transparent);
+  --canvas-grid-major: color-mix(in srgb, #4a5157 60%, transparent);
+  --radius: 0.125rem;
+  --font-ui: var(--font-archivo), system-ui, sans-serif;
+  --font-code: var(--font-martian-mono), ui-monospace, monospace;
+  --sr-steel: #5d656c;
+  --card-edge: var(--rule-strong);
+  --card-lift: var(--lift);
+  /* Canvas skin. */
+  --canvas-dept-fill: #1b1e21;
+  --canvas-dept-frame: #5d656c;
+  --canvas-dept-ink: #ecedea;
+  --canvas-module-fill: #6b5538;
+  /* Changed test rows sit on a darker base, so light type ink stays AA. */
+  --canvas-test-fill: color-mix(in srgb, var(--action) 20%, #453622);
+  --canvas-module-frame: #8a6d48;
+  --canvas-module-ink: #f3ede4;
+  --canvas-row-rule: #7d6446;
+  --canvas-row-stripe: #654f33;
+  --canvas-type-ink: #e2d3bd;
+  --canvas-edge: #9aa1a8;
+  --canvas-label-fill: #24282c;
+  --canvas-label-frame: #5d656c;
+  --canvas-label-ink: #ecedea;
+  --dept-1: #a89cc4;
+  --dept-2: #7fa9a2;
+  --dept-3: #c39468;
+  --dept-4: #b98a93;
+  --dept-1-band: #3a4046;
+  --dept-2-band: #3a4046;
+  --dept-3-band: #3a4046;
+  --dept-4-band: #3a4046;
+  --button-edge: var(--ink-muted);
+  --button-ink: var(--ink);
+  --canvas-field-ink: var(--canvas-module-ink);
+  --dept-1-card: #2a2d31;
+  --dept-2-card: #2a2d31;
+  --dept-3-card: #2a2d31;
+  --dept-4-card: #2a2d31;
+  --dept-1-sheet: var(--canvas-dept-fill);
+  --dept-2-sheet: var(--canvas-dept-fill);
+  --dept-3-sheet: var(--canvas-dept-fill);
+  --dept-4-sheet: var(--canvas-dept-fill);
+  --dept-1-module: var(--canvas-module-fill);
+  --dept-2-module: var(--canvas-module-fill);
+  --dept-3-module: var(--canvas-module-fill);
+  --dept-4-module: var(--canvas-module-fill);
+  --dept-1-stripe: var(--canvas-row-stripe);
+  --dept-2-stripe: var(--canvas-row-stripe);
+  --dept-3-stripe: var(--canvas-row-stripe);
+  --dept-4-stripe: var(--canvas-row-stripe);
+  --data-ink: var(--ink);
+  --sr-steel-lite: #2a2f34;
+  --sr-tape: #ecedea;
+  --sr-tape-ink: #16181b;
+  --sr-wall: #16181b;
+}
+
+/* Skin places. Stockroom is steel shelving and kraft boxes: steel rails
+   and uprights, stencilled page titles, label-maker tags, and paper end
+   labels on each box. Page titles change case; labels, table heads, chips,
+   and card titles keep theirs because they can show names people typed. */
+
+[data-theme="stockroom"] [data-skin="page"] {
+  background-color: var(--sr-wall);
+}
+
+/* The sidebar is a painted steel upright; the top bar sits on a rail. */
+[data-theme="stockroom"] [data-slot="sidebar-container"] {
+  border-color: var(--sr-steel);
+}
+
+[data-theme="stockroom"] [data-skin="topbar"] {
+  box-shadow:
+    inset 0 -3px 0 var(--sr-steel),
+    0 1px 0 var(--sr-steel);
+}
+
+/* Page titles are stencilled. */
+[data-theme="stockroom"] [data-slot="page-title"] {
+  font-family: var(--font-stencil), var(--font-ui), sans-serif;
+  text-transform: uppercase;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+[data-theme="stockroom"] [data-slot="card-title"] {
+  font-stretch: 85%;
+  font-weight: 800;
+}
+
+/* Cards sit on a shelf: a steel beam along the top edge. */
+[data-theme="stockroom"] [data-slot="card-header"] {
+  border-bottom: 3px solid var(--sr-steel);
+}
+
+[data-theme="stockroom"]
+  :is([data-slot="field-label"], [data-slot="table-head"]) {
+  font-stretch: 75%;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+/* Status chips are label-maker tape: dark tape, raised letters. The
+   variant keeps its tape color so the signal still reads. */
+[data-theme="stockroom"] [data-slot="badge"] {
+  border-radius: 1px;
+  border: 0;
+  font-family: var(--font-code);
+  font-stretch: 75%;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.2);
+}
+
+[data-theme="stockroom"]
+  [data-slot="badge"]:is(
+    [data-variant="outline"],
+    [data-variant="secondary"],
+    [data-variant="default"]
+  ) {
+  background-color: var(--sr-tape);
+  color: var(--sr-tape-ink);
+}
+
+[data-theme="stockroom"] [data-slot="button"] {
+  font-stretch: 88%;
+  font-weight: 700;
+}
+
+[data-theme="stockroom"] [data-slot="tabs-list"] {
+  background: var(--sr-steel-lite);
+  border-radius: 2px;
+  box-shadow: inset 0 -2px 0 var(--sr-steel);
+}
+
+[data-theme="stockroom"] [data-slot="tabs-trigger"][data-active] {
+  box-shadow: inset 0 -3px 0 var(--action);
+  font-weight: 700;
+}
+
+/* Tables are stock sheets: a steel header band and firm rules. */
+[data-theme="stockroom"] [data-slot="table-head"] {
+  background-color: var(--sr-steel-lite);
+  border-bottom: 2px solid var(--sr-steel);
+}
+
+[data-theme="stockroom"] [data-slot="table-row"] {
+  border-bottom-width: 1px;
+}
+
+[data-theme="stockroom"] [data-slot="alert"] {
+  border-width: 1px 1px 1px 1px;
+  box-shadow: inset 0 3px 0 currentColor;
+  border-radius: 2px;
+}
+
+[data-theme="stockroom"]
+  :is([data-slot="dialog-content"], [data-slot="sheet-content"]) {
+  box-shadow:
+    inset 0 5px 0 var(--sr-steel),
+    var(--lift-raised);
+}
+
+/* The canvas frame carries steel uprights on both sides. */
+[data-theme="stockroom"] [data-skin="canvas-frame"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  box-shadow:
+    inset 6px 0 0 var(--sr-steel),
+    inset -6px 0 0 var(--sr-steel);
+}
+
+/* Each department is a shelf bay with steel uprights; modules are kraft
+   boxes with a paper end label. State strokes stay heavier than idle ones. */
+[data-theme="stockroom"]
+  .sandbox-ui
+  .x6-cell:not([data-sandbox-pressed="true"])
+  [data-sandbox-kind="department"][data-selected="false"][data-feedback=""] {
+  stroke-width: 6px;
+}
+
+[data-theme="stockroom"]
+  .sandbox-ui
+  [data-sandbox-kind="department"][data-selected="true"] {
+  stroke-width: 7px;
+}
+
+[data-theme="stockroom"]
+  .sandbox-ui
+  :is([data-sandbox-body], [data-sandbox-part="header"]) {
+  rx: 2px;
+  ry: 2px;
+}
+
+[data-theme="stockroom"] .sandbox-ui [data-sandbox-kind="module"] {
+  filter: drop-shadow(0 2px 0 var(--sr-steel));
+}
+
+[data-theme="stockroom"] .sandbox-ui [data-sandbox-line] {
+  stroke-width: 1.6px;
+  animation: none;
+}
+
+[data-theme="stockroom"]
+  .sandbox-ui
+  [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
+  stroke-dasharray: none;
+}
+
+[data-theme="stockroom"]
+  .sandbox-ui
+  [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
+  stroke-dasharray: 8 5;
+}

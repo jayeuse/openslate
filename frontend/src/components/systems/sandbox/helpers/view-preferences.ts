@@ -3,27 +3,22 @@ export type DesignerPane = "Structure" | "Canvas" | "Inspector";
 export interface SandboxViewPreferences {
   gridVisible: boolean;
   snapEnabled: boolean;
-  structureWidth: number;
-  inspectorWidth: number;
-  structureCollapsed: boolean;
-  inspectorCollapsed: boolean;
-  mobilePane: DesignerPane;
+  workbenchWidth: number;
+  workbenchCollapsed: boolean;
 }
 
 export const SANDBOX_VIEW_PREFERENCES_KEY = "openslate.sandbox.view.v2";
-export const SANDBOX_STRUCTURE_PANEL_MIN_WIDTH = 320;
-export const SANDBOX_STRUCTURE_PANEL_MAX_WIDTH = 420;
-export const SANDBOX_INSPECTOR_PANEL_MIN_WIDTH = 450;
-export const SANDBOX_INSPECTOR_PANEL_MAX_WIDTH = 480;
+// One right workbench (Structure | Properties) keeps the canvas at ≥65% of a
+// wide Build area.
+export const SANDBOX_WORKBENCH_MIN_WIDTH = 320;
+export const SANDBOX_WORKBENCH_MAX_WIDTH = 400;
+export const SANDBOX_WORKBENCH_DEFAULT_WIDTH = 360;
 
 export const defaultSandboxViewPreferences: SandboxViewPreferences = {
   gridVisible: true,
   snapEnabled: true,
-  structureWidth: SANDBOX_STRUCTURE_PANEL_MIN_WIDTH,
-  inspectorWidth: SANDBOX_INSPECTOR_PANEL_MIN_WIDTH,
-  structureCollapsed: false,
-  inspectorCollapsed: false,
-  mobilePane: "Structure",
+  workbenchWidth: SANDBOX_WORKBENCH_DEFAULT_WIDTH,
+  workbenchCollapsed: false,
 };
 
 function boundedNumber(
@@ -39,12 +34,6 @@ function boundedNumber(
 
 function booleanOr(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
-}
-
-function paneOr(value: unknown): DesignerPane {
-  return value === "Canvas" || value === "Inspector" || value === "Structure"
-    ? value
-    : defaultSandboxViewPreferences.mobilePane;
 }
 
 export function normalizeSandboxViewPreferences(
@@ -63,27 +52,17 @@ export function normalizeSandboxViewPreferences(
       stored.snapEnabled,
       defaultSandboxViewPreferences.snapEnabled,
     ),
-    structureWidth: boundedNumber(
-      stored.structureWidth,
-      defaultSandboxViewPreferences.structureWidth,
-      SANDBOX_STRUCTURE_PANEL_MIN_WIDTH,
-      SANDBOX_STRUCTURE_PANEL_MAX_WIDTH,
+    // Tabs saved before the single workbench kept an inspector width.
+    workbenchWidth: boundedNumber(
+      stored.workbenchWidth ?? stored.inspectorWidth,
+      defaultSandboxViewPreferences.workbenchWidth,
+      SANDBOX_WORKBENCH_MIN_WIDTH,
+      SANDBOX_WORKBENCH_MAX_WIDTH,
     ),
-    inspectorWidth: boundedNumber(
-      stored.inspectorWidth,
-      defaultSandboxViewPreferences.inspectorWidth,
-      SANDBOX_INSPECTOR_PANEL_MIN_WIDTH,
-      SANDBOX_INSPECTOR_PANEL_MAX_WIDTH,
+    workbenchCollapsed: booleanOr(
+      stored.workbenchCollapsed ?? stored.inspectorCollapsed,
+      defaultSandboxViewPreferences.workbenchCollapsed,
     ),
-    structureCollapsed: booleanOr(
-      stored.structureCollapsed,
-      defaultSandboxViewPreferences.structureCollapsed,
-    ),
-    inspectorCollapsed: booleanOr(
-      stored.inspectorCollapsed,
-      defaultSandboxViewPreferences.inspectorCollapsed,
-    ),
-    mobilePane: paneOr(stored.mobilePane),
   };
 }
 

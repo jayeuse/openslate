@@ -192,9 +192,11 @@ async function installViewsApi(
     additionalViews?: SavedView[];
     deepViewBeyondBound?: boolean;
     calendarDateTimeValue?: string;
+    audienceOptionsFailure?: boolean;
   } = {},
 ) {
   await installOpenViewEventSource(page);
+  let audienceOptionsFailure = options.audienceOptionsFailure ?? false;
   let saved = baseView();
   if (options.initialName) saved = { ...saved, name: options.initialName };
   if (options.disableInitialSearch)
@@ -489,6 +491,12 @@ async function installViewsApi(
       });
     }
     if (url.pathname === "/api/views/audience-options") {
+      if (audienceOptionsFailure)
+        return route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Audience options are unavailable." }),
+        });
       const option =
         url.searchParams.get("kind") === "role"
           ? {
@@ -1002,6 +1010,9 @@ async function installViewsApi(
     windowQueryRequests,
     failNextWindowQuery: () => {
       failNextWindowQuery = true;
+    },
+    restoreAudienceOptions: () => {
+      audienceOptionsFailure = false;
     },
   };
 }
@@ -1597,6 +1608,49 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   expect(
     api.requests.some((request) => request.includes("deleted=include")),
   ).toBe(true);
+});
+
+test("a failed audience list keeps the catalog open and limits sharing to Only me and Everyone", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page, { audienceOptionsFailure: true });
+
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry catalog" })).toHaveCount(
+    0,
+  );
+
+  await page.getByRole("button", { name: "Save view" }).click();
+  const dialog = page.getByRole("dialog");
+  const audience = dialog.getByRole("combobox", { name: "Audience" });
+  await expect(audience.getByRole("option")).toHaveText([
+    "Only me",
+    "Everyone",
+  ]);
+  await expect(
+    dialog.getByText(
+      "Roles and people could not be loaded. You can still share with Only me or Everyone.",
+    ),
+  ).toBeVisible();
+
+  const retry = dialog.getByRole("button", { name: "Retry roles and people" });
+  await retry.click();
+  await expect(retry).toBeFocused();
+  await expect(retry).not.toHaveAttribute("aria-disabled", "true");
+
+  api.restoreAudienceOptions();
+  await retry.click();
+  await expect(audience.getByRole("option")).toHaveText([
+    "Only me",
+    "Everyone",
+    "Role: Operations",
+    "User: Nina Santos",
+  ]);
+  await expect(
+    dialog.getByRole("button", { name: "Retry roles and people" }),
+  ).toHaveCount(0);
+  await expect(audience).toBeFocused();
 });
 
 test("clearing an implicit default asks before discarding its local draft", async ({

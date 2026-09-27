@@ -114,6 +114,11 @@ type IdentityEditorProps = {
   onOpenChange: (open: boolean) => void;
 };
 
+const EDITOR_KIND_LABELS: Record<AccessIdentity["kind"], string> = {
+  internal: "Internal",
+  guest: "Guest",
+  service: "Service",
+};
 export function IdentityEditor({
   controller,
   identityId,
@@ -708,9 +713,13 @@ export function IdentityEditor({
                   ? draft.name
                   : identityId
                     ? "Identity no longer available"
-                    : `Add ${draft.kind} identity`}
+                    : draft.kind === "internal"
+                      ? "Add internal person"
+                      : draft.kind === "guest"
+                        ? "Add guest"
+                        : "Add service"}
               </SheetTitle>
-              <Badge variant="outline">{draft.kind}</Badge>
+              <Badge variant="outline">{EDITOR_KIND_LABELS[draft.kind]}</Badge>
               <Badge
                 variant={
                   draft.status === "active"
@@ -952,7 +961,7 @@ export function IdentityEditor({
                       ))}
                     </NativeSelect>
                     <FieldDescription>
-                      Every identity has exactly one role.
+                      Each person or service has one role.
                     </FieldDescription>
                   </Field>
                   {draft.kind === "internal" && (
@@ -1269,7 +1278,9 @@ export function IdentityEditor({
                           disabled={pending}
                           onClick={disableExistingIdentity}
                         >
-                          Disable identity
+                          {draft.kind === "service"
+                            ? "Disable service"
+                            : "Disable person"}
                         </Button>
                       ) : null}
                     </div>
@@ -1432,7 +1443,11 @@ export function IdentityEditor({
                   className="min-h-11"
                   disabled={pending || uncertain || targetMissing}
                 >
-                  {identityId ? "Save changes" : "Add identity"}
+                  {identityId
+                    ? "Save changes"
+                    : draft?.kind === "service"
+                      ? "Add service"
+                      : "Add person"}
                 </Button>
               )}
             </SheetFooter>
@@ -1728,7 +1743,9 @@ export function IdentityEditor({
             </div>
           </Alert>
           <Field>
-            <FieldLabel htmlFor={`${nameId}-confirm`}>Identity name</FieldLabel>
+            <FieldLabel htmlFor={`${nameId}-confirm`}>
+              Type the name to confirm
+            </FieldLabel>
             <Input
               id={`${nameId}-confirm`}
               autoComplete="off"

@@ -26,6 +26,8 @@ import {
   type SandboxDocumentV2,
 } from "./domain/document";
 import type { SandboxOrganizationTemplate } from "./domain/templates";
+import { openingModuleId } from "./domain/opening-module";
+import { summarizeTestRun, testTraceSteps } from "./domain/test-run-summary";
 import { canvasFieldId } from "./helpers/bridge";
 import { clearSandboxViewPreferences } from "./helpers/view-preferences";
 import { Designer } from "./components/designer";
@@ -111,6 +113,9 @@ function sectionHref(
     ([, label]) => label === section,
   )?.[0];
   const params = new URLSearchParams(current);
+  // A trace is a one-time "Show on canvas" request, not part of the view.
+  params.delete("trace");
+  params.delete("run");
   params.set("section", slug ?? "build");
   return `/sandbox?${params.toString()}`;
 }
@@ -127,6 +132,32 @@ function commandFailure(error: unknown): SandboxCommandFailure {
 
 function sandboxStillLoading(): SandboxCommandFailure {
   return { ok: false, error: "Sandbox is still loading." };
+}
+
+type PublishStatus = { label: string; publishable: boolean };
+
+// The header status names the draft's real state, and Review & Publish is
+// available only when publishing would change something.
+function publishStatus(
+  session: SandboxDocumentSession | null,
+  design: Design,
+  conflict: boolean,
+): PublishStatus {
+  if (conflict) return { label: "Unsaved changes", publishable: false };
+  const published = session?.publishedHash !== undefined;
+  if (
+    !published &&
+    design.departments.length === 0 &&
+    design.modules.length === 0
+  )
+    return { label: "Nothing to publish yet", publishable: false };
+  if (
+    session?.hasUnpublishedChanges === true ||
+    (published && session.contentHash !== session.publishedHash)
+  )
+    return { label: "Unpublished changes", publishable: true };
+  if (published) return { label: "Published", publishable: false };
+  return { label: "Draft saved", publishable: true };
 }
 
 function emptyDocument(): SandboxDocumentV2 {
@@ -156,6 +187,7 @@ export default function SandboxPage() {
   const [message, setMessage] = useState("");
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [automationDraft, setAutomationDraft] = useState({
     dirty: false,
     pending: false,
@@ -177,12 +209,30 @@ export default function SandboxPage() {
     ).values(),
   );
   const requestedFocusTarget = search.get("inspect");
-  const requestedSelection =
+  const traceTarget = search.get("trace");
+  const traceRun = testRuns.find((item) => item.id === search.get("run"));
+  const traceSteps =
+    traceTarget && traceRun && session
+      ? testTraceSteps(
+          traceRun,
+          session.document.design,
+          summarizeTestRun(
+            traceRun,
+            session.document.design,
+            session.document.automations,
+            session.revision,
+          ),
+        )
+      : null;
+  const linkedSelection =
     requestedFocusTarget ??
+    traceTarget ??
     search.get("module") ??
-    search.get("department") ??
-    design.modules[0]?.id ??
-    "";
+    search.get("department");
+  // With no link, open on the first module of the busiest department, the
+  // same department the canvas opens on.
+  const requestedSelection = linkedSelection ?? openingModuleId(design) ?? "";
+  const status = publishStatus(session, design, Boolean(conflict));
 
   const refreshVersions = useCallback(async () => {
     setVersions(await listAllSandboxVersions());
@@ -683,23 +733,16 @@ export default function SandboxPage() {
           </Button>
         </Alert>
       ) : null}
-      <header className="space-y-2 xl:flex xl:flex-wrap xl:items-end xl:justify-between xl:gap-4 xl:space-y-0">
-        <div className="flex items-center justify-between gap-2 xl:contents">
-          <div className="flex min-w-0 items-center gap-2 xl:flex-wrap xl:gap-3">
-            <h1 className="truncate text-xl font-semibold tracking-tight sm:text-2xl">
+      <header className="xl:flex xl:flex-wrap xl:items-end xl:justify-between xl:gap-4">
+        <div className="flex flex-col gap-3 xl:contents">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            <h1
+              data-slot="page-title"
+              className="text-xl font-semibold tracking-tight sm:text-2xl"
+            >
               Organization builder
             </h1>
-            <Badge variant="outline" className="max-xl:hidden">
-              {conflict
-                ? "Unsaved changes"
-                : session?.hasUnpublishedChanges === true ||
-                    (session?.publishedHash !== undefined &&
-                      session.contentHash !== session.publishedHash)
-                  ? "Unpublished changes"
-                  : session?.publishedHash
-                    ? "Published"
-                    : "Draft saved"}
-            </Badge>
+            <Badge variant="outline">{status.label}</Badge>
           </div>
           <div className="flex shrink-0 gap-2">
             {section === "Build" ? (
@@ -730,7 +773,7 @@ export default function SandboxPage() {
               disabled={
                 pending ||
                 testPending ||
-                Boolean(conflict) ||
+                !status.publishable ||
                 automationDraft.dirty ||
                 automationDraft.pending
               }
@@ -745,6 +788,12 @@ export default function SandboxPage() {
                 automationDraft.dirty ||
                 automationDraft.pending
               }
+              templatesOpen={templatesOpen}
+              onTemplatesOpenChange={setTemplatesOpen}
+              canCheckpoint={
+                design.departments.length > 0 || design.modules.length > 0
+              }
+              canDiscard={status.publishable}
               onCreateCheckpoint={checkpoint}
               onImport={importFile}
               onApplyTemplate={applyTemplate}
@@ -777,7 +826,17 @@ export default function SandboxPage() {
         <Designer
           key={`${requestedSelection}-${sandboxGeneration}`}
           initialSelected={requestedSelection}
+          inspectOnOpen={linkedSelection !== null && traceTarget === null}
           focusTargetId={requestedFocusTarget}
+          traceTargetId={traceTarget}
+          traceSteps={traceSteps}
+          onBackToTest={() => {
+            // Return to the same result: keep the run, drop the trace.
+            const params = new URLSearchParams(search.toString());
+            params.delete("trace");
+            params.set("section", "test");
+            router.push(`/sandbox?${params.toString()}`, { scroll: false });
+          }}
           design={design}
           change={change}
           initializeLayout={initializeLayout}
@@ -785,6 +844,7 @@ export default function SandboxPage() {
           onViewPreferenceChange={() => undefined}
           createRequest={null}
           onCreateRequestHandled={() => undefined}
+          onStartFromTemplate={() => setTemplatesOpen(true)}
           pending={pending}
         />
       ) : null}
@@ -822,6 +882,17 @@ export default function SandboxPage() {
             setTestRuns([]);
           }}
           onPendingChange={setTestPending}
+          draftRevision={session.revision}
+          initialRunId={search.get("run")}
+          onShowOnCanvas={(run) => {
+            const params = new URLSearchParams(search.toString());
+            for (const key of ["inspect", "module", "department", "rule"])
+              params.delete(key);
+            params.set("trace", run.input.moduleId);
+            params.set("run", run.id);
+            params.set("section", "build");
+            router.push(`/sandbox?${params.toString()}`, { scroll: false });
+          }}
         />
       ) : null}
       {section === "History" ? (
@@ -891,13 +962,17 @@ export default function SandboxPage() {
       <footer className="border-border text-muted-foreground flex flex-wrap justify-between gap-2 border-t pt-3 text-xs">
         <span>{counts(design)}</span>
         <span>
-          Draft · {session?.history.past.length ?? 0} undo steps available
+          Draft
+          {session?.history.past.length
+            ? ` · ${session.history.past.length} ${session.history.past.length === 1 ? "change" : "changes"} you can undo`
+            : ""}
         </span>
       </footer>
       {session ? (
         <ReviewPublishDialog
           open={reviewOpen}
           expectedRevision={session.revision}
+          design={session.document.design}
           disabled={
             pending ||
             Boolean(conflict) ||

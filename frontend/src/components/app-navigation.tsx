@@ -12,7 +12,7 @@ import {
   ShieldCheck,
   Workflow,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import {
   getWorkspaceNavigation,
@@ -63,6 +63,7 @@ export function AppNavigation({
 }: AppNavigationProps) {
   const router = useRouter();
   const requestNavigation = useWorkspaceNavigationRequest();
+  const descriptionIdPrefix = useId();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [hash, setHash] = useState("");
   const prefetchTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
@@ -133,6 +134,10 @@ export function AppNavigation({
             const Icon = groupIcons[group.id as keyof typeof groupIcons];
             const active = isWorkspaceNavigationGroupActive(group, pathname);
             const open = !collapsed && (expanded[group.id] ?? active);
+            const showDescription = Boolean(
+              group.description && !collapsed && !open,
+            );
+            const descriptionId = `${descriptionIdPrefix}-${group.id}-description`;
 
             return (
               <Collapsible
@@ -151,8 +156,20 @@ export function AppNavigation({
                     <SidebarMenuButton
                       isActive={active}
                       aria-label={group.label}
-                      title={collapsed ? group.label : undefined}
-                      className="min-h-11"
+                      aria-describedby={
+                        showDescription ? descriptionId : undefined
+                      }
+                      title={
+                        collapsed
+                          ? group.description
+                            ? `${group.label} — ${group.description}`
+                            : group.label
+                          : undefined
+                      }
+                      className={cn(
+                        "min-h-11",
+                        showDescription && "h-auto py-1.5",
+                      )}
                     />
                   }
                   onClick={() => {
@@ -160,7 +177,17 @@ export function AppNavigation({
                   }}
                 >
                   <Icon aria-hidden="true" />
-                  <span className="truncate">{group.label}</span>
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate">{group.label}</span>
+                    {showDescription ? (
+                      <span
+                        id={descriptionId}
+                        className="text-sidebar-muted truncate text-xs font-normal"
+                      >
+                        {group.description}
+                      </span>
+                    ) : null}
+                  </span>
                   <ChevronRight
                     aria-hidden="true"
                     className={cn(

@@ -191,7 +191,7 @@ export function AutomationFlow({
         </p>
         {!automation.enabled && (
           <p className="text-muted-foreground mt-3 text-sm">
-            Disabled in this draft. This rule will not run when published.
+            Disabled in this draft. This automation will not run when published.
           </p>
         )}
         <div className="mx-auto my-7 w-full max-w-md">
@@ -271,10 +271,10 @@ export function AutomationFlow({
         </div>
       </section>
       <section
-        aria-label="Rule summary"
+        aria-label="Automation summary"
         className="border-border min-w-0 border-t pt-5"
       >
-        <h3 className="font-semibold">Rule summary</h3>
+        <h3 className="font-semibold">Automation summary</h3>
         <div className="mt-3 space-y-2 text-sm leading-relaxed [overflow-wrap:anywhere] break-words whitespace-pre-wrap">
           <p>
             {automation.trigger.kind === "schedule"
