@@ -1,17 +1,25 @@
 export const DEFAULT_APPEARANCE_PREFERENCES = {
   mode: "light",
+  reduceMotion: false,
 } as const;
 
 export type AppearanceMode = "light" | "dark";
 
 export interface AppearancePreferences {
   mode: AppearanceMode;
+  /**
+   * Reduce motion in this browser, as the device's reduced-motion setting
+   * does (fades stay, movement stops). Off follows the device setting.
+   */
+  reduceMotion: boolean;
 }
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 // The light/dark key predates organization themes, so it keeps its old name.
 const MODE_KEY = "openslate-theme";
+// Stored only while reduce motion is on (public/theme-init.js reads it too).
+const MOTION_KEY = "openslate-motion";
 // Accent and corner style became part of the organization theme; the global
 // density setting was never wired to any component.
 const RETIRED_KEYS = [
@@ -39,6 +47,7 @@ export function readAppearancePreferences(
       mode: isOneOf(mode, ["light", "dark"])
         ? mode
         : DEFAULT_APPEARANCE_PREFERENCES.mode,
+      reduceMotion: storage.getItem(MOTION_KEY) === "reduced",
     };
   } catch {
     return DEFAULT_APPEARANCE_PREFERENCES;
@@ -58,6 +67,8 @@ export function applyAppearancePreferences(
   root: HTMLElement = document.documentElement,
 ): void {
   root.classList.toggle("dark", preferences.mode === "dark");
+  if (preferences.reduceMotion) root.dataset.motion = "reduced";
+  else delete root.dataset.motion;
   delete root.dataset.accent;
   delete root.dataset.density;
   delete root.dataset.radius;
@@ -73,6 +84,8 @@ export function persistAppearancePreferences(
       return;
     }
     target.setItem(MODE_KEY, preferences.mode);
+    if (preferences.reduceMotion) target.setItem(MOTION_KEY, "reduced");
+    else target.removeItem(MOTION_KEY);
     RETIRED_KEYS.forEach((key) => target.removeItem(key));
   } catch {
     // Private browsing and blocked storage should not prevent appearance changes.

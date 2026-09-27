@@ -236,7 +236,9 @@
    from left to right as the page arrives. It plays only during a sidebar
    handoff, never on load. */
 @media (prefers-reduced-motion: no-preference) {
-  :root[data-theme="stockroom"]:active-view-transition-type(nav-down, nav-up)
+  :root[data-theme="stockroom"]:not(
+      [data-motion="reduced"]
+    ):active-view-transition-type(nav-down, nav-up)
     [data-slot="page-title"] {
     animation: sr-stencil-spray var(--motion-base) var(--ease-out)
       var(--motion-fast) both;

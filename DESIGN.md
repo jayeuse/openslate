@@ -535,6 +535,10 @@ Correct: `::view-transition-old(root), ::view-transition-new(root) { animation: 
 
 Wrong: letting the browser's default root cross-fade run, so the whole window, sidebar included, dissolves on every click.
 
+### Reduce motion setting
+
+Appearance has a **Reduce motion** switch (per person, per browser, stored as `openslate-motion`). On, it sets `data-motion="reduced"` on `<html>` before first paint (`public/theme-init.js`), and every reduced-motion rule answers to that attribute as well as to the device's `prefers-reduced-motion`: the Tailwind `motion-reduce:` variant is redefined in `globals.css` to cover both, and each hand-written reduced rule has a `[data-motion="reduced"]` twin. Off, OpenSlate follows the device setting; when the device already asks for reduced motion, the page says so.
+
 **The Travel Not Meaning Rule.** Reduced motion removes travel (`--nav-travel-*` become 0, glides and arrival signatures stop) but keeps the fades and color changes that say something changed.
 
 Correct: under `prefers-reduced-motion`, the page body still cross-fades on a sidebar move.

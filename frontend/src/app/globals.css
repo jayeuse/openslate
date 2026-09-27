@@ -2,6 +2,17 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Reduced motion comes from the device setting or from Appearance, which
+   sets data-motion="reduced" on <html> (lib/appearance-preferences.ts). */
+@custom-variant motion-reduce {
+  @media (prefers-reduced-motion: reduce) {
+    @slot;
+  }
+  &:where([data-motion="reduced"], [data-motion="reduced"] *) {
+    @slot;
+  }
+}
+
 @import "./themes/whiteboard.css";
 @import "./themes/triplicate.css";
 @import "./themes/stockroom.css";
@@ -452,13 +463,20 @@ textarea {
   }
 }
 
+/* Reduced motion (device setting or Appearance): keep the handoff fade;
+   drop the travel. */
 @media (prefers-reduced-motion: reduce) {
-  /* Keep the handoff fade; drop the travel and the glide. */
   :root,
   :root[data-theme] {
     --nav-travel-x: 0px;
     --nav-travel-y: 0px;
   }
+}
+
+:root[data-motion="reduced"],
+:root[data-motion="reduced"][data-theme] {
+  --nav-travel-x: 0px;
+  --nav-travel-y: 0px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -472,6 +490,19 @@ textarea {
     transition: none;
     scroll-behavior: auto;
   }
+}
+
+[data-motion="reduced"]
+  .sandbox-ui
+  :is(button, a[href], summary, input, select, textarea, [role="separator"]) {
+  transition: none;
+}
+
+[data-motion="reduced"]
+  .openview-ui
+  :is(button, a[href], input, select, textarea, [role="separator"]) {
+  transition: none;
+  scroll-behavior: auto;
 }
 
 .sandbox-ui
@@ -590,6 +621,14 @@ textarea {
   .sandbox-ui .x6-cell[data-trace] {
     transition: none;
   }
+}
+
+[data-motion="reduced"] .sandbox-ui [data-sandbox-line="true"] {
+  animation: none;
+}
+
+[data-motion="reduced"] .sandbox-ui .x6-cell[data-trace] {
+  transition: none;
 }
 
 /* Resizing follows the pointer instead of the sidebar toggle transition. */
