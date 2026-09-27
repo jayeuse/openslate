@@ -152,7 +152,12 @@ export function PersonDetails({
       return;
     }
     setEdit({ baseline, draft });
-    if (!writePersonDraft(signedInId, { personId: person.id, baseline, draft }))
+    // An unresolved save of another person blocks the journal; keep that
+    // notice rather than replacing it.
+    if (
+      !writePersonDraft(signedInId, { personId: person.id, baseline, draft }) &&
+      stored.status !== "uncertain"
+    )
       setJournalIssue(
         "This browser cannot keep your draft, so unsaved changes will be lost if the page reloads.",
       );
@@ -186,13 +191,22 @@ export function PersonDetails({
       return;
     }
     const record = { personId: person.id, baseline, draft: resolved };
-    beginPersonSubmission(signedInId, record);
+    const journaled = beginPersonSubmission(signedInId, record);
     try {
       await updateAccessUser(person.id, patch);
     } catch (caught) {
       if (isUnansweredRequest(caught)) {
-        setEdit(null);
-        setUncertain(record);
+        if (journaled) {
+          setEdit(null);
+          setUncertain(record);
+        } else {
+          // Without a journal there is nothing to hold; keep the draft and
+          // ask for a check before another save.
+          setError(
+            "The save got no answer, so it may have completed. Check this person before you save again.",
+          );
+          void afterAccessUserChange(client);
+        }
         return;
       }
       finishPersonSubmission(signedInId, true);
@@ -306,24 +320,32 @@ export function PersonDetails({
 
   if (uncertain)
     return (
-      <UncertainDraftWarning
-        subject="person"
-        currentSummary="Compare your saved change with this person now. If it is not there, discard it and make the change again."
-        savedValues={reviewValues(uncertain.draft)}
-        currentValues={reviewValues(current)}
-        entriesLabel="Details"
-        canResolve={
-          listFresh && !accessDraftSubmissionNeedsReload(signedInId, "identity")
-        }
-        pending={pending}
-        onResolve={() => {
-          if (finishPersonSubmission(signedInId, false)) setUncertain(null);
-          else
-            setJournalIssue(
-              "The saved change could not be cleared from this browser. Try again.",
-            );
-        }}
-      />
+      <div className="flex flex-col gap-4">
+        {journalIssue ? (
+          <Alert variant="warning" role="status">
+            {journalIssue}
+          </Alert>
+        ) : null}
+        <UncertainDraftWarning
+          subject="person"
+          currentSummary="Compare your saved change with this person now. If it is not there, discard it and make the change again."
+          savedValues={reviewValues(uncertain.draft)}
+          currentValues={reviewValues(current)}
+          entriesLabel="Details"
+          canResolve={
+            listFresh &&
+            !accessDraftSubmissionNeedsReload(signedInId, "identity")
+          }
+          pending={pending}
+          onResolve={() => {
+            if (finishPersonSubmission(signedInId, false)) setUncertain(null);
+            else
+              setJournalIssue(
+                "The saved change could not be cleared from this browser. Try again.",
+              );
+          }}
+        />
+      </div>
     );
 
   return (
