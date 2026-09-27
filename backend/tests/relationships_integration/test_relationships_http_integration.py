@@ -200,6 +200,35 @@ def test_member_without_a_group_for_the_department_sees_and_changes_no_relations
     assert relationship_http_fixture.active_edge_ids() == {UUID(edge_id)}
 
 
+def test_guest_reads_relationships_but_cannot_change_them(relationship_http_fixture) -> None:
+    graph = relationship_http_fixture.graph
+    assert graph is not None
+    guest = relationship_http_fixture.guest
+    assert guest is not None
+    with relationship_http_fixture.client(relationship_http_fixture.actor) as client:
+        payload = _payload(graph.field_id, graph.source_id, graph.target_id)
+        created = client.post("/api/relationships", json=payload)
+        assert created.status_code == 201
+    edge_id = created.json()["id"]
+    with relationship_http_fixture.client(guest) as client:
+        listed = client.get(f"/api/relationships?field_id={graph.field_id}")
+        assert listed.status_code == 200
+        assert [item["id"] for item in listed.json()["items"]] == [edge_id]
+        assert client.get(f"/api/relationships/{edge_id}").status_code == 200
+        replacement = _payload(graph.field_id, graph.source_id, graph.replacement_id)
+        assert client.post("/api/relationships", json=replacement).status_code == 403
+        assert (
+            client.put(
+                f"/api/relationships/fields/{graph.field_id}/sources/{graph.source_id}",
+                json={"target_record_id": str(graph.replacement_id)},
+            ).status_code
+            == 403
+        )
+        assert client.delete(f"/api/relationships/{edge_id}").status_code == 403
+
+    assert relationship_http_fixture.active_edge_ids() == {UUID(edge_id)}
+
+
 def test_registered_route_requires_bearer_credentials() -> None:
     with TestClient(create_app()) as client:
         response = client.get("/api/relationships")

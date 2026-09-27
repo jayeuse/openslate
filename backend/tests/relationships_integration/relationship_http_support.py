@@ -107,9 +107,12 @@ class RelationshipHTTPFixture:
         self.app = create_app()
         self.actor_id = uuid7()
         self.member_id = uuid7()
+        self.guest_id = uuid7()
+        self.group_id = uuid7()
         self.member: User | None = None
+        self.guest: User | None = None
         self.graph: RelationshipGraph | None = None
-        self._all_ids: set[UUID] = {self.actor_id, self.member_id}
+        self._all_ids: set[UUID] = {self.actor_id, self.member_id, self.guest_id}
         try:
             self.actor = self._seed()
         except BaseException:
@@ -155,7 +158,41 @@ class RelationshipHTTPFixture:
             if updated.rowcount != 2:
                 raise RuntimeError("The local test actors could not be created")
             self._insert_graph(connection, graph)
+            # A guest whose group writes the whole department still only reads it.
+            connection.execute(
+                text(
+                    "INSERT INTO public.users "
+                    "(id, email, username, status, role, sponsor_user_id, expires_at) "
+                    "VALUES (:id, :email, :username, 'active', 'guest', :sponsor, "
+                    "now() + interval '30 days')"
+                ),
+                {
+                    "id": self.guest_id,
+                    "email": f"rel-http-guest-{prefix}@example.com",
+                    "username": f"rel_http_guest_{prefix}",
+                    "sponsor": self.member_id,
+                },
+            )
+            connection.execute(
+                text("INSERT INTO public.groups (id, name) VALUES (:id, :name)"),
+                {"id": self.group_id, "name": f"Rel HTTP guests {prefix}"},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO public.group_members (id, group_id, user_id) "
+                    "VALUES (:id, :group_id, :user_id)"
+                ),
+                {"id": uuid7(), "group_id": self.group_id, "user_id": self.guest_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO public.group_access (id, group_id, department_id, level) "
+                    "VALUES (:id, :group_id, :department_id, 'write')"
+                ),
+                {"id": uuid7(), "group_id": self.group_id, "department_id": graph.department_id},
+            )
         self.member = _load_user(self.runtime_engine, self.member_id)
+        self.guest = _load_user(self.runtime_engine, self.guest_id)
         return _load_user(self.runtime_engine, self.actor_id)
 
     @staticmethod
@@ -305,7 +342,16 @@ class RelationshipHTTPFixture:
         try:
             with self.owner_engine.begin() as connection:
                 ids = list(self._all_ids)
-                user_ids = [self.actor_id, self.member_id]
+                user_ids = [self.actor_id, self.member_id, self.guest_id]
+                for table in ("group_access", "group_members"):
+                    connection.execute(
+                        text(f"DELETE FROM public.{table} WHERE group_id = :group_id"),
+                        {"group_id": self.group_id},
+                    )
+                connection.execute(
+                    text("DELETE FROM public.groups WHERE id = :group_id"),
+                    {"group_id": self.group_id},
+                )
                 if ids:
                     expanded = bindparam("ids", expanding=True)
                     expanded_user_ids = bindparam("user_ids", expanding=True)
