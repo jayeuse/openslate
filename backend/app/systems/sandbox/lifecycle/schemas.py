@@ -27,6 +27,7 @@ class LifecycleBlockerCode(StrEnum):
     FIELD_POSITION_CONFLICT = "field_position_conflict"
     SCHEMA_INVALID = "schema_invalid"
     RECORD_DATA_INVALID = "record_data_invalid"
+    TITLE_FIELD_SELECTED = "title_field_selected"
     RECORD_CLOSE_UNSUPPORTED = "record_close_unsupported"
     PURGE_BOARD_DEPENDENCY = "purge_board_dependency"
     PURGE_DASHBOARD_DEPENDENCY = "purge_dashboard_dependency"

@@ -15,6 +15,7 @@ const fieldTypeSchema = z.enum([
   "date",
   "datetime",
   "select",
+  "user",
 ]);
 const queryFieldTypeSchema = fieldTypeSchema;
 const viewLayoutSchema = z.enum([
@@ -375,12 +376,14 @@ const dataSourceSchema = z
     id: uuidSchema,
     name: z.string().min(1),
     department_id: uuidSchema,
+    title_field_id: uuidSchema.nullable(),
   })
   .strict()
-  .transform(({ id, name, department_id }) => ({
+  .transform(({ id, name, department_id, title_field_id }) => ({
     id,
     name,
     departmentId: department_id,
+    titleFieldId: title_field_id,
   }));
 const fieldSchema = z
   .object({
@@ -398,7 +401,8 @@ const recordSchema = z
   .object({
     id: uuidSchema,
     module_id: uuidSchema,
-    data: z.record(z.string(), z.unknown()),
+    data: z.record(uuidSchema, z.unknown()),
+    display_values: z.record(uuidSchema, z.string()),
     created_at: timestampSchema,
     updated_at: timestampSchema,
     deleted_at: timestampSchema.nullable(),
@@ -409,6 +413,7 @@ const recordSchema = z
   .transform(
     ({
       module_id,
+      display_values,
       created_at,
       updated_at,
       deleted_at,
@@ -418,6 +423,7 @@ const recordSchema = z
     }) => ({
       ...record,
       moduleId: module_id,
+      displayValues: display_values,
       createdAt: created_at,
       updatedAt: updated_at,
       deletedAt: deleted_at,

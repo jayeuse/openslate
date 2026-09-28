@@ -3,12 +3,15 @@ import {
   mergeProjectedDesign,
   projectSandboxDocument,
 } from "../../../src/components/systems/sandbox/domain/document-bridge";
-import type { SandboxDocumentV3 } from "../../../src/components/systems/sandbox/domain/document";
+import type { SandboxDocumentV4 } from "../../../src/components/systems/sandbox/domain/document";
 
-function fixture(): SandboxDocumentV3 {
+const openOptionId = "00000000-0000-4000-8000-000000000041";
+const closedOptionId = "00000000-0000-4000-8000-000000000042";
+
+function fixture(): SandboxDocumentV4 {
   return {
     kind: "openslate-sandbox",
-    schemaVersion: 3,
+    schemaVersion: 4,
     design: {
       departments: [{ id: "operations", name: "Operations", closed: false }],
       modules: [
@@ -17,6 +20,7 @@ function fixture(): SandboxDocumentV3 {
           departmentId: "operations",
           name: "Requests",
           closed: false,
+          titleFieldId: "title",
           fields: [
             {
               id: "title",
@@ -34,8 +38,11 @@ function fixture(): SandboxDocumentV3 {
               closed: false,
               config: {
                 kind: "select",
-                defaultValue: "Open",
-                options: ["Open", "Closed"],
+                defaultValue: openOptionId,
+                options: [
+                  { id: openOptionId, label: "Open" },
+                  { id: closedOptionId, label: "Closed" },
+                ],
               },
             },
           ],
@@ -45,6 +52,7 @@ function fixture(): SandboxDocumentV3 {
           departmentId: "operations",
           name: "Equipment",
           closed: false,
+          titleFieldId: null,
           fields: [
             {
               id: "asset-tag",
@@ -89,7 +97,7 @@ function fixture(): SandboxDocumentV3 {
               id: "status-is-open",
               field: { moduleId: "requests", fieldId: "status" },
               operator: "=",
-              value: { kind: "literal", value: "Open" },
+              value: { kind: "literal", value: openOptionId },
             },
             {
               id: "title-is-present",
@@ -122,7 +130,7 @@ function fixture(): SandboxDocumentV3 {
           {
             id: "request-1",
             moduleId: "requests",
-            values: { title: "Printer unavailable", status: "Open" },
+            values: { title: "Printer unavailable", status: openOptionId },
           },
         ],
         links: [],
@@ -150,7 +158,7 @@ function fixture(): SandboxDocumentV3 {
   };
 }
 
-function documentWithSecondTrigger(): SandboxDocumentV3 {
+function documentWithSecondTrigger(): SandboxDocumentV4 {
   const document = fixture();
   document.triggers = [
     {
@@ -166,7 +174,7 @@ function documentWithSecondTrigger(): SandboxDocumentV3 {
             id: "status-is-open",
             field: { moduleId: "requests", fieldId: "status" },
             operator: "=",
-            value: { kind: "literal", value: "Open" },
+            value: { kind: "literal", value: openOptionId },
           },
         ],
       },
@@ -190,13 +198,13 @@ function documentWithSecondTrigger(): SandboxDocumentV3 {
   return document;
 }
 
-test("v2 documents round-trip through the legacy Designer projection", () => {
+test("v4 documents round-trip through the legacy Designer projection", () => {
   const document = fixture();
   const projected = projectSandboxDocument(document);
 
   expect(projected.modules[0].fields[1]).toMatchObject({
     type: "Select",
-    value: "Open",
+    value: openOptionId,
     options: "Open, Closed",
   });
   expect(projected.relationships[0].fieldMappings).toEqual([
@@ -208,7 +216,7 @@ test("v2 documents round-trip through the legacy Designer projection", () => {
     moduleId: "requests",
     fieldId: "status",
     operator: "=",
-    value: "Open",
+    value: openOptionId,
   });
 
   expect(mergeProjectedDesign(document, projected, projected)).toEqual(

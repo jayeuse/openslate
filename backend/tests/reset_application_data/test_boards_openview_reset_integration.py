@@ -41,9 +41,7 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
         with connect(database_url) as database:
             with database.cursor() as cursor:
                 for table in ("board_groups", "group_access", "group_members"):
-                    cursor.execute(
-                        f"DELETE FROM public.{table} WHERE group_id = %s", (group_id,)
-                    )
+                    cursor.execute(f"DELETE FROM public.{table} WHERE group_id = %s", (group_id,))
                 cursor.execute("DELETE FROM public.groups WHERE id = %s", (group_id,))
                 cursor.execute(
                     "DELETE FROM public.users WHERE id IN (%s, %s)", (admin_id, member_id)
@@ -297,7 +295,7 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "SELECT revision, document->>'schemaVersion', performed_by "
                 "FROM public.sandbox_documents"
             )
-            assert cursor.fetchone() == (1, "3", None)
+            assert cursor.fetchone() == (1, "4", None)
             cursor.execute(
                 "SELECT sequence, kind, label, performed_by FROM public.sandbox_versions"
             )

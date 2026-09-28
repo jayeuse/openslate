@@ -20,10 +20,16 @@ export function prepareBoardEventLifecycleAction(
   access: BoardMyAccess | null,
   boardActive: boolean,
   kind: "archive" | "restore",
+  viewerId?: string,
 ): BoardEventLifecycleAction | null {
+  const authorized =
+    kind === "restore"
+      ? access?.manage === true
+      : access?.manage === true ||
+        (access?.edit === true && event.authorId === viewerId);
   if (
     !boardActive ||
-    access?.manage !== true ||
+    !authorized ||
     event.boardId !== boardId ||
     event.archived !== (kind === "restore") ||
     event.boardRevision !== boardRevision

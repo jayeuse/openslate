@@ -463,6 +463,8 @@ export function ChartDefinitionForm({
                     </PopoverDescription>
                   </PopoverHeader>
                   <ChartFilterControls
+                    key={moduleId}
+                    moduleId={moduleId}
                     filterFields={filterFields}
                     filters={filters}
                     filterLogic={filterLogic}

@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from record_queries.test_database import READER, request_for, route_actor, setup_rows
+from record_queries.test_database import READER, _option_id, request_for, route_actor, setup_rows
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -53,7 +53,7 @@ def reference(field: Field) -> dict[str, object]:
 
 
 def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
-    module, field, rows = setup_rows(query_db, "select", ["A", "A", "B", None, ..., ""])
+    module, field, rows = setup_rows(query_db, "select", ["A", "A", "B", None, ..., "Empty"])
     order_field = add_values(
         query_db, module, rows, "Order", "text", ["b", "a", "c", "z", "b", "d"]
     )
@@ -68,7 +68,7 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
 
     headers = query_grouped_records(query_db, GroupedRecordQuery(**base), reader=READER)
     assert [(group.value, group.label, group.count) for group in headers.groups] == [
-        ("B", "B", 1),
+        (_option_id("B"), "B", 1),
         (None, "Unspecified", 2),
     ]
     assert headers.items == []
@@ -81,7 +81,7 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
         GroupedRecordQuery(
             **base,
             limit=1,
-            selected_group={"kind": "value", "value": "B"},
+            selected_group={"kind": "value", "value": _option_id("B")},
         ),
         reader=READER,
     )
@@ -89,7 +89,7 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
     assert selected.items[0].data == {}
     assert selected.selected_group is not None
     assert selected.selected_group.kind == "value"
-    assert selected.selected_group.value == "B"
+    assert selected.selected_group.value == _option_id("B")
     assert selected.pagination is not None
     assert selected.pagination.total == 1
 
@@ -120,15 +120,15 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
     assert second_member_page.pagination.offset == 1
     assert second_member_page.pagination.total == 2
 
-    empty_string = query_grouped_records(
+    empty_choice = query_grouped_records(
         query_db,
-        GroupedRecordQuery(**base, selected_group={"kind": "value", "value": ""}),
+        GroupedRecordQuery(**base, selected_group={"kind": "value", "value": _option_id("Empty")}),
         reader=READER,
     )
-    assert [item.id for item in empty_string.items] == [rows[5].id]
-    assert empty_string.selected_group is not None
-    assert empty_string.selected_group.kind == "value"
-    assert empty_string.selected_group.value == ""
+    assert [item.id for item in empty_choice.items] == [rows[5].id]
+    assert empty_choice.selected_group is not None
+    assert empty_choice.selected_group.kind == "value"
+    assert empty_choice.selected_group.value == _option_id("Empty")
 
 
 def test_grouped_query_rejects_deleted_or_type_changed_group_field(query_db) -> None:
@@ -350,12 +350,12 @@ def test_grouped_snapshot_combines_or_filters_with_an_independent_date_window(qu
                 {
                     **reference(dimension),
                     "operator": "eq",
-                    "value": "Open",
+                    "value": _option_id("Open"),
                 },
                 {
                     **reference(dimension),
                     "operator": "eq",
-                    "value": "Closed",
+                    "value": _option_id("Closed"),
                 },
             ],
         },

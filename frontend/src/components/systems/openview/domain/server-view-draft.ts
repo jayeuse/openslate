@@ -159,6 +159,7 @@ export function operatorChoices(
       ? [...common, "contains", "in"]
       : [...common, "contains", "prefix", "suffix"];
   }
+  if (type === "user") return common;
   if (["number", "decimal", "int", "date", "datetime"].includes(type))
     return [...common, "lt", "lte", "gt", "gte"];
   return common;

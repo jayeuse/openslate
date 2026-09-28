@@ -14,7 +14,11 @@ from app.systems.boards.access import board_reader_ids
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board, BoardStatus
 from app.systems.boards.reminder_models import BoardEventReminder
-from app.systems.boards.reminder_service import occurrence_at, reminder_due_at
+from app.systems.boards.reminder_service import (
+    REMINDER_DELIVERY_GRACE,
+    occurrence_at,
+    reminder_due_at,
+)
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.platform.scheduling.materializer import materialize_event_reminders
 from app.systems.platform.scheduling.models import (
@@ -124,7 +128,6 @@ def finalize_reminder_claim(
     Returns the IDs of the new notifications; the caller owns commit or rollback.
     """
 
-    current = _current(now)
     source = db.execute(
         select(ScheduledWork.reminder_id, ScheduledWork.occurrence_start_at).where(
             ScheduledWork.id == claim.id,
@@ -159,8 +162,15 @@ def finalize_reminder_claim(
         .with_for_update()
         .execution_options(populate_existing=True)
     )
+    current = _current(now)
     work = _locked_claim(db, claim, current)
     if work is None or work.reminder_id != source.reminder_id:
+        return []
+    current = _current(now)
+    if work.lease_expires_at is None or work.lease_expires_at <= current:
+        return []
+    if work.scheduled_for < current - REMINDER_DELIVERY_GRACE:
+        _cancel(work, "reminder_expired")
         return []
     start = source.occurrence_start_at
     if (
@@ -245,5 +255,5 @@ def execute_due_reminders(
         db.commit()
     delivered: list[UUID] = []
     for claim in claims:
-        delivered.extend(execute_reminder_claim(engine, claim, now=current))
+        delivered.extend(execute_reminder_claim(engine, claim, now=now))
     return delivered

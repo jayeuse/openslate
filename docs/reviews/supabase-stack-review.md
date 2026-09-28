@@ -74,7 +74,7 @@ The new `--env-file` option forwards relative paths unchanged, while `uv --direc
 
 ### F5 — BLOCKING · P2: resolve the observed mandatory Ruff failures
 
-**C10: required static gate.** Locations: [new application baseline](../../backend/migrations/versions/c4ec36fc30cc_self_hosted_supabase_application_.py), lines 4973–4974; [new sign-out test](../../backend/tests/auth/test_provider_signout.py), import block at lines 3–14.
+**C10: required static gate.** Locations: [new application baseline](../../backend/migrations/history/schema_redesign/c4ec36fc30cc_self_hosted_supabase_application_.py), lines 4973–4974; [new sign-out test](../../backend/tests/auth/test_provider_signout.py), import block at lines 3–14.
 
 The current backend Ruff check exits 1 with two E501 errors in the new baseline and I001 in the new test. The canonical gate includes these files, so it cannot pass unchanged.
 

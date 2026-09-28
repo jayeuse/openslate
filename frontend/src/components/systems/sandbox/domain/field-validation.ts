@@ -82,7 +82,10 @@ export function validateFieldValue(
     )
       return `${field.name} is later than allowed`;
   }
-  if (config.kind === "select" && !config.options.includes(value))
+  if (
+    config.kind === "select" &&
+    !config.options.some((option) => option.id === value)
+  )
     return `${field.name} must use an available option`;
   return null;
 }
@@ -116,11 +119,13 @@ export function fieldDefaultMatches(field: Field): boolean {
         normalized.config.defaultValue === null ||
         validDateTime(normalized.config.defaultValue)
       );
-    case "select":
+    case "select": {
+      const select = normalized.config;
       return (
-        normalized.config.defaultValue === null ||
-        normalized.config.options.includes(normalized.config.defaultValue)
+        select.defaultValue === null ||
+        select.options.some((option) => option.id === select.defaultValue)
       );
+    }
     case "email":
       return (
         normalized.config.defaultValue === "" ||
@@ -143,6 +148,7 @@ export function validateFieldConfig(field: Field): SandboxValidationIssue[] {
   const config = normalizeField(field).config;
   const issues: SandboxValidationIssue[] = [];
   if (
+    "defaultValue" in config &&
     ["text", "long-text", "email", "url"].includes(config.kind) &&
     typeof config.defaultValue === "string" &&
     config.defaultValue.length > SANDBOX_LIMITS.textCharacters

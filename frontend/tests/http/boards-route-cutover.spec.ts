@@ -1,4 +1,9 @@
 import { expect, test, type Page } from "./helpers/test";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
+import { captureOpenViewReview } from "./helpers/openview-review-capture";
 
 const boardId = "00000000-0000-4000-8000-000000000011";
 const userId = "00000000-0000-4000-8000-000000000012";
@@ -27,9 +32,33 @@ const managerAccess = {
   write: true,
   manage: true,
 };
+const authorAccess = {
+  level: "write",
+  read: true,
+  write: true,
+  manage: false,
+};
 const readerAccess = { level: "read", read: true, write: false, manage: false };
 
-async function installBoardApi(page: Page, isAllowed: () => boolean) {
+async function captureAuthorArchiveEvidence(
+  page: Page,
+  name: string,
+  fullPage = true,
+) {
+  const directory = process.env.BOARD_ARCHIVE_CAPTURE_DIR;
+  if (!directory) return;
+  await page.screenshot({
+    path: `${directory}/${name}.png`,
+    fullPage,
+  });
+}
+
+async function installBoardApi(
+  page: Page,
+  isAllowed: () => boolean,
+  access = managerAccess,
+) {
+  const visibleBoard = { ...board, level: access.level };
   await page.route("**/api/**", (route) =>
     route.fulfill({
       status: 404,
@@ -81,7 +110,7 @@ async function installBoardApi(page: Page, isAllowed: () => boolean) {
       });
     if (path === "/api/boards")
       return reply(200, {
-        items: [board, otherBoard],
+        items: [visibleBoard, otherBoard],
         pagination: {
           limit: 25,
           offset: 0,
@@ -90,8 +119,7 @@ async function installBoardApi(page: Page, isAllowed: () => boolean) {
           has_more: false,
         },
       });
-    if (path === `/api/boards/${boardId}/my-access`)
-      return reply(200, managerAccess);
+    if (path === `/api/boards/${boardId}/my-access`) return reply(200, access);
     if (path === `/api/boards/${boardId}/events/occurrences`)
       return reply(200, {
         items: [],
@@ -132,7 +160,7 @@ async function installBoardApi(page: Page, isAllowed: () => boolean) {
       });
     if (path === `/api/boards/${boardId}`)
       return isAllowed()
-        ? reply(200, board)
+        ? reply(200, visibleBoard)
         : reply(404, { detail: "Board not found" });
     if (path === `/api/boards/${otherBoard.id}`) return reply(200, otherBoard);
     return reply(404, { detail: "Not available in this route test" });
@@ -620,4 +648,838 @@ test("My events refreshes after saving and when the current tab reselects it", a
     }),
   ).toBeVisible();
   expect(listRequests).toBeGreaterThan(beforeReselect);
+});
+
+test("an event author can archive their event, while another author's event stays protected", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await installBoardApi(page, () => true, authorAccess);
+  const eventId = "00000000-0000-4000-8000-000000000031";
+  const otherEventId = "00000000-0000-4000-8000-000000000032";
+  const otherAuthorId = "00000000-0000-4000-8000-000000000033";
+  const event = (
+    id: string,
+    authorId: string,
+    title: string,
+    boardRevision: number,
+  ) => ({
+    id,
+    board_id: boardId,
+    author_id: authorId,
+    title,
+    details: "",
+    location: "",
+    links: [],
+    all_day: true,
+    start_date: "2026-09-25",
+    end_date: "2026-09-25",
+    start_at: null,
+    end_at: null,
+    timezone_name: "UTC",
+    recurrence: "none",
+    repeat_until: null,
+    reminders: [],
+    archived: false,
+    revision: 1,
+    board_revision: boardRevision,
+    created_at: "2026-09-25T00:00:00Z",
+    updated_at: "2026-09-25T00:00:00Z",
+  });
+  const occurrence = (
+    id: string,
+    title: string,
+    authorId: string,
+    boardRevision: number,
+  ) => ({
+    id: `${id}:2026-09-25`,
+    event_id: id,
+    start: "2026-09-25",
+    end: "2026-09-25",
+    date: "2026-09-25",
+    event: event(id, authorId, title, boardRevision),
+  });
+  let archived = false;
+  let archiveBody: unknown = null;
+  await page.route(
+    `**/api/boards/${boardId}/events/occurrences?**`,
+    (route) => {
+      const boardRevision = archived ? 2 : 1;
+      const items = [
+        ...(!archived
+          ? [occurrence(eventId, "My planning session", userId, boardRevision)]
+          : []),
+        occurrence(
+          otherEventId,
+          "Team planning session",
+          otherAuthorId,
+          boardRevision,
+        ),
+      ];
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          items,
+          pagination: {
+            limit: 100,
+            offset: 0,
+            count: items.length,
+            total: items.length,
+            has_more: false,
+          },
+          board_revision: boardRevision,
+        }),
+      });
+    },
+  );
+  await page.route(
+    `**/api/boards/${boardId}/events/${eventId}/archive`,
+    async (route) => {
+      archiveBody = route.request().postDataJSON();
+      archived = true;
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: eventId,
+          event_revision: 2,
+          board_revision: 2,
+        }),
+      });
+    },
+  );
+
+  await page.goto(`/boards?board=${boardId}&section=calendar`);
+  const selectedEvents = page.getByRole("region", {
+    name: "Fri, Sep 25 events",
+  });
+  await selectedEvents.getByText("View event", { exact: true }).nth(0).click();
+  await selectedEvents.getByText("View event", { exact: true }).nth(1).click();
+  await expect(
+    selectedEvents.getByRole("button", {
+      name: "Archive My planning session",
+    }),
+  ).toBeVisible();
+  await expect(
+    selectedEvents.getByRole("button", {
+      name: "Archive Team planning session",
+    }),
+  ).toHaveCount(0);
+  await captureAuthorArchiveEvidence(page, "event-archive-desktop");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Agenda", exact: true }).click();
+  const agendaEvents = page.getByRole("region", {
+    name: "September 2026 events",
+  });
+  await expect(
+    agendaEvents.getByRole("button", {
+      name: "Archive My planning session",
+    }),
+  ).toBeVisible();
+  await expect(
+    agendaEvents.getByRole("button", {
+      name: "Archive Team planning session",
+    }),
+  ).toHaveCount(0);
+  await captureAuthorArchiveEvidence(page, "event-archive-mobile");
+  await agendaEvents
+    .getByRole("button", { name: "Archive My planning session" })
+    .click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Archive event?",
+  });
+  await expect(confirmation).toBeVisible();
+  const archivedResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/boards/${boardId}/events/${eventId}/archive` &&
+      response.request().method() === "POST",
+  );
+  await confirmation
+    .getByRole("button", { name: "Archive event", exact: true })
+    .click();
+  const response = await archivedResponse;
+  expect(response.status()).toBe(200);
+  await expect(page.getByText("Event archived.")).toBeVisible();
+  await expect(
+    agendaEvents.getByRole("button", {
+      name: "Archive My planning session",
+    }),
+  ).toHaveCount(0);
+  expect(archiveBody).toEqual({ board_revision: 1, event_revision: 1 });
+});
+
+test("Board Record link labels refresh after linked module invalidations", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true, readerAccess);
+  const eventId = "00000000-0000-4000-8000-000000000051";
+  const recordId = "00000000-0000-4000-8000-000000000052";
+  const moduleId = "00000000-0000-4000-8000-000000000053";
+  const linkId = "00000000-0000-4000-8000-000000000054";
+  let label = "Cooling manifold";
+  let linkRequests = 0;
+
+  await page.addInitScript(() => {
+    const sources: EventTarget[] = [];
+    class TestEventSource extends EventTarget {
+      constructor(readonly url: string) {
+        super();
+        sources.push(this);
+      }
+
+      close() {}
+    }
+    Object.defineProperty(window, "EventSource", {
+      configurable: true,
+      value: TestEventSource,
+    });
+    Object.defineProperty(window, "__boardTestEventSources", {
+      configurable: true,
+      value: sources,
+    });
+  });
+
+  await page.route(`**/api/boards/${boardId}/events/occurrences?**`, (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [
+          {
+            id: `${eventId}:2026-09-25`,
+            event_id: eventId,
+            start: "2026-09-25",
+            end: "2026-09-25",
+            date: "2026-09-25",
+            event: {
+              id: eventId,
+              board_id: boardId,
+              author_id: userId,
+              title: "Equipment handover",
+              details: "",
+              location: "",
+              links: [],
+              all_day: true,
+              start_date: "2026-09-25",
+              end_date: "2026-09-25",
+              start_at: null,
+              end_at: null,
+              timezone_name: "UTC",
+              recurrence: "none",
+              repeat_until: null,
+              reminders: [],
+              archived: false,
+              revision: 1,
+              board_revision: 1,
+              created_at: "2026-09-25T00:00:00Z",
+              updated_at: "2026-09-25T00:00:00Z",
+            },
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+        board_revision: 1,
+      }),
+    }),
+  );
+  await page.route(
+    `**/api/boards/${boardId}/events/${eventId}/record-links?**`,
+    (route) => {
+      linkRequests += 1;
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              id: linkId,
+              record_id: recordId,
+              module_id: moduleId,
+              label,
+              available: true,
+              url: `/openview?module=${moduleId}&record=${recordId}`,
+            },
+          ],
+          limit: 20,
+          offset: 0,
+          has_more: false,
+        }),
+      });
+    },
+  );
+
+  await page.goto(`/boards?board=${boardId}&section=calendar`);
+  const selectedEvents = page.getByRole("region", {
+    name: "Fri, Sep 25 events",
+  });
+  await selectedEvents.getByText("View event", { exact: true }).click();
+  await expect(
+    page.getByRole("link", { name: "Cooling manifold" }),
+  ).toBeVisible();
+  await expect.poll(() => linkRequests).toBeGreaterThan(0);
+  const beforeInvalidation = linkRequests;
+
+  label = "Cooling manifold updated";
+  await page.evaluate((targetModuleId) => {
+    type EventWindow = Window & {
+      __boardTestEventSources?: EventTarget[];
+    };
+    const source = (window as EventWindow).__boardTestEventSources?.[0];
+    source?.dispatchEvent(
+      new MessageEvent("invalidate", {
+        data: JSON.stringify({ entity: "records", module_id: targetModuleId }),
+      }),
+    );
+  }, moduleId);
+
+  await expect.poll(() => linkRequests).toBeGreaterThan(beforeInvalidation);
+  await expect(
+    page.getByRole("link", { name: "Cooling manifold updated" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Cooling manifold", exact: true }),
+  ).toHaveCount(0);
+
+  const beforeEligibilityInvalidation = linkRequests;
+  label = "Record title after eligibility change";
+  await page.evaluate((targetModuleId) => {
+    type EventWindow = Window & {
+      __boardTestEventSources?: EventTarget[];
+    };
+    const source = (window as EventWindow).__boardTestEventSources?.[0];
+    source?.dispatchEvent(
+      new MessageEvent("invalidate", {
+        data: JSON.stringify({
+          entity: "group_access",
+          module_id: targetModuleId,
+        }),
+      }),
+    );
+  }, moduleId);
+
+  await expect
+    .poll(() => linkRequests)
+    .toBeGreaterThan(beforeEligibilityInvalidation);
+  await expect(
+    page.getByRole("link", { name: "Record title after eligibility change" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Cooling manifold updated", exact: true }),
+  ).toHaveCount(0);
+  await captureOpenViewReview(page, "boards-record-link-title");
+});
+
+test("Board record widgets refresh user labels after eligibility invalidation", async ({
+  page,
+}) => {
+  const moduleId = "00000000-0000-4000-8000-000000000061";
+  const widgetId = "00000000-0000-4000-8000-000000000062";
+  const assigneeFieldId = "00000000-0000-4000-8000-000000000063";
+  const assigneeId = "00000000-0000-4000-8000-000000000064";
+  await installBoardApi(page, () => true, readerAccess);
+  await installOpenViewEventSource(page);
+  let assigneeLabel = "Alex Reader";
+  let recordQueries = 0;
+
+  await page.route(`**/api/boards/${boardId}/widgets**`, (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [
+          {
+            id: widgetId,
+            board_id: boardId,
+            name: "Assignment queue",
+            widget_type: "records",
+            module_id: moduleId,
+            position: 0,
+            config: {
+              version: 1,
+              fields: [{ field_id: assigneeFieldId, expected_type: "user" }],
+              filters: [],
+              logic: "and",
+              metric: null,
+              visualization: "bar",
+              size: "half",
+              refresh: "manual",
+              pinned: false,
+            },
+            created_at: "2026-09-25T00:00:00Z",
+            updated_at: "2026-09-25T00:00:00Z",
+          },
+        ],
+        pagination: {
+          limit: 12,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+        board_revision: 1,
+      }),
+    }),
+  );
+  await page.route(`**/api/views/data-sources/${moduleId}/fields**`, (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [
+          {
+            id: assigneeFieldId,
+            module_id: moduleId,
+            name: "Assignee",
+            type: "user",
+            required: false,
+            position: 0,
+            config: { kind: "user" },
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      }),
+    }),
+  );
+  await page.route("**/api/records/query", (route) => {
+    recordQueries += 1;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [
+          {
+            id: "00000000-0000-4000-8000-000000000065",
+            module_id: moduleId,
+            data: { [assigneeFieldId]: assigneeId },
+            display_values: { [assigneeFieldId]: assigneeLabel },
+            created_at: "2026-09-25T00:00:00Z",
+            updated_at: "2026-09-25T00:00:00Z",
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: userId,
+          },
+        ],
+        pagination: {
+          limit: 5,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      }),
+    });
+  });
+
+  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await expect(page.getByText("Alex Reader", { exact: true })).toBeVisible();
+  const beforeInvalidation = recordQueries;
+  await expect(page.getByText(assigneeId, { exact: true })).toHaveCount(0);
+
+  assigneeLabel = "Unavailable user";
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "group_access",
+    module_id: moduleId,
+  });
+
+  await expect.poll(() => recordQueries).toBeGreaterThan(beforeInvalidation);
+  await expect(
+    page.getByText("Unavailable user", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Alex Reader", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(assigneeId, { exact: true })).toHaveCount(0);
+  await captureOpenViewReview(page, "boards-user-record-widget");
+});
+
+test("an author can archive their own editable post with current revisions", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await installBoardApi(page, () => true, authorAccess);
+  const postId = "00000000-0000-4000-8000-000000000041";
+  const otherPostId = "00000000-0000-4000-8000-000000000042";
+  const otherAuthorId = "00000000-0000-4000-8000-000000000043";
+  const now = "2026-09-25T00:00:00Z";
+  const post = (id: string, authorId: string, title: string) => ({
+    id,
+    board_id: boardId,
+    author_id: authorId,
+    title,
+    body: `${title} body`,
+    links: [],
+    status: "published",
+    publish_at: now,
+    expires_at: null,
+    pinned: false,
+    post_revision: 3,
+    board_revision: 1,
+    publication_number: null,
+    published_at: null,
+    edited: false,
+    created_at: now,
+    updated_at: now,
+  });
+  const ownPost = post(postId, userId, "My editable notice");
+  const otherPost = post(otherPostId, otherAuthorId, "Another author's notice");
+  let archived = false;
+  let archiveBody: unknown = null;
+  await page.route(`**/api/boards/${boardId}/posts**`, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname;
+    const reply = (status: number, body: unknown) =>
+      route.fulfill({
+        status,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+    if (path === `/api/boards/${boardId}/posts` && request.method() === "GET") {
+      const view = url.searchParams.get("view");
+      const items =
+        view === "editable"
+          ? archived
+            ? [otherPost]
+            : [ownPost, otherPost]
+          : [];
+      return reply(200, {
+        items,
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: items.length,
+          total: items.length,
+          has_more: false,
+        },
+        board_revision: 1,
+      });
+    }
+    if (
+      path === `/api/boards/${boardId}/posts/${postId}` &&
+      request.method() === "GET"
+    )
+      return archived
+        ? reply(404, { detail: "Post not found" })
+        : reply(200, ownPost);
+    if (
+      path === `/api/boards/${boardId}/posts/${postId}/archive` &&
+      request.method() === "POST"
+    ) {
+      archiveBody = request.postDataJSON();
+      archived = true;
+      return reply(200, {
+        id: postId,
+        post_revision: 4,
+        board_revision: 2,
+      });
+    }
+    return reply(404, { detail: "Unmocked author post route" });
+  });
+
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await page.getByRole("button", { name: "More post actions" }).click();
+  await page.getByRole("menuitem", { name: "Edit drafts" }).click();
+  const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
+  const ownPostChoice = editor.getByRole("button", {
+    name: "My editable notice · Published",
+  });
+  await expect(ownPostChoice).toBeVisible();
+  await expect(
+    editor.getByRole("button", { name: /Another author's notice/ }),
+  ).toHaveCount(0);
+  await ownPostChoice.click();
+  const archiveButton = editor.getByRole("button", {
+    name: "Archive post",
+    exact: true,
+  });
+  await expect(archiveButton).toBeVisible();
+  await captureAuthorArchiveEvidence(page, "post-archive-desktop");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(archiveButton).toBeVisible();
+  await archiveButton.scrollIntoViewIfNeeded();
+  await captureAuthorArchiveEvidence(page, "post-archive-mobile", false);
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Archive post?",
+  });
+  await archiveButton.click();
+  await expect(confirmation).toBeVisible();
+  const archivedResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/boards/${boardId}/posts/${postId}/archive` &&
+      response.request().method() === "POST",
+  );
+  await confirmation
+    .getByRole("button", { name: "Archive post", exact: true })
+    .click();
+  const response = await archivedResponse;
+  expect(response.status()).toBe(200);
+  await expect(editor.getByText("Post archived.")).toBeVisible();
+  await expect(ownPostChoice).toHaveCount(0);
+  expect(archiveBody).toEqual({ board_revision: 1, post_revision: 3 });
+});
+
+test("a stale author post archive preserves the selected post and local form", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true, authorAccess);
+  const postId = "00000000-0000-4000-8000-000000000051";
+  const now = "2026-09-25T00:00:00Z";
+  const ownPost = {
+    id: postId,
+    board_id: boardId,
+    author_id: userId,
+    title: "My notice",
+    body: "Keep this saved text.",
+    links: [],
+    status: "published",
+    publish_at: now,
+    expires_at: null,
+    pinned: false,
+    post_revision: 3,
+    board_revision: 1,
+    publication_number: null,
+    published_at: null,
+    edited: false,
+    created_at: now,
+    updated_at: now,
+  };
+  await page.route(`**/api/boards/${boardId}/posts**`, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname;
+    const reply = (status: number, body: unknown) =>
+      route.fulfill({
+        status,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+    if (path === `/api/boards/${boardId}/posts` && request.method() === "GET") {
+      const items =
+        url.searchParams.get("view") === "editable" ? [ownPost] : [];
+      return reply(200, {
+        items,
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: items.length,
+          total: items.length,
+          has_more: false,
+        },
+        board_revision: 1,
+      });
+    }
+    if (
+      path === `/api/boards/${boardId}/posts/${postId}` &&
+      request.method() === "GET"
+    )
+      return reply(200, ownPost);
+    if (
+      path === `/api/boards/${boardId}/posts/${postId}/archive` &&
+      request.method() === "POST"
+    )
+      return reply(409, {
+        detail: {
+          code: "stale_post_revision",
+          message: "Post changed; reload before saving",
+        },
+      });
+    return reply(404, { detail: "Unmocked author post route" });
+  });
+
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await page.getByRole("button", { name: "More post actions" }).click();
+  await page.getByRole("menuitem", { name: "Edit drafts" }).click();
+  const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
+  await editor.getByRole("button", { name: "My notice · Published" }).click();
+  const title = editor.getByLabel("Title", { exact: true });
+  const archiveButton = editor.getByRole("button", {
+    name: "Archive post",
+    exact: true,
+  });
+  await expect(archiveButton).toBeVisible();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Archive post?",
+  });
+  await archiveButton.click();
+  await confirmation
+    .getByRole("button", { name: "Archive post", exact: true })
+    .click();
+  await expect(
+    editor.getByText(/Post changed; reload before saving/),
+  ).toBeVisible();
+  await expect(title).toHaveValue("My notice");
+  await expect(
+    editor.getByRole("button", { name: "My notice · Published" }),
+  ).toBeVisible();
+  await expect(archiveButton).toBeDisabled();
+});
+
+test("an author links a Record using its server-derived title", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true, authorAccess);
+  const postId = "00000000-0000-4000-8000-000000000071";
+  const moduleId = "00000000-0000-4000-8000-000000000072";
+  const fieldId = "00000000-0000-4000-8000-000000000073";
+  const recordId = "00000000-0000-4000-8000-000000000074";
+  const linkId = "00000000-0000-4000-8000-000000000075";
+  const now = "2026-09-25T00:00:00Z";
+  const post = {
+    id: postId,
+    board_id: boardId,
+    author_id: userId,
+    title: "Request handoff",
+    body: "Link the request.",
+    links: [],
+    status: "draft",
+    publish_at: null,
+    expires_at: null,
+    pinned: false,
+    post_revision: 2,
+    board_revision: 1,
+    publication_number: null,
+    published_at: null,
+    edited: false,
+    created_at: now,
+    updated_at: now,
+  };
+  let submitted: unknown = null;
+  let linked = false;
+  const wireLink = {
+    id: linkId,
+    record_id: recordId,
+    module_id: moduleId,
+    label: "Request 27",
+    available: true,
+    url: `/openview?module=${moduleId}&record=${recordId}`,
+  };
+  await page.route(`**/api/boards/${boardId}/posts**`, (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === `/api/boards/${boardId}/posts`)
+      return route.fulfill({
+        json: {
+          items: [post],
+          pagination: {
+            limit: 25,
+            offset: 0,
+            count: 1,
+            total: 1,
+            has_more: false,
+          },
+          board_revision: 1,
+        },
+      });
+    if (path === `/api/boards/${boardId}/posts/${postId}`)
+      return route.fulfill({ json: post });
+    if (path === `/api/boards/${boardId}/posts/${postId}/record-links`) {
+      if (request.method() === "POST") {
+        submitted = request.postDataJSON();
+        linked = true;
+        return route.fulfill({ json: wireLink });
+      }
+      return route.fulfill({
+        json: {
+          items: linked ? [wireLink] : [],
+          limit: 20,
+          offset: 0,
+          has_more: false,
+        },
+      });
+    }
+    return route.fulfill({ status: 404, json: { detail: "Unmocked route" } });
+  });
+  await page.route("**/api/views/data-sources**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === `/api/views/data-sources/${moduleId}/fields`)
+      return route.fulfill({
+        json: {
+          items: [
+            {
+              id: fieldId,
+              module_id: moduleId,
+              name: "Request title",
+              type: "text",
+              required: false,
+              position: 0,
+              config: { kind: "text" },
+            },
+          ],
+          pagination: {
+            limit: 100,
+            offset: 0,
+            count: 1,
+            total: 1,
+            has_more: false,
+          },
+        },
+      });
+    return route.fulfill({
+      json: {
+        items: [
+          {
+            id: moduleId,
+            name: "Requests",
+            department_id: boardId,
+            title_field_id: fieldId,
+          },
+        ],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    });
+  });
+  await page.route("**/api/records/query", (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: recordId,
+            module_id: moduleId,
+            data: { [fieldId]: "Request 27" },
+            display_values: { [fieldId]: "Request 27" },
+            created_at: now,
+            updated_at: now,
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: userId,
+          },
+        ],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    }),
+  );
+
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await page.getByRole("button", { name: "More post actions" }).click();
+  await page.getByRole("menuitem", { name: "Edit drafts" }).click();
+  const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
+  await editor.getByRole("button", { name: "Request handoff" }).click();
+  const links = editor.getByRole("region", { name: "Record links" });
+  await links.getByLabel("Record data source").selectOption(moduleId);
+  await links.getByLabel("Record to link").selectOption(recordId);
+  await links.getByRole("button", { name: "Link Record" }).click();
+  await expect(links.getByRole("link", { name: "Request 27" })).toBeVisible();
+  await captureOpenViewReview(page, "boards-record-link-add");
+  expect(submitted).toEqual({
+    record_id: recordId,
+    board_revision: 1,
+    content_revision: 2,
+  });
 });

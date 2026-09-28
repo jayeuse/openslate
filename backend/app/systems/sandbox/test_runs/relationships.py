@@ -11,7 +11,7 @@ from app.systems.sandbox.designs.field_validation import (
     validate_value,
 )
 from app.systems.sandbox.designs.mapping_validation import field_metadata
-from app.systems.sandbox.designs.schemas import DesignField
+from app.systems.sandbox.designs.schemas import DesignField, SelectFieldConfig
 from app.systems.sandbox.test_runs.results import SandboxTestIssue, SandboxTestRoute
 from app.systems.sandbox.test_runs.schemas import TestValue
 
@@ -104,6 +104,27 @@ def _relationship_projections(
         if source_id is None or target_id is None or source_id not in values:
             continue
         value = values[source_id]
+        source_config = DesignField.model_validate(source).config
+        target_config = DesignField.model_validate(target).config
+        if (
+            isinstance(value, str)
+            and isinstance(source_config, SelectFieldConfig)
+            and isinstance(target_config, SelectFieldConfig)
+        ):
+            source_option = next(
+                (option for option in source_config.options if option.id == value), None
+            )
+            if source_option is not None:
+                target_option = next(
+                    (
+                        option
+                        for option in target_config.options
+                        if option.label == source_option.label
+                    ),
+                    None,
+                )
+                if target_option is not None:
+                    value = target_option.id
         if not _value_is_valid(value, target):
             issues.append(
                 SandboxTestIssue(

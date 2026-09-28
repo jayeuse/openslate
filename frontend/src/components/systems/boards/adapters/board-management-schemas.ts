@@ -21,6 +21,7 @@ const fieldTypeSchema = z.enum([
   "date",
   "datetime",
   "select",
+  "user",
 ]);
 const fieldSchema = z
   .object({
@@ -68,7 +69,11 @@ const filterSchema = fieldSchema
     ) {
       context.addIssue({ code: "custom", message: "Invalid filter value" });
     }
-    const allowed = new Set<string>(["eq", "neq", ...withoutValue]);
+    const allowed = new Set<string>(
+      filter.expected_type === "user"
+        ? withoutValue
+        : ["eq", "neq", ...withoutValue],
+    );
     if (["text", "long_text", "email", "url"].includes(filter.expected_type)) {
       ["contains", "prefix", "suffix"].forEach((operator) =>
         allowed.add(operator),

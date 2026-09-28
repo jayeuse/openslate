@@ -57,7 +57,7 @@ def current_content(item: BoardPost) -> PostContent:
 def fingerprint(
     item: BoardPost,
     attachment_file_ids: list[UUID] | None = None,
-    record_links: list[tuple[UUID, UUID, str]] | None = None,
+    record_links: list[tuple[UUID, UUID]] | None = None,
 ) -> str:
     return publication_content_fingerprint(
         author_id=item.author_id,
@@ -129,7 +129,7 @@ def publish_locked(
     content_fingerprint = fingerprint(
         item,
         attachment_file_ids,
-        [(link.record_id, link.module_id, link.label) for link in current_record_links],
+        [(link.record_id, link.module_id) for link in current_record_links],
     )
     prior = db.scalar(
         select(BoardPostRevision)
@@ -192,7 +192,6 @@ def publish_locked(
                 revision_id=published.id,
                 record_id=link.record_id,
                 module_id=link.module_id,
-                label=link.label,
             )
         )
     item.status, item.publish_at = "published", published_at

@@ -28,6 +28,7 @@ from app.systems.sandbox.record_triggers.models import (
 )
 from app.systems.sandbox.record_triggers.outbox import enqueue_child_field_event
 from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.records.mutation_validation import validate_live_user_assignments
 
 SCHEDULE_RECORD_CHUNK = 100
 ACTOR_LABEL_LENGTH = 100
@@ -293,6 +294,8 @@ def _apply_actions(
             continue
         normalized = validate_field_value(field, value)
         key = str(field.id)
+        if FieldType(field.type) is FieldType.USER:
+            validate_live_user_assignments(db, record.module_id, {key: normalized}, [field])
         if key in record.data and record.data[key] == normalized:
             continue
         record.data = {**record.data, key: normalized}

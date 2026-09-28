@@ -36,6 +36,7 @@ pytest_plugins = ("tests.catalog.dynamic_field_support",)
 def test_router_persists_jsonb_types_and_canonical_decimal_values(
     integration_db: AuditSession, owned_ids: set[UUID]
 ) -> None:
+    select_option_id = str(uuid7())
     field_specs = (
         ("text", FieldType.TEXT, {}),
         ("number", FieldType.NUMBER, {}),
@@ -43,7 +44,11 @@ def test_router_persists_jsonb_types_and_canonical_decimal_values(
         ("boolean", FieldType.BOOLEAN, {}),
         ("date", FieldType.DATE, {}),
         ("datetime", FieldType.DATETIME, {}),
-        ("select", FieldType.SELECT, {"options": ["open", "closed"]}),
+        (
+            "select",
+            FieldType.SELECT,
+            {"options": [{"id": select_option_id, "label": "open"}]},
+        ),
         ("decimal", FieldType.DECIMAL, {"minimum": "0", "maximum": "20"}),
     )
     seeded = _seed_committed_module(
@@ -62,7 +67,7 @@ def test_router_persists_jsonb_types_and_canonical_decimal_values(
         str(field_ids["boolean"]): True,
         str(field_ids["date"]): "2026-08-31",
         str(field_ids["datetime"]): "2026-08-31T12:34:56Z",
-        str(field_ids["select"]): "open",
+        str(field_ids["select"]): select_option_id,
         str(field_ids["decimal"]): "1.2300",
     }
 

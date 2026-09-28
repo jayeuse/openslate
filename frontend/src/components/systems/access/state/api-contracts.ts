@@ -199,6 +199,7 @@ export const moduleSchema = z.strictObject({
   id: uuid,
   department_id: uuid,
   module_name: z.string().min(1),
+  title_field_id: uuid.nullable(),
   created_at: dateTime,
   updated_at: dateTime,
   deleted_at: dateTime.nullable(),

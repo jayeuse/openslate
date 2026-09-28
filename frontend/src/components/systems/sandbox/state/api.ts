@@ -5,7 +5,7 @@ import {
   parseSandboxDocumentForApi,
   SANDBOX_DOCUMENT_SCHEMA_VERSION,
   type SandboxFieldValue,
-  type SandboxDocumentV3,
+  type SandboxDocumentV4,
 } from "../domain/document";
 
 export type SandboxValidationIssue = {
@@ -15,7 +15,7 @@ export type SandboxValidationIssue = {
 };
 
 export type SandboxDocumentResponse = {
-  document: SandboxDocumentV3;
+  document: SandboxDocumentV4;
   revision: number;
   contentHash: string;
   byteCount: number;
@@ -52,7 +52,7 @@ export type SandboxVersion = {
 };
 
 export type SandboxVersionDetail = SandboxVersion & {
-  document: SandboxDocumentV3;
+  document: SandboxDocumentV4;
 };
 
 export type SandboxVersionPage = {
@@ -65,7 +65,7 @@ export type SandboxVersionPage = {
 };
 
 export type SandboxExport = {
-  document: SandboxDocumentV3;
+  document: SandboxDocumentV4;
   filename: string;
 };
 
@@ -462,7 +462,7 @@ export function loadSandboxDocument(
 }
 
 export function replaceSandboxDocument(
-  request: RevisionRequest & { document: SandboxDocumentV3 },
+  request: RevisionRequest & { document: SandboxDocumentV4 },
 ): Promise<SandboxDocumentResponse> {
   return documentRequest("/sandbox/document", {
     method: "PUT",
@@ -689,7 +689,7 @@ export function rollbackSandboxVersion(
 }
 
 export function importSandboxBundle(
-  request: RevisionRequest & { bundle: SandboxDocumentV3 },
+  request: RevisionRequest & { bundle: SandboxDocumentV4 },
 ): Promise<SandboxDocumentResponse> {
   return documentRequest("/sandbox/imports", {
     method: "POST",

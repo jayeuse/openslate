@@ -12,7 +12,7 @@ from app.systems.sandbox.relationships.models import RelationshipEdge
 from app.systems.sandbox.test_runs.models import SandboxTestRun
 from app.systems.sandbox.test_runs.schemas import SandboxTestRunCreateRequest
 from app.systems.sandbox.test_runs.service import create_run
-from tests.sandbox_test_runs.fixtures import sandbox_document
+from tests.sandbox_test_runs.fixtures import option_id, sandbox_document
 
 pytestmark = pytest.mark.integration
 
@@ -47,7 +47,7 @@ def test_temporary_test_persists_only_evidence(
             {
                 "expectedRevision": saved.revision,
                 "moduleId": "requests",
-                "values": {"priority": "High", "status": "", "score": 0},
+                "values": {"priority": option_id("priority", "High"), "status": "", "score": 0},
                 "event": {"kind": "record-created"},
             }
         ),

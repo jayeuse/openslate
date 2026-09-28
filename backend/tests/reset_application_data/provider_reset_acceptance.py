@@ -293,7 +293,7 @@ def _assert_after_reset(
         pytest.fail("The CLI did not preserve exactly the configured administrator profile")
     if state["invitations"] != (7, 30):
         pytest.fail("The CLI did not restore the invitation settings")
-    if state["workspace"] != (None,) or state["sandbox"] != (True, 3, 1, None, None, False):
+    if state["workspace"] != (None,) or state["sandbox"] != (True, 4, 1, None, None, False):
         pytest.fail("The CLI did not restore the workspace and Sandbox defaults")
     if provider_state != (True, False):
         pytest.fail("The CLI did not retain only the administrator Auth identity")

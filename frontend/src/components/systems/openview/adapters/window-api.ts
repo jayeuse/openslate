@@ -109,6 +109,7 @@ const recordSchema = z
     id: uuidSchema,
     module_id: uuidSchema,
     data: z.record(uuidSchema, z.unknown()),
+    display_values: z.record(uuidSchema, z.string()),
     created_at: z.iso.datetime({ offset: true }),
     updated_at: z.iso.datetime({ offset: true }),
     deleted_at: z.iso.datetime({ offset: true }).nullable(),
@@ -119,6 +120,7 @@ const recordSchema = z
   .transform(
     ({
       module_id,
+      display_values,
       created_at,
       updated_at,
       deleted_at,
@@ -128,6 +130,7 @@ const recordSchema = z
     }) => ({
       ...record,
       moduleId: module_id,
+      displayValues: display_values,
       createdAt: created_at,
       updatedAt: updated_at,
       deletedAt: deleted_at,

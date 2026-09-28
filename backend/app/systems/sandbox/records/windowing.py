@@ -13,6 +13,7 @@ from app.common.listing.schemas import PaginationMetadata
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.records.display import FieldDisplayResolver
 from app.systems.sandbox.records.query import (
     compile_query,
     field_expression,
@@ -102,8 +103,9 @@ def query_window_records(
     total = db.scalar(select(func.count()).select_from(statement.order_by(None).subquery())) or 0
     projected_statement = projected_record_query(statement, payload.definition)
     rows = db.execute(projected_statement.limit(payload.limit).offset(payload.offset)).all()
+    resolver = FieldDisplayResolver(db, payload.module_id, fields.values())
     return WindowRecordResponse(
-        items=[projected_record_response(row) for row in rows],
+        items=[projected_record_response(row, resolver) for row in rows],
         pagination=PaginationMetadata(
             limit=payload.limit,
             offset=payload.offset,

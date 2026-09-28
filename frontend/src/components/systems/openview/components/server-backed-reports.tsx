@@ -917,6 +917,9 @@ export default function ServerBackedReports() {
   const summarySource =
     sources.find((source) => source.id === draft.moduleId)?.name ??
     (draft.moduleId ? "Source details unavailable" : "Choose a source");
+  const summaryDepartment = draft.moduleId
+    ? (reportDepartmentNames.get(draft.moduleId) ?? "Department unavailable")
+    : "Choose a source";
   const canRunReport = Boolean(
     baselineReport &&
     !baselineReport.isDeleted &&
@@ -1007,7 +1010,7 @@ export default function ServerBackedReports() {
             </Alert>
           ) : null}
           {accessDenied ? null : showReportSummary ? (
-            <Card className="min-w-0">
+            <Card className="min-w-0 self-stretch">
               <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <CardTitle className="break-words">{summaryName}</CardTitle>
@@ -1020,6 +1023,10 @@ export default function ServerBackedReports() {
                     <div className="flex flex-wrap gap-1.5">
                       <dt className="text-muted-foreground">Source</dt>
                       <dd>{summarySource}</dd>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <dt className="text-muted-foreground">Department</dt>
+                      <dd>{summaryDepartment}</dd>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       <dt className="text-muted-foreground">Columns</dt>

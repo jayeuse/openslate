@@ -1,25 +1,16 @@
-"""OpenView ownership catalog: no personal content, one default view per module.
+"""Fresh-root OpenView catalog: no personal content, one default view per module."""
 
-The revision ``22c73bf93a9d`` removes the owner and audience columns and the three
-personal tables, and refuses to run while OpenView content exists.
-"""
-
-import subprocess
-from pathlib import Path
 from uuid import UUID
 
 import pytest
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from tests.conftest import guarded_create_engine
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
+from tests.operations.migration_support import guarded_migration_environment
 
-REVISION = "22c73bf93a9d"
 REMOVED_TABLES = ("dashboard_defaults", "saved_view_defaults", "openview_chart_preferences")
 
 
@@ -38,58 +29,6 @@ def test_openview_catalog_has_no_personal_content_and_one_default_view_per_modul
         _delete_rows(owner_engine, ids)
         runtime_engine.dispose()
         owner_engine.dispose()
-
-
-@pytest.mark.integration
-def test_revision_refuses_to_downgrade_while_openview_content_exists() -> None:
-    environment = guarded_migration_environment()
-    owner_engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
-    ids = {key: uuid7() for key in ("department", "module", "first", "second", "archived")}
-    stepped_down = False
-    try:
-        _seed_module(owner_engine, ids)
-        with owner_engine.begin() as connection:
-            _insert_view(connection, ids["first"], ids["module"], is_default=False)
-
-        # Later revisions step down first, so the refusal under test is this
-        # revision's own guard, whatever the current head is.
-        previous_revision, head = _revision_bounds()
-        stepped_down = head != REVISION
-        if stepped_down:
-            run_alembic(environment, "downgrade", REVISION)
-
-        with pytest.raises(subprocess.CalledProcessError):
-            run_alembic(environment, "downgrade", previous_revision)
-
-        with owner_engine.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM public.alembic_version")) == (
-                REVISION
-            )
-            assert (
-                connection.scalar(
-                    text("SELECT count(*) FROM public.saved_views WHERE id = :id"),
-                    {"id": ids["first"]},
-                )
-                == 1
-            )
-    finally:
-        _delete_rows(owner_engine, ids)
-        owner_engine.dispose()
-        # The seeded content is gone, so every revision can step back up.
-        if stepped_down:
-            run_alembic(environment, "upgrade", "head")
-
-
-def _revision_bounds() -> tuple[str, str]:
-    """The revision this test covers steps down to its parent; head is current."""
-    config = Config()
-    config.set_main_option("script_location", str(Path(__file__).parents[2] / "migrations"))
-    scripts = ScriptDirectory.from_config(config)
-    revision = scripts.get_revision(REVISION)
-    assert revision is not None
-    previous = revision.down_revision
-    assert isinstance(previous, str)
-    return previous, scripts.get_current_head() or REVISION
 
 
 def _seed_module(engine: Engine, ids: dict[str, UUID]) -> None:

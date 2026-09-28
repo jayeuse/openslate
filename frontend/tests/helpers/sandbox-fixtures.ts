@@ -8,12 +8,12 @@ import {
 } from "../../src/components/systems/sandbox/domain/document-bridge";
 import {
   SANDBOX_DOCUMENT_SCHEMA_VERSION,
-  type SandboxDocumentV3,
+  type SandboxDocumentV4,
 } from "../../src/components/systems/sandbox/domain/document";
 
 /** Builds a current-format Sandbox document from a Designer fixture. */
-export function sandboxDocumentFromDesign(design: Design): SandboxDocumentV3 {
-  const empty: SandboxDocumentV3 = {
+export function sandboxDocumentFromDesign(design: Design): SandboxDocumentV4 {
+  const empty: SandboxDocumentV4 = {
     kind: "openslate-sandbox",
     schemaVersion: SANDBOX_DOCUMENT_SCHEMA_VERSION,
     design: { departments: [], modules: [], relationships: [], layout: {} },

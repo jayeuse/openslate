@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.database.session import AuditSession
 from app.core.observability import log_event
 from app.systems.manage.audit.context import get_audit_context
+from app.systems.manage.audit.department_ancestry import DepartmentAncestry
 from app.systems.manage.audit.models import AuditAction, AuditLog, SecurityEvent
 from app.systems.manage.audit.snapshots import (
     AUDIT_METADATA_FIELDS,
@@ -18,6 +19,7 @@ from app.systems.manage.audit.snapshots import (
 )
 from app.systems.platform.events.models import event_for_entity
 from app.systems.platform.events.publisher import publish_invalidations
+from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
@@ -32,6 +34,7 @@ class PendingChange:
     instance: Any
     action: AuditAction
     changes: dict[str, tuple[Any, Any]] | None = None
+    department: UUID | Department | None = None
 
 
 def _is_audited(instance: Any) -> bool:
@@ -151,6 +154,12 @@ def capture_changes(session: AuditSession, flush_context: Any, instances: Any) -
         if _is_audited(instance):
             pending.append(PendingChange(instance, AuditAction.DELETE))
 
+    if pending and isinstance(session, Session):
+        with session.no_autoflush:
+            ancestry = DepartmentAncestry(session, (change.instance for change in pending))
+            for change in pending:
+                change.department = ancestry.for_instance(change.instance)
+
 
 @event.listens_for(AuditSession, "after_flush_postexec")
 def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
@@ -207,6 +216,11 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
             action=change.action,
             entity_type=entity_type,
             entity_id=getattr(change.instance, "id", None),
+            department_id=(
+                change.department.id
+                if isinstance(change.department, Department)
+                else change.department
+            ),
             before=before,
             after=after,
             request_id=context.request_id,

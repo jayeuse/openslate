@@ -18,7 +18,9 @@ from app.systems.boards.portability import (
     MAX_PORTABLE_BOARD_BYTES,
     PortabilityError,
     parse_portable_board,
+    reject_nonportable_person_filter,
     resolve_portable_board,
+    select_filter_labels,
 )
 from app.systems.boards.portability_schemas import (
     PortableBoardBundle,
@@ -34,8 +36,9 @@ from app.systems.boards.router import _response as board_response
 from app.systems.boards.schemas import BoardResponse
 from app.systems.boards.widget_schemas import BoardWidgetConfig
 from app.systems.sandbox.departments.models import Department
-from app.systems.sandbox.fields.models import Field
+from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.query_schemas import QueryFilter
 
 
 def _private_cache(response: Response) -> None:
@@ -61,7 +64,10 @@ def _http_error(error: PortabilityError) -> HTTPException:
     if error.code == "board_bundle_invalid":
         return HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={"code": error.code, "message": "Board configuration is invalid"},
+            detail={
+                "code": error.code,
+                "message": error.message or "Board configuration is invalid",
+            },
         )
     return HTTPException(
         status.HTTP_409_CONFLICT,
@@ -138,6 +144,20 @@ def _portable_field(
     return PortableFieldReference(name=field.name, expected_type=field.type)
 
 
+def _portable_filter(
+    reference: QueryFilter, module_id: UUID, fields: dict[UUID, Field]
+) -> PortableQueryFilter:
+    portable = _portable_field(reference.field_id, reference.expected_type, module_id, fields)
+    field = fields[reference.field_id]
+    reject_nonportable_person_filter(field, reference.value)
+    value = (
+        select_filter_labels(field, reference.value)
+        if field.type == FieldType.SELECT
+        else reference.value
+    )
+    return PortableQueryFilter(**portable.model_dump(), operator=reference.operator, value=value)
+
+
 def _bundle_from_board(
     db: Session, board_id: UUID, actor: User, *, mutation: bool
 ) -> PortableBoardBundle:
@@ -200,14 +220,7 @@ def _bundle_from_board(
                             for ref in config.fields
                         ],
                         filters=[
-                            PortableQueryFilter(
-                                **_portable_field(
-                                    ref.field_id, ref.expected_type, module.id, fields
-                                ).model_dump(),
-                                operator=ref.operator,
-                                value=ref.value,
-                            )
-                            for ref in config.filters
+                            _portable_filter(ref, module.id, fields) for ref in config.filters
                         ],
                         logic=config.logic,
                         metric=(

@@ -2,6 +2,7 @@
 
 import os
 from datetime import UTC, datetime
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 from fastapi import HTTPException
@@ -36,6 +37,10 @@ def query_db(request):
 
 # An administrator reads every module, so direct query calls need no group.
 READER = User(id=uuid7(), status="active", role="admin", is_deleted=False)
+
+
+def _option_id(label: str) -> str:
+    return str(uuid5(NAMESPACE_URL, f"record-query:{label}"))
 
 
 def route_actor(db: Session, *, records_read: bool = True) -> User:
@@ -73,14 +78,32 @@ def setup_rows(db: Session, kind: str, values: list[object]):
         type=kind,
         position=0,
         required=False,
-        config={"options": list(dict.fromkeys(value for value in values if isinstance(value, str)))}
-        if kind == "select"
-        else {},
+        config=(
+            {
+                "options": [
+                    {"id": _option_id(value), "label": value}
+                    for value in dict.fromkeys(value for value in values if isinstance(value, str))
+                ]
+            }
+            if kind == "select"
+            else {}
+        ),
     )
     db.add(field)
     db.flush()
     rows = [
-        Record(module_id=module.id, data={} if value is ... else {str(field.id): value})
+        Record(
+            module_id=module.id,
+            data=(
+                {}
+                if value is ...
+                else {
+                    str(field.id): (
+                        _option_id(value) if kind == "select" and isinstance(value, str) else value
+                    )
+                }
+            ),
+        )
         for value in values
     ]
     db.add_all(rows)
@@ -227,6 +250,9 @@ def test_blank_not_blank_suffix_and_neq_preserve_legacy_empty_semantics(query_db
 
 def test_select_contains_and_or_logic_and_allowlisted_search(query_db):
     module, select_field, rows = setup_rows(query_db, "select", ["Pending", "Completed", "Blocked"])
+    select_field.config = {
+        "options": [*select_field.config["options"], {"id": _option_id("end"), "label": "end"}]
+    }
     text_field = Field(
         module_id=module.id,
         name="Summary",
@@ -247,7 +273,7 @@ def test_select_contains_and_or_logic_and_allowlisted_search(query_db):
     contains = request_for(
         module,
         select_field,
-        filters=[{**select_reference, "operator": "contains", "value": "end"}],
+        filters=[{**select_reference, "operator": "contains", "value": _option_id("end")}],
     )
     assert [item.id for item in query_records(query_db, contains, reader=READER).items] == [
         rows[0].id
@@ -258,7 +284,7 @@ def test_select_contains_and_or_logic_and_allowlisted_search(query_db):
         select_field,
         logic="or",
         filters=[
-            {**select_reference, "operator": "eq", "value": "Pending"},
+            {**select_reference, "operator": "eq", "value": _option_id("Pending")},
             {**text_reference, "operator": "contains", "value": "report"},
         ],
     )
@@ -280,6 +306,16 @@ def test_select_contains_and_or_logic_and_allowlisted_search(query_db):
     assert not query_records(
         query_db, request_for(module, select_field, search="dashboard"), reader=READER
     ).items
+    select_search = request_for(
+        module, select_field, search="pend", search_fields=[select_reference]
+    )
+    assert [item.id for item in query_records(query_db, select_search, reader=READER).items] == [
+        rows[0].id
+    ]
+    raw_id_search = request_for(
+        module, select_field, search=_option_id("Pending"), search_fields=[select_reference]
+    )
+    assert not query_records(query_db, raw_id_search, reader=READER).items
     assert [
         item.id
         for item in query_records(
@@ -502,6 +538,8 @@ def test_filtered_empty_page_preserves_exact_total(query_db, value, total):
 )
 def test_allowed_predicates_execute_in_postgres(query_db, kind, values, operator, value, expected):
     module, field, rows = setup_rows(query_db, kind, values)
+    if kind == "select" and isinstance(value, list):
+        value = [_option_id(item) for item in value]
     payload = request_for(
         module,
         field,

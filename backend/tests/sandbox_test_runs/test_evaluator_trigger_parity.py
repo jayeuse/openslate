@@ -1,7 +1,7 @@
 """Parity checks for chained temporary Sandbox trigger evaluation."""
 
 from app.systems.sandbox.test_runs.evaluator import evaluate_test
-from tests.sandbox_test_runs.fixtures import document_payload, sandbox_document
+from tests.sandbox_test_runs.fixtures import document_payload, option_id, sandbox_document
 
 
 def test_field_change_event_runs_matching_threshold_trigger() -> None:
@@ -22,7 +22,7 @@ def test_field_change_event_runs_matching_threshold_trigger() -> None:
     result = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "score": 5},
+        values={"priority": option_id("priority", "Low"), "score": 5},
         event={"kind": "field-changed", "fieldId": "score", "previousValue": 4},
         trigger_ids=None,
     )
@@ -44,7 +44,7 @@ def test_trigger_changes_enqueue_a_bounded_follow_up_field_event() -> None:
     result = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": "", "score": 0},
+        values={"priority": option_id("priority", "High"), "status": "", "score": 0},
         event={"kind": "record-created"},
         trigger_ids=None,
     )
@@ -98,7 +98,7 @@ def test_equal_priority_triggers_preserve_designer_order() -> None:
     result = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": "", "score": 0},
+        values={"priority": option_id("priority", "High"), "status": "", "score": 0},
         event={"kind": "record-created"},
         trigger_ids=None,
     )
@@ -169,12 +169,16 @@ def test_chained_thresholds_use_the_child_event_snapshot_not_prior_actions() -> 
     result = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "score": 4, "status": ""},
+        values={"priority": option_id("priority", "Low"), "score": 4, "status": ""},
         event={"kind": "record-created"},
         trigger_ids=None,
     )
 
-    assert result.values == {"priority": "Low", "score": 10, "status": "Detected"}
+    assert result.values == {
+        "priority": option_id("priority", "Low"),
+        "score": 10,
+        "status": "Detected",
+    }
 
 
 def test_field_references_keep_missing_distinct_from_explicit_null() -> None:
@@ -195,14 +199,14 @@ def test_field_references_keep_missing_distinct_from_explicit_null() -> None:
     missing = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "status": "Original"},
+        values={"priority": option_id("priority", "Low"), "status": "Original"},
         event={"kind": "record-created"},
         trigger_ids=["mark-high"],
     )
     explicit_null = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "score": None, "status": "Original"},
+        values={"priority": option_id("priority", "Low"), "score": None, "status": "Original"},
         event={"kind": "record-created"},
         trigger_ids=["mark-high"],
     )
@@ -232,14 +236,14 @@ def test_conditions_keep_missing_distinct_from_explicit_null() -> None:
     missing = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "status": "Original"},
+        values={"priority": option_id("priority", "Low"), "status": "Original"},
         event={"kind": "record-created"},
         trigger_ids=["mark-high"],
     )
     explicit_null = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "score": None, "status": "Original"},
+        values={"priority": option_id("priority", "Low"), "score": None, "status": "Original"},
         event={"kind": "record-created"},
         trigger_ids=["mark-high"],
     )
@@ -288,7 +292,7 @@ def test_absent_target_set_to_null_queues_a_downstream_field_change() -> None:
     result = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "score": 0},
+        values={"priority": option_id("priority", "Low"), "score": 0},
         event={"kind": "record-created"},
         trigger_ids=None,
     )
@@ -337,7 +341,7 @@ def test_test_evaluation_stops_after_the_shared_hundred_action_budget() -> None:
     result = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low"},
+        values={"priority": option_id("priority", "Low")},
         event={"kind": "record-created"},
         trigger_ids=None,
     )

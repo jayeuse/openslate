@@ -10,6 +10,7 @@ from app.systems.sandbox.record_triggers.models import (
     RecordTrigger,
     RecordTriggerAction,
 )
+from tests.sandbox_designs.fixtures import sample_option_id
 from tests.sandbox_publications.support import (
     binding,
     publish_revision,
@@ -144,7 +145,14 @@ def _trigger(
                         "moduleId": module_id,
                         "fieldId": field_id,
                     },
-                    "value": {"kind": "literal", "value": value},
+                    "value": {
+                        "kind": "literal",
+                        "value": (
+                            sample_option_id(field_id, value)
+                            if field_id == "sample-field-requests-status"
+                            else value
+                        ),
+                    },
                 }
             ],
         }
@@ -163,7 +171,10 @@ def _trigger_with_ordered_children(identifier: str) -> TriggerDocument:
                     "fieldId": "sample-field-requests-status",
                 },
                 "operator": "=",
-                "value": {"kind": "literal", "value": "Open"},
+                "value": {
+                    "kind": "literal",
+                    "value": sample_option_id("sample-field-requests-status", "Open"),
+                },
             },
             {
                 "id": f"{identifier}-condition-two",
@@ -184,7 +195,10 @@ def _trigger_with_ordered_children(identifier: str) -> TriggerDocument:
                 "moduleId": "sample-requests",
                 "fieldId": "sample-field-requests-status",
             },
-            "value": {"kind": "literal", "value": "In progress"},
+            "value": {
+                "kind": "literal",
+                "value": sample_option_id("sample-field-requests-status", "In progress"),
+            },
         },
         {
             "id": f"{identifier}-action-two",

@@ -6,6 +6,7 @@ import {
   type Design,
 } from "../../src/components/systems/sandbox/domain/model";
 import { publicationFieldKey } from "../../src/components/systems/sandbox/components/publish-change-groups";
+import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   configuredSandboxDesign,
   sandboxDocumentFromDesign,
@@ -591,6 +592,44 @@ test("an empty Sandbox authors and persists a complete connected organization", 
   expect(document.design.relationships).toHaveLength(1);
   expect(document.triggers).toHaveLength(1);
   expect(document.scenarios).toEqual([]);
+});
+
+test("creating a Select field saves a typed default as its choice ID", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    structuredClone(configuredSandboxDesign),
+  );
+  await page.getByRole("button", { name: "Add field", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "Field name", exact: true })
+    .fill("Review stage");
+  await page.getByLabel("Field type", { exact: true }).selectOption("Select");
+  await page
+    .getByLabel("Select options (comma separated)", { exact: true })
+    .fill("Open, On hold");
+  await page.getByLabel("Default value", { exact: true }).fill("Open");
+  await page.getByRole("button", { name: "Create field" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(1);
+
+  const created = sandbox
+    .document()
+    .design.modules.flatMap((item) => item.fields)
+    .find((field) => field.name === "Review stage");
+  expect(created?.config.kind).toBe("select");
+  if (created?.config.kind !== "select")
+    throw new Error("The saved Select field is required");
+  expect(created.config.options.map((option) => option.label)).toEqual([
+    "Open",
+    "On hold",
+  ]);
+  const openId = created.config.options.find(
+    (option) => option.label === "Open",
+  )?.id;
+  expect(openId).toBeTruthy();
+  expect(created.config.defaultValue).toBe(openId);
+  expect(created.config.options[1]?.id).not.toBe(openId);
 });
 
 test("a dirty trigger draft protects browser exits", async ({ page }) => {
@@ -1680,6 +1719,325 @@ test("trigger panels resize with their requested minimum widths and remain usabl
       ),
     )
     .toBeLessThanOrEqual(0);
+});
+
+test("editing select choices preserves IDs, even when a label matches the default ID", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const statusField = design.modules[0]?.fields.find(
+    (field) => field.name === "Status",
+  );
+  if (!statusField) throw new Error("The Status select field is required");
+  statusField.value = "Open";
+  const sandbox = await openAuthenticatedSandbox(page, design);
+  const readStatusField = () => {
+    const raw: unknown = JSON.parse(JSON.stringify(sandbox.document()));
+    const document = raw as {
+      design: {
+        modules: Array<{
+          fields: Array<{
+            name: string;
+            config: {
+              kind: string;
+              defaultValue: unknown;
+              options: Array<{ id: string; label: string }>;
+            };
+          }>;
+        }>;
+      };
+    };
+    const field = document.design.modules
+      .flatMap((module) => module.fields)
+      .find((candidate) => candidate.name === "Status");
+    if (!field || field.config.kind !== "select")
+      throw new Error("The saved Status select field is required");
+    return field.config;
+  };
+  const before = readStatusField();
+  const originalIds = Object.fromEntries(
+    before.options.map((option) => [option.label, option.id]),
+  );
+  const openId = originalIds.Open;
+  expect(openId).toBeTruthy();
+  expect(before.defaultValue).toBe(openId);
+  const idShapedLabel = openId;
+
+  await page.getByRole("button", { name: "Show Status settings" }).click();
+  const settings = page.getByLabel("Status field settings");
+  await settings
+    .getByLabel("Status options")
+    .fill(`${idShapedLabel}, Open, In progress, Complete`);
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(1);
+
+  const inserted = readStatusField();
+  expect(inserted.options.find((option) => option.label === "Open")?.id).toBe(
+    originalIds.Open,
+  );
+  expect(
+    inserted.options.find((option) => option.label === "In progress")?.id,
+  ).toBe(originalIds["In progress"]);
+  expect(
+    inserted.options.find((option) => option.label === "Complete")?.id,
+  ).toBe(originalIds.Complete);
+  const insertedId = inserted.options.find(
+    (option) => option.label === idShapedLabel,
+  )?.id;
+  expect(insertedId).toBeTruthy();
+  expect(Object.values(originalIds)).not.toContain(insertedId);
+  expect(inserted.defaultValue).toBe(openId);
+
+  await settings
+    .getByLabel("Status options")
+    .fill(`Complete, ${idShapedLabel}, Open, In progress`);
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(2);
+  const reordered = readStatusField();
+  expect(reordered.options.map((option) => [option.label, option.id])).toEqual([
+    ["Complete", originalIds.Complete],
+    [idShapedLabel, insertedId],
+    ["Open", openId],
+    ["In progress", originalIds["In progress"]],
+  ]);
+
+  await settings
+    .getByLabel("Status options")
+    .fill(`Complete, ${idShapedLabel}, Active, In progress`);
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(3);
+
+  const after = readStatusField();
+  expect(after.options.find((option) => option.label === "Active")?.id).toBe(
+    openId,
+  );
+  expect(after.defaultValue).toBe(openId);
+
+  await settings
+    .getByLabel("Status options")
+    .fill(`Complete, ${idShapedLabel}, In progress`);
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect(
+    settings.getByText("Default value must match a select option."),
+  ).toBeVisible();
+  expect(sandbox.documentWrites()).toBe(3);
+  await settings.getByLabel("Status default value").selectOption("");
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(4);
+  expect(readStatusField().defaultValue).toBeNull();
+
+  const optionsInput = settings.getByLabel("Status options");
+  const defaultInput = settings.getByLabel("Status default value");
+  await optionsInput.fill(
+    `Complete, ${idShapedLabel}, In progress, Draft choice`,
+  );
+  await defaultInput.selectOption({ label: "Draft choice" });
+  await optionsInput.fill(
+    `Draft choice, Complete, ${idShapedLabel}, In progress`,
+  );
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(5);
+  const savedNewChoice = readStatusField();
+  const draftChoiceId = savedNewChoice.options.find(
+    (option) => option.label === "Draft choice",
+  )?.id;
+  expect(draftChoiceId).toBeTruthy();
+  expect(savedNewChoice.defaultValue).toBe(draftChoiceId);
+  expect(
+    savedNewChoice.options.find((option) => option.label === "Complete")?.id,
+  ).toBe(originalIds.Complete);
+  await captureOpenViewReview(page, "sandbox-stable-select-choice", {
+    beforeScreenshot: async (capturePage, viewport) => {
+      if (viewport.width < 640) {
+        const propertiesTab = capturePage.getByRole("tab", {
+          name: "Properties",
+        });
+        await expect(propertiesTab).toHaveCount(1);
+        if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
+          await propertiesTab.click();
+        const showSettings = capturePage
+          .getByLabel("Status field settings")
+          .getByRole("button", { name: "Show Status settings", exact: true });
+        if (await showSettings.isVisible()) await showSettings.click();
+      }
+    },
+  });
+});
+
+test("removing an unsaved selected choice requires an explicit new default", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const sandbox = await openAuthenticatedSandbox(page, design);
+  await page.getByRole("button", { name: "Show Status settings" }).click();
+  const settings = page.getByLabel("Status field settings");
+  const optionsInput = settings.getByLabel("Status options");
+  await optionsInput.fill("Temporary, Open, In progress, Complete");
+  await settings
+    .getByLabel("Status default value")
+    .selectOption({ label: "Temporary" });
+  await optionsInput.fill("Open, In progress, Complete");
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect(
+    settings.getByText("Default value must match a select option."),
+  ).toBeVisible();
+  expect(sandbox.documentWrites()).toBe(0);
+  await settings.getByLabel("Status default value").selectOption("");
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(1);
+});
+
+test("the Designer saves a module record title field in the current v4 draft", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  const design = structuredClone(configuredSandboxDesign);
+  const targetModule = design.modules[0];
+  const titleField = targetModule?.fields.find(
+    (field) => field.name === "Title",
+  );
+  if (!targetModule || !titleField)
+    throw new Error("A module with a title field is required");
+  const sandbox = await openAuthenticatedSandbox(page, design);
+
+  await page
+    .getByLabel("Record title field", { exact: true })
+    .selectOption(titleField.id);
+  await expect.poll(sandbox.documentWrites).toBe(1);
+
+  const raw: unknown = JSON.parse(JSON.stringify(sandbox.document()));
+  const document = raw as {
+    design: { modules: Array<{ id: string; titleFieldId: string | null }> };
+  };
+  expect(
+    document.design.modules.find((item) => item.id === targetModule.id)
+      ?.titleFieldId,
+  ).toBe(titleField.id);
+  const titleSelector = page.getByLabel("Record title field", { exact: true });
+  await expect(titleSelector).toHaveValue(titleField.id);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+
+  const titleSettings = page.getByLabel(`${titleField.name} field settings`);
+  await titleSettings
+    .getByRole("button", { name: `Show ${titleField.name} settings` })
+    .click();
+  const closeField = titleSettings.getByRole("button", {
+    name: "Close field",
+  });
+  await expect(
+    titleSettings.getByText(/selected as the record title/i),
+  ).toBeVisible();
+  await expect(closeField).toBeDisabled();
+  await captureOpenViewReview(page, "sandbox-selected-record-title", {
+    beforeScreenshot: async (capturePage, viewport) => {
+      if (viewport.width < 640) {
+        const propertiesTab = capturePage.getByRole("tab", {
+          name: "Properties",
+        });
+        await expect(propertiesTab).toHaveCount(1);
+        if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
+          await propertiesTab.click();
+        const showSettings = capturePage
+          .getByLabel("Title field settings")
+          .getByRole("button", { name: "Show Title settings", exact: true });
+        if (await showSettings.isVisible()) await showSettings.click();
+      }
+    },
+  });
+
+  await titleSelector.selectOption("");
+  await expect.poll(sandbox.documentWrites).toBe(2);
+  await expect(
+    titleSettings.getByText(/selected as the record title/i),
+  ).toHaveCount(0);
+  const showSettings = titleSettings.getByRole("button", {
+    name: "Show Title settings",
+    exact: true,
+  });
+  if (await showSettings.isVisible()) await showSettings.click();
+  await expect(closeField).toBeEnabled();
+});
+
+test("Sandbox Test treats User values as simulated UUIDs without live eligibility lookup", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const targetModule = design.modules[0];
+  if (!targetModule) throw new Error("A test module is required");
+  targetModule.fields.push({
+    id: "sandbox-assignee",
+    name: "Assigned user",
+    type: "User",
+    required: true,
+    value: "",
+    options: "",
+    closed: false,
+  });
+  const requestPaths: string[] = [];
+  page.on("request", (request) => {
+    requestPaths.push(new URL(request.url()).pathname);
+  });
+  await openAuthenticatedSandbox(page, design);
+  let submitted: Record<string, unknown> | undefined;
+  await page.route("**/api/sandbox/tests", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const input = route.request().postDataJSON() as {
+      moduleId: string;
+      values: Record<string, unknown>;
+      event: { kind: string };
+    };
+    submitted = input.values;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "00000000-0000-4000-8000-000000000041",
+        createdAt: "2026-09-25T10:00:00Z",
+        documentRevision: 1,
+        input: { moduleId: input.moduleId, values: input.values },
+        event: input.event,
+        triggerIds: null,
+        result: {
+          values: input.values,
+          routes: [],
+          triggerTraces: [],
+          issues: [],
+        },
+      }),
+    });
+  });
+  await page.getByRole("link", { name: "Test", exact: true }).click();
+  const setup = page.getByRole("region", { name: "Test setup", exact: true });
+  await expect(
+    setup.getByText(/simulat(?:ed|ion).*UUID|UUID.*simulat(?:ed|ion)/i),
+  ).toBeVisible();
+  await expect(
+    setup.getByText(
+      /eligibility.*(?:not|never).*(?:check|verify)|(?:does not|never).*(?:check|verify).*eligibility/i,
+    ),
+  ).toBeVisible();
+
+  const simulatedUserId = "00000000-0000-4000-8000-000000000042";
+  await setup
+    .getByLabel("Assigned user", { exact: true })
+    .fill(simulatedUserId);
+  await captureOpenViewReview(page, "sandbox-simulated-user-input");
+  await setup.getByRole("button", { name: "Run test", exact: true }).click();
+  await expect
+    .poll(() => submitted?.["sandbox-assignee"])
+    .toBe(simulatedUserId);
+  expect(
+    requestPaths.filter((path) =>
+      /\/api\/(?:users(?:\/|$)|modules\/[^/]+\/assignable-users(?:\/|$))/.test(
+        path,
+      ),
+    ),
+  ).toEqual([]);
 });
 
 test("Test field search preserves hidden edits in the submitted temporary values", async ({

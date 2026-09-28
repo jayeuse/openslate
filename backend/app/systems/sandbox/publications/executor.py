@@ -152,6 +152,7 @@ def apply_publication(
     departments = _apply_departments(db, document, bindings, actor_id)
     modules = _apply_modules(db, document, bindings, departments, actor_id)
     fields = _apply_fields(db, document, bindings, modules, actor_id)
+    _apply_title_fields(document, modules, fields, actor_id)
     _apply_relationships(db, document, bindings, modules, actor_id)
     close_removed_structure(db, document, bindings, actor_id, retired)
     sync_department_boards(db, actor_id)
@@ -344,6 +345,42 @@ def _apply_fields(
             if not closed:
                 active_position += 1
     return result
+
+
+def _apply_title_fields(
+    document: Any,
+    modules: dict[str, Module],
+    fields: dict[str, Field],
+    actor_id: UUID,
+) -> None:
+    """Resolve draft title selections only after their live field bindings exist."""
+
+    for desired in document.design.modules:
+        module = modules[desired.id]
+        selected = (
+            fields.get(_field_key(desired.id, desired.title_field_id))
+            if desired.title_field_id is not None
+            else None
+        )
+        if desired.title_field_id is not None and (
+            selected is None
+            or selected.module_id != module.id
+            or (selected.is_deleted and not module.is_deleted)
+            or selected.type
+            not in {
+                FieldType.TEXT,
+                FieldType.LONG_TEXT,
+                FieldType.EMAIL,
+                FieldType.URL,
+                FieldType.INTEGER,
+                FieldType.NUMBER,
+                FieldType.DECIMAL,
+                FieldType.SELECT,
+            }
+        ):
+            raise PublicationError("title_field_invalid", "Choose an active title field")
+        module.title_field_id = selected.id if selected is not None else None
+        module.performed_by = actor_id
 
 
 def _apply_relationships(

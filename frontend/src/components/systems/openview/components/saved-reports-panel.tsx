@@ -74,7 +74,7 @@ export function SavedReportsPanel({
       <CardHeader>
         <CardTitle>Saved Reports</CardTitle>
         <CardDescription>
-          Reports on data you can read. Managers of a department change them.
+          Reports on data you can read. Module managers can change them.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">

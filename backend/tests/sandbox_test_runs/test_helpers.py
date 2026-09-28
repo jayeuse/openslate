@@ -16,6 +16,7 @@ from app.systems.sandbox.test_runs.trigger_values import (
     resolve_trigger_value,
     trigger_issue,
 )
+from tests.sandbox_test_runs.fixtures import option_id
 
 
 def _field(field_id: str, kind: str, **config: object) -> dict[str, object]:
@@ -231,8 +232,15 @@ def test_relationship_routes_report_invalid_shapes_and_project_safe_values() -> 
 
 def test_relationship_helper_compatibility_and_value_types_are_bounded() -> None:
     assert _mapping_is_compatible(
-        _field("a", "select", options=["Open"]),
-        _field("b", "select", options=["Open", "Done"]),
+        _field("a", "select", options=[{"id": option_id("a", "Open"), "label": "Open"}]),
+        _field(
+            "b",
+            "select",
+            options=[
+                {"id": option_id("b", "Open"), "label": "Open"},
+                {"id": option_id("b", "Done"), "label": "Done"},
+            ],
+        ),
     )
     assert _mapping_is_compatible(_field("a", "integer"), _field("b", "number"))
     assert _mapping_is_compatible(_field("a", "email"), _field("b", "text"))
@@ -247,7 +255,10 @@ def test_relationship_helper_compatibility_and_value_types_are_bounded() -> None
     assert _value_is_valid(True, _field("a", "checkbox"))
     assert _value_is_valid(1, _field("a", "integer"))
     assert not _value_is_valid(True, _field("a", "number"))
-    assert _value_is_valid("Open", _field("a", "select", options=["Open"]))
+    assert _value_is_valid(
+        option_id("a", "Open"),
+        _field("a", "select", options=[{"id": option_id("a", "Open"), "label": "Open"}]),
+    )
     assert _value_is_valid("2026-09-21", _field("a", "date"))
     assert not _value_is_valid(50, _field("a", "number", min=0, max=10))
 

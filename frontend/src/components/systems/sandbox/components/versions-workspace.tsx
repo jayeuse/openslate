@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/native-select";
 import { changesFrom } from "../domain/model";
 import { projectSandboxDocument } from "../domain/document-bridge";
-import type { SandboxDocumentV3 } from "../domain/document";
+import type { SandboxDocumentV4 } from "../domain/document";
 import type { SandboxCommandResult } from "../state/commands";
 import type {
   SandboxDocumentResponse,
@@ -78,13 +78,13 @@ function canonicalEntityChanges(
 }
 
 /**
- * Compares canonical v2 documents without reducing trigger content to
+ * Compares canonical v4 documents without reducing trigger content to
  * Designer rules. The projected design and the canonical triggers can
  * report the same trigger, so identical entries appear once.
  */
 export function canonicalVersionChanges(
-  before: SandboxDocumentV3,
-  after: SandboxDocumentV3,
+  before: SandboxDocumentV4,
+  after: SandboxDocumentV4,
 ): string[] {
   return [
     ...new Set([

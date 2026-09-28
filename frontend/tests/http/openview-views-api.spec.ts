@@ -5,6 +5,7 @@ import {
   type Page,
   type Route,
 } from "./helpers/test";
+import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -15,6 +16,8 @@ const moduleId = "00000000-0000-4000-8000-000000000010";
 const departmentId = "00000000-0000-4000-8000-000000000011";
 const nameFieldId = "00000000-0000-4000-8000-000000000012";
 const statusFieldId = "00000000-0000-4000-8000-000000000013";
+const inServiceChoiceId = "00000000-0000-4000-8000-000000000031";
+const inspectionDueChoiceId = "00000000-0000-4000-8000-000000000032";
 const serialFieldId = "00000000-0000-4000-8000-000000000020";
 const unselectedQueryFieldId = "00000000-0000-4000-8000-000000000021";
 const timelineStartFieldId = "00000000-0000-4000-8000-000000000022";
@@ -147,12 +150,18 @@ function pageResponse<T>(
 }
 
 function record(id: string, name: string, status: string) {
+  const statusValue =
+    status === "In service"
+      ? inServiceChoiceId
+      : status === "Inspection due"
+        ? inspectionDueChoiceId
+        : status;
   return {
     id,
     module_id: moduleId,
     data: {
       [nameFieldId]: name,
-      [statusFieldId]: status,
+      [statusFieldId]: statusValue,
       [serialFieldId]: id === recordOneId ? "S" : `SN-${id.slice(-2)}`,
       [unselectedQueryFieldId]: "Do not surface this query-only field",
       [timelineStartFieldId]: "2026-09-01",
@@ -162,6 +171,7 @@ function record(id: string, name: string, status: string) {
       [timelineProgressFieldId]: "50.00",
       [timelineTimestampDeadlineFieldId]: "2026-09-06T18:30:00.000Z",
     },
+    display_values: { [statusFieldId]: status },
     created_at: "2026-09-23T00:00:00Z",
     updated_at: "2026-09-23T00:00:00Z",
     deleted_at: null,
@@ -361,6 +371,30 @@ async function installViewsApi(
       }),
     }),
   );
+  await page.route("**/api/departments**", (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: departmentId,
+            department_name: "Field service",
+            created_at: "2026-09-23T00:00:00Z",
+            updated_at: "2026-09-23T00:00:00Z",
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    }),
+  );
   await page.route("**/api/views**", async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -370,7 +404,12 @@ async function installViewsApi(
         contentType: "application/json",
         body: JSON.stringify(
           pageResponse([
-            { id: moduleId, name: "Equipment", department_id: departmentId },
+            {
+              id: moduleId,
+              name: "Equipment",
+              department_id: departmentId,
+              title_field_id: null,
+            },
           ]),
         ),
       });
@@ -396,7 +435,12 @@ async function installViewsApi(
               type: "select",
               required: false,
               position: 1,
-              config: { choices: ["In service", "Inspection due"] },
+              config: {
+                options: [
+                  { id: inServiceChoiceId, label: "In service" },
+                  { id: inspectionDueChoiceId, label: "Inspection due" },
+                ],
+              },
             },
             {
               id: serialFieldId,
@@ -782,13 +826,22 @@ async function installViewsApi(
     const fieldId = body.group_by.field_id;
     const groupValue = (row: ReturnType<typeof record>) =>
       (row.data as Record<string, unknown>)[fieldId];
+    const groupLabel = (value: string) => {
+      const row = rows.find(
+        (candidate) => String(groupValue(candidate) ?? "") === value,
+      );
+      const display = Object.entries(row?.display_values ?? {}).find(
+        ([id]) => id === fieldId,
+      )?.[1];
+      return typeof display === "string" ? display : value;
+    };
     const groups = Array.from(
       new Set(rows.map((row) => String(groupValue(row) ?? ""))),
     )
       .sort((left, right) => left.localeCompare(right))
       .map((value) => ({
         value,
-        label: value,
+        label: groupLabel(value),
         count: rows.filter((row) => String(groupValue(row) ?? "") === value)
           .length,
       }));
@@ -1090,7 +1143,7 @@ test("number View filters continue sending numeric values", async ({
   });
 });
 
-test("membership View filters accept comma-separated typing and submit lists", async ({
+test("membership View filters select choices by label and submit stable IDs", async ({
   page,
 }) => {
   const api = await installViewsApi(page);
@@ -1103,14 +1156,14 @@ test("membership View filters accept comma-separated typing and submit lists", a
   });
   await operator.selectOption("in");
 
-  const value = filtersRegion.getByLabel("Value");
-  await value.pressSequentially("In service, Inspection due");
-  await expect(value).toHaveValue("In service, Inspection due");
+  const value = filtersRegion.getByRole("group", { name: "Value" });
+  await value.getByRole("checkbox", { name: "In service" }).check();
+  await value.getByRole("checkbox", { name: "Inspection due" }).check();
   const expectedMembershipFilter = {
     field_id: statusFieldId,
     expected_type: "select",
     operator: "in",
-    value: ["In service", "Inspection due"],
+    value: [inServiceChoiceId, inspectionDueChoiceId],
   };
   await expect
     .poll(() =>
@@ -1153,7 +1206,7 @@ test("membership View filters accept comma-separated typing and submit lists", a
       field_id: statusFieldId,
       expected_type: "select",
       operator: "in",
-      value: ["In service", "Inspection due"],
+      value: [inServiceChoiceId, inspectionDueChoiceId],
     },
   ]);
 });
@@ -1216,9 +1269,9 @@ for (const layout of ["kanban", "calendar", "timeline"] as const) {
           ),
         ),
     ).toBe(false);
-    const value = filtersRegion.getByLabel("Value");
-    await value.pressSequentially("In service, Inspection due");
-    await expect(value).toHaveValue("In service, Inspection due");
+    const value = filtersRegion.getByRole("group", { name: "Value" });
+    await value.getByRole("checkbox", { name: "In service" }).check();
+    await value.getByRole("checkbox", { name: "Inspection due" }).check();
     await expect
       .poll(() =>
         requests.some((request) => {
@@ -1228,7 +1281,7 @@ for (const layout of ["kanban", "calendar", "timeline"] as const) {
               filter.field_id === statusFieldId &&
               filter.operator === "in" &&
               JSON.stringify(filter.value) ===
-                JSON.stringify(["In service", "Inspection due"]),
+                JSON.stringify([inServiceChoiceId, inspectionDueChoiceId]),
           );
         }),
       )
@@ -1248,20 +1301,23 @@ test("switching scalar and membership View filters clears incompatible values", 
     name: "Condition",
   });
   const value = filtersRegion.getByLabel("Value");
-
-  await value.fill("In service");
+  await value.selectOption(inServiceChoiceId);
   await operator.selectOption("in");
-  await expect(value).toHaveValue("");
+  const membership = filtersRegion.getByRole("group", { name: "Value" });
+  await expect(
+    membership.getByRole("checkbox", { name: "In service" }),
+  ).not.toBeChecked();
   await expect(
     page.getByText("Complete this condition or remove it before saving."),
   ).toBeVisible();
-  await value.fill("In service, Inspection due");
+  await membership.getByRole("checkbox", { name: "In service" }).check();
+  await membership.getByRole("checkbox", { name: "Inspection due" }).check();
   await operator.selectOption("eq");
   await expect(value).toHaveValue("");
   await expect(
     page.getByRole("button", { name: "Save changes" }),
   ).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Save view" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save view" })).toHaveCount(0);
 });
 
 test("changing a Views filter field with the keyboard retains focus", async ({
@@ -1313,7 +1369,7 @@ test("clearing a number View filter stays blank instead of querying zero", async
   await expect(
     page.getByRole("button", { name: "Save changes" }),
   ).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Save view" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save view" })).toHaveCount(0);
   expect(
     api.recordQueryRequests
       .slice(requestCountBeforeClear)
@@ -1377,6 +1433,17 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
     viewId,
   );
   await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
+  await captureOpenViewReview(page, "views-manager");
+  await expect(
+    page.getByText("Field service · 12 active fields"),
+  ).toBeVisible();
+  await expect(page.getByText("Search: pump")).toBeVisible();
+  await expect(page.getByText("No active filters")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save view" })).toHaveCount(0);
+  await openViewAction(page, "Rename view…");
+  const renameDialog = page.getByRole("dialog", { name: "Rename view" });
+  await expect(renameDialog).toBeVisible();
+  await renameDialog.getByRole("button", { name: "Cancel" }).click();
   await expect(page).toHaveURL(
     new RegExp(`module=${moduleId}.*view=${viewId}`),
   );
@@ -1500,7 +1567,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await page
     .getByRole("searchbox", { name: "Search Equipment" })
     .fill("draft before restore");
-  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await expect(page.getByText("Temporary changes")).toBeVisible();
   // The unsaved draft is a temporary change of the same address.
   await expect(page).toHaveURL(
     new RegExp(`/openview\\?section=views&module=${moduleId}&changes=`),
@@ -1511,7 +1578,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
     archivedDialog.getByText("Equipment register", { exact: true }),
   ).toBeVisible();
   await archivedDialog.getByRole("button", { name: "Close" }).click();
-  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await expect(page.getByText("Temporary changes")).toBeVisible();
   await page.getByRole("button", { name: "Archived views" }).click();
   await archivedDialog
     .getByRole("button", { name: "Restore Equipment register" })
@@ -1553,6 +1620,9 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await openViewAction(page, "Make default view");
   await expect(
     page.getByRole("status").filter({ hasText: "default" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Department default", { exact: true }),
   ).toBeVisible();
   expect(api.defaultView()).toBe(viewId);
   expect(
@@ -1712,7 +1782,7 @@ test("resetting changes restores the saved base or clears an unsaved draft", asy
   await page.getByRole("button", { name: "Reset changes" }).click();
   await expect(search).toHaveValue("");
   await expectLayoutFromSettings(page, "table");
-  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+  await expect(page.getByText("Temporary changes")).toHaveCount(0);
   await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
 
   await page.getByRole("combobox", { name: "Saved view" }).selectOption(viewId);
@@ -1723,7 +1793,7 @@ test("resetting changes restores the saved base or clears an unsaved draft", asy
 
   await expect(search).toHaveValue("pump");
   await expectLayoutFromSettings(page, "table");
-  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+  await expect(page.getByText("Temporary changes")).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
     viewId,
   );
@@ -1760,7 +1830,7 @@ test("temporary View changes live in the address, survive reload, and are never 
   await page.reload();
   await expect(search).toHaveValue("valve");
   await expectLayoutFromSettings(page, "grid");
-  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await expect(page.getByText("Temporary changes")).toBeVisible();
 
   await page.getByRole("button", { name: "Reset changes" }).click();
   await expect(search).toHaveValue("pump");
@@ -1793,8 +1863,57 @@ test("a reader keeps temporary View filters in the address without save controls
   await search.fill("valve");
   await expect(page).toHaveURL(/[?&]changes=/);
   await expect(page.getByRole("button", { name: /^Save view/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("button", { name: "View actions" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "Archived views" }),
+  ).toBeVisible();
+  await expect(page.getByText("Temporary changes")).toBeVisible();
+  await expect(
+    page.getByText(/These changes live in the page address/),
+  ).toBeVisible();
+  await captureOpenViewReview(page, "views-reader-filter");
   await page.reload();
   await expect(search).toHaveValue("valve");
+  await expect(page.getByText("Temporary changes")).toBeVisible();
+});
+
+test("a module reader can browse archived Views without a Restore action", async ({
+  page,
+}) => {
+  await installViewsApi(page, {
+    additionalViews: [
+      {
+        ...baseView(),
+        id: secondViewId,
+        name: "Old equipment view",
+        is_deleted: true,
+        can_edit: true,
+      },
+    ],
+  });
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        id: userId,
+        role: "member",
+        access: [
+          { department_id: departmentId, module_id: null, level: "read" },
+        ],
+      },
+    }),
+  );
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await page.getByRole("button", { name: /Archived views/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Archived views" });
+  await expect(dialog.getByText("Old equipment view")).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Restore Old equipment view" }),
+  ).toHaveCount(0);
 });
 
 test("a malformed temporary View address is ignored and removed", async ({
@@ -1807,7 +1926,7 @@ test("a malformed temporary View address is ignored and removed", async ({
     page.getByRole("searchbox", { name: "Search Equipment" }),
   ).toHaveValue("pump");
   await expect(page).toHaveURL(viewUrl);
-  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+  await expect(page.getByText("Temporary changes")).toHaveCount(0);
 });
 
 test("saved Views send, save, and reload up to three ordered sort rules", async ({
@@ -1924,7 +2043,7 @@ for (const layout of ["table", "grid", "gallery"] as const) {
       limit: 25,
       offset: 0,
       group_offset: 0,
-      selected_group: { kind: "value", value: "In service" },
+      selected_group: { kind: "value", value: inServiceChoiceId },
     });
     expect(api.recordQueryRequests).toHaveLength(ordinaryRequestCount);
 
@@ -1948,7 +2067,7 @@ for (const layout of ["table", "grid", "gallery"] as const) {
       limit: 25,
       offset: 25,
       group_offset: 0,
-      selected_group: { kind: "value", value: "In service" },
+      selected_group: { kind: "value", value: inServiceChoiceId },
     });
     expect(api.recordQueryRequests).toHaveLength(ordinaryRequestCount);
     if (layout === "table") {
@@ -1971,8 +2090,14 @@ for (const layout of ["table", "grid", "gallery"] as const) {
         /record=00000000-0000-4000-8000-000000000125/,
       );
       expect(api.groupedQueryRequests.slice(-2)).toMatchObject([
-        { offset: 0, selected_group: { kind: "value", value: "In service" } },
-        { offset: 25, selected_group: { kind: "value", value: "In service" } },
+        {
+          offset: 0,
+          selected_group: { kind: "value", value: inServiceChoiceId },
+        },
+        {
+          offset: 25,
+          selected_group: { kind: "value", value: inServiceChoiceId },
+        },
       ]);
     }
   });
@@ -2359,9 +2484,9 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
   await page.getByRole("button", { name: "Columns", exact: true }).click();
   await expect(columnsDialog).toBeVisible();
   await columnsDialog.getByRole("button", { name: "Close" }).click();
-  await expect(page.getByText("Unsaved changes", { exact: true })).toHaveCount(
-    1,
-  );
+  await expect(
+    page.getByText("Temporary changes", { exact: true }),
+  ).toHaveCount(1);
   expect(api.saved().revision).toBe(initialRevision);
 
   const filtersRegion = await openFilters(page);
@@ -2373,7 +2498,7 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
   await filtersRegion
     .getByRole("combobox", { name: "Condition" })
     .selectOption("eq");
-  await filtersRegion.getByLabel("Value").fill("Inspection due");
+  await filtersRegion.getByLabel("Value").selectOption(inspectionDueChoiceId);
   await expect
     .poll(() =>
       api.recordQueryRequests.some(({ definition }) =>
@@ -2381,7 +2506,7 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
           (filter) =>
             filter.field_id === statusFieldId &&
             filter.operator === "eq" &&
-            filter.value === "Inspection due",
+            filter.value === inspectionDueChoiceId,
         ),
       ),
     )
@@ -2418,7 +2543,7 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
       field_id: statusFieldId,
       expected_type: "select",
       operator: "eq",
-      value: "Inspection due",
+      value: inspectionDueChoiceId,
     },
   ]);
   expect(api.saved().definition.sort).toEqual([
@@ -2639,7 +2764,7 @@ test("Views grouped member page size preserves twelve-group directory paging", a
     offset: 0,
     group_limit: 12,
     group_offset: 0,
-    selected_group: { kind: "value", value: "In service" },
+    selected_group: { kind: "value", value: inServiceChoiceId },
   });
   await expect(results.getByText("Showing 1–5 of 38")).toBeVisible();
 
@@ -2653,7 +2778,7 @@ test("Views grouped member page size preserves twelve-group directory paging", a
     offset: 5,
     group_limit: 12,
     group_offset: 0,
-    selected_group: { kind: "value", value: "In service" },
+    selected_group: { kind: "value", value: inServiceChoiceId },
   });
   await expect(results.getByText("Showing 6–10 of 38")).toBeVisible();
   await expect(page.getByText("Groups 1–1 of 1").first()).toBeVisible();
@@ -3141,7 +3266,7 @@ for (const localAction of ["revert", "save"] as const) {
     await expect(
       page.getByRole("button", { name: "Save changes" }),
     ).toHaveCount(0);
-    await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+    await expect(page.getByText("Temporary changes")).toHaveCount(0);
     await expect(
       page.getByText(`Revision ${api.saved().revision}`),
     ).toBeVisible();
@@ -3586,4 +3711,295 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
   ).toHaveValue("");
   expect(dashboardListRequests).toBeGreaterThan(0);
   expect(savedViewRequests).toBe(0);
+});
+
+test("Views show authorized labels while filters keep stable choice and eligible user IDs", async ({
+  page,
+}) => {
+  const choiceId = "00000000-0000-4000-8000-000000000031";
+  const eligibleUserId = "00000000-0000-4000-8000-000000000032";
+  const unavailableUserId = "00000000-0000-4000-8000-000000000033";
+  const userFieldId = "00000000-0000-4000-8000-000000000034";
+  const label = "Awaiting review";
+  await installViewsApi(page, { disableInitialSearch: true });
+
+  const view = baseView();
+  view.definition = {
+    ...view.definition,
+    columns: [
+      { field_id: nameFieldId, expected_type: "text" },
+      { field_id: statusFieldId, expected_type: "select" },
+      { field_id: userFieldId, expected_type: "user" },
+    ],
+    filters: [],
+    search: null,
+    search_fields: [],
+  };
+  view.presentation = {
+    ...view.presentation,
+    column_field_ids: [nameFieldId, statusFieldId, userFieldId],
+    primary_field_id: nameFieldId,
+    secondary_field_id: statusFieldId,
+  };
+  await page.route("**/api/views**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (
+      request.method() === "GET" &&
+      pathname === "/api/views/data-sources/" + moduleId + "/fields"
+    ) {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(
+          pageResponse([
+            {
+              id: nameFieldId,
+              module_id: moduleId,
+              name: "Equipment name",
+              type: "text",
+              required: true,
+              position: 0,
+              config: {},
+            },
+            {
+              id: statusFieldId,
+              module_id: moduleId,
+              name: "Status",
+              type: "select",
+              required: false,
+              position: 1,
+              config: {
+                options: [{ id: choiceId, label }],
+              },
+            },
+            {
+              id: userFieldId,
+              module_id: moduleId,
+              name: "Assignee",
+              type: "user",
+              required: false,
+              position: 2,
+              config: {},
+            },
+          ]),
+        ),
+      });
+    }
+    if (request.method() === "GET" && pathname === "/api/views")
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(pageResponse([view])),
+      });
+    if (request.method() === "GET" && pathname === "/api/views/" + viewId)
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(view),
+      });
+    return route.fallback();
+  });
+
+  let assignableUsersPath: string | null = null;
+  let assignableUsersRequests = 0;
+  let eligibleUserAvailable = true;
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      url.pathname === "/api/modules/" + moduleId + "/assignable-users" &&
+      request.method() === "GET"
+    )
+      assignableUsersRequests += 1;
+  });
+  await page.route(
+    "**/api/modules/" + moduleId + "/assignable-users**",
+    async (route) => {
+      assignableUsersPath = new URL(route.request().url()).pathname;
+      return route.fulfill({
+        headers: { "cache-control": "private, no-store" },
+        contentType: "application/json",
+        body: JSON.stringify(
+          pageResponse(
+            eligibleUserAvailable
+              ? [
+                  {
+                    id: eligibleUserId,
+                    display_name: "Alex Reader",
+                    username: "alex.reader",
+                  },
+                ]
+              : [],
+          ),
+        ),
+      });
+    },
+  );
+
+  const rows = [
+    {
+      ...record(recordOneId, "Centrifugal pump 04", label),
+      data: {
+        ...record(recordOneId, "Centrifugal pump 04", label).data,
+        [statusFieldId]: choiceId,
+        [userFieldId]: eligibleUserId,
+      },
+      display_values: {
+        [statusFieldId]: label,
+        [userFieldId]: "Alex Reader",
+      },
+    },
+    {
+      ...record(recordTwoId, "Cooling panel 02", label),
+      data: {
+        ...record(recordTwoId, "Cooling panel 02", label).data,
+        [statusFieldId]: choiceId,
+        [userFieldId]: unavailableUserId,
+      },
+      display_values: {
+        [statusFieldId]: label,
+        [userFieldId]: "Unavailable user",
+      },
+    },
+  ];
+  let recordQueryCount = 0;
+  await page.route("**/api/records/query", async (route) => {
+    recordQueryCount += 1;
+    const request = route.request().postDataJSON() as {
+      definition: QueryDefinition;
+      limit?: number;
+      offset?: number;
+    };
+    const limit = request.limit ?? 25;
+    const offset = request.offset ?? 0;
+    const items = rows
+      .map((row) => ({
+        ...row,
+        display_values: {
+          ...row.display_values,
+          [userFieldId]:
+            row.data[userFieldId] === eligibleUserId && !eligibleUserAvailable
+              ? "Unavailable user"
+              : row.display_values[userFieldId],
+        },
+      }))
+      .slice(offset, offset + limit);
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(pageResponse(items, limit, offset, rows.length)),
+    });
+  });
+
+  await page.goto(
+    "/openview?section=views&module=" + moduleId + "&view=" + viewId,
+  );
+  await expect(page.getByText(label, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Alex Reader", { exact: true })).toBeVisible();
+  const eligibleRecord = page
+    .getByRole("row")
+    .filter({ hasText: "Centrifugal pump 04" });
+  await expect(
+    eligibleRecord.getByText("Alex Reader", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Unavailable user", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(new RegExp(eligibleUserId))).toHaveCount(0);
+  await expect(page.getByText(unavailableUserId, { exact: true })).toHaveCount(
+    0,
+  );
+
+  const filters = await openFilters(page);
+  await filters.getByRole("button", { name: "Add filter" }).click();
+  const filterFields = filters.getByRole("combobox", {
+    name: "Field",
+    exact: true,
+  });
+  await filterFields.nth(0).selectOption(statusFieldId);
+  const choiceValue = filters.getByLabel("Value", { exact: true }).nth(0);
+  await expect(choiceValue.getByRole("option", { name: label })).toBeAttached();
+  const choiceRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    if (url.pathname !== "/api/records/query" || request.method() !== "POST")
+      return false;
+    const body = request.postDataJSON() as { definition: QueryDefinition };
+    return body.definition.filters.some(
+      (filter) =>
+        filter.field_id === statusFieldId && filter.value === choiceId,
+    );
+  });
+  await choiceValue.selectOption(choiceId);
+  const choiceQuery = await choiceRequest;
+  expect(
+    (choiceQuery.postDataJSON() as { definition: QueryDefinition }).definition
+      .filters,
+  ).toContainEqual({
+    field_id: statusFieldId,
+    expected_type: "select",
+    operator: "eq",
+    value: choiceId,
+  });
+
+  await filters.getByRole("button", { name: "Add filter" }).click();
+  await filterFields.nth(1).selectOption(userFieldId);
+  await expect(
+    filters
+      .getByLabel("Condition", { exact: true })
+      .nth(1)
+      .getByRole("option", { name: "is one of", exact: true }),
+  ).toHaveCount(0);
+  await expect.poll(() => assignableUsersRequests).toBeGreaterThan(0);
+  expect(assignableUsersPath).toBe(
+    "/api/modules/" + moduleId + "/assignable-users",
+  );
+  const userValue = filters.getByLabel("Value", { exact: true }).nth(1);
+  await expect(
+    userValue.getByRole("option", { name: "Alex Reader" }),
+  ).toBeAttached();
+  await expect(
+    userValue.getByRole("option", { name: unavailableUserId }),
+  ).toHaveCount(0);
+  const userRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    if (url.pathname !== "/api/records/query" || request.method() !== "POST")
+      return false;
+    const body = request.postDataJSON() as { definition: QueryDefinition };
+    return body.definition.filters.some(
+      (filter) =>
+        filter.field_id === userFieldId && filter.value === eligibleUserId,
+    );
+  });
+  await userValue.selectOption(eligibleUserId);
+  const userQuery = await userRequest;
+  expect(
+    (userQuery.postDataJSON() as { definition: QueryDefinition }).definition
+      .filters,
+  ).toContainEqual({
+    field_id: userFieldId,
+    expected_type: "user",
+    operator: "eq",
+    value: eligibleUserId,
+  });
+  await expect(page.getByText(eligibleUserId, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(unavailableUserId, { exact: true })).toHaveCount(
+    0,
+  );
+  const readsBeforeEligibilityChange = recordQueryCount;
+  eligibleUserAvailable = false;
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "group_access",
+    module_id: moduleId,
+  });
+  await expect
+    .poll(() => recordQueryCount)
+    .toBeGreaterThan(readsBeforeEligibilityChange);
+  await expect(
+    eligibleRecord.getByText("Unavailable user", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    eligibleRecord.getByText("Alex Reader", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    userValue.getByRole("option", {
+      name: "Selected person is not in the current results",
+    }),
+  ).toBeAttached();
+  await captureOpenViewReview(page, "views-select-person-labels");
 });

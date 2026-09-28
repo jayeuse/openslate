@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from uuid import NAMESPACE_URL, uuid5
+
 from app.systems.sandbox.designs.schemas import SandboxDocument
+
+
+def sample_option_id(field_id: str, label: str) -> str:
+    return str(uuid5(NAMESPACE_URL, f"{field_id}:{label}"))
 
 
 def _text(field_id: str, name: str, *, required: bool = False) -> dict[str, object]:
@@ -17,6 +23,7 @@ def _text(field_id: str, name: str, *, required: bool = False) -> dict[str, obje
 
 
 def _status(field_id: str) -> dict[str, object]:
+    options = ("Open", "In progress", "Complete")
     return {
         "id": field_id,
         "name": "Status",
@@ -26,7 +33,10 @@ def _status(field_id: str) -> dict[str, object]:
         "config": {
             "kind": "select",
             "defaultValue": None,
-            "options": ["Open", "In progress", "Complete"],
+            "options": [
+                {"id": sample_option_id(field_id, label), "label": label}
+                for label in options
+            ],
         },
     }
 
@@ -37,7 +47,7 @@ def sample_document() -> SandboxDocument:
     return SandboxDocument.model_validate(
         {
             "kind": "openslate-sandbox",
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "design": {
                 "departments": [
                     {"id": "sample-operations", "name": "Operations", "closed": False},

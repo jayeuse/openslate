@@ -76,6 +76,7 @@ def live_state_digest(
                 str(row.id),
                 str(row.department_id),
                 row.module_name,
+                str(row.title_field_id) if row.title_field_id is not None else None,
                 row.is_deleted,
                 row.updated_at.isoformat(),
             )
@@ -84,6 +85,7 @@ def live_state_digest(
                     Module.id,
                     Module.department_id,
                     Module.module_name,
+                    Module.title_field_id,
                     Module.is_deleted,
                     Module.updated_at,
                 ).order_by(Module.id)

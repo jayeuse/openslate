@@ -123,6 +123,16 @@ import {
   type SandboxViewPreferences,
 } from "../helpers/view-preferences";
 
+const RECORD_TITLE_FIELD_TYPES = new Set([
+  "Text",
+  "Long text",
+  "Email",
+  "URL",
+  "Integer",
+  "Number",
+  "Select",
+]);
+
 function ResponsiveDesignerTabPanel({
   wide,
   pane,
@@ -1000,6 +1010,21 @@ export function Designer({
       return;
     }
     if (editor === "field" && selectedModule) {
+      const fieldType = (canonicalFieldType(type) ?? "Text") as FieldTypeName;
+      const selectOptions =
+        fieldType === "Select"
+          ? options
+              .split(",")
+              .map((entry) => entry.trim())
+              .filter(Boolean)
+              .map((label) => ({ id: crypto.randomUUID(), label }))
+          : undefined;
+      const requestedDefault = value.trim();
+      const defaultValue =
+        fieldType === "Select" && requestedDefault
+          ? (selectOptions?.find((option) => option.label === requestedDefault)
+              ?.id ?? requestedDefault)
+          : value;
       const result = buildField(
         {
           id: uid(),
@@ -1013,10 +1038,11 @@ export function Designer({
         {
           name,
           description: "",
-          type: (canonicalFieldType(type) ?? "Text") as FieldTypeName,
+          type: fieldType,
           required,
-          defaultValue: value,
+          defaultValue,
           options,
+          selectOptions,
           maxLength: "",
           min: "",
           max: "",
@@ -1617,6 +1643,59 @@ export function Designer({
                 </FormField>
               </div>
               <div className="border-border flex flex-col gap-3 border-t pt-4">
+                <FormField>
+                  <FieldLabel htmlFor="sandbox-record-title-field">
+                    Record title field
+                  </FieldLabel>
+                  <NativeSelect
+                    id="sandbox-record-title-field"
+                    className="w-full [&_select]:min-h-10"
+                    value={selectedModule.titleFieldId ?? ""}
+                    disabled={pending}
+                    onChange={(event) => {
+                      const titleFieldId = event.currentTarget.value || null;
+                      void change((previous) => {
+                        if (
+                          !previous.modules.some(
+                            (item) => item.id === selectedModule.id,
+                          )
+                        )
+                          throw new SandboxCommandError(
+                            "This module was deleted. Keep the title field setting open and try again.",
+                          );
+                        return {
+                          ...previous,
+                          modules: previous.modules.map((item) =>
+                            item.id === selectedModule.id
+                              ? { ...item, titleFieldId }
+                              : item,
+                          ),
+                        };
+                      }, `sandbox.design.module-title:${selectedModule.id}`);
+                    }}
+                  >
+                    <NativeSelectOption value="">
+                      Use the Record ID
+                    </NativeSelectOption>
+                    {selectedModule.fields
+                      .filter(
+                        (field) =>
+                          !field.closed &&
+                          RECORD_TITLE_FIELD_TYPES.has(field.type),
+                      )
+                      .map((field) => (
+                        <NativeSelectOption key={field.id} value={field.id}>
+                          {field.name}
+                        </NativeSelectOption>
+                      ))}
+                  </NativeSelect>
+                  <p className="text-muted-foreground text-xs">
+                    Used for Record links in Boards. If blank, links show Record
+                    and the first eight characters of its ID.
+                  </p>
+                </FormField>
+              </div>
+              <div className="border-border flex flex-col gap-3 border-t pt-4">
                 <div className="flex items-center justify-between">
                   <h3
                     data-slot="section-title"
@@ -1643,6 +1722,7 @@ export function Designer({
                       field={f}
                       index={i}
                       count={selectedModule.fields.length}
+                      titleFieldId={selectedModule.titleFieldId ?? null}
                       onSave={(nextField) =>
                         change((previous) => {
                           const currentModule = previous.modules.find(

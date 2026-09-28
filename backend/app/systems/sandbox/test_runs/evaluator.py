@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from math import isfinite
 from typing import cast
 from urllib.parse import urlparse
+from uuid import UUID
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.test_runs.relationships import relationship_routes
@@ -227,7 +228,18 @@ def _value_is_valid(value: TestValue, field: Mapping[str, object]) -> bool:
         )
     if kind == "select":
         options = config.get("options")
-        return isinstance(value, str) and isinstance(options, list) and value in options
+        return (
+            isinstance(value, str)
+            and isinstance(options, list)
+            and any(isinstance(option, Mapping) and option.get("id") == value for option in options)
+        )
+    if kind == "user":
+        if not isinstance(value, str):
+            return False
+        try:
+            return str(UUID(value)) == value
+        except ValueError:
+            return False
     if kind == "date":
         return isinstance(value, str) and _date_is_valid(value, config, is_datetime=False)
     if kind == "datetime":

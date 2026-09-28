@@ -16,6 +16,7 @@ from app.systems.sandbox.test_runs.schemas import (
     SandboxTestRunResponse,
 )
 from tests.rbac.support import _client, make_user
+from tests.sandbox_test_runs.fixtures import option_id
 
 
 def test_tests_are_administrator_only_for_reads_and_writes(monkeypatch) -> None:
@@ -129,7 +130,7 @@ def _request_body() -> dict[str, object]:
     return {
         "expectedRevision": 1,
         "moduleId": "requests",
-        "values": {"priority": "High", "status": "", "score": 0},
+        "values": {"priority": option_id("priority", "High"), "status": "", "score": 0},
         "event": {"kind": "record-created"},
     }
 
@@ -139,11 +140,14 @@ def _response() -> SandboxTestRunResponse:
         id=uuid7(),
         createdAt=datetime.now(UTC),
         documentRevision=1,
-        input={"moduleId": "requests", "values": {"priority": "High", "status": ""}},
+        input={
+            "moduleId": "requests",
+            "values": {"priority": option_id("priority", "High"), "status": ""},
+        },
         event={"kind": "record-created"},
         triggerIds=None,
         result={
-            "values": {"priority": "High", "status": "Triaged"},
+            "values": {"priority": option_id("priority", "High"), "status": "Triaged"},
             "routes": [],
             "triggerTraces": [],
             "issues": [],

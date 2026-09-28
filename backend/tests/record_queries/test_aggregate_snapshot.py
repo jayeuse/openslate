@@ -83,6 +83,7 @@ class _SnapshotFixture:
     date_field_id: UUID
     record_ids: list[UUID]
     department_id: UUID
+    select_ids: dict[str, str]
 
     def grouped_payload(self) -> dict[str, object]:
         return {
@@ -115,6 +116,7 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
     date_field_id = uuid7()
     record_ids = [uuid7(), uuid7()]
     select_values = ["Alpha", "Beta"]
+    select_ids = {label: str(uuid7()) for label in (*select_values, "Missing", "Changed")}
     dimension_key = str(dimension_id)
     date_key = str(date_field_id)
 
@@ -139,7 +141,11 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
             type=FieldType.SELECT,
             position=0,
             required=False,
-            config={"options": [*select_values, "Missing"]},
+            config={
+                "options": [
+                    {"id": option_id, "label": label} for label, option_id in select_ids.items()
+                ]
+            },
         )
         date_field = Field(
             id=date_field_id,
@@ -176,7 +182,7 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
                 Record(
                     id=record_id,
                     module_id=module_id,
-                    data={dimension_key: value, date_key: day},
+                    data={dimension_key: select_ids[value], date_key: day},
                 )
                 for record_id, value, day in zip(
                     record_ids,
@@ -201,6 +207,7 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
         date_field_id=date_field_id,
         record_ids=record_ids,
         department_id=department_id,
+        select_ids=select_ids,
     )
     try:
         yield fixture
@@ -228,9 +235,7 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
             cleanup.execute(
                 text("DELETE FROM public.fields WHERE module_id = :id"), {"id": module_id}
             )
-            cleanup.execute(
-                text("DELETE FROM public.modules WHERE id = :id"), {"id": module_id}
-            )
+            cleanup.execute(text("DELETE FROM public.modules WHERE id = :id"), {"id": module_id})
             cleanup.execute(
                 text("DELETE FROM public.departments WHERE id = :id"),
                 {"id": department_id},
@@ -277,15 +282,21 @@ def test_snapshot_returns_every_group_and_commits_safe_audit_event(
     with Session(snapshot_fixture.engine) as setup:
         dimension = setup.get(Field, snapshot_fixture.dimension_id)
         assert dimension is not None
-        values = [f"Category {index:03}" for index in range(105)]
-        dimension.config = {"options": values}
+        values = [f"Category {index:03}" for index in range(2, 105)]
+        new_options = {label: str(uuid7()) for label in values}
+        dimension.config = {
+            "options": [
+                {"id": option_id, "label": label}
+                for label, option_id in {**snapshot_fixture.select_ids, **new_options}.items()
+            ]
+        }
         setup.add_all(
             [
                 Record(
                     module_id=snapshot_fixture.module_id,
-                    data={str(snapshot_fixture.dimension_id): value},
+                    data={str(snapshot_fixture.dimension_id): new_options[value]},
                 )
-                for value in values[2:]
+                for value in values
             ]
         )
         setup.commit()
@@ -328,7 +339,7 @@ def test_snapshot_returns_a_complete_empty_group_result(
                 "field_id": str(snapshot_fixture.dimension_id),
                 "expected_type": "select",
                 "operator": "eq",
-                "value": "Missing",
+                "value": snapshot_fixture.select_ids["Missing"],
             }
         ],
     }
@@ -411,7 +422,7 @@ def test_snapshot_uses_one_repeatable_read_snapshot_during_concurrent_record_cha
         with Session(snapshot_fixture.engine) as writer:
             record = writer.get(Record, snapshot_fixture.record_ids[0])
             assert record is not None
-            record.data[str(snapshot_fixture.dimension_id)] = "Changed"
+            record.data[str(snapshot_fixture.dimension_id)] = snapshot_fixture.select_ids["Changed"]
             writer.commit()
         return original(snapshot, payload, fields)
 

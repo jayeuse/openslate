@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { parseSandboxDocument } from "../../../src/components/systems/sandbox/domain/document";
 import { SANDBOX_ORGANIZATION_TEMPLATES } from "../../../src/components/systems/sandbox/domain/templates";
 
-test("organization templates are detailed valid v2 baselines", () => {
+test("organization templates are detailed valid v4 baselines", () => {
   expect(SANDBOX_ORGANIZATION_TEMPLATES.map((template) => template.id)).toEqual(
     [
       "inventory-procurement",

@@ -17,6 +17,7 @@ from app.systems.openview.reports.models import Report, ReportRun
 from app.systems.openview.reports.schemas import ReportRecipe
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.display import FieldDisplayResolver
 from app.systems.sandbox.records.export import (
     MAX_BYTES,
     MAX_ROWS,
@@ -175,6 +176,11 @@ def capture_report_snapshot(
             group_field = (
                 fields_by_id[recipe.group_by.field_id] if recipe.group_by is not None else None
             )
+            resolver = FieldDisplayResolver(
+                db,
+                report.module_id,
+                [*fields, *([group_field] if group_field is not None else [])],
+            )
             profile = db.scalar(
                 select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
             )
@@ -243,6 +249,7 @@ def capture_report_snapshot(
                             group_field,
                             profile.timezone,
                             profile.locale,
+                            resolver,
                         )
                     )
                     append_row(summary_row(f"Group: {group_label}"))
@@ -256,6 +263,7 @@ def capture_report_snapshot(
                             field,
                             profile.timezone,
                             profile.locale,
+                            resolver,
                         )
                         for field in fields
                     ]

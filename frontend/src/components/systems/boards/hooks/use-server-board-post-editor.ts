@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiContractError, ApiError } from "@/lib/api";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import {
+  archiveBoardPost,
   createBoardPost,
   listBoardPosts,
   publishBoardPost,
@@ -205,6 +206,13 @@ export function useServerBoardPostEditor({
     current.status === "ready" &&
     access?.edit === true;
   const canManage = access?.manage === true;
+  const canArchiveSelected =
+    canEdit &&
+    current.selected !== null &&
+    current.selected.authorId === actorId &&
+    current.selected.boardId === boardId &&
+    current.selected.status !== "archived" &&
+    current.selected.postRevision !== null;
   const scheduleDirty =
     current.scheduleLocal !== postLocalScheduleValue(current.selected);
   const drafts = canEdit
@@ -639,6 +647,69 @@ export function useServerBoardPostEditor({
     }
   }
 
+  async function archiveSelected() {
+    const selected = current.selected;
+    if (
+      !canArchiveSelected ||
+      current.pending ||
+      attachmentPendingRef.current ||
+      recordLinkPendingRef.current ||
+      current.conflict ||
+      operationPendingRef.current ||
+      dirty(current.form, selected) ||
+      scheduleDirty ||
+      !selected ||
+      selected.postRevision === null
+    )
+      return;
+    const operation = ++mutationSequence.current;
+    operationPendingRef.current = true;
+    setState((previous) =>
+      previous.key === key
+        ? { ...previous, pending: true, error: null, notice: null }
+        : previous,
+    );
+    try {
+      const result = await archiveBoardPost(
+        boardId,
+        selected.id,
+        current.boardRevision,
+        selected.postRevision,
+      );
+      if (operation !== mutationSequence.current) return;
+      selectedRef.current = null;
+      publishKeyRef.current = null;
+      setState((previous) =>
+        previous.key === key
+          ? {
+              ...previous,
+              selected: null,
+              form: null,
+              scheduleLocal: "",
+              scheduleError: null,
+              boardRevision: result.boardRevision,
+              pending: false,
+              conflict: false,
+              error: null,
+              notice: "Post archived.",
+            }
+          : previous,
+      );
+      if (mountedRef.current && activeKeyRef.current === key)
+        onPublished?.(boardId);
+      setRetryKey((value) => value + 1);
+    } catch (error) {
+      if (operation !== mutationSequence.current) return;
+      if (isDenial(error)) selectedRef.current = null;
+      setState((previous) =>
+        previous.key === key ? editorFailure(previous, error) : previous,
+      );
+    } finally {
+      if (operation === mutationSequence.current)
+        operationPendingRef.current = false;
+    }
+  }
+
   function close() {
     if (
       !canEdit ||
@@ -757,6 +828,8 @@ export function useServerBoardPostEditor({
 
   return {
     view,
+    canArchiveSelected,
+    archiveSelected,
     newDraft,
     selectDraft,
     changeForm,

@@ -14,6 +14,7 @@ from app.core.config.development import is_relaxed_development
 from app.systems.access.users.models import User
 from app.systems.sandbox.designs.date_values import parse_datetime
 from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.records.display import FieldDisplayResolver
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query import (
     compile_query,
@@ -109,10 +110,14 @@ def query_grouped_records(
         db.scalar(select(func.count()).select_from(groups_query.order_by(None).subquery())) or 0
     )
     rows = db.execute(groups_query.limit(payload.group_limit).offset(payload.group_offset)).all()
+    resolver = FieldDisplayResolver(db, payload.module_id, fields.values())
+    group_field = fields[payload.group_by.field_id]
     groups = [
         RecordGroup(
             value=_group_value(row.value),
-            label="Unspecified" if row.value is None else _group_value(row.value) or "",
+            label=(
+                "Unspecified" if row.value is None else resolver.label(group_field, row.value)
+            ),
             count=row.count,
         )
         for row in rows
@@ -142,7 +147,7 @@ def query_grouped_records(
         member_rows = db.execute(
             projected_members.limit(payload.limit).offset(payload.offset)
         ).all()
-        items = [projected_record_response(row) for row in member_rows]
+        items = [projected_record_response(row, resolver) for row in member_rows]
         pagination = PaginationMetadata(
             limit=payload.limit,
             offset=payload.offset,

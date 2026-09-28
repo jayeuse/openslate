@@ -13,7 +13,7 @@ OpenSlate is a self-hosted web application installed separately for each client.
 | Browser routes, assets, and 404s | FastAPI static-site delivery |
 | Business API and application authorization | FastAPI with synchronous SQLAlchemy and OpenSlate roles, groups, permissions, and domain policies |
 | Relational database | Supabase Database (PostgreSQL), with separate Supabase-owned and OpenSlate-owned schemas |
-| Application schema | Alembic using the owner connection; the active fresh-install root is `c4ec36fc30cc` |
+| Application schema | Alembic using the owner connection; the active fresh-install root is `089c54b88aa6` |
 | Authentication | Supabase Auth verifies email/password and issues provider sessions and JWTs |
 | Application identity and sessions | FastAPI maps provider subjects to local users and keeps revocable `identity_sessions` |
 | Files | PostgreSQL file metadata; private Supabase Storage `openslate-quarantine` and `openslate-ready` objects, mediated by FastAPI |
@@ -36,7 +36,7 @@ Production uses `infra/supabase/compose.production.yaml` to add the unified Fast
 - The repository contains a per-installation self-hosted Supabase Compose stack for PostgreSQL, Auth, Storage, and Studio, plus OpenSlate's PostgreSQL, Auth, and Storage adapters.
 - Supabase Auth owns password verification, provider tokens, invitations, and password-recovery email actions. FastAPI owns application identity binding, sessions, authorization, and session revocation.
 - Private Supabase Storage buckets and the FastAPI/ClamAV scan path replace the former local-filesystem file adapter. File authorization stays in OpenSlate.
-- Alembic owns only OpenSlate's application schema. Earlier vanilla PostgreSQL revisions are retained as history; the new lineage is for fresh installations and does not import an existing database.
+- Alembic owns only OpenSlate's application schema. The prior Supabase/schema-redesign and vanilla PostgreSQL chains are retained as history; the active root is for fresh installations and does not import an existing database.
 - The OpenSlate event endpoint remains authenticated SSE over PostgreSQL notifications. Supabase Realtime is not part of the current application contract.
 - The selected server target is Linux and Windows with Linux containers. Windows acceptance remains pending; macOS is a workstation platform, not a server target.
 - `/api/ready` reports Database, Auth, Storage, SMTP configuration, and scanner states. Production requires scanner engine health and worker leadership; development/test treats the scanner as optional. These probes do not establish mail delivery, backup integrity, or complete deployment acceptance.

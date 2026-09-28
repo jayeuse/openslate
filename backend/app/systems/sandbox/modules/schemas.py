@@ -9,6 +9,7 @@ class ModuleResponse(BaseModel):
     id: UUID
     department_id: UUID
     module_name: str = Field(min_length=1, max_length=150)
+    title_field_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None

@@ -13,10 +13,12 @@ import {
   listOpenViewSharedReportRuns,
 } from "./reports-api";
 import {
+  listOpenViewAssignableUsers,
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
   listOpenViewSavedViews,
   type OpenViewDataSourceField,
+  type OpenViewAssignableUser,
   type OpenViewPage,
   type OpenViewSavedView,
 } from "./views-api";
@@ -39,6 +41,9 @@ export const openViewKeys = {
   /** Readable departments, which own Dashboards and name data sources. */
   departments: () => ["openview", "catalog", "departments"] as const,
   fields: ["openview", "fields"] as const,
+  assignableUsers: ["openview", "assignable-users"] as const,
+  assignableUsersPage: (moduleId: string, search: string) =>
+    ["openview", "assignable-users", moduleId, { search }] as const,
   fieldsFirstPage: (moduleId: string) =>
     ["openview", "fields", moduleId, "first-page"] as const,
   moduleWorkspaces: ["openview", "module-workspace"] as const,
@@ -181,6 +186,23 @@ export const fieldsFirstPageOptions = (moduleId: string) =>
     enabled: Boolean(moduleId),
   });
 
+export const assignableUsersOptions = (
+  moduleId: string,
+  search: string,
+  enabled = true,
+) =>
+  queryOptions({
+    queryKey: openViewKeys.assignableUsersPage(moduleId, search),
+    queryFn: (): Promise<OpenViewPage<OpenViewAssignableUser>> =>
+      listOpenViewAssignableUsers(moduleId, {
+        limit: CATALOG_PAGE_SIZE,
+        offset: 0,
+        search,
+      }),
+    enabled: Boolean(moduleId) && enabled,
+    staleTime: 0,
+  });
+
 export const moduleWorkspaceOptions = (moduleId: string) =>
   queryOptions({
     queryKey: openViewKeys.moduleWorkspace(moduleId),
@@ -232,13 +254,20 @@ const CATALOG_ENTITIES = new Set([
   "workspace_profiles",
 ]);
 const VIEW_METADATA_ENTITIES = new Set(["saved_views"]);
+const USER_DISPLAY_ENTITIES = new Set([
+  "group_access",
+  "group_members",
+  "groups",
+  "users",
+]);
 
 /** Entities whose change refreshes applied record results in a section. */
 export function invalidatesRecords(entity: string): boolean {
   return (
     entity === "records" ||
     entity === "relationships" ||
-    CATALOG_ENTITIES.has(entity)
+    CATALOG_ENTITIES.has(entity) ||
+    USER_DISPLAY_ENTITIES.has(entity)
   );
 }
 
@@ -249,7 +278,16 @@ export function openViewKeysForEntity(entity: string): QueryKey[] {
       openViewKeys.catalog,
       openViewKeys.fields,
       openViewKeys.moduleWorkspaces,
+      openViewKeys.assignableUsers,
     ];
+  if (
+    entity === "departments" ||
+    entity === "group_access" ||
+    entity === "group_members" ||
+    entity === "groups" ||
+    entity === "users"
+  )
+    return [openViewKeys.assignableUsers];
   if (VIEW_METADATA_ENTITIES.has(entity))
     return [openViewKeys.moduleWorkspaces];
   return [];

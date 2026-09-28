@@ -3,6 +3,7 @@
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.designs.schemas import SandboxDocument, TriggerDocument
@@ -16,8 +17,12 @@ from app.systems.sandbox.record_triggers.models import (
     RecordTriggerAction,
     RecordTriggerCondition,
 )
+from app.systems.sandbox.records.grouping import query_grouped_records
+from app.systems.sandbox.records.query import query_records
+from app.systems.sandbox.records.query_schemas import GroupedRecordQuery, RecordQuery
 from app.systems.sandbox.records.router import create_record
 from app.systems.sandbox.records.schemas import RecordCreate
+from tests.sandbox_designs.fixtures import sample_option_id
 from tests.sandbox_publications.support import (
     binding,
     bound_field,
@@ -28,6 +33,88 @@ from tests.sandbox_publications.support import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+def test_published_select_id_keeps_record_value_when_option_label_changes(
+    integration_owner_db: Session,
+) -> None:
+    payload = publishable_document().model_dump(by_alias=True, mode="json")
+    payload["schemaVersion"] = 4
+    for module in payload["design"]["modules"]:
+        for field in module["fields"]:
+            if field["type"] == "Select":
+                field["config"]["options"] = [
+                    {
+                        "id": str(uuid7()),
+                        "label": option["label"] if isinstance(option, dict) else option,
+                    }
+                    for option in field["config"]["options"]
+                ]
+    request_module = next(
+        module for module in payload["design"]["modules"] if module["id"] == "sample-requests"
+    )
+    request_module["titleFieldId"] = "sample-field-requests-status"
+    status = next(field for field in request_module["fields"] if field["type"] == "Select")
+    option_id = status["config"]["options"][0]["id"]
+    publisher, document = publish_structure(
+        integration_owner_db, SandboxDocument.model_validate(payload)
+    )
+    module = bound_module(integration_owner_db, "sample-requests")
+    status_field = bound_field(
+        integration_owner_db, "field", "sample-requests:sample-field-requests-status"
+    )
+    number_field = bound_field(
+        integration_owner_db, "field", "sample-requests:sample-field-requests-request-number"
+    )
+    assert module.title_field_id == status_field.id
+    record = create_record(
+        RecordCreate(
+            module_id=module.id,
+            data={str(number_field.id): "REQ-SELECT", str(status_field.id): option_id},
+        ),
+        publisher,
+        integration_owner_db,
+    )
+
+    renamed_payload = document.model_dump(by_alias=True, mode="json")
+    renamed_module = next(
+        item for item in renamed_payload["design"]["modules"] if item["id"] == "sample-requests"
+    )
+    renamed_status = next(item for item in renamed_module["fields"] if item["type"] == "Select")
+    renamed_status["config"]["options"][0]["label"] = "Awaiting review"
+    publish_revision(
+        integration_owner_db,
+        publisher,
+        SandboxDocument.model_validate(renamed_payload),
+        "rename-select-option",
+    )
+
+    reference = {"field_id": status_field.id, "expected_type": "select"}
+    query = RecordQuery(
+        module_id=module.id,
+        definition={
+            "columns": [reference],
+            "filters": [{**reference, "operator": "eq", "value": option_id}],
+        },
+    )
+    result = query_records(integration_owner_db, query, reader=publisher)
+    assert [item.id for item in result.items] == [record.id]
+    assert result.items[0].data[str(status_field.id)] == option_id
+    assert result.items[0].display_values[str(status_field.id)] == "Awaiting review"
+    grouped = query_grouped_records(
+        integration_owner_db,
+        GroupedRecordQuery(
+            module_id=module.id,
+            definition={"columns": [reference]},
+            group_by=reference,
+            selected_group={"kind": "value", "value": option_id},
+        ),
+        reader=publisher,
+    )
+    assert [(item.value, item.label, item.count) for item in grouped.groups] == [
+        (option_id, "Awaiting review", 1)
+    ]
+    assert [item.id for item in grouped.items] == [record.id]
 
 
 def test_initial_relationship_is_closed_when_its_target_module_is_closed(
@@ -378,7 +465,10 @@ def _triage_trigger() -> TriggerDocument:
                         "moduleId": "sample-requests",
                         "fieldId": "sample-field-requests-status",
                     },
-                    "value": {"kind": "literal", "value": "Open"},
+                    "value": {
+                        "kind": "literal",
+                        "value": sample_option_id("sample-field-requests-status", "Open"),
+                    },
                 }
             ],
         }

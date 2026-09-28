@@ -21,8 +21,6 @@ from app.systems.access.policy.models import AccessLevel, GroupAccess
 from app.systems.access.policy.schemas import GroupAccessEntry, GroupCreate
 from app.systems.access.policy.service import create_group, group_etag, replace_group_access
 from app.systems.access.users.models import User, UserRole
-from app.systems.boards.models import Board
-from app.systems.boards.placement_router import router as placement_router
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.router import router as workspace_router
@@ -95,7 +93,6 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
         departments_router,
         modules_router,
         fields_router,
-        placement_router,
         workspace_router,
         auth_router,
     ):
@@ -204,37 +201,6 @@ def test_catalog_reads_hide_departments_modules_and_fields_without_a_group(
     assert guest.get(f"/api/departments/{world.department.id}").status_code == 200
     assert guest.get(f"/api/modules/{world.module.id}").status_code == 200
     assert guest.get(f"/api/fields/{world.field.id}").status_code == 200
-
-
-# Board record links
-
-
-def test_board_record_links_need_module_read_and_a_non_guest(world: _World) -> None:
-    boards = {}
-    for user in (world.no_group, world.reader):
-        board = Board(owner_id=user.id, name=f"Links {uuid7().hex[-8:]}")
-        world.db.add(board)
-        boards[user.id] = board
-    world.db.flush()
-
-    hidden = world.client(world.no_group).post(
-        f"/api/boards/{boards[world.no_group.id].id}/placements",
-        json={"revision": 1, "record_id": str(world.record.id)},
-    )
-    assert hidden.status_code == 409
-    assert hidden.json()["detail"]["code"] == "record_unavailable"
-
-    linked = world.client(world.reader).post(
-        f"/api/boards/{boards[world.reader.id].id}/placements",
-        json={"revision": 1, "record_id": str(world.record.id)},
-    )
-    assert linked.status_code == 201
-
-    guest = world.client(world.guest).post(
-        f"/api/boards/{boards[world.reader.id].id}/placements",
-        json={"revision": 2, "record_id": str(world.record.id)},
-    )
-    assert guest.status_code == 403
 
 
 # /auth/me

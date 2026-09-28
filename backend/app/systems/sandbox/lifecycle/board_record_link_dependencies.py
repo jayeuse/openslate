@@ -66,7 +66,6 @@ def load_board_record_link_purge_dependencies(
                 "post_id": link.post_id,
                 "record_id": link.record_id,
                 "module_id": link.module_id,
-                "label": link.label,
             }
         )
         rows.append(state)
@@ -87,7 +86,6 @@ def load_board_record_link_purge_dependencies(
                 "revision_id": link.revision_id,
                 "record_id": link.record_id,
                 "module_id": link.module_id,
-                "label": link.label,
             }
         )
         rows.append(state)

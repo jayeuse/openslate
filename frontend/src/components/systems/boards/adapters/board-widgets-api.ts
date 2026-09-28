@@ -21,6 +21,7 @@ const fieldTypeSchema = z.enum([
   "date",
   "datetime",
   "select",
+  "user",
 ]);
 const operatorSchema = z.enum([
   "eq",

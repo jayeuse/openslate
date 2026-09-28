@@ -3,53 +3,32 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
 
 from app.systems.sandbox.designs.field_validation import (
     DocumentValueError,
     validate_value,
 )
-from app.systems.sandbox.designs.mapping_validation import field_metadata, fields_compatible
+from app.systems.sandbox.designs.mapping_validation import (
+    field_metadata,
+    fields_compatible,
+    title_field_issue,
+)
 from app.systems.sandbox.designs.schemas import (
     DesignField,
     FieldMapping,
     FieldReference,
-    ModuleDocument,
     RelationshipDocument,
     SandboxDocument,
     ScenarioLink,
     TriggerValue,
     ValidationIssue,
 )
-
-
-@dataclass(slots=True)
-class _ValidationIndexes:
-    modules: dict[str, ModuleDocument]
-    fields: dict[str, set[str]]
-    relationships: dict[str, RelationshipDocument]
-    first_modules: dict[str, ModuleDocument]
-    first_fields: dict[tuple[str, str], DesignField]
-    first_relationships: dict[str, RelationshipDocument]
-
-
-def _build_indexes(document: SandboxDocument) -> _ValidationIndexes:
-    modules = {item.id: item for item in document.design.modules}
-    fields = {item.id: {field.id for field in item.fields} for item in document.design.modules}
-    relationships = {item.id: item for item in document.design.relationships}
-    first_modules: dict[str, ModuleDocument] = {}
-    first_fields: dict[tuple[str, str], DesignField] = {}
-    for module in document.design.modules:
-        if module.id not in first_modules:
-            first_modules[module.id] = module
-            for field in module.fields:
-                first_fields.setdefault((module.id, field.id), field)
-    first_relationships: dict[str, RelationshipDocument] = {}
-    for relationship in document.design.relationships:
-        first_relationships.setdefault(relationship.id, relationship)
-    return _ValidationIndexes(
-        modules, fields, relationships, first_modules, first_fields, first_relationships
-    )
+from app.systems.sandbox.designs.validation_indexes import (
+    ValidationIndexes as _ValidationIndexes,
+)
+from app.systems.sandbox.designs.validation_indexes import (
+    build_indexes as _build_indexes,
+)
 
 
 def validate_document(document: SandboxDocument | dict[str, object]) -> list[ValidationIssue]:
@@ -66,6 +45,8 @@ def validate_document(document: SandboxDocument | dict[str, object]) -> list[Val
             issues.append(
                 _issue("module.department_missing", "Module department does not exist", module.id)
             )
+        if title_issue := title_field_issue(module):
+            issues.append(title_issue)
     for relationship in parsed.design.relationships:
         source_fields = indexes.fields.get(relationship.source_module_id, set())
         target_fields = indexes.fields.get(relationship.target_module_id, set())

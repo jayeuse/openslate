@@ -2,7 +2,8 @@ from enum import StrEnum
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -17,6 +18,7 @@ from app.common.listing import (
 from app.core.database import get_db
 from app.systems.access.policy.checks import module_filter
 from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.scope import module_reader_ids
 from app.systems.access.users.models import User
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.modules.schemas import ModuleResponse
@@ -38,6 +40,32 @@ class ModuleListResponse(StandardListResponse[ModuleResponse]):
 
 class ModuleListRequest(StandardListRequest[ModuleSortField]):
     department_id: UUID | None = None
+
+
+class AssignableUserSort(StrEnum):
+    USERNAME = "username"
+    DISPLAY_NAME = "display_name"
+
+
+class AssignableUserResponse(BaseModel):
+    id: UUID
+    display_name: str | None
+    username: str
+
+
+ASSIGNABLE_USER_LIST_SPEC = ListQuerySpec(
+    sort_fields={
+        AssignableUserSort.USERNAME: cast(ColumnElement[Any], User.username),
+        AssignableUserSort.DISPLAY_NAME: cast(ColumnElement[Any], User.display_name),
+    },
+    default_sort=AssignableUserSort.USERNAME,
+    tie_breaker=cast(ColumnElement[Any], User.id),
+    search_fields=(
+        cast(ColumnElement[str], User.username),
+        cast(ColumnElement[str], User.display_name),
+    ),
+    deleted_field=cast(ColumnElement[bool], User.is_deleted),
+)
 
 
 MODULE_LIST_SPEC = ListQuerySpec(
@@ -92,3 +120,34 @@ def get_module(
     db: Annotated[Session, Depends(get_db)],
 ) -> Module:
     return _module(db, user, module_id)
+
+
+@router.get(
+    "/{module_id}/assignable-users",
+    response_model=StandardListResponse[AssignableUserResponse],
+)
+def list_assignable_users(
+    module_id: UUID,
+    user: ModuleReadUser,
+    db: Annotated[Session, Depends(get_db)],
+    params: Annotated[StandardListRequest[AssignableUserSort], Query()],
+    response: Response,
+) -> StandardListResponse[AssignableUserResponse]:
+    module = _module(db, user, module_id)
+    if module.is_deleted or module.deleted_at is not None:
+        raise _not_found()
+    reader_ids = module_reader_ids(db, module_id)
+    statement = select(User).where(User.id.in_(reader_ids))
+    result = execute_standard_list(db, statement, params, ASSIGNABLE_USER_LIST_SPEC)
+    response.headers["Cache-Control"] = "private, no-store"
+    return StandardListResponse(
+        items=[
+            AssignableUserResponse(
+                id=item.id,
+                display_name=item.display_name,
+                username=item.username,
+            )
+            for item in result.items
+        ],
+        pagination=result.pagination,
+    )

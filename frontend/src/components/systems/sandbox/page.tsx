@@ -25,7 +25,7 @@ import {
 } from "./domain/validation";
 import {
   SANDBOX_DOCUMENT_SCHEMA_VERSION,
-  type SandboxDocumentV3,
+  type SandboxDocumentV4,
 } from "./domain/document";
 import type { SandboxOrganizationTemplate } from "./domain/templates";
 import { openingModuleId } from "./domain/opening-module";
@@ -93,7 +93,7 @@ const LEGACY_SECTION_ALIASES: Readonly<Record<string, SandboxSection>> = {
 };
 type SandboxSection = (typeof SANDBOX_SECTIONS)[keyof typeof SANDBOX_SECTIONS];
 type Conflict = {
-  proposedDocument: SandboxDocumentV3;
+  proposedDocument: SandboxDocumentV4;
   reason: "conflict" | "save-failed";
 };
 
@@ -165,7 +165,7 @@ function publishStatus(
   return { label: "Draft saved", publishable: true };
 }
 
-function emptyDocument(): SandboxDocumentV3 {
+function emptyDocument(): SandboxDocumentV4 {
   return {
     kind: "openslate-sandbox",
     schemaVersion: SANDBOX_DOCUMENT_SCHEMA_VERSION,
@@ -474,7 +474,7 @@ export default function SandboxPage() {
     [],
   );
   const saveDocument = useCallback(
-    async (document: SandboxDocumentV3) => {
+    async (document: SandboxDocumentV4) => {
       if (!session) throw new Error("Sandbox is still loading.");
       const result = await persist({ ...session, document }, document);
       if (!result.ok) throw new Error(result.error);
@@ -588,7 +588,7 @@ export default function SandboxPage() {
   );
   const importFile = useCallback(
     async (
-      bundle: SandboxDocumentV3,
+      bundle: SandboxDocumentV4,
     ): Promise<SandboxCommandResult<unknown>> => {
       if (!session) return sandboxStillLoading();
       setPending(true);
@@ -600,7 +600,7 @@ export default function SandboxPage() {
         setSession(openSandboxDocumentSession(response));
         await refreshVersions();
         navigate("Build", false, true);
-        setMessage("Shared Sandbox replaced from the v2 JSON bundle.");
+        setMessage("Shared Sandbox replaced from the v4 JSON bundle.");
         return { ok: true, value: response.document };
       } catch (error) {
         return commandFailure(error);

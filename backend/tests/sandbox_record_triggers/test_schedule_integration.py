@@ -26,6 +26,7 @@ from tests.sandbox_record_triggers.support import (
     DocumentBaseline,
     cleanup_committed_trigger,
     document_baseline,
+    option_id,
     publish_trigger,
     schedule_trigger,
 )
@@ -49,7 +50,7 @@ def test_schedule_freezes_upper_bound_and_completes_more_than_one_chunk(
             module_id=module.id,
             data={
                 str(fields["request-number"].id): f"REQ-{index:03d}",
-                str(fields["status"].id): "Complete",
+                str(fields["status"].id): option_id(fields["status"], "Complete"),
             },
         )
         for index in range(101)
@@ -84,7 +85,7 @@ def test_schedule_freezes_upper_bound_and_completes_more_than_one_chunk(
         module_id=module.id,
         data={
             str(fields["request-number"].id): "REQ-LATE",
-            str(fields["status"].id): "Open",
+            str(fields["status"].id): option_id(fields["status"], "Open"),
         },
     )
     integration_owner_db.add(late_record)
@@ -110,7 +111,7 @@ def test_schedule_freezes_upper_bound_and_completes_more_than_one_chunk(
     assert event.schedule_action_count == 0
     assert run is not None
     assert run.details == {"recordsMatched": 101, "actionsApplied": 0}
-    assert late_record.data[str(fields["status"].id)] == "Open"
+    assert late_record.data[str(fields["status"].id)] == option_id(fields["status"], "Open")
 
 
 def test_two_sessions_dedupe_schedule_and_claim_one_event() -> None:

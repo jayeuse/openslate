@@ -135,12 +135,27 @@ def field_config(field_type: FieldType, config: dict[str, Any]) -> dict[str, Any
             or not options
         ):
             raise ValueError("Select fields require a non-empty options list")
-        if any(not isinstance(option, str) or not option.strip() for option in options):
-            raise ValueError("Select options must be non-empty strings")
-        if len(options) != len(set(options)):
-            raise ValueError("Select options must be unique")
+        option_ids: list[str] = []
+        labels: list[str] = []
+        for option in options:
+            if not isinstance(option, dict) or set(option) != {"id", "label"}:
+                raise ValueError("Select options need IDs and labels")
+            option_id, label = option["id"], option["label"]
+            if not isinstance(option_id, str) or not isinstance(label, str) or not label.strip():
+                raise ValueError("Select option IDs and labels must be non-empty strings")
+            try:
+                if str(UUID(option_id)) != option_id:
+                    raise ValueError
+            except ValueError as error:
+                raise ValueError("Select option IDs must be canonical UUIDs") from error
+            if len(label) > 100:
+                raise ValueError("Select option labels may have at most 100 characters")
+            option_ids.append(option_id)
+            labels.append(label)
+        if len(option_ids) != len(set(option_ids)) or len(labels) != len(set(labels)):
+            raise ValueError("Select option IDs and labels must be unique")
         default = config.get("defaultValue")
-        if default is not None and default not in options:
+        if default is not None and default not in option_ids:
             raise ValueError("Select defaultValue must be one of the configured options")
     elif field_type in {FieldType.NUMBER, FieldType.INTEGER}:
         return _numeric_config(field_type, config)
@@ -381,8 +396,23 @@ def _validate_date_bounds(value: str, field: Field, *, datetime_values: bool) ->
 
 def _validate_select(value: Any, field: Field) -> str:
     options = field.config.get("options")
-    if not isinstance(value, str) or not isinstance(options, list) or value not in options:
+    if (
+        not isinstance(value, str)
+        or not isinstance(options, list)
+        or value not in {option.get("id") for option in options if isinstance(option, dict)}
+    ):
         raise ValueError(f"Field {field.id} must be one of the configured options")
+    return value
+
+
+def _validate_user(value: Any, field: Field) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"Field {field.id} must be a user ID")
+    try:
+        if str(UUID(value)) != value:
+            raise ValueError
+    except ValueError as error:
+        raise ValueError(f"Field {field.id} must be a user ID") from error
     return value
 
 
@@ -420,6 +450,7 @@ FIELD_VALIDATORS: dict[FieldType, FieldValidator] = {
     FieldType.DATE: _validate_date,
     FieldType.DATETIME: _validate_datetime,
     FieldType.SELECT: _validate_select,
+    FieldType.USER: _validate_user,
     FieldType.RELATIONSHIP: _validate_relationship,
 }
 

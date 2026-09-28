@@ -105,7 +105,10 @@ function defaultLiteral(
   field: SandboxDocumentField | undefined,
 ): SandboxValueSource {
   if (!field) return { kind: "literal", value: "" };
-  return { kind: "literal", value: field.config.defaultValue };
+  return {
+    kind: "literal",
+    value: field.config.kind === "user" ? null : field.config.defaultValue,
+  };
 }
 
 function firstOpenModule(design: SandboxDocumentDesign): string {
@@ -168,8 +171,8 @@ export function sandboxFieldsAreDirectionallyCompatible(
   if (sourceKind === "select") {
     if (targetKind !== "select") return false;
     const targetOptions = target.config.options;
-    return source.config.options.every((value) =>
-      targetOptions.includes(value),
+    return source.config.options.every((option) =>
+      targetOptions.some((candidate) => candidate.label === option.label),
     );
   }
   if (sourceKind === "number" || sourceKind === "integer") {
@@ -409,7 +412,7 @@ export function validateFieldLiteral(
   if (
     config.kind === "select" &&
     typeof value === "string" &&
-    !config.options.includes(value)
+    !config.options.some((option) => option.id === value)
   )
     return `${field.name} must use a configured option.`;
   return null;

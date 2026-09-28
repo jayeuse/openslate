@@ -15,6 +15,7 @@ from app.core.database.session import AuditSession
 from app.systems.access.policy.models import GroupMember
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
+from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.reports.report_run_support import _RunFixture as _RunFixture
@@ -88,9 +89,68 @@ def test_manual_report_run_freezes_grouped_csv_and_replays_key(
         assert (
             observer.scalar(
                 select(func.count()).select_from(ReportRunRow).where(ReportRunRow.run_id == run_id)
-            )
-            == 3
         )
+        == 3
+    )
+
+
+def test_report_capture_resolves_current_select_label_and_freezes_each_run(
+    report_run_fixture: _RunFixture,
+) -> None:
+    fixture = report_run_fixture
+    option_id = str(uuid7())
+    with AuditSession(fixture.owner_engine) as writer:
+        writer.info[AUDIT_CONTEXT_KEY] = AuditContext(
+            performed_by=fixture.owner_id,
+            request_id=uuid7(),
+            request_method="PATCH",
+            request_path="/api/report-run-test/select-label",
+        )
+        field = writer.get(Field, fixture.note_field_id)
+        report = writer.get(Report, fixture.report_id)
+        assert field is not None and report is not None
+        field.type = FieldType.SELECT
+        field.config = {"options": [{"id": option_id, "label": "Needs review"}]}
+        recipe = dict(report.recipe)
+        recipe["fields"] = [
+            {**reference, "expected_type": "select"}
+            if reference["field_id"] == str(field.id)
+            else reference
+            for reference in recipe["fields"]
+        ]
+        report.recipe = recipe
+        for record in writer.scalars(select(Record).where(Record.module_id == fixture.module_id)):
+            record.data = {**record.data, str(field.id): option_id}
+        writer.commit()
+
+    path = f"/api/reports/{fixture.report_id}/runs"
+    first = fixture.client.post(path, headers=fixture.headers(key=uuid7()))
+    assert first.status_code == 201, first.text
+    first_csv = fixture.client.get(f"{path}/{first.json()['id']}/csv", headers=fixture.headers())
+    assert first_csv.status_code == 200
+    assert "Needs review" in first_csv.text and option_id not in first_csv.text
+
+    with AuditSession(fixture.owner_engine) as writer:
+        writer.info[AUDIT_CONTEXT_KEY] = AuditContext(
+            performed_by=fixture.owner_id,
+            request_id=uuid7(),
+            request_method="PATCH",
+            request_path="/api/report-run-test/select-rename",
+        )
+        field = writer.get(Field, fixture.note_field_id)
+        assert field is not None
+        field.config = {"options": [{"id": option_id, "label": "Ready for review"}]}
+        writer.commit()
+    second = fixture.client.post(path, headers=fixture.headers(key=uuid7()))
+    assert second.status_code == 201, second.text
+    second_csv = fixture.client.get(
+        f"{path}/{second.json()['id']}/csv", headers=fixture.headers()
+    )
+    assert second_csv.status_code == 200
+    assert "Ready for review" in second_csv.text and option_id not in second_csv.text
+    assert fixture.client.get(
+        f"{path}/{first.json()['id']}/csv", headers=fixture.headers()
+    ).content == first_csv.content
 
 
 def test_every_non_guest_module_reader_runs_a_report_and_a_guest_cannot(

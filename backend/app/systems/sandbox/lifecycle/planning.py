@@ -93,6 +93,23 @@ def plan_lifecycle(
         "records": {row.entity_id for row in rows if row.entity_type == "records"},
     }
     purge_blockers: list[LifecycleBlocker] = []
+    if resolved_target is LifecycleTargetType.FIELD and resolved_operation in {
+        LifecycleOperation.CLOSE,
+        LifecycleOperation.PURGE,
+    }:
+        selected_field = scope.fields[0]
+        parent_module = db.get(Module, selected_field.module_id)
+        if parent_module is not None and parent_module.title_field_id == selected_field.id:
+            purge_blockers.append(
+                LifecycleBlocker(
+                    code=LifecycleBlockerCode.TITLE_FIELD_SELECTED,
+                    entity_type="fields",
+                    entity_id=selected_field.id,
+                    detail="Change this module's title field before closing or purging it",
+                    field_id=selected_field.id,
+                    module_id=parent_module.id,
+                )
+            )
     dependency_ids: dict[str, tuple[UUID, ...]] = {}
     if resolved_operation is LifecycleOperation.PURGE:
         dependencies = load_purge_dependencies(db, scope, resolved_target)

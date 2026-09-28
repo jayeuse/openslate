@@ -5,7 +5,9 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from uuid6 import uuid7
 
+from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.test_runs.evaluator import (
     _date_is_valid,
     _departments,
@@ -16,7 +18,82 @@ from app.systems.sandbox.test_runs.evaluator import (
     _value_is_valid,
     evaluate_test,
 )
-from tests.sandbox_test_runs.fixtures import document_payload, sandbox_document
+from tests.sandbox_test_runs.fixtures import document_payload, option_id, sandbox_document
+
+
+def test_select_relationship_mapping_translates_independent_ids_by_shared_label() -> None:
+    source_id, target_id = str(uuid7()), str(uuid7())
+    document = SandboxDocument.model_validate(
+        {
+            "kind": "openslate-sandbox",
+            "schemaVersion": 4,
+            "design": {
+                "departments": [{"id": "department", "name": "Department"}],
+                "modules": [
+                    {
+                        "id": "source",
+                        "departmentId": "department",
+                        "name": "Source",
+                        "fields": [
+                            {
+                                "id": "choice",
+                                "name": "Choice",
+                                "type": "Select",
+                                "config": {
+                                    "kind": "select",
+                                    "options": [{"id": source_id, "label": "Shared"}],
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "id": "target",
+                        "departmentId": "department",
+                        "name": "Target",
+                        "fields": [
+                            {
+                                "id": "choice-copy",
+                                "name": "Choice copy",
+                                "type": "Select",
+                                "config": {
+                                    "kind": "select",
+                                    "options": [{"id": target_id, "label": "Shared"}],
+                                },
+                            }
+                        ],
+                    },
+                ],
+                "relationships": [
+                    {
+                        "id": "link",
+                        "name": "Link",
+                        "sourceModuleId": "source",
+                        "targetModuleId": "target",
+                        "cardinality": "one-to-many",
+                        "fieldMappings": [
+                            {"sourceFieldId": "choice", "targetFieldId": "choice-copy"}
+                        ],
+                    }
+                ],
+                "layout": {},
+            },
+            "triggers": [],
+            "scenarios": [],
+        }
+    )
+
+    result = evaluate_test(
+        document=document,
+        module_id="source",
+        values={"choice": source_id},
+        event={"kind": "record-created"},
+        trigger_ids=None,
+    )
+
+    assert result.issues == ()
+    assert len(result.routes) == 1
+    assert target_id in result.routes[0].detail
+    assert source_id not in result.routes[0].detail
 
 
 def test_enabled_triggers_apply_in_priority_order_without_mutating_document() -> None:
@@ -25,12 +102,16 @@ def test_enabled_triggers_apply_in_priority_order_without_mutating_document() ->
     result = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": "", "score": 0},
+        values={"priority": option_id("priority", "High"), "status": "", "score": 0},
         event={"kind": "record-created"},
         trigger_ids=None,
     )
     assert document.model_dump(by_alias=True, mode="json") == original
-    assert result.values == {"priority": "High", "status": "Triaged", "score": 10}
+    assert result.values == {
+        "priority": option_id("priority", "High"),
+        "status": "Triaged",
+        "score": 10,
+    }
     assert [trace.trigger_id for trace in result.trigger_traces] == [
         "mark-high",
         "copy-triaged",
@@ -54,14 +135,14 @@ def test_threshold_requires_a_crossing_from_previous_to_current_value() -> None:
     crossed = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "score": 5},
+        values={"priority": option_id("priority", "Low"), "score": 5},
         event={"kind": "threshold-crossed", "fieldId": "score", "previousValue": 4},
         trigger_ids=None,
     )
     already_met = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "score": 6},
+        values={"priority": option_id("priority", "Low"), "score": 6},
         event={"kind": "threshold-crossed", "fieldId": "score", "previousValue": 5},
         trigger_ids=None,
     )
@@ -106,7 +187,7 @@ def test_datetime_thresholds_compare_temporary_values_as_instants() -> None:
         document=document,
         module_id="requests",
         values={
-            "priority": "Low",
+            "priority": option_id("priority", "Low"),
             "status": "",
             "due-at": "2025-01-01T01:00:00+02:00",
         },
@@ -148,14 +229,14 @@ def test_selected_and_disabled_triggers_are_handled_without_running_disabled_act
     all_enabled = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": "", "score": 0},
+        values={"priority": option_id("priority", "High"), "status": "", "score": 0},
         event={"kind": "record-created"},
         trigger_ids=None,
     )
     explicit = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": "", "score": 0},
+        values={"priority": option_id("priority", "High"), "status": "", "score": 0},
         event={"kind": "record-created"},
         trigger_ids=["copy-triaged", "mark-high"],
     )
@@ -181,14 +262,14 @@ def test_field_change_triggers_match_only_the_selected_field() -> None:
     changed = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": ""},
+        values={"priority": option_id("priority", "High"), "status": ""},
         event={"kind": "field-changed", "fieldId": "priority"},
         trigger_ids=["mark-high"],
     )
     wrong_field = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": ""},
+        values={"priority": option_id("priority", "High"), "status": ""},
         event={"kind": "field-changed", "fieldId": "status"},
         trigger_ids=["mark-high"],
     )
@@ -207,14 +288,14 @@ def test_relationship_projection_and_unsupported_actions_report_issues() -> None
             "id": "change-target",
             "kind": "set-field",
             "target": {"moduleId": "equipment", "fieldId": "priority-copy"},
-            "value": {"kind": "literal", "value": "High"},
+            "value": {"kind": "literal", "value": option_id("priority-copy", "High")},
         },
     ]
     document = type(sandbox_document()).model_validate(payload)
     result = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": "", "score": 0},
+        values={"priority": option_id("priority", "High"), "status": "", "score": 0},
         event={"kind": "record-created"},
         trigger_ids=["mark-high"],
     )
@@ -242,7 +323,7 @@ def test_huge_integer_survives_validation_and_relationship_projection() -> None:
     result = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "score": value},
+        values={"priority": option_id("priority", "Low"), "score": value},
         event={"kind": "record-created"},
         trigger_ids=None,
     )
@@ -262,7 +343,8 @@ def test_defensive_value_helpers_cover_every_supported_temporary_input_type() ->
     assert _value_is_valid(True, field("checkbox"))
     assert _value_is_valid(4, field("integer", min=0, max=8, step=2))
     assert _value_is_valid(4.5, field("number"))
-    assert _value_is_valid("Open", field("select", options=["Open"]))
+    option = option_id("choice", "Open")
+    assert _value_is_valid(option, field("select", options=[{"id": option, "label": "Open"}]))
     assert _value_is_valid("2026-09-21", field("date"))
     assert _value_is_valid("2026-09-21T09:00:00Z", field("datetime"))
     assert not _value_is_valid("value", field("unknown"))

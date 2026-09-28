@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
 from app.systems.boards.models import Board, BoardGroup, BoardWidget
@@ -161,10 +162,43 @@ def test_managers_export_and_administrators_duplicate_every_widget(
     db = integration_owner_db
     administrator, manager, writer, outsider = admin(db), member(db), member(db), member(db)
     department, module, field = _source(db)
+    option_id = str(uuid7())
+    status_field = Field(
+        module_id=module.id,
+        name="Status",
+        type=FieldType.SELECT,
+        position=1,
+        config={"options": [{"id": option_id, "label": "Open"}]},
+    )
+    assignee_field = Field(
+        module_id=module.id,
+        name="Assignee",
+        type=FieldType.USER,
+        position=2,
+        config={},
+    )
+    db.add_all((status_field, assignee_field))
+    db.flush()
     board = project_board(db, "Source", description="Private guidance")
     grant(db, board, [manager], AccessLevel.MANAGE)
     grant(db, board, [writer], AccessLevel.WRITE)
     for position, name in enumerate(("First", "Second")):
+        config = _config(field)
+        config["fields"].append({"field_id": str(assignee_field.id), "expected_type": "user"})
+        config["filters"] = [
+            {
+                "field_id": str(status_field.id),
+                "expected_type": "select",
+                "operator": "eq",
+                "value": option_id,
+            },
+            {
+                "field_id": str(assignee_field.id),
+                "expected_type": "user",
+                "operator": "empty",
+                "value": None,
+            },
+        ]
         db.add(
             BoardWidget(
                 board_id=board.id,
@@ -172,7 +206,7 @@ def test_managers_export_and_administrators_duplicate_every_widget(
                 name=name,
                 widget_type="records",
                 module_id=module.id,
-                config=_config(field),
+                config=config,
             )
         )
     db.commit()
@@ -194,6 +228,16 @@ def test_managers_export_and_administrators_duplicate_every_widget(
         "First",
         "Second",
     ]
+    assert all(
+        widget["config"]["filters"][0]["value"] == "Open"
+        for widget in payload["configuration"]["widgets"]
+    )
+    assert all(
+        widget["config"]["fields"][1] == {"name": "Assignee", "expected_type": "user"}
+        and widget["config"]["filters"][1]["value"] is None
+        for widget in payload["configuration"]["widgets"]
+    )
+    assert option_id not in exported.text
     assert str(field.id) not in exported.text and str(module.id) not in exported.text
 
     set_audit_actor(db, administrator.id)
@@ -205,12 +249,88 @@ def test_managers_export_and_administrators_duplicate_every_widget(
     assert copied_board.scope == "project"
     copied = db.scalars(select(BoardWidget).where(BoardWidget.board_id == duplicate_id)).all()
     assert sorted(item.name for item in copied) == ["First", "Second"]
+    assert all(item.config["filters"][0]["value"] == option_id for item in copied)
+    assert all(
+        item.config["fields"][1]
+        == {
+            "field_id": str(assignee_field.id),
+            "expected_type": "user",
+        }
+        and item.config["filters"][1]["value"] is None
+        for item in copied
+    )
     assert (
         db.scalar(
             select(func.count()).select_from(BoardGroup).where(BoardGroup.board_id == duplicate_id)
         )
         == 0
     )
+
+
+@pytest.mark.integration
+def test_valued_person_filters_fail_board_bundle_export_and_import(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    administrator, manager = admin(db), member(db)
+    department, module, label_field = _source(db)
+    assignee_field = Field(
+        module_id=module.id,
+        name="Assignee",
+        type=FieldType.USER,
+        position=1,
+        config={},
+    )
+    db.add(assignee_field)
+    db.flush()
+    board = project_board(db, "Person filter source")
+    grant(db, board, [manager], AccessLevel.MANAGE)
+    widget_config = _config(label_field)
+    widget_config["filters"] = [
+        {
+            "field_id": str(assignee_field.id),
+            "expected_type": "user",
+            "operator": "eq",
+            "value": str(administrator.id),
+        }
+    ]
+    db.add(
+        BoardWidget(
+            board_id=board.id,
+            position=0,
+            name="Assigned records",
+            widget_type="records",
+            module_id=module.id,
+            config=widget_config,
+        )
+    )
+    db.commit()
+    before_boards = db.scalar(select(func.count()).select_from(Board))
+
+    for response in (
+        client(db, manager, router).get(f"/api/boards/{board.id}/configuration"),
+        client(db, administrator, router).post(f"/api/boards/{board.id}/duplicate"),
+    ):
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"]["code"] == "board_bundle_invalid"
+        assert "Person filter values cannot be transferred" in response.json()["detail"]["message"]
+
+    bundle = _bundle(department)
+    widget = bundle["configuration"]["widgets"][0]
+    widget["config"]["fields"].append({"name": "Assignee", "expected_type": "user"})
+    widget["config"]["filters"] = [
+        {
+            "name": "Assignee",
+            "expected_type": "user",
+            "operator": "eq",
+            "value": str(administrator.id),
+        }
+    ]
+    imported = _upload(client(db, administrator, router), bundle)
+    assert imported.status_code == 422, imported.text
+    assert imported.json()["detail"]["code"] == "board_bundle_invalid"
+    assert "Person filter values cannot be transferred" in imported.json()["detail"]["message"]
+    assert db.scalar(select(func.count()).select_from(Board)) == before_boards
 
 
 @pytest.mark.integration

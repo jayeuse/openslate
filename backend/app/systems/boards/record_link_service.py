@@ -24,6 +24,7 @@ from app.systems.boards.record_link_models import (
 )
 from app.systems.platform.files.access import error
 from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.display import record_title
 from app.systems.sandbox.records.models import Record
 
 
@@ -75,7 +76,7 @@ def listed_links(
     view: str,
     limit: int,
     offset: int,
-) -> tuple[list[BoardRecordLink | BoardPostRevisionRecordLink], dict[UUID, UUID]]:
+) -> tuple[list[BoardRecordLink | BoardPostRevisionRecordLink], dict[UUID, tuple[UUID, str]]]:
     board, item = _content(
         db,
         actor,
@@ -118,11 +119,11 @@ def listed_links(
             )
         )
     record_ids = [link.record_id for link in links]
-    active: dict[UUID, UUID] = (
+    active: dict[UUID, tuple[UUID, str]] = (
         {
-            record_id: module_id
-            for record_id, module_id in db.execute(
-                select(Record.id, Record.module_id)
+            record.id: (module.id, record_title(db, record, module))
+            for record, module in db.execute(
+                select(Record, Module)
                 .join(Module, Module.id == Record.module_id)
                 .where(
                     Record.id.in_(record_ids),
@@ -147,11 +148,10 @@ def link_record(
     kind: str,
     content_id: UUID,
     record_id: UUID,
-    label: str,
     *,
     board_revision: int,
     content_revision: int,
-) -> BoardRecordLink:
+) -> tuple[BoardRecordLink, str]:
     board, item = _content(db, actor, board_id, kind, content_id, write=True, lock=True)
     if board.revision != board_revision or item.revision != content_revision:
         raise error("stale_revision", "Board content changed; reload before linking")
@@ -170,13 +170,15 @@ def link_record(
     if existing is not None:
         raise error("record_link_exists", "Record is already linked to this content")
     record = _available_record(db, actor, record_id)
+    module = db.get(Module, record.module_id)
+    assert module is not None
+    title = record_title(db, record, module)
     link = BoardRecordLink(
         board_id=board_id,
         event_id=content_id if kind == "event" else None,
         post_id=content_id if kind == "post" else None,
         record_id=record.id,
         module_id=record.module_id,
-        label=label,
     )
     db.add(link)
     _content_changed(db, board, item)
@@ -185,7 +187,7 @@ def link_record(
     except IntegrityError as exc:
         db.rollback()
         raise error("record_link_invalid", "Record link changed; reload before linking") from exc
-    return link
+    return link, title
 
 
 def unlink_record(

@@ -21,6 +21,7 @@ from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.record_triggers.models import RecordTrigger
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
+from tests.sandbox_designs.fixtures import sample_option_id
 from tests.sandbox_publications.support import actor, publishable_document
 
 pytestmark = pytest.mark.integration
@@ -104,7 +105,10 @@ def test_relationship_scoped_trigger_blocks_publish_without_live_writes(
                             "fieldId": "sample-field-requests-status",
                             "relationshipId": "sample-uses",
                         },
-                        "value": {"kind": "literal", "value": "Open"},
+                        "value": {
+                            "kind": "literal",
+                            "value": sample_option_id("sample-field-requests-status", "Open"),
+                        },
                     }
                 ],
             }

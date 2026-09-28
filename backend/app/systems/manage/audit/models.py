@@ -36,6 +36,7 @@ class AuditLog(Base):
             name="ck_audit_logs_action",
         ),
         Index("ix_audit_logs_created_at_id", "created_at", "id"),
+        Index("ix_audit_logs_department_created_at_id", "department_id", "created_at", "id"),
         Index("ix_audit_logs_entity", "entity_type", "entity_id", "created_at"),
         Index("ix_audit_logs_actor", "performed_by", "created_at"),
         Index("ix_audit_logs_request", "request_id"),
@@ -54,6 +55,7 @@ class AuditLog(Base):
     action: Mapped[AuditAction] = mapped_column(String(50), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
     entity_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)
+    department_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)
     before: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     after: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     request_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)

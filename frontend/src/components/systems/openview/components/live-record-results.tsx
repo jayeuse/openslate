@@ -16,6 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { LiveRecordCards } from "./live-record-cards";
+import { openViewRecordFieldValue } from "../domain/record-display";
 
 type RecordPage = {
   rows: readonly OpenViewRecord[];
@@ -142,10 +143,10 @@ export function LiveRecordResults({
                         className="text-primary focus-visible:ring-ring min-h-11 text-left font-medium underline-offset-4 hover:underline focus-visible:ring-2"
                         onClick={() => onOpenRecord(row.id)}
                       >
-                        {recordValue(row.data[field.id])}
+                        {recordValue(openViewRecordFieldValue(row, field))}
                       </button>
                     ) : (
-                      recordValue(row.data[field.id])
+                      recordValue(openViewRecordFieldValue(row, field))
                     )}
                   </TableCell>
                 ))}

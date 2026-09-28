@@ -474,7 +474,12 @@ test("source chooser reads active OpenView catalog page rather than accepting a 
     return Promise.resolve(
       Response.json({
         items: [
-          { id: moduleId, name: "Accepted source", department_id: otherId },
+          {
+            id: moduleId,
+            name: "Accepted source",
+            department_id: otherId,
+            title_field_id: null,
+          },
         ],
         pagination: {
           limit: 100,

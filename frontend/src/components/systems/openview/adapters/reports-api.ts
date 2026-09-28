@@ -32,6 +32,7 @@ const fieldTypeSchema = z.enum([
   "date",
   "datetime",
   "select",
+  "user",
 ]);
 
 const fieldReferenceSchema = z

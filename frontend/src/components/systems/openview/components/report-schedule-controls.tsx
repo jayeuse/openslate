@@ -116,6 +116,16 @@ function formatUtc(value: string): string {
   }).format(new Date(value))} UTC`;
 }
 
+function scheduleSummary(schedule: OpenViewReportSchedule): string {
+  const cadence =
+    schedule.cadence === "weekly"
+      ? `Weekly on ${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][schedule.weekday ?? 0]}`
+      : schedule.cadence === "monthly"
+        ? `Monthly on day ${schedule.monthDay}`
+        : "Daily";
+  return `${schedule.enabled ? "" : "Paused · "}${cadence} at ${schedule.localTime} (${schedule.timezoneName})`;
+}
+
 function policySignature(draft: ReportScheduleDraft): string {
   try {
     return JSON.stringify(reportSchedulePolicyFrom(draft));
@@ -287,8 +297,9 @@ export function ReportScheduleControls({
       <CardHeader>
         <CardTitle>Schedule</CardTitle>
         <CardDescription>
-          Choose a local wall-clock time for future runs. The server determines
-          the next due time.
+          {canManage
+            ? "Choose a local time for future runs. The server determines the next due time."
+            : "Read the saved schedule and its next run."}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -357,10 +368,12 @@ export function ReportScheduleControls({
               </p>
             )}
             {!canManage ? (
-              <p className="text-muted-foreground text-sm">
-                Only a manager of this department changes the schedule.
-                Scheduled runs are shared with everyone who can read the data.
-              </p>
+              <div className="text-muted-foreground space-y-1 text-sm">
+                <p>
+                  {schedule ? scheduleSummary(schedule) : "No saved schedule."}
+                </p>
+                <p>Only a manager of this module changes the schedule.</p>
+              </div>
             ) : disabledReason ? (
               <p className="text-muted-foreground text-sm">{disabledReason}</p>
             ) : null}
@@ -369,6 +382,11 @@ export function ReportScheduleControls({
                 onSubmit={(event) => void save(event)}
                 className="flex flex-col gap-4"
               >
+                <p className="text-muted-foreground text-sm">
+                  Scheduled runs use workspace access. People who could read
+                  this report’s module when a run was created can open that
+                  output while they still have access.
+                </p>
                 <Field className="min-h-11 flex-row items-center gap-3">
                   <Checkbox
                     id={`report-schedule-enabled-${reportId}`}

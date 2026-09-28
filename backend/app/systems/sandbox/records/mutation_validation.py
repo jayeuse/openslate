@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy.orm import Session
+
+from app.systems.access.policy.scope import module_reader_ids
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import parse_field_key, validate_field_value
 
@@ -176,3 +179,44 @@ def validate_record_mutation(
     merged = {key: value for key, value in current_data.items() if key in closed_keys}
     merged.update(normalized_active)
     return merged
+
+
+def validate_live_user_assignments(
+    db: Session,
+    module_id: UUID,
+    data: dict[str, Any],
+    fields: list[Field],
+) -> None:
+    """Check only explicitly assigned active user values against current access."""
+
+    assignments = [
+        (field, data[str(field.id)])
+        for field in fields
+        if not field.is_deleted
+        and FieldType(field.type) is FieldType.USER
+        and str(field.id) in data
+        and data[str(field.id)] is not None
+    ]
+    if not assignments:
+        return
+    readers = module_reader_ids(db, module_id)
+
+    def eligible(value: Any) -> bool:
+        if not isinstance(value, str):
+            return False
+        try:
+            return UUID(value) in readers
+        except ValueError:
+            return False
+
+    issues = [
+        RecordValidationIssue(
+            code="invalid_field_value",
+            field_id=field.id,
+            message="User must be an active reader of this module",
+        )
+        for field, value in assignments
+        if not eligible(value)
+    ]
+    if issues:
+        raise RecordValidationError(issues[:20], len(issues) > 20)

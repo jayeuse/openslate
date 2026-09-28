@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
 from typing import Any
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy import Engine, delete, func, or_, select, update
 from sqlalchemy.orm import Session
@@ -47,6 +47,18 @@ class DocumentBaseline:
     updated_at: datetime
 
 
+def document_option_id(field_name: str, label: str) -> str:
+    return str(uuid5(NAMESPACE_URL, f"trigger:{field_name}:{label}"))
+
+
+def option_id(field: Field, label: str) -> str:
+    return str(next(option["id"] for option in field.config["options"] if option["label"] == label))
+
+
+def _options(field_name: str, labels: tuple[str, ...]) -> list[dict[str, str]]:
+    return [{"id": document_option_id(field_name, label), "label": label} for label in labels]
+
+
 def document_baseline(db: Session) -> DocumentBaseline:
     row = db.scalar(select(SandboxDocumentRow))
     assert row is not None
@@ -74,35 +86,23 @@ def cleanup_committed_trigger(
     with engine.begin() as connection:
         event_ids = list(
             connection.scalars(
-                select(RecordTriggerEvent.id).where(
-                    RecordTriggerEvent.module_id == module_id
-                )
+                select(RecordTriggerEvent.id).where(RecordTriggerEvent.module_id == module_id)
             )
         )
         connection.execute(
-            delete(RecordTriggerRun).where(
-                RecordTriggerRun.trigger_id == definition_id
-            )
+            delete(RecordTriggerRun).where(RecordTriggerRun.trigger_id == definition_id)
         )
         connection.execute(
             delete(RecordTriggerEvent).where(RecordTriggerEvent.module_id == module_id)
         )
         connection.execute(delete(SandboxBinding).where(SandboxBinding.performed_by == actor_id))
         connection.execute(
-            delete(RecordTriggerAction).where(
-                RecordTriggerAction.trigger_id == definition_id
-            )
+            delete(RecordTriggerAction).where(RecordTriggerAction.trigger_id == definition_id)
         )
         connection.execute(
-            delete(RecordTriggerCondition).where(
-                RecordTriggerCondition.trigger_id == definition_id
-            )
+            delete(RecordTriggerCondition).where(RecordTriggerCondition.trigger_id == definition_id)
         )
-        connection.execute(
-            delete(RecordTrigger).where(
-                RecordTrigger.id == definition_id
-            )
-        )
+        connection.execute(delete(RecordTrigger).where(RecordTrigger.id == definition_id))
         connection.execute(
             delete(SandboxPublication).where(SandboxPublication.actor_id == actor_id)
         )
@@ -166,9 +166,9 @@ def publish_trigger(
     initial = read_document(db)
     if triggers is not None and record_trigger is not None:
         raise ValueError("Pass either trigger or triggers")
-    selected_triggers = list(triggers) if triggers is not None else [
-        record_trigger or field_change_trigger()
-    ]
+    selected_triggers = (
+        list(triggers) if triggers is not None else [record_trigger or field_change_trigger()]
+    )
     if not selected_triggers:
         raise ValueError("At least one trigger is required")
     selected = selected_triggers[0]
@@ -223,7 +223,7 @@ def publication_document(triggers: Sequence[TriggerDocument]) -> SandboxDocument
     return SandboxDocument.model_validate(
         {
             "kind": "openslate-sandbox",
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "design": {
                 "departments": [{"id": "sample-operations", "name": "Operations"}],
                 "modules": [
@@ -251,8 +251,10 @@ def publication_document(triggers: Sequence[TriggerDocument]) -> SandboxDocument
                                 "type": "Select",
                                 "config": {
                                     "kind": "select",
-                                    "defaultValue": "Open",
-                                    "options": ["Open", "In progress", "Complete"],
+                                    "defaultValue": document_option_id("status", "Open"),
+                                    "options": _options(
+                                        "status", ("Open", "In progress", "Complete")
+                                    ),
                                 },
                             },
                             {
@@ -261,8 +263,8 @@ def publication_document(triggers: Sequence[TriggerDocument]) -> SandboxDocument
                                 "type": "Select",
                                 "config": {
                                     "kind": "select",
-                                    "defaultValue": "Low",
-                                    "options": ["Low", "High"],
+                                    "defaultValue": document_option_id("priority", "Low"),
+                                    "options": _options("priority", ("Low", "High")),
                                 },
                             },
                         ],
@@ -302,7 +304,10 @@ def field_change_trigger() -> TriggerDocument:
                             "fieldId": "sample-field-requests-priority",
                         },
                         "operator": "=",
-                        "value": {"kind": "literal", "value": "High"},
+                        "value": {
+                            "kind": "literal",
+                            "value": document_option_id("priority", "High"),
+                        },
                     }
                 ],
             },
@@ -314,7 +319,10 @@ def field_change_trigger() -> TriggerDocument:
                         "moduleId": "sample-requests",
                         "fieldId": "sample-field-requests-status",
                     },
-                    "value": {"kind": "literal", "value": "In progress"},
+                    "value": {
+                        "kind": "literal",
+                        "value": document_option_id("status", "In progress"),
+                    },
                 }
             ],
         }
@@ -332,7 +340,10 @@ def schedule_trigger() -> TriggerDocument:
         "time": "08:30",
     }
     payload["conditionGroup"] = {"operator": "all", "conditions": []}
-    payload["actions"][0]["value"] = {"kind": "literal", "value": "Complete"}
+    payload["actions"][0]["value"] = {
+        "kind": "literal",
+        "value": document_option_id("status", "Complete"),
+    }
     return TriggerDocument.model_validate(payload)
 
 

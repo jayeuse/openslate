@@ -20,8 +20,14 @@ def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
     module_id = uuid7()
     department_id = uuid7()
     field_id = uuid7()
+    option_id = uuid7()
     data_source = ViewDataSourceResponse.model_validate(
-        {"id": module_id, "name": "Equipment", "department_id": department_id}
+        {
+            "id": module_id,
+            "name": "Equipment",
+            "department_id": department_id,
+            "title_field_id": field_id,
+        }
     )
     field = ViewFieldResponse.model_validate(
         {
@@ -31,7 +37,7 @@ def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
             "type": FieldType.SELECT,
             "required": True,
             "position": 2,
-            "config": {"options": ["open", "closed"]},
+            "config": {"options": [{"id": str(option_id), "label": "Open"}]},
         }
     )
 
@@ -39,6 +45,7 @@ def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
         "id": str(module_id),
         "name": "Equipment",
         "department_id": str(department_id),
+        "title_field_id": str(field_id),
     }
     assert field.model_dump(mode="json") == {
         "id": str(field_id),
@@ -47,7 +54,7 @@ def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
         "type": "select",
         "required": True,
         "position": 2,
-        "config": {"options": ["open", "closed"]},
+        "config": {"options": [{"id": str(option_id), "label": "Open"}]},
     }
 
 

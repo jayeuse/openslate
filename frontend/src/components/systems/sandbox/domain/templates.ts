@@ -7,7 +7,7 @@ import type {
   SandboxDocumentModule,
   SandboxFieldValue,
   SandboxRelationship,
-  SandboxDocumentV3,
+  SandboxDocumentV4,
 } from "./document-types";
 import { SANDBOX_DOCUMENT_SCHEMA_VERSION } from "./document-types";
 import {
@@ -26,8 +26,8 @@ export type SandboxOrganizationTemplate = {
   description: string;
   recommendedFor: string[];
   highlights: string[];
-  document: SandboxDocumentV3;
-  createDocument: () => SandboxDocumentV3;
+  document: SandboxDocumentV4;
+  createDocument: () => SandboxDocumentV4;
 };
 
 const fieldId = (moduleId: string, key: string) => `${moduleId}-${key}`;
@@ -85,9 +85,14 @@ function field(
         config: {
           kind: "select",
           defaultValue: null,
-          options: [...selectOptions],
+          options: selectOptions.map((label) => ({
+            id: crypto.randomUUID(),
+            label,
+          })),
         },
       };
+    case "User":
+      return { ...base, config: { kind: "user" } };
     case "Email":
       return {
         ...base,
@@ -101,6 +106,28 @@ function field(
   }
 }
 
+function selectChoiceId(
+  sandboxModule: SandboxDocumentModule,
+  fieldKey: string,
+  label: string,
+): string {
+  const selectField = sandboxModule.fields.find(
+    (item) => item.id === fieldId(sandboxModule.id, fieldKey),
+  );
+  if (!selectField || selectField.config.kind !== "select")
+    throw new Error(
+      `Template field ${sandboxModule.id}.${fieldKey} must be Select`,
+    );
+  const choice = selectField.config.options.find(
+    (option) => option.label === label,
+  );
+  if (!choice)
+    throw new Error(
+      `Template option ${label} is missing from ${selectField.name}`,
+    );
+  return choice.id;
+}
+
 function buildModule(definition: ModuleDefinition): SandboxDocumentModule {
   const [id, departmentId, name, customFields] = definition;
   return {
@@ -108,6 +135,7 @@ function buildModule(definition: ModuleDefinition): SandboxDocumentModule {
     departmentId,
     name,
     closed: false,
+    titleFieldId: null,
     fields: [
       field(id, ["id", `${singularModuleName(name)} ID`, "Text", true]),
       field(id, [
@@ -148,6 +176,7 @@ function fieldChangeTrigger(
   id: string,
   name: string,
   moduleId: string,
+  statusOptionId: string,
   action: TriggerActionWithoutId,
   priority: number,
 ): SandboxTrigger {
@@ -168,7 +197,7 @@ function fieldChangeTrigger(
           id: `${id}-condition`,
           field: { moduleId, fieldId: fieldId(moduleId, "status") },
           operator: "=",
-          value: literal("On hold"),
+          value: literal(statusOptionId),
         },
       ],
     },
@@ -243,7 +272,7 @@ function buildTriggers(
               fieldId: fieldId(modules[0]!.id, "status"),
             },
             operator: "=",
-            value: literal("On hold"),
+            value: literal(selectChoiceId(modules[0]!, "status", "On hold")),
           },
         ],
       },
@@ -263,6 +292,7 @@ function buildTriggers(
       `${prefix}-auto-hold`,
       `${modules[1]!.name} hold escalation`,
       modules[1]!.id,
+      selectChoiceId(modules[1]!, "status", "On hold"),
       {
         kind: "set-field",
         target: {
@@ -277,6 +307,7 @@ function buildTriggers(
       `${prefix}-auto-exception`,
       `${modules[2]!.name} exception alert`,
       modules[2]!.id,
+      selectChoiceId(modules[2]!, "status", "On hold"),
       {
         kind: "set-field",
         target: {
@@ -333,7 +364,7 @@ function buildTriggers(
 function layoutFor(
   departments: SandboxDocumentDepartment[],
   modules: SandboxDocumentModule[],
-): SandboxDocumentV3["design"]["layout"] {
+): SandboxDocumentV4["design"]["layout"] {
   return Object.fromEntries(
     departments.flatMap((item, departmentIndex) => {
       const children = modules.filter(
@@ -377,7 +408,7 @@ function buildTemplate(
   }));
   const modules = definition.modules.map(buildModule);
   const relationships = definition.relationships.map(relationship);
-  const document: SandboxDocumentV3 = {
+  const document: SandboxDocumentV4 = {
     kind: "openslate-sandbox",
     schemaVersion: SANDBOX_DOCUMENT_SCHEMA_VERSION,
     design: {

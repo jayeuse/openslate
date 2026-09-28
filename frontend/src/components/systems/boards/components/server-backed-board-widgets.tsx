@@ -2,6 +2,7 @@
 
 import { createElement, useEffect, useState, type ReactNode } from "react";
 import { getBoardWorkspaceToday } from "../adapters/board-workspace-date-api";
+import type { OpenViewRecord } from "../../openview/adapters/views-api";
 import { collapseBoardWidgetPie } from "../domain/live-widget-query";
 import {
   useLiveBoardWidgets,
@@ -37,6 +38,19 @@ function displayValue(value: unknown): string {
     return String(value);
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return "Value cannot be displayed";
+}
+
+function displayRecordFieldValue(
+  record: OpenViewRecord,
+  field: { fieldId: string; expectedType: string },
+): unknown {
+  const raw = record.data[field.fieldId];
+  if (raw === null || raw === undefined || raw === "") return raw;
+  const label = record.displayValues[field.fieldId];
+  if (typeof label === "string" && label.trim()) return label;
+  if (field.expectedType === "user") return "Unavailable user";
+  if (field.expectedType === "select") return "Unavailable option";
+  return raw;
 }
 
 function recordsContent(item: LiveWidgetItem): ReactNode {
@@ -117,7 +131,7 @@ function recordsContent(item: LiveWidgetItem): ReactNode {
                     createElement(
                       "dd",
                       { className: "min-w-0 break-words" },
-                      displayValue(record.data[field.fieldId]),
+                      displayValue(displayRecordFieldValue(record, field)),
                     ),
                   ),
                 ),

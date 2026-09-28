@@ -12,13 +12,17 @@ async function signIn(page: Page) {
   );
 }
 
-// Themes change look only. textContent ignores CSS text-transform, so it
-// compares the words in the DOM rather than how a theme displays them.
+// Themes change look only. Compare the persistent shell and page, excluding
+// Next's changing script payloads and the session curtain outside the shell.
 async function snapshot(page: Page) {
-  return page.evaluate(() => ({
-    elements: document.body.querySelectorAll("*").length,
-    text: document.body.textContent,
-  }));
+  return page.evaluate(() => {
+    const shell = document.querySelector(".app-shell");
+    if (!shell) throw new Error("Workspace shell is unavailable");
+    return {
+      elements: shell.querySelectorAll("*").length,
+      text: shell.textContent,
+    };
+  });
 }
 
 const THEMES = [

@@ -39,7 +39,6 @@ class RecordLinkCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     record_id: UUID
-    label: str = Field(min_length=1, max_length=100)
     board_revision: int = Field(ge=1)
     content_revision: int = Field(ge=1)
 
@@ -69,14 +68,15 @@ class RecordLinkList(BaseModel):
 
 def _response(
     link: BoardRecordLink | BoardPostRevisionRecordLink,
-    active_modules: dict[UUID, UUID],
+    active_records: dict[UUID, tuple[UUID, str]],
 ) -> RecordLinkResponse:
-    available = active_modules.get(link.record_id) == link.module_id
+    current = active_records.get(link.record_id)
+    available = current is not None and current[0] == link.module_id
     return RecordLinkResponse(
         id=link.id,
         record_id=link.record_id,
         module_id=link.module_id,
-        label=link.label,
+        label=current[1] if available and current is not None else "Record unavailable",
         available=available,
         url=(f"/openview?module={link.module_id}&record={link.record_id}" if available else None),
     )
@@ -93,7 +93,7 @@ def _list(
     limit: int,
     offset: int,
 ) -> RecordLinkList:
-    links, active_modules = listed_links(
+    links, active_records = listed_links(
         db,
         fresh_user(db, actor.id),
         board_id,
@@ -104,7 +104,7 @@ def _list(
         offset=offset,
     )
     return RecordLinkList(
-        items=[_response(link, active_modules) for link in links[:limit]],
+        items=[_response(link, active_records) for link in links[:limit]],
         limit=limit,
         offset=offset,
         has_more=len(links) > limit,
@@ -134,21 +134,20 @@ def create_event_record_link(
     db: Database,
     response: Response,
 ) -> RecordLinkResponse:
-    link = link_record(
+    link, title = link_record(
         db,
         fresh_user(db, actor.id),
         board_id,
         "event",
         event_id,
         payload.record_id,
-        payload.label,
         board_revision=payload.board_revision,
         content_revision=payload.content_revision,
     )
     response.headers["Location"] = (
         f"/api/boards/{board_id}/events/{event_id}/record-links/{link.id}"
     )
-    return _response(link, {link.record_id: link.module_id})
+    return _response(link, {link.record_id: (link.module_id, title)})
 
 
 @router.delete("/{board_id}/events/{event_id}/record-links/{link_id}", status_code=204)
@@ -209,21 +208,20 @@ def create_post_record_link(
     db: Database,
     response: Response,
 ) -> RecordLinkResponse:
-    link = link_record(
+    link, title = link_record(
         db,
         fresh_user(db, actor.id),
         board_id,
         "post",
         post_id,
         payload.record_id,
-        payload.label,
         board_revision=payload.board_revision,
         content_revision=payload.content_revision,
     )
     response.headers["Location"] = (
         f"/api/boards/{board_id}/posts/{post_id}/record-links/{link.id}"
     )
-    return _response(link, {link.record_id: link.module_id})
+    return _response(link, {link.record_id: (link.module_id, title)})
 
 
 @router.delete(

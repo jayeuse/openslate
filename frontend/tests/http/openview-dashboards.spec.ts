@@ -5,6 +5,7 @@ import {
   type Page,
   type Route,
 } from "@playwright/test";
+import { captureOpenViewReview } from "./helpers/openview-review-capture";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 // The data sources and Dashboards of these tests belong to one department.
@@ -12,6 +13,8 @@ const departmentId = userId;
 const moduleId = "00000000-0000-4000-8000-000000000102";
 const categoryFieldId = "00000000-0000-4000-8000-000000000103";
 const regionFieldId = "00000000-0000-4000-8000-000000000104";
+const northChoiceId = "00000000-0000-4000-8000-000000000121";
+const southChoiceId = "00000000-0000-4000-8000-000000000122";
 const dashboardId = "00000000-0000-4000-8000-000000000105";
 const dashboardWidgetId = "00000000-0000-4000-8000-000000000106";
 const secondDashboardWidgetId = "00000000-0000-4000-8000-000000000118";
@@ -26,6 +29,22 @@ const secondModuleFieldId = "00000000-0000-4000-8000-000000000114";
 const secondModuleNextFieldId = "00000000-0000-4000-8000-000000000115";
 const delayedDashboardId = "00000000-0000-4000-8000-000000000116";
 const timestamp = "2026-09-23T00:00:00Z";
+
+function categoryChoice(index: number) {
+  return {
+    id: `00000000-0000-4000-8000-${String(index + 130).padStart(12, "0")}`,
+    label:
+      index === 0
+        ? "Repair"
+        : index === 1
+          ? "Inspection"
+          : `Record ${index + 1}`,
+  };
+}
+
+const categoryChoices = Array.from({ length: 30 }, (_, index) =>
+  categoryChoice(index),
+);
 
 type FieldReference = { field_id: string; expected_type: string };
 type Aggregation = "count" | "sum" | "average";
@@ -275,7 +294,7 @@ function dataSourceField(
     type: "select",
     required: false,
     position,
-    config: {},
+    config: { options: categoryChoices },
   };
 }
 
@@ -414,13 +433,19 @@ async function installDashboardApi(
     const url = new URL(route.request().url());
     if (url.pathname === "/api/views/data-sources") {
       const items = [
-        { id: moduleId, name: "Equipment", department_id: departmentId },
+        {
+          id: moduleId,
+          name: "Equipment",
+          department_id: departmentId,
+          title_field_id: null,
+        },
         ...(fieldPages[secondModuleId]
           ? [
               {
                 id: secondModuleId,
                 name: "Quality checks",
                 department_id: departmentId,
+                title_field_id: null,
               },
             ]
           : []),
@@ -495,7 +520,7 @@ async function installDashboardApi(
               type: "select",
               required: false,
               position: 0,
-              config: { options: ["Service", "Inspection"] },
+              config: { options: categoryChoices },
             },
             {
               id: regionFieldId,
@@ -504,7 +529,12 @@ async function installDashboardApi(
               type: "select",
               required: false,
               position: 1,
-              config: { options: ["North", "South"] },
+              config: {
+                options: [
+                  { id: northChoiceId, label: "North" },
+                  { id: southChoiceId, label: "South" },
+                ],
+              },
             },
             {
               id: amountFieldId,
@@ -806,23 +836,20 @@ async function installDashboardApi(
         }),
       });
     }
-    const allItems = Array.from({ length: recordResultCount }, (_, index) => ({
-      id: `00000000-0000-4000-8000-${String(index + 201).padStart(12, "0")}`,
-      module_id: moduleId,
-      data: {
-        [recordFieldId]:
-          index === 0
-            ? "Repair"
-            : index === 1
-              ? "Inspection"
-              : `Record ${index + 1}`,
-      },
-      created_at: timestamp,
-      updated_at: timestamp,
-      deleted_at: null,
-      is_deleted: false,
-      performed_by: userId,
-    }));
+    const allItems = Array.from({ length: recordResultCount }, (_, index) => {
+      const option = categoryChoice(index % categoryChoices.length);
+      return {
+        id: `00000000-0000-4000-8000-${String(index + 201).padStart(12, "0")}`,
+        module_id: moduleId,
+        data: { [recordFieldId]: option.id },
+        display_values: { [recordFieldId]: option.label },
+        created_at: timestamp,
+        updated_at: timestamp,
+        deleted_at: null,
+        is_deleted: false,
+        performed_by: userId,
+      };
+    });
     const items = allItems.slice(
       request.offset,
       request.offset + request.limit,
@@ -987,7 +1014,7 @@ async function openAddWidgetDialog(page: Page): Promise<Locator> {
 }
 
 async function finishDashboardDialog(dialog: Locator, pageClock?: Page) {
-  await dialog.getByRole("button", { name: "Done" }).click();
+  await dialog.getByRole("button", { name: /^(Done|Continue)$/ }).click();
   if (pageClock) await pageClock.clock.fastForward(200);
   await expect(dialog).toBeHidden();
 }
@@ -1047,7 +1074,7 @@ test("department Dashboard supports mobile keyboard-only controls and survives r
     await page.keyboard.type(character);
   await expect(dashboardName).toHaveValue("Keyboard dashboard");
   const doneSettings = newDashboardDialog.getByRole("button", {
-    name: "Done",
+    name: "Continue",
   });
   await tabTo(page, doneSettings, "backward");
   await expectVisibleKeyboardFocus(doneSettings);
@@ -1146,7 +1173,7 @@ test("new Dashboard and widget dialogs keep configuration local until Dashboard 
   await newDashboardDialog
     .getByLabel("Refresh cadence")
     .selectOption("five-minutes");
-  await newDashboardDialog.getByRole("button", { name: "Done" }).click();
+  await newDashboardDialog.getByRole("button", { name: "Continue" }).click();
   await expect(newDashboardDialog).toBeHidden();
   await expect(
     page.getByText("Unsaved changes", { exact: true }),
@@ -2323,6 +2350,7 @@ test("department Dashboard saves and reloads all four live widget types", async 
   await expect(
     page.getByRole("table", { name: "Complete data for Count by Category" }),
   ).toBeVisible();
+  await captureOpenViewReview(page, "dashboard-manager");
 });
 
 test("saved Record widget shows values for a field beyond the first catalog page after reload", async ({
@@ -2751,21 +2779,27 @@ test("a department reader sees its Dashboards without change controls", async ({
 
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   await expect(page.getByText("Field service", { exact: true })).toBeVisible();
+  await captureOpenViewReview(page, "dashboard-reader");
   await expect(page.getByText(/private|only you/i)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "New Dashboard" })).toHaveCount(
     0,
   );
   await expect(page.getByRole("button", { name: "Add widget" })).toBeHidden();
-  await page.getByRole("button", { name: "Dashboard options" }).click();
   await expect(
-    page.getByRole("menuitem", { name: "Reload saved Dashboard" }),
+    page.getByRole("button", { name: "Dashboard options" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Reload saved Dashboard" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Widget options:/ }),
+  ).toHaveCount(0);
   for (const name of [
     "Dashboard settings",
     "Duplicate Dashboard",
     "Archive Dashboard",
   ])
-    await expect(page.getByRole("menuitem", { name })).toBeHidden();
+    await expect(page.getByRole("menuitem", { name })).toHaveCount(0);
 });
 
 test("Dashboards opens the first Dashboard by position when none is chosen", async ({
@@ -2802,7 +2836,7 @@ test("a new Dashboard is created in a managed department", async ({ page }) => {
   const dialog = page.getByRole("dialog", { name: "New Dashboard" });
   await expect(dialog.getByLabel("Department")).toHaveValue(departmentId);
   await dialog.getByLabel("Dashboard name").fill("Weekly review");
-  await dialog.getByRole("button", { name: "Done" }).click();
+  await dialog.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
   await expect.poll(() => api.writes.length).toBe(1);
@@ -2810,4 +2844,20 @@ test("a new Dashboard is created in a managed department", async ({ page }) => {
     department_id: departmentId,
     name: "Weekly review",
   });
+});
+
+test("Cancel discards a new Dashboard draft and returns to the selected Dashboard", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page, dashboard());
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
+  await page.getByRole("button", { name: "New Dashboard" }).click();
+  const dialog = page.getByRole("dialog", { name: "New Dashboard" });
+  await dialog.getByLabel("Dashboard name").fill("Discard me");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
+  expect(api.writes).toHaveLength(0);
 });

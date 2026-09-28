@@ -19,7 +19,7 @@ function response(revision = 7): SandboxDocumentResponse {
     publishedHash: null,
     document: {
       kind: "openslate-sandbox",
-      schemaVersion: 3,
+      schemaVersion: 4,
       design: {
         departments: [{ id: "operations", name: "Operations", closed: false }],
         modules: [
@@ -28,6 +28,7 @@ function response(revision = 7): SandboxDocumentResponse {
             departmentId: "operations",
             name: "Requests",
             closed: false,
+            titleFieldId: "title",
             fields: [
               {
                 id: "title",
@@ -52,7 +53,7 @@ function response(revision = 7): SandboxDocumentResponse {
   };
 }
 
-test("loads a v2 response and prepares a revision-aware structural save", () => {
+test("loads a v4 response and prepares a revision-aware structural save", () => {
   const opened = openSandboxDocumentSession(response());
   const changed = updateSandboxDocumentSession(opened, {
     ...opened.history.present,

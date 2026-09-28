@@ -58,6 +58,7 @@ def list_audit_logs(
     action: AuditAction | None = None,
     entity_type: str | None = None,
     entity_id: UUID | None = None,
+    department_id: UUID | None = None,
     performed_by: UUID | None = None,
     request_id: UUID | None = None,
     created_after: datetime | None = None,
@@ -70,6 +71,8 @@ def list_audit_logs(
         conditions.append(AuditLog.entity_type == entity_type)
     if entity_id is not None:
         conditions.append(AuditLog.entity_id == entity_id)
+    if department_id is not None:
+        conditions.append(AuditLog.department_id == department_id)
     if performed_by is not None:
         conditions.append(AuditLog.performed_by == performed_by)
     if request_id is not None:

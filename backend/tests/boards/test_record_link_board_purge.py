@@ -70,14 +70,12 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
                 event_id=event.id,
                 record_id=record.id,
                 module_id=module.id,
-                label="Event source",
             ),
             BoardRecordLink(
                 board_id=board.id,
                 post_id=notice.id,
                 record_id=record.id,
                 module_id=module.id,
-                label="Notice source",
             ),
         )
     )
@@ -87,7 +85,6 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
             revision_id=revision.id,
             record_id=record.id,
             module_id=module.id,
-            label="Notice source",
         )
     )
     db.commit()

@@ -78,6 +78,7 @@ def _trigger_blockers(
             "Date/Time",
             "Checkbox",
             "Select",
+            "User",
             "Email",
             "URL",
         }:
@@ -139,6 +140,7 @@ def _field_type(field: DesignField) -> str:
         "Date/Time": "datetime",
         "Checkbox": "boolean",
         "Select": "select",
+        "User": "user",
     }[field.type]
 
 

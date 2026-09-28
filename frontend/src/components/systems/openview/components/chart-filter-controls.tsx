@@ -1,10 +1,12 @@
 "use client";
 
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { assignableUsersOptions } from "../adapters/openview-queries";
 import type { OpenViewDataSourceField } from "../adapters/views-api";
 import {
   COMMON_FILTER_OPERATORS,
@@ -18,6 +20,7 @@ import {
 } from "../domain/chart-query";
 
 type ChartFilterControlsProps = {
+  moduleId: string;
   filterFields: OpenViewDataSourceField[];
   filters: FilterDraft[];
   filterLogic: FilterLogic;
@@ -28,7 +31,23 @@ type ChartFilterControlsProps = {
   addFilter: () => void;
 };
 
+function selectOptionsForField(
+  field: OpenViewDataSourceField | undefined,
+): Array<{ id: string; label: string }> {
+  if (!field || field.type !== "select" || !Array.isArray(field.config.options))
+    return [];
+  return field.config.options.flatMap((option) => {
+    if (typeof option !== "object" || option === null) return [];
+    const candidate = option as Record<string, unknown>;
+    return typeof candidate.id === "string" &&
+      typeof candidate.label === "string"
+      ? [{ id: candidate.id, label: candidate.label }]
+      : [];
+  });
+}
+
 export function ChartFilterControls({
+  moduleId,
   filterFields,
   filters,
   filterLogic,
@@ -38,6 +57,20 @@ export function ChartFilterControls({
   setFilterLogic,
   addFilter,
 }: ChartFilterControlsProps) {
+  const [userSearch, setUserSearch] = useState("");
+  const hasUserFilter = filters.some((filter) => {
+    const field = filterFields.find(
+      (candidate) => candidate.id === filter.fieldId,
+    );
+    return field?.type === "user" && !EMPTY_OPERATORS.has(filter.operator);
+  });
+  const assignableUsers = useQuery(
+    assignableUsersOptions(moduleId, userSearch, hasUserFilter),
+  );
+  const eligiblePeople =
+    assignableUsers.isSuccess && !assignableUsers.isFetching
+      ? assignableUsers.data.items
+      : [];
   return (
     <fieldset className="flex min-w-0 flex-col gap-4">
       <legend className="sr-only">Filters</legend>
@@ -45,6 +78,60 @@ export function ChartFilterControls({
         Combine up to 10 field filters before aggregation. The separate date
         window is also applied to the matching records.
       </p>
+      {hasUserFilter ? (
+        <div className="grid max-w-xl gap-2">
+          <Field>
+            <FieldLabel htmlFor="chart-eligible-user-search">
+              Search eligible people
+            </FieldLabel>
+            <Input
+              id="chart-eligible-user-search"
+              className="min-h-11"
+              type="search"
+              maxLength={100}
+              value={userSearch}
+              onChange={(event) => setUserSearch(event.target.value)}
+            />
+            <FieldDescription>
+              Only people who can read this data source can be selected.
+            </FieldDescription>
+          </Field>
+          {assignableUsers.isFetching ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              Loading eligible people…
+            </p>
+          ) : null}
+          {assignableUsers.isError ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <p role="alert" className="text-destructive text-sm">
+                Eligible people could not be loaded.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => void assignableUsers.refetch()}
+              >
+                Retry people
+              </Button>
+            </div>
+          ) : null}
+          {!assignableUsers.isFetching &&
+          !assignableUsers.isError &&
+          assignableUsers.data?.pagination.hasMore ? (
+            <p className="text-muted-foreground text-sm">
+              Showing the first 100 eligible people. Search to narrow the list.
+            </p>
+          ) : null}
+          {!assignableUsers.isFetching &&
+          !assignableUsers.isError &&
+          assignableUsers.data?.items.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              No eligible people match this search.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <Field className="w-full max-w-56">
         <FieldLabel htmlFor="chart-filter-logic">Chart filter logic</FieldLabel>
         <Select
@@ -65,12 +152,13 @@ export function ChartFilterControls({
         const fieldOperators = field
           ? operatorsFor(field)
           : COMMON_FILTER_OPERATORS;
-        const choices = field?.config.options;
-        const selectChoices = Array.isArray(choices)
-          ? choices.filter(
-              (choice): choice is string => typeof choice === "string",
-            )
-          : [];
+        const selectChoices = selectOptionsForField(field);
+        const selectedUser = eligiblePeople.some(
+          (person) => person.id === filter.value,
+        );
+        const selectedChoice = selectChoices.some(
+          (choice) => choice.id === filter.value,
+        );
         return (
           <div
             key={filter.id}
@@ -142,7 +230,7 @@ export function ChartFilterControls({
                 <FieldLabel htmlFor={`chart-filter-${filter.id}-value`}>
                   Filter {index + 1} value
                 </FieldLabel>
-                {selectChoices.length ? (
+                {field?.type === "select" ? (
                   <Select
                     id={`chart-filter-${filter.id}-value`}
                     className="min-h-11"
@@ -156,12 +244,48 @@ export function ChartFilterControls({
                       )
                     }
                   >
-                    <option value="" disabled>
-                      Select a value
-                    </option>
+                    <option value="">Select a value</option>
+                    {filter.value && !selectedChoice ? (
+                      <option value={filter.value} disabled>
+                        Unavailable option
+                      </option>
+                    ) : null}
                     {selectChoices.map((choice) => (
-                      <option key={choice} value={choice}>
-                        {choice}
+                      <option key={choice.id} value={choice.id}>
+                        {choice.label}
+                      </option>
+                    ))}
+                  </Select>
+                ) : field?.type === "user" ? (
+                  <Select
+                    id={`chart-filter-${filter.id}-value`}
+                    className="min-h-11"
+                    value={filter.value}
+                    disabled={
+                      queryLoading ||
+                      assignableUsers.isFetching ||
+                      assignableUsers.isError
+                    }
+                    onValueChange={(value) =>
+                      setFilters((current) =>
+                        current.map((item) =>
+                          item.id === filter.id ? { ...item, value } : item,
+                        ),
+                      )
+                    }
+                  >
+                    <option value="">Choose an eligible person</option>
+                    {filter.value &&
+                    assignableUsers.isSuccess &&
+                    !assignableUsers.isFetching &&
+                    !selectedUser ? (
+                      <option value={filter.value} disabled>
+                        Selected person is not in the current results
+                      </option>
+                    ) : null}
+                    {eligiblePeople.map((person) => (
+                      <option key={person.id} value={person.id}>
+                        {person.displayName?.trim() || person.username}
                       </option>
                     ))}
                   </Select>

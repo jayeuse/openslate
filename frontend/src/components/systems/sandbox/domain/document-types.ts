@@ -1,8 +1,8 @@
 import type { FieldConfig, FieldTypeName } from "./model";
 
 /** The Sandbox document format version that this client reads and writes. */
-export const SANDBOX_DOCUMENT_SCHEMA_VERSION = 3;
-/** Shown when a file or saved design uses a format before version 3. */
+export const SANDBOX_DOCUMENT_SCHEMA_VERSION = 4;
+/** Shown when a file or saved design uses a format before version 4. */
 export const SANDBOX_OLDER_FORMAT_MESSAGE =
   "This design uses an older format and cannot be opened.";
 
@@ -52,6 +52,7 @@ export type SandboxDocumentModule = {
   departmentId: string;
   name: string;
   closed: boolean;
+  titleFieldId: string | null;
   fields: SandboxDocumentField[];
 };
 export type SandboxFieldMapping = {
@@ -153,12 +154,12 @@ export type SandboxVersionSnapshot = {
   id: string;
   label: string;
   kind: "checkpoint" | "published" | "imported";
-  document: Omit<SandboxDocumentV3, "kind" | "schemaVersion" | "versions">;
+  document: Omit<SandboxDocumentV4, "kind" | "schemaVersion" | "versions">;
   published: boolean;
   date: string;
   note?: string;
 };
-export type SandboxDocumentV3 = {
+export type SandboxDocumentV4 = {
   kind: "openslate-sandbox";
   schemaVersion: typeof SANDBOX_DOCUMENT_SCHEMA_VERSION;
   design: SandboxDocumentDesign;
@@ -167,4 +168,4 @@ export type SandboxDocumentV3 = {
   versions?: SandboxVersionSnapshot[];
 };
 export type SandboxDocumentParseResult =
-  { ok: true; document: SandboxDocumentV3 } | { ok: false; error: string };
+  { ok: true; document: SandboxDocumentV4 } | { ok: false; error: string };

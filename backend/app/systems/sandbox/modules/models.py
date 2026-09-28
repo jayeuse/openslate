@@ -30,6 +30,11 @@ class Module(BaseModel):
         index=True,
     )
     module_name: Mapped[str] = mapped_column(String(150), nullable=False)
+    title_field_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("fields.id", ondelete="RESTRICT", use_alter=True),
+        nullable=True,
+        index=True,
+    )
     department: Mapped["Department"] = relationship(back_populates="modules")
     fields: Mapped[list["Field"]] = relationship(
         foreign_keys="Field.module_id",

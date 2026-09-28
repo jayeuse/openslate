@@ -46,6 +46,20 @@ export type {
 } from "./views-schemas";
 export { serializeOpenViewQueryDefinition };
 
+const assignableUserSchema = z
+  .object({
+    id: uuidSchema,
+    display_name: z.string().nullable(),
+    username: z.string().min(1),
+  })
+  .strict()
+  .transform(({ id, display_name, username }) => ({
+    id,
+    displayName: display_name,
+    username,
+  }));
+export type OpenViewAssignableUser = z.output<typeof assignableUserSchema>;
+
 function pageQuery(options: { limit?: number; offset?: number } = {}) {
   return pageRequestSchema.parse(options);
 }
@@ -86,6 +100,25 @@ export async function listOpenViewDataSourceFields(
     }),
   );
   return result;
+}
+
+export async function listOpenViewAssignableUsers(
+  moduleId: string,
+  options: { limit?: number; offset?: number; search?: string } = {},
+): Promise<OpenViewPage<OpenViewAssignableUser>> {
+  const validModuleId = uuidSchema.parse(moduleId);
+  const { search: rawSearch, ...rawPage } = options;
+  const page = pageQuery(rawPage);
+  const search = z.string().trim().max(100).optional().parse(rawSearch);
+  const query = queryString({
+    ...page,
+    ...(search ? { search } : {}),
+  });
+  return openViewReadFetch(
+    `/modules/${encodeURIComponent(validModuleId)}/assignable-users?${query}`,
+    listSchema(assignableUserSchema),
+    { cache: "no-store" },
+  );
 }
 
 export async function listOpenViewSavedViews(options: {

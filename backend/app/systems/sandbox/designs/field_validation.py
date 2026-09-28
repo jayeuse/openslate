@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from math import isfinite
 from urllib.parse import urlparse
+from uuid import UUID
 
 from app.systems.sandbox.designs.date_values import date_in_range, valid_date, valid_datetime
 from app.systems.sandbox.numeric import numeric_matches_step
@@ -21,6 +22,7 @@ class FieldMetadata:
     required: bool
     closed: bool
     select_options: frozenset[str]
+    select_labels: frozenset[str]
     max_length: int | None
     minimum: float | None
     maximum: float | None
@@ -48,6 +50,14 @@ def validate_value(value: Scalar, field: FieldMetadata) -> None:
         valid = isinstance(value, (int, float)) and not isinstance(value, bool)
     elif field.config_kind == "select":
         valid = isinstance(value, str) and value in field.select_options
+    elif field.config_kind == "user":
+        if not isinstance(value, str):
+            valid = False
+        else:
+            try:
+                valid = str(UUID(value)) == value
+            except ValueError:
+                valid = False
     elif field.config_kind == "date":
         valid = isinstance(value, str) and valid_date(value) and _date_in_range(value, field)
     elif field.config_kind == "datetime":
@@ -74,7 +84,7 @@ def validate_mapping(source: FieldMetadata, target: FieldMetadata, relationship_
     if not source.required and target.required:
         raise DocumentValueError(f"relationship {relationship_id} maps optional into required")
     if source.config_kind == "select":
-        if target.config_kind == "select" and source.select_options <= target.select_options:
+        if target.config_kind == "select" and source.select_labels <= target.select_labels:
             return
         raise DocumentValueError(f"relationship {relationship_id} has incompatible field mappings")
     if source.config_kind in {"number", "integer"}:

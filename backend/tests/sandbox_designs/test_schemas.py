@@ -78,11 +78,11 @@ def test_document_typed_values_reject_non_finite_json_numbers() -> None:
         SandboxDocument.model_validate_json(raw)
 
 
-def test_v2_frontend_fixture_preserves_exact_trigger_and_scenario_shapes() -> None:
+def test_v4_frontend_fixture_preserves_exact_trigger_and_scenario_shapes() -> None:
     document = SandboxDocument.model_validate(
         {
             "kind": "openslate-sandbox",
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "design": {
                 "departments": [{"id": "department-1", "name": "Operations", "closed": False}],
                 "modules": [

@@ -495,6 +495,7 @@ export function ServerBackedBoardCalendar({
       currentAccess,
       boardActive,
       kind,
+      viewerId,
     );
     if (!action) return;
     setLifecycleNotice(null);
@@ -505,21 +506,34 @@ export function ServerBackedBoardCalendar({
     const action = lifecycleTarget;
     if (!action || lifecyclePendingRef.current) return;
     const page = action.kind === "archive" ? calendarPage : archivedPage;
-    const listed =
+    const listedEvent =
       action.kind === "archive"
-        ? calendarPage?.items.some(
+        ? calendarPage?.items.find(
             (item) =>
               item.event.id === action.eventId &&
-              item.event.revision === action.eventRevision,
-          )
+              item.event.revision === action.eventRevision &&
+              !item.event.archived,
+          )?.event
+        : undefined;
+    const listed =
+      action.kind === "archive"
+        ? listedEvent !== undefined
         : archivedPage?.items.some(
             (item) =>
               item.id === action.eventId &&
               item.revision === action.eventRevision,
           );
+    const authorized =
+      action.kind === "restore"
+        ? canManage
+        : boardActive &&
+          !accessDenied &&
+          (currentAccess?.manage === true ||
+            (currentAccess?.edit === true &&
+              listedEvent?.authorId === viewerId));
     if (
       action.boardId !== boardId ||
-      !canManage ||
+      !authorized ||
       !page ||
       page.boardRevision !== action.boardRevision ||
       !listed
@@ -850,7 +864,25 @@ export function ServerBackedBoardCalendar({
         currentAccess,
         boardActive,
         "archive",
+        viewerId,
       ) !== null
+    );
+  }
+
+  function canConfirmLifecycle(action: BoardEventLifecycleAction | null) {
+    if (!action || action.boardId !== boardId) return false;
+    if (action.kind === "restore") return canManage;
+    const listed = calendarPage?.items.find(
+      (item) =>
+        item.event.id === action.eventId &&
+        item.event.revision === action.eventRevision &&
+        !item.event.archived,
+    );
+    return (
+      boardActive &&
+      !accessDenied &&
+      (currentAccess?.manage === true ||
+        (currentAccess?.edit === true && listed?.event.authorId === viewerId))
     );
   }
 
@@ -1476,7 +1508,10 @@ export function ServerBackedBoardCalendar({
           />
         )}
       <AlertDialog
-        open={lifecycleTarget?.boardId === boardId && canManage}
+        open={
+          lifecycleTarget?.boardId === boardId &&
+          canConfirmLifecycle(lifecycleTarget)
+        }
         onOpenChange={(open) => {
           if (!open && !lifecyclePending) setLifecycleTarget(null);
         }}

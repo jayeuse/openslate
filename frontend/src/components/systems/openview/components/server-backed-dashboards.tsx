@@ -260,6 +260,7 @@ export default function ServerBackedDashboards() {
     useState<OpenViewDashboard | null>(null);
   const [dashboardDialogKind, setDashboardDialogKind] =
     useState<DashboardDialogKind>(null);
+  const dashboardBeforeNew = useRef<OpenViewDashboard | null>(null);
   const [widgetDialogOpen, setWidgetDialogOpen] = useState(false);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [routeClearPending, setRouteClearPending] = useState(false);
@@ -828,6 +829,7 @@ export default function ServerBackedDashboards() {
       setNotice("Save this Dashboard before switching to a new one.");
       return;
     }
+    dashboardBeforeNew.current = selectedDashboard;
     if (selectedDashboard || routeDashboardId) {
       routeLoadSequence.current += 1;
       setSelectedDashboard(null);
@@ -842,6 +844,20 @@ export default function ServerBackedDashboards() {
     }
     setNotice("");
     setDashboardDialogKind("new");
+  }
+
+  function cancelNewDashboard() {
+    if (dashboardBeforeNew.current) {
+      applyDashboard(dashboardBeforeNew.current);
+      updateDashboardUrl(dashboardBeforeNew.current.id);
+    } else {
+      setDashboardName("");
+      setRefreshCadence("manual");
+      setDraftWidgets([]);
+      setActiveWidgetKey("");
+    }
+    dashboardBeforeNew.current = null;
+    setDashboardDialogKind(null);
   }
 
   function chooseDashboard(dashboardId: string) {
@@ -1691,91 +1707,104 @@ export default function ServerBackedDashboards() {
                   {savePending ? "Saving…" : "Save Dashboard"}
                 </Button>
               ) : null}
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      variant="outline"
-                      className="min-h-11"
-                      aria-label="Dashboard options"
-                    />
-                  }
-                >
-                  Dashboard options{" "}
-                  <ChevronDown data-icon="inline-end" aria-hidden="true" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-56">
-                  {canManageDashboard ? (
-                    <DropdownMenuItem
-                      className="min-h-11"
-                      disabled={
-                        !selectedDashboard ||
-                        selectedDashboard.isDeleted ||
-                        savePending ||
-                        archivePending ||
-                        Boolean(restorePendingId)
-                      }
-                      onClick={() => setDashboardDialogKind("settings")}
-                    >
-                      Dashboard settings
-                    </DropdownMenuItem>
-                  ) : null}
-                  {selectedDashboard && canManageDashboard ? (
-                    <DropdownMenuSeparator />
-                  ) : null}
-                  {selectedDashboard && !selectedDashboard.isDeleted ? (
-                    <>
+              {canManageDashboard ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        variant="outline"
+                        className="min-h-11"
+                        aria-label="Dashboard options"
+                      />
+                    }
+                  >
+                    Dashboard options{" "}
+                    <ChevronDown data-icon="inline-end" aria-hidden="true" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-56">
+                    {canManageDashboard ? (
                       <DropdownMenuItem
-                        className={canManageDashboard ? "min-h-11" : "hidden"}
+                        className="min-h-11"
                         disabled={
-                          draftDirty ||
-                          duplicatePending ||
+                          !selectedDashboard ||
+                          selectedDashboard.isDeleted ||
                           savePending ||
                           archivePending ||
                           Boolean(restorePendingId)
                         }
-                        onClick={() => void duplicateDashboard()}
+                        onClick={() => setDashboardDialogKind("settings")}
                       >
-                        {duplicatePending
-                          ? "Duplicating…"
-                          : "Duplicate Dashboard"}
+                        Dashboard settings
                       </DropdownMenuItem>
+                    ) : null}
+                    {selectedDashboard && canManageDashboard ? (
+                      <DropdownMenuSeparator />
+                    ) : null}
+                    {selectedDashboard && !selectedDashboard.isDeleted ? (
+                      <>
+                        <DropdownMenuItem
+                          className="min-h-11"
+                          disabled={
+                            draftDirty ||
+                            duplicatePending ||
+                            savePending ||
+                            archivePending ||
+                            Boolean(restorePendingId)
+                          }
+                          onClick={() => void duplicateDashboard()}
+                        >
+                          {duplicatePending
+                            ? "Duplicating…"
+                            : "Duplicate Dashboard"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="min-h-11"
+                          disabled={dashboardLoading || duplicatePending}
+                          onClick={() =>
+                            void reloadSelectedDashboard(draftDirty)
+                          }
+                        >
+                          {draftDirty
+                            ? "Discard draft and reload"
+                            : "Reload saved Dashboard"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="min-h-11"
+                          disabled={
+                            archivePending || duplicatePending || draftDirty
+                          }
+                          onClick={() => void archiveDashboard()}
+                        >
+                          {archivePending ? "Archiving…" : "Archive Dashboard"}
+                        </DropdownMenuItem>
+                      </>
+                    ) : null}
+                    {selectedDashboard?.isDeleted && canManageDashboard ? (
                       <DropdownMenuItem
                         className="min-h-11"
-                        disabled={dashboardLoading || duplicatePending}
-                        onClick={() => void reloadSelectedDashboard(draftDirty)}
-                      >
-                        {draftDirty
-                          ? "Discard draft and reload"
-                          : "Reload saved Dashboard"}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className={canManageDashboard ? "min-h-11" : "hidden"}
                         disabled={
-                          archivePending || duplicatePending || draftDirty
+                          draftDirty ||
+                          archivePending ||
+                          duplicatePending ||
+                          Boolean(restorePendingId)
                         }
-                        onClick={() => void archiveDashboard()}
+                        onClick={() => void restoreDashboard(selectedDashboard)}
                       >
-                        {archivePending ? "Archiving…" : "Archive Dashboard"}
+                        Restore Dashboard
                       </DropdownMenuItem>
-                    </>
-                  ) : null}
-                  {selectedDashboard?.isDeleted && canManageDashboard ? (
-                    <DropdownMenuItem
-                      className="min-h-11"
-                      disabled={
-                        draftDirty ||
-                        archivePending ||
-                        duplicatePending ||
-                        Boolean(restorePendingId)
-                      }
-                      onClick={() => void restoreDashboard(selectedDashboard)}
-                    >
-                      Restore Dashboard
-                    </DropdownMenuItem>
-                  ) : null}
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    ) : null}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : selectedDashboard && !selectedDashboard.isDeleted ? (
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={dashboardLoading}
+                  onClick={() => void reloadSelectedDashboard(false)}
+                >
+                  Reload saved Dashboard
+                </Button>
+              ) : null}
             </div>
             {showArchived && dashboards.length ? (
               <ul className="border-border flex min-w-0 flex-wrap gap-2 border-t pt-3 lg:col-span-2">
@@ -1930,7 +1959,7 @@ export default function ServerBackedDashboards() {
                               ? "secondary"
                               : "ghost"
                           }
-                          className="min-h-12 min-w-0 flex-1 flex-col items-start justify-center gap-0.5 overflow-hidden text-left"
+                          className="h-auto min-h-12 min-w-0 flex-1 flex-col items-start justify-center gap-0.5 overflow-hidden py-2 text-left"
                           aria-label={
                             "View " +
                             viewLabel +
@@ -1947,49 +1976,52 @@ export default function ServerBackedDashboards() {
                             {persisted ? kind : kind + " · Unsaved"}
                           </span>
                         </Button>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger
-                            render={
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="size-11 shrink-0"
-                                aria-label={"Widget options: " + title}
-                                disabled={unavailable}
-                              />
-                            }
-                          >
-                            <MoreHorizontal aria-hidden="true" />
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              className="min-h-11"
-                              disabled={index === 0 || unavailable}
-                              onClick={() => moveWidget(widget.key, -1)}
-                            >
-                              Move up
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="min-h-11"
-                              disabled={
-                                index === draftWidgets.length - 1 || unavailable
+                        {canManageDashboard ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger
+                              render={
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-11 shrink-0"
+                                  aria-label={"Widget options: " + title}
+                                  disabled={unavailable}
+                                />
                               }
-                              onClick={() => moveWidget(widget.key, 1)}
                             >
-                              Move down
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="min-h-11"
-                              variant="destructive"
-                              disabled={unavailable}
-                              onClick={() => removeWidget(widget.key)}
-                            >
-                              Remove widget
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                              <MoreHorizontal aria-hidden="true" />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                className="min-h-11"
+                                disabled={index === 0 || unavailable}
+                                onClick={() => moveWidget(widget.key, -1)}
+                              >
+                                Move up
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="min-h-11"
+                                disabled={
+                                  index === draftWidgets.length - 1 ||
+                                  unavailable
+                                }
+                                onClick={() => moveWidget(widget.key, 1)}
+                              >
+                                Move down
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="min-h-11"
+                                variant="destructive"
+                                disabled={unavailable}
+                                onClick={() => removeWidget(widget.key)}
+                              >
+                                Remove widget
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : null}
                       </li>
                     );
                   })}
@@ -2044,7 +2076,10 @@ export default function ServerBackedDashboards() {
           <Dialog
             open={dashboardDialogKind !== null}
             onOpenChange={(open) => {
-              if (!open) setDashboardDialogKind(null);
+              if (!open) {
+                if (dashboardDialogKind === "new") cancelNewDashboard();
+                else setDashboardDialogKind(null);
+              }
             }}
           >
             <DialogContent className="max-w-xl">
@@ -2059,7 +2094,7 @@ export default function ServerBackedDashboards() {
                   until you save this Dashboard.
                 </DialogDescription>
               </DialogHeader>
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="mt-2 grid gap-4 sm:grid-cols-2">
                 <Field className="min-w-0 sm:col-span-2">
                   <FieldLabel htmlFor="dashboard-department">
                     Department
@@ -2153,12 +2188,26 @@ export default function ServerBackedDashboards() {
                 </Field>
               </div>
               <DialogFooter>
+                {dashboardDialogKind === "new" ? (
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={cancelNewDashboard}
+                  >
+                    Cancel
+                  </Button>
+                ) : null}
                 <Button
-                  variant="outline"
+                  variant={
+                    dashboardDialogKind === "new" ? "default" : "outline"
+                  }
                   className="min-h-11"
-                  onClick={() => setDashboardDialogKind(null)}
+                  onClick={() => {
+                    dashboardBeforeNew.current = null;
+                    setDashboardDialogKind(null);
+                  }}
                 >
-                  Done
+                  {dashboardDialogKind === "new" ? "Continue" : "Done"}
                 </Button>
               </DialogFooter>
             </DialogContent>

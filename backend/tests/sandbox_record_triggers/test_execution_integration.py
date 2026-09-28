@@ -28,6 +28,7 @@ from app.systems.sandbox.records.router import create_record, update_record
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
 from tests.sandbox_record_triggers.support import (
     event_count,
+    option_id,
     publish_trigger,
 )
 
@@ -43,8 +44,8 @@ def test_record_mutations_enqueue_once_and_execute_with_audit_and_dedupe(
             module_id=module.id,
             data={
                 str(fields["request-number"].id): "REQ-001",
-                str(fields["priority"].id): "Low",
-                str(fields["status"].id): "Open",
+                str(fields["priority"].id): option_id(fields["priority"], "Low"),
+                str(fields["status"].id): option_id(fields["status"], "Open"),
             },
         ),
         actor,
@@ -62,7 +63,9 @@ def test_record_mutations_enqueue_once_and_execute_with_audit_and_dedupe(
 
     update_record(
         record.id,
-        RecordUpdate(data={**record.data, str(fields["priority"].id): "High"}),
+        RecordUpdate(
+            data={**record.data, str(fields["priority"].id): option_id(fields["priority"], "High")}
+        ),
         actor,
         integration_owner_db,
     )
@@ -83,8 +86,11 @@ def test_record_mutations_enqueue_once_and_execute_with_audit_and_dedupe(
         execute_claim(integration_owner_db, claim)
         integration_owner_db.commit()
 
-    integration_owner_db.refresh(record)
-    assert record.data[str(fields["status"].id)] == "In progress"
+    record_row = integration_owner_db.get(Record, record.id)
+    assert record_row is not None
+    integration_owner_db.refresh(record_row)
+    record = record_row
+    assert record.data[str(fields["status"].id)] == option_id(fields["status"], "In progress")
     assert (
         integration_owner_db.scalar(
             select(func.count())
@@ -135,7 +141,7 @@ def test_event_snapshots_redact_secret_record_values(integration_owner_db: Sessi
             data={
                 str(fields["request-number"].id): "REQ-SECRET",
                 str(fields["title"].id): secret,
-                str(fields["status"].id): "Open",
+                str(fields["status"].id): option_id(fields["status"], "Open"),
             },
         ),
         actor,

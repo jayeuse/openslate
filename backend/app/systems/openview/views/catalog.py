@@ -77,6 +77,7 @@ def list_data_sources(
             id=item.id,
             name=item.module_name,
             department_id=item.department_id,
+            title_field_id=item.title_field_id,
         )
         for item in result.items
     ]

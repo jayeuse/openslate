@@ -219,6 +219,7 @@ export async function mockAccessApi(
       id: ids.prices,
       department_id: ids.inventory,
       module_name: "Prices",
+      title_field_id: null,
       ...catalogFields,
     },
   ];

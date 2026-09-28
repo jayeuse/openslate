@@ -23,6 +23,7 @@ const queryFieldTypeSchema = z.enum([
   "date",
   "datetime",
   "select",
+  "user",
 ]);
 const numericFieldTypes = new Set<OpenViewQueryFieldType>([
   "number",

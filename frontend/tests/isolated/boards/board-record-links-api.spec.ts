@@ -5,17 +5,20 @@ import {
   listBoardRecordLinks,
   removeBoardRecordLink,
 } from "../../../src/components/systems/boards/adapters/board-record-links-api";
+import type { OpenViewRecord } from "../../../src/components/systems/openview/adapters/views-api";
+import { recordTitleForLink } from "../../../src/components/systems/boards/components/server-backed-board-record-links";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const contentId = "00000000-0000-4000-8000-000000000002";
 const recordId = "00000000-0000-4000-8000-000000000003";
 const moduleId = "00000000-0000-4000-8000-000000000004";
 const linkId = "00000000-0000-4000-8000-000000000005";
+const titleFieldId = "00000000-0000-4000-8000-000000000006";
 const link = {
   id: linkId,
   record_id: recordId,
   module_id: moduleId,
-  label: "Supplier",
+  label: "Centrifugal pump 04",
   available: true,
   url: `/openview?module=${moduleId}&record=${recordId}`,
 };
@@ -36,10 +39,11 @@ test("Board Record links stay content-scoped and carry dual revisions", async ()
     const target = { kind: "event" as const, boardId, contentId };
     const listed = await listBoardRecordLinks(target);
     expect(listed.items).toMatchObject([{ id: linkId, recordId, moduleId }]);
-    await addBoardRecordLink(target, recordId, "Supplier", {
+    const added = await addBoardRecordLink(target, recordId, {
       boardRevision: 3,
       contentRevision: 5,
     });
+    expect(added.label).toBe("Centrifugal pump 04");
     await removeBoardRecordLink(target, linkId, {
       boardRevision: 4,
       contentRevision: 6,
@@ -51,7 +55,6 @@ test("Board Record links stay content-scoped and carry dual revisions", async ()
     ]);
     expect(JSON.parse(String(requests[1]?.init?.body))).toEqual({
       record_id: recordId,
-      label: "Supplier",
       board_revision: 3,
       content_revision: 5,
     });
@@ -65,6 +68,27 @@ test("Board Record links stay content-scoped and carry dual revisions", async ()
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test("Board link candidates use the selected title display or the record-ID fallback", () => {
+  const record: OpenViewRecord = {
+    id: recordId,
+    moduleId,
+    data: { [titleFieldId]: "00000000-0000-4000-8000-000000000031" },
+    displayValues: { [titleFieldId]: "Cooling manifold" },
+    createdAt: "2026-09-23T00:00:00Z",
+    updatedAt: "2026-09-23T00:00:00Z",
+    deletedAt: null,
+    isDeleted: false,
+    performedBy: null,
+  };
+
+  expect(recordTitleForLink(record, { id: titleFieldId, type: "select" })).toBe(
+    "Cooling manifold",
+  );
+  expect(recordTitleForLink(record, null)).toBe(
+    `Record ${recordId.slice(0, 8)}`,
+  );
 });
 
 test("published Post links are read-only and reject unsafe server URLs", async () => {

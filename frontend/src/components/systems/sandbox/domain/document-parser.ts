@@ -11,7 +11,7 @@ import {
   type SandboxLayoutBox,
   type SandboxFieldMapping,
   type SandboxScenarioLink,
-  type SandboxDocumentV3,
+  type SandboxDocumentV4,
   type SandboxFieldValue,
   type SandboxDocumentField,
   type SandboxDocumentDesign,
@@ -56,6 +56,17 @@ function array(value: unknown, label: string): unknown[] {
 function string(value: unknown, label: string): string {
   if (typeof value !== "string") throw new Error(`${label} must be a string`);
   return value;
+}
+
+function uuid(value: unknown, label: string): string {
+  const parsed = string(value, label);
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      parsed,
+    )
+  )
+    throw new Error(`${label} must be a UUID`);
+  return parsed;
 }
 
 function boundedString(
@@ -213,25 +224,37 @@ function parseFieldConfig(value: unknown): FieldConfig {
       defaultValue: boolean(source.defaultValue, "field config defaultValue"),
     };
   }
+  if (kind === "user") {
+    exactKeys(source, ["kind"], "field config");
+    return { kind };
+  }
   if (kind === "select") {
     exactKeys(source, ["kind", "defaultValue", "options"], "field config");
     if (source.defaultValue !== null && typeof source.defaultValue !== "string")
       throw new Error("field config defaultValue must be a string or null");
-    const options = array(source.options, "field config options").map((item) =>
-      boundedString(
-        item,
-        "field config option",
-        SANDBOX_DOCUMENT_LIMITS.selectOptionCharacters,
-      ),
+    const options = array(source.options, "field config options").map(
+      (item) => {
+        const option = record(item, "field config option");
+        exactKeys(option, ["id", "label"], "field config option");
+        return {
+          id: uuid(option.id, "field config option id"),
+          label: boundedString(
+            option.label,
+            "field config option label",
+            SANDBOX_DOCUMENT_LIMITS.selectOptionCharacters,
+          ),
+        };
+      },
     );
     if (
       options.length > SANDBOX_DOCUMENT_LIMITS.selectOptions ||
-      new Set(options).size !== options.length
+      new Set(options.map((option) => option.id)).size !== options.length ||
+      new Set(options.map((option) => option.label)).size !== options.length
     )
       throw new Error("field config options are invalid");
     if (
       source.defaultValue !== null &&
-      !options.includes(source.defaultValue as string)
+      !options.some((option) => option.id === source.defaultValue)
     )
       throw new Error("field config defaultValue must be a select option");
     return {
@@ -283,7 +306,10 @@ function parseField(value: unknown): SandboxDocumentField {
     ...(description === undefined ? {} : { description }),
     config,
   };
-  if (!valueMatchesField(config.defaultValue, field, false))
+  if (
+    config.kind !== "user" &&
+    !valueMatchesField(config.defaultValue, field, false)
+  )
     throw new Error("field config defaultValue does not match its field");
   return field;
 }
@@ -355,7 +381,17 @@ function valueMatchesField(
     case "checkbox":
       return typeof value === "boolean";
     case "select":
-      return typeof value === "string" && field.config.options.includes(value);
+      return (
+        typeof value === "string" &&
+        field.config.options.some((option) => option.id === value)
+      );
+    case "user":
+      return (
+        typeof value === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          value,
+        )
+      );
     case "date":
       return (
         typeof value === "string" &&
@@ -458,10 +494,14 @@ function parseDesign(value: unknown, semantic = true): SandboxDocumentDesign {
     const source = record(item, "module");
     exactKeys(
       source,
-      ["id", "departmentId", "name", "closed", "fields"],
+      ["id", "departmentId", "name", "closed", "titleFieldId", "fields"],
       "module",
     );
     const fields = array(source.fields, "module fields").map(parseField);
+    const titleFieldId =
+      source.titleFieldId === null
+        ? null
+        : boundedString(source.titleFieldId, "module titleFieldId");
     return {
       id: boundedString(source.id, "module id"),
       departmentId: boundedString(source.departmentId, "module departmentId"),
@@ -471,6 +511,7 @@ function parseDesign(value: unknown, semantic = true): SandboxDocumentDesign {
         SANDBOX_DOCUMENT_LIMITS.nameCharacters,
       ),
       closed: boolean(source.closed, "module closed"),
+      titleFieldId,
       fields,
     };
   });
@@ -502,6 +543,27 @@ function parseDesign(value: unknown, semantic = true): SandboxDocumentDesign {
         sandboxModule.fields.map((field) => field.id),
         "field IDs",
       );
+    if (semantic && sandboxModule.titleFieldId !== null) {
+      const titleField = sandboxModule.fields.find(
+        (field) => field.id === sandboxModule.titleFieldId,
+      );
+      if (
+        !titleField ||
+        titleField.closed ||
+        ![
+          "Text",
+          "Long text",
+          "Email",
+          "URL",
+          "Integer",
+          "Number",
+          "Select",
+        ].includes(titleField.type)
+      )
+        throw new Error(
+          "module titleFieldId must refer to an active title field",
+        );
+    }
   }
   const parsedRelationships = relationships.map((item): SandboxRelationship => {
     const source = record(item, "relationship");
@@ -636,7 +698,9 @@ function compatibleFields(
   if (sourceKind === "select") {
     if (targetKind !== "select") return false;
     const targetOptions = target.config.options;
-    return source.config.options.every((item) => targetOptions.includes(item));
+    return source.config.options.every((item) =>
+      targetOptions.some((candidate) => candidate.label === item.label),
+    );
   }
   if (sourceKind === "number" || sourceKind === "integer") {
     if (targetKind !== "number" && sourceKind !== targetKind) return false;
@@ -1285,7 +1349,7 @@ function validateScenario(
 function parseDocumentContents(
   source: UnknownRecord,
   semantic = true,
-): Omit<SandboxDocumentV3, "kind" | "schemaVersion" | "versions"> {
+): Omit<SandboxDocumentV4, "kind" | "schemaVersion" | "versions"> {
   return {
     design: parseDesign(source.design, semantic),
     triggers: [],
@@ -1341,7 +1405,7 @@ function parseVersion(value: unknown, semantic = true): SandboxVersionSnapshot {
   };
 }
 
-function parseDocument(value: unknown, semantic = true): SandboxDocumentV3 {
+function parseDocument(value: unknown, semantic = true): SandboxDocumentV4 {
   const source = record(value, "sandbox document");
   if (
     typeof source.schemaVersion === "number" &&
@@ -1385,7 +1449,7 @@ function parseDocument(value: unknown, semantic = true): SandboxDocumentV3 {
 export function parseSandboxDocumentValue(
   value: unknown,
   semantic = true,
-): SandboxDocumentV3 {
+): SandboxDocumentV4 {
   return parseDocument(value, semantic);
 }
 

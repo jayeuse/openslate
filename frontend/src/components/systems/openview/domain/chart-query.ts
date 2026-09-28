@@ -22,6 +22,7 @@ export const CATEGORICAL_TYPES = new Set([
   "email",
   "url",
   "select",
+  "user",
   "boolean",
 ]);
 export const EMPTY_OPERATORS = new Set<FilterOperator>([
@@ -52,6 +53,7 @@ export function operatorsFor(field: OpenViewDataSourceField): FilterOperator[] {
     return [...COMMON_FILTER_OPERATORS, "contains", "prefix", "suffix"];
   }
   if (field.type === "select") return [...COMMON_FILTER_OPERATORS, "contains"];
+  if (field.type === "user") return COMMON_FILTER_OPERATORS;
   if (
     NUMERIC_TYPES.has(field.type) ||
     ["date", "datetime"].includes(field.type)

@@ -5,7 +5,7 @@ const notificationId = "00000000-0000-4000-8000-000000000102";
 const reportId = "00000000-0000-4000-8000-000000000103";
 const runId = "00000000-0000-4000-8000-000000000104";
 const boardId = "00000000-0000-4000-8000-000000000105";
-const announcementId = "00000000-0000-4000-8000-000000000106";
+const postId = "00000000-0000-4000-8000-000000000106";
 const revisionId = "00000000-0000-4000-8000-000000000107";
 const eventId = "00000000-0000-4000-8000-000000000108";
 const timestamp = "2026-09-23T00:00:00Z";
@@ -120,9 +120,9 @@ test("connected inbox shows Board publication and reminder references without co
         items: [
           {
             id: notificationId,
-            kind: "announcement-publish",
+            kind: "post-publish",
             board_id: boardId,
-            announcement_id: announcementId,
+            post_id: postId,
             publication_revision_id: revisionId,
             status: "unread",
             scheduled_for: timestamp,
@@ -135,6 +135,7 @@ test("connected inbox shows Board publication and reminder references without co
             board_id: boardId,
             event_id: eventId,
             occurrence_id: `${eventId}:2026-09-23`,
+            occurrence_start_at: timestamp,
             status: "unread",
             scheduled_for: timestamp,
             created_at: timestamp,
@@ -157,17 +158,17 @@ test("connected inbox shows Board publication and reminder references without co
     name: "Connected notifications",
   });
   await expect(
-    connected.getByText("Board announcement", { exact: true }),
+    connected.getByText("Board post", { exact: true }),
   ).toBeVisible();
   await expect(
     connected.getByText("Event reminder", { exact: true }),
   ).toBeVisible();
-  await expect(connected).not.toContainText(announcementId);
+  await expect(connected).not.toContainText(postId);
   await expect(connected).not.toContainText(eventId);
   await expect(connected).not.toContainText("Publication body");
   await expect(
-    connected.getByRole("link", { name: "Open Board announcements" }),
-  ).toHaveAttribute("href", `/boards?board=${boardId}&section=announcements`);
+    connected.getByRole("link", { name: "Open Board posts" }),
+  ).toHaveAttribute("href", `/boards?board=${boardId}&section=posts`);
   await expect(
     connected.getByRole("link", { name: "Open Board calendar" }),
   ).toHaveAttribute("href", `/boards?board=${boardId}&section=calendar`);

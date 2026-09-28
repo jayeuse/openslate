@@ -87,6 +87,7 @@ export const accessModule = {
   id: ids.module,
   department_id: ids.department,
   module_name: "Prices",
+  title_field_id: null,
   created_at: timestamp,
   updated_at: timestamp,
   deleted_at: null,

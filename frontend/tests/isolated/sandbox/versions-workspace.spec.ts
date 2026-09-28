@@ -5,12 +5,12 @@ import {
   validVersionSelection,
 } from "../../../src/components/systems/sandbox/components/versions-workspace";
 import type { SandboxVersion } from "../../../src/components/systems/sandbox/state/api";
-import type { SandboxDocumentV3 } from "../../../src/components/systems/sandbox/domain/document";
+import type { SandboxDocumentV4 } from "../../../src/components/systems/sandbox/domain/document";
 
-function document(): SandboxDocumentV3 {
+function document(): SandboxDocumentV4 {
   return {
     kind: "openslate-sandbox",
-    schemaVersion: 3,
+    schemaVersion: 4,
     design: { departments: [], modules: [], relationships: [], layout: {} },
     triggers: [
       {

@@ -12,7 +12,11 @@ from app.core.base_model import utc_now
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board, BoardStatus
 from app.systems.boards.reminder_models import BoardEventReminder
-from app.systems.boards.reminder_service import next_occurrence_start, reminder_due_at
+from app.systems.boards.reminder_service import (
+    REMINDER_DELIVERY_GRACE,
+    next_occurrence_start,
+    reminder_due_at,
+)
 from app.systems.openview.reports.models import Report
 from app.systems.openview.reports.schedule_models import ReportSchedule
 from app.systems.platform.scheduling.models import ScheduledWork, WorkKind, WorkState
@@ -139,12 +143,11 @@ def materialize_due_schedules(
 def materialize_event_reminders(
     db: Session, *, now: datetime | None = None, limit: int = MAX_REMINDER_BATCH
 ) -> list[UUID]:
-    """Queue the next occurrence of each live reminder that has nothing queued.
+    """Queue the next eligible occurrence of each live reminder.
 
     One ``scheduled_work`` row exists for each reminder and occurrence. A reminder
-    whose next due time has passed is skipped, not sent late: a reminder set after
-    its due time, or while its Board was archived, starts with the next occurrence.
-    The caller owns commit or rollback.
+    due up to 15 minutes ago may still be queued for delivery. Older due times are
+    skipped. The caller owns commit or rollback.
     """
 
     if not 1 <= limit <= MAX_REMINDER_BATCH:
@@ -152,14 +155,15 @@ def materialize_event_reminders(
     current = now or utc_now()
     if current.tzinfo is None or current.utcoffset() != timedelta(0):
         raise ValueError("Materialization requires a UTC instant")
-    earliest_day = current.date() - timedelta(days=2)
+    earliest_due = current - REMINDER_DELIVERY_GRACE
+    earliest_day = earliest_due.date() - timedelta(days=2)
     queued = exists(
         select(ScheduledWork.id).where(
             ScheduledWork.reminder_id == BoardEventReminder.id,
             ScheduledWork.state.in_((WorkState.PENDING, WorkState.RUNNING)),
         )
     )
-    candidates = db.execute(
+    candidate_query = (
         select(BoardEventReminder.id, BoardEventReminder.timing, BoardEvent)
         .join(BoardEvent, BoardEvent.id == BoardEventReminder.event_id)
         .join(Board, Board.id == BoardEventReminder.board_id)
@@ -173,32 +177,59 @@ def materialize_event_reminders(
             ~queued,
             or_(
                 and_(BoardEvent.recurrence != "none", BoardEvent.repeat_until >= earliest_day),
-                BoardEvent.start_at > current,
+                BoardEvent.start_at >= earliest_due,
                 BoardEvent.start_date >= earliest_day,
             ),
         )
-        .order_by(BoardEventReminder.id)
-        .limit(limit)
-    ).all()
+    )
+    upper_id = db.scalar(
+        select(BoardEventReminder.id).order_by(BoardEventReminder.id.desc()).limit(1)
+    )
+    if upper_id is None:
+        return []
     work_ids: list[UUID] = []
-    for reminder_id, timing, event in candidates:
-        start = next_occurrence_start(event, timing, current)
-        if start is None:
-            continue
-        due = reminder_due_at(start, timing)
-        work = ScheduledWork(
-            kind=WorkKind.EVENT_REMINDER,
-            reminder_id=reminder_id,
-            occurrence_start_at=start,
-            scheduled_for=due,
-            next_attempt_at=due,
-        )
-        try:
-            with db.begin_nested():
-                db.add(work)
-                db.flush()
-        except IntegrityError:
-            # This occurrence already has a row (delivered or canceled): skip it.
-            continue
-        work_ids.append(work.id)
+    last_reminder_id: UUID | None = None
+    while len(work_ids) < limit:
+        page = candidate_query.where(BoardEventReminder.id <= upper_id)
+        if last_reminder_id is not None:
+            page = page.where(BoardEventReminder.id > last_reminder_id)
+        candidates = db.execute(
+            page.order_by(BoardEventReminder.id).limit(MAX_REMINDER_BATCH)
+        ).all()
+        if not candidates:
+            break
+        for reminder_id, timing, event in candidates:
+            last_reminder_id = reminder_id
+            cursor = earliest_due
+            while (start := next_occurrence_start(event, timing, cursor)) is not None:
+                due = reminder_due_at(start, timing)
+                existing_state = db.scalar(
+                    select(ScheduledWork.state).where(
+                        ScheduledWork.reminder_id == reminder_id,
+                        ScheduledWork.occurrence_start_at == start,
+                    )
+                )
+                if existing_state in (WorkState.PENDING, WorkState.RUNNING):
+                    break
+                if existing_state is not None:
+                    cursor = due + timedelta(microseconds=1)
+                    continue
+                work = ScheduledWork(
+                    kind=WorkKind.EVENT_REMINDER,
+                    reminder_id=reminder_id,
+                    occurrence_start_at=start,
+                    scheduled_for=due,
+                    next_attempt_at=due,
+                )
+                try:
+                    with db.begin_nested():
+                        db.add(work)
+                        db.flush()
+                except IntegrityError:
+                    # Another worker won this occurrence key; its work will be polled.
+                    break
+                work_ids.append(work.id)
+                break
+            if len(work_ids) == limit:
+                break
     return work_ids

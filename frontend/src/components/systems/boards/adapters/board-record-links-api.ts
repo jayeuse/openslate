@@ -72,23 +72,19 @@ export async function listBoardRecordLinks(
 export async function addBoardRecordLink(
   target: BoardEditableRecordLinkTarget,
   rawRecordId: string,
-  rawLabel: string,
   versions: BoardAttachmentVersions,
 ): Promise<BoardRecordLink> {
   const recordId = uuid.parse(rawRecordId);
-  const label = z.string().trim().min(1).max(100).parse(rawLabel);
   const link = await apiFetch(path(target), linkSchema, {
     method: "POST",
     cache: "no-store",
     body: JSON.stringify({
       record_id: recordId,
-      label,
       board_revision: versions.boardRevision,
       content_revision: versions.contentRevision,
     }),
   });
-  if (link.recordId !== recordId || link.label !== label)
-    throw new ApiContractError();
+  if (link.recordId !== recordId) throw new ApiContractError();
   return link;
 }
 

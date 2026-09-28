@@ -25,9 +25,11 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import parse_field_key, validate_record_data
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.record_triggers.outbox import enqueue_record_event
+from app.systems.sandbox.records.display import FieldDisplayResolver, displayed_record
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.mutation_validation import (
     RecordValidationError,
+    validate_live_user_assignments,
     validate_record_mutation,
 )
 from app.systems.sandbox.records.schemas import RecordCreate, RecordResponse, RecordUpdate
@@ -187,9 +189,14 @@ def _validate_data(
     try:
         for key in data:
             parse_field_key(key)
-        validate_record_data(data, fields if fields is not None else _active_fields(db, module_id))
+        selected_fields = fields if fields is not None else _active_fields(db, module_id)
+        validate_record_data(data, selected_fields)
     except ValueError as error:
         raise _invalid(str(error)) from error
+    try:
+        validate_live_user_assignments(db, module_id, data, selected_fields)
+    except RecordValidationError as error:
+        raise _record_validation_http_error(error) from error
 
 
 def _merge_patch_data(
@@ -199,7 +206,9 @@ def _merge_patch_data(
     requested: dict[str, Any],
 ) -> dict[str, Any]:
     fields = _module_fields(db, module_id)
-    return validate_record_mutation(requested, existing, fields)
+    normalized = validate_record_mutation(requested, existing, fields)
+    validate_live_user_assignments(db, module_id, normalized, fields)
+    return normalized
 
 
 def _commit(db: Session, message: str) -> None:
@@ -221,8 +230,16 @@ def list_records(
     if module_id is not None:
         statement = statement.where(Record.module_id == module_id)
     result = execute_standard_list(db, statement, params, RECORD_LIST_SPEC)
+    resolvers: dict[UUID, FieldDisplayResolver] = {}
+    items: list[RecordResponse] = []
+    for record in result.items:
+        if record.module_id not in resolvers:
+            resolvers[record.module_id] = FieldDisplayResolver(
+                db, record.module_id, _module_fields(db, record.module_id)
+            )
+        items.append(displayed_record(record, resolvers[record.module_id]))
     return RecordListResponse.model_validate(
-        {"items": result.items, "pagination": result.pagination},
+        {"items": items, "pagination": result.pagination},
         from_attributes=True,
     )
 
@@ -232,8 +249,11 @@ def get_record(
     record_id: UUID,
     user: RecordReadUser,
     db: Annotated[Session, Depends(get_db)],
-) -> Record:
-    return _record(db, user, record_id)
+) -> RecordResponse:
+    record = _record(db, user, record_id)
+    return displayed_record(
+        record, FieldDisplayResolver(db, record.module_id, _module_fields(db, record.module_id))
+    )
 
 
 @router.post("", response_model=RecordResponse, status_code=status.HTTP_201_CREATED)
@@ -241,7 +261,7 @@ def create_record(
     payload: RecordCreate,
     user: RecordWriteUser,
     db: Annotated[Session, Depends(get_db)],
-) -> Record:
+) -> RecordResponse:
     require_module_access(db, user, payload.module_id, AccessLevel.WRITE)
     _active_module(db, payload.module_id)
     _lock_active_module(db, payload.module_id)
@@ -254,6 +274,7 @@ def create_record(
             {},
             fields,
         )
+        validate_live_user_assignments(db, payload.module_id, normalized_data, fields)
     except RecordValidationError as error:
         raise _record_validation_http_error(error) from error
     record = Record(module_id=payload.module_id, data=normalized_data)
@@ -262,7 +283,7 @@ def create_record(
     enqueue_record_event(db, record, previous=None)
     _commit(db, "Unable to create record")
     db.refresh(record)
-    return record
+    return displayed_record(record, FieldDisplayResolver(db, record.module_id, fields))
 
 
 @router.patch("/{record_id}", response_model=RecordResponse)
@@ -271,7 +292,7 @@ def update_record(
     payload: RecordUpdate,
     user: RecordWriteUser,
     db: Annotated[Session, Depends(get_db)],
-) -> Record:
+) -> RecordResponse:
     _require_patch(payload)
     record = _record(db, user, record_id, AccessLevel.WRITE)
     if record.is_deleted:
@@ -291,7 +312,9 @@ def update_record(
             raise _record_validation_http_error(error) from error
         enqueue_record_event(db, record, previous=previous)
     _commit(db, "Unable to update record")
-    return record
+    return displayed_record(
+        record, FieldDisplayResolver(db, record.module_id, _module_fields(db, record.module_id))
+    )
 
 
 @router.delete("/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -319,7 +342,7 @@ def restore_record(
     record_id: UUID,
     user: RecordWriteUser,
     db: Annotated[Session, Depends(get_db)],
-) -> Record:
+) -> RecordResponse:
     record = _record(db, user, record_id, AccessLevel.WRITE)
     if not record.is_deleted:
         raise _conflict("Record is not deleted")
@@ -335,4 +358,6 @@ def restore_record(
     record.is_deleted = False
     record.deleted_at = None
     _commit(db, "Unable to restore record")
-    return record
+    return displayed_record(
+        record, FieldDisplayResolver(db, record.module_id, _module_fields(db, record.module_id))
+    )

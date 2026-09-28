@@ -75,6 +75,8 @@ export function ServerBoardPostEditorDisplay({
   onAttachmentBusyChange,
   onRecordLinkBusyChange,
   refreshAttachmentVersions,
+  canArchiveSelected = false,
+  onArchive,
   showNewButton = true,
 }: {
   boardId: string;
@@ -93,6 +95,8 @@ export function ServerBoardPostEditorDisplay({
   onAttachmentBusyChange: (busy: boolean) => void;
   onRecordLinkBusyChange: (busy: boolean) => void;
   refreshAttachmentVersions: () => Promise<BoardAttachmentVersions>;
+  canArchiveSelected?: boolean;
+  onArchive?: () => void;
   showNewButton?: boolean;
 }) {
   const heading = createElement(
@@ -738,6 +742,22 @@ export function ServerBoardPostEditorDisplay({
                     "Cancel scheduled publication",
                   )
                 : null,
+              canArchiveSelected && selected && onArchive
+                ? createElement(
+                    "button",
+                    {
+                      type: "button",
+                      onClick: onArchive,
+                      disabled:
+                        view.pending ||
+                        view.conflict ||
+                        view.dirty ||
+                        view.scheduleDirty,
+                      className: secondaryClass,
+                    },
+                    "Archive post",
+                  )
+                : null,
               createElement(
                 "button",
                 {
@@ -798,6 +818,7 @@ export function ServerBackedBoardPostEditor({
 }) {
   const [open, setOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const editor = useServerBoardPostEditor({
     boardId,
     boardRevision,
@@ -967,6 +988,8 @@ export function ServerBackedBoardPostEditor({
             onAttachmentBusyChange={editor.setAttachmentPending}
             onRecordLinkBusyChange={editor.setRecordLinkPending}
             refreshAttachmentVersions={editor.refreshAttachmentVersions}
+            canArchiveSelected={editor.canArchiveSelected}
+            onArchive={() => setArchiveOpen(true)}
           />
         </SheetContent>
       </Sheet>
@@ -978,6 +1001,24 @@ export function ServerBackedBoardPostEditor({
         onCancel={() => setDiscardOpen(false)}
         onConfirm={discardChanges}
         disabled={view.pending}
+      />
+      <ConfirmAction
+        open={archiveOpen && editor.canArchiveSelected}
+        title="Archive post?"
+        description={`Archive “${view.selected?.title ?? "this post"}”? Readers will no longer see it. Its edit history stays, and a Board manager can restore it.`}
+        action="Archive post"
+        onCancel={() => setArchiveOpen(false)}
+        onConfirm={() => {
+          setArchiveOpen(false);
+          void editor.archiveSelected();
+        }}
+        disabled={
+          view.pending ||
+          view.conflict ||
+          view.dirty ||
+          view.scheduleDirty ||
+          !editor.canArchiveSelected
+        }
       />
     </>
   );

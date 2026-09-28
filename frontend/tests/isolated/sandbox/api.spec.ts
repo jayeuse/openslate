@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { ApiContractError } from "../../../src/lib/api";
-import type { SandboxDocumentV3 } from "../../../src/components/systems/sandbox/domain/document";
+import type { SandboxDocumentV4 } from "../../../src/components/systems/sandbox/domain/document";
 import {
   SANDBOX_REQUEST_BODY_LIMIT_BYTES,
   createSandboxVersion,
@@ -25,9 +25,9 @@ import {
 
 const versionId = "00000000-0000-4000-8000-000000000001";
 
-const document: SandboxDocumentV3 = {
+const document: SandboxDocumentV4 = {
   kind: "openslate-sandbox",
-  schemaVersion: 3,
+  schemaVersion: 4,
   design: {
     departments: [{ id: "operations", name: "Operations", closed: false }],
     modules: [
@@ -36,6 +36,7 @@ const document: SandboxDocumentV3 = {
         departmentId: "operations",
         name: "Requests",
         closed: false,
+        titleFieldId: "title",
         fields: [
           {
             id: "title",
@@ -69,7 +70,7 @@ const documentResponse = {
   hasUnpublishedChanges: true,
 };
 
-const repairableDocument: SandboxDocumentV3 = {
+const repairableDocument: SandboxDocumentV4 = {
   ...document,
   triggers: [
     {
@@ -90,7 +91,7 @@ const repairableDocument: SandboxDocumentV3 = {
   ],
 };
 
-const documentWithVersions: SandboxDocumentV3 = {
+const documentWithVersions: SandboxDocumentV4 = {
   ...document,
   versions: [
     {

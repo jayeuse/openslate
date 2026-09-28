@@ -26,7 +26,7 @@ test("new Sandbox workspaces start without placeholder entities", () => {
   });
 });
 
-test("sandbox field configuration has ten canonical types and normalizes legacy select values", () => {
+test("sandbox field configuration includes User and assigns stable IDs to legacy select choices", () => {
   expect(FIELD_TYPES.map((type) => type.name)).toEqual([
     "Text",
     "Long text",
@@ -36,24 +36,33 @@ test("sandbox field configuration has ten canonical types and normalizes legacy 
     "Date/Time",
     "Checkbox",
     "Select",
+    "User",
     "Email",
     "URL",
   ]);
-  expect(
-    normalizeField({
-      id: "status",
-      name: "Status",
-      type: "Select",
-      required: false,
-      value: "Open",
-      options: " Open, Closed, Open ",
-      closed: false,
-    }).config,
-  ).toEqual({
-    kind: "select",
-    defaultValue: "Open",
-    options: ["Open", "Closed"],
+  const normalized = normalizeField({
+    id: "status",
+    name: "Status",
+    type: "Select",
+    required: false,
+    value: "Open",
+    options: " Open, Closed, Open ",
+    closed: false,
   });
+  expect(normalized.config.kind).toBe("select");
+  if (normalized.config.kind !== "select")
+    throw new Error("Status must remain a select field");
+  expect(normalized.config.options.map((option) => option.label)).toEqual([
+    "Open",
+    "Closed",
+  ]);
+  const selected = normalized.config.options.find(
+    (option) => option.label === "Open",
+  );
+  expect(normalized.config.defaultValue).toBe(selected?.id);
+  expect(selected?.id).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+  );
 });
 
 test("canvas field type changes replace incompatible saved configuration", () => {

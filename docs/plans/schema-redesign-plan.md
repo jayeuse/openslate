@@ -1,4 +1,4 @@
-> **Status: proposed plan.** No application code, schema or test has changed. This plan implements the contract in [docs/specs/schema-redesign.md](../specs/schema-redesign.md). It is based on `main` at `0f58c08`. Revalidate file paths and line numbers against the current checkout before each slice starts.
+> **Status: implementation in progress.** Slices 1–7 are implemented and reviewed on `codex/schema-redesign`; the retained test, coverage, static-check and build evidence is recorded in the continuation handoff. Final real-stack browser acceptance remains unverified and was stopped at the user’s request; do not resume scanner testing without renewed authorization. The active fresh-install root is `089c54b88aa6`; the old chain is archived, and development-instance reinitialization still requires approval. This plan implements the contract in [docs/specs/schema-redesign.md](../specs/schema-redesign.md) and is based on `main` at `0f58c08`. Revalidate paths against the current checkout before continuing.
 
 # Schema Redesign Implementation Plan
 
@@ -54,6 +54,16 @@ These choices are needed to write the slices. Change any of them before its slic
 | D13 | The Access nav item shows for administrators and for users with `manage` on any department. A manager sees only the Groups tab, only the groups they may manage, and can change only their members. | `/api/auth/me` returns `role` and `access`, so the frontend can gate the nav. The backend still enforces every rule. |
 | D14 | Members change through a dedicated `PUT /api/access/groups/{id}/members` with `If-Match`. `PATCH` keeps name and description and is administrator-only. A non-guest active user with `manage` on every department that the group's `group_access` rows reach may replace the members. A group with no access rows is administrator-only. A manager may add active or pending non-administrator users, including guests, may remove anyone including other managers and themselves, and may add members to a group that grants `manage`. `GET /api/access/groups` and `GET /api/access/groups/{id}` return only the groups a manager may change. `GET /api/access/member-candidates` returns the minimal list a manager needs: ID, display name, username, email, role and status of non-administrator, non-deleted users. | The spec gives `manage` the right to change the members of groups that stay inside the manager's departments. The administrator already chose each group's levels, so adding a member gives that person exactly what the administrator decided. A dedicated route keeps one authorization rule per resource. |
 | D15 | `GET /api/reports/audience-roles` returns 422 because `/api/reports/{report_id}` matches the path. This is accepted: the route no longer exists. | A 404 would need a route-order change for a path that nothing calls. |
+
+### 1.5 Boards continuation decisions
+
+Confirmed by the user on 2026-09-28:
+
+- Authors retain the ability to archive their own posts and events; the frontend must expose the actions allowed by the backend.
+- Reminder timings remain start, 15 minutes before, and 1 day before. A reminder may be delivered up to and including 15 minutes after its due time; older reminders are not delivered. Delivery still uses the current board audience and must not duplicate an occurrence.
+- Purging a department also purges its department board and owned content, matching department-owned dashboard cleanup. The purge preview and confirmation must cover that content while preserving safeguards for unrelated boards, file storage, and concurrent changes.
+
+**File boundary for the department cascade.** Implement the database cascade with the existing file-purge prerequisite: file bytes must already have a confirmed purge before their metadata and owner are removed. This preserves the plan's deferred file scope. The question of adding a resumable combined byte-deletion workflow remains a separate scope decision; it does not block the approved cascade for content that satisfies the existing file guard.
 
 ## 2. Delivery strategy
 
@@ -480,7 +490,7 @@ DROP TABLE dashboard_defaults, saved_view_defaults, openview_chart_preferences;
 **Backend.**
 
 1. In `manage/audit/listeners.py`, derive the department at write time: `departments` → its ID; `modules`, `saved_views`, `reports` → the module department; `fields`, `records` → through the module; `relationship_edges` → the source record module; `dashboards` → its column; `boards` → its department when the scope is `department`; `board_posts`, `board_events`, `board_widgets` and their children → through the board; `group_access` → its column. Everything else stays NULL.
-2. `GET /api/audit-logs` accepts `department_id`. Managers of that department can use it (default D8); administrators see everything.
+2. `GET /api/audit-logs` accepts `department_id`. Managers must supply a department they manage at department level; an omitted or unauthorized department returns 403. Administrators may omit the filter to see everything. Apply the filter to both items and pagination totals. Audit responses include nullable `department_id`. Detail, export, and security-event routes remain administrator-only.
 
 **Tests.** One test per entity family for the derived department; one test that a manager of Inventory gets 403 for Finance entries.
 
@@ -499,7 +509,7 @@ ALTER TABLE board_post_revision_record_links DROP COLUMN label;
 -- sandbox_documents / sandbox_versions CHECK schema_version = 4
 ```
 
-Select options change inside `fields.config` from `["In stock", …]` to `[{"id": "<uuid>", "label": "In stock"}, …]`. Record values for select fields store the option ID. Development data is reset before this revision.
+Select options change inside `fields.config` from `["In stock", …]` to `[{"id": "<uuid>", "label": "In stock"}, …]`. Record values for select fields store the option ID. The migration must refuse incompatible nonempty field/record/link/history data or a nonempty Sandbox draft. An already-empty version-3 draft may become the empty version-4 draft without resetting accounts or provider data. If the guard finds content, obtain explicit approval for the separate application-data reset before proceeding; do not silently convert or discard it.
 
 **Backend.**
 
@@ -509,9 +519,19 @@ Select options change inside `fields.config` from `["In stock", …]` to `[{"id"
 4. Query compiler (`records/query.py`, `grouping.py`, `aggregation.py`): filters compare option IDs; grouping and CSV (`export.py`) and report capture show labels; `user` values show display names.
 5. Record triggers: literal values of select and `user` fields store IDs.
 6. New route `GET /api/modules/{module_id}/assignable-users` for the person picker.
-7. Board record links show the live record title.
+7. Board record links show the live record title. Existing module and record data-source responses expose nullable `title_field_id`, so candidate selectors request and display that field too; no new metadata endpoint is needed.
 
-**Frontend.** The Sandbox field editor (option editor with stable IDs, title field picker, `user` type), record forms (person picker), tables, filters and CSV display, and board record links.
+**Frontend.** The Sandbox field editor (option editor with stable IDs, title field picker, `user` type), existing record forms (person picker), tables, filters and CSV display, and board record links. **Confirmed by the user on 2026-09-28:** keep OpenView's live record inspector read-only; extend existing forms, API, filters and displays rather than adding live record creation or editing to OpenView.
+
+**Existing-form boundary.** Sandbox TestWorkspace is a draft-only trigger simulator, not a live record editor. Its module IDs have no exposed live binding, so person values there are explicitly simulated UUIDs and cannot claim current assignment eligibility. The live `assignable-users` picker serves published-module filters; live record writes and production trigger actions enforce active-user/module-read eligibility. Do not add a global user picker or a new binding API to make draft simulation appear live.
+
+**Relationship mapping compatibility.** Preserve the existing label-based select mapping rule: source option labels must be contained in the target labels. Independently created fields may have different option IDs. The draft relationship simulator resolves the source ID to its label and then the matching target option ID before validating the projected value. Do not introduce shared option identities or a new mapping configuration. Missing labels remain incompatible.
+
+**Board bundle portability.** Preserve version-3 named-source portability for select filters: export stored option IDs as labels and resolve imported labels to the target field's option IDs, including membership lists. Missing or ambiguous labels fail existing validation. Empty checks keep their null values. This adapts the existing portable contract without sharing option IDs across installations or changing the bundle version. User output-field references remain portable by field name and type, and value-free User checks remain supported. Reject value-bearing User filters on export and import: their installation-specific user UUIDs have no defined portable identity binding. Do not invent person-name matching, a new user directory, or a new bundle version; live User filters remain supported.
+
+**Person read and write boundary.** Keep structural UUID validation separate from current eligibility: live create, explicitly supplied update values, restore and production trigger assignments check the selected user through the existing module-reader policy. Preserve the existing PATCH contract: supplying `data` replaces the active field values, so explicitly included person IDs are revalidated even when unchanged. A PATCH that does not replace `data` may retain unavailable person values. Moving a record to another module remains unsupported (409); this slice adds no move capability. Querying historical values and draft simulation do not grant assignment eligibility. The module-scoped picker returns only ID, display name and username to callers who can read that module. Raw record and grouping values remain IDs; transient display labels use the same eligibility-aware resolver for reads, grouping, CSV and report capture. Select equality and membership compare IDs. Existing select contains filters resolve their selected option ID to its current label; global select search uses labels rather than UUIDs. An ineligible trigger assignment follows the existing validation-failure transaction rollback and bounded retry/terminal-failure path; do not silently skip an action or add a new failure framework.
+
+**Title lifecycle and display defaults.** A standalone close or purge of the selected title field is blocked until a Sandbox publication clears or changes the selection. Closing a whole module or department preserves the selection for reopening; reopening validates the selection against the effective active fields. Purging a whole module or department clears title pointers on the modules being purged in the same audited transaction before deleting their fields. Publication resolves title selections after field bindings and before closing removed structure. An absent or empty title displays the existing `Record <first eight ID characters>` fallback. Person pickers offer only active module readers; stored person values that are no longer eligible display `Unavailable user`, while the stored ID remains unchanged. These are implementation defaults within the field contract, not broader lifecycle or user-directory changes.
 
 **Acceptance criteria.**
 
@@ -527,9 +547,11 @@ Select options change inside `fields.config` from `["In stock", …]` to `[{"id"
 1. Generate one revision with `down_revision = None` that creates the final schema, the grants and default privileges, every database function with its `EXECUTE` grant, and the singleton rows (`sandbox_documents` version 4, the company board).
 2. Move the slice revisions to `backend/migrations/history/schema_redesign/`, like `history/vanilla_postgresql/`.
 3. Prove equality: apply the chain to one empty database and the new root to another; `pg_dump --schema-only` of the `public` schema must be identical, and `alembic check` must pass on both.
-4. Update `docs/architecture/01-system-overview.md` and `06-data-architecture.md` with the new root revision ID, and write down how the root was produced (today no document records how `c4ec36fc30cc` was created).
+4. Update `docs/architecture/01-system-overview.md` and `06-data-architecture.md` with the root revision ID and the model-autogeneration, supplement-review, and schema-comparison procedure. The active root is `089c54b88aa6`; its predecessor chain is under `history/schema_redesign/`.
 5. Caution: recreating the development database deletes the provider volume with its Auth and Storage state. Get approval, then follow `infra/supabase/README.md` for a fresh instance, `provision_database_role.py`, `alembic upgrade head`, `alembic check`, `provision_storage.py` and `bootstrap_admin.py`.
-6. After slice 8, re-plan the UI-equivalent sample data against the new schema.
+6. Re-plan the UI-equivalent sample data against the new schema. The revised plan uses current configuration/content controls and defers live operational-record population because OpenView remains read-only and no supported live-record authoring surface exists.
+
+Keep the existing record-trigger suspension columns and run-state value in this root: execution still reads them. Removing dormant write paths or columns is separate cleanup; the new root must reproduce the final chain without unrelated schema changes.
 
 ## 5. Per-table matrix
 
@@ -631,14 +653,14 @@ Skills in `.agents/skills/` that describe the flat capabilities (`webapp-securit
 | The new root differs from the chain. | The schema dump comparison in slice 8. |
 | A manager escalates access through a shared group. | Slice 3d rule and its tests. |
 
-**Rollback.** Each slice is one pull request. Revert the pull request and run `alembic downgrade` to the previous revision. Downgrades of dropped tables recreate empty tables, which is acceptable because there is no real data. After slice 8, rollback means restoring the archived chain.
+**Rollback.** Use only the downgrade supported by the specific revision. Slice 7 deliberately refuses downgrade: option IDs and removed Board labels cannot be converted losslessly to version 3. Recover that development lineage through an approved fresh initialization or a supported backup restoration, rather than inventing lost values. Other supported downgrades of dropped tables recreate empty tables. After slice 8, restoring the old lineage requires the archived chain and a compatible database; do not stamp an existing database onto the new root.
 
 ## 8. Open items
 
 | Item | Needed before |
 |---|---|
-| Spec decision 6: library documents (deferred with files). | After this plan |
-| Spec decisions 9 and 10: `is_deleted` as a generated column; soft delete only on restorable tables. Not in any slice. Add them to a slice or defer them. | Slice 8 at the latest |
-| Spec decision 11: one rate-limit table. Not in any slice. | Optional |
-| Spec decision 14: `actor_label` for users. Slice 2 adds the write path for triggers only. | Optional |
+| Spec decision 6: library documents. Remain deferred with files. | After this plan |
+| Spec decisions 9 and 10: generated `is_deleted` and soft delete only on restorable tables. Continuation scope default: defer beyond these eight slices; neither is included in the implementation checklist. | Separate follow-up unless the user expands scope |
+| Spec decision 11: one rate-limit table. Remains deferred; not in any slice. | Optional follow-up |
+| Spec decision 14: `actor_label` for users. Keep the spec's existing declined status; slice 2 adds the write path for triggers only. | Separate user decision |
 | Revalidate the "rewrite" test lists. The investigations classified many files by name and code path, not line by line. | Start of each slice |

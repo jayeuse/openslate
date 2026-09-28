@@ -270,6 +270,7 @@ test("widget state clears on Board switch, changed configuration, and revoked ac
           id: recordId,
           moduleId,
           data: { [fieldId]: "Private value" },
+          displayValues: {},
           createdAt: timestamp,
           updatedAt: timestamp,
           deletedAt: null,
@@ -472,6 +473,103 @@ function displayState(items: LiveWidgetItem[]): LiveWidgetsState {
   return { key, sequence: 1, status: "ready", items, error: null };
 }
 
+test("record widgets show authorized select and person labels instead of stored IDs", async () => {
+  const statusFieldId = "00000000-0000-4000-8000-000000000011";
+  const assigneeFieldId = "00000000-0000-4000-8000-000000000012";
+  const choiceId = "00000000-0000-4000-8000-000000000013";
+  const assigneeId = "00000000-0000-4000-8000-000000000014";
+  const recordsWidget: BoardWidget = {
+    ...widget,
+    id: otherBoardId,
+    name: "Assignment queue",
+    config: {
+      ...widget.config,
+      fields: [
+        { fieldId: statusFieldId, expectedType: "select" },
+        { fieldId: assigneeFieldId, expectedType: "user" },
+      ],
+    },
+  };
+  const mock = mockFetch((path) => {
+    if (
+      path === `/api/views/data-sources/${moduleId}/fields?limit=100&offset=0`
+    )
+      return Response.json({
+        items: [
+          {
+            id: statusFieldId,
+            module_id: moduleId,
+            name: "Status",
+            type: "select",
+            required: false,
+            position: 0,
+            config: { options: [{ id: choiceId, label: "In progress" }] },
+          },
+          {
+            id: assigneeFieldId,
+            module_id: moduleId,
+            name: "Assignee",
+            type: "user",
+            required: false,
+            position: 1,
+            config: {},
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 2,
+          total: 2,
+          has_more: false,
+        },
+      });
+    if (path === "/api/records/query")
+      return Response.json({
+        items: [
+          {
+            id: recordId,
+            module_id: moduleId,
+            data: {
+              [statusFieldId]: choiceId,
+              [assigneeFieldId]: assigneeId,
+            },
+            display_values: {
+              [statusFieldId]: "In progress",
+              [assigneeFieldId]: "Alex Reader",
+            },
+            created_at: timestamp,
+            updated_at: timestamp,
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        pagination: {
+          limit: 5,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  try {
+    const plan = buildBoardWidgetQueryPlan(recordsWidget);
+    if (plan.kind !== "records") throw new Error("Expected a records widget");
+    const data = await loadLiveWidgetData(plan);
+    const html = renderWidgets(displayState([widgetItem(recordsWidget, data)]));
+
+    expect(renderedText(html)).toContain("Status In progress");
+    expect(renderedText(html)).toContain("Assignee Alex Reader");
+    expect(html).not.toContain(choiceId);
+    expect(html).not.toContain(assigneeId);
+  } finally {
+    mock.restore();
+  }
+});
+
 test("live Board Overview renders exact summary count and escaped returned record values", () => {
   const summary = {
     ...widget,
@@ -509,6 +607,7 @@ test("live Board Overview renders exact summary count and escaped returned recor
               id: recordId,
               moduleId,
               data: { [fieldId]: "Private <script>value</script>" },
+              displayValues: {},
               createdAt: timestamp,
               updatedAt: timestamp,
               deletedAt: null,
@@ -612,6 +711,7 @@ test("records card does not show values when a selected field label is missing",
               id: recordId,
               moduleId,
               data: { [fieldId]: "Private salary" },
+              displayValues: {},
               createdAt: timestamp,
               updatedAt: timestamp,
               deletedAt: null,

@@ -180,7 +180,7 @@ test("calendar shows an edit action only for an explicitly authorized returned e
   expect(noAccess).not.toContain("Edit Visible planning session");
 });
 
-test("calendar offers archive only for a manager-approved returned event, not an author with edit access", () => {
+test("calendar renders archive only when the supplied event policy allows it", () => {
   const window = calendarWindowForMonth("2026-09");
   const manager = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
@@ -252,7 +252,7 @@ test("event edit authority requires current Board edit and author or manager", (
   ).toBe(false);
 });
 
-test("event lifecycle requires Board manager access and current revision, not author edit", () => {
+test("event lifecycle fails closed for author edit without a viewer ID and requires current revision", () => {
   const event = visibleOccurrence.event;
   const author = {
     level: "write" as const,

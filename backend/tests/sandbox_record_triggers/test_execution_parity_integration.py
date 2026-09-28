@@ -15,11 +15,19 @@ from app.systems.sandbox.record_triggers.models import (
     RecordTriggerEvent,
 )
 from app.systems.sandbox.record_triggers.runner import execute_claim
+from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.router import create_record
 from app.systems.sandbox.records.schemas import RecordCreate
-from tests.sandbox_record_triggers.support import field_change_trigger, publish_trigger
+from tests.sandbox_record_triggers.support import (
+    document_option_id,
+    field_change_trigger,
+    option_id,
+    publish_trigger,
+)
 
 pytestmark = pytest.mark.integration
+
+
 def test_claimed_child_event_uses_its_snapshot_for_thresholds(
     integration_owner_db: Session,
 ) -> None:
@@ -31,7 +39,9 @@ def test_claimed_child_event_uses_its_snapshot_for_thresholds(
         priority=-20,
         event_kind="record-created",
     )
-    _set_action(integration_owner_db, root, fields["priority"], "High")
+    _set_action(
+        integration_owner_db, root, fields["priority"], option_id(fields["priority"], "High")
+    )
     lower = _definition(
         integration_owner_db,
         template,
@@ -40,7 +50,9 @@ def test_claimed_child_event_uses_its_snapshot_for_thresholds(
         event_kind="field-changed",
         trigger_field_id=fields["priority"].id,
     )
-    _set_action(integration_owner_db, lower, fields["priority"], "Low")
+    _set_action(
+        integration_owner_db, lower, fields["priority"], option_id(fields["priority"], "Low")
+    )
     threshold = _definition(
         integration_owner_db,
         template,
@@ -49,16 +61,18 @@ def test_claimed_child_event_uses_its_snapshot_for_thresholds(
         event_kind="threshold-crossed",
         trigger_field_id=fields["priority"].id,
         trigger_operator="=",
-        trigger_value="High",
+        trigger_value=option_id(fields["priority"], "High"),
     )
-    _set_action(integration_owner_db, threshold, fields["status"], "Complete")
+    _set_action(
+        integration_owner_db, threshold, fields["status"], option_id(fields["status"], "Complete")
+    )
     record = create_record(
         RecordCreate(
             module_id=module.id,
             data={
                 str(fields["request-number"].id): "REQ-SNAPSHOT",
-                str(fields["priority"].id): "Low",
-                str(fields["status"].id): "Open",
+                str(fields["priority"].id): option_id(fields["priority"], "Low"),
+                str(fields["status"].id): option_id(fields["status"], "Open"),
             },
         ),
         actor,
@@ -72,14 +86,14 @@ def test_claimed_child_event_uses_its_snapshot_for_thresholds(
     integration_owner_db.commit()
     root_event = integration_owner_db.get(RecordTriggerEvent, root_claim.id)
     child_event = integration_owner_db.scalar(
-        select(RecordTriggerEvent).where(
-            RecordTriggerEvent.root_event_id == root_claim.id
-        )
+        select(RecordTriggerEvent).where(RecordTriggerEvent.root_event_id == root_claim.id)
     )
     assert root_event is not None and root_event.action_budget == 99
     assert child_event is not None
-    assert child_event.values[str(fields["priority"].id)] == "High"
-    assert child_event.previous_values[str(fields["priority"].id)] == "Low"
+    assert child_event.values[str(fields["priority"].id)] == option_id(fields["priority"], "High")
+    assert child_event.previous_values[str(fields["priority"].id)] == option_id(
+        fields["priority"], "Low"
+    )
 
     child_claim = claim_due_events(integration_owner_db)[0]
     integration_owner_db.commit()
@@ -87,9 +101,12 @@ def test_claimed_child_event_uses_its_snapshot_for_thresholds(
     assert execute_claim(integration_owner_db, child_claim)
     integration_owner_db.commit()
 
-    integration_owner_db.refresh(record)
-    assert record.data[str(fields["priority"].id)] == "Low"
-    assert record.data[str(fields["status"].id)] == "Complete"
+    record_row = integration_owner_db.get(Record, record.id)
+    assert record_row is not None
+    integration_owner_db.refresh(record_row)
+    record = record_row
+    assert record.data[str(fields["priority"].id)] == option_id(fields["priority"], "Low")
+    assert record.data[str(fields["status"].id)] == option_id(fields["status"], "Complete")
 
 
 def test_hundred_action_budget_prevents_an_extra_child_event(integration_owner_db: Session) -> None:
@@ -120,8 +137,8 @@ def test_hundred_action_budget_prevents_an_extra_child_event(integration_owner_d
             module_id=module.id,
             data={
                 str(fields["request-number"].id): "REQ-BUDGET",
-                str(fields["priority"].id): "Low",
-                str(fields["status"].id): "Open",
+                str(fields["priority"].id): option_id(fields["priority"], "Low"),
+                str(fields["status"].id): option_id(fields["status"], "Open"),
             },
         ),
         actor,
@@ -135,13 +152,19 @@ def test_hundred_action_budget_prevents_an_extra_child_event(integration_owner_d
     integration_owner_db.commit()
 
     event = integration_owner_db.get(RecordTriggerEvent, claim.id)
-    integration_owner_db.refresh(record)
+    record_row = integration_owner_db.get(Record, record.id)
+    assert record_row is not None
+    integration_owner_db.refresh(record_row)
+    record = record_row
     assert event is not None and event.action_budget == 0
     assert len({str(target.id) for target in targets} & set(record.data)) == 100
     assert str(targets[-1].id) not in record.data
-    assert integration_owner_db.scalar(
-        select(RecordTriggerEvent).where(RecordTriggerEvent.root_event_id == claim.id)
-    ) is None
+    assert (
+        integration_owner_db.scalar(
+            select(RecordTriggerEvent).where(RecordTriggerEvent.root_event_id == claim.id)
+        )
+        is None
+    )
 
 
 def test_equal_priority_execution_uses_the_published_designer_position(
@@ -162,7 +185,10 @@ def test_equal_priority_execution_uses_the_published_designer_position(
                 "conditionGroup": {"operator": "all", "conditions": []},
             }
         )
-        payload["actions"][0]["value"] = {"kind": "literal", "value": value}
+        payload["actions"][0]["value"] = {
+            "kind": "literal",
+            "value": document_option_id("status", value),
+        }
     actor, module, fields, _definition = publish_trigger(
         integration_owner_db,
         triggers=[
@@ -175,8 +201,8 @@ def test_equal_priority_execution_uses_the_published_designer_position(
             module_id=module.id,
             data={
                 str(fields["request-number"].id): "REQ-ORDER",
-                str(fields["priority"].id): "Low",
-                str(fields["status"].id): "Open",
+                str(fields["priority"].id): option_id(fields["priority"], "Low"),
+                str(fields["status"].id): option_id(fields["status"], "Open"),
             },
         ),
         actor,
@@ -198,8 +224,11 @@ def test_equal_priority_execution_uses_the_published_designer_position(
     assert execute_claim(integration_owner_db, claim)
     integration_owner_db.commit()
 
-    integration_owner_db.refresh(record)
-    assert record.data[str(fields["status"].id)] == "Complete"
+    record_row = integration_owner_db.get(Record, record.id)
+    assert record_row is not None
+    integration_owner_db.refresh(record_row)
+    record = record_row
+    assert record.data[str(fields["status"].id)] == option_id(fields["status"], "Complete")
 
 
 def test_execution_position_defaults_to_zero_and_rejects_negative_values(
@@ -256,9 +285,7 @@ def _definition(
     return definition
 
 
-def _set_action(
-    db: Session, definition: RecordTrigger, field: Field, value: str
-) -> None:
+def _set_action(db: Session, definition: RecordTrigger, field: Field, value: str) -> None:
     db.add(
         RecordTriggerAction(
             trigger_id=definition.id,

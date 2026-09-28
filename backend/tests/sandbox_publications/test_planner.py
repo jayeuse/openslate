@@ -30,7 +30,9 @@ from app.systems.sandbox.record_triggers.models import (
     RecordTriggerCondition,
 )
 from tests.sandbox_designs.fixtures import sample_document
-from tests.sandbox_test_runs.fixtures import sandbox_document
+from tests.sandbox_test_runs.fixtures import option_id, sandbox_document
+
+SELECT_OPTION_ID = str(uuid7())
 
 
 def test_field_binding_key_is_module_scoped() -> None:
@@ -69,8 +71,15 @@ def test_relationship_cardinality_maps_to_live_edge_constraints() -> None:
         ("Checkbox", {"kind": "checkbox", "defaultValue": False}, {"defaultValue": False}),
         (
             "Select",
-            {"kind": "select", "defaultValue": "Open", "options": ["Open"]},
-            {"defaultValue": "Open", "options": ["Open"]},
+            {
+                "kind": "select",
+                "defaultValue": SELECT_OPTION_ID,
+                "options": [{"id": SELECT_OPTION_ID, "label": "Open"}],
+            },
+            {
+                "defaultValue": SELECT_OPTION_ID,
+                "options": [{"id": SELECT_OPTION_ID, "label": "Open"}],
+            },
         ),
     ],
 )
@@ -149,7 +158,7 @@ def test_trigger_semantic_signature_detects_trigger_condition_and_action_edits()
             position=0,
             operator="=",
             value_kind="literal",
-            literal_value={"value": "High"},
+            literal_value={"value": option_id("priority", "High")},
         )
     ]
     actions = [

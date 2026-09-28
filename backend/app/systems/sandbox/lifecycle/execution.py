@@ -9,13 +9,19 @@ from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
 from app.systems.access.policy.models import GroupAccess
+from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
 from app.systems.boards.department_boards import sync_department_board
-from app.systems.boards.models import Board, BoardWidget
+from app.systems.boards.event_models import BoardEvent
+from app.systems.boards.models import Board, BoardGroup, BoardWidget
+from app.systems.boards.post_models import BoardPost, BoardPostRevision
+from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
+from app.systems.boards.reminder_models import BoardEventReminder
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
 from app.systems.openview.views.models import SavedView
 from app.systems.platform.files.models import File
+from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.lifecycle.exceptions import (
@@ -47,7 +53,19 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("departments", Department),
     ("group_access", GroupAccess),
     ("boards", Board),
+    ("board_groups", BoardGroup),
     ("board_widgets", BoardWidget),
+    ("board_events", BoardEvent),
+    ("board_event_reminders", BoardEventReminder),
+    ("board_posts", BoardPost),
+    ("board_attachments", BoardAttachment),
+    ("board_record_links", BoardRecordLink),
+    ("board_files", File),
+    ("scheduled_work", ScheduledWork),
+    ("in_app_notifications", InAppNotification),
+    ("board_post_revisions", BoardPostRevision),
+    ("board_post_revision_attachments", BoardPostRevisionAttachment),
+    ("board_post_revision_record_links", BoardPostRevisionRecordLink),
     ("dashboards", Dashboard),
     ("dashboard_widgets", DashboardWidget),
     ("reports", Report),
@@ -123,6 +141,39 @@ def _transition_instances(db: Session, plan: LifecyclePlan) -> list[Any]:
     return instances
 
 
+def _delete_department_board_children(db: Session, plan: LifecyclePlan) -> None:
+    """Remove every inventoried child of a Department Board before its sources."""
+
+    if plan.target_type is not LifecycleTargetType.DEPARTMENT:
+        return
+
+    child_models: tuple[tuple[str, type[Any]], ...] = (
+        ("in_app_notifications", InAppNotification),
+        ("scheduled_work", ScheduledWork),
+        ("board_post_revision_attachments", BoardPostRevisionAttachment),
+        ("board_post_revision_record_links", BoardPostRevisionRecordLink),
+        ("board_attachments", BoardAttachment),
+        ("board_record_links", BoardRecordLink),
+        ("board_post_revisions", BoardPostRevision),
+        ("board_groups", BoardGroup),
+        ("board_widgets", BoardWidget),
+        ("board_event_reminders", BoardEventReminder),
+        ("board_events", BoardEvent),
+        ("board_posts", BoardPost),
+    )
+    rows_by_type: dict[str, list[UUID]] = {}
+    for row in plan.rows:
+        rows_by_type.setdefault(row.entity_type, []).append(row.entity_id)
+
+    for entity_type, model in child_models:
+        for entity_id in rows_by_type.get(entity_type, ()):
+            instance = db.get(model, entity_id)
+            if instance is None:
+                raise LifecycleUnavailable("Lifecycle operation row is no longer available")
+            db.delete(instance)
+        db.flush()
+
+
 def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
     """Physically remove a validated plan in dependency-safe audited phases."""
 
@@ -139,6 +190,14 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
         "boards": Board,
     }
 
+    for row in plan.rows:
+        if row.entity_type != "modules":
+            continue
+        module = db.get(Module, row.entity_id)
+        if module is not None and module.title_field_id is not None:
+            module.title_field_id = None
+            db.flush()
+
     for edge_id in plan.scope_ids.get("relationship_edges", ()):
         edge = db.get(RelationshipEdge, edge_id)
         if edge is None:
@@ -153,6 +212,8 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
         if key_strip.key in record.data:
             record.data = {key: value for key, value in record.data.items() if key != key_strip.key}
             db.flush()
+
+    _delete_department_board_children(db, plan)
 
     for entity_type in (
         "group_access",

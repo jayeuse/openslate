@@ -83,7 +83,12 @@ def _catalog() -> tuple[Department, Module, list[Field]]:
             name="Status",
             type=FieldType.SELECT,
             is_deleted=False,
-            config={"options": ["Open", "Closed"]},
+            config={
+                "options": [
+                    {"id": str(uuid7()), "label": "Open"},
+                    {"id": str(uuid7()), "label": "Closed"},
+                ]
+            },
             position=1,
         ),
     ]
@@ -113,7 +118,7 @@ def test_v3_structure_resolves_exact_active_names_types_without_mutating() -> No
     assert widget.module_id == module.id
     assert widget.config.fields[0].field_id == fields[0].id
     assert widget.config.filters[0].field_id == fields[1].id
-    assert widget.config.filters[0].value == "Open"
+    assert widget.config.filters[0].value == fields[1].config["options"][0]["id"]
     statements = [
         str(call.args[0].compile(dialect=postgresql.dialect()))
         for call in db.scalars.call_args_list

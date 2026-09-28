@@ -371,7 +371,8 @@ export function validateSandboxDesign(
           );
         if (
           normalized.config.options.some(
-            (option) => option.length > SANDBOX_LIMITS.selectOptionCharacters,
+            (option) =>
+              option.label.length > SANDBOX_LIMITS.selectOptionCharacters,
           )
         )
           issues.push(

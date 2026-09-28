@@ -32,7 +32,10 @@ import {
   type OpenViewSavedView,
 } from "../adapters/views-api";
 import { queryOpenViewWindowRecords } from "../adapters/window-api";
-import { authMeOptions } from "../adapters/openview-queries";
+import {
+  authMeOptions,
+  departmentsOptions,
+} from "../adapters/openview-queries";
 import { isCalendarDateField } from "./live-calendar";
 import { LiveKanban } from "./live-kanban";
 import { LiveCalendar } from "./live-calendar";
@@ -203,13 +206,41 @@ function groupName(value: string | null, label: string): string {
   return label;
 }
 
+function selectLabelForId(
+  field: OpenViewDataSourceField | undefined,
+  value: unknown,
+): string {
+  if (!field || field.type !== "select" || typeof value !== "string")
+    return "Unavailable option";
+  const options = field.config.options;
+  if (!Array.isArray(options)) return "Unavailable option";
+  const option = options.find(
+    (candidate): candidate is { id: string; label: string } =>
+      typeof candidate === "object" &&
+      candidate !== null &&
+      "id" in candidate &&
+      candidate.id === value &&
+      "label" in candidate &&
+      typeof candidate.label === "string",
+  );
+  return option?.label ?? "Unavailable option";
+}
+
 function filterSummary(
   filter: OpenViewQueryDefinition["filters"][number],
-  fieldName: string,
+  field: OpenViewDataSourceField | undefined,
 ): string {
+  const fieldName = field?.name ?? "Unavailable field";
   const label = OPERATOR_LABELS[filter.operator];
+  if (filter.expectedType === "user") return `${fieldName} ${label} person`;
   if (filter.value === null || filter.value === undefined)
     return `${fieldName} ${label}`;
+  if (filter.expectedType === "select") {
+    const values = Array.isArray(filter.value) ? filter.value : [filter.value];
+    return `${fieldName} ${label} ${values
+      .map((value) => selectLabelForId(field, value))
+      .join(", ")}`;
+  }
   const value = Array.isArray(filter.value)
     ? filter.value.join(", ")
     : typeof filter.value === "boolean"
@@ -257,6 +288,19 @@ function replaceTemporaryChanges(value: string | null) {
     null,
     "",
     `${url.pathname}${url.search}${url.hash}`,
+  );
+}
+
+function DepartmentName({
+  departmentId,
+  fallback,
+}: {
+  departmentId: string | undefined;
+  fallback: string;
+}) {
+  const departments = useQuery(departmentsOptions());
+  return (
+    departments.data?.find((item) => item.id === departmentId)?.name ?? fallback
   );
 }
 
@@ -573,6 +617,9 @@ export default function ServerBackedViewsWorkspace({
       searchFields: [],
       deleted: "include",
     };
+    // The compiler cannot prove the stability of search-param values; this
+    // memoization keeps record reads anchored to the actual address value.
+    // eslint-disable-next-line react-hooks/preserve-manual-memoization
   }, [normalizedDraftDefinition, requestedRecord]);
   const draftHasUnsafeIntegerFilter = draft.definition.filters.some(
     hasUnsafeIntegerFilter,
@@ -1014,7 +1061,7 @@ export default function ServerBackedViewsWorkspace({
         (draft.presentation.timelineProgressFieldId != null &&
           !timelineProgressField)));
   const currentDefault = Boolean(activeSaved?.isDefault);
-  const canEditSaved = Boolean(activeSaved?.canEdit);
+  const canEditSaved = Boolean(canManageViews && activeSaved?.canEdit);
   const quickSortFields = fields.filter((field) => queryFieldIds.has(field.id));
   const firstSort = draft.definition.sort[0];
   const quickSortValue = firstSort
@@ -1045,9 +1092,7 @@ export default function ServerBackedViewsWorkspace({
       ],
     }));
   };
-  const archivedViews = moduleViews.filter(
-    (view) => view.isDeleted && view.canEdit,
-  );
+  const archivedViews = moduleViews.filter((view) => view.isDeleted);
   const saveTarget = canEditSaved ? activeSaved : undefined;
   const setRoute = useCallback(
     (
@@ -1088,6 +1133,8 @@ export default function ServerBackedViewsWorkspace({
         else router.push(target as Route, { scroll: false });
       });
     },
+    // This callback's identity tracks the current address and temporary draft.
+    // eslint-disable-next-line react-hooks/preserve-manual-memoization
     [moduleId, requestedRecord, router, selectedViewId, temporaryChanges],
   );
 
@@ -1633,6 +1680,7 @@ export default function ServerBackedViewsWorkspace({
     resolveConflict = false,
   ) => {
     if (
+      !canManageViews ||
       !moduleId ||
       pendingAction ||
       incompleteFilters ||
@@ -1818,7 +1866,7 @@ export default function ServerBackedViewsWorkspace({
   };
 
   const restoreView = async (view: OpenViewSavedView) => {
-    if (!view.canEdit || pendingAction) return;
+    if (!canManageViews || !view.canEdit || pendingAction) return;
     setArchivedError("");
     setPendingAction(`Restoring ${view.name}…`);
     try {
@@ -2086,7 +2134,7 @@ export default function ServerBackedViewsWorkspace({
             data-slot="card"
             className="bg-card border-card-edge shadow-card flex flex-wrap items-end justify-between gap-3 rounded-[var(--radius)] border p-4 sm:p-5"
           >
-            <div className="min-w-0 flex-1 sm:max-w-sm">
+            <div className="w-full min-w-0 sm:max-w-sm sm:flex-1">
               <Field>
                 <FieldLabel htmlFor="openview-data-source">
                   Data source
@@ -2122,7 +2170,11 @@ export default function ServerBackedViewsWorkspace({
                 </Select>
               </Field>
               <p className="text-muted-foreground mt-2 text-xs">
-                {moduleName ?? "Data source"} · {fields.length} active fields
+                <DepartmentName
+                  departmentId={source?.departmentId}
+                  fallback="Department unavailable"
+                />{" "}
+                · {fields.length} active fields
               </p>
               {catalogHasMore ? (
                 <Button
@@ -2136,7 +2188,7 @@ export default function ServerBackedViewsWorkspace({
                 </Button>
               ) : null}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
               <Field className="min-w-56 flex-1 sm:flex-none">
                 <FieldLabel htmlFor="openview-saved-view">
                   Saved view
@@ -2347,7 +2399,7 @@ export default function ServerBackedViewsWorkspace({
                   </Button>
                 </EmptyContent>
               </Empty>
-            ) : !moduleName ? (
+            ) : !moduleName || !moduleId ? (
               <Empty>
                 <EmptyHeader>
                   <EmptyTitle>No data source selected</EmptyTitle>
@@ -2372,10 +2424,22 @@ export default function ServerBackedViewsWorkspace({
                           Revision {activeSaved.revision}
                         </Badge>
                       ) : null}
+                      {activeSaved?.isDefault ? (
+                        <Badge variant="outline">Department default</Badge>
+                      ) : null}
                       {dirty ? (
-                        <Badge variant="outline">Unsaved changes</Badge>
+                        <Badge variant="outline">Temporary changes</Badge>
                       ) : null}
                     </div>
+                    {dirty ? (
+                      <p className="text-muted-foreground w-full text-sm">
+                        These changes live in the page address. Share the link
+                        to share them.
+                        {!canManageViews
+                          ? " Only module managers can save the view."
+                          : null}
+                      </p>
+                    ) : null}
                     <div className="flex flex-wrap items-center gap-2">
                       {dirty ? (
                         <Button
@@ -2405,12 +2469,9 @@ export default function ServerBackedViewsWorkspace({
                           Save changes
                         </Button>
                       ) : null}
-                      {canManageViews ? (
+                      {canManageViews && !saveTarget ? (
                         <Button
                           type="button"
-                          variant={
-                            canEditSaved && dirty ? "outline" : "default"
-                          }
                           className="min-h-11"
                           disabled={
                             Boolean(pendingAction) ||
@@ -2419,7 +2480,7 @@ export default function ServerBackedViewsWorkspace({
                           }
                           onClick={openSaveDialog}
                         >
-                          {saveTarget ? "Save view" : "Save view as"}
+                          Save view as
                         </Button>
                       ) : null}
                       {canManageViews ? (
@@ -2439,6 +2500,19 @@ export default function ServerBackedViewsWorkspace({
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="min-w-56">
                             <DropdownMenuGroup>
+                              {saveTarget ? (
+                                <DropdownMenuItem
+                                  className="min-h-11"
+                                  disabled={
+                                    Boolean(pendingAction) ||
+                                    dirty ||
+                                    Boolean(saveConflict)
+                                  }
+                                  onClick={openSaveDialog}
+                                >
+                                  Rename view…
+                                </DropdownMenuItem>
+                              ) : null}
                               {activeSaved && canManageViews ? (
                                 <DropdownMenuItem
                                   className="min-h-11"
@@ -2535,6 +2609,7 @@ export default function ServerBackedViewsWorkspace({
                       filtersClassName="sm:grid-cols-1 xl:grid-cols-1"
                     >
                       <SavedViewFilterControls
+                        moduleId={moduleId}
                         logic={draft.definition.logic}
                         filters={draft.definition.filters}
                         fields={fields}
@@ -2554,7 +2629,7 @@ export default function ServerBackedViewsWorkspace({
                     {draft.definition.filters.length ? (
                       <div
                         aria-label="Active filters"
-                        className="flex min-w-0 flex-1 flex-wrap items-center gap-2"
+                        className="flex min-w-0 basis-full flex-wrap items-center gap-2 sm:flex-1 sm:basis-auto"
                       >
                         <span className="text-muted-foreground text-sm">
                           Active filters
@@ -2562,8 +2637,7 @@ export default function ServerBackedViewsWorkspace({
                         {draft.definition.filters.map((filter, index) => {
                           const summary = filterSummary(
                             filter,
-                            activeFields.get(filter.fieldId)?.name ??
-                              "Unavailable field",
+                            activeFields.get(filter.fieldId),
                           );
                           return (
                             <Button
@@ -2586,7 +2660,9 @@ export default function ServerBackedViewsWorkspace({
                       </div>
                     ) : (
                       <p className="text-muted-foreground text-sm">
-                        No active filters
+                        {draft.definition.search?.trim()
+                          ? `Search: ${draft.definition.search.trim()}`
+                          : "No active filters"}
                       </p>
                     )}
                     <div className="flex flex-wrap gap-2">
@@ -3072,11 +3148,20 @@ export default function ServerBackedViewsWorkspace({
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>
-                  {saveTarget ? "Update saved view" : "Save view"}
+                  {saveConflict
+                    ? "Update saved view"
+                    : saveTarget
+                      ? "Rename view"
+                      : "Save view"}
                 </DialogTitle>
                 <DialogDescription>
-                  Save this query for everyone who can read this module. Record
-                  access still follows each person’s access.
+                  {saveTarget ? "Rename" : "Save"} this view for everyone who
+                  can read this module in the{" "}
+                  <DepartmentName
+                    departmentId={source?.departmentId}
+                    fallback="current"
+                  />{" "}
+                  department. Record access still follows each person’s access.
                 </DialogDescription>
               </DialogHeader>
               {saveConflict ? (
@@ -3178,7 +3263,7 @@ export default function ServerBackedViewsWorkspace({
                     }
                   >
                     {pendingAction ||
-                      (saveTarget ? "Update view" : "Save view")}
+                      (saveTarget ? "Rename view" : "Save view")}
                   </Button>
                 ) : null}
               </DialogFooter>
@@ -3267,18 +3352,20 @@ export default function ServerBackedViewsWorkspace({
                           Revision {view.revision}
                         </p>
                       </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={Boolean(pendingAction)}
-                        aria-label={`Restore ${view.name}`}
-                        onClick={() =>
-                          confirmDraftDiscard(() => void restoreView(view))
-                        }
-                      >
-                        Restore {view.name}
-                      </Button>
+                      {canManageViews && view.canEdit ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-11"
+                          disabled={Boolean(pendingAction)}
+                          aria-label={`Restore ${view.name}`}
+                          onClick={() =>
+                            confirmDraftDiscard(() => void restoreView(view))
+                          }
+                        >
+                          Restore {view.name}
+                        </Button>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

@@ -272,7 +272,6 @@ def test_record_links_must_match_their_board_post_and_record(
             post_id=other_item.id,
             record_id=record.id,
             module_id=module.id,
-            label="Wrong board",
         ),
     )
     _rejects(
@@ -282,11 +281,10 @@ def test_record_links_must_match_their_board_post_and_record(
             post_id=item.id,
             record_id=record.id,
             module_id=other_module.id,
-            label="Wrong module",
         ),
     )
     link = BoardRecordLink(
-        board_id=board.id, post_id=item.id, record_id=record.id, module_id=module.id, label="Item"
+        board_id=board.id, post_id=item.id, record_id=record.id, module_id=module.id
     )
     db.add(link)
     db.flush()
@@ -299,24 +297,24 @@ def test_record_links_must_match_their_board_post_and_record(
     _rejects(
         db,
         BoardPostRevisionRecordLink(
-            revision_id=revision.id, record_id=record.id, module_id=module.id, label="Other label"
+            revision_id=revision.id, record_id=record.id, module_id=other_module.id
         ),
     )
     snapshot = BoardPostRevisionRecordLink(
-        revision_id=revision.id, record_id=record.id, module_id=module.id, label="Item"
+        revision_id=revision.id, record_id=record.id, module_id=module.id
     )
     db.add(snapshot)
     db.flush()
 
     def change_snapshot() -> None:
-        snapshot.label = "Changed"
+        snapshot.is_deleted = True
 
     _rejects(db, change_snapshot)
     unrelated = _revision(db, other_item)
     _rejects(
         db,
         BoardPostRevisionRecordLink(
-            revision_id=unrelated.id, record_id=record.id, module_id=module.id, label="Item"
+            revision_id=unrelated.id, record_id=record.id, module_id=module.id
         ),
     )
 

@@ -4,14 +4,17 @@ import {
   parseSandboxDocument,
   parseSandboxDocumentForApi,
   SANDBOX_OLDER_FORMAT_MESSAGE,
-  type SandboxDocumentV3,
+  type SandboxDocumentV4,
 } from "../../../src/components/systems/sandbox/domain/document";
 import { configuredSandboxDesign } from "../../helpers/sandbox-fixtures";
 
-function documentFixture(): SandboxDocumentV3 {
+const openOptionId = "00000000-0000-4000-8000-000000000031";
+const closedOptionId = "00000000-0000-4000-8000-000000000032";
+
+function documentFixture(): SandboxDocumentV4 {
   return {
     kind: "openslate-sandbox",
-    schemaVersion: 3,
+    schemaVersion: 4,
     design: {
       departments: [{ id: "ops", name: "Operations", closed: false }],
       modules: [
@@ -20,6 +23,7 @@ function documentFixture(): SandboxDocumentV3 {
           departmentId: "ops",
           name: "Requests",
           closed: false,
+          titleFieldId: "title",
           fields: [
             {
               id: "title",
@@ -37,8 +41,11 @@ function documentFixture(): SandboxDocumentV3 {
               closed: false,
               config: {
                 kind: "select",
-                defaultValue: "Open",
-                options: ["Open", "Closed"],
+                defaultValue: openOptionId,
+                options: [
+                  { id: openOptionId, label: "Open" },
+                  { id: closedOptionId, label: "Closed" },
+                ],
               },
             },
           ],
@@ -64,7 +71,7 @@ function documentFixture(): SandboxDocumentV3 {
               id: "is-open",
               field: { moduleId: "requests", fieldId: "status" },
               operator: "=",
-              value: { kind: "literal", value: "Open" },
+              value: { kind: "literal", value: openOptionId },
             },
           ],
         },
@@ -91,7 +98,7 @@ function documentFixture(): SandboxDocumentV3 {
           {
             id: "request-1",
             moduleId: "requests",
-            values: { title: "Printer unavailable", status: "Open" },
+            values: { title: "Printer unavailable", status: openOptionId },
           },
         ],
         links: [],
@@ -100,7 +107,7 @@ function documentFixture(): SandboxDocumentV3 {
   };
 }
 
-test("v3 sandbox documents serialize canonically without editor or run state", () => {
+test("v4 sandbox documents serialize canonically without editor or run state", () => {
   const document = documentFixture();
   const serialized = exportSandboxDocument({
     ...document,
@@ -138,8 +145,9 @@ test("v3 sandbox documents serialize canonically without editor or run state", (
   });
 });
 
-test("v3 compares Date/Time bounds and values as instants", () => {
+test("v4 compares Date/Time bounds and values as instants", () => {
   const document = documentFixture();
+  document.design.modules[0].titleFieldId = null;
   document.design.modules[0].fields[0] = {
     ...document.design.modules[0].fields[0],
     type: "Date/Time",
@@ -155,13 +163,14 @@ test("v3 compares Date/Time bounds and values as instants", () => {
   expect(parseSandboxDocument(JSON.stringify(document)).ok).toBe(true);
 });
 
-test("v3 accepts compatible text mappings", () => {
+test("v4 accepts compatible text mappings", () => {
   const document = documentFixture();
   document.design.modules.push({
     id: "triage",
     departmentId: "ops",
     name: "Triage",
     closed: false,
+    titleFieldId: null,
     fields: [
       {
         id: "notes",
@@ -202,7 +211,7 @@ test("v3 accepts compatible text mappings", () => {
   });
 });
 
-test("v3 rejects unrelated direct and one-hop trigger references", () => {
+test("v4 rejects unrelated direct and one-hop trigger references", () => {
   const document = documentFixture();
   for (const id of ["remote", "other"]) {
     document.design.modules.push({
@@ -210,6 +219,7 @@ test("v3 rejects unrelated direct and one-hop trigger references", () => {
       departmentId: "ops",
       name: id,
       closed: false,
+      titleFieldId: null,
       fields: [
         {
           id: `${id}-text`,
@@ -308,7 +318,7 @@ test("API document parsing admits repairable graph defects but portable parsing 
   expect(parseSandboxDocumentForApi(text).ok).toBe(true);
 });
 
-test("v3 rejects unsafe optional and constrained field-reference assignments", () => {
+test("v4 rejects unsafe optional and constrained field-reference assignments", () => {
   const optionalSource = documentFixture();
   optionalSource.design.modules[0].fields.push({
     id: "optional-text",
@@ -403,12 +413,12 @@ test("v3 rejects unsafe optional and constrained field-reference assignments", (
   expect(parseSandboxDocument(JSON.stringify(dateSource)).ok).toBe(false);
 });
 
-test("v3 validates field defaults and constrained scenario values", () => {
+test("v4 validates field defaults and constrained scenario values", () => {
   const variants = [
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.scenarios[0].records[0].values.title = null;
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0].config = {
         kind: "text",
         defaultValue: "",
@@ -416,7 +426,7 @@ test("v3 validates field defaults and constrained scenario values", () => {
       };
       document.scenarios[0].records[0].values.title = "four";
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0] = {
         ...document.design.modules[0].fields[0],
         type: "Email",
@@ -424,35 +434,35 @@ test("v3 validates field defaults and constrained scenario values", () => {
       };
       document.scenarios[0].records[0].values.title = "not-an-email";
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0] = {
         ...document.design.modules[0].fields[0],
         type: "Email",
         config: { kind: "email", defaultValue: "not-an-email" },
       };
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0] = {
         ...document.design.modules[0].fields[0],
         type: "Text",
         config: { kind: "text", defaultValue: "x".repeat(1_001) },
       };
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0] = {
         ...document.design.modules[0].fields[0],
         type: "Email",
         config: { kind: "email", defaultValue: "x".repeat(1_001) },
       };
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0] = {
         ...document.design.modules[0].fields[0],
         type: "URL",
         config: { kind: "url", defaultValue: "x".repeat(1_001) },
       };
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0] = {
         ...document.design.modules[0].fields[0],
         type: "Number",
@@ -466,10 +476,10 @@ test("v3 validates field defaults and constrained scenario values", () => {
       };
       document.scenarios[0].records[0].values.title = 3;
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.scenarios[0].records[0].values.status = "Missing";
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0] = {
         ...document.design.modules[0].fields[0],
         type: "Date",
@@ -482,7 +492,7 @@ test("v3 validates field defaults and constrained scenario values", () => {
       };
       document.scenarios[0].records[0].values.title = "2025-12-31";
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0] = {
         ...document.design.modules[0].fields[0],
         type: "Date",
@@ -493,7 +503,7 @@ test("v3 validates field defaults and constrained scenario values", () => {
         },
       };
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0] = {
         ...document.design.modules[0].fields[0],
         type: "Date",
@@ -504,7 +514,7 @@ test("v3 validates field defaults and constrained scenario values", () => {
         },
       };
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0] = {
         ...document.design.modules[0].fields[0],
         type: "Date/Time",
@@ -515,7 +525,7 @@ test("v3 validates field defaults and constrained scenario values", () => {
         },
       };
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0] = {
         ...document.design.modules[0].fields[0],
         type: "Date/Time",
@@ -526,7 +536,7 @@ test("v3 validates field defaults and constrained scenario values", () => {
         },
       };
     },
-    (document: SandboxDocumentV3) => {
+    (document: SandboxDocumentV4) => {
       document.design.modules[0].fields[0] = {
         ...document.design.modules[0].fields[0],
         type: "URL",
@@ -548,6 +558,7 @@ test("v3 validates field defaults and constrained scenario values", () => {
     departmentId: "ops",
     name: "Duplicate target",
     closed: false,
+    titleFieldId: null,
     fields: [
       {
         id: "duplicate-title",
@@ -589,7 +600,7 @@ test("v3 validates field defaults and constrained scenario values", () => {
   expect(parseSandboxDocument(JSON.stringify(duplicate)).ok).toBe(false);
 });
 
-test("v3 enforces scenario relationship cardinality", () => {
+test("v4 enforces scenario relationship cardinality", () => {
   const invalidScenarios = ["one-to-one", "one-to-many"] as const;
   for (const cardinality of invalidScenarios) {
     const document = documentFixture();
@@ -598,6 +609,7 @@ test("v3 enforces scenario relationship cardinality", () => {
       departmentId: "ops",
       name: "Target",
       closed: false,
+      titleFieldId: null,
       fields: [
         {
           id: "target-title",
@@ -624,7 +636,7 @@ test("v3 enforces scenario relationship cardinality", () => {
       {
         id: "request-2",
         moduleId: "requests",
-        values: { title: "Second", status: "Open" },
+        values: { title: "Second", status: openOptionId },
       },
       {
         id: "target-1",
@@ -667,7 +679,7 @@ test("v3 enforces scenario relationship cardinality", () => {
   }
 });
 
-test("v3 validates nested version documents", () => {
+test("v4 validates nested version documents", () => {
   const invalidVersion = documentFixture();
   invalidVersion.versions = [
     {
@@ -691,7 +703,7 @@ test("v3 validates nested version documents", () => {
   expect(parseSandboxDocument(JSON.stringify(invalidVersion)).ok).toBe(false);
 });
 
-test("v3 portable history accepts the published kind emitted by the backend", () => {
+test("v4 portable history accepts the published kind emitted by the backend", () => {
   const document = documentFixture();
   document.versions = [
     {
@@ -734,7 +746,7 @@ test("older format files are refused with one clear message and are not converte
   );
 });
 
-test("v3 parser fails closed for future versions, broken references, incompatible mappings, and runtime state", () => {
+test("v4 parser fails closed for future versions, broken references, incompatible mappings, and runtime state", () => {
   const document = documentFixture();
   const relationshipDocument = structuredClone(document);
   relationshipDocument.design.relationships = [
@@ -756,7 +768,7 @@ test("v3 parser fails closed for future versions, broken references, incompatibl
   ];
 
   for (const value of [
-    { ...document, schemaVersion: 4 },
+    { ...document, schemaVersion: 5 },
     {
       ...document,
       triggers: [

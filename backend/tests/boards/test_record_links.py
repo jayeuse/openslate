@@ -25,6 +25,7 @@ from app.systems.boards.record_link_models import (
 )
 from app.systems.boards.record_link_router import router
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.lifecycle.schemas import LifecycleOperation, LifecycleTargetType
 from app.systems.sandbox.modules.models import Module
@@ -32,6 +33,85 @@ from app.systems.sandbox.records.models import Record
 from tests.boards.support import guest, member
 from tests.boards.test_post_routes import _actor, _board, _grant
 from tests.rbac.support import make_group_access
+
+
+@pytest.mark.integration
+def test_board_record_link_uses_live_title_and_requires_source_read(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    board_writer = _actor(db, "title-link-writer")
+    board_reader = _actor(db, "title-link-reader")
+    source_reader = _actor(db, "title-source-reader")
+    board = _board(db, board_writer)
+    _grant(db, board, board_reader, "view")
+    module, record = _source(db, source_reader)
+    title_field = Field(
+        module_id=module.id,
+        name="Record title",
+        type=FieldType.TEXT,
+        position=0,
+        required=False,
+        config={},
+    )
+    db.add(title_field)
+    db.flush()
+    module.title_field_id = title_field.id
+    record.data = {str(title_field.id): "Private first title"}
+    event = BoardEvent(
+        board_id=board.id,
+        author_id=board_writer.id,
+        title="Record meeting",
+        all_day=True,
+        start_date=date(2026, 9, 24),
+        end_date=date(2026, 9, 24),
+        timezone_name="UTC",
+    )
+    db.add(event)
+    db.commit()
+    path = f"/api/boards/{board.id}/events/{event.id}/record-links"
+
+    with _client(db, board_writer) as client:
+        denied = client.post(
+            path,
+            json={"record_id": str(record.id), "board_revision": 1, "content_revision": 1},
+        )
+        assert denied.status_code == 409
+        assert denied.json()["detail"]["code"] == "record_unavailable"
+    assert (
+        db.scalar(select(BoardRecordLink.id).where(BoardRecordLink.record_id == record.id))
+        is None
+    )
+
+    source_department = db.get(Department, module.department_id)
+    assert source_department is not None
+    make_group_access(db, [board_writer], source_department, module)
+    reader_grant = make_group_access(db, [board_reader], source_department, module)
+    db.commit()
+    with _client(db, board_writer) as client:
+        created = client.post(
+            path,
+            json={"record_id": str(record.id), "board_revision": 1, "content_revision": 1},
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["label"] == "Private first title"
+
+    record.data[str(title_field.id)] = "Private revised title"
+    db.commit()
+    with _client(db, board_reader) as client:
+        visible = client.get(path)
+        assert visible.status_code == 200
+        assert visible.json()["items"][0]["label"] == "Private revised title"
+        assert visible.json()["items"][0]["available"] is True
+
+    reader_grant.is_deleted = True
+    db.commit()
+    with _client(db, board_reader) as client:
+        hidden = client.get(path)
+        assert hidden.status_code == 200
+        link = hidden.json()["items"][0]
+        assert link["available"] is False and link["url"] is None
+        assert "Private" not in hidden.text
 
 
 def _client(db: Session, actor) -> TestClient:
@@ -101,7 +181,6 @@ def test_event_record_link_is_contextual_and_one_record_can_link_two_items(
             path,
             json={
                 "record_id": str(record.id),
-                "label": "Source request",
                 "board_revision": 1,
                 "content_revision": 1,
             },
@@ -111,7 +190,7 @@ def test_event_record_link_is_contextual_and_one_record_can_link_two_items(
         assert linked.json()["url"] == f"/openview?module={module.id}&record={record.id}"
         listed = client.get(path)
         assert listed.status_code == 200
-        assert listed.json()["items"][0]["label"] == "Source request"
+        assert listed.json()["items"][0]["label"] == f"Record {str(record.id)[:8]}"
         assert "private" not in listed.text
         wrong_board = client.get(f"/api/boards/{other.id}/events/{first.id}/record-links")
         assert wrong_board.status_code == 404
@@ -120,7 +199,6 @@ def test_event_record_link_is_contextual_and_one_record_can_link_two_items(
                 path,
                 json={
                     "record_id": str(record.id),
-                    "label": "Duplicate",
                     "board_revision": 1,
                     "content_revision": 1,
                 },
@@ -131,7 +209,6 @@ def test_event_record_link_is_contextual_and_one_record_can_link_two_items(
             f"/api/boards/{board.id}/events/{second.id}/record-links",
             json={
                 "record_id": str(record.id),
-                "label": "Also linked",
                 "board_revision": 2,
                 "content_revision": 1,
             },
@@ -176,7 +253,6 @@ def test_published_record_link_snapshot_survives_draft_unlink_and_blocks_source_
             path,
             json={
                 "record_id": str(record.id),
-                "label": "Published source",
                 "board_revision": 1,
                 "content_revision": 1,
             },
@@ -215,7 +291,7 @@ def test_published_record_link_snapshot_survives_draft_unlink_and_blocks_source_
     assert snapshot is not None
     with pytest.raises(IntegrityError):
         with db.begin_nested():
-            snapshot.label = "Rewritten history"
+            snapshot.is_deleted = True
             db.flush()
     db.refresh(snapshot)
     with _client(db, owner) as client:
@@ -302,7 +378,6 @@ def test_archived_event_record_link_blocks_record_module_and_department_purge_un
             f"{path}/record-links",
             json={
                 "record_id": str(record.id),
-                "label": "Source",
                 "board_revision": 1,
                 "content_revision": 1,
             },
@@ -374,7 +449,6 @@ def test_record_link_cap_and_database_parent_guards(integration_owner_db: Sessio
                     event_id=event.id,
                     record_id=record.id,
                     module_id=module.id,
-                    label="Wrong Board",
                 )
             )
             db.flush()
@@ -388,14 +462,12 @@ def test_record_link_cap_and_database_parent_guards(integration_owner_db: Sessio
                 event_id=event.id,
                 record_id=source.id,
                 module_id=module.id,
-                label=f"Source {index}",
             )
         )
     db.commit()
     path = f"/api/boards/{board.id}/events/{event.id}/record-links"
     payload = {
         "record_id": str(record.id),
-        "label": "Overflow",
         "board_revision": 1,
         "content_revision": 1,
     }

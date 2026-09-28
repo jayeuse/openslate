@@ -15,6 +15,7 @@ from app.systems.access.policy.checks import module_hidden
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.records.display import FieldDisplayResolver
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query import (
     compile_query,
@@ -119,10 +120,13 @@ def _grouped_aggregate(
         or 0
     )
     rows = db.execute(grouped_query.limit(payload.limit).offset(payload.offset)).all()
+    resolver = FieldDisplayResolver(db, payload.module_id, (dimension,))
     items = [
         AggregateDatum(
             key=_key(row.dimension),
-            label="Unspecified" if row.dimension is None else _key(row.dimension) or "",
+            label=(
+                "Unspecified" if row.dimension is None else resolver.label(dimension, row.dimension)
+            ),
             value=row.value,
             record_count=row.record_count,
         )
@@ -218,7 +222,8 @@ def aggregate_records(
 def _grouped_aggregate_snapshot(
     db: Session, payload: GroupedAggregateSnapshotQuery, fields: dict[UUID, Field]
 ) -> AggregateSnapshotResponse:
-    dimension_expression = field_expression(fields[payload.dimension.field_id])
+    dimension = fields[payload.dimension.field_id]
+    dimension_expression = field_expression(dimension)
     aggregate_expression = _aggregate_expression(payload.aggregation, payload.measure, fields)
     count_expression = func.count(Record.id)
     base_query = compile_query(payload.module_id, payload.definition, fields).order_by(None)
@@ -247,10 +252,13 @@ def _grouped_aggregate_snapshot(
     rows = db.execute(grouped_query.limit(MAX_AGGREGATE_SNAPSHOT_BUCKETS + 1)).all()
     if len(rows) > MAX_AGGREGATE_SNAPSHOT_BUCKETS:
         raise _snapshot_limit_exceeded()
+    resolver = FieldDisplayResolver(db, payload.module_id, (dimension,))
     items = [
         AggregateDatum(
             key=_key(row.dimension),
-            label="Unspecified" if row.dimension is None else _key(row.dimension) or "",
+            label=(
+                "Unspecified" if row.dimension is None else resolver.label(dimension, row.dimension)
+            ),
             value=row.value,
             record_count=row.record_count,
         )

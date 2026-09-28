@@ -73,7 +73,7 @@ def load_purge_dependencies(
     access_rows, group_access_ids = load_group_access_purge_dependencies(
         db, department_ids, module_ids, fingerprint
     )
-    board_rows, board_blockers, board_ids = load_department_board_purge_dependencies(
+    board_rows, board_blockers, department_board_ids = load_department_board_purge_dependencies(
         db, department_ids, departments_by_id, fingerprint
     )
     field_ids = [field.id for field in scope.fields]
@@ -85,6 +85,15 @@ def load_purge_dependencies(
     record_link_rows, record_link_blockers, record_link_ids, record_link_board_ids = (
         load_board_record_link_purge_dependencies(db, record_ids, fingerprint)
     )
+    department_owned_record_link_ids = set(department_board_ids["board_record_links"])
+    department_owned_revision_link_ids = set(
+        department_board_ids["board_post_revision_record_links"]
+    )
+    cascade_link_ids = department_owned_record_link_ids | department_owned_revision_link_ids
+    record_link_rows = [row for row in record_link_rows if row.entity_id not in cascade_link_ids]
+    record_link_blockers = [
+        blocker for blocker in record_link_blockers if blocker.entity_id not in cascade_link_ids
+    ]
     report_rows, report_blockers, report_ids = load_report_purge_dependencies(
         db, module_ids, record_ids, fingerprint
     )
@@ -106,6 +115,15 @@ def load_purge_dependencies(
     board_widget_rows, board_widget_blockers, board_widget_ids = (
         load_board_widget_purge_dependencies(db, widget_module_ids, target_field, fingerprint)
     )
+    department_owned_widget_ids = set(department_board_ids["board_widgets"])
+    board_widget_rows = [
+        row for row in board_widget_rows if row.entity_id not in department_owned_widget_ids
+    ]
+    board_widget_blockers = [
+        blocker
+        for blocker in board_widget_blockers
+        if blocker.entity_id not in department_owned_widget_ids
+    ]
     dashboard_rows, dashboard_blockers, dashboard_ids = load_dashboard_purge_dependencies(
         db,
         department_ids,
@@ -128,9 +146,7 @@ def load_purge_dependencies(
     definitions = (
         list(
             db.scalars(
-                select(RecordTrigger)
-                .where(or_(*definition_filters))
-                .order_by(RecordTrigger.id)
+                select(RecordTrigger).where(or_(*definition_filters)).order_by(RecordTrigger.id)
             )
         )
         if definition_filters
@@ -204,9 +220,7 @@ def load_purge_dependencies(
     runs = (
         list(
             db.scalars(
-                select(RecordTriggerRun)
-                .where(or_(*run_filters))
-                .order_by(RecordTriggerRun.id)
+                select(RecordTriggerRun).where(or_(*run_filters)).order_by(RecordTriggerRun.id)
             )
         )
         if run_filters
@@ -306,13 +320,33 @@ def load_purge_dependencies(
         tuple(blockers),
         {
             "group_access": group_access_ids,
+            **department_board_ids,
             "boards": tuple(
                 sorted(
-                    set(board_ids) | record_link_board_ids | set(board_widget_ids["boards"])
+                    set(department_board_ids["boards"])
+                    | record_link_board_ids
+                    | set(board_widget_ids["boards"])
                 )
             ),
             **record_link_ids,
-            "board_widgets": board_widget_ids["board_widgets"],
+            "board_record_links": tuple(
+                sorted(
+                    set(department_board_ids["board_record_links"])
+                    | set(record_link_ids["board_record_links"])
+                )
+            ),
+            "board_post_revision_record_links": tuple(
+                sorted(
+                    set(department_board_ids["board_post_revision_record_links"])
+                    | set(record_link_ids["board_post_revision_record_links"])
+                )
+            ),
+            "board_widgets": tuple(
+                sorted(
+                    set(department_board_ids["board_widgets"])
+                    | set(board_widget_ids["board_widgets"])
+                )
+            ),
             **report_ids,
             **dashboard_ids,
             "files": tuple(file.id for file in files),

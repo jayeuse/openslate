@@ -31,6 +31,7 @@ from app.systems.platform.scheduling.models import (
 )
 
 OFFSETS = {"start": timedelta(), "15m": timedelta(minutes=15), "1d": timedelta(days=1)}
+REMINDER_DELIVERY_GRACE = timedelta(minutes=15)
 _SEARCH_STEP_DAYS = 31
 _SEARCH_LIMIT_DAYS = 366
 TIMING_FIELDS = (
@@ -91,7 +92,7 @@ def occurrence_at(event: BoardEvent, start: datetime) -> BoardEventOccurrence | 
 
 
 def next_occurrence_start(event: BoardEvent, timing: str, after: datetime) -> datetime | None:
-    """The start of the first occurrence whose reminder falls strictly after ``after``."""
+    """The start of the first occurrence whose reminder is due at or after ``after``."""
 
     offset = OFFSETS[timing]
     try:
@@ -107,7 +108,7 @@ def next_occurrence_start(event: BoardEvent, timing: str, after: datetime) -> da
                 start = occurrence_instant(event, occurrence)
             except ValueError:
                 continue
-            if start - offset > after:
+            if start - offset >= after:
                 return start
     return None
 

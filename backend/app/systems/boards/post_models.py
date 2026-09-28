@@ -32,7 +32,7 @@ def publication_content_fingerprint(
     expires_at: datetime | None = None,
     links: list[dict[str, str]] | None = None,
     attachment_file_ids: list[UUID] | None = None,
-    record_links: list[tuple[UUID, UUID, str]] | None = None,
+    record_links: list[tuple[UUID, UUID]] | None = None,
 ) -> str:
     """Hash only immutable publication content, not the server-assigned publication time."""
     content: dict[str, object] = {
@@ -43,8 +43,7 @@ def publication_content_fingerprint(
         "links": links or [],
         "attachment_file_ids": sorted(str(file_id) for file_id in attachment_file_ids or []),
         "record_links": sorted(
-            (str(record_id), str(module_id), label)
-            for record_id, module_id, label in record_links or []
+            (str(record_id), str(module_id)) for record_id, module_id in record_links or []
         ),
     }
     encoded = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False)

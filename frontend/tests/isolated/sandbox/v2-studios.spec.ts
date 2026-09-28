@@ -25,6 +25,7 @@ const design: SandboxDocumentDesign = {
       departmentId: "operations",
       name: "Requests",
       closed: false,
+      titleFieldId: null,
       fields: [
         {
           id: "title",
@@ -43,7 +44,10 @@ const design: SandboxDocumentDesign = {
           config: {
             kind: "select",
             defaultValue: null,
-            options: ["Open", "On hold"],
+            options: [
+              { id: "open", label: "Open" },
+              { id: "on-hold", label: "On hold" },
+            ],
           },
         },
       ],

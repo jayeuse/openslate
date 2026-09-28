@@ -32,9 +32,9 @@ const wireNotificationSchema = z
     z
       .object({
         ...commonNotification,
-        kind: z.literal("announcement-publish"),
+        kind: z.literal("post-publish"),
         board_id: uuidSchema,
-        announcement_id: uuidSchema,
+        post_id: uuidSchema,
         publication_revision_id: uuidSchema,
       })
       .strict(),
@@ -45,6 +45,7 @@ const wireNotificationSchema = z
         board_id: uuidSchema,
         event_id: uuidSchema,
         occurrence_id: z.string().min(1).max(100),
+        occurrence_start_at: utcTimestampSchema,
       })
       .strict(),
   ])
@@ -64,12 +65,12 @@ const wireNotificationSchema = z
         reportId: notification.report_id,
         runId: notification.run_id,
       };
-    if (notification.kind === "announcement-publish")
+    if (notification.kind === "post-publish")
       return {
         ...common,
         kind: notification.kind,
         boardId: notification.board_id,
-        announcementId: notification.announcement_id,
+        postId: notification.post_id,
         publicationRevisionId: notification.publication_revision_id,
       };
     return {
@@ -78,6 +79,7 @@ const wireNotificationSchema = z
       boardId: notification.board_id,
       eventId: notification.event_id,
       occurrenceId: notification.occurrence_id,
+      occurrenceStartAt: notification.occurrence_start_at,
     };
   });
 

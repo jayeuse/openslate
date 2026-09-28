@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from secrets import token_urlsafe
 from typing import Any
@@ -50,7 +51,7 @@ RECORD_FIELD_VALIDATION_CASES = _load_record_field_validation_cases()
         (FieldType.BOOLEAN, {}),
         (FieldType.DATE, {}),
         (FieldType.DATETIME, {}),
-        (FieldType.SELECT, {"options": ["open"]}),
+        (FieldType.SELECT, {"options": [{"id": str(uuid7()), "label": "open"}]}),
     ],
 )
 def test_optional_primitive_record_values_accept_null(
@@ -366,6 +367,9 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
     closed = make_field(module.id, FieldType.INTEGER, deleted=True)
     record = Record(module_id=module.id, data={str(closed.id): 1})
     record.id = uuid7()
+    record.created_at = datetime.now(UTC)
+    record.updated_at = record.created_at
+    record.is_deleted = False
     db = Mock(spec=Session)
     db.get.side_effect = lambda model, *_args, **_kwargs: module if model is Module else record
     db.scalar.return_value = module

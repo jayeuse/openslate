@@ -38,7 +38,7 @@ def test_document_read_is_administrator_only(monkeypatch) -> None:
     response = _client(application, reader, database).get("/api/sandbox/document")
 
     assert response.status_code == 200
-    assert response.json()["document"]["schemaVersion"] == 3
+    assert response.json()["document"]["schemaVersion"] == 4
 
 
 def test_document_write_returns_route_local_stale_revision_conflict(monkeypatch) -> None:

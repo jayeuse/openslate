@@ -138,6 +138,7 @@ async function installOpenViewApi(page: Page): Promise<Api> {
               (laterPage ?? []).map((source) => ({
                 ...source,
                 department_id: departmentId,
+                title_field_id: null,
               })),
               100,
             ),
@@ -149,7 +150,14 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       if (catalogDenied) return route.fulfill(forbidden);
       if (laterPagesRefused || laterPage) {
         const first = pageOf(
-          [{ id: moduleId, name: "Assets", department_id: departmentId }],
+          [
+            {
+              id: moduleId,
+              name: "Assets",
+              department_id: departmentId,
+              title_field_id: null,
+            },
+          ],
           100,
         );
         return route.fulfill({
@@ -164,7 +172,14 @@ async function installOpenViewApi(page: Page): Promise<Api> {
         contentType: "application/json",
         body: JSON.stringify(
           pageOf(
-            [{ id: moduleId, name: "Assets", department_id: departmentId }],
+            [
+              {
+                id: moduleId,
+                name: "Assets",
+                department_id: departmentId,
+                title_field_id: null,
+              },
+            ],
             100,
           ),
         ),

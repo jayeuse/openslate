@@ -1,18 +1,18 @@
 # Schema Redesign
 
-> **Status: proposed.** Nothing in this document is implemented. The verified current state is in [docs/architecture](../architecture/README.md). This document records the target schema, the reasons for each change, the open decisions, and the delivery order.
+> **Status: implementation in progress on `codex/schema-redesign`.** This document records the agreed contract, the reasons for each change, deferred decisions, and delivery order. See the [implementation plan](../plans/schema-redesign-plan.md) for remaining work and [architecture](../architecture/README.md) for current source-backed behavior. Final integration verification and development-instance activation are separate completion steps.
 
 ## Outcome
 
 The database models how OpenSlate is meant to work:
 
 - An administrator designs departments, modules, fields, relationships and record triggers in the Sandbox, and publishes them.
-- Each department has a home (OpenView) where its people read and change records, open dashboards and run reports.
+- Each department has a home (OpenView) where its people inspect records, open dashboards and run reports. OpenView record inspection remains read-only; existing record-write APIs remain available outside that inspector.
 - Boards are for communication: one company board, one board for each department, and project boards across departments.
 - Groups decide who can read, write or manage each department and module.
 - Everything that users create belongs to a department. There is no personal content.
 
-The current database has 64 application tables. The target has 49. A smaller table count is a result of the design, not its goal.
+The redesign replaces the 64-table baseline with 49 application tables. A smaller table count is a result of the design, not its goal.
 
 ## Principles
 
@@ -21,26 +21,26 @@ The current database has 64 application tables. The target has 49. A smaller tab
 3. The users define the system. Access is set per department and module, and managers inside each department control their own content.
 4. There is one way to change the data model: the Sandbox publish.
 
-## Current-state findings
+## Pre-redesign findings
 
-These findings are from source code. They are the reasons for most of the changes.
+These observations describe the source baseline at `main` revision `0f58c08`, before the redesign. They explain the changes; they are not claims about the current implementation. Historical paths below refer to that revision, including files since removed or renamed.
 
 | Finding | Source |
 |---|---|
-| The authorization check loads only workspace-scope rules. Department, module and field rules are stored and validated, but never evaluated. | [authorization.py:368](../../backend/app/systems/access/policy/authorization.py), [rules_service.py:161](../../backend/app/systems/access/policy/rules_service.py) |
+| The authorization check loads only workspace-scope rules. Department, module and field rules are stored and validated, but never evaluated. | `backend/app/systems/access/policy/authorization.py`, `backend/app/systems/access/policy/rules_service.py` |
 | Department membership does not limit record access. It controls only board audiences and department purge. | `user_departments` users in `boards/` and `sandbox/lifecycle/` |
-| Service identities have no token or sign-in. Only the access simulator and the rules use them. | [service_identities/](../../backend/app/systems/access/service_identities/) |
-| The direct create and update routes for departments, modules and fields exist next to the Sandbox publish. No frontend screen uses them to write. Tests and the sample-data seeder use them. | [modules/router.py:203](../../backend/app/systems/sandbox/modules/router.py), [seed_sample_data.py](../../backend/operations/seed_sample_data.py) |
-| Record triggers (now "published automations") run as the publisher and stop when the publisher loses `records.write`. | [publisher_policy.py](../../backend/app/systems/sandbox/automations/publisher_policy.py) |
-| Board announcement title, body and links are redacted in the audit log. The audit log cannot serve as post history. | [announcement_models.py:83](../../backend/app/systems/boards/announcement_models.py) |
-| Select options are plain strings, and records store the option text. | [validation.py:138](../../backend/app/systems/sandbox/fields/validation.py) |
-| Every table has both `is_deleted` and `deleted_at`. Some queries check both. | [base_model.py](../../backend/app/core/base_model.py) |
-| The Manage screens make no server calls. The organization theme is saved in browser storage. | [manage/](../../frontend/src/components/systems/manage/), [appearance-preferences.ts](../../frontend/src/lib/appearance-preferences.ts) |
-| The Platform screens (search, import and export, account, file library, record actions) run on sample data. Only the report notifications panel uses the server. | [platform/page.tsx](../../frontend/src/components/systems/platform/page.tsx) |
-| Record values are stored in one JSONB column, `records.data`, keyed by field ID. A module is a set of rows in `modules`, `fields` and `records`, not its own table. | [query.py:134](../../backend/app/systems/sandbox/records/query.py) |
-| Board post revisions are stored, but no route lists them. Deleting a post deletes all of its revisions. | [announcement_router.py](../../backend/app/systems/boards/announcement_router.py), [server-backed-board-announcement-lifecycle.tsx:353](../../frontend/src/components/systems/boards/components/server-backed-board-announcement-lifecycle.tsx) |
-| `audit_logs.performed_by` uses `ON DELETE SET NULL`, and `actor_label` is not filled for users. A permanent user purge removes the actor from their audit entries. | [audit/models.py:49](../../backend/app/systems/manage/audit/models.py) |
-| Security events are committed through a separate session, so denied and failed attempts are kept when the request changes roll back. | [audit/service.py:135](../../backend/app/systems/manage/audit/service.py) |
+| Service identities have no token or sign-in. Only the access simulator and the rules use them. | `backend/app/systems/access/service_identities/` |
+| The direct create and update routes for departments, modules and fields exist next to the Sandbox publish. No frontend screen uses them to write. Tests and the sample-data seeder use them. | `backend/app/systems/sandbox/modules/router.py`, `backend/operations/seed_sample_data.py` |
+| Record triggers (now "published automations") run as the publisher and stop when the publisher loses `records.write`. | `backend/app/systems/sandbox/automations/publisher_policy.py` |
+| Board announcement title, body and links are redacted in the audit log. The audit log cannot serve as post history. | `backend/app/systems/boards/announcement_models.py` |
+| Select options are plain strings, and records store the option text. | `backend/app/systems/sandbox/fields/validation.py` |
+| Every table has both `is_deleted` and `deleted_at`. Some queries check both. | `backend/app/core/base_model.py` |
+| The Manage screens make no server calls. The organization theme is saved in browser storage. | `frontend/src/components/systems/manage/`, `frontend/src/lib/appearance-preferences.ts` |
+| The Platform screens (search, import and export, account, file library, record actions) run on sample data. Only the report notifications panel uses the server. | `frontend/src/components/systems/platform/page.tsx` |
+| Record values are stored in one JSONB column, `records.data`, keyed by field ID. A module is a set of rows in `modules`, `fields` and `records`, not its own table. | `backend/app/systems/sandbox/records/query.py` |
+| Board post revisions are stored, but no route lists them. Deleting a post deletes all of its revisions. | `backend/app/systems/boards/announcement_router.py`, `frontend/src/components/systems/boards/components/server-backed-board-announcement-lifecycle.tsx` |
+| `audit_logs.performed_by` uses `ON DELETE SET NULL`, and `actor_label` is not filled for users. A permanent user purge removes the actor from their audit entries. | `backend/app/systems/manage/audit/models.py` |
+| Security events are committed through a separate session, so denied and failed attempts are kept when the request changes roll back. | `backend/app/systems/manage/audit/service.py` |
 
 ## Target schema
 
@@ -106,6 +106,8 @@ audit_logs ; security_events ; workspace_profiles
 | Δ `record_trigger_conditions`, `record_trigger_actions`, `record_trigger_events`, `record_trigger_runs` | Renamed from `published_automation_*`. |
 
 To a user, a module such as Products looks like its own table. In the database, the Sandbox publish adds rows: one `modules` row, one `fields` row for each column, and one `records` row for each record, with all values in `records.data`. No publish creates a database table. The backend validates each value against its field type before it saves the record.
+
+The field-model implementation keeps OpenView's live record inspector read-only, as confirmed by the user. Extend the existing Sandbox simulator, filters, API and displays; do not add live record creation or editing to OpenView. Sandbox person inputs are explicitly simulated UUIDs because draft modules have no live access binding. Published-module filters use the module-scoped person picker, and live writes and trigger assignments enforce active module-reader eligibility.
 
 ### Sandbox and lifecycle (8 tables)
 
@@ -179,10 +181,13 @@ Inventory board (Inventory access)        boards, scope = department
 Boards rules (proposed):
 
 1. The board scope decides who sees the board. There is no audience on each post, event or tile.
-2. On the company board, administrators post. On a department or project board, `write` users add posts and events, and `manage` users also pin posts, change tiles and change the posts of other users.
+2. On the company board, administrators post. On a department or project board, `write` users add posts and events and can archive their own content; the UI exposes that existing author right. Users with `manage` also pin posts, change tiles and change other users' content.
 3. A post with a future `publish_at` stays hidden until that time. A post shows "New" for its first 7 days. OpenSlate does not track who read a post.
 4. Each publish of a post adds a revision. Readers can open the earlier versions, like an "Edited" history.
 5. Deleting a published post archives it. Only the lifecycle purge removes a post and its revisions.
+6. Department purge removes its Board and owned content, matching the department Dashboard cascade. Foreign Board references still block source deletion. File-byte deletion keeps its separate existing prerequisite: attached files must already be confirmed purged before this database cascade; the deferred file workflow is not expanded.
+
+Board bundles retain version 3 and named source/field references. Select filter values travel as labels and bind to target option IDs. User output fields and value-free checks may use named field references; value-bearing User filters are rejected at import and export because installation-specific user IDs have no portable binding. This restriction does not remove live User filters.
 
 ### Platform and Manage (6 tables)
 
@@ -239,7 +244,7 @@ Record triggers run as the workspace. Their audit entries have no user in `perfo
 ## Scheduled work
 
 - A scheduled report runs as the workspace, like a record trigger. Anyone who can read the report module can open its runs; access is checked again when a run is opened. Users with `manage` on the department create and change schedules.
-- An event reminder belongs to the event. The author chooses one or more timings. For a repeating event, every occurrence sends the reminder to everyone who can read the board, as an in-app notification.
+- An event reminder belongs to the event. The author chooses one or more timings: the start, 15 minutes before, or 1 day before. Each occurrence may deliver through 15 minutes after its selected due time, inclusive, to users who can read the Board at delivery. Older reminders are expired. This grace period allows short worker delays without delivering stale reminders.
 - Deleting a post that was never published removes it. Deleting a published post archives it.
 
 ## Deferred

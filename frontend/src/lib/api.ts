@@ -66,7 +66,7 @@ export type Relationship = BaseEntity & {
   hidden_reasons: RelationshipHiddenReason[];
 };
 export type LifecycleTargetType =
-  "department" | "module" | "field" | "record" | "file";
+  "department" | "module" | "field" | "record" | "file" | "board";
 export type LifecycleOperation = "close" | "purge" | "reopen";
 export type LifecycleBlockerCode =
   | "closed_ancestor"
@@ -75,7 +75,12 @@ export type LifecycleBlockerCode =
   | "field_position_conflict"
   | "schema_invalid"
   | "record_data_invalid"
+  | "title_field_selected"
   | "record_close_unsupported"
+  | "purge_board_dependency"
+  | "purge_dashboard_dependency"
+  | "purge_report_dependency"
+  | "purge_report_run_dependency"
   | "purge_trigger_dependency"
   | "purge_external_schema_dependency"
   | "purge_file_dependency";

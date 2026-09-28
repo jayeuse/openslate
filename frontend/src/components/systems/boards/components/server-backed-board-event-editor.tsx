@@ -472,8 +472,8 @@ export function ServerBoardEventEditorForm({
           <FieldSet>
             <FieldLegend className="text-sm font-medium">Reminders</FieldLegend>
             <p className="text-muted-foreground text-sm">
-              Everyone who can read this Board gets each reminder, before every
-              occurrence.
+              Reminders notify everyone who can read this Board at delivery
+              time. They may arrive up to 15 minutes after the selected time.
             </p>
             <div className="flex flex-col">
               {REMINDER_TIMINGS.map((timing) => {

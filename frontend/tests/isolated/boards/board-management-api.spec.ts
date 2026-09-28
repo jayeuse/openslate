@@ -360,6 +360,103 @@ test("downloads exact validated v3 bytes and the fixed safe filename", async () 
   }
 });
 
+test("portable Board fields accept User references but not installation-specific User values", async () => {
+  const userBundle = {
+    ...bundle,
+    configuration: {
+      ...bundle.configuration,
+      widgets: [
+        {
+          ...bundle.configuration.widgets[0]!,
+          config: {
+            ...bundle.configuration.widgets[0]!.config,
+            fields: [{ name: "Assignee", expected_type: "user" }],
+            filters: [
+              {
+                name: "Assignee",
+                expected_type: "user",
+                operator: "not_empty",
+                value: null,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  };
+  const uploadBytes = new TextEncoder().encode(JSON.stringify(userBundle));
+  const upload = installFetch(() => jsonResponse(boardResponse(), 201));
+  try {
+    await expect(
+      importBoardConfiguration(
+        new Blob([uploadBytes], { type: "application/json" }),
+      ),
+    ).resolves.toMatchObject({ id: newBoardId });
+    const body = upload.requests[0]?.init?.body;
+    expect(body).toBeInstanceOf(Blob);
+    expect(new Uint8Array(await (body as Blob).arrayBuffer())).toEqual(
+      uploadBytes,
+    );
+  } finally {
+    upload.restore();
+  }
+
+  const installationUserValue = "00000000-0000-4000-8000-000000000009";
+  const invalidUserBundle = {
+    ...userBundle,
+    configuration: {
+      ...userBundle.configuration,
+      widgets: [
+        {
+          ...userBundle.configuration.widgets[0]!,
+          config: {
+            ...userBundle.configuration.widgets[0]!.config,
+            filters: [
+              {
+                name: "Assignee",
+                expected_type: "user",
+                operator: "eq",
+                value: installationUserValue,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  };
+  const invalidUpload = installFetch(() => jsonResponse(boardResponse(), 201));
+  try {
+    await expect(
+      importBoardConfiguration(new Blob([JSON.stringify(invalidUserBundle)])),
+    ).rejects.toThrow();
+    expect(invalidUpload.requests).toHaveLength(0);
+  } finally {
+    invalidUpload.restore();
+  }
+
+  const downloadBytes = new TextEncoder().encode(
+    JSON.stringify(userBundle, null, 2),
+  );
+  const download = installFetch(
+    () =>
+      new Response(downloadBytes, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Disposition":
+            'attachment; filename="board-configuration.json"',
+        },
+      }),
+  );
+  try {
+    await expect(downloadBoardConfiguration(boardId)).resolves.toMatchObject({
+      bundle: userBundle,
+    });
+  } finally {
+    download.restore();
+  }
+});
+
 test("import sends validated bounded original JSON bytes as octet-stream", async () => {
   const mock = installFetch(() => jsonResponse(boardResponse(), 201));
   const bytes = new TextEncoder().encode(JSON.stringify(bundle));

@@ -12,7 +12,7 @@ export * from "./document-types";
 export { parseSandboxDocumentForApi, exportSandboxDocument };
 
 /**
- * Parses a Sandbox document file. A file in a format before version 3 is
+ * Parses a Sandbox document file. A file in a format before version 4 is
  * refused with the older-format message; old designs are not converted.
  */
 export function parseSandboxDocument(text: string): SandboxDocumentParseResult {

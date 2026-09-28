@@ -7,6 +7,7 @@ from uuid6 import uuid7
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.fields.validation import (
     field_config,
+    validate_field_value,
     validate_module_schema,
 )
 from tests.catalog.field_record_support import _make_validation_client, make_field, make_module
@@ -17,6 +18,30 @@ def test_field_config_rejects_invalid_select_options() -> None:
         field_config(FieldType.SELECT, {})
     with pytest.raises(ValueError):
         field_config(FieldType.SELECT, {"options": ["open", "open"]})
+
+
+def test_select_option_ids_are_stable_values_and_duplicate_labels_are_rejected() -> None:
+    first_id, second_id = str(uuid7()), str(uuid7())
+    options = [
+        {"id": first_id, "label": "Open"},
+        {"id": second_id, "label": "Closed"},
+    ]
+    config = field_config(
+        FieldType.SELECT, {"options": options, "defaultValue": first_id}
+    )
+    field = make_field(uuid7(), FieldType.SELECT, config=config)
+    assert validate_field_value(field, first_id) == first_id
+    with pytest.raises(ValueError):
+        validate_field_value(field, "Open")
+    with pytest.raises(ValueError):
+        validate_field_value(field, str(uuid7()))
+    with pytest.raises(ValueError):
+        field_config(FieldType.SELECT, {"options": [{"id": first_id, "label": "Open"}] * 2})
+    with pytest.raises(ValueError):
+        field_config(
+            FieldType.SELECT,
+            {"options": [{"id": first_id, "label": "Open"}, {"id": second_id, "label": "Open"}]},
+        )
 
 
 @pytest.mark.parametrize(
@@ -90,7 +115,11 @@ def test_module_schema_validator_checks_active_field_structure() -> None:
 
 def test_module_schema_validator_reuses_field_config_and_relationship_metadata() -> None:
     module_id = uuid7()
-    field = make_field(module_id, FieldType.SELECT, config={"options": ["open"]})
+    field = make_field(
+        module_id,
+        FieldType.SELECT,
+        config={"options": [{"id": str(uuid7()), "label": "open"}]},
+    )
     validate_module_schema([field])
 
     field.config = {"options": []}

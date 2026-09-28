@@ -64,7 +64,7 @@ function defaultValues(
   return Object.fromEntries(
     moduleFields(design, moduleId).map((field) => [
       field.id,
-      field.config.defaultValue,
+      field.config.kind === "user" ? null : field.config.defaultValue,
     ]),
   );
 }
@@ -307,7 +307,11 @@ export function TestWorkspace({
         relevantIds.add(mapping.sourceFieldId);
   }
   const editedFields = fields.filter(
-    (field) => !Object.is(values[field.id], field.config.defaultValue),
+    (field) =>
+      !Object.is(
+        values[field.id],
+        field.config.kind === "user" ? null : field.config.defaultValue,
+      ),
   );
   const matchingFields = fields.filter((field) =>
     search.trim()
@@ -705,6 +709,7 @@ export function TestWorkspace({
                           "aria-describedby": `${fieldControlId}-issue`,
                         }
                       : {};
+                    const userHelpId = `${fieldControlId}-simulation-help`;
                     return (
                       <Field key={field.id}>
                         <FieldLabel htmlFor={fieldControlId}>
@@ -729,6 +734,33 @@ export function TestWorkspace({
                               No
                             </NativeSelectOption>
                           </NativeSelect>
+                        ) : field.config.kind === "user" ? (
+                          <>
+                            <Input
+                              id={fieldControlId}
+                              placeholder="Enter a simulated user UUID"
+                              aria-invalid={issue ? true : undefined}
+                              aria-describedby={
+                                issue
+                                  ? `${userHelpId} ${fieldControlId}-issue`
+                                  : userHelpId
+                              }
+                              value={typeof value === "string" ? value : ""}
+                              onChange={(event) =>
+                                setValues({
+                                  ...values,
+                                  [field.id]: event.target.value || null,
+                                })
+                              }
+                            />
+                            <p
+                              id={userHelpId}
+                              className="text-muted-foreground text-xs"
+                            >
+                              Test values are simulated UUIDs. Sandbox does not
+                              check live user eligibility.
+                            </p>
+                          </>
                         ) : field.config.kind === "select" ? (
                           <NativeSelect
                             id={fieldControlId}
@@ -745,8 +777,11 @@ export function TestWorkspace({
                               Choose a value
                             </NativeSelectOption>
                             {field.config.options.map((option) => (
-                              <NativeSelectOption key={option} value={option}>
-                                {option}
+                              <NativeSelectOption
+                                key={option.id}
+                                value={option.id}
+                              >
+                                {option.label}
                               </NativeSelectOption>
                             ))}
                           </NativeSelect>

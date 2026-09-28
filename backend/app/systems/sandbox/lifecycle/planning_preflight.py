@@ -190,6 +190,20 @@ def reopen_blockers(
             or any(field.id in transition_ids["fields"] for field in fields)
             or reopening_records
         ):
+            if module.title_field_id is not None and not any(
+                field.id == module.title_field_id
+                and field.type
+                in {"text", "long_text", "email", "url", "int", "number", "decimal", "select"}
+                for field in fields
+            ):
+                blockers.append(
+                    LifecycleBlocker(
+                        code=LifecycleBlockerCode.SCHEMA_INVALID,
+                        entity_type="modules",
+                        entity_id=module.id,
+                        detail="The selected title field is unavailable",
+                    )
+                )
             try:
                 from app.systems.sandbox.fields.validation import validate_module_schema
 

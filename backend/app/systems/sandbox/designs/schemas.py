@@ -2,194 +2,56 @@
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from typing import Annotated, Any, Final, Literal
-from urllib.parse import urlparse
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 from pydantic_core import PydanticCustomError
 
-from app.systems.sandbox.designs.date_values import date_in_range, valid_date, valid_datetime
-from app.systems.sandbox.numeric import numeric_matches_step
+from app.systems.sandbox.designs.field_schemas import (
+    ID as ID,
+)
+from app.systems.sandbox.designs.field_schemas import (
+    CheckboxFieldConfig as CheckboxFieldConfig,
+)
+from app.systems.sandbox.designs.field_schemas import (
+    DateFieldConfig as DateFieldConfig,
+)
+from app.systems.sandbox.designs.field_schemas import (
+    DesignField as DesignField,
+)
+from app.systems.sandbox.designs.field_schemas import (
+    FieldConfig as FieldConfig,
+)
+from app.systems.sandbox.designs.field_schemas import (
+    FiniteNumber,
+    Name,
+    Text,
+    TypedValue,
+    VersionLabel,
+)
+from app.systems.sandbox.designs.field_schemas import (
+    NumberFieldConfig as NumberFieldConfig,
+)
+from app.systems.sandbox.designs.field_schemas import (
+    SelectFieldConfig as SelectFieldConfig,
+)
+from app.systems.sandbox.designs.field_schemas import (
+    SelectOption as SelectOption,
+)
+from app.systems.sandbox.designs.field_schemas import (
+    StrictModel as StrictModel,
+)
+from app.systems.sandbox.designs.field_schemas import (
+    TextFieldConfig as TextFieldConfig,
+)
+from app.systems.sandbox.designs.field_schemas import (
+    UserFieldConfig as UserFieldConfig,
+)
 
-DOCUMENT_SCHEMA_VERSION: Final = 3
+DOCUMENT_SCHEMA_VERSION: Final = 4
 OLDER_FORMAT_MESSAGE: Final = "This design uses an older format and cannot be opened."
-
-ID = Annotated[str, Field(min_length=1, max_length=1_000)]
-Name = Annotated[str, Field(min_length=1, max_length=80)]
-VersionLabel = Annotated[str, Field(min_length=1, max_length=80)]
-Text = Annotated[str, Field(max_length=1_000)]
-FiniteNumber = Annotated[float, Field(ge=-100_000, le=100_000, allow_inf_nan=False)]
-TypedValue = str | int | Annotated[float, Field(allow_inf_nan=False)] | bool | None
-
-
-class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=True)
-
-
-class TextFieldConfig(StrictModel):
-    kind: Literal["text", "long-text", "email", "url"]
-    default_value: Text = Field(default="", alias="defaultValue")
-    max_length: int | None = Field(default=None, ge=1, le=1_000, alias="maxLength")
-
-
-class NumberFieldConfig(StrictModel):
-    kind: Literal["number", "integer"]
-    default_value: float | None = Field(default=None, allow_inf_nan=False, alias="defaultValue")
-    minimum: float | None = Field(default=None, allow_inf_nan=False, alias="min")
-    maximum: float | None = Field(default=None, allow_inf_nan=False, alias="max")
-    step: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-
-    @model_validator(mode="after")
-    def _valid_range(self) -> NumberFieldConfig:
-        if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
-            raise ValueError("min cannot exceed max")
-        if self.kind == "integer" and any(
-            value is not None and not float(value).is_integer()
-            for value in (self.default_value, self.minimum, self.maximum, self.step)
-        ):
-            raise ValueError("integer field constraints must be whole numbers")
-        return self
-
-
-class DateFieldConfig(StrictModel):
-    kind: Literal["date", "datetime"]
-    default_value: str | None = Field(default=None, max_length=64, alias="defaultValue")
-    earliest: str | None = Field(default=None, max_length=64)
-    latest: str | None = Field(default=None, max_length=64)
-
-    @model_validator(mode="after")
-    def _valid_range(self) -> DateFieldConfig:
-        valid = valid_date if self.kind == "date" else valid_datetime
-        for value in (self.default_value, self.earliest, self.latest):
-            if value is not None and not valid(value):
-                raise ValueError(f"{self.kind} values must use valid ISO syntax")
-        datetime_values = self.kind == "datetime"
-        if (
-            self.earliest is not None
-            and self.latest is not None
-            and not date_in_range(
-                self.earliest, None, self.latest, datetime_values=datetime_values
-            )
-        ):
-            raise ValueError("earliest cannot exceed latest")
-        if self.default_value is not None and not date_in_range(
-            self.default_value,
-            self.earliest,
-            self.latest,
-            datetime_values=datetime_values,
-        ):
-            raise ValueError("defaultValue must be within the earliest and latest limits")
-        return self
-
-
-class CheckboxFieldConfig(StrictModel):
-    kind: Literal["checkbox"]
-    default_value: bool = Field(default=False, alias="defaultValue")
-
-
-class SelectFieldConfig(StrictModel):
-    kind: Literal["select"]
-    default_value: str | None = Field(default=None, max_length=100, alias="defaultValue")
-    options: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(max_length=100)
-
-    @model_validator(mode="after")
-    def _default_is_option(self) -> SelectFieldConfig:
-        if self.default_value is not None and self.default_value not in self.options:
-            raise ValueError("select defaultValue must be an option")
-        if len(self.options) != len(set(self.options)):
-            raise ValueError("select options must be unique")
-        return self
-
-
-FieldConfig = Annotated[
-    TextFieldConfig | NumberFieldConfig | DateFieldConfig | CheckboxFieldConfig | SelectFieldConfig,
-    Field(discriminator="kind"),
-]
-
-
-def _field_default_is_valid(config: FieldConfig) -> bool:
-    value = config.default_value
-    if value is None:
-        return True
-    if isinstance(config, TextFieldConfig):
-        if not isinstance(value, str) or (
-            config.max_length is not None and len(value) > config.max_length
-        ):
-            return False
-        if config.kind == "email":
-            return not value or re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value) is not None
-        if config.kind == "url":
-            parsed = urlparse(value)
-            return not value or (parsed.scheme in {"http", "https"} and bool(parsed.netloc))
-        return True
-    if isinstance(config, NumberFieldConfig):
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            return False
-        numeric_value = float(value)
-        if config.minimum is not None and numeric_value < config.minimum:
-            return False
-        if config.maximum is not None and numeric_value > config.maximum:
-            return False
-        step = config.step if config.step is not None else (1 if config.kind == "integer" else None)
-        if step is None:
-            return True
-        return numeric_matches_step(numeric_value, config.minimum or 0, step)
-    if isinstance(config, DateFieldConfig):
-        return isinstance(value, str) and date_in_range(
-            value,
-            config.earliest,
-            config.latest,
-            datetime_values=config.kind == "datetime",
-        )
-    if isinstance(config, CheckboxFieldConfig):
-        return isinstance(value, bool)
-    return (
-        isinstance(config, SelectFieldConfig) and isinstance(value, str) and value in config.options
-    )
-
-
-class DesignField(StrictModel):
-    id: ID
-    name: Name
-    type: Literal[
-        "Text",
-        "Long text",
-        "Number",
-        "Integer",
-        "Date",
-        "Date/Time",
-        "Checkbox",
-        "Select",
-        "Email",
-        "URL",
-    ]
-    required: bool = False
-    closed: bool = False
-    description: Text | None = None
-    config: FieldConfig
-
-    @model_validator(mode="after")
-    def _matching_config(self) -> DesignField:
-        expected_kind = {
-            "Text": "text",
-            "Long text": "long-text",
-            "Number": "number",
-            "Integer": "integer",
-            "Date": "date",
-            "Date/Time": "datetime",
-            "Checkbox": "checkbox",
-            "Select": "select",
-            "Email": "email",
-            "URL": "url",
-        }[self.type]
-        if expected_kind != self.config.kind:
-            raise ValueError("field type must match config kind")
-        if not _field_default_is_valid(self.config):
-            raise ValueError("field config defaultValue does not match its field")
-        return self
 
 
 class DepartmentDocument(StrictModel):
@@ -203,6 +65,7 @@ class ModuleDocument(StrictModel):
     department_id: ID = Field(alias="departmentId")
     name: Name
     closed: bool = False
+    title_field_id: ID | None = Field(default=None, alias="titleFieldId")
     fields: list[DesignField] = Field(default_factory=list, max_length=5_000)
 
 
@@ -395,7 +258,7 @@ class SandboxSnapshot(StrictModel):
 
 class SandboxDocument(SandboxSnapshot):
     kind: Literal["openslate-sandbox"]
-    schema_version: Literal[3] = Field(alias="schemaVersion")
+    schema_version: Literal[4] = Field(alias="schemaVersion")
 
     @model_validator(mode="before")
     @classmethod

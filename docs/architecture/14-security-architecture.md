@@ -56,6 +56,13 @@ checks stored bytes and integrity before promotion, and only a durable clean
 verdict permits download. A private bucket or privileged Storage key does not
 replace application authorization.
 
+Audit history is also scope-aware. Administrators can list across departments;
+other users must hold department-level `manage` and explicitly filter one
+department. Audit-log detail, export, and SecurityEvent access remain
+administrator-only ([`audit/router.py`](../../backend/app/systems/manage/audit/router.py)).
+The audit listener derives the department from entity ancestry before a purge
+removes parent rows ([`department_ancestry.py`](../../backend/app/systems/manage/audit/department_ancestry.py)).
+
 Authenticated SSE carries opaque invalidations over PostgreSQL
 `LISTEN`/`NOTIFY`; Supabase Realtime is not the active event transport.
 Subscriber limits, reauthorization, bounded queues, and send timeouts limit
@@ -65,9 +72,12 @@ route/asset cache policy and response security headers belong to FastAPI/Caddy,
 not a Node.js frontend process. Audit redacts sensitive fields and does not
 record raw passwords, tokens, object paths, or bytes.
 
-[`/api/ready`](../../backend/app/main.py) currently checks database connectivity
-only; it does not establish Auth, Storage, SMTP, scanner, or complete stack
-readiness. The encrypted [Restic backup](../../packaging/backup/backup_installation.py)
+[`/api/ready`](../../backend/app/main.py) reports bounded Database, Auth,
+Storage, SMTP-configuration, and scanner component states
+([`readiness.py`](../../backend/app/core/readiness.py)). Scanner presence is
+required in production and optional in development/test. This component report
+does not establish mail delivery, schema compatibility, backup integrity, or
+complete stack readiness. The encrypted [Restic backup](../../packaging/backup/backup_installation.py)
 and [restore](../../packaging/backup/restore_installation.py) commands exist,
 but production TLS, the complete five-volume backup/restore path, scanned-file
 access through the restored API, reboot recovery, and final release acceptance

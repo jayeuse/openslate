@@ -240,9 +240,10 @@ def test_confirmed_board_purge_deletes_its_children_but_preserves_sources_and_au
     before = plan_lifecycle(
         db, LifecycleTargetType.DEPARTMENT, department.id, LifecycleOperation.PURGE, admin.id
     )
-    assert any(
-        blocker.code is LifecycleBlockerCode.PURGE_BOARD_DEPENDENCY for blocker in before.blockers
-    )
+    assert not before.blockers
+    planned = {(row.entity_type, row.entity_id) for row in before.rows}
+    assert ("boards", board.id) in planned
+    assert {(table, row_id) for table, row_id in children.items()} <= planned
     untouched = Board(scope="project", name="Keep this Board")
     db.add(untouched)
     db.commit()

@@ -97,6 +97,7 @@ class ViewDataSourceResponse(BaseModel):
     id: UUID
     name: str
     department_id: UUID
+    title_field_id: UUID | None = None
 
 
 class ViewFieldResponse(BaseModel):

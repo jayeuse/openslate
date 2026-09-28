@@ -20,7 +20,7 @@ import type {
   SandboxTriggerEvent,
   SandboxDocumentDesign,
   SandboxDocumentField,
-  SandboxDocumentV3,
+  SandboxDocumentV4,
   SandboxFieldReference,
   SandboxLayoutBox,
   SandboxRelationship,
@@ -46,7 +46,9 @@ function legacyFieldValue(config: FieldConfig): string {
 }
 
 function legacyFieldOptions(config: FieldConfig): string {
-  return config.kind === "select" ? config.options.join(", ") : "";
+  return config.kind === "select"
+    ? config.options.map((option) => option.label).join(", ")
+    : "";
 }
 
 function documentFieldToLegacy(field: SandboxDocumentField): Field {
@@ -183,12 +185,12 @@ function projectRecordTrigger(
 }
 
 /**
- * Adapts the v2 persisted document for the current single-condition,
+ * Adapts the v4 persisted document for the current single-condition,
  * single-action Designer UI. The projection deliberately does not flatten the
  * original document: `mergeProjectedDesign` uses the matching projection to
  * retain richer triggers when the Designer did not edit them.
  */
-export function projectSandboxDocument(document: SandboxDocumentV3): Design {
+export function projectSandboxDocument(document: SandboxDocumentV4): Design {
   const layout = structuredClone(document.design.layout) as SandboxCanvasLayout;
   const designWithoutRules: Omit<Design, "rules"> = {
     layout,
@@ -202,6 +204,7 @@ export function projectSandboxDocument(document: SandboxDocumentV3): Design {
       department: sandboxModule.departmentId,
       name: sandboxModule.name,
       closed: sandboxModule.closed,
+      titleFieldId: sandboxModule.titleFieldId,
       fields: sandboxModule.fields.map((field) => documentFieldToLegacy(field)),
       x: document.design.layout[sandboxModule.id]?.x ?? 0,
       y: document.design.layout[sandboxModule.id]?.y ?? 0,
@@ -432,6 +435,7 @@ function documentDesign(nextDesign: Design): SandboxDocumentDesign {
       departmentId: sandboxModule.department,
       name: sandboxModule.name,
       closed: sandboxModule.closed,
+      titleFieldId: sandboxModule.titleFieldId ?? null,
       fields: sandboxModule.fields.map((field) => {
         const normalized = normalizeField(field);
         return {
@@ -500,16 +504,16 @@ function sameRuleOrder(
 }
 
 /**
- * Applies legacy Designer edits to a v2 document without serializing through
- * the v1 file format. Each unchanged projected rule part retains its original
+ * Applies legacy Designer edits to a v4 document without serializing through
+ * the file format. Each unchanged projected rule part retains its original
  * richer canonical data; an edited legacy part becomes only the one-step form
  * that the current Designer can express.
  */
 export function mergeProjectedDesign(
-  document: SandboxDocumentV3,
+  document: SandboxDocumentV4,
   previousProjected: Design,
   nextDesign: Design,
-): SandboxDocumentV3 {
+): SandboxDocumentV4 {
   const existing = new Map(
     document.triggers.map((recordTrigger) => [recordTrigger.id, recordTrigger]),
   );

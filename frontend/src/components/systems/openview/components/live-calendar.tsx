@@ -12,6 +12,7 @@ import type {
   OpenViewQueryDefinition,
   OpenViewRecord,
 } from "../adapters/views-api";
+import { openViewRecordFieldValue } from "../domain/record-display";
 import type { RecordInspectionPage } from "./live-record-inspector";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -678,7 +679,9 @@ export function LiveCalendar({
                             <ul className="flex max-h-44 min-w-0 flex-col gap-1 overflow-y-auto">
                               {rows.map((row) => {
                                 const title = titleField
-                                  ? recordText(row.data[titleField.id])
+                                  ? recordText(
+                                      openViewRecordFieldValue(row, titleField),
+                                    )
                                   : `Record ${row.id.slice(0, 8)}`;
                                 return (
                                   <li key={row.id}>
@@ -713,7 +716,12 @@ export function LiveCalendar({
                                           {detailFields
                                             .slice(0, 2)
                                             .map((field) =>
-                                              recordText(row.data[field.id]),
+                                              recordText(
+                                                openViewRecordFieldValue(
+                                                  row,
+                                                  field,
+                                                ),
+                                              ),
                                             )
                                             .join(" · ")}
                                         </span>
@@ -827,7 +835,7 @@ export function LiveCalendar({
               <ul className="divide-y">
                 {rows.map((row) => {
                   const title = titleField
-                    ? recordText(row.data[titleField.id])
+                    ? recordText(openViewRecordFieldValue(row, titleField))
                     : `Record ${row.id.slice(0, 8)}`;
                   return (
                     <li
@@ -864,7 +872,8 @@ export function LiveCalendar({
                             key={field.id}
                             className="text-muted-foreground text-sm"
                           >
-                            {field.name}: {recordText(row.data[field.id])}
+                            {field.name}:{" "}
+                            {recordText(openViewRecordFieldValue(row, field))}
                           </p>
                         ))}
                       </div>

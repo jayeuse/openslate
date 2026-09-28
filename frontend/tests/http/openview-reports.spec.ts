@@ -5,6 +5,7 @@ import {
   type Page,
   type Route,
 } from "./helpers/test";
+import { captureOpenViewReview } from "./helpers/openview-review-capture";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";
@@ -74,6 +75,7 @@ async function installReportsApi(
     failFirstHistoryAfterRun?: boolean;
     /** The user's level on the Report department; the default manages it. */
     level?: "read" | "manage";
+    savedSchedule?: boolean;
   } = {},
 ) {
   let currentReport = initialReport;
@@ -134,6 +136,24 @@ async function installReportsApi(
       }),
     }),
   );
+  await page.route("**/api/departments**", (route) =>
+    route.fulfill({
+      json: pageOf(
+        [
+          {
+            id: ownerId,
+            department_name: "Field operations",
+            created_at: timestamp,
+            updated_at: timestamp,
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        100,
+      ),
+    }),
+  );
   await page.route("**/api/views/data-sources**", (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/views/data-sources")
@@ -141,7 +161,14 @@ async function installReportsApi(
         contentType: "application/json",
         body: JSON.stringify(
           pageOf(
-            [{ id: moduleId, name: "Assets", department_id: ownerId }],
+            [
+              {
+                id: moduleId,
+                name: "Assets",
+                department_id: ownerId,
+                title_field_id: null,
+              },
+            ],
             100,
           ),
         ),
@@ -257,11 +284,30 @@ async function installReportsApi(
         ),
       });
     if (path === `/api/reports/${reportId}/schedule` && method === "GET")
-      return route.fulfill({
-        status: 404,
-        contentType: "application/json",
-        body: JSON.stringify({ detail: "Report schedule not found" }),
-      });
+      return route.fulfill(
+        options.savedSchedule
+          ? {
+              json: {
+                id: scheduleId,
+                report_id: reportId,
+                revision: 1,
+                enabled: true,
+                cadence: "weekly",
+                timezone_name: "Asia/Manila",
+                local_time: "09:00",
+                weekday: 0,
+                month_day: null,
+                next_due_at: "2026-09-28T01:00:00Z",
+                created_at: timestamp,
+                updated_at: timestamp,
+              },
+            }
+          : {
+              status: 404,
+              contentType: "application/json",
+              body: JSON.stringify({ detail: "Report schedule not found" }),
+            },
+      );
     if (path === `/api/reports/${reportId}/schedule` && method === "POST") {
       scheduleWrites += 1;
       return route.fulfill({
@@ -407,6 +453,7 @@ test.describe("Reports in a non-UTC browser timezone", () => {
     );
     await page.getByRole("button", { name: "Create schedule" }).click();
     await expect(page.getByText("Schedule saved and enabled.")).toBeVisible();
+    await captureOpenViewReview(page, "report-manager-schedule");
     await page.getByRole("tab", { name: "Saved outputs" }).click();
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: /Download CSV/ }).click();
@@ -668,7 +715,10 @@ test("saved and available output actions fit a narrow viewport", async ({
 test("a module reader runs a Report but cannot change, copy or schedule it", async ({
   page,
 }) => {
-  const api = await installReportsApi(page, false, report, { level: "read" });
+  const api = await installReportsApi(page, false, report, {
+    level: "read",
+    savedSchedule: true,
+  });
   await page.goto("/openview?section=reports");
   await page.getByRole("button", { name: "Operations review" }).click();
 
@@ -687,8 +737,12 @@ test("a module reader runs a Report but cannot change, copy or schedule it", asy
     page.getByRole("checkbox", { name: "Enable scheduled runs" }),
   ).toHaveCount(0);
   await expect(
-    page.getByText("Only a manager of this department changes the schedule."),
+    page.getByText("Weekly on Monday at 09:00 (Asia/Manila)"),
   ).toBeVisible();
+  await expect(
+    page.getByText("Only a manager of this module changes the schedule."),
+  ).toBeVisible();
+  await captureOpenViewReview(page, "report-reader-schedule");
   expect(api.counts().manualRuns).toBe(0);
 });
 
@@ -755,7 +809,10 @@ test("duplicating a saved Report creates a separate draft on its first Save", as
   });
   await page.reload();
   await page
-    .getByRole("button", { name: "Operations review", exact: true })
+    .getByRole("button", {
+      name: "Operations review Field operations",
+      exact: true,
+    })
     .click();
   await page.getByRole("button", { name: "Edit report" }).click();
   await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
@@ -763,7 +820,10 @@ test("duplicating a saved Report creates a separate draft on its first Save", as
   );
   await page.getByRole("button", { name: "Close editor" }).click();
   await page
-    .getByRole("button", { name: "Copy of Operations review", exact: true })
+    .getByRole("button", {
+      name: "Copy of Operations review Field operations",
+      exact: true,
+    })
     .click();
   await page.getByRole("button", { name: "Edit report" }).click();
   await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
@@ -796,11 +856,14 @@ test("a saved Report can start an independent new Report through the template ch
   });
   await page.reload();
   await expect(
-    page.getByRole("button", { name: "Operations review", exact: true }),
+    page.getByRole("button", {
+      name: "Operations review Field operations",
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", {
-      name: "Copy of Operations review",
+      name: "Copy of Operations review Field operations",
       exact: true,
     }),
   ).toBeVisible();
@@ -909,5 +972,146 @@ test("Report recipes open on demand and preserve cross-tab drafts when closed", 
     module_id: moduleId,
     name: "Quarterly review",
     recipe: { fields: [{ field_id: fieldId, expected_type: "text" }] },
+  });
+});
+
+test("Report filters display Select labels, submit stable IDs, and use module-eligible people", async ({
+  page,
+}) => {
+  const api = await installReportsApi(page);
+  const selectFieldId = "00000000-0000-4000-8000-000000000112";
+  const inServiceChoiceId = "00000000-0000-4000-8000-000000000113";
+  const inspectionChoiceId = "00000000-0000-4000-8000-000000000114";
+  const userFieldId = "00000000-0000-4000-8000-000000000115";
+  const eligibleUserId = "00000000-0000-4000-8000-000000000116";
+  const assignableUserRequests: string[] = [];
+  const globalUserRequests: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path === `/api/modules/${moduleId}/assignable-users`)
+      assignableUserRequests.push(path);
+    if (path === "/api/users" || path.startsWith("/api/users/"))
+      globalUserRequests.push(path);
+  });
+  await page.route(`**/api/views/data-sources/${moduleId}/fields**`, (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        pageOf(
+          [
+            {
+              id: fieldId,
+              module_id: moduleId,
+              name: "Asset",
+              type: "text",
+              required: true,
+              position: 0,
+              config: {},
+            },
+            {
+              id: selectFieldId,
+              module_id: moduleId,
+              name: "Status",
+              type: "select",
+              required: false,
+              position: 1,
+              config: {
+                options: [
+                  { id: inServiceChoiceId, label: "In service" },
+                  { id: inspectionChoiceId, label: "Inspection due" },
+                ],
+              },
+            },
+            {
+              id: userFieldId,
+              module_id: moduleId,
+              name: "Assignee",
+              type: "user",
+              required: false,
+              position: 2,
+              config: { kind: "user" },
+            },
+          ],
+          100,
+        ),
+      ),
+    }),
+  );
+  await page.route(`**/api/modules/${moduleId}/assignable-users**`, (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        pageOf(
+          [
+            {
+              id: eligibleUserId,
+              display_name: "Alex Reader",
+              username: "alex.reader",
+            },
+          ],
+          100,
+        ),
+      ),
+    }),
+  );
+
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "New Report" }).click();
+  const editor = page.getByRole("dialog", { name: "New report" });
+  await editor.getByLabel("Data source").selectOption(moduleId);
+  await editor.getByLabel("Report name").fill("Stable filters");
+  await editor.getByRole("tab", { name: "Columns" }).click();
+  await editor.getByRole("checkbox", { name: "Asset" }).check();
+  await editor.getByRole("tab", { name: "Advanced" }).click();
+
+  await editor.getByRole("button", { name: "Add filter" }).click();
+  await editor
+    .getByRole("combobox", { name: "Field" })
+    .nth(0)
+    .selectOption(selectFieldId);
+  await editor
+    .getByRole("combobox", { name: "Condition" })
+    .nth(0)
+    .selectOption("in");
+  const choices = editor.getByRole("group", { name: "Value" });
+  await choices.getByRole("checkbox", { name: "In service" }).check();
+  await choices.getByRole("checkbox", { name: "Inspection due" }).check();
+
+  await editor.getByRole("button", { name: "Add filter" }).click();
+  await editor
+    .getByRole("combobox", { name: "Field" })
+    .nth(1)
+    .selectOption(userFieldId);
+  await expect.poll(() => assignableUserRequests.length).toBeGreaterThan(0);
+  const personValue = editor.getByRole("combobox", { name: "Value" });
+  await expect(
+    personValue.getByRole("option", { name: "Alex Reader" }),
+  ).toBeAttached();
+  await personValue.selectOption(eligibleUserId);
+  await expect(editor.getByText(eligibleUserId, { exact: true })).toHaveCount(
+    0,
+  );
+  expect(globalUserRequests).toEqual([]);
+  await captureOpenViewReview(page, "reports-select-person-filters");
+
+  await editor.getByRole("button", { name: "Create Report" }).click();
+  await expect(editor).not.toBeVisible();
+  expect(api.createdReports()[0]?.request).toMatchObject({
+    recipe: {
+      filters: [
+        {
+          field_id: selectFieldId,
+          expected_type: "select",
+          operator: "in",
+          value: [inServiceChoiceId, inspectionChoiceId],
+        },
+        {
+          field_id: userFieldId,
+          expected_type: "user",
+          operator: "eq",
+          value: eligibleUserId,
+        },
+      ],
+    },
   });
 });

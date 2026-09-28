@@ -5,6 +5,7 @@ import {
   createOpenViewSavedView,
   getOpenViewConflict,
   getOpenViewSavedView,
+  listOpenViewAssignableUsers,
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
   listOpenViewSavedViews,
@@ -17,6 +18,8 @@ import {
 
 const moduleId = "00000000-0000-4000-8000-000000000001";
 const fieldId = "00000000-0000-4000-8000-000000000002";
+const userFieldId = "00000000-0000-4000-8000-000000000003";
+const eligibleUserId = "00000000-0000-4000-8000-000000000004";
 const viewId = "00000000-0000-4000-8000-000000000005";
 const departmentId = "00000000-0000-4000-8000-000000000007";
 const timelineStartFieldId = "00000000-0000-4000-8000-000000000008";
@@ -172,7 +175,14 @@ const pagination = {
 test("maps validated catalog, saved-view, and record pages", async () => {
   const responses: unknown[] = [
     {
-      items: [{ id: moduleId, name: "Equipment", department_id: departmentId }],
+      items: [
+        {
+          id: moduleId,
+          name: "Equipment",
+          department_id: departmentId,
+          title_field_id: fieldId,
+        },
+      ],
       pagination,
     },
     {
@@ -204,6 +214,15 @@ test("maps validated catalog, saved-view, and record pages", async () => {
           position: 2,
           config: {},
         },
+        {
+          id: userFieldId,
+          module_id: moduleId,
+          name: "Assignee",
+          type: "user",
+          required: false,
+          position: 3,
+          config: {},
+        },
       ],
       pagination,
     },
@@ -214,7 +233,8 @@ test("maps validated catalog, saved-view, and record pages", async () => {
         {
           id: "00000000-0000-4000-8000-000000000006",
           module_id: moduleId,
-          data: { [fieldId]: "Pump 04" },
+          data: { [fieldId]: "Pump 04", [userFieldId]: eligibleUserId },
+          display_values: { [userFieldId]: "Alex Reader" },
           created_at: "2026-09-23T00:00:00Z",
           updated_at: "2026-09-23T00:00:00Z",
           deleted_at: null,
@@ -228,7 +248,14 @@ test("maps validated catalog, saved-view, and record pages", async () => {
   const mock = installFetch(() => Response.json(responses.shift()));
   try {
     await expect(listOpenViewDataSources()).resolves.toEqual({
-      items: [{ id: moduleId, name: "Equipment", departmentId }],
+      items: [
+        {
+          id: moduleId,
+          name: "Equipment",
+          departmentId,
+          titleFieldId: fieldId,
+        },
+      ],
       pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
     });
     await expect(listOpenViewDataSourceFields(moduleId)).resolves.toEqual({
@@ -260,6 +287,15 @@ test("maps validated catalog, saved-view, and record pages", async () => {
           position: 2,
           config: {},
         },
+        {
+          id: userFieldId,
+          moduleId,
+          name: "Assignee",
+          type: "user",
+          required: false,
+          position: 3,
+          config: {},
+        },
       ],
       pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
     });
@@ -288,7 +324,8 @@ test("maps validated catalog, saved-view, and record pages", async () => {
       items: [
         {
           moduleId,
-          data: { [fieldId]: "Pump 04" },
+          data: { [fieldId]: "Pump 04", [userFieldId]: eligibleUserId },
+          displayValues: { [userFieldId]: "Alex Reader" },
           isDeleted: false,
         },
       ],
@@ -327,6 +364,44 @@ test("maps validated catalog, saved-view, and record pages", async () => {
         offset: 0,
       }),
     );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("lists only module-scoped assignable user labels without caching", async () => {
+  const mock = installFetch(() =>
+    Response.json({
+      items: [
+        {
+          id: eligibleUserId,
+          display_name: "Alex Reader",
+          username: "alex.reader",
+        },
+      ],
+      pagination: { ...pagination, limit: 100 },
+    }),
+  );
+  try {
+    await expect(
+      listOpenViewAssignableUsers(moduleId, {
+        limit: 100,
+        search: "  Alex Reader  ",
+      }),
+    ).resolves.toEqual({
+      items: [
+        {
+          id: eligibleUserId,
+          displayName: "Alex Reader",
+          username: "alex.reader",
+        },
+      ],
+      pagination: { limit: 100, offset: 0, count: 1, total: 1, hasMore: false },
+    });
+    expect(String(mock.requests[0]?.input)).toBe(
+      `/api/modules/${moduleId}/assignable-users?limit=100&offset=0&search=Alex+Reader`,
+    );
+    expect(mock.requests[0]?.init?.cache).toBe("no-store");
   } finally {
     mock.restore();
   }
