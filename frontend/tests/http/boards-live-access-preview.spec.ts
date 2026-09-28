@@ -22,7 +22,12 @@ const initial: AccessPreviewState = {
 };
 
 test("read-only Board manager becomes preview-eligible from the manager-only chooser, not my-access.write", () => {
-  const readOnlyManager = { view: true, edit: false, manage: false };
+  const readOnlyManager = {
+    level: "read" as const,
+    view: true,
+    edit: false,
+    manage: false,
+  };
   const initialEligibility: BoardPreviewEligibility = {
     key: null,
     status: "loading",
@@ -66,21 +71,30 @@ test("read-only Board manager becomes preview-eligible from the manager-only cho
   ).toEqual(denied);
 });
 
-test("Board access preview states effective permissions without claiming content audience visibility", () => {
+test("Board access preview states the person's level and what it allows", () => {
   const html = renderToStaticMarkup(
     createElement(BoardAccessPreviewResult, {
       user: { id: userId, username: "Alex <script>not markup</script>" },
-      access: { view: true, edit: false, manage: false },
+      access: { level: "write", view: true, edit: true, manage: false },
     }),
   );
   expect(html).toContain("Alex &lt;script&gt;not markup&lt;/script&gt;");
   expect(html).toContain("Board-level access");
-  expect(html).toContain("Can view Board");
-  expect(html).toContain("Can edit Board");
-  expect(html).toContain("Can manage Board");
-  expect(html).toContain("Event and announcement audiences");
+  expect(html).toContain("Level on this Board: write.");
+  expect(html).toContain("Can read posts, events and widgets");
+  expect(html).toContain("Can add posts and events");
+  expect(html).toContain("Can manage posts, events and widgets");
+  expect(html).not.toContain("audience");
   expect(html).not.toContain(userId);
   expect(html).not.toContain("<script>");
+  expect(
+    renderToStaticMarkup(
+      createElement(BoardAccessPreviewResult, {
+        user: { id: userId, username: "Sam" },
+        access: { level: null, view: false, edit: false, manage: false },
+      }),
+    ),
+  ).toContain("This person cannot open this Board.");
 });
 
 test("Board access preview clears old data on target or Board switch and ignores stale completions", () => {
@@ -91,7 +105,7 @@ test("Board access preview clears old data on target or Board switch and ignores
       type: "resolve",
       key,
       sequence: 1,
-      data: { view: true, edit: true, manage: false },
+      data: { level: "write", view: true, edit: true, manage: false },
     },
   );
   expect(ready.data?.edit).toBe(true);
@@ -112,7 +126,7 @@ test("Board access preview clears old data on target or Board switch and ignores
         type: "resolve",
         key,
         sequence: 1,
-        data: { view: true, edit: true, manage: true },
+        data: { level: "manage", view: true, edit: true, manage: true },
       }),
     ).toEqual(switched);
   }
@@ -123,7 +137,7 @@ test("Board access preview clears permission data after a denied or unavailable 
   const ready: AccessPreviewState = {
     key,
     sequence: 1,
-    data: { view: true, edit: true, manage: true },
+    data: { level: "manage", view: true, edit: true, manage: true },
     status: "ready",
     error: null,
   };

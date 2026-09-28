@@ -4,19 +4,20 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.systems.access.identity.eligibility import is_identity_eligible
-from app.systems.access.policy.authorization import authorize_workspace_capabilities
-from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
-from app.systems.boards.access import can_access_board
+from app.systems.access.policy.checks import module_level
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.scope import includes
+from app.systems.access.users.eligibility import is_active_account, is_established_user
+from app.systems.access.users.models import User, UserRole
+from app.systems.boards.access import board_level
 from app.systems.boards.attachment_models import (
-    BoardAnnouncementRevisionAttachment,
-    BoardContentAttachment,
+    BoardAttachment,
+    BoardPostRevisionAttachment,
 )
-from app.systems.boards.models import Board, BoardGrant, BoardPermission, BoardStatus
+from app.systems.boards.models import Board, BoardStatus
 from app.systems.platform.files.models import File
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
@@ -30,29 +31,39 @@ def error(code: str, message: str, status: int = 409) -> HTTPException:
     )
 
 
-def authorize(db: Session, user: User, purpose: str, *, write: bool = False) -> User:
-    """Authorize a file action before acquiring parent or inventory locks."""
+def authorize(
+    db: Session,
+    user: User,
+    purpose: str,
+    *,
+    write: bool = False,
+    record_id: UUID | None = None,
+) -> User:
+    """Authorize a file action before acquiring parent or inventory locks.
+
+    A record attachment follows its record's module: read to see it, write to
+    change it. A record the user cannot read is reported as missing. Other file
+    purposes are administrator-only.
+    """
 
     if purpose not in {"record_attachment", "library_document", "workspace_logo"}:
         raise error("forbidden", "Forbidden", 403)
-    if purpose == "record_attachment":
-        capability = Capability.RECORDS_WRITE if write else Capability.RECORDS_READ
-        return authorize_workspace_capabilities(
-            db,
-            actor_id=user.id,
-            expected_role_id=user.role_id,
-            capabilities=(capability,),
-        )
-    if (
-        user.is_deleted
-        or not is_identity_eligible(user)
-        or user.status != "active"
-        or not is_established_user(user)
-        or user.role is None
-        or user.role.is_deleted
-    ):
+    if not is_active_account(user):
         raise error("forbidden", "Forbidden", 403)
-    if user.role.role != "admin":
+    if purpose == "record_attachment":
+        # A guest reads at most, so it never changes an attachment.
+        if write and user.role == UserRole.GUEST.value:
+            raise error("forbidden", "Forbidden", 403)
+        if record_id is None:
+            return user
+        record = db.get(Record, record_id)
+        granted = None if record is None else module_level(db, user, record.module_id)
+        if granted is None:
+            raise error("file_not_found", "File parent not found", 404)
+        if write and not includes(granted, AccessLevel.WRITE):
+            raise error("forbidden", "Forbidden", 403)
+        return user
+    if user.role != UserRole.ADMIN.value:
         raise error("forbidden", "Forbidden", 403)
     return user
 
@@ -60,7 +71,6 @@ def authorize(db: Session, user: User, purpose: str, *, write: bool = False) -> 
 def fresh_user(db: Session, actor_id: UUID) -> User:
     user = db.scalar(
         select(User)
-        .options(joinedload(User.role))
         .where(User.id == actor_id)
         .execution_options(populate_existing=True)
     )
@@ -70,8 +80,6 @@ def fresh_user(db: Session, actor_id: UUID) -> User:
         or not is_identity_eligible(user)
         or user.status != "active"
         or not is_established_user(user)
-        or user.role is None
-        or user.role.is_deleted
     ):
         raise error("forbidden", "Forbidden", 403)
     return user
@@ -100,19 +108,12 @@ def authorize_board_file(
     db: Session, user: User, board_id: UUID, *, write: bool,
     lock: bool = False,
 ) -> Board:
-    """A Board-scoped grant, never the generic file-purpose capability."""
+    """The Board level decides: read to see a file, write to add or change one."""
     if not is_established_user(user):
         raise error("file_not_found", "File not found", 404)
     board = board_parent(db, board_id, active=write, lock=lock)
-    grants = db.scalars(
-        select(BoardGrant).where(
-            BoardGrant.board_id == board_id,
-            BoardGrant.is_deleted.is_(False),
-            BoardGrant.deleted_at.is_(None),
-        )
-    ).all()
-    action = BoardPermission.EDIT if write else BoardPermission.VIEW
-    if not can_access_board(board, user, action, grants):
+    required = AccessLevel.WRITE if write else AccessLevel.READ
+    if not includes(board_level(db, user, board), required):
         raise error("file_not_found", "File not found", 404)
     return board
 
@@ -127,19 +128,19 @@ def authorize_contextual_file(
     elif board_id is not None:
         raise error("file_not_found", "File not found", 404)
     else:
-        authorize(db, user, file.purpose, write=write)
+        authorize(db, user, file.purpose, write=write, record_id=file.record_id)
 
 
 def require_unlinked(db: Session, file_id: UUID) -> None:
     active_link = db.scalar(
-        select(BoardContentAttachment.id).where(
-            BoardContentAttachment.file_id == file_id,
-            BoardContentAttachment.is_linked.is_(True),
+        select(BoardAttachment.id).where(
+            BoardAttachment.file_id == file_id,
+            BoardAttachment.is_linked.is_(True),
         ).limit(1)
     )
     published_link = db.scalar(
-        select(BoardAnnouncementRevisionAttachment.id).where(
-            BoardAnnouncementRevisionAttachment.file_id == file_id
+        select(BoardPostRevisionAttachment.id).where(
+            BoardPostRevisionAttachment.file_id == file_id
         ).limit(1)
     )
     if active_link is not None or published_link is not None:

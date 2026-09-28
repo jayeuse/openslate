@@ -6,26 +6,20 @@ from uuid import UUID
 
 from sqlalchemy import Select, and_, false, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
-from app.systems.access.identity.eligibility import is_identity_eligible
+from app.systems.access.policy.checks import module_filter
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.access.users.permissions import Capability, has_capability
-from app.systems.boards.announcement_models import (
-    BoardAnnouncement,
-    BoardAnnouncementRevision,
-)
-from app.systems.boards.announcement_service import audience_clause as announcement_audience_clause
+from app.systems.access.users.models import User, UserStatus
+from app.systems.boards.access import visible_board_clause
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.event_router import _audience_clause as event_audience_clause
 from app.systems.boards.models import Board, BoardStatus
+from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.reminder_models import BoardEventReminder
-from app.systems.boards.router import _board_view_clause
 from app.systems.manage.audit.context import get_audit_context
-from app.systems.openview.reports.audience import run_audience_clause
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunEligibleUser
 from app.systems.platform.scheduling.models import (
     InAppNotification,
@@ -38,6 +32,8 @@ from app.systems.sandbox.modules.models import Module
 MAX_CLAIM_BATCH = 20
 MAX_ATTEMPTS = 5
 LEASE_DURATION = timedelta(minutes=2)
+# The length of ``audit_logs.actor_label``.
+ACTOR_LABEL_LENGTH = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,44 +48,28 @@ def _utc_instant(value: datetime) -> datetime:
     return value
 
 
-def _eligible_owner(db: Session, report: Report, *, lock: bool) -> User | None:
-    if report.is_deleted or report.deleted_at is not None:
+def report_source(db: Session, report: Report | None, *, lock: bool) -> Module | None:
+    """Return the live module of an active Report, or None when it cannot run.
+
+    A scheduled Report runs as the workspace, so no user decides whether it runs:
+    it runs while the Report and its module are active.
+    """
+
+    if report is None or report.is_deleted or report.deleted_at is not None:
         return None
     module_query = select(Module).where(Module.id == report.module_id)
     if lock:
         module_query = module_query.with_for_update()
     module = db.scalar(module_query)
-    if (
-        module is None
-        or module.is_deleted
-        or module.deleted_at is not None
-        or not module.is_schema_accepted
-    ):
+    if module is None or module.is_deleted or module.deleted_at is not None:
         return None
-    user_query = select(User).where(User.id == report.owner_id)
-    if lock:
-        user_query = user_query.with_for_update()
-    user = db.scalar(user_query)
-    if (
-        user is None
-        or user.is_deleted
-        or user.deleted_at is not None
-        or not is_identity_eligible(user)
-        or user.status != UserStatus.ACTIVE.value
-        or not is_established_user(user)
-    ):
-        return None
-    role_query = select(Role).where(Role.id == user.role_id)
-    if lock:
-        role_query = role_query.with_for_update()
-    role = db.scalar(role_query)
-    if role is None or role.is_deleted or role.deleted_at is not None:
-        return None
-    if not has_capability(role, Capability.RECORDS_READ):
-        return None
-    if not has_capability(role, Capability.RECORDS_WRITE):
-        return None
-    return user
+    return module
+
+
+def scheduled_actor_label(report: Report) -> str:
+    """The audit actor of a scheduled run: the workspace, named after the Report."""
+
+    return f"Scheduled report: {report.name}"[:ACTOR_LABEL_LENGTH]
 
 
 def queue_report_occurrence(
@@ -99,7 +79,7 @@ def queue_report_occurrence(
 
     instant = _utc_instant(scheduled_for)
     report = db.scalar(select(Report).where(Report.id == report_id).with_for_update())
-    if report is None or _eligible_owner(db, report, lock=True) is None:
+    if report_source(db, report, lock=True) is None:
         raise ValueError("Report is unavailable for scheduling")
     existing = db.scalar(
         select(ScheduledWork).where(
@@ -198,7 +178,7 @@ def _locked_claim(db: Session, claim: WorkClaim, now: datetime) -> ScheduledWork
 def complete_report_work(
     db: Session, claim: WorkClaim, run_id: UUID, *, now: datetime | None = None
 ) -> bool:
-    """Finalize the current lease without requiring the owner in the audience."""
+    """Finalize the current lease and notify every module reader recorded on the run."""
 
     current = _utc_instant(now or utc_now())
     report_id = db.scalar(
@@ -210,11 +190,11 @@ def complete_report_work(
         return False
     # Match Report lifecycle order: source and its policy rows precede the work row.
     report = db.scalar(select(Report).where(Report.id == report_id).with_for_update())
-    owner = _eligible_owner(db, report, lock=True) if report is not None else None
+    source = report_source(db, report, lock=True)
     work = _locked_claim(db, claim, current)
     if work is None or work.report_id != report_id:
         return False
-    if report is None or owner is None:
+    if report is None or source is None:
         work.state = WorkState.CANCELED
         work.failure_code = "source_unavailable"
         work.lease_token = None
@@ -238,6 +218,8 @@ def complete_report_work(
         context.request_id = uuid7()
         context.request_method = "SCHEDULE"
         context.request_path = "/internal/reports/scheduler"
+    context.performed_by = None
+    context.actor_label = scheduled_actor_label(report)
     for recipient_id in db.scalars(
         select(ReportRunEligibleUser.user_id).where(ReportRunEligibleUser.run_id == run.id)
     ):
@@ -269,7 +251,6 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
 
     user = db.scalar(
         select(User)
-        .options(joinedload(User.role))
         .where(User.id == user_id)
         .with_for_update(of=User)
         .execution_options(populate_existing=True)
@@ -280,16 +261,6 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
         or user.deleted_at is not None
         or user.status != UserStatus.ACTIVE.value
         or not is_established_user(user)
-    ):
-        return select(InAppNotification).where(false())
-    role = db.scalar(
-        select(Role).where(Role.id == user.role_id).execution_options(populate_existing=True)
-    )
-    if (
-        role is None
-        or role.is_deleted
-        or role.deleted_at is not None
-        or not has_capability(role, Capability.RECORDS_READ)
     ):
         return select(InAppNotification).where(false())
     report_ids = (
@@ -307,12 +278,11 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
             ScheduledWork.kind == WorkKind.REPORT_RUN,
             ReportRun.report_id == Report.id,
             ReportRun.is_deleted.is_(False),
-            run_audience_clause(user),
+            module_filter(db, user, AccessLevel.READ, Report.module_id),
             Report.is_deleted.is_(False),
             Report.deleted_at.is_(None),
             Module.is_deleted.is_(False),
             Module.deleted_at.is_(None),
-            Module.is_schema_accepted.is_(True),
         )
     )
     reminder_ids = (
@@ -326,7 +296,6 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
             InAppNotification.is_deleted.is_(False),
             ScheduledWork.kind == WorkKind.EVENT_REMINDER,
             ScheduledWork.state == WorkState.SUCCEEDED,
-            BoardEventReminder.recipient_id == user_id,
             BoardEventReminder.is_deleted.is_(False),
             BoardEventReminder.deleted_at.is_(None),
             BoardEvent.board_id == Board.id,
@@ -336,41 +305,39 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
             Board.is_deleted.is_(False),
             Board.deleted_at.is_(None),
             Board.status == BoardStatus.ACTIVE,
-            _board_view_clause(user),
-            event_audience_clause(user),
+            visible_board_clause(user),
         )
     )
-    announcement_ids = (
+    post_ids = (
         select(InAppNotification.id)
         .join(ScheduledWork, ScheduledWork.id == InAppNotification.work_id)
-        .join(BoardAnnouncement, BoardAnnouncement.id == ScheduledWork.announcement_id)
+        .join(BoardPost, BoardPost.id == ScheduledWork.post_id)
         .join(
-            BoardAnnouncementRevision,
-            BoardAnnouncementRevision.id == ScheduledWork.publication_result_id,
+            BoardPostRevision,
+            BoardPostRevision.id == ScheduledWork.publication_result_id,
         )
-        .join(Board, Board.id == BoardAnnouncement.board_id)
+        .join(Board, Board.id == BoardPost.board_id)
         .where(
             InAppNotification.recipient_id == user_id,
             InAppNotification.is_deleted.is_(False),
-            ScheduledWork.kind == WorkKind.ANNOUNCEMENT_PUBLISH,
+            ScheduledWork.kind == WorkKind.POST_PUBLISH,
             ScheduledWork.state == WorkState.SUCCEEDED,
-            BoardAnnouncement.is_deleted.is_(False),
-            BoardAnnouncement.deleted_at.is_(None),
-            BoardAnnouncement.status == "published",
-            BoardAnnouncement.displayed_publication_number
-            == BoardAnnouncementRevision.publication_number,
-            BoardAnnouncementRevision.announcement_id == BoardAnnouncement.id,
-            BoardAnnouncementRevision.is_deleted.is_(False),
-            BoardAnnouncementRevision.deleted_at.is_(None),
+            BoardPost.is_deleted.is_(False),
+            BoardPost.deleted_at.is_(None),
+            BoardPost.status == "published",
+            BoardPost.displayed_publication_number
+            == BoardPostRevision.publication_number,
+            BoardPostRevision.post_id == BoardPost.id,
+            BoardPostRevision.is_deleted.is_(False),
+            BoardPostRevision.deleted_at.is_(None),
             Board.is_deleted.is_(False),
             Board.deleted_at.is_(None),
             Board.status == BoardStatus.ACTIVE,
-            _board_view_clause(user),
+            visible_board_clause(user),
             or_(
-                BoardAnnouncementRevision.expires_at.is_(None),
-                BoardAnnouncementRevision.expires_at > utc_now(),
+                BoardPostRevision.expires_at.is_(None),
+                BoardPostRevision.expires_at > utc_now(),
             ),
-            announcement_audience_clause(BoardAnnouncementRevision, user),
         )
     )
 
@@ -378,7 +345,7 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
         or_(
             InAppNotification.id.in_(report_ids),
             InAppNotification.id.in_(reminder_ids),
-            InAppNotification.id.in_(announcement_ids),
+            InAppNotification.id.in_(post_ids),
         )
     )
 
@@ -386,7 +353,7 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
 def list_current_user_notifications(
     db: Session, user_id: UUID, *, limit: int = 50, offset: int = 0
 ) -> list[InAppNotification]:
-    """Return references only for a currently eligible Report owner."""
+    """Return references only while the recipient can still read the source."""
 
     if not 1 <= limit <= 100 or offset < 0:
         raise ValueError("Notification page is out of range")

@@ -10,7 +10,7 @@ import {
   CHANNELS,
   CATEGORIES,
 } from "../../../src/components/systems/comms/domain/model";
-import { initialPeople } from "../../../src/components/systems/access/domain/model";
+import { initialPeople } from "../../../src/components/systems/shared/data/sample-people";
 const person = initialPeople[0];
 const channel = CHANNELS[0];
 test("channel values override inherited settings unless workspace locked", () => {

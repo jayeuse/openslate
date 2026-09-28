@@ -78,7 +78,7 @@ import {
   MESSAGES,
   type Thread,
 } from "../../../src/components/systems/comms/domain/model";
-import { initialPeople } from "../../../src/components/systems/access/domain/model";
+import { initialPeople } from "../../../src/components/systems/shared/data/sample-people";
 test("tool sending observes slow mode from recent thread replies in the destination channel", () => {
   const config = createCommsConfiguration();
   config.workspace.settings.slowModeSeconds = 60;

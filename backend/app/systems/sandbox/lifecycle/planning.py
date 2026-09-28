@@ -6,7 +6,6 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.systems.access.policy.models import AccessDefaultDepartment
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.lifecycle.batch_dependencies import load_purge_dependencies
@@ -94,30 +93,21 @@ def plan_lifecycle(
         "records": {row.entity_id for row in rows if row.entity_type == "records"},
     }
     purge_blockers: list[LifecycleBlocker] = []
-    close_blockers: list[LifecycleBlocker] = []
-    if resolved_operation is LifecycleOperation.CLOSE and transition_ids["departments"]:
-        default_department_ids = db.scalars(
-            select(AccessDefaultDepartment.department_id)
-            .where(AccessDefaultDepartment.department_id.in_(transition_ids["departments"]))
-            .order_by(AccessDefaultDepartment.department_id)
-        ).all()
-        closing_departments_by_id = {
-            department.id: department for department in scope.departments
-        }
-        for department_id in default_department_ids:
-            default_department = closing_departments_by_id[department_id]
-            close_blockers.append(
+    if resolved_target is LifecycleTargetType.FIELD and resolved_operation in {
+        LifecycleOperation.CLOSE,
+        LifecycleOperation.PURGE,
+    }:
+        selected_field = scope.fields[0]
+        parent_module = db.get(Module, selected_field.module_id)
+        if parent_module is not None and parent_module.title_field_id == selected_field.id:
+            purge_blockers.append(
                 LifecycleBlocker(
-                    code=LifecycleBlockerCode.DEFAULT_DEPARTMENT_REFERENCE,
-                    entity_type="departments",
-                    entity_id=department_id,
-                    detail=(
-                        f"Department {default_department.department_name} is a default "
-                        "for new people. "
-                        "Change Access defaults before closing it."
-                    ),
-                    department_id=department_id,
-                    department_name=default_department.department_name,
+                    code=LifecycleBlockerCode.TITLE_FIELD_SELECTED,
+                    entity_type="fields",
+                    entity_id=selected_field.id,
+                    detail="Change this module's title field before closing or purging it",
+                    field_id=selected_field.id,
+                    module_id=parent_module.id,
                 )
             )
     dependency_ids: dict[str, tuple[UUID, ...]] = {}
@@ -259,7 +249,7 @@ def plan_lifecycle(
     else:
         blockers = tuple(
             sorted(
-                (*purge_blockers, *close_blockers),
+                purge_blockers,
                 key=lambda blocker: (blocker.entity_type, str(blocker.entity_id), blocker.code),
             )
         )

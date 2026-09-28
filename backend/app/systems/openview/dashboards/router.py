@@ -1,4 +1,8 @@
-"""Revisioned, private Dashboard metadata and ordered chart widgets."""
+"""Revisioned department Dashboards and their ordered widgets.
+
+Every user who can read something in a department reads its Dashboards. Only a
+user with ``manage`` on the department (or an administrator) changes them.
+"""
 
 from datetime import UTC, datetime
 from typing import Annotated, Any, cast
@@ -10,16 +14,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
-from app.systems.access.users.models import User, UserStatus
-from app.systems.access.users.permissions import Capability
-from app.systems.openview.dashboards.models import Dashboard, DashboardDefault, DashboardWidget
+from app.systems.access.policy.checks import department_filter, forbidden
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.scope import effective_levels
+from app.systems.access.users.models import User
+from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.dashboards.schemas import (
     DashboardCreate,
-    DashboardDefaultResponse,
-    DashboardDefaultSet,
     DashboardListRequest,
     DashboardResponse,
     DashboardRestore,
@@ -29,6 +33,7 @@ from app.systems.openview.dashboards.schemas import (
     DashboardWidgetSpec,
 )
 from app.systems.openview.dashboards.widget_validation import validate_dashboard_widgets
+from app.systems.sandbox.departments.models import Department
 
 
 def _private_cache(response: Response) -> None:
@@ -40,17 +45,19 @@ router = APIRouter(
     tags=["dashboards"],
     dependencies=[Depends(_private_cache)],
 )
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
+# Changing a Dashboard needs ``manage`` on its department; each route checks it.
+Writer = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 DASHBOARD_LIST_SPEC = ListQuerySpec(
     sort_fields={
+        DashboardSort.POSITION: cast(ColumnElement[Any], Dashboard.position),
         DashboardSort.NAME: cast(ColumnElement[Any], Dashboard.name),
         DashboardSort.CREATED_AT: cast(ColumnElement[Any], Dashboard.created_at),
         DashboardSort.UPDATED_AT: cast(ColumnElement[Any], Dashboard.updated_at),
     },
-    default_sort=DashboardSort.NAME,
+    default_sort=DashboardSort.POSITION,
     tie_breaker=cast(ColumnElement[Any], Dashboard.id),
     search_fields=(cast(ColumnElement[str], Dashboard.name),),
     deleted_field=cast(ColumnElement[bool], Dashboard.is_deleted),
@@ -80,31 +87,31 @@ def _stale_revision(current_revision: int) -> HTTPException:
     )
 
 
-def _owner_clause(user: User) -> ColumnElement[bool]:
-    role = user.role
-    if (
-        user.status != UserStatus.ACTIVE.value
-        or user.is_deleted
-        or user.deleted_at is not None
-        or role is None
-        or role.is_deleted
-        or role.deleted_at is not None
-        or role.id != user.role_id
-    ):
-        return Dashboard.id.is_(None)
-    return Dashboard.owner_id == user.id
+def _require_manager(db: Session, user: User, department_id: UUID) -> None:
+    """404 when the user reads nothing in the department, 403 without ``manage``."""
+
+    access = effective_levels(db, user)
+    readable = access.department_ids()
+    if readable is not None and department_id not in readable:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Department not found")
+    if access.department_level(department_id) != AccessLevel.MANAGE:
+        raise forbidden()
 
 
-def _dashboard(db: Session, user: User, dashboard_id: UUID, *, lock: bool = False) -> Dashboard:
+def _dashboard(
+    db: Session, user: User, dashboard_id: UUID, *, lock: bool = False, manage: bool = False
+) -> Dashboard:
     statement = select(Dashboard).where(
         Dashboard.id == dashboard_id,
-        _owner_clause(user),
+        department_filter(db, user, Dashboard.department_id),
     )
     if lock:
         statement = statement.with_for_update().execution_options(populate_existing=True)
     dashboard = db.scalar(statement)
     if dashboard is None:
         raise _not_found()
+    if manage:
+        _require_manager(db, user, dashboard.department_id)
     return dashboard
 
 
@@ -138,7 +145,8 @@ def _dashboard_responses(db: Session, dashboards: list[Dashboard]) -> list[Dashb
     return [
         DashboardResponse(
             id=dashboard.id,
-            owner_id=dashboard.owner_id,
+            department_id=dashboard.department_id,
+            position=dashboard.position,
             name=dashboard.name,
             refresh_cadence=dashboard.refresh_cadence,
             revision=dashboard.revision,
@@ -214,23 +222,15 @@ def _commit(db: Session) -> None:
         raise _invalid_dashboard() from error
 
 
-def _commit_default(db: Session) -> None:
-    try:
-        db.commit()
-    except IntegrityError as error:
-        db.rollback()
-        raise _conflict(
-            "default_dashboard_invalid", "Unable to save the default Dashboard"
-        ) from error
-
-
 @router.get("", response_model=StandardListResponse[DashboardResponse])
 def list_dashboards(
     user: Reader,
     db: Database,
     params: Annotated[DashboardListRequest, Query()],
 ) -> StandardListResponse[DashboardResponse]:
-    statement = select(Dashboard).where(_owner_clause(user))
+    statement = select(Dashboard).where(department_filter(db, user, Dashboard.department_id))
+    if params.department_id is not None:
+        statement = statement.where(Dashboard.department_id == params.department_id)
     result = execute_standard_list(db, statement, params, DASHBOARD_LIST_SPEC)
     return StandardListResponse(
         items=_dashboard_responses(db, result.items),
@@ -245,9 +245,18 @@ def create_dashboard(
     db: Database,
     response: Response,
 ) -> DashboardResponse:
-    validate_dashboard_widgets(db, payload.widgets)
+    _require_manager(db, user, payload.department_id)
+    department = db.scalar(
+        select(Department)
+        .where(Department.id == payload.department_id, Department.is_deleted.is_(False))
+        .with_for_update(read=True)
+    )
+    if department is None:
+        raise _conflict("dashboard_invalid", "The department is unavailable")
+    validate_dashboard_widgets(db, user, payload.department_id, payload.widgets)
     dashboard = Dashboard(
-        owner_id=user.id,
+        department_id=payload.department_id,
+        position=payload.position,
         name=payload.name,
         refresh_cadence=payload.refresh_cadence,
     )
@@ -272,62 +281,6 @@ def create_dashboard(
     return _dashboard_response(db, dashboard)
 
 
-@router.get("/default", response_model=DashboardDefaultResponse)
-def read_personal_default(user: Reader, db: Database) -> DashboardDefaultResponse:
-    dashboard_id = db.scalar(
-        select(DashboardDefault.dashboard_id)
-        .join(Dashboard, Dashboard.id == DashboardDefault.dashboard_id)
-        .where(
-            DashboardDefault.user_id == user.id,
-            _owner_clause(user),
-            Dashboard.is_deleted.is_(False),
-        )
-    )
-    return DashboardDefaultResponse(dashboard_id=dashboard_id)
-
-
-@router.put("/default", response_model=DashboardDefaultResponse)
-def set_personal_default(
-    payload: DashboardDefaultSet,
-    user: Writer,
-    db: Database,
-) -> DashboardDefaultResponse:
-    # Serialize one user's preference writes even when no default row exists yet.
-    db.scalar(select(User.id).where(User.id == user.id).with_for_update())
-    if payload.dashboard_id is not None:
-        dashboard = db.scalar(
-            select(Dashboard)
-            .where(
-                Dashboard.id == payload.dashboard_id,
-                _owner_clause(user),
-                Dashboard.is_deleted.is_(False),
-            )
-            .with_for_update()
-        )
-        if dashboard is None:
-            raise _conflict("default_dashboard_invalid", "The default Dashboard is unavailable")
-
-    existing = db.scalar(
-        select(DashboardDefault)
-        .where(DashboardDefault.user_id == user.id)
-        .with_for_update()
-    )
-    if payload.dashboard_id is None:
-        if existing is not None:
-            db.delete(existing)
-            _commit_default(db)
-        return DashboardDefaultResponse(dashboard_id=None)
-
-    if existing is not None and existing.dashboard_id == payload.dashboard_id:
-        return DashboardDefaultResponse(dashboard_id=payload.dashboard_id)
-    if existing is None:
-        db.add(DashboardDefault(user_id=user.id, dashboard_id=payload.dashboard_id))
-    else:
-        existing.dashboard_id = payload.dashboard_id
-    _commit_default(db)
-    return DashboardDefaultResponse(dashboard_id=payload.dashboard_id)
-
-
 @router.get("/{dashboard_id}", response_model=DashboardResponse)
 def read_dashboard(dashboard_id: UUID, user: Reader, db: Database) -> DashboardResponse:
     return _dashboard_response(db, _dashboard(db, user, dashboard_id))
@@ -340,15 +293,16 @@ def update_dashboard(
     user: Writer,
     db: Database,
 ) -> DashboardResponse:
-    dashboard = _dashboard(db, user, dashboard_id, lock=True)
+    dashboard = _dashboard(db, user, dashboard_id, lock=True, manage=True)
     if dashboard.revision != payload.revision:
         raise _stale_revision(dashboard.revision)
     if dashboard.is_deleted:
         raise _conflict("dashboard_archived", "Restore the Dashboard before editing it")
 
     if payload.widgets is not None:
-        validate_dashboard_widgets(db, payload.widgets)
+        validate_dashboard_widgets(db, user, dashboard.department_id, payload.widgets)
     name_changed = payload.name is not None and payload.name != dashboard.name
+    position_changed = payload.position is not None and payload.position != dashboard.position
     cadence_changed = (
         payload.refresh_cadence is not None
         and payload.refresh_cadence != dashboard.refresh_cadence
@@ -360,7 +314,9 @@ def update_dashboard(
         dashboard.name = payload.name
     if payload.refresh_cadence is not None and cadence_changed:
         dashboard.refresh_cadence = payload.refresh_cadence
-    if name_changed or cadence_changed or widgets_changed:
+    if payload.position is not None and position_changed:
+        dashboard.position = payload.position
+    if name_changed or position_changed or cadence_changed or widgets_changed:
         dashboard.revision += 1
     _commit(db)
     db.refresh(dashboard)
@@ -374,7 +330,7 @@ def archive_dashboard(
     user: Writer,
     db: Database,
 ) -> Response:
-    dashboard = _dashboard(db, user, dashboard_id, lock=True)
+    dashboard = _dashboard(db, user, dashboard_id, lock=True, manage=True)
     if dashboard.revision != revision:
         raise _stale_revision(dashboard.revision)
     if dashboard.is_deleted:
@@ -393,7 +349,7 @@ def restore_dashboard(
     user: Writer,
     db: Database,
 ) -> DashboardResponse:
-    dashboard = _dashboard(db, user, dashboard_id, lock=True)
+    dashboard = _dashboard(db, user, dashboard_id, lock=True, manage=True)
     if dashboard.revision != payload.revision:
         raise _stale_revision(dashboard.revision)
     if not dashboard.is_deleted:

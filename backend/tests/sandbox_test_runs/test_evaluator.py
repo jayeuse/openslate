@@ -5,7 +5,9 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from uuid6 import uuid7
 
+from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.test_runs.evaluator import (
     _date_is_valid,
     _departments,
@@ -16,22 +18,101 @@ from app.systems.sandbox.test_runs.evaluator import (
     _value_is_valid,
     evaluate_test,
 )
-from tests.sandbox_test_runs.fixtures import document_payload, sandbox_document
+from tests.sandbox_test_runs.fixtures import document_payload, option_id, sandbox_document
 
 
-def test_enabled_automations_apply_in_priority_order_without_mutating_document() -> None:
+def test_select_relationship_mapping_translates_independent_ids_by_shared_label() -> None:
+    source_id, target_id = str(uuid7()), str(uuid7())
+    document = SandboxDocument.model_validate(
+        {
+            "kind": "openslate-sandbox",
+            "schemaVersion": 4,
+            "design": {
+                "departments": [{"id": "department", "name": "Department"}],
+                "modules": [
+                    {
+                        "id": "source",
+                        "departmentId": "department",
+                        "name": "Source",
+                        "fields": [
+                            {
+                                "id": "choice",
+                                "name": "Choice",
+                                "type": "Select",
+                                "config": {
+                                    "kind": "select",
+                                    "options": [{"id": source_id, "label": "Shared"}],
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "id": "target",
+                        "departmentId": "department",
+                        "name": "Target",
+                        "fields": [
+                            {
+                                "id": "choice-copy",
+                                "name": "Choice copy",
+                                "type": "Select",
+                                "config": {
+                                    "kind": "select",
+                                    "options": [{"id": target_id, "label": "Shared"}],
+                                },
+                            }
+                        ],
+                    },
+                ],
+                "relationships": [
+                    {
+                        "id": "link",
+                        "name": "Link",
+                        "sourceModuleId": "source",
+                        "targetModuleId": "target",
+                        "cardinality": "one-to-many",
+                        "fieldMappings": [
+                            {"sourceFieldId": "choice", "targetFieldId": "choice-copy"}
+                        ],
+                    }
+                ],
+                "layout": {},
+            },
+            "triggers": [],
+            "scenarios": [],
+        }
+    )
+
+    result = evaluate_test(
+        document=document,
+        module_id="source",
+        values={"choice": source_id},
+        event={"kind": "record-created"},
+        trigger_ids=None,
+    )
+
+    assert result.issues == ()
+    assert len(result.routes) == 1
+    assert target_id in result.routes[0].detail
+    assert source_id not in result.routes[0].detail
+
+
+def test_enabled_triggers_apply_in_priority_order_without_mutating_document() -> None:
     document = sandbox_document()
     original = deepcopy(document.model_dump(by_alias=True, mode="json"))
     result = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": "", "score": 0},
+        values={"priority": option_id("priority", "High"), "status": "", "score": 0},
         event={"kind": "record-created"},
-        automation_ids=None,
+        trigger_ids=None,
     )
     assert document.model_dump(by_alias=True, mode="json") == original
-    assert result.values == {"priority": "High", "status": "Triaged", "score": 10}
-    assert [trace.automation_id for trace in result.automation_traces] == [
+    assert result.values == {
+        "priority": option_id("priority", "High"),
+        "status": "Triaged",
+        "score": 10,
+    }
+    assert [trace.trigger_id for trace in result.trigger_traces] == [
         "mark-high",
         "copy-triaged",
     ]
@@ -39,34 +120,34 @@ def test_enabled_automations_apply_in_priority_order_without_mutating_document()
 
 def test_threshold_requires_a_crossing_from_previous_to_current_value() -> None:
     payload = document_payload()
-    automation = payload["automations"][0]
-    assert isinstance(automation, dict)
-    automation["id"] = "threshold"
-    automation["trigger"] = {
+    record_trigger = payload["triggers"][0]
+    assert isinstance(record_trigger, dict)
+    record_trigger["id"] = "threshold"
+    record_trigger["trigger"] = {
         "kind": "threshold-crossed",
         "moduleId": "requests",
         "fieldId": "score",
         "operator": ">=",
         "value": {"kind": "literal", "value": 5},
     }
-    automation["conditionGroup"] = {"operator": "all", "conditions": []}
+    record_trigger["conditionGroup"] = {"operator": "all", "conditions": []}
     document = type(sandbox_document()).model_validate(payload)
     crossed = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "score": 5},
+        values={"priority": option_id("priority", "Low"), "score": 5},
         event={"kind": "threshold-crossed", "fieldId": "score", "previousValue": 4},
-        automation_ids=None,
+        trigger_ids=None,
     )
     already_met = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "score": 6},
+        values={"priority": option_id("priority", "Low"), "score": 6},
         event={"kind": "threshold-crossed", "fieldId": "score", "previousValue": 5},
-        automation_ids=None,
+        trigger_ids=None,
     )
-    assert crossed.automation_traces[0].outcome == "Applied"
-    assert already_met.automation_traces[0].outcome == "Not triggered"
+    assert crossed.trigger_traces[0].outcome == "Applied"
+    assert already_met.trigger_traces[0].outcome == "Not triggered"
 
 
 def test_datetime_thresholds_compare_temporary_values_as_instants() -> None:
@@ -89,24 +170,24 @@ def test_datetime_thresholds_compare_temporary_values_as_instants() -> None:
             "config": {"kind": "datetime", "defaultValue": None},
         }
     )
-    automation = payload["automations"][0]
-    assert isinstance(automation, dict)
-    automation["trigger"] = {
+    record_trigger = payload["triggers"][0]
+    assert isinstance(record_trigger, dict)
+    record_trigger["trigger"] = {
         "kind": "threshold-crossed",
         "moduleId": "requests",
         "fieldId": "due-at",
         "operator": ">=",
         "value": {"kind": "literal", "value": "2025-01-01T00:00:00Z"},
     }
-    automation["conditionGroup"] = {"operator": "all", "conditions": []}
-    payload["automations"] = [automation]
+    record_trigger["conditionGroup"] = {"operator": "all", "conditions": []}
+    payload["triggers"] = [record_trigger]
     document = type(sandbox_document()).model_validate(payload)
 
     result = evaluate_test(
         document=document,
         module_id="requests",
         values={
-            "priority": "Low",
+            "priority": option_id("priority", "Low"),
             "status": "",
             "due-at": "2025-01-01T01:00:00+02:00",
         },
@@ -115,22 +196,22 @@ def test_datetime_thresholds_compare_temporary_values_as_instants() -> None:
             "fieldId": "due-at",
             "previousValue": "2024-12-31T22:00:00Z",
         },
-        automation_ids=None,
+        trigger_ids=None,
     )
 
-    assert result.automation_traces[0].outcome == "Not triggered"
+    assert result.trigger_traces[0].outcome == "Not triggered"
 
 
-def test_invalid_values_stop_automation_but_keep_a_safe_relationship_route() -> None:
+def test_invalid_values_stop_trigger_but_keep_a_safe_relationship_route() -> None:
     result = evaluate_test(
         document=sandbox_document(),
         module_id="requests",
         values={"priority": "Unknown", "missing": "value"},
         event={"kind": "record-created"},
-        automation_ids=None,
+        trigger_ids=None,
     )
     assert result.values == {}
-    assert result.automation_traces == ()
+    assert result.trigger_traces == ()
     assert {issue.code for issue in result.issues} == {
         "field_invalid",
         "value_invalid",
@@ -139,29 +220,29 @@ def test_invalid_values_stop_automation_but_keep_a_safe_relationship_route() -> 
     assert result.routes[0].label == "Operations / Requests → Service / Equipment"
 
 
-def test_selected_and_disabled_automations_are_handled_without_running_disabled_actions() -> None:
+def test_selected_and_disabled_triggers_are_handled_without_running_disabled_actions() -> None:
     payload = document_payload()
-    disabled = payload["automations"][1]
+    disabled = payload["triggers"][1]
     assert isinstance(disabled, dict)
     disabled["enabled"] = False
     document = type(sandbox_document()).model_validate(payload)
     all_enabled = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": "", "score": 0},
+        values={"priority": option_id("priority", "High"), "status": "", "score": 0},
         event={"kind": "record-created"},
-        automation_ids=None,
+        trigger_ids=None,
     )
     explicit = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": "", "score": 0},
+        values={"priority": option_id("priority", "High"), "status": "", "score": 0},
         event={"kind": "record-created"},
-        automation_ids=["copy-triaged", "mark-high"],
+        trigger_ids=["copy-triaged", "mark-high"],
     )
-    assert [trace.automation_id for trace in all_enabled.automation_traces] == ["mark-high"]
+    assert [trace.trigger_id for trace in all_enabled.trigger_traces] == ["mark-high"]
     assert all_enabled.values["score"] == 0
-    assert [trace.outcome for trace in explicit.automation_traces] == [
+    assert [trace.outcome for trace in explicit.trigger_traces] == [
         "Applied",
         "Skipped — disabled",
     ]
@@ -169,58 +250,62 @@ def test_selected_and_disabled_automations_are_handled_without_running_disabled_
 
 def test_field_change_triggers_match_only_the_selected_field() -> None:
     payload = document_payload()
-    automation = payload["automations"][0]
-    assert isinstance(automation, dict)
-    automation["trigger"] = {"kind": "field-changed", "moduleId": "requests", "fieldId": "priority"}
-    automation["conditionGroup"] = {"operator": "all", "conditions": []}
+    record_trigger = payload["triggers"][0]
+    assert isinstance(record_trigger, dict)
+    record_trigger["trigger"] = {
+        "kind": "field-changed",
+        "moduleId": "requests",
+        "fieldId": "priority",
+    }
+    record_trigger["conditionGroup"] = {"operator": "all", "conditions": []}
     document = type(sandbox_document()).model_validate(payload)
     changed = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": ""},
+        values={"priority": option_id("priority", "High"), "status": ""},
         event={"kind": "field-changed", "fieldId": "priority"},
-        automation_ids=["mark-high"],
+        trigger_ids=["mark-high"],
     )
     wrong_field = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": ""},
+        values={"priority": option_id("priority", "High"), "status": ""},
         event={"kind": "field-changed", "fieldId": "status"},
-        automation_ids=["mark-high"],
+        trigger_ids=["mark-high"],
     )
-    assert changed.automation_traces[0].outcome == "Applied"
-    assert wrong_field.automation_traces[0].outcome == "Not triggered"
+    assert changed.trigger_traces[0].outcome == "Applied"
+    assert wrong_field.trigger_traces[0].outcome == "Not triggered"
 
 
 def test_relationship_projection_and_unsupported_actions_report_issues() -> None:
     payload = document_payload()
-    automation = payload["automations"][0]
-    assert isinstance(automation, dict)
-    automation["conditionGroup"] = {"operator": "all", "conditions": []}
-    automation["actions"] = [
+    record_trigger = payload["triggers"][0]
+    assert isinstance(record_trigger, dict)
+    record_trigger["conditionGroup"] = {"operator": "all", "conditions": []}
+    record_trigger["actions"] = [
         {"id": "notify", "kind": "notification", "message": "Legacy"},
         {
             "id": "change-target",
             "kind": "set-field",
             "target": {"moduleId": "equipment", "fieldId": "priority-copy"},
-            "value": {"kind": "literal", "value": "High"},
+            "value": {"kind": "literal", "value": option_id("priority-copy", "High")},
         },
     ]
     document = type(sandbox_document()).model_validate(payload)
     result = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "High", "status": "", "score": 0},
+        values={"priority": option_id("priority", "High"), "status": "", "score": 0},
         event={"kind": "record-created"},
-        automation_ids=["mark-high"],
+        trigger_ids=["mark-high"],
     )
-    assert result.automation_traces[0].outcome == "Needs attention"
-    assert [issue.code for issue in result.issues] == ["automation_invalid", "automation_invalid"]
+    assert result.trigger_traces[0].outcome == "Needs attention"
+    assert [issue.code for issue in result.issues] == ["trigger_invalid", "trigger_invalid"]
 
 
 def test_huge_integer_survives_validation_and_relationship_projection() -> None:
     payload = document_payload()
-    payload["automations"] = []
+    payload["triggers"] = []
     relationship = payload["design"]["relationships"][0]
     relationship["fieldMappings"] = [{"sourceFieldId": "score", "targetFieldId": "priority-copy"}]
     source_field = payload["design"]["modules"][0]["fields"][2]
@@ -238,9 +323,9 @@ def test_huge_integer_survives_validation_and_relationship_projection() -> None:
     result = evaluate_test(
         document=document,
         module_id="requests",
-        values={"priority": "Low", "score": value},
+        values={"priority": option_id("priority", "Low"), "score": value},
         event={"kind": "record-created"},
-        automation_ids=None,
+        trigger_ids=None,
     )
     assert result.issues == ()
     assert result.values["score"] == value
@@ -258,7 +343,8 @@ def test_defensive_value_helpers_cover_every_supported_temporary_input_type() ->
     assert _value_is_valid(True, field("checkbox"))
     assert _value_is_valid(4, field("integer", min=0, max=8, step=2))
     assert _value_is_valid(4.5, field("number"))
-    assert _value_is_valid("Open", field("select", options=["Open"]))
+    option = option_id("choice", "Open")
+    assert _value_is_valid(option, field("select", options=[{"id": option, "label": "Open"}]))
     assert _value_is_valid("2026-09-21", field("date"))
     assert _value_is_valid("2026-09-21T09:00:00Z", field("datetime"))
     assert not _value_is_valid("value", field("unknown"))

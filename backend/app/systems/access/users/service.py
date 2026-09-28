@@ -6,10 +6,10 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies import require_fresh_exact_admin
+from app.common.dependencies import lock_administrator_changes, require_fresh_exact_admin
 from app.core.base_model import utc_now
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
@@ -18,25 +18,17 @@ from app.core.integrations.supabase_auth import (
     get_supabase_auth_client,
 )
 from app.systems.access.identity.session_revocation import revoke_user_sessions
-from app.systems.access.policy.models import AccessGroupMember
-from app.systems.access.policy.service import load_creation_defaults
+from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.users.coordination import (
     InvitationConflict,
     InvitationError,
     InvitationNotFound,
+    ProfileValidationError,
     get_user,
-    resolve_department_memberships,
     validate_identity_profile,
 )
 from app.systems.access.users.invitation_provider import prepare_invitation_user
-from app.systems.access.users.models import (
-    IdentityKind,
-    Role,
-    User,
-    UserDepartment,
-    UserRole,
-    UserStatus,
-)
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -45,6 +37,7 @@ from app.systems.manage.audit.service import (
     append_committed_security_event,
     append_security_event,
 )
+from app.systems.manage.workspace.models import WorkspaceProfile
 
 
 def _security_event(
@@ -90,37 +83,18 @@ def _record_invitation_failure(
         pass
 
 
-def _lock_role(db: Session, role_id: UUID) -> Role:
-    role = db.scalar(
-        select(Role).where(Role.id == role_id, Role.is_deleted.is_(False)).with_for_update()
-    )
-    if not isinstance(role, Role):
-        raise InvitationError("Role is not active")
-    return role
+def _lock_administrator_changes(db: Session) -> None:
+    """Order this change after any administrator change in flight."""
 
-
-def _lock_role_any_state(db: Session, role_id: UUID) -> Role | None:
-    role = db.scalar(select(Role).where(Role.id == role_id).with_for_update())
-    if role is not None and not isinstance(role, Role):
-        raise InvitationError("Unable to lock invitation role")
-    return role
-
-
-def _lock_admin_role(db: Session) -> Role:
-    role = db.scalar(
-        select(Role)
-        .where(Role.role == UserRole.ADMIN, Role.is_deleted.is_(False))
-        .with_for_update()
-    )
-    if not isinstance(role, Role):
-        raise InvitationError("Unable to lock administrator membership")
-    return role
+    try:
+        lock_administrator_changes(db, exclusive=True)
+    except SQLAlchemyError as error:
+        raise InvitationError("Unable to lock administrator membership") from error
 
 
 def _lock_profile(db: Session, user_id: UUID) -> User | None:
     profile = db.scalar(
         select(User)
-        .options(joinedload(User.role), selectinload(User.department_memberships))
         .where(User.id == user_id)
         .execution_options(populate_existing=True)
         .with_for_update(of=User)
@@ -130,20 +104,46 @@ def _lock_profile(db: Session, user_id: UUID) -> User | None:
     return profile
 
 
-def _other_non_deleted_assignment_exists(
-    db: Session, role_id: UUID, excluded_user_id: UUID
-) -> bool:
+def _other_administrator_exists(db: Session, excluded_user_id: UUID) -> bool:
     return bool(
         db.scalar(
             select(func.count())
             .select_from(User)
             .where(
-                User.role_id == role_id,
+                User.role == UserRole.ADMIN.value,
                 User.id != excluded_user_id,
                 User.is_deleted.is_(False),
             )
         )
     )
+
+
+def _guest_duration_days(db: Session) -> int:
+    value = db.scalar(
+        select(WorkspaceProfile.guest_duration_days).where(
+            WorkspaceProfile.singleton_key.is_(True)
+        )
+    )
+    if type(value) is not int or not 1 <= value <= 365:
+        raise InvitationError("Invitation settings are unavailable")
+    return value
+
+
+def _lock_active_groups(db: Session, group_ids: list[UUID]) -> tuple[UUID, ...]:
+    unique_ids = tuple(dict.fromkeys(group_ids))
+    if not unique_ids:
+        return unique_ids
+    found = set(
+        db.scalars(
+            select(Group.id)
+            .where(Group.id.in_(unique_ids), Group.is_deleted.is_(False))
+            .order_by(Group.id)
+            .with_for_update()
+        ).all()
+    )
+    if found != set(unique_ids):
+        raise ProfileValidationError("Group is not active")
+    return unique_ids
 
 
 def invite_user(
@@ -163,28 +163,21 @@ def invite_user(
     try:
         if actor_id is not None:
             require_fresh_exact_admin(db, actor_id)
-        try:
-            defaults = load_creation_defaults(db)
-        except (ValueError, HTTPException) as error:
-            raise InvitationError("Access defaults are unavailable") from error
-        role = defaults.role if payload.role_id is None else _lock_role(db, payload.role_id)
+        role = UserRole(payload.role)
         expires_at = payload.expires_at
-        if payload.identity_kind is IdentityKind.GUEST and expires_at is None:
-            expires_at = utc_now() + timedelta(days=defaults.guest_duration_days)
+        if role is UserRole.GUEST and expires_at is None:
+            expires_at = utc_now() + timedelta(days=_guest_duration_days(db))
         validate_identity_profile(
             db,
-            identity_kind=payload.identity_kind,
+            role=role,
             sponsor_user_id=payload.sponsor_user_id,
             expires_at=expires_at,
-            role=role,
         )
-        department_ids = resolve_department_memberships(
-            db,
-            list(defaults.department_ids)
-            if payload.department_ids is None
-            else payload.department_ids,
-            payload.primary_department_id,
-        )
+        if role is UserRole.ADMIN and payload.group_ids:
+            raise ProfileValidationError(
+                "Administrators have access everywhere and are not group members"
+            )
+        group_ids = _lock_active_groups(db, payload.group_ids)
         existing = db.scalar(
             select(User)
             .where(or_(User.email == payload.email, User.username == payload.username))
@@ -192,39 +185,26 @@ def invite_user(
         )
         if existing is not None:
             raise InvitationConflict("Email or username is already in use")
-        if (
-            bootstrap
-            and role.role == UserRole.ADMIN
-            and _other_non_deleted_assignment_exists(db, role.id, UUID(int=0))
-        ):
-            raise InvitationError("An administrator reservation already exists")
+        if bootstrap:
+            _lock_administrator_changes(db)
+            if role is UserRole.ADMIN and _other_administrator_exists(db, UUID(int=0)):
+                raise InvitationError("An administrator reservation already exists")
         user = User(
             email=payload.email,
             username=payload.username,
-            role_id=role.id,
-            role=role,
+            role=role.value,
             display_name=payload.display_name,
-            identity_kind=payload.identity_kind.value,
             job_title=payload.job_title,
             sponsor_user_id=payload.sponsor_user_id,
             expires_at=expires_at,
             status=UserStatus.PENDING.value,
             invitation_sent_at=None,
             provider_invitation_operation_id=operation_id,
-            department_memberships=[],
         )
         db.add(user)
-        for department_id in department_ids:
-            db.add(
-                UserDepartment(
-                    user=user,
-                    department_id=department_id,
-                    is_primary=department_id == payload.primary_department_id,
-                )
-            )
         db.flush()
-        for group_id in defaults.group_ids:
-            db.add(AccessGroupMember(group_id=group_id, user_id=user.id, performed_by=actor_id))
+        for group_id in group_ids:
+            db.add(GroupMember(group_id=group_id, user_id=user.id, performed_by=actor_id))
         db.commit()
     except InvitationError:
         db.rollback()
@@ -399,9 +379,9 @@ def reconcile_invitation(
         ):
             raise InvitationError("Invitation is not pending")
         if bootstrap:
-            admin_role = _lock_admin_role(db)
-            if profile.role_id != admin_role.id or _other_non_deleted_assignment_exists(
-                db, admin_role.id, profile.id
+            _lock_administrator_changes(db)
+            if profile.role != UserRole.ADMIN.value or _other_administrator_exists(
+                db, profile.id
             ):
                 raise InvitationError("Bootstrap reservation is unavailable")
         operation_id = profile.provider_invitation_operation_id

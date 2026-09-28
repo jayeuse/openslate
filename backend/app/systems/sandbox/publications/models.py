@@ -26,25 +26,25 @@ class SandboxBinding(BaseModel):
     __tablename__ = "sandbox_bindings"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('department', 'module', 'field', 'relationship', 'automation')",
+            "kind IN ('department', 'module', 'field', 'relationship', 'trigger')",
             name="ck_sandbox_bindings_kind",
         ),
         CheckConstraint(
             "(kind = 'department' AND department_id IS NOT NULL "
-            "AND module_id IS NULL AND field_id IS NULL AND automation_id IS NULL) "
+            "AND module_id IS NULL AND field_id IS NULL AND trigger_id IS NULL) "
             "OR (kind = 'module' AND department_id IS NULL "
-            "AND module_id IS NOT NULL AND field_id IS NULL AND automation_id IS NULL) "
+            "AND module_id IS NOT NULL AND field_id IS NULL AND trigger_id IS NULL) "
             "OR (kind IN ('field', 'relationship') AND department_id IS NULL "
-            "AND module_id IS NULL AND field_id IS NOT NULL AND automation_id IS NULL) "
-            "OR (kind = 'automation' AND department_id IS NULL "
-            "AND module_id IS NULL AND field_id IS NULL AND automation_id IS NOT NULL)",
+            "AND module_id IS NULL AND field_id IS NOT NULL AND trigger_id IS NULL) "
+            "OR (kind = 'trigger' AND department_id IS NULL "
+            "AND module_id IS NULL AND field_id IS NULL AND trigger_id IS NOT NULL)",
             name="ck_sandbox_bindings_exactly_one_live_target",
         ),
         UniqueConstraint("kind", "sandbox_id", name="uq_sandbox_bindings_kind_sandbox_id"),
         UniqueConstraint("department_id", name="uq_sandbox_bindings_department_id"),
         UniqueConstraint("module_id", name="uq_sandbox_bindings_module_id"),
         UniqueConstraint("field_id", name="uq_sandbox_bindings_field_id"),
-        UniqueConstraint("automation_id", name="uq_sandbox_bindings_automation_id"),
+        UniqueConstraint("trigger_id", name="uq_sandbox_bindings_trigger_id"),
     )
 
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -58,8 +58,8 @@ class SandboxBinding(BaseModel):
     field_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("fields.id", ondelete="RESTRICT"), nullable=True
     )
-    automation_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("published_automation_definitions.id", ondelete="RESTRICT"), nullable=True
+    trigger_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("record_triggers.id", ondelete="RESTRICT"), nullable=True
     )
 
 

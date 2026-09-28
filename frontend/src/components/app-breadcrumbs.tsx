@@ -2,9 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import type { Route } from "next";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
-import { getWorkspaceLocation } from "@/components/workspace-navigation";
+import {
+  accessNavigationFor,
+  getWorkspaceLocation,
+} from "@/components/workspace-navigation";
+import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -16,6 +21,7 @@ import {
 
 // Routes without sections in the sidebar name only themselves.
 const routeLabels: Record<string, string> = {
+  "/access": "Access",
   "/comms": "OpenComms",
   "/settings/appearance": "Appearance",
 };
@@ -38,10 +44,12 @@ export function AppBreadcrumbs() {
     window.addEventListener("hashchange", syncHash);
     return () => window.removeEventListener("hashchange", syncHash);
   }, [pathname, searchParams]);
+  const identity = useQuery(authMeOptions());
   const location = getWorkspaceLocation(
     pathname,
     new URLSearchParams(searchParams.toString()),
     hash,
+    accessNavigationFor(identity.data),
   );
   const current = location?.section ?? routeLabels[pathname] ?? "Workspace";
   return (

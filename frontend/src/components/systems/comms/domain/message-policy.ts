@@ -1,4 +1,4 @@
-import type { Person, Role } from "../../access/domain/model";
+import type { Person, Role } from "../../shared/data/sample-people";
 import type { SampleRecord } from "../../shared/data/sample-data";
 import type { Category, Channel, LocalAttachment, Message } from "./model";
 import {

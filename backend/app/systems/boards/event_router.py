@@ -1,4 +1,4 @@
-"""Board event-series and occurrence routes; not mounted in the application yet."""
+"""Board event series, their author-set reminders, and bounded occurrence listing."""
 
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -7,28 +7,25 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user
 from app.common.listing import (
     ListQuerySpec,
     execute_standard_list,
 )
 from app.common.listing.schemas import PaginationMetadata
 from app.core.database import get_db
-from app.systems.access.identity.eligibility import identity_eligible_clause
-from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import Role, User, UserDepartment, UserStatus
-from app.systems.access.users.permissions import Capability
-from app.systems.boards.access import can_access_board
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User
+from app.systems.boards.access import has_level
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.event_occurrences import expand_board_event_occurrences
 from app.systems.boards.event_schemas import (
     EventArchiveFilter,
-    EventAudience,
     EventCreate,
     EventDefinition,
     EventListRequest,
@@ -42,15 +39,15 @@ from app.systems.boards.event_schemas import (
     OccurrenceRequest,
     OccurrenceResponse,
 )
-from app.systems.boards.models import Board, BoardGrant, BoardPermission, BoardStatus
+from app.systems.boards.models import Board, BoardStatus
 from app.systems.boards.reminder_service import (
-    cancel_event_reminders,
+    TIMING_FIELDS,
+    clear_pending_reminder_work,
     delete_event_reminders,
-    reconcile_event_reminders,
-    snapshot_event_timing,
+    set_event_reminders,
+    timings_by_event,
 )
 from app.systems.boards.router import _board_with_access
-from app.systems.sandbox.departments.models import Department
 
 MAX_SERIES_CANDIDATES = 500
 EVENT_FIELDS = (
@@ -73,8 +70,7 @@ def _private_cache(response: Response) -> None:
 
 
 router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_private_cache)])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -101,65 +97,12 @@ def _not_found() -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, detail="Board event not found")
 
 
-def _audience_clause(actor: User) -> ColumnElement[bool]:
-    membership = exists(
-        select(UserDepartment.id)
-        .join(Department, Department.id == UserDepartment.department_id)
-        .join(User, User.id == UserDepartment.user_id)
-        .where(
-            UserDepartment.user_id == actor.id,
-            UserDepartment.department_id == BoardEvent.audience_department_id,
-            UserDepartment.is_deleted.is_(False),
-            UserDepartment.deleted_at.is_(None),
-            Department.is_deleted.is_(False),
-            Department.deleted_at.is_(None),
-            User.status == UserStatus.ACTIVE.value,
-            User.is_deleted.is_(False),
-            User.deleted_at.is_(None),
-            established_user_clause(),
-        )
-    )
-    no_target = and_(
-        BoardEvent.audience_role_id.is_(None),
-        BoardEvent.audience_user_id.is_(None),
-        BoardEvent.audience_department_id.is_(None),
-    )
-    return or_(
-        and_(BoardEvent.audience_kind == "everyone", no_target),
-        and_(BoardEvent.audience_kind == "author", BoardEvent.author_id == actor.id, no_target),
-        and_(
-            BoardEvent.audience_kind == "role",
-            BoardEvent.audience_role_id == actor.role_id,
-            BoardEvent.audience_user_id.is_(None),
-            BoardEvent.audience_department_id.is_(None),
-        ),
-        and_(
-            BoardEvent.audience_kind == "user",
-            BoardEvent.audience_user_id == actor.id,
-            BoardEvent.audience_role_id.is_(None),
-            BoardEvent.audience_department_id.is_(None),
-        ),
-        and_(
-            BoardEvent.audience_kind == "department",
-            membership,
-            BoardEvent.audience_role_id.is_(None),
-            BoardEvent.audience_user_id.is_(None),
-        ),
-    )
-
-
-def _event(
-    db: Session, board_id: UUID, event_id: UUID, actor: User, *, lock: bool = False,
-    allow_author: bool = False,
-) -> BoardEvent:
+def _event(db: Session, board_id: UUID, event_id: UUID, *, lock: bool = False) -> BoardEvent:
     statement = select(BoardEvent).where(
         BoardEvent.id == event_id,
         BoardEvent.board_id == board_id,
         BoardEvent.is_deleted.is_(False),
         BoardEvent.deleted_at.is_(None),
-        or_(_audience_clause(actor), BoardEvent.author_id == actor.id)
-        if allow_author
-        else _audience_clause(actor),
     )
     if lock:
         statement = statement.with_for_update().execution_options(populate_existing=True)
@@ -169,19 +112,9 @@ def _event(
     return event
 
 
-def _audience(event: BoardEvent) -> EventAudience:
-    return EventAudience(
-        kind=event.audience_kind,
-        role_id=event.audience_role_id,
-        user_id=event.audience_user_id,
-        department_id=event.audience_department_id,
-    )
-
-
 def _definition(event: BoardEvent) -> EventDefinition:
     values = {key: getattr(event, key) for key in EVENT_FIELDS}
     values["links"] = event.links
-    values["audience"] = _audience(event)
     try:
         if not event.all_day:
             for key in ("start_at", "end_at"):
@@ -193,13 +126,14 @@ def _definition(event: BoardEvent) -> EventDefinition:
         raise _conflict("event_invalid", "Stored Board event is invalid") from error
 
 
-def _response(event: BoardEvent, board_revision: int) -> EventResponse:
+def _response(event: BoardEvent, board_revision: int, reminders: list[str]) -> EventResponse:
     definition = _definition(event)
     return EventResponse(
         id=event.id,
         board_id=event.board_id,
         author_id=event.author_id,
         **definition.model_dump(),
+        reminders=reminders,
         archived=event.archived,
         revision=event.revision,
         board_revision=board_revision,
@@ -230,55 +164,10 @@ def _check_event(event: BoardEvent, revision: int) -> None:
         )
 
 
-def _validate_target(db: Session, audience: EventAudience) -> None:
-    if audience.kind == "role":
-        target = db.scalar(
-            select(Role.id)
-            .where(
-                Role.id == audience.role_id, Role.is_deleted.is_(False), Role.deleted_at.is_(None)
-            )
-            .with_for_update()
-        )
-    elif audience.kind == "user":
-        target = db.scalar(
-            select(User.id)
-            .join(Role, Role.id == User.role_id)
-            .where(
-                User.id == audience.user_id,
-                User.status == UserStatus.ACTIVE.value,
-                User.is_deleted.is_(False),
-                User.deleted_at.is_(None),
-                identity_eligible_clause(),
-                Role.is_deleted.is_(False),
-                Role.deleted_at.is_(None),
-                established_user_clause(),
-            )
-            .with_for_update(of=User)
-        )
-    elif audience.kind == "department":
-        target = db.scalar(
-            select(Department.id)
-            .where(
-                Department.id == audience.department_id,
-                Department.is_deleted.is_(False),
-                Department.deleted_at.is_(None),
-            )
-            .with_for_update()
-        )
-    else:
-        return
-    if target is None:
-        raise _conflict("audience_unavailable", "The selected audience is unavailable")
-
-
 def _set_definition(event: BoardEvent, definition: EventDefinition) -> None:
     for key in EVENT_FIELDS:
         setattr(event, key, getattr(definition, key))
     event.links = [link.model_dump() for link in definition.links]
-    event.audience_kind = definition.audience.kind
-    event.audience_role_id = definition.audience.role_id
-    event.audience_user_id = definition.audience.user_id
-    event.audience_department_id = definition.audience.department_id
 
 
 def _commit(db: Session) -> None:
@@ -292,41 +181,44 @@ def _commit(db: Session) -> None:
         raise
 
 
-def _manager(db: Session, board: Board, actor: User) -> bool:
-    grants = db.scalars(
-        select(BoardGrant).where(
-            BoardGrant.board_id == board.id,
-            BoardGrant.is_deleted.is_(False),
-            BoardGrant.deleted_at.is_(None),
-        )
-    ).all()
-    return can_access_board(board, actor, BoardPermission.MANAGE, grants)
+def _changeable(db: Session, board: Board, event: BoardEvent, actor: User) -> None:
+    """Authors change their own events; managers change every event."""
+
+    if event.author_id != actor.id and not has_level(db, actor, board, AccessLevel.MANAGE):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Manage access required")
+
+
+def event_responses(
+    db: Session, events: list[BoardEvent], board_revision: int
+) -> list[EventResponse]:
+    reminders = timings_by_event(db, (event.id for event in events))
+    return [_response(event, board_revision, reminders[event.id]) for event in events]
 
 
 @router.get("/{board_id}/events/occurrences", response_model=OccurrenceListResponse)
 def list_event_occurrences(
     board_id: UUID, actor: Reader, db: Database, params: Annotated[OccurrenceRequest, Query()]
 ) -> OccurrenceListResponse:
-    board = _board_with_access(db, actor, board_id, BoardPermission.VIEW)
+    board = _board_with_access(db, actor, board_id, AccessLevel.READ)
     statement = select(BoardEvent).where(
         BoardEvent.board_id == board.id,
         BoardEvent.is_deleted.is_(False),
         BoardEvent.deleted_at.is_(None),
         BoardEvent.archived.is_(False),
-        _audience_clause(actor),
     )
     if params.search is not None:
         statement = statement.where(BoardEvent.title.icontains(params.search, autoescape=True))
-    candidates = db.scalars(
-        statement.order_by(BoardEvent.id).limit(MAX_SERIES_CANDIDATES + 1)
-    ).all()
+    candidates = list(
+        db.scalars(statement.order_by(BoardEvent.id).limit(MAX_SERIES_CANDIDATES + 1)).all()
+    )
     if len(candidates) > MAX_SERIES_CANDIDATES:
         raise _conflict("event_candidate_limit", "Too many visible event series; archive events")
     items: list[OccurrenceResponse] = []
-    for event in candidates:
-        event_response = _response(event, board.revision)
+    for event, event_response in zip(
+        candidates, event_responses(db, candidates, board.revision), strict=True
+    ):
         definition = _definition(event)
-        source = BoardEvent(id=event.id, **definition.model_dump(exclude={"audience"}))
+        source = BoardEvent(id=event.id, **definition.model_dump())
         expanded = expand_board_event_occurrences(source, params.window_start, params.window_end)
         if expanded.truncated:
             raise _conflict("event_occurrence_limit", "Event occurrences exceed the window limit")
@@ -354,12 +246,11 @@ def list_event_occurrences(
 def list_board_events(
     board_id: UUID, actor: Reader, db: Database, params: Annotated[EventListRequest, Query()]
 ) -> EventListResponse:
-    board = _board_with_access(db, actor, board_id, BoardPermission.VIEW)
+    board = _board_with_access(db, actor, board_id, AccessLevel.READ)
     statement = select(BoardEvent).where(
         BoardEvent.board_id == board.id,
         BoardEvent.is_deleted.is_(False),
         BoardEvent.deleted_at.is_(None),
-        _audience_clause(actor),
     )
     if params.archived != EventArchiveFilter.ALL:
         statement = statement.where(
@@ -367,7 +258,7 @@ def list_board_events(
         )
     result = execute_standard_list(db, statement, params, EVENT_LIST_SPEC)
     return EventListResponse(
-        items=[_response(row, board.revision) for row in result.items],
+        items=event_responses(db, list(result.items), board.revision),
         pagination=result.pagination,
         board_revision=board.revision,
     )
@@ -377,11 +268,10 @@ def list_board_events(
     "/{board_id}/events", response_model=EventMutationResponse, status_code=status.HTTP_201_CREATED
 )
 def create_board_event(
-    board_id: UUID, payload: EventCreate, actor: Writer, db: Database, response: Response
+    board_id: UUID, payload: EventCreate, actor: Reader, db: Database, response: Response
 ) -> EventMutationResponse:
-    board = _board_with_access(db, actor, board_id, BoardPermission.EDIT, lock=True)
+    board = _board_with_access(db, actor, board_id, AccessLevel.WRITE, lock=True)
     _check_board(board, payload.board_revision)
-    _validate_target(db, payload.audience)
     count = db.scalar(
         select(func.count(BoardEvent.id)).where(
             BoardEvent.board_id == board.id,
@@ -395,6 +285,8 @@ def create_board_event(
     event = BoardEvent(board_id=board.id, author_id=actor.id)
     _set_definition(event, payload)
     db.add(event)
+    db.flush()
+    set_event_reminders(db, event, payload.reminders)
     board.revision += 1
     _commit(db)
     db.refresh(event)
@@ -404,26 +296,26 @@ def create_board_event(
 
 @router.get("/{board_id}/events/{event_id}", response_model=EventResponse)
 def read_board_event(board_id: UUID, event_id: UUID, actor: Reader, db: Database) -> EventResponse:
-    board = _board_with_access(db, actor, board_id, BoardPermission.VIEW)
-    return _response(_event(db, board.id, event_id, actor, allow_author=True), board.revision)
+    board = _board_with_access(db, actor, board_id, AccessLevel.READ)
+    return event_responses(db, [_event(db, board.id, event_id)], board.revision)[0]
 
 
 @router.patch("/{board_id}/events/{event_id}", response_model=EventMutationResponse)
 def update_board_event(
-    board_id: UUID, event_id: UUID, payload: EventPatch, actor: Writer, db: Database
+    board_id: UUID, event_id: UUID, payload: EventPatch, actor: Reader, db: Database
 ) -> EventMutationResponse:
-    board = _board_with_access(db, actor, board_id, BoardPermission.EDIT, lock=True)
+    board = _board_with_access(db, actor, board_id, AccessLevel.WRITE, lock=True)
     _check_board(board, payload.board_revision)
-    manager = _manager(db, board, actor)
-    event = _event(db, board.id, event_id, actor, lock=True, allow_author=True)
-    if event.author_id != actor.id and not manager:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Manage access required")
+    event = _event(db, board.id, event_id, lock=True)
+    _changeable(db, board, event, actor)
     _check_event(event, payload.event_revision)
     if event.archived:
         raise _conflict("event_archived", "Restore the event before editing it")
     values = _definition(event).model_dump()
     values.update(
-        payload.model_dump(exclude_unset=True, exclude={"board_revision", "event_revision"})
+        payload.model_dump(
+            exclude_unset=True, exclude={"board_revision", "event_revision", "reminders"}
+        )
     )
     try:
         definition = EventDefinition.model_validate(values)
@@ -432,10 +324,12 @@ def update_board_event(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": "event_invalid", "message": "Event fields are invalid"},
         ) from error
-    _validate_target(db, definition.audience)
-    previous_timing = snapshot_event_timing(event)
+    previous = tuple(getattr(event, key) for key in TIMING_FIELDS)
     _set_definition(event, definition)
-    reconcile_event_reminders(db, event, previous_timing)
+    if tuple(getattr(event, key) for key in TIMING_FIELDS) != previous:
+        clear_pending_reminder_work(db, event.id)
+    if payload.reminders is not None:
+        set_event_reminders(db, event, payload.reminders)
     event.revision += 1
     board.revision += 1
     _commit(db)
@@ -445,22 +339,23 @@ def update_board_event(
 def _lifecycle_event(
     db: Session, board_id: UUID, event_id: UUID, actor: User, payload: EventRevisionWrite
 ) -> tuple[Board, BoardEvent]:
-    board = _board_with_access(db, actor, board_id, BoardPermission.MANAGE, lock=True)
+    board = _board_with_access(db, actor, board_id, AccessLevel.WRITE, lock=True)
     _check_board(board, payload.board_revision)
-    event = _event(db, board.id, event_id, actor, lock=True, allow_author=True)
+    event = _event(db, board.id, event_id, lock=True)
+    _changeable(db, board, event, actor)
     _check_event(event, payload.event_revision)
     return board, event
 
 
 @router.post("/{board_id}/events/{event_id}/archive", response_model=EventMutationResponse)
 def archive_board_event(
-    board_id: UUID, event_id: UUID, payload: EventRevisionWrite, actor: Writer, db: Database
+    board_id: UUID, event_id: UUID, payload: EventRevisionWrite, actor: Reader, db: Database
 ) -> EventMutationResponse:
     board, event = _lifecycle_event(db, board_id, event_id, actor, payload)
     if event.archived:
         raise _conflict("event_archived", "The event is already archived")
     event.archived = True
-    cancel_event_reminders(db, event.id)
+    clear_pending_reminder_work(db, event.id)
     event.revision += 1
     board.revision += 1
     _commit(db)
@@ -469,7 +364,7 @@ def archive_board_event(
 
 @router.post("/{board_id}/events/{event_id}/restore", response_model=EventMutationResponse)
 def restore_board_event(
-    board_id: UUID, event_id: UUID, payload: EventRevisionWrite, actor: Writer, db: Database
+    board_id: UUID, event_id: UUID, payload: EventRevisionWrite, actor: Reader, db: Database
 ) -> EventMutationResponse:
     board, event = _lifecycle_event(db, board_id, event_id, actor, payload)
     if not event.archived:
@@ -483,7 +378,7 @@ def restore_board_event(
 
 @router.delete("/{board_id}/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_board_event(
-    board_id: UUID, event_id: UUID, payload: EventRevisionWrite, actor: Writer, db: Database
+    board_id: UUID, event_id: UUID, payload: EventRevisionWrite, actor: Reader, db: Database
 ) -> None:
     board, event = _lifecycle_event(db, board_id, event_id, actor, payload)
     if not event.archived:

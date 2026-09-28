@@ -1,4 +1,4 @@
-"""Report and announcement work share storage without sharing claim authority."""
+"""Report and post work share storage without sharing claim authority."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -7,13 +7,16 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.boards.announcement_models import (
-    BoardAnnouncement,
-    BoardAnnouncementRevision,
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User, UserStatus
+from app.systems.boards.event_models import BoardEvent
+from app.systems.boards.models import Board
+from app.systems.boards.post_models import (
+    BoardPost,
+    BoardPostRevision,
     publication_content_fingerprint,
 )
-from app.systems.boards.models import Board
+from app.systems.boards.reminder_models import BoardEventReminder
 from app.systems.openview.reports.models import Report
 from app.systems.platform.scheduling.models import ScheduledWork, WorkState
 from app.systems.platform.scheduling.service import (
@@ -24,16 +27,14 @@ from app.systems.platform.scheduling.service import (
 )
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
+from tests.rbac.support import make_group_access
 
 pytestmark = pytest.mark.integration
 NOW = datetime(2026, 9, 24, 10, tzinfo=UTC)
 
 
 def _sources(db):
-    role = Role(
-        role=f"work-kind-{uuid7().hex}",
-        permissions={"records.read": True, "records.write": True},
-    )
+    role = "member"
     actor = User(
         email=f"work-kind-{uuid7().hex}@example.test",
         username=f"work_kind_{uuid7().hex[:16]}",
@@ -43,37 +44,36 @@ def _sources(db):
     department = Department(department_name=f"Work kind {uuid7().hex}")
     db.add_all((actor, department))
     db.flush()
-    board = Board(owner_id=actor.id, name="Scheduled announcements")
+    board = Board(scope="project", name="Scheduled posts")
     module = Module(
         department_id=department.id,
         module_name=f"Work kind {uuid7().hex}",
-        is_schema_accepted=True,
     )
     db.add_all((board, module))
     db.flush()
-    announcement = BoardAnnouncement(
+    make_group_access(db, [actor], department, module, level=AccessLevel.WRITE)
+    post = BoardPost(
         board_id=board.id,
         author_id=actor.id,
         title="Upcoming",
         body="Publication body",
         status="scheduled",
         publish_at=NOW,
-        audience_kind="author",
         revision=2,
     )
-    report = Report(owner_id=actor.id, module_id=module.id, name="Report", recipe={})
-    db.add_all((announcement, report))
+    report = Report(module_id=module.id, name="Report", recipe={})
+    db.add_all((post, report))
     db.flush()
-    return actor, announcement, report
+    return actor, post, report
 
 
-def test_announcement_work_cannot_be_claimed_or_failed_by_report_worker(integration_owner_db):
+def test_post_work_cannot_be_claimed_or_failed_by_report_worker(integration_owner_db):
     db = integration_owner_db
-    actor, announcement, report = _sources(db)
+    actor, post, report = _sources(db)
     publication = ScheduledWork(
-        kind="announcement-publish",
-        announcement_id=announcement.id,
-        source_revision=announcement.revision,
+        kind="post-publish",
+        post_id=post.id,
+        source_revision=post.revision,
         scheduling_actor_id=actor.id,
         scheduled_for=NOW,
         next_attempt_at=NOW,
@@ -98,13 +98,13 @@ def test_announcement_work_cannot_be_claimed_or_failed_by_report_worker(integrat
     assert publication.attempt_count == 1
 
 
-def test_announcement_work_enforces_disjoint_sources_and_unique_occurrence(integration_owner_db):
+def test_post_work_enforces_disjoint_sources_and_unique_occurrence(integration_owner_db):
     db = integration_owner_db
-    actor, announcement, report = _sources(db)
+    actor, post, report = _sources(db)
     publication = ScheduledWork(
-        kind="announcement-publish",
-        announcement_id=announcement.id,
-        source_revision=announcement.revision,
+        kind="post-publish",
+        post_id=post.id,
+        source_revision=post.revision,
         scheduling_actor_id=actor.id,
         scheduled_for=NOW,
         next_attempt_at=NOW,
@@ -115,9 +115,9 @@ def test_announcement_work_enforces_disjoint_sources_and_unique_occurrence(integ
     with pytest.raises(IntegrityError), db.begin_nested():
         db.add(
             ScheduledWork(
-                kind="announcement-publish",
-                announcement_id=announcement.id,
-                source_revision=announcement.revision,
+                kind="post-publish",
+                post_id=post.id,
+                source_revision=post.revision,
                 scheduling_actor_id=actor.id,
                 scheduled_for=NOW + timedelta(hours=1),
                 next_attempt_at=NOW + timedelta(hours=1),
@@ -127,10 +127,10 @@ def test_announcement_work_enforces_disjoint_sources_and_unique_occurrence(integ
     with pytest.raises(IntegrityError), db.begin_nested():
         db.add(
             ScheduledWork(
-                kind="announcement-publish",
+                kind="post-publish",
                 report_id=report.id,
-                announcement_id=announcement.id,
-                source_revision=announcement.revision + 1,
+                post_id=post.id,
+                source_revision=post.revision + 1,
                 scheduling_actor_id=actor.id,
                 scheduled_for=NOW + timedelta(hours=2),
                 next_attempt_at=NOW + timedelta(hours=2),
@@ -140,8 +140,8 @@ def test_announcement_work_enforces_disjoint_sources_and_unique_occurrence(integ
     with pytest.raises(IntegrityError), db.begin_nested():
         db.add(
             ScheduledWork(
-                kind="announcement-publish",
-                announcement_id=announcement.id,
+                kind="post-publish",
+                post_id=post.id,
                 source_revision=0,
                 scheduling_actor_id=actor.id,
                 scheduled_for=NOW + timedelta(hours=3),
@@ -152,13 +152,13 @@ def test_announcement_work_enforces_disjoint_sources_and_unique_occurrence(integ
     assert db.scalar(select(ScheduledWork).where(ScheduledWork.id == publication.id)) is publication
 
 
-def test_announcement_success_requires_its_publication_result(integration_owner_db):
+def test_post_success_requires_its_publication_result(integration_owner_db):
     db = integration_owner_db
-    actor, announcement, _report = _sources(db)
+    actor, post, _report = _sources(db)
     work = ScheduledWork(
-        kind="announcement-publish",
-        announcement_id=announcement.id,
-        source_revision=announcement.revision,
+        kind="post-publish",
+        post_id=post.id,
+        source_revision=post.revision,
         scheduling_actor_id=actor.id,
         scheduled_for=NOW,
         next_attempt_at=NOW,
@@ -169,20 +169,18 @@ def test_announcement_success_requires_its_publication_result(integration_owner_
         work.state = WorkState.SUCCEEDED
         db.flush()
     db.refresh(work)
-    revision = BoardAnnouncementRevision(
-        announcement_id=announcement.id,
+    revision = BoardPostRevision(
+        post_id=post.id,
         publication_number=1,
         publication_key=work.id,
         content_fingerprint=publication_content_fingerprint(
             author_id=actor.id,
-            title=announcement.title,
-            body=announcement.body,
-            audience_kind="author",
+            title=post.title,
+            body=post.body,
         ),
         author_id=actor.id,
-        title=announcement.title,
-        body=announcement.body,
-        audience_kind="author",
+        title=post.title,
+        body=post.body,
         published_at=NOW,
     )
     db.add(revision)
@@ -192,6 +190,67 @@ def test_announcement_success_requires_its_publication_result(integration_owner_
     db.flush()
     assert work.run_id is None
     assert work.publication_result_id == revision.id
+
+
+def test_reminder_work_needs_one_occurrence_and_is_unique_per_occurrence(integration_owner_db):
+    db = integration_owner_db
+    actor, post, _report = _sources(db)
+    event = BoardEvent(
+        board_id=post.board_id,
+        author_id=actor.id,
+        title="Weekly review",
+        all_day=False,
+        start_at=NOW,
+        end_at=NOW + timedelta(hours=1),
+        timezone_name="UTC",
+    )
+    db.add(event)
+    db.flush()
+    reminder = BoardEventReminder(board_id=post.board_id, event_id=event.id, timing="start")
+    db.add(reminder)
+    db.flush()
+
+    def reminder_work(**changes: object) -> ScheduledWork:
+        values: dict[str, object] = {
+            "kind": "event-reminder",
+            "reminder_id": reminder.id,
+            "occurrence_start_at": NOW,
+            "scheduled_for": NOW,
+            "next_attempt_at": NOW,
+        }
+        return ScheduledWork(**(values | changes))
+
+    db.add(reminder_work())
+    db.flush()
+    for invalid in (
+        reminder_work(),
+        reminder_work(occurrence_start_at=None),
+        reminder_work(occurrence_start_at=NOW + timedelta(days=1), post_id=post.id),
+    ):
+        with pytest.raises(IntegrityError), db.begin_nested():
+            db.add(invalid)
+            db.flush()
+    db.add(reminder_work(occurrence_start_at=NOW + timedelta(weeks=1)))
+    db.flush()
+    with pytest.raises(IntegrityError), db.begin_nested():
+        db.add(
+            ScheduledWork(
+                kind="post-publish",
+                post_id=post.id,
+                source_revision=post.revision,
+                scheduling_actor_id=actor.id,
+                occurrence_start_at=NOW,
+                scheduled_for=NOW,
+                next_attempt_at=NOW,
+            )
+        )
+        db.flush()
+    with pytest.raises(IntegrityError), db.begin_nested():
+        db.add(BoardEventReminder(board_id=post.board_id, event_id=event.id, timing="start"))
+        db.flush()
+    with pytest.raises(IntegrityError), db.begin_nested():
+        db.add(BoardEventReminder(board_id=post.board_id, event_id=event.id, timing="now"))
+        db.flush()
 
 
 def test_typed_work_constraints_fks_and_runtime_privileges_are_installed(integration_owner_db):
@@ -208,8 +267,9 @@ def test_typed_work_constraints_fks_and_runtime_privileges_are_installed(integra
     assert constraints["ck_scheduled_work_kind"][0] == "c"
     assert constraints["ck_scheduled_work_source"][0] == "c"
     assert constraints["ck_scheduled_work_run"][0] == "c"
-    assert constraints["uq_scheduled_work_announcement_occurrence"][0] == "u"
-    assert constraints["fk_scheduled_work_announcement_id_board_announcements"] == ("f", "r")
+    assert constraints["uq_scheduled_work_post_occurrence"][0] == "u"
+    assert constraints["uq_scheduled_work_reminder"][0] == "u"
+    assert constraints["fk_scheduled_work_post_id_board_posts"] == ("f", "r")
     publication_result_fks = [
         value
         for name, value in constraints.items()

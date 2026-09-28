@@ -9,11 +9,13 @@ from pydantic import Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_roles
+from app.common.dependencies import get_current_user, require_admin
 from app.common.listing import SortOrder, StandardListRequest
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.observability import log_event
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.scope import effective_levels
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit import listeners as _listeners  # noqa: F401
 from app.systems.manage.audit.models import AuditAction, AuditLog, SecurityEvent
@@ -37,7 +39,8 @@ security_events_router = APIRouter(prefix="/security-events", tags=["security-ev
 internal_security_events_router = APIRouter(
     prefix="/internal/security-events", tags=["security-events-internal"]
 )
-AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+AdminUser = Annotated[User, Depends(require_admin)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 class AuditLogListRequest(StandardListRequest[AuditLogSortField]):
@@ -50,23 +53,30 @@ class AuditLogExportRequest(AuditLogListRequest):
 
 @router.get("", response_model=AuditLogListResponse)
 def get_audit_logs(
-    _: AdminUser,
+    user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[AuditLogListRequest, Depends()],
     action: AuditAction | None = None,
     entity_type: Annotated[str | None, Query(max_length=50)] = None,
     entity_id: UUID | None = None,
+    department_id: UUID | None = None,
     performed_by: UUID | None = None,
     request_id: UUID | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
 ) -> AuditLogListResponse:
+    if user.role != UserRole.ADMIN.value and (
+        department_id is None
+        or effective_levels(db, user).department_level(department_id) != AccessLevel.MANAGE
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     result = list_audit_logs(
         db,
         params,
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,
+        department_id=department_id,
         performed_by=performed_by,
         request_id=request_id,
         created_after=created_after,

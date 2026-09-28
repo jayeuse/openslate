@@ -7,10 +7,11 @@ from types import SimpleNamespace
 import psycopg
 from uuid6 import uuid7
 
-from app.systems.access.users.permissions import Capability
-from app.systems.platform.events.hub import PostgresInvalidationListener
+from app.systems.platform.events.hub import EventViewer, PostgresInvalidationListener
 from app.systems.platform.events.models import InvalidationEvent, event_for_entity
 from app.systems.platform.events.publisher import publish_invalidation, publish_invalidations
+
+READABLE_MODULE = uuid7()
 
 
 def test_publisher_sends_only_the_opaque_payload_with_pg_notify(monkeypatch) -> None:
@@ -48,12 +49,15 @@ def test_publisher_sends_only_the_opaque_payload_with_pg_notify(monkeypatch) -> 
     recipient_id = uuid7()
     private_event = event_for_entity("in_app_notifications", uuid7(), recipient_id=recipient_id)
     assert private_event is not None
-    assert publish_invalidation(InvalidationEvent("records", capability=Capability.RECORDS_READ))
+    assert publish_invalidation(InvalidationEvent("records", module_id=READABLE_MODULE))
     assert publish_invalidation(private_event)
     assert commands == [
         (
             "SELECT pg_notify(%s, %s)",
-            ("openslate_invalidation", '{"capability":"records.read","entity":"records"}'),
+            (
+                "openslate_invalidation",
+                f'{{"entity":"records","module_id":"{READABLE_MODULE}"}}',
+            ),
         ),
         (
             "SELECT pg_notify(%s, %s)",
@@ -116,8 +120,8 @@ def test_large_commit_collapses_to_one_resync_notification(monkeypatch) -> None:
 
     assert publish_invalidations(
         (
-            InvalidationEvent("records", capability=Capability.RECORDS_READ),
-            InvalidationEvent("modules", capability=Capability.MODULES_READ),
+            InvalidationEvent("records", module_id=READABLE_MODULE),
+            InvalidationEvent("modules", module_id=READABLE_MODULE),
         )
     )
     assert commands == [
@@ -159,12 +163,15 @@ def test_private_notification_overflow_never_emits_a_global_resync(monkeypatch) 
     assert commands == []
 
     assert publish_invalidations(
-        (*private_events, InvalidationEvent("records", capability=Capability.RECORDS_READ))
+        (*private_events, InvalidationEvent("records", module_id=READABLE_MODULE))
     )
     assert commands == [
         (
             "SELECT pg_notify(%s, %s)",
-            ("openslate_invalidation", '{"capability":"records.read","entity":"records"}'),
+            (
+                "openslate_invalidation",
+                f'{{"entity":"records","module_id":"{READABLE_MODULE}"}}',
+            ),
         )
     ]
 
@@ -174,9 +181,7 @@ def test_listener_reconnects_and_fans_out_notification() -> None:
         from app.systems.platform.events.hub import EventHub
 
         hub = EventHub()
-        user = SimpleNamespace(
-            role=SimpleNamespace(role="member", permissions={"records.read": True})
-        )
+        user = EventViewer(user_id=uuid7(), role="member", module_ids=frozenset({READABLE_MODULE}))
         subscription = await hub.subscribe(user)
         stop_wait = threading.Event()
         attempts = 0
@@ -200,9 +205,7 @@ def test_listener_reconnects_and_fans_out_notification() -> None:
                 if not self.delivered:
                     self.delivered = True
                     yield SimpleNamespace(
-                        payload=InvalidationEvent(
-                            "records", capability=Capability.RECORDS_READ
-                        ).to_json()
+                        payload=InvalidationEvent("records", module_id=READABLE_MODULE).to_json()
                     )
                 else:
                     stop_wait.wait(0.5)
@@ -225,7 +228,7 @@ def test_listener_reconnects_and_fans_out_notification() -> None:
         try:
             assert await asyncio.wait_for(subscription.queue.get(), timeout=2) is None
             assert await asyncio.wait_for(subscription.queue.get(), timeout=2) == InvalidationEvent(
-                "records", capability=Capability.RECORDS_READ
+                "records", module_id=READABLE_MODULE
             )
             assert attempts >= 2
         finally:
@@ -242,7 +245,7 @@ def test_listener_reconnect_resyncs_subscribers_and_keeps_a_live_thread_referenc
 
         hub = EventHub()
         subscription = await hub.subscribe(
-            SimpleNamespace(role=SimpleNamespace(role="member", permissions={}))
+            EventViewer(user_id=uuid7(), role="member", module_ids=frozenset())
         )
         attempts = 0
 

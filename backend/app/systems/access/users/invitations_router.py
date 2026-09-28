@@ -6,14 +6,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import get_current_user, require_roles
+from app.common.dependencies import get_current_user, require_admin
 from app.core.database import get_db
 from app.systems.access.users.coordination import (
     InvitationConflict,
     InvitationError,
     InvitationNotFound,
 )
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import User
 from app.systems.access.users.schemas import UserResponse
 from app.systems.access.users.service import reconcile_invitation, revoke_invitation
 
@@ -47,7 +47,7 @@ def revoke_invite(
 @router.post("/{user_id}/reconcile", response_model=UserResponse)
 def reconcile_invite(
     user_id: UUID,
-    admin: Annotated[User, Depends(require_roles(UserRole.ADMIN))],
+    admin: Annotated[User, Depends(require_admin)],
     db: Annotated[Session, Depends(get_db)],
 ) -> UserResponse:
     try:

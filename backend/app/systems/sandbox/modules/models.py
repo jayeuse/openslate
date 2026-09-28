@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Boolean, ForeignKey, Index, String, text
+from sqlalchemy import ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.base_model import BaseModel
@@ -30,11 +30,10 @@ class Module(BaseModel):
         index=True,
     )
     module_name: Mapped[str] = mapped_column(String(150), nullable=False)
-    is_schema_accepted: Mapped[bool] = mapped_column(
-        Boolean,
-        default=False,
-        server_default=text("false"),
-        nullable=False,
+    title_field_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("fields.id", ondelete="RESTRICT", use_alter=True),
+        nullable=True,
+        index=True,
     )
     department: Mapped["Department"] = relationship(back_populates="modules")
     fields: Mapped[list["Field"]] = relationship(

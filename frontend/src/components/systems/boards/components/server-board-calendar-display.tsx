@@ -482,7 +482,10 @@ export function MyEventsDisplay({
               <div className="min-w-0 space-y-1">
                 <h3 className="font-medium break-words">{event.title}</h3>
                 <p className="text-muted-foreground text-sm">
-                  {myEventSchedule(event)} · Audience: {event.audience.kind}
+                  {myEventSchedule(event)}
+                  {event.reminders.length > 0
+                    ? ` · ${event.reminders.length} ${event.reminders.length === 1 ? "reminder" : "reminders"}`
+                    : ""}
                 </p>
               </div>
               <Button

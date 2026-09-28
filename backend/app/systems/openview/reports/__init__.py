@@ -1,4 +1,4 @@
-"""Private Reports and their versioned recipes."""
+"""Department Reports and their versioned recipes."""
 
 from app.systems.openview.reports.models import Report
 from app.systems.openview.reports.schemas import ReportCreate, ReportRecipe, ReportUpdate

@@ -18,7 +18,7 @@ def _payload() -> dict[str, object]:
 
 def test_schema_rejects_weekly_schedule_without_a_weekday_and_labels_over_80_characters() -> None:
     payload = _payload()
-    payload["automations"] = [
+    payload["triggers"] = [
         {
             "id": "weekly",
             "name": "Weekly",
@@ -201,3 +201,20 @@ def test_validation_enforces_field_formats_constraints_and_required_strings() ->
     codes = {issue.code for issue in validate_document(payload)}
 
     assert "scenario.value_type_invalid" in codes
+
+
+OLDER_FORMAT_MESSAGE = "This design uses an older format and cannot be opened."
+
+
+@pytest.mark.parametrize("schema_version", (1, 2))
+def test_schema_refuses_an_older_document_format_with_one_clear_message(
+    schema_version: int,
+) -> None:
+    payload = _payload()
+    payload["schemaVersion"] = schema_version
+    payload["automations"] = payload.pop("triggers")
+
+    with pytest.raises(ValidationError) as refused:
+        SandboxDocument.model_validate(payload)
+
+    assert [error["msg"] for error in refused.value.errors()] == [OLDER_FORMAT_MESSAGE]

@@ -10,7 +10,6 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
 import {
-  audienceOptions,
   extendsRead,
   moduleFieldKeys,
   readStamp,
@@ -24,12 +23,9 @@ import {
 } from "../adapters/openview-queries";
 import { useOpenViewAccessDenied } from "../adapters/openview-access";
 import {
-  listOpenViewAudienceOptions,
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
-  listOpenViewPersonalDefaults,
   listOpenViewSavedViews,
-  type OpenViewAudienceOption,
   type OpenViewDataSource,
   type OpenViewSavedView,
 } from "../adapters/views-api";
@@ -50,8 +46,6 @@ function messageFor(error: unknown, fallback: string): string {
   return fallback;
 }
 
-const NO_AUDIENCES: OpenViewAudienceOption[] = [];
-
 const AUTHORIZATION_ERROR =
   "OpenView data is unavailable. Sign in or ask for access, then retry.";
 
@@ -64,26 +58,14 @@ type CatalogExtension = {
   hasMore: boolean;
   nextOffset: number;
 };
-type AudienceExtension = {
-  readAt: number;
-  items: OpenViewAudienceOption[];
-  roleHasMore: boolean;
-  roleNextOffset: number;
-  userHasMore: boolean;
-  userNextOffset: number;
-  error: string | null;
-};
 
 export function useServerViewsResource(requestedModule: string | null) {
   const queryClient = useQueryClient();
   // A refusal of any cached OpenView read hides them all (openview-access.ts).
   const accessDenied = useOpenViewAccessDenied();
   const catalogQuery = useQuery(boundedCatalogOptions());
-  const audienceQuery = useQuery(audienceOptions());
   const [catalogExtension, setCatalogExtension] =
     useState<CatalogExtension | null>(null);
-  const [audienceExtension, setAudienceExtension] =
-    useState<AudienceExtension | null>(null);
   const [metadataLoadingMore, setMetadataLoadingMore] = useState(false);
   const [metadataError, setMetadataError] = useState("");
   const [metadataRetryTarget, setMetadataRetryTarget] = useState<
@@ -109,7 +91,7 @@ export function useServerViewsResource(requestedModule: string | null) {
       ? catalogExtension
       : null;
   // The workspace keys effects (route sync, deep-link lookup) on the
-  // catalog and audience arrays, so they keep one identity per loaded batch,
+  // catalog array, so it keeps one identity per loaded batch,
   // as the former state did.
   const loadedCatalog = useMemo(
     () =>
@@ -141,7 +123,7 @@ export function useServerViewsResource(requestedModule: string | null) {
   // through a retry, so retained data stays hidden while access is checked.
   const authorizationDenied =
     accessDenied ||
-    [catalogQuery, audienceQuery, moduleQuery].some((query) =>
+    [catalogQuery, moduleQuery].some((query) =>
       isAuthorizationDenied(query.error),
     );
 
@@ -170,45 +152,6 @@ export function useServerViewsResource(requestedModule: string | null) {
     : moduleLoadError
       ? messageFor(moduleLoadError, "The data source could not be loaded.")
       : "";
-
-  const audienceLists = audienceQuery.data;
-  const audienceReadAt = readStamp(audienceQuery);
-  const audienceMore =
-    audienceExtension && extendsRead(audienceExtension.readAt, audienceQuery)
-      ? audienceExtension
-      : null;
-  const loadedAudiences = useMemo(
-    () => [
-      ...(audienceLists?.roles?.items ?? []),
-      ...(audienceLists?.people?.items ?? []),
-      ...(audienceMore?.items ?? []),
-    ],
-    [audienceLists, audienceMore],
-  );
-  const audiences = authorizationDenied ? NO_AUDIENCES : loadedAudiences;
-  const roleOptionsHasMore = audienceMore
-    ? audienceMore.roleHasMore
-    : (audienceLists?.roles?.hasMore ?? false);
-  const roleOptionsNextOffset = audienceMore
-    ? audienceMore.roleNextOffset
-    : (audienceLists?.roles?.nextOffset ?? 0);
-  const userOptionsHasMore = audienceMore
-    ? audienceMore.userHasMore
-    : (audienceLists?.people?.hasMore ?? false);
-  const userOptionsNextOffset = audienceMore
-    ? audienceMore.userNextOffset
-    : (audienceLists?.people?.nextOffset ?? 0);
-  const audienceError = authorizationDenied
-    ? ""
-    : (audienceMore?.error ??
-      (audienceLists?.failed
-        ? "Roles and people could not be loaded. You can still share with Only me or Everyone."
-        : ""));
-  const audienceLoading = audienceQuery.isFetching;
-
-  const retryAudiences = useCallback(() => {
-    void audienceQuery.refetch();
-  }, [audienceQuery]);
 
   // Saved-view commands update the cached workspace of the module they
   // belong to; each updater ignores a workspace for another module.
@@ -266,13 +209,13 @@ export function useServerViewsResource(requestedModule: string | null) {
 
   const loadMoreModuleMetadata = useCallback(async () => {
     if (!moduleId || !moduleWorkspace || metadataLoadingMore) return;
-    const { fieldsHasMore, viewsHasMore, defaultsHasMore } = moduleWorkspace;
-    if (!fieldsHasMore && !viewsHasMore && !defaultsHasMore) return;
+    const { fieldsHasMore, viewsHasMore } = moduleWorkspace;
+    if (!fieldsHasMore && !viewsHasMore) return;
     setMetadataLoadingMore(true);
     setMetadataError("");
     setMetadataRetryTarget(null);
     try {
-      const [fieldsPage, viewsPage, defaultsPage] = await Promise.all([
+      const [fieldsPage, viewsPage] = await Promise.all([
         fieldsHasMore
           ? listOpenViewDataSourceFields(moduleId, {
               limit: 100,
@@ -285,12 +228,6 @@ export function useServerViewsResource(requestedModule: string | null) {
               deleted: "include",
               limit: 100,
               offset: moduleWorkspace.viewsNextOffset,
-            })
-          : Promise.resolve(null),
-        defaultsHasMore
-          ? listOpenViewPersonalDefaults({
-              limit: 100,
-              offset: moduleWorkspace.defaultsNextOffset,
             })
           : Promise.resolve(null),
       ]);
@@ -313,14 +250,6 @@ export function useServerViewsResource(requestedModule: string | null) {
           viewsNextOffset: viewsPage
             ? previous.viewsNextOffset + viewsPage.pagination.count
             : previous.viewsNextOffset,
-          defaults: defaultsPage
-            ? [...previous.defaults, ...defaultsPage.items]
-            : previous.defaults,
-          defaultsHasMore:
-            defaultsPage?.pagination.hasMore ?? previous.defaultsHasMore,
-          defaultsNextOffset: defaultsPage
-            ? previous.defaultsNextOffset + defaultsPage.pagination.count
-            : previous.defaultsNextOffset,
         };
       });
     } catch (error) {
@@ -343,91 +272,15 @@ export function useServerViewsResource(requestedModule: string | null) {
     setModuleWorkspace,
   ]);
 
-  const loadMoreAudienceOptions = useCallback(async () => {
-    if (metadataLoadingMore || (!roleOptionsHasMore && !userOptionsHasMore))
-      return;
-    if (!audienceReadAt) return;
-    setMetadataLoadingMore(true);
-    const extension: AudienceExtension = {
-      readAt: audienceReadAt,
-      items: audienceMore?.items ?? [],
-      roleHasMore: roleOptionsHasMore,
-      roleNextOffset: roleOptionsNextOffset,
-      userHasMore: userOptionsHasMore,
-      userNextOffset: userOptionsNextOffset,
-      error: "",
-    };
-    setAudienceExtension(extension);
-    try {
-      const [roles, users] = await Promise.all([
-        roleOptionsHasMore
-          ? listOpenViewAudienceOptions("role", {
-              limit: 100,
-              offset: roleOptionsNextOffset,
-            })
-          : Promise.resolve(null),
-        userOptionsHasMore
-          ? listOpenViewAudienceOptions("user", {
-              limit: 100,
-              offset: userOptionsNextOffset,
-            })
-          : Promise.resolve(null),
-      ]);
-      setAudienceExtension({
-        ...extension,
-        items: [
-          ...extension.items,
-          ...(roles?.items ?? []),
-          ...(users?.items ?? []),
-        ],
-        ...(roles
-          ? {
-              roleHasMore: roles.pagination.hasMore,
-              roleNextOffset: roleOptionsNextOffset + roles.pagination.count,
-            }
-          : {}),
-        ...(users
-          ? {
-              userHasMore: users.pagination.hasMore,
-              userNextOffset: userOptionsNextOffset + users.pagination.count,
-            }
-          : {}),
-      });
-    } catch (error) {
-      if (isAuthorizationDenied(error)) {
-        void recordPageDenial(queryClient, [openViewKeys.audiences()], error);
-        return;
-      }
-      setAudienceExtension({
-        ...extension,
-        error:
-          "More roles and people could not be loaded. You can still share with the choices shown.",
-      });
-    } finally {
-      setMetadataLoadingMore(false);
-    }
-  }, [
-    audienceMore,
-    audienceReadAt,
-    queryClient,
-    metadataLoadingMore,
-    roleOptionsHasMore,
-    roleOptionsNextOffset,
-    userOptionsHasMore,
-    userOptionsNextOffset,
-  ]);
-
   const refreshModule = useCallback(() => {
     void moduleQuery.refetch();
   }, [moduleQuery]);
 
   const retryCatalog = useCallback(() => {
-    // Role and person choices reload with the catalog, as a denial may have
-    // come from any read.
+    // A denial may have come from either read.
     void catalogQuery.refetch();
-    void audienceQuery.refetch();
     if (moduleQuery.isError) void moduleQuery.refetch();
-  }, [audienceQuery, catalogQuery, moduleQuery]);
+  }, [catalogQuery, moduleQuery]);
 
   const retryMetadata = useCallback(() => {
     if (metadataRetryTarget === "catalog") void loadMoreCatalog();
@@ -439,12 +292,6 @@ export function useServerViewsResource(requestedModule: string | null) {
     catalogHasMore,
     catalogLoading,
     catalogError,
-    audiences,
-    audienceError,
-    audienceLoading,
-    retryAudiences,
-    roleOptionsHasMore,
-    userOptionsHasMore,
     moduleId,
     moduleWorkspace,
     setModuleWorkspace,
@@ -455,7 +302,6 @@ export function useServerViewsResource(requestedModule: string | null) {
     retryMetadata,
     loadMoreCatalog,
     loadMoreModuleMetadata,
-    loadMoreAudienceOptions,
     refreshModule,
     retryCatalog,
     recordInvalidation,

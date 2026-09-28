@@ -19,7 +19,7 @@ function response(revision = 7): SandboxDocumentResponse {
     publishedHash: null,
     document: {
       kind: "openslate-sandbox",
-      schemaVersion: 2,
+      schemaVersion: 4,
       design: {
         departments: [{ id: "operations", name: "Operations", closed: false }],
         modules: [
@@ -28,6 +28,7 @@ function response(revision = 7): SandboxDocumentResponse {
             departmentId: "operations",
             name: "Requests",
             closed: false,
+            titleFieldId: "title",
             fields: [
               {
                 id: "title",
@@ -46,13 +47,13 @@ function response(revision = 7): SandboxDocumentResponse {
           requests: { x: 24, y: 48, width: 280, height: 160 },
         },
       },
-      automations: [],
+      triggers: [],
       scenarios: [],
     },
   };
 }
 
-test("loads a v2 response and prepares a revision-aware structural save", () => {
+test("loads a v4 response and prepares a revision-aware structural save", () => {
   const opened = openSandboxDocumentSession(response());
   const changed = updateSandboxDocumentSession(opened, {
     ...opened.history.present,
@@ -103,10 +104,10 @@ test("metadata-only revision sync keeps local undo history", () => {
   expect(synced.history).toBe(changed.history);
 });
 
-test("whole-document reapply preserves automation and scenario drafts", () => {
+test("whole-document reapply preserves trigger and scenario drafts", () => {
   const current = response(8);
   const proposed = structuredClone(current.document);
-  proposed.automations.push({
+  proposed.triggers.push({
     id: "notify",
     name: "Notify",
     enabled: true,
@@ -127,6 +128,6 @@ test("whole-document reapply preserves automation and scenario drafts", () => {
   const reapplied = reapplySandboxDocument(response(9), proposed);
 
   expect(reapplied.revision).toBe(9);
-  expect(reapplied.document.automations).toEqual(proposed.automations);
+  expect(reapplied.document.triggers).toEqual(proposed.triggers);
   expect(reapplied.document.scenarios).toEqual(proposed.scenarios);
 });

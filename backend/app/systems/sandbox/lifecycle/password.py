@@ -5,7 +5,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
 from app.core.integrations.supabase_auth import (
@@ -76,19 +76,13 @@ class ProviderPasswordGrantClient:
                 or not provider_user.is_eligible()
             ):
                 raise LifecycleInvalidCredentials("The supplied password is invalid")
-            local = self._db.scalar(
-                select(User)
-                .options(joinedload(User.role))
-                .where(User.supabase_user_id == provider_user.id)
-            )
+            local = self._db.scalar(select(User).where(User.supabase_user_id == provider_user.id))
             if (
                 local is None
                 or local.email != email
                 or local.status != UserStatus.ACTIVE.value
                 or not is_identity_eligible(local)
                 or not is_established_user(local)
-                or local.role is None
-                or local.role.is_deleted
             ):
                 raise LifecycleInvalidCredentials("The supplied password is invalid")
             if bucket is not None:

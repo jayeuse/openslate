@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.sandbox.designs.models import SandboxDocument
 from app.systems.sandbox.designs.service import read_document, replace_document
 from app.systems.sandbox.records.models import Record
@@ -12,7 +12,7 @@ from app.systems.sandbox.relationships.models import RelationshipEdge
 from app.systems.sandbox.test_runs.models import SandboxTestRun
 from app.systems.sandbox.test_runs.schemas import SandboxTestRunCreateRequest
 from app.systems.sandbox.test_runs.service import create_run
-from tests.sandbox_test_runs.fixtures import sandbox_document
+from tests.sandbox_test_runs.fixtures import option_id, sandbox_document
 
 pytestmark = pytest.mark.integration
 
@@ -20,13 +20,13 @@ pytestmark = pytest.mark.integration
 def test_temporary_test_persists_only_evidence(
     integration_owner_db: Session,
 ) -> None:
-    role = integration_owner_db.scalar(select(Role).where(Role.role == "admin"))
+    role = "admin"
     assert role is not None
     actor = User(
         email="sandbox-test-owner@example.test",
         username="sandbox-test-owner",
         status=UserStatus.ACTIVE.value,
-        role_id=role.id,
+        role=role,
     )
     integration_owner_db.add(actor)
     integration_owner_db.flush()
@@ -47,7 +47,7 @@ def test_temporary_test_persists_only_evidence(
             {
                 "expectedRevision": saved.revision,
                 "moduleId": "requests",
-                "values": {"priority": "High", "status": "", "score": 0},
+                "values": {"priority": option_id("priority", "High"), "status": "", "score": 0},
                 "event": {"kind": "record-created"},
             }
         ),
@@ -77,8 +77,8 @@ def test_runtime_role_can_manage_saved_test_evidence(
         module_id="runtime-check",
         input_values={},
         event={"kind": "record-created"},
-        automation_ids=None,
-        result={"values": {}, "routes": [], "automationTraces": [], "issues": []},
+        trigger_ids=None,
+        result={"values": {}, "routes": [], "triggerTraces": [], "issues": []},
         result_byte_count=0,
     )
     integration_db.add(run)

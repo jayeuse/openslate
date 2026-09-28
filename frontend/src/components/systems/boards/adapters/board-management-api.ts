@@ -8,7 +8,8 @@ import {
   boardPurgePreviewSchema,
   boardPurgeResultSchema,
   boardPurgeInputSchema,
-  personalSchema,
+  boardGroupsSchema,
+  boardGroupsInputSchema,
   boardListOptionsSchema,
   boardCreateSchema,
   revisionSchema,
@@ -21,7 +22,8 @@ import type {
   BoardListOptions,
   BoardCreateInput,
   BoardUpdateInput,
-  BoardPersonalState,
+  BoardGroups,
+  BoardGroupsInput,
 } from "./board-management-schemas";
 export type {
   BoardManagementBoard,
@@ -30,25 +32,19 @@ export type {
   BoardListOptions,
   BoardCreateInput,
   BoardUpdateInput,
-  BoardPersonalState,
+  BoardGroups,
+  BoardGroupsInput,
 };
 export type {
   PortableBoardBundle,
-  BoardTemplate,
-  BoardTemplateListOptions,
   BoardConfigurationDownload,
+  BoardScope,
+  BoardAccessLevel,
 } from "./board-management-schemas";
 export {
   downloadBoardConfiguration,
   importBoardConfiguration,
 } from "./board-configuration-api";
-export {
-  deleteBoardTemplate,
-  getBoardTemplate,
-  instantiateBoardTemplate,
-  listBoardTemplates,
-  saveBoardTemplate,
-} from "./board-templates-api";
 
 export async function listBoards(
   raw: BoardListOptions = {},
@@ -60,9 +56,9 @@ export async function listBoards(
     sort_by: options.sortBy,
     sort_order: options.sortOrder,
     status: options.status,
-    favorites_only: String(options.favoritesOnly),
   };
   if (options.search !== undefined) values.search = options.search;
+  if (options.scope !== undefined) values.scope = options.scope;
   if (options.departmentId !== undefined)
     values.department_id = options.departmentId;
   return safeBoardJson(`/boards?${queryString(values)}`, boardListSchema);
@@ -77,8 +73,6 @@ export async function createBoard(
     body: JSON.stringify({
       name: input.name,
       description: input.description,
-      department_id: input.departmentId,
-      default_section: input.defaultSection,
     }),
   });
 }
@@ -112,8 +106,6 @@ export async function updateBoard(
       revision: input.revision,
       name: input.name,
       description: input.description,
-      department_id: input.departmentId,
-      default_section: input.defaultSection,
     }),
   });
 }
@@ -201,32 +193,39 @@ export async function duplicateBoardStructure(
   return board;
 }
 
-export async function getBoardPersonalState(): Promise<BoardPersonalState> {
-  return safeBoardJson("/boards/personal", personalSchema);
+export async function readBoardGroups(
+  rawBoardId: string,
+): Promise<BoardGroups> {
+  const boardId = uuidSchema.parse(rawBoardId);
+  const groups = await safeBoardJson(
+    `/boards/${encodeURIComponent(boardId)}/groups`,
+    boardGroupsSchema,
+  );
+  if (groups.boardId !== boardId) throw new ApiContractError();
+  return groups;
 }
 
-export async function setBoardFavorite(
+/** Replaces the whole set of groups of a project Board; administrators only. */
+export async function replaceBoardGroups(
   rawBoardId: string,
-  rawFavorite: boolean,
-): Promise<BoardPersonalState> {
+  raw: BoardGroupsInput,
+): Promise<BoardGroups> {
   const boardId = uuidSchema.parse(rawBoardId);
-  const favorite = z.boolean().parse(rawFavorite);
-  return safeBoardJson(
-    `/boards/personal/favorites/${encodeURIComponent(boardId)}`,
-    personalSchema,
+  const input = boardGroupsInputSchema.parse(raw);
+  const groups = await safeBoardJson(
+    `/boards/${encodeURIComponent(boardId)}/groups`,
+    boardGroupsSchema,
     {
       method: "PUT",
-      body: JSON.stringify({ favorite }),
+      body: JSON.stringify({
+        revision: input.revision,
+        groups: input.groups.map((group) => ({
+          group_id: group.groupId,
+          level: group.level,
+        })),
+      }),
     },
   );
-}
-
-export async function setBoardHome(
-  rawBoardId: string | null,
-): Promise<BoardPersonalState> {
-  const boardId = uuidSchema.nullable().parse(rawBoardId);
-  return safeBoardJson("/boards/personal/home", personalSchema, {
-    method: "PUT",
-    body: JSON.stringify({ board_id: boardId }),
-  });
+  if (groups.boardId !== boardId) throw new ApiContractError();
+  return groups;
 }

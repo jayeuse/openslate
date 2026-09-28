@@ -1,4 +1,4 @@
-"""Private Report metadata and version-one recipe contracts."""
+"""Report metadata and version-one recipe contracts."""
 
 from datetime import datetime
 from enum import StrEnum
@@ -36,29 +36,8 @@ class ReportRecipe(BaseModel):
         return self
 
 
-class ReportAudience(BaseModel):
-    """One exclusive audience for run and export access."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["private", "everyone", "role", "user"] = "private"
-    role_id: UUID | None = None
-    user_id: UUID | None = None
-
-    @model_validator(mode="after")
-    def target_matches_kind(self) -> Self:
-        valid = (
-            (self.kind in {"private", "everyone"} and self.role_id is None and self.user_id is None)
-            or (self.kind == "role" and self.role_id is not None and self.user_id is None)
-            or (self.kind == "user" and self.role_id is None and self.user_id is not None)
-        )
-        if not valid:
-            raise ValueError("Audience target must match its kind")
-        return self
-
-
 class ReportCreate(BaseModel):
-    """Creation input; the authenticated caller supplies ownership separately."""
+    """Creation input; the Report belongs to the department of its module."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -66,11 +45,10 @@ class ReportCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     subtitle: str | None = Field(default=None, max_length=160)
     recipe: ReportRecipe
-    audience: ReportAudience = Field(default_factory=ReportAudience)
 
 
 class ReportUpdate(BaseModel):
-    """Revision-preconditioned partial update for a private Report."""
+    """Revision-preconditioned partial update of a Report."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -79,7 +57,6 @@ class ReportUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=80)
     subtitle: str | None = Field(default=None, max_length=160)
     recipe: ReportRecipe | None = None
-    audience: ReportAudience | None = None
 
     @model_validator(mode="after")
     def require_nonempty_update(self) -> Self:
@@ -106,7 +83,7 @@ class ReportSort(StrEnum):
 
 
 class ReportListRequest(StandardListRequest[ReportSort]):
-    """Bounded owner-private report listing with an optional source module."""
+    """Bounded Report listing with an optional source module."""
 
     module_id: UUID | None = None
 
@@ -117,13 +94,11 @@ class ReportResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: UUID
-    owner_id: UUID
     module_id: UUID
     name: str
     subtitle: str | None
     revision: int = Field(ge=1)
     recipe: ReportRecipe
-    audience: ReportAudience
     is_deleted: bool
     created_at: datetime
     updated_at: datetime

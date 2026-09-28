@@ -14,7 +14,7 @@ import {
 } from "../../src/components/systems/boards/hooks/use-server-boards";
 import {
   boardSearchEmptyCopy,
-  isSelectedBoardAnnouncementManagerOpen,
+  isSelectedBoardPostManagerOpen,
   isSelectedBoardWidgetManagerOpen,
 } from "../../src/components/systems/boards/components/server-backed-boards";
 
@@ -23,13 +23,13 @@ const homeId = "00000000-0000-4000-8000-000000000002";
 const archivedId = "00000000-0000-4000-8000-000000000003";
 const activeBoard: BoardManagementBoard = {
   id: boardId,
-  ownerId: homeId,
+  scope: "project",
   departmentId: null,
   name: "Operations",
   description: null,
   status: "active",
-  defaultSection: "overview",
   revision: 3,
+  level: "manage",
   createdAt: "2026-09-23T00:00:00Z",
   updatedAt: "2026-09-23T00:00:00Z",
 };
@@ -44,13 +44,22 @@ test("Board search keys distinguish server-filtered pages without losing status 
   expect(boardListKey("active", 0, "Operations")).not.toBe(
     boardListKey("archived", 0, "Operations"),
   );
+  expect(boardListKey("active", 0, null, "department")).not.toBe(
+    boardListKey("active", 0, null, "project"),
+  );
 });
 
 test("archived search matches prompt selection instead of claiming no Boards match", () => {
   const route = parseBoardRoute("");
   for (const status of ["archived", "all"] as const) {
-    const matches = [{ id: archivedId, status: "archived" as const }];
-    expect(chooseBoardCandidate(route, matches, null, null)).toBeNull();
+    const matches = [
+      {
+        id: archivedId,
+        scope: "project" as const,
+        status: "archived" as const,
+      },
+    ];
+    expect(chooseBoardCandidate(route, matches)).toBeNull();
     const copy = boardSearchEmptyCopy(
       "Payroll",
       matches.length,
@@ -79,23 +88,15 @@ test("widget manager stays open across same-Board refresh and closes on Board sw
   expect(isSelectedBoardWidgetManagerOpen(boardId, null)).toBe(false);
 });
 
-test("announcement manager stays open across same-Board refresh but closes outside that section", () => {
-  expect(
-    isSelectedBoardAnnouncementManagerOpen(boardId, boardId, "announcements"),
-  ).toBe(true);
-  expect(
-    isSelectedBoardAnnouncementManagerOpen(
-      boardId,
-      archivedId,
-      "announcements",
-    ),
-  ).toBe(false);
-  expect(
-    isSelectedBoardAnnouncementManagerOpen(boardId, boardId, "overview"),
-  ).toBe(false);
-  expect(
-    isSelectedBoardAnnouncementManagerOpen(boardId, null, "announcements"),
-  ).toBe(false);
+test("post manager stays open across same-Board refresh but closes outside that section", () => {
+  expect(isSelectedBoardPostManagerOpen(boardId, boardId, "posts")).toBe(true);
+  expect(isSelectedBoardPostManagerOpen(boardId, archivedId, "posts")).toBe(
+    false,
+  );
+  expect(isSelectedBoardPostManagerOpen(boardId, boardId, "overview")).toBe(
+    false,
+  );
+  expect(isSelectedBoardPostManagerOpen(boardId, null, "posts")).toBe(false);
 });
 
 test("explicit Board URL retains its UUID outside the page and fails closed on invalid IDs", () => {
@@ -106,12 +107,9 @@ test("explicit Board URL retains its UUID outside the page and fails closed on i
     section: "calendar",
   });
   expect(
-    chooseBoardCandidate(
-      direct,
-      [{ id: boardId, status: "active" }],
-      null,
-      null,
-    ),
+    chooseBoardCandidate(direct, [
+      { id: boardId, scope: "project", status: "active" },
+    ]),
   ).toEqual({
     id: homeId,
     source: "explicit",
@@ -121,12 +119,9 @@ test("explicit Board URL retains its UUID outside the page and fails closed on i
   );
   expect(invalid).toEqual({ kind: "invalid-board", section: "overview" });
   expect(
-    chooseBoardCandidate(
-      invalid,
-      [{ id: boardId, status: "active" }],
-      homeId,
-      null,
-    ),
+    chooseBoardCandidate(invalid, [
+      { id: boardId, scope: "company", status: "active" },
+    ]),
   ).toBeNull();
   expect(parseBoardRoute("?board=&section=overview").kind).toBe(
     "invalid-board",
@@ -134,45 +129,30 @@ test("explicit Board URL retains its UUID outside the page and fails closed on i
   expect(parseBoardRoute(`?board=${boardId}&board=${homeId}`).kind).toBe(
     "invalid-board",
   );
-  expect(boardUrl(homeId, "announcements")).toBe(
-    `/boards?board=${homeId}&section=announcements`,
+  expect(boardUrl(homeId, "posts")).toBe(
+    `/boards?board=${homeId}&section=posts`,
   );
 });
 
-test("no-ID selection prefers accessible home then first active list item", () => {
-  const none = parseBoardRoute("?section=announcements");
+test("no-ID selection prefers the company Board, then the first active list item", () => {
+  const none = parseBoardRoute("?section=posts");
   const page = [
-    { id: archivedId, status: "archived" as const },
-    { id: boardId, status: "active" as const },
+    { id: archivedId, scope: "company" as const, status: "archived" as const },
+    { id: boardId, scope: "project" as const, status: "active" as const },
+    { id: homeId, scope: "company" as const, status: "active" as const },
   ];
-  expect(chooseBoardCandidate(none, page, homeId, null)).toEqual({
+  expect(chooseBoardCandidate(none, page)).toEqual({
     id: homeId,
-    source: "home",
+    source: "list",
   });
-  expect(chooseBoardCandidate(none, page, homeId, homeId)).toEqual({
+  expect(chooseBoardCandidate(none, page.slice(0, 2))).toEqual({
     id: boardId,
     source: "list",
   });
-  expect(chooseBoardCandidate(none, page, null, null)).toEqual({
-    id: boardId,
-    source: "list",
-  });
-  expect(
-    chooseBoardCandidate(
-      none,
-      [{ id: archivedId, status: "archived" }],
-      null,
-      null,
-    ),
-  ).toBeNull();
-  expect(resolveBoardSection(none, { defaultSection: "calendar" })).toBe(
-    "announcements",
+  expect(resolveBoardSection(none)).toBe("posts");
+  expect(resolveBoardSection(parseBoardRoute("?section=unsupported"))).toBe(
+    "overview",
   );
-  expect(
-    resolveBoardSection(parseBoardRoute("?section=unsupported"), {
-      defaultSection: "calendar",
-    }),
-  ).toBe("calendar");
 });
 
 test("resource transitions keep last good on refresh failure but clear revoked or switched Boards", () => {
@@ -291,13 +271,6 @@ function runAuthorizationDenialScenario(status: number) {
     status: "ready",
     error: null,
   };
-  let personal: ResourceState<string> = {
-    key: "personal",
-    sequence: 4,
-    data: "Favorite and home IDs",
-    status: "ready",
-    error: null,
-  };
   let detail: ResourceState<string> = {
     key: homeId,
     sequence: 5,
@@ -307,37 +280,33 @@ function runAuthorizationDenialScenario(status: number) {
   };
   const sequences = {
     list: { current: 3 },
-    personal: { current: 4 },
     detail: { current: 5 },
   };
-  const handled = invalidateBoardResourcesIfAuthorizationDenied<
-    string,
-    string,
-    string
-  >(new ApiError(status, "Denied"), sequences, {
-    list: (update) => {
-      list = update(list);
+  const handled = invalidateBoardResourcesIfAuthorizationDenied<string, string>(
+    new ApiError(status, "Denied"),
+    sequences,
+    {
+      list: (
+        update: (current: ResourceState<string>) => ResourceState<string>,
+      ) => {
+        list = update(list);
+      },
+      detail: (
+        update: (current: ResourceState<string>) => ResourceState<string>,
+      ) => {
+        detail = update(detail);
+      },
     },
-    personal: (update) => {
-      personal = update(personal);
-    },
-    detail: (update) => {
-      detail = update(detail);
-    },
-  });
-  return { handled, list, personal, detail, sequences };
+  );
+  return { handled, list, detail, sequences };
 }
 
-test("detail authorization denial clears unrelated list, personal state, and direct Board detail", () => {
-  const { handled, list, personal, detail, sequences } =
+test("detail authorization denial clears the unrelated list and direct Board detail", () => {
+  const { handled, list, detail, sequences } =
     runAuthorizationDenialScenario(401);
   expect(handled).toBe(true);
-  expect([list.data, personal.data, detail.data]).toEqual([null, null, null]);
-  expect([
-    sequences.list.current,
-    sequences.personal.current,
-    sequences.detail.current,
-  ]).toEqual([4, 5, 6]);
+  expect([list.data, detail.data]).toEqual([null, null]);
+  expect([sequences.list.current, sequences.detail.current]).toEqual([4, 6]);
   expect(
     transitionResource(list, {
       type: "resolve",
@@ -356,22 +325,18 @@ test("detail authorization denial clears unrelated list, personal state, and dir
   ).toEqual(detail);
 });
 
-test("clear-home authorization denial clears selected Board even without a mutation target", () => {
-  const { handled, list, personal, detail } =
-    runAuthorizationDenialScenario(403);
+test("forbidden authorization clears the selected Board even without a mutation target", () => {
+  const { handled, list, detail } = runAuthorizationDenialScenario(403);
   expect(handled).toBe(true);
   expect(list).toMatchObject({ data: null, status: "error" });
-  expect(personal).toMatchObject({ data: null, status: "error" });
   expect(detail).toMatchObject({ data: null, status: "error" });
 });
 
 test("transient errors do not globally clear retained Board resources", () => {
-  const { handled, list, personal, detail } =
-    runAuthorizationDenialScenario(500);
+  const { handled, list, detail } = runAuthorizationDenialScenario(500);
   expect(handled).toBe(false);
-  expect([list.data, personal.data, detail.data]).toEqual([
+  expect([list.data, detail.data]).toEqual([
     "A different Board on this page",
-    "Favorite and home IDs",
     "Selected Board outside page",
   ]);
 });

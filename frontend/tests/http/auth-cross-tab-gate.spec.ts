@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/test";
 
 const userA = "00000000-0000-4000-8000-000000000101";
 const userB = "00000000-0000-4000-8000-000000000201";

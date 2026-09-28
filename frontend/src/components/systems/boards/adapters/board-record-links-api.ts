@@ -39,19 +39,19 @@ export type BoardRecordLink = z.output<typeof linkSchema>;
 export type BoardRecordLinkTarget =
   | { kind: "event"; boardId: string; contentId: string }
   | {
-      kind: "announcement";
+      kind: "post";
       boardId: string;
       contentId: string;
       view: "draft" | "published";
     };
 export type BoardEditableRecordLinkTarget =
   | { kind: "event"; boardId: string; contentId: string }
-  | { kind: "announcement"; boardId: string; contentId: string; view: "draft" };
+  | { kind: "post"; boardId: string; contentId: string; view: "draft" };
 
 function path(target: BoardRecordLinkTarget): string {
   const boardId = uuid.parse(target.boardId);
   const contentId = uuid.parse(target.contentId);
-  return `/boards/${boardId}/${target.kind === "event" ? "events" : "announcements"}/${contentId}/record-links`;
+  return `/boards/${boardId}/${target.kind === "event" ? "events" : "posts"}/${contentId}/record-links`;
 }
 
 export async function listBoardRecordLinks(
@@ -59,7 +59,7 @@ export async function listBoardRecordLinks(
   offset = 0,
 ): Promise<{ items: BoardRecordLink[]; hasMore: boolean }> {
   const requestedOffset = z.number().int().min(0).parse(offset);
-  const view = target.kind === "announcement" ? `&view=${target.view}` : "";
+  const view = target.kind === "post" ? `&view=${target.view}` : "";
   const page = await apiFetch(
     `${path(target)}?limit=20&offset=${requestedOffset}${view}`,
     pageSchema,
@@ -72,23 +72,19 @@ export async function listBoardRecordLinks(
 export async function addBoardRecordLink(
   target: BoardEditableRecordLinkTarget,
   rawRecordId: string,
-  rawLabel: string,
   versions: BoardAttachmentVersions,
 ): Promise<BoardRecordLink> {
   const recordId = uuid.parse(rawRecordId);
-  const label = z.string().trim().min(1).max(100).parse(rawLabel);
   const link = await apiFetch(path(target), linkSchema, {
     method: "POST",
     cache: "no-store",
     body: JSON.stringify({
       record_id: recordId,
-      label,
       board_revision: versions.boardRevision,
       content_revision: versions.contentRevision,
     }),
   });
-  if (link.recordId !== recordId || link.label !== label)
-    throw new ApiContractError();
+  if (link.recordId !== recordId) throw new ApiContractError();
   return link;
 }
 

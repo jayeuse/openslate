@@ -4,7 +4,8 @@ import {
   type Locator,
   type Page,
   type Route,
-} from "@playwright/test";
+} from "./helpers/test";
+import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -15,6 +16,8 @@ const moduleId = "00000000-0000-4000-8000-000000000010";
 const departmentId = "00000000-0000-4000-8000-000000000011";
 const nameFieldId = "00000000-0000-4000-8000-000000000012";
 const statusFieldId = "00000000-0000-4000-8000-000000000013";
+const inServiceChoiceId = "00000000-0000-4000-8000-000000000031";
+const inspectionDueChoiceId = "00000000-0000-4000-8000-000000000032";
 const serialFieldId = "00000000-0000-4000-8000-000000000020";
 const unselectedQueryFieldId = "00000000-0000-4000-8000-000000000021";
 const timelineStartFieldId = "00000000-0000-4000-8000-000000000022";
@@ -54,14 +57,8 @@ type QueryDefinition = {
 type SavedView = {
   id: string;
   module_id: string;
-  owner_id: string;
   name: string;
-  visibility: "private" | "workspace";
-  audience: {
-    kind: "private" | "everyone" | "role" | "user";
-    role_id: string | null;
-    user_id: string | null;
-  };
+  is_default: boolean;
   definition: QueryDefinition;
   presentation: {
     version: 1;
@@ -95,10 +92,8 @@ function baseView(): SavedView {
   return {
     id: viewId,
     module_id: moduleId,
-    owner_id: userId,
     name: "Equipment register",
-    visibility: "private",
-    audience: { kind: "private", role_id: null, user_id: null },
+    is_default: false,
     definition: {
       version: 1,
       logic: "and",
@@ -155,12 +150,18 @@ function pageResponse<T>(
 }
 
 function record(id: string, name: string, status: string) {
+  const statusValue =
+    status === "In service"
+      ? inServiceChoiceId
+      : status === "Inspection due"
+        ? inspectionDueChoiceId
+        : status;
   return {
     id,
     module_id: moduleId,
     data: {
       [nameFieldId]: name,
-      [statusFieldId]: status,
+      [statusFieldId]: statusValue,
       [serialFieldId]: id === recordOneId ? "S" : `SN-${id.slice(-2)}`,
       [unselectedQueryFieldId]: "Do not surface this query-only field",
       [timelineStartFieldId]: "2026-09-01",
@@ -170,6 +171,7 @@ function record(id: string, name: string, status: string) {
       [timelineProgressFieldId]: "50.00",
       [timelineTimestampDeadlineFieldId]: "2026-09-06T18:30:00.000Z",
     },
+    display_values: { [statusFieldId]: status },
     created_at: "2026-09-23T00:00:00Z",
     updated_at: "2026-09-23T00:00:00Z",
     deleted_at: null,
@@ -192,11 +194,9 @@ async function installViewsApi(
     additionalViews?: SavedView[];
     deepViewBeyondBound?: boolean;
     calendarDateTimeValue?: string;
-    audienceOptionsFailure?: boolean;
   } = {},
 ) {
   await installOpenViewEventSource(page);
-  let audienceOptionsFailure = options.audienceOptionsFailure ?? false;
   let saved = baseView();
   if (options.initialName) saved = { ...saved, name: options.initialName };
   if (options.disableInitialSearch)
@@ -286,12 +286,24 @@ async function installViewsApi(
       },
     };
   }
-  let personalDefault: string | null = options.initialDefault ? viewId : null;
+  // The module's shared default view; every view response carries it.
+  let defaultViewId: string | null = options.initialDefault ? viewId : null;
+  const withDefault = (view: SavedView): SavedView => ({
+    ...view,
+    is_default: view.id === defaultViewId,
+  });
   const createdViews: SavedView[] = [];
   let nextPatchIsStale = false;
   let failNextGroupedQuery = false;
   let nextMutationFailure: "archive" | "restore" | "default-clear" | null =
     null;
+  // Only a manager of the module sees save and change controls.
+  await page.route("**/api/auth/me", async (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ id: userId, role: "admin", access: [] }),
+    }),
+  );
   let nextPatchBarrier: {
     wait: Promise<void>;
     signalStarted: () => void;
@@ -359,6 +371,30 @@ async function installViewsApi(
       }),
     }),
   );
+  await page.route("**/api/departments**", (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: departmentId,
+            department_name: "Field service",
+            created_at: "2026-09-23T00:00:00Z",
+            updated_at: "2026-09-23T00:00:00Z",
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    }),
+  );
   await page.route("**/api/views**", async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -368,7 +404,12 @@ async function installViewsApi(
         contentType: "application/json",
         body: JSON.stringify(
           pageResponse([
-            { id: moduleId, name: "Equipment", department_id: departmentId },
+            {
+              id: moduleId,
+              name: "Equipment",
+              department_id: departmentId,
+              title_field_id: null,
+            },
           ]),
         ),
       });
@@ -394,7 +435,12 @@ async function installViewsApi(
               type: "select",
               required: false,
               position: 1,
-              config: { choices: ["In service", "Inspection due"] },
+              config: {
+                options: [
+                  { id: inServiceChoiceId, label: "In service" },
+                  { id: inspectionDueChoiceId, label: "Inspection due" },
+                ],
+              },
             },
             {
               id: serialFieldId,
@@ -490,58 +536,21 @@ async function installViewsApi(
         ),
       });
     }
-    if (url.pathname === "/api/views/audience-options") {
-      if (audienceOptionsFailure)
-        return route.fulfill({
-          status: 422,
-          contentType: "application/json",
-          body: JSON.stringify({ detail: "Audience options are unavailable." }),
-        });
-      const option =
-        url.searchParams.get("kind") === "role"
-          ? {
-              kind: "role",
-              id: "00000000-0000-4000-8000-000000000017",
-              label: "Operations",
-            }
-          : {
-              kind: "user",
-              id: "00000000-0000-4000-8000-000000000018",
-              label: "Nina Santos",
-            };
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(pageResponse([option])),
-      });
-    }
-    if (url.pathname === "/api/views/defaults") {
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(
-          pageResponse(
-            personalDefault
-              ? [{ module_id: moduleId, view_id: personalDefault, revision: 1 }]
-              : [],
-          ),
-        ),
-      });
-    }
     if (url.pathname === "/api/views" && request.method() === "POST") {
       const body = request.postDataJSON() as {
         module_id: string;
         name: string;
-        audience: SavedView["audience"];
+        is_default: boolean;
         definition: QueryDefinition;
         presentation: SavedView["presentation"];
       };
+      if (body.is_default) defaultViewId = duplicateViewId;
       const created: SavedView = {
         ...saved,
         id: duplicateViewId,
         module_id: body.module_id,
-        owner_id: userId,
         name: body.name,
-        visibility: body.audience.kind === "private" ? "private" : "workspace",
-        audience: body.audience,
+        is_default: body.is_default,
         definition: body.definition,
         presentation: body.presentation,
         revision: 1,
@@ -568,11 +577,14 @@ async function installViewsApi(
             const sequence = (offset + index + 1)
               .toString(16)
               .padStart(12, "0");
-            if (absoluteIndex === total - 1) return saved;
+            if (absoluteIndex === total - 1) return withDefault(saved);
+            // The older views are separate, active records: archiving or
+            // restoring the deep-linked view must not change them.
             return {
-              ...saved,
+              ...withDefault(saved),
               id: `10000000-0000-4000-8000-${sequence}`,
               name: `Older view ${offset + index + 1}`,
+              is_deleted: false,
             };
           },
         );
@@ -595,11 +607,13 @@ async function installViewsApi(
         ...(options.additionalViews ?? []),
         ...createdViews,
       ];
-      const views = allViews.filter(
-        (view) =>
-          view.module_id === url.searchParams.get("module_id") &&
-          (includeDeleted || !view.is_deleted),
-      );
+      const views = allViews
+        .filter(
+          (view) =>
+            view.module_id === url.searchParams.get("module_id") &&
+            (includeDeleted || !view.is_deleted),
+        )
+        .map(withDefault);
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(pageResponse(views, limit, offset, views.length)),
@@ -608,7 +622,7 @@ async function installViewsApi(
     if (url.pathname === `/api/views/${viewId}` && request.method() === "GET") {
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(saved),
+        body: JSON.stringify(withDefault(saved)),
       });
     }
     if (
@@ -643,10 +657,21 @@ async function installViewsApi(
       const body = request.postDataJSON() as {
         revision: number;
         name?: string;
-        audience?: SavedView["audience"];
+        is_default?: boolean;
         definition?: QueryDefinition;
         presentation?: SavedView["presentation"];
       };
+      if (
+        body.is_default === false &&
+        nextMutationFailure === "default-clear"
+      ) {
+        nextMutationFailure = null;
+        return route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Default could not be cleared." }),
+        });
+      }
       if (body.revision !== saved.revision) {
         return route.fulfill({
           status: 409,
@@ -658,18 +683,16 @@ async function installViewsApi(
         ...saved,
         revision: saved.revision + 1,
         name: body.name ?? saved.name,
-        audience: body.audience ?? saved.audience,
-        visibility:
-          body.audience && body.audience.kind !== "private"
-            ? "workspace"
-            : saved.visibility,
         definition: body.definition ?? saved.definition,
         presentation: body.presentation ?? saved.presentation,
         updated_at: new Date().toISOString(),
       };
+      if (body.is_default === true) defaultViewId = viewId;
+      if (body.is_default === false && defaultViewId === viewId)
+        defaultViewId = null;
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(saved),
+        body: JSON.stringify(withDefault(saved)),
       });
     }
     if (
@@ -685,6 +708,7 @@ async function installViewsApi(
         });
       }
       saved = { ...saved, revision: saved.revision + 1, is_deleted: true };
+      if (defaultViewId === viewId) defaultViewId = null;
       return route.fulfill({ status: 204, body: "" });
     }
     if (
@@ -702,38 +726,8 @@ async function installViewsApi(
       saved = { ...saved, revision: saved.revision + 1, is_deleted: false };
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(saved),
+        body: JSON.stringify(withDefault(saved)),
       });
-    }
-    if (
-      url.pathname === `/api/views/defaults/${moduleId}` &&
-      request.method() === "PUT"
-    ) {
-      const body = request.postDataJSON() as { view_id: string };
-      personalDefault = body.view_id;
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          module_id: moduleId,
-          view_id: personalDefault,
-          revision: 1,
-        }),
-      });
-    }
-    if (
-      url.pathname === `/api/views/defaults/${moduleId}` &&
-      request.method() === "DELETE"
-    ) {
-      if (nextMutationFailure === "default-clear") {
-        nextMutationFailure = null;
-        return route.fulfill({
-          status: 500,
-          contentType: "application/json",
-          body: JSON.stringify({ detail: "Default could not be cleared." }),
-        });
-      }
-      personalDefault = null;
-      return route.fulfill({ status: 204, body: "" });
     }
     return route.fulfill({
       status: 404,
@@ -835,13 +829,22 @@ async function installViewsApi(
     const fieldId = body.group_by.field_id;
     const groupValue = (row: ReturnType<typeof record>) =>
       (row.data as Record<string, unknown>)[fieldId];
+    const groupLabel = (value: string) => {
+      const row = rows.find(
+        (candidate) => String(groupValue(candidate) ?? "") === value,
+      );
+      const display = Object.entries(row?.display_values ?? {}).find(
+        ([id]) => id === fieldId,
+      )?.[1];
+      return typeof display === "string" ? display : value;
+    };
     const groups = Array.from(
       new Set(rows.map((row) => String(groupValue(row) ?? ""))),
     )
       .sort((left, right) => left.localeCompare(right))
       .map((value) => ({
         value,
-        label: value,
+        label: groupLabel(value),
         count: rows.filter((row) => String(groupValue(row) ?? "") === value)
           .length,
       }));
@@ -980,9 +983,9 @@ async function installViewsApi(
       };
     },
     createdViews: () => createdViews,
-    personalDefault: () => personalDefault,
-    changePersonalDefaultElsewhere: (viewId: string) => {
-      personalDefault = viewId;
+    defaultView: () => defaultViewId,
+    changeDefaultElsewhere: (viewId: string) => {
+      defaultViewId = viewId;
     },
     recordQueryRequests,
     denyRecordQueries() {
@@ -1013,9 +1016,6 @@ async function installViewsApi(
     windowQueryRequests,
     failNextWindowQuery: () => {
       failNextWindowQuery = true;
-    },
-    restoreAudienceOptions: () => {
-      audienceOptionsFailure = false;
     },
   };
 }
@@ -1146,7 +1146,7 @@ test("number View filters continue sending numeric values", async ({
   });
 });
 
-test("membership View filters accept comma-separated typing and submit lists", async ({
+test("membership View filters select choices by label and submit stable IDs", async ({
   page,
 }) => {
   const api = await installViewsApi(page);
@@ -1159,14 +1159,14 @@ test("membership View filters accept comma-separated typing and submit lists", a
   });
   await operator.selectOption("in");
 
-  const value = filtersRegion.getByLabel("Value");
-  await value.pressSequentially("In service, Inspection due");
-  await expect(value).toHaveValue("In service, Inspection due");
+  const value = filtersRegion.getByRole("group", { name: "Value" });
+  await value.getByRole("checkbox", { name: "In service" }).check();
+  await value.getByRole("checkbox", { name: "Inspection due" }).check();
   const expectedMembershipFilter = {
     field_id: statusFieldId,
     expected_type: "select",
     operator: "in",
-    value: ["In service", "Inspection due"],
+    value: [inServiceChoiceId, inspectionDueChoiceId],
   };
   await expect
     .poll(() =>
@@ -1209,7 +1209,7 @@ test("membership View filters accept comma-separated typing and submit lists", a
       field_id: statusFieldId,
       expected_type: "select",
       operator: "in",
-      value: ["In service", "Inspection due"],
+      value: [inServiceChoiceId, inspectionDueChoiceId],
     },
   ]);
 });
@@ -1272,9 +1272,9 @@ for (const layout of ["kanban", "calendar", "timeline"] as const) {
           ),
         ),
     ).toBe(false);
-    const value = filtersRegion.getByLabel("Value");
-    await value.pressSequentially("In service, Inspection due");
-    await expect(value).toHaveValue("In service, Inspection due");
+    const value = filtersRegion.getByRole("group", { name: "Value" });
+    await value.getByRole("checkbox", { name: "In service" }).check();
+    await value.getByRole("checkbox", { name: "Inspection due" }).check();
     await expect
       .poll(() =>
         requests.some((request) => {
@@ -1284,7 +1284,7 @@ for (const layout of ["kanban", "calendar", "timeline"] as const) {
               filter.field_id === statusFieldId &&
               filter.operator === "in" &&
               JSON.stringify(filter.value) ===
-                JSON.stringify(["In service", "Inspection due"]),
+                JSON.stringify([inServiceChoiceId, inspectionDueChoiceId]),
           );
         }),
       )
@@ -1304,20 +1304,23 @@ test("switching scalar and membership View filters clears incompatible values", 
     name: "Condition",
   });
   const value = filtersRegion.getByLabel("Value");
-
-  await value.fill("In service");
+  await value.selectOption(inServiceChoiceId);
   await operator.selectOption("in");
-  await expect(value).toHaveValue("");
+  const membership = filtersRegion.getByRole("group", { name: "Value" });
+  await expect(
+    membership.getByRole("checkbox", { name: "In service" }),
+  ).not.toBeChecked();
   await expect(
     page.getByText("Complete this condition or remove it before saving."),
   ).toBeVisible();
-  await value.fill("In service, Inspection due");
+  await membership.getByRole("checkbox", { name: "In service" }).check();
+  await membership.getByRole("checkbox", { name: "Inspection due" }).check();
   await operator.selectOption("eq");
   await expect(value).toHaveValue("");
   await expect(
     page.getByRole("button", { name: "Save changes" }),
   ).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Save view" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save view" })).toHaveCount(0);
 });
 
 test("changing a Views filter field with the keyboard retains focus", async ({
@@ -1369,7 +1372,7 @@ test("clearing a number View filter stays blank instead of querying zero", async
   await expect(
     page.getByRole("button", { name: "Save changes" }),
   ).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Save view" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save view" })).toHaveCount(0);
   expect(
     api.recordQueryRequests
       .slice(requestCountBeforeClear)
@@ -1422,7 +1425,7 @@ test("unsafe integer View filters fail locally without sending a rounded value",
   ).toBeDisabled();
 });
 
-test("server-backed Views preserve edits through save, conflict, archive, restore, and default changes", async ({
+test("server-backed Views preserve edits through save, conflict, archive, restore, and module default changes", async ({
   page,
 }) => {
   const api = await installViewsApi(page);
@@ -1433,6 +1436,17 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
     viewId,
   );
   await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
+  await captureOpenViewReview(page, "views-manager");
+  await expect(
+    page.getByText("Field service · 12 active fields"),
+  ).toBeVisible();
+  await expect(page.getByText("Search: pump")).toBeVisible();
+  await expect(page.getByText("No active filters")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save view" })).toHaveCount(0);
+  await openViewAction(page, "Rename view…");
+  const renameDialog = page.getByRole("dialog", { name: "Rename view" });
+  await expect(renameDialog).toBeVisible();
+  await renameDialog.getByRole("button", { name: "Cancel" }).click();
   await expect(page).toHaveURL(
     new RegExp(`module=${moduleId}.*view=${viewId}`),
   );
@@ -1556,15 +1570,18 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await page
     .getByRole("searchbox", { name: "Search Equipment" })
     .fill("draft before restore");
-  await expect(page.getByText("Unsaved changes")).toBeVisible();
-  await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
+  await expect(page.getByText("Temporary changes")).toBeVisible();
+  // The unsaved draft is a temporary change of the same address.
+  await expect(page).toHaveURL(
+    new RegExp(`/openview\\?section=views&module=${moduleId}&changes=`),
+  );
   await page.getByRole("button", { name: "Archived views" }).click();
   const archivedDialog = page.getByRole("dialog", { name: "Archived views" });
   await expect(
     archivedDialog.getByText("Equipment register", { exact: true }),
   ).toBeVisible();
   await archivedDialog.getByRole("button", { name: "Close" }).click();
-  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await expect(page.getByText("Temporary changes")).toBeVisible();
   await page.getByRole("button", { name: "Archived views" }).click();
   await archivedDialog
     .getByRole("button", { name: "Restore Equipment register" })
@@ -1603,57 +1620,17 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   ).toBeVisible();
   await archivedDialog.getByRole("button", { name: "Close" }).click();
 
-  await openViewAction(page, "Set as my default");
+  await openViewAction(page, "Make default view");
   await expect(
     page.getByRole("status").filter({ hasText: "default" }),
   ).toBeVisible();
-  expect(api.personalDefault()).toBe(viewId);
+  await expect(
+    page.getByText("Department default", { exact: true }),
+  ).toBeVisible();
+  expect(api.defaultView()).toBe(viewId);
   expect(
     api.requests.some((request) => request.includes("deleted=include")),
   ).toBe(true);
-});
-
-test("a failed audience list keeps the catalog open and limits sharing to Only me and Everyone", async ({
-  page,
-}) => {
-  const api = await installViewsApi(page, { audienceOptionsFailure: true });
-
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Retry catalog" })).toHaveCount(
-    0,
-  );
-
-  await page.getByRole("button", { name: "Save view" }).click();
-  const dialog = page.getByRole("dialog");
-  const audience = dialog.getByRole("combobox", { name: "Audience" });
-  await expect(audience.getByRole("option")).toHaveText([
-    "Only me",
-    "Everyone",
-  ]);
-  await expect(
-    dialog.getByText(
-      "Roles and people could not be loaded. You can still share with Only me or Everyone.",
-    ),
-  ).toBeVisible();
-
-  const retry = dialog.getByRole("button", { name: "Retry roles and people" });
-  await retry.click();
-  await expect(retry).toBeFocused();
-  await expect(retry).not.toHaveAttribute("aria-disabled", "true");
-
-  api.restoreAudienceOptions();
-  await retry.click();
-  await expect(audience.getByRole("option")).toHaveText([
-    "Only me",
-    "Everyone",
-    "Role: Operations",
-    "User: Nina Santos",
-  ]);
-  await expect(
-    dialog.getByRole("button", { name: "Retry roles and people" }),
-  ).toHaveCount(0);
-  await expect(audience).toBeFocused();
 });
 
 test("clearing an implicit default asks before discarding its local draft", async ({
@@ -1667,18 +1644,18 @@ test("clearing an implicit default asks before discarding its local draft", asyn
   );
   const search = page.getByRole("searchbox", { name: "Search Equipment" });
   await search.fill("unpublished default draft");
-  await openViewAction(page, "Clear my default");
+  await openViewAction(page, "Clear default view");
 
   const discardDialog = page.getByRole("alertdialog", {
     name: "Discard unsaved view changes?",
   });
   await expect(discardDialog).toBeVisible();
-  expect(api.personalDefault()).toBe(viewId);
+  expect(api.defaultView()).toBe(viewId);
   await discardDialog.getByRole("button", { name: "Keep editing" }).click();
   await expect(search).toHaveValue("unpublished default draft");
-  expect(api.personalDefault()).toBe(viewId);
+  expect(api.defaultView()).toBe(viewId);
 
-  await openViewAction(page, "Clear my default");
+  await openViewAction(page, "Clear default view");
   api.rejectNextMutation("default-clear");
   await discardDialog
     .getByRole("button", { name: "Discard and continue" })
@@ -1686,22 +1663,22 @@ test("clearing an implicit default asks before discarding its local draft", asyn
   await expect(
     page.getByRole("alert").filter({ hasText: "Default" }),
   ).toBeVisible();
-  expect(api.personalDefault()).toBe(viewId);
+  expect(api.defaultView()).toBe(viewId);
   await expect(search).toHaveValue("unpublished default draft");
 
-  await openViewAction(page, "Clear my default");
+  await openViewAction(page, "Clear default view");
   await discardDialog
     .getByRole("button", { name: "Discard and continue" })
     .click();
   await expect(
-    page.getByRole("status").filter({ hasText: "default was cleared" }),
+    page.getByRole("status").filter({ hasText: "default view was cleared" }),
   ).toBeVisible();
-  expect(api.personalDefault()).toBe(null);
+  expect(api.defaultView()).toBe(null);
   await expect(search).toHaveValue("");
   await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
 });
 
-test("selecting Unsaved view overrides a personal default after discard confirmation", async ({
+test("selecting Unsaved view overrides the module default after discard confirmation", async ({
   page,
 }) => {
   await installViewsApi(page, { initialDefault: true });
@@ -1733,7 +1710,7 @@ test("selecting Unsaved view overrides a personal default after discard confirma
   await expect(savedView).toHaveValue(viewId);
 });
 
-test("duplicating a saved view saves the current draft as a private selected copy", async ({
+test("duplicating a saved view saves the current draft as a selected copy", async ({
   page,
 }) => {
   const existingCopy = {
@@ -1768,10 +1745,9 @@ test("duplicating a saved view saves the current draft as a private selected cop
   expect(api.createdViews()).toHaveLength(1);
   expect(api.createdViews()[0]).toMatchObject({
     name: "Equipment register (copy 2)",
-    audience: { kind: "private" },
+    is_default: false,
     definition: { search: "draft query" },
     presentation: { layout: "grid" },
-    owner_id: userId,
     can_edit: true,
   });
   expect(api.saved()).toMatchObject({
@@ -1809,7 +1785,7 @@ test("resetting changes restores the saved base or clears an unsaved draft", asy
   await page.getByRole("button", { name: "Reset changes" }).click();
   await expect(search).toHaveValue("");
   await expectLayoutFromSettings(page, "table");
-  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+  await expect(page.getByText("Temporary changes")).toHaveCount(0);
   await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
 
   await page.getByRole("combobox", { name: "Saved view" }).selectOption(viewId);
@@ -1820,7 +1796,7 @@ test("resetting changes restores the saved base or clears an unsaved draft", asy
 
   await expect(search).toHaveValue("pump");
   await expectLayoutFromSettings(page, "table");
-  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+  await expect(page.getByText("Temporary changes")).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
     viewId,
   );
@@ -1831,6 +1807,129 @@ test("resetting changes restores the saved base or clears an unsaved draft", asy
     definition: { search: "pump" },
     presentation: { layout: "table" },
   });
+});
+
+test("temporary View changes live in the address, survive reload, and are never saved", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page);
+  const viewWrites: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith("/api/views") && request.method() !== "GET")
+      viewWrites.push(`${request.method()} ${path}`);
+  });
+  const viewUrl = `/openview?section=views&module=${moduleId}&view=${viewId}`;
+  await page.goto(viewUrl);
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
+  await expect(search).toHaveValue("pump");
+
+  await search.fill("valve");
+  await setLayoutFromSettings(page, "grid");
+  await expect(page).toHaveURL(/[?&]changes=[A-Za-z0-9_-]+/);
+  const temporaryUrl = page.url();
+  expect(new URL(temporaryUrl).searchParams.get("view")).toBe(viewId);
+
+  await page.reload();
+  await expect(search).toHaveValue("valve");
+  await expectLayoutFromSettings(page, "grid");
+  await expect(page.getByText("Temporary changes")).toBeVisible();
+
+  await page.getByRole("button", { name: "Reset changes" }).click();
+  await expect(search).toHaveValue("pump");
+  await expect(page).toHaveURL(viewUrl);
+  expect(viewWrites).toEqual([]);
+  expect(api.saved()).toMatchObject({
+    definition: { search: "pump" },
+    presentation: { layout: "table" },
+  });
+});
+
+test("a reader keeps temporary View filters in the address without save controls", async ({
+  page,
+}) => {
+  await installViewsApi(page);
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        id: userId,
+        role: "member",
+        access: [
+          { department_id: departmentId, module_id: null, level: "read" },
+        ],
+      },
+    }),
+  );
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
+  await expect(search).toHaveValue("pump");
+  await search.fill("valve");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  await expect(page.getByRole("button", { name: /^Save view/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("button", { name: "View actions" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "Archived views" }),
+  ).toBeVisible();
+  await expect(page.getByText("Temporary changes")).toBeVisible();
+  await expect(
+    page.getByText(/These changes live in the page address/),
+  ).toBeVisible();
+  await captureOpenViewReview(page, "views-reader-filter");
+  await page.reload();
+  await expect(search).toHaveValue("valve");
+  await expect(page.getByText("Temporary changes")).toBeVisible();
+});
+
+test("a module reader can browse archived Views without a Restore action", async ({
+  page,
+}) => {
+  await installViewsApi(page, {
+    additionalViews: [
+      {
+        ...baseView(),
+        id: secondViewId,
+        name: "Old equipment view",
+        is_deleted: true,
+        can_edit: true,
+      },
+    ],
+  });
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        id: userId,
+        role: "member",
+        access: [
+          { department_id: departmentId, module_id: null, level: "read" },
+        ],
+      },
+    }),
+  );
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await page.getByRole("button", { name: /Archived views/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Archived views" });
+  await expect(dialog.getByText("Old equipment view")).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Restore Old equipment view" }),
+  ).toHaveCount(0);
+});
+
+test("a malformed temporary View address is ignored and removed", async ({
+  page,
+}) => {
+  await installViewsApi(page);
+  const viewUrl = `/openview?section=views&module=${moduleId}&view=${viewId}`;
+  await page.goto(`${viewUrl}&changes=not-a-view`);
+  await expect(
+    page.getByRole("searchbox", { name: "Search Equipment" }),
+  ).toHaveValue("pump");
+  await expect(page).toHaveURL(viewUrl);
+  await expect(page.getByText("Temporary changes")).toHaveCount(0);
 });
 
 test("saved Views send, save, and reload up to three ordered sort rules", async ({
@@ -1947,7 +2046,7 @@ for (const layout of ["table", "grid", "gallery"] as const) {
       limit: 25,
       offset: 0,
       group_offset: 0,
-      selected_group: { kind: "value", value: "In service" },
+      selected_group: { kind: "value", value: inServiceChoiceId },
     });
     expect(api.recordQueryRequests).toHaveLength(ordinaryRequestCount);
 
@@ -1971,7 +2070,7 @@ for (const layout of ["table", "grid", "gallery"] as const) {
       limit: 25,
       offset: 25,
       group_offset: 0,
-      selected_group: { kind: "value", value: "In service" },
+      selected_group: { kind: "value", value: inServiceChoiceId },
     });
     expect(api.recordQueryRequests).toHaveLength(ordinaryRequestCount);
     if (layout === "table") {
@@ -1994,8 +2093,14 @@ for (const layout of ["table", "grid", "gallery"] as const) {
         /record=00000000-0000-4000-8000-000000000125/,
       );
       expect(api.groupedQueryRequests.slice(-2)).toMatchObject([
-        { offset: 0, selected_group: { kind: "value", value: "In service" } },
-        { offset: 25, selected_group: { kind: "value", value: "In service" } },
+        {
+          offset: 0,
+          selected_group: { kind: "value", value: inServiceChoiceId },
+        },
+        {
+          offset: 25,
+          selected_group: { kind: "value", value: inServiceChoiceId },
+        },
       ]);
     }
   });
@@ -2382,9 +2487,9 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
   await page.getByRole("button", { name: "Columns", exact: true }).click();
   await expect(columnsDialog).toBeVisible();
   await columnsDialog.getByRole("button", { name: "Close" }).click();
-  await expect(page.getByText("Unsaved changes", { exact: true })).toHaveCount(
-    1,
-  );
+  await expect(
+    page.getByText("Temporary changes", { exact: true }),
+  ).toHaveCount(1);
   expect(api.saved().revision).toBe(initialRevision);
 
   const filtersRegion = await openFilters(page);
@@ -2396,7 +2501,7 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
   await filtersRegion
     .getByRole("combobox", { name: "Condition" })
     .selectOption("eq");
-  await filtersRegion.getByLabel("Value").fill("Inspection due");
+  await filtersRegion.getByLabel("Value").selectOption(inspectionDueChoiceId);
   await expect
     .poll(() =>
       api.recordQueryRequests.some(({ definition }) =>
@@ -2404,7 +2509,7 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
           (filter) =>
             filter.field_id === statusFieldId &&
             filter.operator === "eq" &&
-            filter.value === "Inspection due",
+            filter.value === inspectionDueChoiceId,
         ),
       ),
     )
@@ -2441,7 +2546,7 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
       field_id: statusFieldId,
       expected_type: "select",
       operator: "eq",
-      value: "Inspection due",
+      value: inspectionDueChoiceId,
     },
   ]);
   expect(api.saved().definition.sort).toEqual([
@@ -2662,7 +2767,7 @@ test("Views grouped member page size preserves twelve-group directory paging", a
     offset: 0,
     group_limit: 12,
     group_offset: 0,
-    selected_group: { kind: "value", value: "In service" },
+    selected_group: { kind: "value", value: inServiceChoiceId },
   });
   await expect(results.getByText("Showing 1–5 of 38")).toBeVisible();
 
@@ -2676,7 +2781,7 @@ test("Views grouped member page size preserves twelve-group directory paging", a
     offset: 5,
     group_limit: 12,
     group_offset: 0,
-    selected_group: { kind: "value", value: "In service" },
+    selected_group: { kind: "value", value: inServiceChoiceId },
   });
   await expect(results.getByText("Showing 6–10 of 38")).toBeVisible();
   await expect(page.getByText("Groups 1–1 of 1").first()).toBeVisible();
@@ -3082,16 +3187,16 @@ test("default invalidation keeps an implicit selected view and its dirty draft a
   await search.fill("compressor");
   await expect(search).toHaveValue("compressor");
 
-  api.changePersonalDefaultElsewhere(secondViewId);
+  api.changeDefaultElsewhere(secondViewId);
   const defaultsReadCount = api.requests.filter((request) =>
-    request.startsWith("GET /api/views/defaults"),
+    request.startsWith("GET /api/views?module_id"),
   ).length;
-  await api.triggerInvalidation("saved_view_defaults");
+  await api.triggerInvalidation("saved_views");
   await expect
     .poll(
       () =>
         api.requests.filter((request) =>
-          request.startsWith("GET /api/views/defaults"),
+          request.startsWith("GET /api/views?module_id"),
         ).length,
     )
     .toBeGreaterThan(defaultsReadCount);
@@ -3127,8 +3232,8 @@ test("default invalidation follows the new default after an implicit draft is re
   await search.fill("pump");
   await expect(search).toHaveValue("pump");
 
-  api.changePersonalDefaultElsewhere(secondViewId);
-  await api.triggerInvalidation("saved_view_defaults");
+  api.changeDefaultElsewhere(secondViewId);
+  await api.triggerInvalidation("saved_views");
   await expect(
     selected.locator(`option[value="${secondViewId}"]`),
   ).toContainText("default");
@@ -3164,7 +3269,7 @@ for (const localAction of ["revert", "save"] as const) {
     await expect(
       page.getByRole("button", { name: "Save changes" }),
     ).toHaveCount(0);
-    await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+    await expect(page.getByText("Temporary changes")).toHaveCount(0);
     await expect(
       page.getByText(`Revision ${api.saved().revision}`),
     ).toBeVisible();
@@ -3544,14 +3649,40 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
       body: "{}",
     });
   });
+  await page.route("**/api/auth/me", async (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ id: userId, role: "admin", access: [] }),
+    }),
+  );
+  // A new Dashboard needs a department to belong to.
+  await page.route("**/api/departments**", async (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [
+          {
+            id: departmentId,
+            department_name: "Field service",
+            created_at: "2026-09-23T00:00:00Z",
+            updated_at: "2026-09-23T00:00:00Z",
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      }),
+    }),
+  );
   await page.route("**/api/dashboards**", async (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path === "/api/dashboards/default") {
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({ dashboard_id: null }),
-      });
-    }
     if (path === "/api/dashboards") {
       dashboardListRequests += 1;
       return route.fulfill({
@@ -3572,7 +3703,7 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
   });
   await page.goto("/openview?section=dashboards");
   await expect(
-    page.getByRole("heading", { name: "Private dashboards" }),
+    page.getByRole("heading", { level: 1, name: "Dashboards" }),
   ).toBeVisible();
   await expect(
     page.getByText("No Dashboards yet.", { exact: false }),
@@ -3583,4 +3714,295 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
   ).toHaveValue("");
   expect(dashboardListRequests).toBeGreaterThan(0);
   expect(savedViewRequests).toBe(0);
+});
+
+test("Views show authorized labels while filters keep stable choice and eligible user IDs", async ({
+  page,
+}) => {
+  const choiceId = "00000000-0000-4000-8000-000000000031";
+  const eligibleUserId = "00000000-0000-4000-8000-000000000032";
+  const unavailableUserId = "00000000-0000-4000-8000-000000000033";
+  const userFieldId = "00000000-0000-4000-8000-000000000034";
+  const label = "Awaiting review";
+  await installViewsApi(page, { disableInitialSearch: true });
+
+  const view = baseView();
+  view.definition = {
+    ...view.definition,
+    columns: [
+      { field_id: nameFieldId, expected_type: "text" },
+      { field_id: statusFieldId, expected_type: "select" },
+      { field_id: userFieldId, expected_type: "user" },
+    ],
+    filters: [],
+    search: null,
+    search_fields: [],
+  };
+  view.presentation = {
+    ...view.presentation,
+    column_field_ids: [nameFieldId, statusFieldId, userFieldId],
+    primary_field_id: nameFieldId,
+    secondary_field_id: statusFieldId,
+  };
+  await page.route("**/api/views**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (
+      request.method() === "GET" &&
+      pathname === "/api/views/data-sources/" + moduleId + "/fields"
+    ) {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(
+          pageResponse([
+            {
+              id: nameFieldId,
+              module_id: moduleId,
+              name: "Equipment name",
+              type: "text",
+              required: true,
+              position: 0,
+              config: {},
+            },
+            {
+              id: statusFieldId,
+              module_id: moduleId,
+              name: "Status",
+              type: "select",
+              required: false,
+              position: 1,
+              config: {
+                options: [{ id: choiceId, label }],
+              },
+            },
+            {
+              id: userFieldId,
+              module_id: moduleId,
+              name: "Assignee",
+              type: "user",
+              required: false,
+              position: 2,
+              config: {},
+            },
+          ]),
+        ),
+      });
+    }
+    if (request.method() === "GET" && pathname === "/api/views")
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(pageResponse([view])),
+      });
+    if (request.method() === "GET" && pathname === "/api/views/" + viewId)
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(view),
+      });
+    return route.fallback();
+  });
+
+  let assignableUsersPath: string | null = null;
+  let assignableUsersRequests = 0;
+  let eligibleUserAvailable = true;
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      url.pathname === "/api/modules/" + moduleId + "/assignable-users" &&
+      request.method() === "GET"
+    )
+      assignableUsersRequests += 1;
+  });
+  await page.route(
+    "**/api/modules/" + moduleId + "/assignable-users**",
+    async (route) => {
+      assignableUsersPath = new URL(route.request().url()).pathname;
+      return route.fulfill({
+        headers: { "cache-control": "private, no-store" },
+        contentType: "application/json",
+        body: JSON.stringify(
+          pageResponse(
+            eligibleUserAvailable
+              ? [
+                  {
+                    id: eligibleUserId,
+                    display_name: "Alex Reader",
+                    username: "alex.reader",
+                  },
+                ]
+              : [],
+          ),
+        ),
+      });
+    },
+  );
+
+  const rows = [
+    {
+      ...record(recordOneId, "Centrifugal pump 04", label),
+      data: {
+        ...record(recordOneId, "Centrifugal pump 04", label).data,
+        [statusFieldId]: choiceId,
+        [userFieldId]: eligibleUserId,
+      },
+      display_values: {
+        [statusFieldId]: label,
+        [userFieldId]: "Alex Reader",
+      },
+    },
+    {
+      ...record(recordTwoId, "Cooling panel 02", label),
+      data: {
+        ...record(recordTwoId, "Cooling panel 02", label).data,
+        [statusFieldId]: choiceId,
+        [userFieldId]: unavailableUserId,
+      },
+      display_values: {
+        [statusFieldId]: label,
+        [userFieldId]: "Unavailable user",
+      },
+    },
+  ];
+  let recordQueryCount = 0;
+  await page.route("**/api/records/query", async (route) => {
+    recordQueryCount += 1;
+    const request = route.request().postDataJSON() as {
+      definition: QueryDefinition;
+      limit?: number;
+      offset?: number;
+    };
+    const limit = request.limit ?? 25;
+    const offset = request.offset ?? 0;
+    const items = rows
+      .map((row) => ({
+        ...row,
+        display_values: {
+          ...row.display_values,
+          [userFieldId]:
+            row.data[userFieldId] === eligibleUserId && !eligibleUserAvailable
+              ? "Unavailable user"
+              : row.display_values[userFieldId],
+        },
+      }))
+      .slice(offset, offset + limit);
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(pageResponse(items, limit, offset, rows.length)),
+    });
+  });
+
+  await page.goto(
+    "/openview?section=views&module=" + moduleId + "&view=" + viewId,
+  );
+  await expect(page.getByText(label, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Alex Reader", { exact: true })).toBeVisible();
+  const eligibleRecord = page
+    .getByRole("row")
+    .filter({ hasText: "Centrifugal pump 04" });
+  await expect(
+    eligibleRecord.getByText("Alex Reader", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Unavailable user", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(new RegExp(eligibleUserId))).toHaveCount(0);
+  await expect(page.getByText(unavailableUserId, { exact: true })).toHaveCount(
+    0,
+  );
+
+  const filters = await openFilters(page);
+  await filters.getByRole("button", { name: "Add filter" }).click();
+  const filterFields = filters.getByRole("combobox", {
+    name: "Field",
+    exact: true,
+  });
+  await filterFields.nth(0).selectOption(statusFieldId);
+  const choiceValue = filters.getByLabel("Value", { exact: true }).nth(0);
+  await expect(choiceValue.getByRole("option", { name: label })).toBeAttached();
+  const choiceRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    if (url.pathname !== "/api/records/query" || request.method() !== "POST")
+      return false;
+    const body = request.postDataJSON() as { definition: QueryDefinition };
+    return body.definition.filters.some(
+      (filter) =>
+        filter.field_id === statusFieldId && filter.value === choiceId,
+    );
+  });
+  await choiceValue.selectOption(choiceId);
+  const choiceQuery = await choiceRequest;
+  expect(
+    (choiceQuery.postDataJSON() as { definition: QueryDefinition }).definition
+      .filters,
+  ).toContainEqual({
+    field_id: statusFieldId,
+    expected_type: "select",
+    operator: "eq",
+    value: choiceId,
+  });
+
+  await filters.getByRole("button", { name: "Add filter" }).click();
+  await filterFields.nth(1).selectOption(userFieldId);
+  await expect(
+    filters
+      .getByLabel("Condition", { exact: true })
+      .nth(1)
+      .getByRole("option", { name: "is one of", exact: true }),
+  ).toHaveCount(0);
+  await expect.poll(() => assignableUsersRequests).toBeGreaterThan(0);
+  expect(assignableUsersPath).toBe(
+    "/api/modules/" + moduleId + "/assignable-users",
+  );
+  const userValue = filters.getByLabel("Value", { exact: true }).nth(1);
+  await expect(
+    userValue.getByRole("option", { name: "Alex Reader" }),
+  ).toBeAttached();
+  await expect(
+    userValue.getByRole("option", { name: unavailableUserId }),
+  ).toHaveCount(0);
+  const userRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    if (url.pathname !== "/api/records/query" || request.method() !== "POST")
+      return false;
+    const body = request.postDataJSON() as { definition: QueryDefinition };
+    return body.definition.filters.some(
+      (filter) =>
+        filter.field_id === userFieldId && filter.value === eligibleUserId,
+    );
+  });
+  await userValue.selectOption(eligibleUserId);
+  const userQuery = await userRequest;
+  expect(
+    (userQuery.postDataJSON() as { definition: QueryDefinition }).definition
+      .filters,
+  ).toContainEqual({
+    field_id: userFieldId,
+    expected_type: "user",
+    operator: "eq",
+    value: eligibleUserId,
+  });
+  await expect(page.getByText(eligibleUserId, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(unavailableUserId, { exact: true })).toHaveCount(
+    0,
+  );
+  const readsBeforeEligibilityChange = recordQueryCount;
+  eligibleUserAvailable = false;
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "group_access",
+    module_id: moduleId,
+  });
+  await expect
+    .poll(() => recordQueryCount)
+    .toBeGreaterThan(readsBeforeEligibilityChange);
+  await expect(
+    eligibleRecord.getByText("Unavailable user", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    eligibleRecord.getByText("Alex Reader", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    userValue.getByRole("option", {
+      name: "Selected person is not in the current results",
+    }),
+  ).toBeAttached();
+  await captureOpenViewReview(page, "views-select-person-labels");
 });

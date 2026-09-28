@@ -1,4 +1,4 @@
-"""Durable Board metadata and per-Board access grants."""
+"""Scoped Boards, the groups of project Boards, and Board widgets."""
 
 from enum import StrEnum
 from typing import ClassVar
@@ -20,21 +20,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.base_model import BaseModel
 
 
-class BoardPrincipalType(StrEnum):
-    USER = "user"
-    ROLE = "role"
-    EVERYONE = "everyone"
+class BoardScope(StrEnum):
+    """Who a Board is for: everyone, one department, or the groups of a project."""
 
-
-class BoardPermission(StrEnum):
-    VIEW = "view"
-    EDIT = "edit"
-    MANAGE = "manage"
-
-
-class BoardGrantEffect(StrEnum):
-    ALLOW = "allow"
-    DENY = "deny"
+    COMPANY = "company"
+    DEPARTMENT = "department"
+    PROJECT = "project"
 
 
 class BoardStatus(StrEnum):
@@ -42,14 +33,8 @@ class BoardStatus(StrEnum):
     ARCHIVED = "archived"
 
 
-class BoardSection(StrEnum):
-    OVERVIEW = "overview"
-    CALENDAR = "calendar"
-    ANNOUNCEMENTS = "announcements"
-
-
 class Board(BaseModel):
-    """A private-by-default workspace board."""
+    """One company Board, one Board for each department, and project Boards."""
 
     __tablename__ = "boards"
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"description"})
@@ -61,17 +46,30 @@ class Board(BaseModel):
             name="ck_boards_status",
         ),
         CheckConstraint(
-            "default_section IN ('overview', 'calendar', 'announcements')",
-            name="ck_boards_default_section",
+            "scope IN ('company', 'department', 'project')",
+            name="ck_boards_scope",
         ),
-        Index("ix_boards_owner_id", "owner_id"),
+        CheckConstraint(
+            "(scope = 'department') = (department_id IS NOT NULL)",
+            name="ck_boards_department_scope",
+        ),
+        Index(
+            "uq_boards_company",
+            "scope",
+            unique=True,
+            postgresql_where=text("scope = 'company' AND NOT is_deleted"),
+        ),
+        Index(
+            "uq_boards_department",
+            "department_id",
+            unique=True,
+            postgresql_where=text("scope = 'department' AND NOT is_deleted"),
+        ),
     )
 
+    scope: Mapped[BoardScope] = mapped_column(String(20), nullable=False)
     department_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("departments.id", ondelete="RESTRICT"), nullable=True, index=True
-    )
-    owner_id: Mapped[UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -81,106 +79,38 @@ class Board(BaseModel):
         server_default=text("'active'"),
         nullable=False,
     )
-    default_section: Mapped[BoardSection] = mapped_column(
-        String(30),
-        default=BoardSection.OVERVIEW,
-        server_default=text("'overview'"),
-        nullable=False,
-    )
     revision: Mapped[int] = mapped_column(
         Integer, default=1, server_default=text("1"), nullable=False
     )
 
 
-class BoardGrant(BaseModel):
-    """One explicit allow or deny for a Board principal and access level."""
+class BoardGroup(BaseModel):
+    """One group's level on a project Board. Only project Boards have rows."""
 
-    __tablename__ = "board_grants"
+    __tablename__ = "board_groups"
     __table_args__ = (
-        CheckConstraint(
-            "principal_type IN ('user', 'role', 'everyone')",
-            name="ck_board_grants_principal_type",
-        ),
-        CheckConstraint(
-            "(principal_type = 'user' AND principal_user_id IS NOT NULL "
-            "AND principal_role_id IS NULL) OR "
-            "(principal_type = 'role' AND principal_user_id IS NULL "
-            "AND principal_role_id IS NOT NULL) OR "
-            "(principal_type = 'everyone' AND principal_user_id IS NULL "
-            "AND principal_role_id IS NULL)",
-            name="ck_board_grants_principal_reference",
-        ),
-        CheckConstraint(
-            "permission IN ('view', 'edit', 'manage')",
-            name="ck_board_grants_permission",
-        ),
-        CheckConstraint("effect IN ('allow', 'deny')", name="ck_board_grants_effect"),
-        Index("ix_board_grants_board_id", "board_id"),
-        Index("ix_board_grants_principal_user_id", "principal_user_id"),
-        Index("ix_board_grants_principal_role_id", "principal_role_id"),
+        CheckConstraint("level IN ('read', 'write', 'manage')", name="ck_board_groups_level"),
         Index(
-            "uq_board_grants_active_user_decision",
+            "uq_board_groups_board_group_active",
             "board_id",
-            "principal_user_id",
-            "permission",
-            "effect",
+            "group_id",
             unique=True,
-            postgresql_where=text("principal_type = 'user' AND is_deleted = false"),
+            postgresql_where=text("is_deleted = false"),
         ),
-        Index(
-            "uq_board_grants_active_role_decision",
-            "board_id",
-            "principal_role_id",
-            "permission",
-            "effect",
-            unique=True,
-            postgresql_where=text("principal_type = 'role' AND is_deleted = false"),
-        ),
-        Index(
-            "uq_board_grants_active_everyone_decision",
-            "board_id",
-            "permission",
-            "effect",
-            unique=True,
-            postgresql_where=text("principal_type = 'everyone' AND is_deleted = false"),
-        ),
+        Index("ix_board_groups_group_id", "group_id"),
     )
 
     board_id: Mapped[UUID] = mapped_column(
         ForeignKey("boards.id", ondelete="RESTRICT"), nullable=False
     )
-    principal_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    principal_user_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    group_id: Mapped[UUID] = mapped_column(
+        ForeignKey("groups.id", ondelete="RESTRICT"), nullable=False
     )
-    principal_role_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="RESTRICT"), nullable=True
-    )
-    permission: Mapped[str] = mapped_column(String(20), nullable=False)
-    effect: Mapped[str] = mapped_column(String(10), nullable=False)
-
-
-class BoardRecordPlacement(BaseModel):
-    """A unique Board shortcut to a source record, independent of Board status."""
-
-    __tablename__ = "board_record_placements"
-    __table_args__ = (
-        UniqueConstraint(
-            "board_id", "record_id", name="uq_board_record_placements_board_record"
-        ),
-        Index("ix_board_record_placements_record_id", "record_id"),
-    )
-
-    board_id: Mapped[UUID] = mapped_column(
-        ForeignKey("boards.id", ondelete="RESTRICT"), nullable=False
-    )
-    record_id: Mapped[UUID] = mapped_column(
-        ForeignKey("records.id", ondelete="RESTRICT"), nullable=False
-    )
+    level: Mapped[str] = mapped_column(String(10), nullable=False)
 
 
 class BoardWidget(BaseModel):
-    """One ordered Board widget; source references remain retained until deletion."""
+    """One ordered Board tile; every reader of the Board sees it."""
 
     __tablename__ = "board_widgets"
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"config"})
@@ -191,21 +121,11 @@ class BoardWidget(BaseModel):
             name="ck_board_widgets_type",
         ),
         CheckConstraint("position >= 0 AND position < 12", name="ck_board_widgets_position"),
-        CheckConstraint(
-            "(audience_kind IN ('private', 'everyone') AND audience_role_id IS NULL "
-            "AND audience_user_id IS NULL) OR "
-            "(audience_kind = 'role' AND audience_role_id IS NOT NULL "
-            "AND audience_user_id IS NULL) OR "
-            "(audience_kind = 'user' AND audience_role_id IS NULL "
-            "AND audience_user_id IS NOT NULL)",
-            name="ck_board_widgets_audience",
-        ),
         UniqueConstraint(
             "board_id", "position", name="uq_board_widgets_board_position",
             deferrable=True, initially="DEFERRED",
         ),
         Index("ix_board_widgets_module_id", "module_id"),
-        Index("ix_board_widgets_creator_id", "creator_id"),
     )
 
     board_id: Mapped[UUID] = mapped_column(
@@ -214,17 +134,7 @@ class BoardWidget(BaseModel):
     module_id: Mapped[UUID] = mapped_column(
         ForeignKey("modules.id", ondelete="RESTRICT"), nullable=False
     )
-    creator_id: Mapped[UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
-    )
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     widget_type: Mapped[str] = mapped_column(String(20), nullable=False)
     config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    audience_kind: Mapped[str] = mapped_column(String(20), nullable=False)
-    audience_role_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="RESTRICT"), nullable=True
-    )
-    audience_user_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
-    )

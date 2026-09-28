@@ -1607,6 +1607,8 @@ export type OpenViewUrlState = {
   view?: string;
   dashboard?: string;
   record?: string;
+  /** Temporary View changes (`domain/temporary-view.ts`); never saved. */
+  changes?: string;
   invalid?: boolean;
 };
 
@@ -1620,6 +1622,7 @@ export function parseOpenViewUrl(
   const recordValue = url.searchParams.get("record");
   const viewValue = url.searchParams.get("view");
   const dashboardValue = url.searchParams.get("dashboard");
+  const changesValue = url.searchParams.get("changes");
   const legacyRecordsSection = sectionValue === "records";
   const section = legacyRecordsSection
     ? "views"
@@ -1657,6 +1660,7 @@ export function parseOpenViewUrl(
   if (record) result.record = record;
   if (view) result.view = view;
   if (dashboard) result.dashboard = dashboard;
+  if (changesValue && result.section === "views") result.changes = changesValue;
   return result;
 }
 
@@ -1679,6 +1683,8 @@ export function serializeOpenViewUrl(state: OpenViewUrlState): string {
   if (state.view) parameters.set("view", state.view);
   if (state.dashboard) parameters.set("dashboard", state.dashboard);
   if (state.record) parameters.set("record", state.record);
+  if (state.changes && state.section === "views")
+    parameters.set("changes", state.changes);
   const query = parameters.toString();
   return query ? `/openview?${query}` : "/openview";
 }

@@ -24,8 +24,6 @@ from app.core.config.instance import (
 
 if __package__:
     from .reset_models import (  # type: ignore[import-not-found]
-        _ACCESS_POLICY_DEFAULTS_STATEMENT,
-        _ACCESS_POLICY_VERSION_STATEMENT,
         _ALEMBIC_HEAD_STATEMENT,
         _COUNT_STATEMENTS,
         _EFFECTIVE_ADMIN_PROFILES_STATEMENT,
@@ -33,25 +31,17 @@ if __package__:
         _PROFILE_STATEMENT,
         _PROVIDER_SUBJECTS_STATEMENT,
         _PUBLIC_TABLES_STATEMENT,
-        _ROLES_STATEMENT,
         _WORKSPACE_STATEMENT,
-        ACCESS_POLICY_DEFAULTS_ID,
-        ACCESS_POLICY_VERSION_ID,
         APPLICATION_TABLES,
         EXPECTED_DATABASE_USER,
-        AccessPolicyDefaultsSnapshot,
-        AccessPolicyVersionSnapshot,
         ProfileSnapshot,
         ResetError,
         ResetPlan,
-        RoleSnapshot,
         WorkspaceSnapshot,
         stable_snapshot_payload,
     )
 else:
     from reset_models import (
-        _ACCESS_POLICY_DEFAULTS_STATEMENT,
-        _ACCESS_POLICY_VERSION_STATEMENT,
         _ALEMBIC_HEAD_STATEMENT,
         _COUNT_STATEMENTS,
         _EFFECTIVE_ADMIN_PROFILES_STATEMENT,
@@ -59,18 +49,12 @@ else:
         _PROFILE_STATEMENT,
         _PROVIDER_SUBJECTS_STATEMENT,
         _PUBLIC_TABLES_STATEMENT,
-        _ROLES_STATEMENT,
         _WORKSPACE_STATEMENT,
-        ACCESS_POLICY_DEFAULTS_ID,
-        ACCESS_POLICY_VERSION_ID,
         APPLICATION_TABLES,
         EXPECTED_DATABASE_USER,
-        AccessPolicyDefaultsSnapshot,
-        AccessPolicyVersionSnapshot,
         ProfileSnapshot,
         ResetError,
         ResetPlan,
-        RoleSnapshot,
         WorkspaceSnapshot,
         stable_snapshot_payload,
     )
@@ -192,18 +176,18 @@ def _read_alembic_head(connection: Any) -> str:
 
 def _read_profile(connection: Any, user_id: UUID) -> ProfileSnapshot:
     rows = _fetchall(connection, _PROFILE_STATEMENT, (user_id,))
-    if len(rows) != 1 or len(rows[0]) != 19:
+    if len(rows) != 1 or len(rows[0]) != 18:
         raise ResetError("The administrator profile is missing or ambiguous")
     row = rows[0]
     return ProfileSnapshot(
         id=_as_uuid(row[0]), created_at=row[1], deleted_at=row[2], is_deleted=row[3],
         updated_at=row[4], performed_by=row[5], email=row[6],
         supabase_user_id=_as_uuid(row[7]) if row[7] is not None else None,
-        username=row[8], status=row[9], role_id=_as_uuid(row[10]), display_name=row[11],
-        identity_kind=row[12], job_title=row[13],
-        sponsor_user_id=_as_uuid(row[14]) if row[14] is not None else None,
-        expires_at=row[15], invitation_sent_at=row[16], invitation_accepted_at=row[17],
-        tokens_valid_after=row[18],
+        username=row[8], status=row[9], role=row[10], display_name=row[11],
+        job_title=row[12],
+        sponsor_user_id=_as_uuid(row[13]) if row[13] is not None else None,
+        expires_at=row[14], invitation_sent_at=row[15], invitation_accepted_at=row[16],
+        tokens_valid_after=row[17],
     )
 
 
@@ -232,7 +216,7 @@ def _read_provider_subjects(
 
 def _read_workspace(connection: Any) -> WorkspaceSnapshot:
     rows = _fetchall(connection, _WORKSPACE_STATEMENT)
-    if len(rows) != 1 or len(rows[0]) != 15:
+    if len(rows) != 1 or len(rows[0]) != 17:
         raise ResetError("The workspace singleton is missing or ambiguous")
     row = rows[0]
     return WorkspaceSnapshot(
@@ -240,55 +224,8 @@ def _read_workspace(connection: Any) -> WorkspaceSnapshot:
         description=row[4], contact_email=row[5], contact_phone=row[6], postal_address=row[7],
         logo_file_id=row[8], timezone=row[9], locale=row[10], revision=row[11],
         deleted_at=row[12], is_deleted=row[13], performed_by=row[14],
+        invitation_expiry_days=row[15], guest_duration_days=row[16],
     )
-
-
-def _read_roles(connection: Any) -> tuple[RoleSnapshot, ...]:
-    roles: list[RoleSnapshot] = []
-    for row in _fetchall(connection, _ROLES_STATEMENT):
-        if len(row) != 9:
-            raise ResetError("The role snapshot is invalid")
-        roles.append(
-            RoleSnapshot(
-                id=_as_uuid(row[0]), created_at=row[1], deleted_at=row[2], is_deleted=row[3],
-                updated_at=row[4], performed_by=row[5], role=row[6], permissions=row[7],
-                description=row[8],
-            )
-        )
-    if len({role.id for role in roles}) != len(roles):
-        raise ResetError("The role snapshot is ambiguous")
-    return tuple(sorted(roles, key=lambda role: str(role.id)))
-
-
-def _read_access_policy_defaults(connection: Any) -> AccessPolicyDefaultsSnapshot:
-    rows = _fetchall(connection, _ACCESS_POLICY_DEFAULTS_STATEMENT)
-    if len(rows) != 1 or len(rows[0]) != 15:
-        raise ResetError("The Access policy defaults singleton is missing or ambiguous")
-    row = rows[0]
-    snapshot = AccessPolicyDefaultsSnapshot(
-        id=_as_uuid(row[0]), singleton_key=row[1], default_role_id=_as_uuid(row[2]),
-        invitation_expiry_days=row[3], guest_duration_days=row[4], service_duration_days=row[5],
-        default_deny=row[6], require_guest_sponsor=row[7], require_service_owner=row[8],
-        revision=row[9], created_at=row[10], deleted_at=row[11], is_deleted=row[12],
-        updated_at=row[13], performed_by=row[14],
-    )
-    if snapshot.id != ACCESS_POLICY_DEFAULTS_ID or snapshot.singleton_key != "workspace":
-        raise ResetError("The Access policy defaults singleton is invalid")
-    return snapshot
-
-
-def _read_access_policy_version(connection: Any) -> AccessPolicyVersionSnapshot:
-    rows = _fetchall(connection, _ACCESS_POLICY_VERSION_STATEMENT)
-    if len(rows) != 1 or len(rows[0]) != 8:
-        raise ResetError("The Access policy version singleton is missing or ambiguous")
-    row = rows[0]
-    snapshot = AccessPolicyVersionSnapshot(
-        id=_as_uuid(row[0]), singleton_key=row[1], revision=row[2], created_at=row[3],
-        deleted_at=row[4], is_deleted=row[5], updated_at=row[6], performed_by=row[7],
-    )
-    if snapshot.id != ACCESS_POLICY_VERSION_ID or snapshot.singleton_key != "workspace":
-        raise ResetError("The Access policy version singleton is invalid")
-    return snapshot
 
 
 def _read_profile_delete_counts(connection: Any, preserved_id: UUID) -> tuple[int, int]:
@@ -341,13 +278,7 @@ def _impact_digest(plan: ResetPlan) -> str:
             [str(app_id), str(provider_id) if provider_id is not None else None]
             for app_id, provider_id in plan.provider_subjects
         ],
-        "admin_role": stable_snapshot_payload(plan.admin_role_snapshot),
-        "member_role": stable_snapshot_payload(plan.member_role_snapshot),
         "workspace": stable_snapshot_payload(plan.workspace_snapshot),
-        "access_policy_defaults": stable_snapshot_payload(
-            plan.access_policy_defaults_snapshot
-        ),
-        "access_policy_version": stable_snapshot_payload(plan.access_policy_version_snapshot),
         "storage_object_keys": list(plan.storage_object_keys),
         "alembic_head": plan.alembic_head,
     }
@@ -362,7 +293,6 @@ def build_reset_plan(
     *,
     storage_object_keys: tuple[str, ...] = (),
     read_profile_fn: Callable[[Any, UUID], ProfileSnapshot] = _read_profile,
-    read_roles_fn: Callable[[Any], tuple[RoleSnapshot, ...]] = _read_roles,
 ) -> ResetPlan:
     """Read and validate every local state value required for one safe reset."""
     try:
@@ -385,11 +315,11 @@ def build_reset_plan(
             connection, admin_id, profile.supabase_user_id
         )
         if (
-            profile.identity_kind != "internal"
+            profile.role != "admin"
             or profile.sponsor_user_id is not None
             or profile.expires_at is not None
         ):
-            raise ResetError("The preserved administrator must have a complete internal identity")
+            raise ResetError("The preserved profile must be a durable administrator")
         workspace = _read_workspace(connection)
         if workspace.singleton_key is not True or workspace.is_deleted is not False:
             raise ResetError("The workspace singleton is invalid")
@@ -399,17 +329,6 @@ def build_reset_plan(
             or len(set(storage_object_keys)) != len(storage_object_keys)
         ):
             raise ResetError("The private storage inventory is invalid")
-        roles = read_roles_fn(connection)
-        access_policy_defaults = _read_access_policy_defaults(connection)
-        access_policy_version = _read_access_policy_version(connection)
-        admin_roles = [
-            role for role in roles if role.role == "admin" and role.is_deleted is False
-        ]
-        member_roles = [
-            role for role in roles if role.role == "member" and role.is_deleted is False
-        ]
-        if len(admin_roles) != 1 or len(member_roles) != 1 or profile.role_id != admin_roles[0].id:
-            raise ResetError("Exactly one active literal admin and member role are required")
         if _fetchall(connection, _EFFECTIVE_ADMIN_PROFILES_STATEMENT, (admin_id,)):
             raise ResetError("Another effective administrator profile exists")
         delete_counts = _read_profile_delete_counts(connection, admin_id)
@@ -429,14 +348,8 @@ def build_reset_plan(
             preserved_admin_id=admin_id,
             preserved_admin_provider_id=profile.supabase_user_id,
             provider_subjects=provider_subjects,
-            preserved_admin_role_id=admin_roles[0].id,
-            preserved_member_role_id=member_roles[0].id,
             profile_snapshot=profile,
-            admin_role_snapshot=admin_roles[0],
-            member_role_snapshot=member_roles[0],
             workspace_snapshot=workspace,
-            access_policy_defaults_snapshot=access_policy_defaults,
-            access_policy_version_snapshot=access_policy_version,
             storage_object_keys=storage_object_keys,
             alembic_head=alembic_head,
         )

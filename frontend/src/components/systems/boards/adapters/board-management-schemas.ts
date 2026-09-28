@@ -21,6 +21,7 @@ const fieldTypeSchema = z.enum([
   "date",
   "datetime",
   "select",
+  "user",
 ]);
 const fieldSchema = z
   .object({
@@ -68,7 +69,11 @@ const filterSchema = fieldSchema
     ) {
       context.addIssue({ code: "custom", message: "Invalid filter value" });
     }
-    const allowed = new Set<string>(["eq", "neq", ...withoutValue]);
+    const allowed = new Set<string>(
+      filter.expected_type === "user"
+        ? withoutValue
+        : ["eq", "neq", ...withoutValue],
+    );
     if (["text", "long_text", "email", "url"].includes(filter.expected_type)) {
       ["contains", "prefix", "suffix"].forEach((operator) =>
         allowed.add(operator),
@@ -132,58 +137,47 @@ const widgetSchema = z
 export const bundleSchema = z
   .object({
     kind: z.literal("openslate-board"),
-    version: z.literal(2),
+    version: z.literal(3),
     configuration: z
       .object({
         name: named(200),
         description: z.string().max(240).nullable(),
-        department_name: named(150).nullable(),
-        default_section: z.enum(["overview", "calendar", "announcements"]),
         widgets: z.array(widgetSchema).max(12),
       })
       .strict(),
   })
   .strict();
+export const boardScopeSchema = z.enum(["company", "department", "project"]);
+export const accessLevelSchema = z.enum(["read", "write", "manage"]);
 export const boardSchema = z
   .object({
     id: uuidSchema,
-    owner_id: uuidSchema,
+    scope: boardScopeSchema,
     department_id: uuidSchema.nullable(),
     name: named(200),
     description: z.string().nullable(),
     status: z.enum(["active", "archived"]),
-    default_section: z.enum(["overview", "calendar", "announcements"]),
     revision: z.number().int().min(1),
+    level: accessLevelSchema,
     created_at: timestampSchema,
     updated_at: timestampSchema,
   })
   .strict()
+  .refine(
+    (board) =>
+      (board.scope === "department") === (board.department_id !== null),
+  )
   .transform((board) => ({
     id: board.id,
-    ownerId: board.owner_id,
+    scope: board.scope,
     departmentId: board.department_id,
     name: board.name,
     description: board.description,
     status: board.status,
-    defaultSection: board.default_section,
     revision: board.revision,
+    level: board.level,
     createdAt: board.created_at,
     updatedAt: board.updated_at,
-  }));
-export const templateSchema = z
-  .object({
-    id: uuidSchema,
-    name: named(80),
-    widget_count: z.number().int().min(0).max(12),
-    created_at: timestampSchema,
-    updated_at: timestampSchema,
-  })
-  .strict()
-  .transform(({ widget_count, created_at, updated_at, ...template }) => ({
-    ...template,
-    widgetCount: widget_count,
-    createdAt: created_at,
-    updatedAt: updated_at,
   }));
 const paginationSchema = z
   .object({
@@ -196,13 +190,6 @@ const paginationSchema = z
   .strict()
   .refine(({ count, limit }) => count <= limit)
   .transform(({ has_more, ...page }) => ({ ...page, hasMore: has_more }));
-export const templateListSchema = z
-  .object({
-    items: z.array(templateSchema),
-    pagination: paginationSchema,
-  })
-  .strict()
-  .refine(({ items, pagination }) => items.length === pagination.count);
 export const boardListSchema = z
   .object({ items: z.array(boardSchema), pagination: paginationSchema })
   .strict()
@@ -268,30 +255,6 @@ export const boardPurgeInputSchema = z
     password: z.string().min(1).max(256),
   })
   .strict();
-export const personalSchema = z
-  .object({
-    favorite_board_ids: z
-      .array(uuidSchema)
-      .refine((ids) => new Set(ids).size === ids.length),
-    home_board_id: uuidSchema.nullable(),
-  })
-  .strict()
-  .transform(({ favorite_board_ids, home_board_id }) => ({
-    favoriteBoardIds: favorite_board_ids,
-    homeBoardId: home_board_id,
-  }));
-export const templateListOptionsSchema = z
-  .object({
-    limit: z.number().int().min(1).max(100).default(25),
-    offset: z.number().int().min(0).default(0),
-    sortBy: z.enum(["name", "created_at", "updated_at"]).default("name"),
-    sortOrder: z.enum(["asc", "desc"]).default("asc"),
-    search: z.string().trim().min(1).max(100).optional(),
-  })
-  .strict();
-export const templateCreateSchema = z
-  .object({ boardId: uuidSchema, name: named(80) })
-  .strict();
 export const boardListOptionsSchema = z
   .object({
     limit: z.number().int().min(1).max(100).default(25),
@@ -300,18 +263,14 @@ export const boardListOptionsSchema = z
     sortOrder: z.enum(["asc", "desc"]).default("asc"),
     status: z.enum(["active", "archived", "all"]).default("active"),
     search: z.string().trim().min(1).max(100).optional(),
+    scope: boardScopeSchema.optional(),
     departmentId: uuidSchema.optional(),
-    favoritesOnly: z.boolean().default(false),
   })
   .strict();
 export const boardCreateSchema = z
   .object({
     name: z.string().trim().min(1).max(200),
     description: z.string().trim().nullable().optional(),
-    departmentId: uuidSchema.nullable().optional(),
-    defaultSection: z
-      .enum(["overview", "calendar", "announcements"])
-      .optional(),
   })
   .strict();
 export const revisionSchema = z.number().int().min(1);
@@ -328,13 +287,53 @@ export type BoardPurgePreview = z.output<typeof boardPurgePreviewSchema>;
 export type BoardListOptions = z.input<typeof boardListOptionsSchema>;
 export type BoardCreateInput = z.input<typeof boardCreateSchema>;
 export type BoardUpdateInput = z.input<typeof boardUpdateSchema>;
-export type BoardTemplate = z.output<typeof templateSchema>;
-export type BoardPersonalState = z.output<typeof personalSchema>;
-export type BoardTemplateListOptions = z.input<
-  typeof templateListOptionsSchema
->;
+export type BoardScope = z.output<typeof boardScopeSchema>;
+export type BoardAccessLevel = z.output<typeof accessLevelSchema>;
 export type BoardConfigurationDownload = {
   blob: Blob;
   filename: typeof EXPORT_FILENAME;
   bundle: PortableBoardBundle;
 };
+
+export const boardGroupsSchema = z
+  .object({
+    board_id: uuidSchema,
+    revision: z.number().int().min(1),
+    groups: z
+      .array(
+        z
+          .object({
+            group_id: uuidSchema,
+            name: z.string().min(1).max(200),
+            level: accessLevelSchema,
+          })
+          .strict(),
+      )
+      .max(100),
+  })
+  .strict()
+  .transform((value) => ({
+    boardId: value.board_id,
+    revision: value.revision,
+    groups: value.groups.map((group) => ({
+      groupId: group.group_id,
+      name: group.name,
+      level: group.level,
+    })),
+  }));
+export const boardGroupsInputSchema = z
+  .object({
+    revision: revisionSchema,
+    groups: z
+      .array(
+        z.object({ groupId: uuidSchema, level: accessLevelSchema }).strict(),
+      )
+      .max(100)
+      .refine(
+        (groups) =>
+          new Set(groups.map((group) => group.groupId)).size === groups.length,
+      ),
+  })
+  .strict();
+export type BoardGroups = z.output<typeof boardGroupsSchema>;
+export type BoardGroupsInput = z.input<typeof boardGroupsInputSchema>;

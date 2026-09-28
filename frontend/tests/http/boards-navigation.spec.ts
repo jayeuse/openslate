@@ -1,16 +1,16 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/test";
 
 const boardId = "00000000-0000-4000-8000-000000000021";
 const userId = "00000000-0000-4000-8000-000000000022";
 const board = {
   id: boardId,
-  owner_id: userId,
+  scope: "project",
   department_id: null,
   name: "Authorized operations",
   description: null,
   status: "active",
-  default_section: "calendar",
   revision: 1,
+  level: "read",
   created_at: "2026-09-23T00:00:00Z",
   updated_at: "2026-09-23T00:00:00Z",
 };
@@ -40,8 +40,6 @@ async function installServerBoards(page: Page) {
         contentType: "application/json",
         body: JSON.stringify(body),
       });
-    if (path === "/api/boards/personal")
-      return reply(200, { favorite_board_ids: [], home_board_id: null });
     if (path === "/api/boards")
       return reply(200, {
         items: [board],
@@ -55,9 +53,13 @@ async function installServerBoards(page: Page) {
       });
     if (path === `/api/boards/${boardId}`) return reply(200, board);
     if (path === `/api/boards/${boardId}/my-access`)
-      return reply(200, { view: true, edit: true, manage: true });
-    if (path === `/api/boards/${boardId}/announcement-authors`)
-      return reply(200, []);
+      return reply(200, {
+        level: "read",
+        read: true,
+        write: false,
+        manage: false,
+      });
+    if (path === `/api/boards/${boardId}/post-authors`) return reply(200, []);
     return reply(404, { detail: "Content route unavailable" });
   });
 }
@@ -97,21 +99,21 @@ test("Board content sections stay on the authorized UUID and fail closed when co
 
   await page
     .getByRole("navigation", { name: "Main navigation", exact: true })
-    .getByRole("link", { name: "Announcements", exact: true })
+    .getByRole("link", { name: "Posts", exact: true })
     .click();
   await expect(page).toHaveURL(
     (url) =>
       url.pathname === "/boards" &&
       url.searchParams.get("board") === boardId &&
-      url.searchParams.get("section") === "announcements",
+      url.searchParams.get("section") === "posts",
   );
   await expect(
     page.getByText(
-      "No announcement content is shown. Retry or ask a Board manager to check your access.",
+      "No post content is shown. Retry or ask a Board manager to check your access.",
     ),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Manager-visible announcement" }),
+    page.getByRole("heading", { name: "Manager-visible post" }),
   ).toHaveCount(0);
 });
 
@@ -180,7 +182,7 @@ test("a slow Board list shows its skeleton only after 300ms, and for at least 30
     )
     .toBe("false");
   await expect(
-    region.getByRole("region", { name: "Board calendar" }),
+    region.getByRole("region", { name: "Record summaries" }),
   ).toBeVisible();
   await expect(label).toHaveCount(0);
 });

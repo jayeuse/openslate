@@ -1,4 +1,3 @@
-import type { AudienceRef } from "./model";
 import type {
   OpenViewDataSourceField,
   OpenViewQueryDefinition,
@@ -38,7 +37,6 @@ export const OPERATOR_LABELS: Record<OpenViewFilterOperator, string> = {
 
 export type SavedDraft = {
   name: string;
-  audience: AudienceRef;
   definition: OpenViewQueryDefinition;
   presentation: OpenViewSavedView["presentation"];
 };
@@ -90,7 +88,6 @@ export function emptyPresentation(
 export function draftForView(view: OpenViewSavedView): SavedDraft {
   return {
     name: view.name,
-    audience: view.audience,
     definition: view.definition,
     presentation: view.presentation,
   };
@@ -127,8 +124,7 @@ export function changedSavedViewFields(
 ): string[] {
   const changed: string[] = [];
   if (base.name !== latest.name) changed.push("Name");
-  if (JSON.stringify(base.audience) !== JSON.stringify(latest.audience))
-    changed.push("Audience");
+  if (base.isDefault !== latest.isDefault) changed.push("Default view");
   if (JSON.stringify(base.definition) !== JSON.stringify(latest.definition))
     changed.push("Query, filters, or sort");
   if (
@@ -163,6 +159,7 @@ export function operatorChoices(
       ? [...common, "contains", "in"]
       : [...common, "contains", "prefix", "suffix"];
   }
+  if (type === "user") return common;
   if (["number", "decimal", "int", "date", "datetime"].includes(type))
     return [...common, "lt", "lte", "gt", "gte"];
   return common;
@@ -250,19 +247,4 @@ export function isFilterReady(
   return (
     filter.value !== null && filter.value !== undefined && filter.value !== ""
   );
-}
-
-export function audienceValue(audience: AudienceRef): string {
-  if (audience.kind === "private" || audience.kind === "everyone")
-    return audience.kind;
-  return `${audience.kind}:${audience.id}`;
-}
-
-export function parseAudience(value: string): AudienceRef {
-  if (value === "everyone") return { kind: "everyone" };
-  if (value.startsWith("role:"))
-    return { kind: "role", id: value.slice("role:".length) };
-  if (value.startsWith("identity:"))
-    return { kind: "identity", id: value.slice("identity:".length) };
-  return { kind: "private" };
 }

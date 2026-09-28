@@ -68,7 +68,6 @@ import {
   ServerArchivedBoardEventsDisplay,
   type BoardEventLifecycleAction,
 } from "./server-backed-board-event-lifecycle";
-import { ServerBoardReminders } from "./server-backed-board-reminders";
 import {
   MonthGrid,
   MyEventsDisplay,
@@ -104,7 +103,7 @@ function sameEventContent(left: BoardEvent, right: BoardEvent): boolean {
     left.timezoneName === right.timezoneName &&
     left.recurrence === right.recurrence &&
     left.repeatUntil === right.repeatUntil &&
-    JSON.stringify(left.audience) === JSON.stringify(right.audience) &&
+    JSON.stringify(left.reminders) === JSON.stringify(right.reminders) &&
     left.archived === right.archived
   );
 }
@@ -496,6 +495,7 @@ export function ServerBackedBoardCalendar({
       currentAccess,
       boardActive,
       kind,
+      viewerId,
     );
     if (!action) return;
     setLifecycleNotice(null);
@@ -506,21 +506,34 @@ export function ServerBackedBoardCalendar({
     const action = lifecycleTarget;
     if (!action || lifecyclePendingRef.current) return;
     const page = action.kind === "archive" ? calendarPage : archivedPage;
-    const listed =
+    const listedEvent =
       action.kind === "archive"
-        ? calendarPage?.items.some(
+        ? calendarPage?.items.find(
             (item) =>
               item.event.id === action.eventId &&
-              item.event.revision === action.eventRevision,
-          )
+              item.event.revision === action.eventRevision &&
+              !item.event.archived,
+          )?.event
+        : undefined;
+    const listed =
+      action.kind === "archive"
+        ? listedEvent !== undefined
         : archivedPage?.items.some(
             (item) =>
               item.id === action.eventId &&
               item.revision === action.eventRevision,
           );
+    const authorized =
+      action.kind === "restore"
+        ? canManage
+        : boardActive &&
+          !accessDenied &&
+          (currentAccess?.manage === true ||
+            (currentAccess?.edit === true &&
+              listedEvent?.authorId === viewerId));
     if (
       action.boardId !== boardId ||
-      !canManage ||
+      !authorized ||
       !page ||
       page.boardRevision !== action.boardRevision ||
       !listed
@@ -851,7 +864,25 @@ export function ServerBackedBoardCalendar({
         currentAccess,
         boardActive,
         "archive",
+        viewerId,
       ) !== null
+    );
+  }
+
+  function canConfirmLifecycle(action: BoardEventLifecycleAction | null) {
+    if (!action || action.boardId !== boardId) return false;
+    if (action.kind === "restore") return canManage;
+    const listed = calendarPage?.items.find(
+      (item) =>
+        item.event.id === action.eventId &&
+        item.event.revision === action.eventRevision &&
+        !item.event.archived,
+    );
+    return (
+      boardActive &&
+      !accessDenied &&
+      (currentAccess?.manage === true ||
+        (currentAccess?.edit === true && listed?.event.authorId === viewerId))
     );
   }
 
@@ -887,7 +918,7 @@ export function ServerBackedBoardCalendar({
               Calendar
             </h2>
             <p className="text-muted-foreground">
-              Plan upcoming work and keep track of your reminders.
+              Events for everyone who can read this Board.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1170,8 +1201,12 @@ export function ServerBackedBoardCalendar({
                         </dd>
                       </div>
                       <div>
-                        <dt className="font-medium">Audience</dt>
-                        <dd>{conflict.latest.event.audience.kind}</dd>
+                        <dt className="font-medium">Reminders</dt>
+                        <dd>
+                          {conflict.latest.event.reminders.length > 0
+                            ? conflict.latest.event.reminders.length
+                            : "None"}
+                        </dd>
                       </div>
                       <div>
                         <dt className="font-medium">Links</dt>
@@ -1215,8 +1250,8 @@ export function ServerBackedBoardCalendar({
                   !conflict.latest.event.archived && (
                     <p className="text-muted-foreground text-sm">
                       Replacing uses your draft’s title, details, location,
-                      schedule, and recurrence. Audience changes only if you
-                      selected a new one.{" "}
+                      schedule, and recurrence. Reminders change only if you
+                      changed them.{" "}
                       {boardEventLinksChanged(activeDraft)
                         ? "Your edited links will replace the latest links."
                         : "The latest links will be kept."}
@@ -1306,7 +1341,7 @@ export function ServerBackedBoardCalendar({
                 <Alert variant="warning">
                   Showing {calendarPage.items.length} of{" "}
                   {calendarPage.pagination.total} occurrences. Load the next
-                  page to include more events and reminder choices.
+                  page to include more events.
                 </Alert>
                 <Button
                   type="button"
@@ -1366,24 +1401,13 @@ export function ServerBackedBoardCalendar({
                   </div>
                 )}
               </div>
-              <aside
-                aria-label={
-                  view === "month" ? "Selected day and reminders" : "Reminders"
-                }
-                className="min-w-0 space-y-4"
-              >
-                {view === "month" && (
+              {view === "month" && (
+                <aside aria-label="Selected day" className="min-w-0 space-y-4">
                   <div id="server-board-calendar-day">
                     {displayCalendarEvents(selectedCalendarDate, true)}
                   </div>
-                )}
-                <ServerBoardReminders
-                  boardId={boardId}
-                  boardActive={boardActive}
-                  occurrences={calendarPage.items}
-                  refreshKey={calendarPage.boardRevision}
-                />
-              </aside>
+                </aside>
+              )}
             </div>
           </>
         )}
@@ -1484,7 +1508,10 @@ export function ServerBackedBoardCalendar({
           />
         )}
       <AlertDialog
-        open={lifecycleTarget?.boardId === boardId && canManage}
+        open={
+          lifecycleTarget?.boardId === boardId &&
+          canConfirmLifecycle(lifecycleTarget)
+        }
         onOpenChange={(open) => {
           if (!open && !lifecyclePending) setLifecycleTarget(null);
         }}

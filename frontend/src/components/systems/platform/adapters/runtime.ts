@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { initialPeople, type Person } from "../../access/domain/model";
+import { initialPeople, type Person } from "../../shared/data/sample-people";
 import { useSampleCommands } from "../../shared/runtime/sample-async";
 import {
   useSampleRuntime,

@@ -1,17 +1,17 @@
 """Empty document defaults for a new Sandbox workspace."""
 
-from app.systems.sandbox.designs.schemas import SandboxDocument
+from app.systems.sandbox.designs.schemas import DOCUMENT_SCHEMA_VERSION, SandboxDocument
 
 EMPTY_SANDBOX_DOCUMENT: dict[str, object] = {
     "kind": "openslate-sandbox",
-    "schemaVersion": 2,
+    "schemaVersion": DOCUMENT_SCHEMA_VERSION,
     "design": {
         "departments": [],
         "modules": [],
         "relationships": [],
         "layout": {},
     },
-    "automations": [],
+    "triggers": [],
     "scenarios": [],
 }
 

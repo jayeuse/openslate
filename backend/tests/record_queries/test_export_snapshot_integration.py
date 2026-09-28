@@ -66,7 +66,6 @@ class _ExportFixture:
                 module = Module(
                     department_id=department.id,
                     module_name=f"Export event {uuid7()}",
-                    is_schema_accepted=True,
                 )
                 database.add(module)
                 database.flush()

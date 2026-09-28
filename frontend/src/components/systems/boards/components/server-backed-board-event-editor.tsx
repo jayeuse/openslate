@@ -3,11 +3,14 @@
 import { Temporal } from "@js-temporal/polyfill";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldDescription,
   FieldGroup,
   FieldLabel,
+  FieldLegend,
+  FieldSet,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -17,42 +20,30 @@ import type {
   BoardEvent,
   BoardEventCreateInput,
   BoardEventPatchInput,
+  BoardEventReminderTiming,
 } from "../adapters/board-events-api";
 import type { BoardAttachmentVersions } from "../adapters/board-files-api";
-import {
-  BoardContentAudiencePicker,
-  type BoardContentAudienceSelection,
-} from "./board-content-audience-picker";
 import { ServerBoardAttachments } from "./server-backed-board-attachments";
 import { ServerBoardRecordLinks } from "./server-backed-board-record-links";
 
 type Recurrence = BoardEvent["recurrence"];
-type AudienceChoice = BoardContentAudienceSelection | "keep";
+/** The author's reminder choices, in the order the form shows them. */
+export const REMINDER_TIMINGS: readonly {
+  value: BoardEventReminderTiming;
+  label: string;
+}[] = [
+  { value: "1d", label: "1 day before" },
+  { value: "15m", label: "15 minutes before" },
+  { value: "start", label: "When it starts" },
+];
 
-function audienceSelection(
-  audience: BoardEvent["audience"] | null,
-): BoardContentAudienceSelection {
-  if (audience?.kind === "role")
-    return { kind: "role", targetId: audience.roleId };
-  if (audience?.kind === "user")
-    return { kind: "user", targetId: audience.userId };
-  if (audience?.kind === "department")
-    return { kind: "department", targetId: audience.departmentId };
-  return { kind: audience?.kind === "author" ? "author" : "everyone" };
-}
-
-function audienceInput(
-  selection: BoardContentAudienceSelection,
-): NonNullable<BoardEventCreateInput["audience"]> {
-  if (selection.kind === "everyone" || selection.kind === "author")
-    return { kind: selection.kind };
-  if (!("targetId" in selection) || !selection.targetId)
-    throw new BoardEventDraftError("Choose an active audience target.");
-  if (selection.kind === "role")
-    return { kind: "role", roleId: selection.targetId };
-  if (selection.kind === "user")
-    return { kind: "user", userId: selection.targetId };
-  return { kind: "department", departmentId: selection.targetId };
+function sameTimings(
+  left: readonly BoardEventReminderTiming[],
+  right: readonly BoardEventReminderTiming[],
+): boolean {
+  return (
+    left.length === right.length && left.every((item) => right.includes(item))
+  );
 }
 
 export type BoardEventDraft = {
@@ -71,8 +62,8 @@ export type BoardEventDraft = {
   timezoneName: string;
   recurrence: Recurrence;
   repeatUntil: string;
-  audience: AudienceChoice;
-  originalAudience: BoardEvent["audience"] | null;
+  reminders: BoardEventReminderTiming[];
+  originalReminders: BoardEventReminderTiming[] | null;
   startOffset: string;
   endOffset: string;
   originalTimezoneName: string | null;
@@ -135,7 +126,7 @@ export function prepareBoardEventConflictRetry(
     eventRevision: latest.event.revision,
     links: linksChanged ? draft.links : latestLinks,
     originalLinks: latestLinks.map((link) => ({ ...link })),
-    originalAudience: latest.event.audience,
+    originalReminders: [...latest.event.reminders],
   };
 }
 
@@ -202,8 +193,8 @@ export function newBoardEventDraft(
     timezoneName: defaultTimezone(),
     recurrence: "none",
     repeatUntil: "",
-    audience: { kind: "everyone" },
-    originalAudience: null,
+    reminders: [],
+    originalReminders: null,
     startOffset: "",
     endOffset: "",
     originalTimezoneName: null,
@@ -235,8 +226,8 @@ export function boardEventDraftFromEvent(event: BoardEvent): BoardEventDraft {
     timezoneName: event.timezoneName,
     recurrence: event.recurrence,
     repeatUntil: event.repeatUntil ?? "",
-    audience: "keep",
-    originalAudience: event.audience,
+    reminders: [...event.reminders],
+    originalReminders: [...event.reminders],
     startOffset:
       event.startAt === null
         ? ""
@@ -359,8 +350,11 @@ export function boardEventInputFromDraft(
     timezoneName: draft.timezoneName,
     recurrence: draft.recurrence,
     repeatUntil,
-    ...(draft.audience !== "keep" && {
-      audience: audienceInput(draft.audience),
+    ...((draft.originalReminders === null ||
+      !sameTimings(draft.reminders, draft.originalReminders)) && {
+      reminders: REMINDER_TIMINGS.map((item) => item.value).filter((value) =>
+        draft.reminders.includes(value),
+      ),
     }),
   };
   if (draft.eventId !== null && draft.eventRevision !== null) {
@@ -475,16 +469,43 @@ export function ServerBoardEventEditorForm({
               onChange={(event) => onChange({ location: event.target.value })}
             />
           </Field>
-          <BoardContentAudiencePicker
-            boardId={draft.boardId}
-            selection={
-              draft.audience === "keep"
-                ? audienceSelection(draft.originalAudience)
-                : draft.audience
-            }
-            disabled={busy}
-            onChange={(audience) => onChange({ audience })}
-          />
+          <FieldSet>
+            <FieldLegend className="text-sm font-medium">Reminders</FieldLegend>
+            <p className="text-muted-foreground text-sm">
+              Reminders notify everyone who can read this Board at delivery
+              time. They may arrive up to 15 minutes after the selected time.
+            </p>
+            <div className="flex flex-col">
+              {REMINDER_TIMINGS.map((timing) => {
+                const id = `live-board-event-reminder-${timing.value}`;
+                return (
+                  <Field
+                    key={timing.value}
+                    className="min-h-11 flex-row items-center gap-3"
+                  >
+                    <Checkbox
+                      id={id}
+                      disabled={busy}
+                      checked={draft.reminders.includes(timing.value)}
+                      onCheckedChange={(checked) =>
+                        onChange({
+                          reminders:
+                            checked === true
+                              ? [...draft.reminders, timing.value]
+                              : draft.reminders.filter(
+                                  (value) => value !== timing.value,
+                                ),
+                        })
+                      }
+                    />
+                    <FieldLabel htmlFor={id} className="font-normal">
+                      {timing.label}
+                    </FieldLabel>
+                  </Field>
+                );
+              })}
+            </div>
+          </FieldSet>
         </div>
         <Field>
           <FieldLabel>External links</FieldLabel>

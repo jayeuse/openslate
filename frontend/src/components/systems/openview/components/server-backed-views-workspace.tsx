@@ -1,7 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import type { Route } from "next";
 import { ApiError } from "@/lib/api";
 import { Columns3, MoreHorizontal, Settings2, X } from "lucide-react";
@@ -17,8 +25,6 @@ import {
   getOpenViewSavedView,
   queryOpenViewRecords,
   restoreOpenViewSavedView,
-  setOpenViewPersonalDefault,
-  unsetOpenViewPersonalDefault,
   updateOpenViewSavedView,
   type OpenViewDataSourceField,
   type OpenViewQueryDefinition,
@@ -26,6 +32,10 @@ import {
   type OpenViewSavedView,
 } from "../adapters/views-api";
 import { queryOpenViewWindowRecords } from "../adapters/window-api";
+import {
+  authMeOptions,
+  departmentsOptions,
+} from "../adapters/openview-queries";
 import { isCalendarDateField } from "./live-calendar";
 import { LiveKanban } from "./live-kanban";
 import { LiveCalendar } from "./live-calendar";
@@ -76,9 +86,9 @@ import {
   GuardedWorkspaceLink,
   useWorkspaceNavigationGuard,
 } from "@/components/workspace-navigation-guard";
-import { serializeOpenViewUrl, type AudienceRef } from "../domain/model";
+import { serializeOpenViewUrl } from "../domain/model";
+import { canManageOpenView } from "../domain/manage-access";
 import {
-  audienceValue,
   changedSavedViewFields,
   draftForView,
   duplicateViewName,
@@ -88,10 +98,14 @@ import {
   isFilterReady,
   normalizeFilterValues,
   OPERATOR_LABELS,
-  parseAudience,
   upsertSavedView,
 } from "../domain/server-view-draft";
 import type { SavedDraft } from "../domain/server-view-draft";
+import {
+  decodeTemporaryView,
+  encodeTemporaryView,
+  TEMPORARY_VIEW_PARAM,
+} from "../domain/temporary-view";
 import { useServerViewsResource } from "../hooks/use-server-views-resource";
 import { LiveGroupedResults } from "./live-grouped-results";
 import {
@@ -192,13 +206,41 @@ function groupName(value: string | null, label: string): string {
   return label;
 }
 
+function selectLabelForId(
+  field: OpenViewDataSourceField | undefined,
+  value: unknown,
+): string {
+  if (!field || field.type !== "select" || typeof value !== "string")
+    return "Unavailable option";
+  const options = field.config.options;
+  if (!Array.isArray(options)) return "Unavailable option";
+  const option = options.find(
+    (candidate): candidate is { id: string; label: string } =>
+      typeof candidate === "object" &&
+      candidate !== null &&
+      "id" in candidate &&
+      candidate.id === value &&
+      "label" in candidate &&
+      typeof candidate.label === "string",
+  );
+  return option?.label ?? "Unavailable option";
+}
+
 function filterSummary(
   filter: OpenViewQueryDefinition["filters"][number],
-  fieldName: string,
+  field: OpenViewDataSourceField | undefined,
 ): string {
+  const fieldName = field?.name ?? "Unavailable field";
   const label = OPERATOR_LABELS[filter.operator];
+  if (filter.expectedType === "user") return `${fieldName} ${label} person`;
   if (filter.value === null || filter.value === undefined)
     return `${fieldName} ${label}`;
+  if (filter.expectedType === "select") {
+    const values = Array.isArray(filter.value) ? filter.value : [filter.value];
+    return `${fieldName} ${label} ${values
+      .map((value) => selectLabelForId(field, value))
+      .join(", ")}`;
+  }
   const value = Array.isArray(filter.value)
     ? filter.value.join(", ")
     : typeof filter.value === "boolean"
@@ -236,28 +278,52 @@ function isAuthorizationDenied(error: unknown): boolean {
   return error instanceof ApiError && [401, 403].includes(error.status);
 }
 
+/** Replace the temporary View changes without a navigation or history entry. */
+function replaceTemporaryChanges(value: string | null) {
+  const url = new URL(window.location.href);
+  if (value) url.searchParams.set(TEMPORARY_VIEW_PARAM, value);
+  else url.searchParams.delete(TEMPORARY_VIEW_PARAM);
+  // Next syncs useSearchParams only for calls without its own history state.
+  window.history.replaceState(
+    null,
+    "",
+    `${url.pathname}${url.search}${url.hash}`,
+  );
+}
+
+function DepartmentName({
+  departmentId,
+  fallback,
+}: {
+  departmentId: string | undefined;
+  fallback: string;
+}) {
+  const departments = useQuery(departmentsOptions());
+  return (
+    departments.data?.find((item) => item.id === departmentId)?.name ?? fallback
+  );
+}
+
 export default function ServerBackedViewsWorkspace({
   invalidUrl,
 }: {
   invalidUrl: boolean;
 }) {
   const router = useRouter();
+  // Every navigation this workspace starts runs in this transition, so the
+  // temporary-changes mirror below never rewrites the address under it.
+  const [navigationPending, startNavigation] = useTransition();
   const searchParams = useSearchParams();
   const requestedModule = searchParams.get("module");
   const requestedView = searchParams.get("view");
   const requestedRecord = searchParams.get("record");
+  const requestedChanges = searchParams.get(TEMPORARY_VIEW_PARAM);
   const resource = useServerViewsResource(requestedModule);
   const {
     catalog,
     catalogHasMore,
     catalogLoading,
     catalogError,
-    audiences,
-    audienceError,
-    audienceLoading,
-    retryAudiences,
-    roleOptionsHasMore,
-    userOptionsHasMore,
     moduleId,
     moduleWorkspace,
     setModuleWorkspace,
@@ -268,7 +334,6 @@ export default function ServerBackedViewsWorkspace({
     retryMetadata,
     loadMoreCatalog,
     loadMoreModuleMetadata,
-    loadMoreAudienceOptions,
     refreshModule,
     retryCatalog,
     recordInvalidation,
@@ -302,20 +367,10 @@ export default function ServerBackedViewsWorkspace({
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
   const [saveOpen, setSaveOpen] = useState(false);
-  // After a successful retry the retry button is gone, so focus moves to
-  // the Audience choice it restored.
-  const focusAudienceAfterRetry = useRef(false);
-  useEffect(() => {
-    if (audienceLoading || !focusAudienceAfterRetry.current) return;
-    focusAudienceAfterRetry.current = false;
-    if (!audienceError)
-      document.getElementById("openview-save-audience")?.focus();
-  }, [audienceError, audienceLoading]);
   const [openViewPanel, setOpenViewPanel] = useState<
     "columns" | "layout" | null
   >(null);
   const [saveName, setSaveName] = useState("");
-  const [saveAudience, setSaveAudience] = useState("private");
   const [saveError, setSaveError] = useState("");
   const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -346,9 +401,11 @@ export default function ServerBackedViewsWorkspace({
 
   useEffect(() => {
     if (!catalog || !moduleId || requestedModule) return;
-    router.replace(
-      serializeOpenViewUrl({ section: "views", module: moduleId }) as Route,
-      { scroll: false },
+    startNavigation(() =>
+      router.replace(
+        serializeOpenViewUrl({ section: "views", module: moduleId }) as Route,
+        { scroll: false },
+      ),
     );
   }, [catalog, moduleId, requestedModule, router]);
 
@@ -367,9 +424,17 @@ export default function ServerBackedViewsWorkspace({
   const fields = currentWorkspace?.fields ?? [];
   const source = catalog?.find((item) => item.id === moduleId);
   const moduleName = source?.name;
-  const defaultViewId = currentWorkspace?.defaults.find(
-    (item) => item.moduleId === moduleId,
-  )?.viewId;
+  // The module's shared default view opens when the address names no view.
+  const defaultViewId = currentWorkspace?.views.find(
+    (view) => view.isDefault && !view.isDeleted,
+  )?.id;
+  const identity = useQuery(authMeOptions());
+  // Only a manager of the module creates, changes or archives its views.
+  const canManageViews = canManageOpenView(
+    identity.data,
+    source?.departmentId,
+    moduleId,
+  );
   const routedView = isUuid(requestedView) ? requestedView : undefined;
   const explicitUnsavedSelection = Boolean(
     moduleId && explicitUnsavedModules.has(moduleId),
@@ -387,7 +452,6 @@ export default function ServerBackedViewsWorkspace({
       : implicitDraftSelection === ""
         ? {
             name: "",
-            audience: { kind: "private" },
             definition: emptyDefinition(fields),
             presentation: emptyPresentation(fields),
           }
@@ -441,7 +505,6 @@ export default function ServerBackedViewsWorkspace({
     if (activeSaved) return draftForView(activeSaved);
     return {
       name: "",
-      audience: { kind: "private" },
       definition: emptyDefinition(fields),
       presentation: emptyPresentation(fields),
     };
@@ -456,6 +519,47 @@ export default function ServerBackedViewsWorkspace({
   useEffect(() => {
     dirtyRef.current = dirty;
   }, [dirty]);
+  // Temporary changes live in the page address so they can be bookmarked and
+  // shared; only a manager's save stores them. `draftState` stays the one
+  // owner of the draft: an address that arrives with a View (a link, reload,
+  // or back/forward) restores it once, and the address then mirrors it. A
+  // value the page wrote itself is never restored onto another View.
+  const temporaryChanges = dirty ? encodeTemporaryView(baseDraft, draft) : null;
+  const draftBaseReady = Boolean(
+    moduleId && currentWorkspace && (!routedView || activeSaved),
+  );
+  const restoredDraftKey = useRef<string | null>(null);
+  const mirroredChanges = useRef<string | null>(null);
+  useEffect(() => {
+    if (!draftBaseReady || navigationPending) return;
+    if (restoredDraftKey.current !== draftKey) {
+      restoredDraftKey.current = draftKey;
+      const arrived =
+        requestedChanges !== null &&
+        requestedChanges !== mirroredChanges.current &&
+        draftState?.key !== draftKey;
+      const restored = arrived
+        ? decodeTemporaryView(requestedChanges, baseDraft, fields)
+        : null;
+      if (restored && JSON.stringify(restored) !== JSON.stringify(baseDraft)) {
+        mirroredChanges.current = requestedChanges;
+        setDraftState({ key: draftKey, value: restored });
+        return;
+      }
+    }
+    mirroredChanges.current = temporaryChanges;
+    if (temporaryChanges !== requestedChanges)
+      replaceTemporaryChanges(temporaryChanges);
+  }, [
+    baseDraft,
+    draftBaseReady,
+    draftKey,
+    draftState,
+    fields,
+    navigationPending,
+    requestedChanges,
+    temporaryChanges,
+  ]);
   const activeFields = useMemo(
     () => new Map(fields.map((field) => [field.id, field])),
     [fields],
@@ -513,6 +617,9 @@ export default function ServerBackedViewsWorkspace({
       searchFields: [],
       deleted: "include",
     };
+    // The compiler cannot prove the stability of search-param values; this
+    // memoization keeps record reads anchored to the actual address value.
+    // eslint-disable-next-line react-hooks/preserve-manual-memoization
   }, [normalizedDraftDefinition, requestedRecord]);
   const draftHasUnsafeIntegerFilter = draft.definition.filters.some(
     hasUnsafeIntegerFilter,
@@ -953,8 +1060,8 @@ export default function ServerBackedViewsWorkspace({
           !timelineDeadlineField) ||
         (draft.presentation.timelineProgressFieldId != null &&
           !timelineProgressField)));
-  const currentDefault = defaultViewId === activeSaved?.id;
-  const canEditSaved = Boolean(activeSaved?.canEdit);
+  const currentDefault = Boolean(activeSaved?.isDefault);
+  const canEditSaved = Boolean(canManageViews && activeSaved?.canEdit);
   const quickSortFields = fields.filter((field) => queryFieldIds.has(field.id));
   const firstSort = draft.definition.sort[0];
   const quickSortValue = firstSort
@@ -985,11 +1092,7 @@ export default function ServerBackedViewsWorkspace({
       ],
     }));
   };
-  const archivedViews = moduleViews.filter(
-    (view) => view.isDeleted && view.canEdit,
-  );
-  const roleOptions = audiences.filter((item) => item.kind === "role");
-  const userOptions = audiences.filter((item) => item.kind === "identity");
+  const archivedViews = moduleViews.filter((view) => view.isDeleted);
   const saveTarget = canEditSaved ? activeSaved : undefined;
   const setRoute = useCallback(
     (
@@ -1000,16 +1103,23 @@ export default function ServerBackedViewsWorkspace({
       },
       replace = false,
     ) => {
+      const targetModule = patch.module === undefined ? moduleId : patch.module;
+      const view = Object.hasOwn(patch, "view")
+        ? patch.view
+        : selectedViewId || undefined;
       const target = serializeOpenViewUrl({
         section: "views",
-        module: patch.module === undefined ? moduleId : patch.module,
-        view: Object.hasOwn(patch, "view")
-          ? patch.view
-          : selectedViewId || undefined,
+        module: targetModule,
+        view,
         record: Object.hasOwn(patch, "record")
           ? patch.record
           : isUuid(requestedRecord)
             ? requestedRecord
+            : undefined,
+        // Opening or closing a record keeps the temporary changes.
+        changes:
+          targetModule === moduleId && view === (selectedViewId || undefined)
+            ? (temporaryChanges ?? undefined)
             : undefined,
       });
       if (
@@ -1018,10 +1128,14 @@ export default function ServerBackedViewsWorkspace({
         target === `${window.location.pathname}${window.location.search}`
       )
         return;
-      if (replace) router.replace(target as Route, { scroll: false });
-      else router.push(target as Route, { scroll: false });
+      startNavigation(() => {
+        if (replace) router.replace(target as Route, { scroll: false });
+        else router.push(target as Route, { scroll: false });
+      });
     },
-    [moduleId, requestedRecord, router, selectedViewId],
+    // This callback's identity tracks the current address and temporary draft.
+    // eslint-disable-next-line react-hooks/preserve-manual-memoization
+    [moduleId, requestedRecord, router, selectedViewId, temporaryChanges],
   );
 
   const openRecordFromResults = (
@@ -1201,7 +1315,7 @@ export default function ServerBackedViewsWorkspace({
         else updated.delete(moduleId);
         return updated;
       });
-      router.push(href, { scroll: false });
+      startNavigation(() => router.push(href, { scroll: false }));
     };
     if (dirty) setPendingNavigation({ href, resume, discardDraft: true });
     else resume();
@@ -1563,10 +1677,10 @@ export default function ServerBackedViewsWorkspace({
   const saveView = async (
     mode: "create" | "update",
     name: string,
-    audience: AudienceRef,
     resolveConflict = false,
   ) => {
     if (
+      !canManageViews ||
       !moduleId ||
       pendingAction ||
       incompleteFilters ||
@@ -1594,14 +1708,12 @@ export default function ServerBackedViewsWorkspace({
               id: saveTarget.id,
               revision: saveTarget.revision,
               name: cleanName,
-              audience,
               definition: normalizeFilterValues(draft.definition),
               presentation: draft.presentation,
             })
           : await createOpenViewSavedView({
               moduleId,
               name: cleanName,
-              audience,
               definition: normalizeFilterValues(draft.definition),
               presentation: draft.presentation,
             });
@@ -1649,10 +1761,9 @@ export default function ServerBackedViewsWorkspace({
           setSaveConflict({
             base: saveTarget,
             latest,
-            local: { ...local, name: cleanName, audience },
+            local: { ...local, name: cleanName },
           });
           setSaveName(cleanName);
-          setSaveAudience(audienceValue(audience));
           setSaveError("");
           setActionError("");
         } catch (refreshError) {
@@ -1675,7 +1786,7 @@ export default function ServerBackedViewsWorkspace({
 
   const saveChanges = () => {
     if (!activeSaved || !canEditSaved || saveConflict) return;
-    void saveView("update", activeSaved.name, activeSaved.audience);
+    void saveView("update", activeSaved.name);
   };
 
   const openSaveDialog = () => {
@@ -1685,7 +1796,6 @@ export default function ServerBackedViewsWorkspace({
     }
     setSaveError("");
     setSaveName(saveTarget?.name ?? "");
-    setSaveAudience(audienceValue(saveTarget?.audience ?? { kind: "private" }));
     setSaveOpen(true);
   };
 
@@ -1712,12 +1822,7 @@ export default function ServerBackedViewsWorkspace({
 
   const saveMyVersionOverLatest = () => {
     if (!saveConflict || pendingAction) return;
-    void saveView(
-      "update",
-      saveName.trim() || saveConflict.local.name,
-      parseAudience(saveAudience),
-      true,
-    );
+    void saveView("update", saveName.trim() || saveConflict.local.name, true);
   };
 
   const archiveView = async () => {
@@ -1731,6 +1836,7 @@ export default function ServerBackedViewsWorkspace({
       });
       const archivedView = {
         ...activeSaved,
+        isDefault: false,
         isDeleted: true,
         revision: activeSaved.revision + 1,
       };
@@ -1740,9 +1846,6 @@ export default function ServerBackedViewsWorkspace({
         return {
           ...previous,
           views: upsertSavedView(previous.views, archivedView),
-          defaults: previous.defaults.filter(
-            (entry) => entry.viewId !== activeSaved.id,
-          ),
         };
       });
       setDeepLinkView((current) =>
@@ -1763,7 +1866,7 @@ export default function ServerBackedViewsWorkspace({
   };
 
   const restoreView = async (view: OpenViewSavedView) => {
-    if (!view.canEdit || pendingAction) return;
+    if (!canManageViews || !view.canEdit || pendingAction) return;
     setArchivedError("");
     setPendingAction(`Restoring ${view.name}…`);
     try {
@@ -1798,51 +1901,49 @@ export default function ServerBackedViewsWorkspace({
   };
 
   const setDefault = async () => {
-    if (!activeSaved || pendingAction) return;
+    if (!activeSaved || !canEditSaved || pendingAction) return;
     setActionError("");
     setPendingAction(
       currentDefault
-        ? "Clearing personal default…"
-        : "Setting personal default…",
+        ? "Clearing the default view…"
+        : "Setting the default view…",
     );
     try {
-      if (currentDefault) {
-        await unsetOpenViewPersonalDefault(activeSaved.moduleId);
-        setModuleWorkspace((previous) =>
-          previous && previous.moduleId === activeSaved.moduleId
-            ? {
-                ...previous,
-                defaults: previous.defaults.filter(
-                  (item) => item.moduleId !== activeSaved.moduleId,
+      const saved = await updateOpenViewSavedView({
+        id: activeSaved.id,
+        revision: activeSaved.revision,
+        isDefault: !currentDefault,
+      });
+      // Setting a default clears the previous one on the server; reread the
+      // module so every view shows its current revision.
+      setModuleWorkspace((previous) =>
+        previous && previous.moduleId === saved.moduleId
+          ? {
+              ...previous,
+              views: upsertSavedView(
+                previous.views.map((view) =>
+                  saved.isDefault && view.isDefault
+                    ? { ...view, isDefault: false }
+                    : view,
                 ),
-              }
-            : previous,
-        );
-        if (!routedView) setDraftState(null);
-        setNotice("The personal default was cleared.");
-      } else {
-        const nextDefault = await setOpenViewPersonalDefault({
-          moduleId: activeSaved.moduleId,
-          viewId: activeSaved.id,
-        });
-        setModuleWorkspace((previous) =>
-          previous && previous.moduleId === activeSaved.moduleId
-            ? {
-                ...previous,
-                defaults: [
-                  ...previous.defaults.filter(
-                    (item) => item.moduleId !== activeSaved.moduleId,
-                  ),
-                  nextDefault,
-                ],
-              }
-            : previous,
-        );
-        setNotice(`“${activeSaved.name}” is your personal default view.`);
-      }
+                saved,
+              ),
+            }
+          : previous,
+      );
+      setDeepLinkView((current) =>
+        current?.id === saved.id ? saved : current,
+      );
+      if (!saved.isDefault && !routedView) setDraftState(null);
+      setNotice(
+        saved.isDefault
+          ? `“${saved.name}” is now the default view of this module.`
+          : "The default view was cleared.",
+      );
+      refreshModule();
     } catch (error) {
       setActionError(
-        messageFor(error, "The personal default could not be changed."),
+        messageFor(error, "The default view could not be changed."),
       );
     } finally {
       setPendingAction("");
@@ -1881,7 +1982,6 @@ export default function ServerBackedViewsWorkspace({
       const duplicated = await createOpenViewSavedView({
         moduleId,
         name: duplicateViewName(activeSaved.name, moduleViews),
-        audience: { kind: "private" },
         definition: normalizeFilterValues(submittedDraft.definition),
         presentation: submittedDraft.presentation,
       });
@@ -2034,7 +2134,7 @@ export default function ServerBackedViewsWorkspace({
             data-slot="card"
             className="bg-card border-card-edge shadow-card flex flex-wrap items-end justify-between gap-3 rounded-[var(--radius)] border p-4 sm:p-5"
           >
-            <div className="min-w-0 flex-1 sm:max-w-sm">
+            <div className="w-full min-w-0 sm:max-w-sm sm:flex-1">
               <Field>
                 <FieldLabel htmlFor="openview-data-source">
                   Data source
@@ -2056,7 +2156,10 @@ export default function ServerBackedViewsWorkspace({
                         resume: () => router.push(href),
                         discardDraft: true,
                       });
-                    else router.push(href, { scroll: false });
+                    else
+                      startNavigation(() =>
+                        router.push(href, { scroll: false }),
+                      );
                   }}
                 >
                   {(catalog ?? []).map((item) => (
@@ -2067,7 +2170,11 @@ export default function ServerBackedViewsWorkspace({
                 </Select>
               </Field>
               <p className="text-muted-foreground mt-2 text-xs">
-                {moduleName ?? "Data source"} · {fields.length} active fields
+                <DepartmentName
+                  departmentId={source?.departmentId}
+                  fallback="Department unavailable"
+                />{" "}
+                · {fields.length} active fields
               </p>
               {catalogHasMore ? (
                 <Button
@@ -2081,7 +2188,7 @@ export default function ServerBackedViewsWorkspace({
                 </Button>
               ) : null}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
               <Field className="min-w-56 flex-1 sm:flex-none">
                 <FieldLabel htmlFor="openview-saved-view">
                   Saved view
@@ -2118,16 +2225,14 @@ export default function ServerBackedViewsWorkspace({
           </header>
 
           {currentWorkspace &&
-          (currentWorkspace.fieldsHasMore ||
-            currentWorkspace.viewsHasMore ||
-            currentWorkspace.defaultsHasMore) ? (
+          (currentWorkspace.fieldsHasMore || currentWorkspace.viewsHasMore) ? (
             <Alert
               role="note"
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <span>
-                OpenView loads metadata in bounded pages. More fields, saved
-                views, or defaults are available.
+                OpenView loads metadata in bounded pages. More fields or saved
+                views are available.
               </span>
               <Button
                 type="button"
@@ -2294,7 +2399,7 @@ export default function ServerBackedViewsWorkspace({
                   </Button>
                 </EmptyContent>
               </Empty>
-            ) : !moduleName ? (
+            ) : !moduleName || !moduleId ? (
               <Empty>
                 <EmptyHeader>
                   <EmptyTitle>No data source selected</EmptyTitle>
@@ -2319,10 +2424,22 @@ export default function ServerBackedViewsWorkspace({
                           Revision {activeSaved.revision}
                         </Badge>
                       ) : null}
+                      {activeSaved?.isDefault ? (
+                        <Badge variant="outline">Department default</Badge>
+                      ) : null}
                       {dirty ? (
-                        <Badge variant="outline">Unsaved changes</Badge>
+                        <Badge variant="outline">Temporary changes</Badge>
                       ) : null}
                     </div>
+                    {dirty ? (
+                      <p className="text-muted-foreground w-full text-sm">
+                        These changes live in the page address. Share the link
+                        to share them.
+                        {!canManageViews
+                          ? " Only module managers can save the view."
+                          : null}
+                      </p>
+                    ) : null}
                     <div className="flex flex-wrap items-center gap-2">
                       {dirty ? (
                         <Button
@@ -2352,83 +2469,99 @@ export default function ServerBackedViewsWorkspace({
                           Save changes
                         </Button>
                       ) : null}
-                      <Button
-                        type="button"
-                        variant={canEditSaved && dirty ? "outline" : "default"}
-                        className="min-h-11"
-                        disabled={
-                          Boolean(pendingAction) ||
-                          incompleteFilters ||
-                          incompletePresentation
-                        }
-                        onClick={openSaveDialog}
-                      >
-                        {saveTarget ? "Save view" : "Save view as"}
-                      </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="min-h-11"
-                              aria-label="View actions"
-                            />
+                      {canManageViews && !saveTarget ? (
+                        <Button
+                          type="button"
+                          className="min-h-11"
+                          disabled={
+                            Boolean(pendingAction) ||
+                            incompleteFilters ||
+                            incompletePresentation
                           }
+                          onClick={openSaveDialog}
                         >
-                          <MoreHorizontal aria-hidden="true" />
-                          View actions
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="min-w-56">
-                          <DropdownMenuGroup>
-                            {activeSaved ? (
-                              <DropdownMenuItem
+                          Save view as
+                        </Button>
+                      ) : null}
+                      {canManageViews ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <Button
+                                type="button"
+                                variant="outline"
                                 className="min-h-11"
-                                disabled={
-                                  Boolean(pendingAction) ||
-                                  Boolean(saveConflict) ||
-                                  incompleteFilters ||
-                                  incompletePresentation
-                                }
-                                onClick={() => void duplicateActiveView()}
-                              >
-                                Duplicate view
-                              </DropdownMenuItem>
-                            ) : null}
-                            {activeSaved ? (
-                              <DropdownMenuItem
-                                className="min-h-11"
-                                disabled={Boolean(pendingAction)}
-                                onClick={() => {
-                                  if (currentDefault && !routedView)
-                                    confirmDraftDiscard(
-                                      () => void setDefault(),
-                                    );
-                                  else void setDefault();
-                                }}
-                              >
-                                {currentDefault
-                                  ? "Clear my default"
-                                  : "Set as my default"}
-                              </DropdownMenuItem>
-                            ) : null}
-                          </DropdownMenuGroup>
-                          {canEditSaved ? (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuGroup>
+                                aria-label="View actions"
+                              />
+                            }
+                          >
+                            <MoreHorizontal aria-hidden="true" />
+                            View actions
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-56">
+                            <DropdownMenuGroup>
+                              {saveTarget ? (
+                                <DropdownMenuItem
+                                  className="min-h-11"
+                                  disabled={
+                                    Boolean(pendingAction) ||
+                                    dirty ||
+                                    Boolean(saveConflict)
+                                  }
+                                  onClick={openSaveDialog}
+                                >
+                                  Rename view…
+                                </DropdownMenuItem>
+                              ) : null}
+                              {activeSaved && canManageViews ? (
+                                <DropdownMenuItem
+                                  className="min-h-11"
+                                  disabled={
+                                    Boolean(pendingAction) ||
+                                    Boolean(saveConflict) ||
+                                    incompleteFilters ||
+                                    incompletePresentation
+                                  }
+                                  onClick={() => void duplicateActiveView()}
+                                >
+                                  Duplicate view
+                                </DropdownMenuItem>
+                              ) : null}
+                              {activeSaved && canEditSaved ? (
                                 <DropdownMenuItem
                                   className="min-h-11"
                                   disabled={Boolean(pendingAction)}
-                                  onClick={() => setArchiveOpen(true)}
+                                  onClick={() => {
+                                    if (currentDefault && !routedView)
+                                      confirmDraftDiscard(
+                                        () => void setDefault(),
+                                      );
+                                    else void setDefault();
+                                  }}
                                 >
-                                  Archive view
+                                  {currentDefault
+                                    ? "Clear default view"
+                                    : "Make default view"}
                                 </DropdownMenuItem>
-                              </DropdownMenuGroup>
-                            </>
-                          ) : null}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                              ) : null}
+                            </DropdownMenuGroup>
+                            {canEditSaved ? (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuGroup>
+                                  <DropdownMenuItem
+                                    className="min-h-11"
+                                    disabled={Boolean(pendingAction)}
+                                    onClick={() => setArchiveOpen(true)}
+                                  >
+                                    Archive view
+                                  </DropdownMenuItem>
+                                </DropdownMenuGroup>
+                              </>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : null}
                     </div>
                   </div>
 
@@ -2476,6 +2609,7 @@ export default function ServerBackedViewsWorkspace({
                       filtersClassName="sm:grid-cols-1 xl:grid-cols-1"
                     >
                       <SavedViewFilterControls
+                        moduleId={moduleId}
                         logic={draft.definition.logic}
                         filters={draft.definition.filters}
                         fields={fields}
@@ -2495,7 +2629,7 @@ export default function ServerBackedViewsWorkspace({
                     {draft.definition.filters.length ? (
                       <div
                         aria-label="Active filters"
-                        className="flex min-w-0 flex-1 flex-wrap items-center gap-2"
+                        className="flex min-w-0 basis-full flex-wrap items-center gap-2 sm:flex-1 sm:basis-auto"
                       >
                         <span className="text-muted-foreground text-sm">
                           Active filters
@@ -2503,8 +2637,7 @@ export default function ServerBackedViewsWorkspace({
                         {draft.definition.filters.map((filter, index) => {
                           const summary = filterSummary(
                             filter,
-                            activeFields.get(filter.fieldId)?.name ??
-                              "Unavailable field",
+                            activeFields.get(filter.fieldId),
                           );
                           return (
                             <Button
@@ -2527,7 +2660,9 @@ export default function ServerBackedViewsWorkspace({
                       </div>
                     ) : (
                       <p className="text-muted-foreground text-sm">
-                        No active filters
+                        {draft.definition.search?.trim()
+                          ? `Search: ${draft.definition.search.trim()}`
+                          : "No active filters"}
                       </p>
                     )}
                     <div className="flex flex-wrap gap-2">
@@ -3013,12 +3148,20 @@ export default function ServerBackedViewsWorkspace({
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>
-                  {saveTarget ? "Update saved view" : "Save view"}
+                  {saveConflict
+                    ? "Update saved view"
+                    : saveTarget
+                      ? "Rename view"
+                      : "Save view"}
                 </DialogTitle>
                 <DialogDescription>
-                  Save this query for reuse. Audience settings control who can
-                  see it; record access remains governed by workspace
-                  permissions.
+                  {saveTarget ? "Rename" : "Save"} this view for everyone who
+                  can read this module in the{" "}
+                  <DepartmentName
+                    departmentId={source?.departmentId}
+                    fallback="current"
+                  />{" "}
+                  department. Record access still follows each person’s access.
                 </DialogDescription>
               </DialogHeader>
               {saveConflict ? (
@@ -3094,67 +3237,7 @@ export default function ServerBackedViewsWorkspace({
                     onChange={(event) => setSaveName(event.target.value)}
                   />
                 </Field>
-                <Field>
-                  <FieldLabel htmlFor="openview-save-audience">
-                    Audience
-                  </FieldLabel>
-                  <Select
-                    id="openview-save-audience"
-                    className="min-h-11"
-                    value={saveAudience}
-                    disabled={Boolean(pendingAction)}
-                    onValueChange={setSaveAudience}
-                  >
-                    <option value="private">Only me</option>
-                    <option value="everyone">Everyone</option>
-                    {roleOptions.map((item) => (
-                      <option key={item.id} value={`role:${item.id}`}>
-                        Role: {item.label}
-                      </option>
-                    ))}
-                    {userOptions.map((item) => (
-                      <option key={item.id} value={`identity:${item.id}`}>
-                        User: {item.label}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
               </FieldGroup>
-              {audienceError ? (
-                <Alert
-                  role="status"
-                  variant="warning"
-                  className="flex flex-wrap items-center justify-between gap-3"
-                >
-                  <span>{audienceError}</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={Boolean(pendingAction)}
-                    // aria-disabled keeps focus here if the retry fails again.
-                    aria-disabled={audienceLoading}
-                    onClick={() => {
-                      if (audienceLoading) return;
-                      focusAudienceAfterRetry.current = true;
-                      retryAudiences();
-                    }}
-                  >
-                    {audienceLoading ? "Retrying…" : "Retry roles and people"}
-                  </Button>
-                </Alert>
-              ) : null}
-              {roleOptionsHasMore || userOptionsHasMore ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={Boolean(pendingAction) || metadataLoadingMore}
-                  onClick={() => void loadMoreAudienceOptions()}
-                >
-                  Load more audience options
-                </Button>
-              ) : null}
               <DialogFooter>
                 <Button
                   type="button"
@@ -3176,15 +3259,11 @@ export default function ServerBackedViewsWorkspace({
                       !saveName.trim()
                     }
                     onClick={() =>
-                      void saveView(
-                        saveTarget ? "update" : "create",
-                        saveName,
-                        parseAudience(saveAudience),
-                      )
+                      void saveView(saveTarget ? "update" : "create", saveName)
                     }
                   >
                     {pendingAction ||
-                      (saveTarget ? "Update view" : "Save view")}
+                      (saveTarget ? "Rename view" : "Save view")}
                   </Button>
                 ) : null}
               </DialogFooter>
@@ -3273,18 +3352,20 @@ export default function ServerBackedViewsWorkspace({
                           Revision {view.revision}
                         </p>
                       </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={Boolean(pendingAction)}
-                        aria-label={`Restore ${view.name}`}
-                        onClick={() =>
-                          confirmDraftDiscard(() => void restoreView(view))
-                        }
-                      >
-                        Restore {view.name}
-                      </Button>
+                      {canManageViews && view.canEdit ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-11"
+                          disabled={Boolean(pendingAction)}
+                          aria-label={`Restore ${view.name}`}
+                          onClick={() =>
+                            confirmDraftDiscard(() => void restoreView(view))
+                          }
+                        >
+                          Restore {view.name}
+                        </Button>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
@@ -3348,7 +3429,7 @@ export default function ServerBackedViewsWorkspace({
                     if (!transition) return;
                     if (transition.discardDraft) setDraftState(null);
                     setPendingNavigation(null);
-                    transition.resume();
+                    startNavigation(transition.resume);
                   }}
                 >
                   Discard and continue

@@ -4,11 +4,11 @@ import {
   type Locator,
   type Page,
   type Route,
-} from "@playwright/test";
+} from "./helpers/test";
+import { captureOpenViewReview } from "./helpers/openview-review-capture";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";
-const roleId = "00000000-0000-4000-8000-000000000108";
 const duplicateReportId = "00000000-0000-4000-8000-000000000109";
 const moduleId = "00000000-0000-4000-8000-000000000103";
 const fieldId = "00000000-0000-4000-8000-000000000104";
@@ -16,6 +16,10 @@ const reportId = "00000000-0000-4000-8000-000000000105";
 const runId = "00000000-0000-4000-8000-000000000106";
 const scheduleId = "00000000-0000-4000-8000-000000000107";
 const timestamp = "2026-09-24T00:00:00Z";
+// A second department whose only module the member can read, not manage.
+const readOnlyDepartmentId = "00000000-0000-4000-8000-000000000110";
+const readOnlyModuleId = "00000000-0000-4000-8000-000000000111";
+const readOnlyReportId = "00000000-0000-4000-8000-000000000112";
 
 function pageOf<T>(items: T[], limit = 25, offset = 0, total = items.length) {
   return {
@@ -32,7 +36,6 @@ function pageOf<T>(items: T[], limit = 25, offset = 0, total = items.length) {
 
 const report = {
   id: reportId,
-  owner_id: userId,
   module_id: moduleId,
   name: "Operations review",
   subtitle: null,
@@ -46,14 +49,12 @@ const report = {
     group_by: null,
     include_row_count: false,
   },
-  audience: { kind: "private", role_id: null, user_id: null },
   is_deleted: false,
   created_at: timestamp,
   updated_at: timestamp,
 };
-type ReportFixture = Omit<typeof report, "audience" | "subtitle"> & {
+type ReportFixture = Omit<typeof report, "subtitle"> & {
   subtitle: string | null;
-  audience: { kind: string; role_id: string | null; user_id: string | null };
 };
 const run = {
   id: runId,
@@ -64,6 +65,12 @@ const run = {
   created_at: timestamp,
 };
 const newRunId = "00000000-0000-4000-8000-000000000900";
+const readOnlyReport = {
+  ...report,
+  id: readOnlyReportId,
+  module_id: readOnlyModuleId,
+  name: "Invoice review",
+};
 
 async function installReportsApi(
   page: Page,
@@ -76,6 +83,13 @@ async function installReportsApi(
     failSharedSecondPage?: boolean;
     distinctNewRun?: boolean;
     failFirstHistoryAfterRun?: boolean;
+    /** The user's level on the Report department; the default manages it. */
+    level?: "read" | "manage";
+    savedSchedule?: boolean;
+    /** The account role; the default is a member. */
+    role?: "admin" | "member";
+    /** Add a module (and a Report on it) that the member can only read. */
+    readOnlySource?: boolean;
   } = {},
 ) {
   let currentReport = initialReport;
@@ -125,10 +139,55 @@ async function installReportsApi(
       contentType: "application/json",
       body: JSON.stringify({
         id: userId,
-        role_id: roleId,
-        role: "member",
-        permissions: ["records.read", "records.write"],
+        role: options.role ?? "member",
+        access: [
+          {
+            department_id: ownerId,
+            module_id: null,
+            level: options.level ?? "manage",
+          },
+          ...(options.readOnlySource
+            ? [
+                {
+                  department_id: readOnlyDepartmentId,
+                  module_id: readOnlyModuleId,
+                  level: "read",
+                },
+              ]
+            : []),
+        ],
       }),
+    }),
+  );
+  await page.route("**/api/departments**", (route) =>
+    route.fulfill({
+      json: pageOf(
+        [
+          {
+            id: ownerId,
+            department_name: "Field operations",
+            created_at: timestamp,
+            updated_at: timestamp,
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+          ...(options.readOnlySource
+            ? [
+                {
+                  id: readOnlyDepartmentId,
+                  department_name: "Finance",
+                  created_at: timestamp,
+                  updated_at: timestamp,
+                  deleted_at: null,
+                  is_deleted: false,
+                  performed_by: null,
+                },
+              ]
+            : []),
+        ],
+        100,
+      ),
     }),
   );
   await page.route("**/api/views/data-sources**", (route) => {
@@ -138,7 +197,24 @@ async function installReportsApi(
         contentType: "application/json",
         body: JSON.stringify(
           pageOf(
-            [{ id: moduleId, name: "Assets", department_id: ownerId }],
+            [
+              {
+                id: moduleId,
+                name: "Assets",
+                department_id: ownerId,
+                title_field_id: null,
+              },
+              ...(options.readOnlySource
+                ? [
+                    {
+                      id: readOnlyModuleId,
+                      name: "Invoices",
+                      department_id: readOnlyDepartmentId,
+                      title_field_id: null,
+                    },
+                  ]
+                : []),
+            ],
             100,
           ),
         ),
@@ -150,7 +226,8 @@ async function installReportsApi(
           [
             {
               id: fieldId,
-              module_id: moduleId,
+              // Answer for the requested module: /api/views/data-sources/<id>/fields.
+              module_id: path.split("/")[4],
               name: "Asset",
               type: "text",
               required: true,
@@ -173,16 +250,10 @@ async function installReportsApi(
       const created = {
         ...initialReport,
         id: duplicateReportId,
-        owner_id: userId,
         module_id: body.module_id,
         name: body.name,
         subtitle: body.subtitle,
         recipe: body.recipe,
-        audience: body.audience ?? {
-          kind: "private",
-          role_id: null,
-          user_id: null,
-        },
         revision: 1,
         is_deleted: false,
       };
@@ -200,6 +271,8 @@ async function installReportsApi(
         contentType: "application/json",
         body: JSON.stringify(currentReport),
       });
+    if (path === `/api/reports/${readOnlyReportId}` && method === "GET")
+      return route.fulfill({ json: readOnlyReport });
     if (
       path === `/api/reports/${duplicateReportId}` &&
       method === "GET" &&
@@ -218,7 +291,6 @@ async function installReportsApi(
         name: body.name as string,
         subtitle: body.subtitle as string | null,
         recipe: body.recipe as typeof currentReport.recipe,
-        audience: body.audience as ReportFixture["audience"],
         revision: currentReport.revision + 1,
       };
       return route.fulfill({
@@ -254,18 +326,39 @@ async function installReportsApi(
           pageOf(
             sharedOnly
               ? []
-              : copiedReport
-                ? [currentReport, copiedReport]
-                : [currentReport],
+              : [
+                  currentReport,
+                  ...(copiedReport ? [copiedReport] : []),
+                  ...(options.readOnlySource ? [readOnlyReport] : []),
+                ],
           ),
         ),
       });
     if (path === `/api/reports/${reportId}/schedule` && method === "GET")
-      return route.fulfill({
-        status: 404,
-        contentType: "application/json",
-        body: JSON.stringify({ detail: "Report schedule not found" }),
-      });
+      return route.fulfill(
+        options.savedSchedule
+          ? {
+              json: {
+                id: scheduleId,
+                report_id: reportId,
+                revision: 1,
+                enabled: true,
+                cadence: "weekly",
+                timezone_name: "Asia/Manila",
+                local_time: "09:00",
+                weekday: 0,
+                month_day: null,
+                next_due_at: "2026-09-28T01:00:00Z",
+                created_at: timestamp,
+                updated_at: timestamp,
+              },
+            }
+          : {
+              status: 404,
+              contentType: "application/json",
+              body: JSON.stringify({ detail: "Report schedule not found" }),
+            },
+      );
     if (path === `/api/reports/${reportId}/schedule` && method === "POST") {
       scheduleWrites += 1;
       return route.fulfill({
@@ -411,6 +504,7 @@ test.describe("Reports in a non-UTC browser timezone", () => {
     );
     await page.getByRole("button", { name: "Create schedule" }).click();
     await expect(page.getByText("Schedule saved and enabled.")).toBeVisible();
+    await captureOpenViewReview(page, "report-manager-schedule");
     await page.getByRole("tab", { name: "Saved outputs" }).click();
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: /Download CSV/ }).click();
@@ -669,28 +763,116 @@ test("saved and available output actions fit a narrow viewport", async ({
   );
 });
 
-test("excluded Report owner cannot run it while eligible scheduling stays available", async ({
+test("a module reader runs a Report but cannot change, copy or schedule it", async ({
   page,
 }) => {
-  const excluded = {
-    ...report,
-    audience: { kind: "user", role_id: null, user_id: ownerId },
-  };
-  const api = await installReportsApi(page, false, excluded);
+  const api = await installReportsApi(page, false, report, {
+    level: "read",
+    savedSchedule: true,
+  });
   await page.goto("/openview?section=reports");
   await page.getByRole("button", { name: "Operations review" }).click();
 
-  await expect(page.getByRole("button", { name: "Run now" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Run now" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "New Report" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Edit report" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("button", { name: "Duplicate" })).toHaveCount(0);
   await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "not included in this Report audience" }),
-  ).toBeVisible();
+    page.getByRole("button", { name: "Report options" }),
+  ).toHaveCount(0);
+  await expect(page.getByText(/audience|owner/i)).toHaveCount(0);
   await page.getByRole("tab", { name: "Schedule" }).click();
   await expect(
     page.getByRole("checkbox", { name: "Enable scheduled runs" }),
-  ).toBeEnabled();
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Weekly on Monday at 09:00 (Asia/Manila)"),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Only a manager of this module changes the schedule."),
+  ).toBeVisible();
+  await captureOpenViewReview(page, "report-reader-schedule");
   expect(api.counts().manualRuns).toBe(0);
+});
+
+test("a new Report offers only data sources the member manages", async ({
+  page,
+}) => {
+  const api = await installReportsApi(page, false, report, {
+    readOnlySource: true,
+  });
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "New Report" }).click();
+
+  const source = page.getByRole("combobox", { name: "Data source" });
+  await expect(source.getByRole("option", { name: "Assets" })).toBeAttached();
+  await expect(source.getByRole("option", { name: "Invoices" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Close editor" }).click();
+
+  // A template on a module the member only reads cannot become a new Report.
+  await page
+    .getByLabel("Start from saved Report")
+    .selectOption(readOnlyReportId);
+  await page.getByRole("button", { name: "Start from saved Report" }).click();
+  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
+    "Copy of Invoice review",
+  );
+  await page.getByRole("button", { name: "Create Report" }).click();
+  await expect(
+    page.getByText("Choose a data source you manage for this Report"),
+  ).toBeVisible();
+  expect(api.reportCreates()).toBe(0);
+});
+
+test("an administrator's new Report offers every data source", async ({
+  page,
+}) => {
+  await installReportsApi(page, false, report, {
+    role: "admin",
+    readOnlySource: true,
+  });
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "New Report" }).click();
+
+  const source = page.getByRole("combobox", { name: "Data source" });
+  await expect(source.getByRole("option", { name: "Assets" })).toBeAttached();
+  await expect(source.getByRole("option", { name: "Invoices" })).toBeAttached();
+});
+
+test("saved Report cards name the department of their module", async ({
+  page,
+}) => {
+  await installReportsApi(page, false, report, { level: "read" });
+  await page.route("**/api/departments**", (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: ownerId,
+            department_name: "Field operations",
+            created_at: "2026-09-23T00:00:00Z",
+            updated_at: "2026-09-23T00:00:00Z",
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    }),
+  );
+  await page.goto("/openview?section=reports");
+  const card = page.getByRole("button", { name: /^Operations review/ });
+  await expect(card).toContainText("Field operations");
+  await expect(card).toHaveAccessibleName("Operations review Field operations");
 });
 
 test("duplicating a saved Report creates a separate draft on its first Save", async ({
@@ -705,7 +887,7 @@ test("duplicating a saved Report creates a separate draft on its first Save", as
     "Copy of Operations review",
   );
   await expect(
-    page.getByText("Save to create a separate Report with the same audience."),
+    page.getByText("Save to create a separate Report."),
   ).toBeVisible();
   expect(api.reportCreates()).toBe(0);
 
@@ -717,14 +899,15 @@ test("duplicating a saved Report creates a separate draft on its first Save", as
   expect(api.reportUpdates()).toBe(0);
   expect(api.createdReports()[0]?.response).toMatchObject({
     id: duplicateReportId,
-    owner_id: userId,
     name: "Copy of Operations review",
-    audience: report.audience,
     recipe: report.recipe,
   });
   await page.reload();
   await page
-    .getByRole("button", { name: "Operations review", exact: true })
+    .getByRole("button", {
+      name: "Operations review Field operations",
+      exact: true,
+    })
     .click();
   await page.getByRole("button", { name: "Edit report" }).click();
   await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
@@ -732,7 +915,10 @@ test("duplicating a saved Report creates a separate draft on its first Save", as
   );
   await page.getByRole("button", { name: "Close editor" }).click();
   await page
-    .getByRole("button", { name: "Copy of Operations review", exact: true })
+    .getByRole("button", {
+      name: "Copy of Operations review Field operations",
+      exact: true,
+    })
     .click();
   await page.getByRole("button", { name: "Edit report" }).click();
   await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
@@ -761,16 +947,18 @@ test("a saved Report can start an independent new Report through the template ch
   expect(api.reportUpdates()).toBe(0);
   expect(api.createdReports()[0]?.request).toMatchObject({
     name: "Copy of Operations review",
-    audience: report.audience,
     recipe: report.recipe,
   });
   await page.reload();
   await expect(
-    page.getByRole("button", { name: "Operations review", exact: true }),
+    page.getByRole("button", {
+      name: "Operations review Field operations",
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", {
-      name: "Copy of Operations review",
+      name: "Copy of Operations review Field operations",
       exact: true,
     }),
   ).toBeVisible();
@@ -835,7 +1023,7 @@ test("Report recipes open on demand and preserve cross-tab drafts when closed", 
   await page.getByRole("button", { name: "New Report" }).click();
   const editor = page.getByRole("dialog", { name: "New report" });
   await expect(editor).toBeVisible();
-  for (const tab of ["Basics", "Columns", "Advanced", "Audience"]) {
+  for (const tab of ["Basics", "Columns", "Advanced"]) {
     await expect(editor.getByRole("tab", { name: tab })).toBeVisible();
   }
   await expect(
@@ -850,10 +1038,7 @@ test("Report recipes open on demand and preserve cross-tab drafts when closed", 
   await expect(
     editor.getByRole("button", { name: "Add filter" }),
   ).toBeVisible();
-  await editor.getByRole("tab", { name: "Audience" }).click();
-  await expect(editor.getByLabel("Who can open saved runs?")).toHaveValue(
-    "private",
-  );
+  await expect(editor.getByRole("tab", { name: "Audience" })).toHaveCount(0);
   await editor.getByRole("tab", { name: "Basics" }).click();
   await editor.getByRole("button", { name: "Close editor" }).click();
 
@@ -882,5 +1067,146 @@ test("Report recipes open on demand and preserve cross-tab drafts when closed", 
     module_id: moduleId,
     name: "Quarterly review",
     recipe: { fields: [{ field_id: fieldId, expected_type: "text" }] },
+  });
+});
+
+test("Report filters display Select labels, submit stable IDs, and use module-eligible people", async ({
+  page,
+}) => {
+  const api = await installReportsApi(page);
+  const selectFieldId = "00000000-0000-4000-8000-000000000112";
+  const inServiceChoiceId = "00000000-0000-4000-8000-000000000113";
+  const inspectionChoiceId = "00000000-0000-4000-8000-000000000114";
+  const userFieldId = "00000000-0000-4000-8000-000000000115";
+  const eligibleUserId = "00000000-0000-4000-8000-000000000116";
+  const assignableUserRequests: string[] = [];
+  const globalUserRequests: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path === `/api/modules/${moduleId}/assignable-users`)
+      assignableUserRequests.push(path);
+    if (path === "/api/users" || path.startsWith("/api/users/"))
+      globalUserRequests.push(path);
+  });
+  await page.route(`**/api/views/data-sources/${moduleId}/fields**`, (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        pageOf(
+          [
+            {
+              id: fieldId,
+              module_id: moduleId,
+              name: "Asset",
+              type: "text",
+              required: true,
+              position: 0,
+              config: {},
+            },
+            {
+              id: selectFieldId,
+              module_id: moduleId,
+              name: "Status",
+              type: "select",
+              required: false,
+              position: 1,
+              config: {
+                options: [
+                  { id: inServiceChoiceId, label: "In service" },
+                  { id: inspectionChoiceId, label: "Inspection due" },
+                ],
+              },
+            },
+            {
+              id: userFieldId,
+              module_id: moduleId,
+              name: "Assignee",
+              type: "user",
+              required: false,
+              position: 2,
+              config: { kind: "user" },
+            },
+          ],
+          100,
+        ),
+      ),
+    }),
+  );
+  await page.route(`**/api/modules/${moduleId}/assignable-users**`, (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        pageOf(
+          [
+            {
+              id: eligibleUserId,
+              display_name: "Alex Reader",
+              username: "alex.reader",
+            },
+          ],
+          100,
+        ),
+      ),
+    }),
+  );
+
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "New Report" }).click();
+  const editor = page.getByRole("dialog", { name: "New report" });
+  await editor.getByLabel("Data source").selectOption(moduleId);
+  await editor.getByLabel("Report name").fill("Stable filters");
+  await editor.getByRole("tab", { name: "Columns" }).click();
+  await editor.getByRole("checkbox", { name: "Asset" }).check();
+  await editor.getByRole("tab", { name: "Advanced" }).click();
+
+  await editor.getByRole("button", { name: "Add filter" }).click();
+  await editor
+    .getByRole("combobox", { name: "Field" })
+    .nth(0)
+    .selectOption(selectFieldId);
+  await editor
+    .getByRole("combobox", { name: "Condition" })
+    .nth(0)
+    .selectOption("in");
+  const choices = editor.getByRole("group", { name: "Value" });
+  await choices.getByRole("checkbox", { name: "In service" }).check();
+  await choices.getByRole("checkbox", { name: "Inspection due" }).check();
+
+  await editor.getByRole("button", { name: "Add filter" }).click();
+  await editor
+    .getByRole("combobox", { name: "Field" })
+    .nth(1)
+    .selectOption(userFieldId);
+  await expect.poll(() => assignableUserRequests.length).toBeGreaterThan(0);
+  const personValue = editor.getByRole("combobox", { name: "Value" });
+  await expect(
+    personValue.getByRole("option", { name: "Alex Reader" }),
+  ).toBeAttached();
+  await personValue.selectOption(eligibleUserId);
+  await expect(editor.getByText(eligibleUserId, { exact: true })).toHaveCount(
+    0,
+  );
+  expect(globalUserRequests).toEqual([]);
+  await captureOpenViewReview(page, "reports-select-person-filters");
+
+  await editor.getByRole("button", { name: "Create Report" }).click();
+  await expect(editor).not.toBeVisible();
+  expect(api.createdReports()[0]?.request).toMatchObject({
+    recipe: {
+      filters: [
+        {
+          field_id: selectFieldId,
+          expected_type: "select",
+          operator: "in",
+          value: [inServiceChoiceId, inspectionChoiceId],
+        },
+        {
+          field_id: userFieldId,
+          expected_type: "user",
+          operator: "eq",
+          value: eligibleUserId,
+        },
+      ],
+    },
   });
 });

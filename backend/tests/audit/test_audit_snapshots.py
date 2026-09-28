@@ -58,7 +58,7 @@ def test_serialize_record_contains_only_local_profile_fields() -> None:
         email="alice@example.com",
         username="alice",
         status="active",
-        role_id=uuid7(),
+        role="member",
     )
 
     snapshot = serialize_record(user)
@@ -69,12 +69,11 @@ def test_serialize_record_contains_only_local_profile_fields() -> None:
         "provider_invitation_operation_id": None,
         "username": "alice",
         "display_name": None,
-        "identity_kind": None,
+        "role": "member",
         "job_title": None,
         "sponsor_user_id": None,
         "expires_at": None,
         "status": "active",
-        "role_id": str(user.role_id),
     }
     assert "password_hash" not in snapshot
     assert "id" not in snapshot

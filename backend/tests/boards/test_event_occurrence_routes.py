@@ -11,15 +11,16 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.event_router import router
-from app.systems.boards.models import Board, BoardGrant
+from app.systems.boards.models import Board
+from tests.boards.support import board_group
 
 
 def _actor(db: Session) -> User:
-    role = Role(role=f"calendar-{uuid7().hex}", permissions={"records.read": True})
-    db.add(role)
+    role = "member"
     db.flush()
     user_id = uuid7()
     actor = User(
@@ -27,7 +28,6 @@ def _actor(db: Session) -> User:
         email=f"calendar-{user_id.hex}@example.test",
         username=f"calendar_{user_id.hex[:12]}",
         status="active",
-        role_id=role.id,
         role=role,
     )
     db.add(actor)
@@ -48,19 +48,11 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner, hidden_viewer = _actor(db), _actor(db)
-    board = Board(owner_id=owner.id, name=f"Calendar {uuid7().hex[:12]}", status="active")
+    owner = _actor(db)
+    board = Board(scope="project", name=f"Calendar {uuid7().hex[:12]}", status="active")
     db.add(board)
     db.flush()
-    db.add(
-        BoardGrant(
-            board_id=board.id,
-            principal_type="user",
-            principal_user_id=hidden_viewer.id,
-            permission="view",
-            effect="allow",
-        )
-    )
+    board_group(db, board, [owner], AccessLevel.WRITE)
     spring_start = datetime(2026, 3, 7, 7, 30, tzinfo=UTC)
     spring = BoardEvent(
         board_id=board.id,
@@ -72,7 +64,6 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
         timezone_name="America/New_York",
         recurrence="daily",
         repeat_until=date(2026, 3, 9),
-        audience_kind="everyone",
     )
     db.add(spring)
     db.add(
@@ -84,7 +75,6 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
             start_date=date(2026, 3, 8),
             end_date=date(2026, 3, 8),
             timezone_name="America/New_York",
-            audience_kind="everyone",
         )
     )
     fall_start = datetime(2026, 10, 31, 5, 30, tzinfo=UTC)
@@ -99,7 +89,6 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
             timezone_name="America/New_York",
             recurrence="daily",
             repeat_until=date(2026, 11, 2),
-            audience_kind="everyone",
         )
     )
     monthly_event = BoardEvent(
@@ -112,22 +101,8 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
         timezone_name="UTC",
         recurrence="monthly",
         repeat_until=date(2026, 4, 30),
-        audience_kind="everyone",
     )
     db.add(monthly_event)
-    db.add(
-        BoardEvent(
-            board_id=board.id,
-            author_id=owner.id,
-            title="Hidden",
-            all_day=True,
-            start_date=date(2026, 3, 8),
-            end_date=date(2026, 3, 8),
-            timezone_name="UTC",
-            audience_kind="user",
-            audience_user_id=hidden_viewer.id,
-        )
-    )
     db.commit()
     root = f"/api/boards/{board.id}/events/occurrences"
     client = _client(db, owner)
@@ -170,7 +145,6 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
             timezone_name="UTC",
             recurrence="daily",
             repeat_until=date(2026, 5, 30),
-            audience_kind="everyone",
         )
     )
     db.commit()
@@ -187,16 +161,13 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
             start_date=date(2027, 1, 1),
             end_date=date(2027, 1, 1),
             timezone_name="UTC",
-            audience_kind="everyone",
         )
         for index in range(496)
     )
     db.commit()
     assert (
         db.scalar(
-            select(func.count(BoardEvent.id)).where(
-                BoardEvent.board_id == board.id, BoardEvent.audience_kind == "everyone"
-            )
+            select(func.count(BoardEvent.id)).where(BoardEvent.board_id == board.id)
         )
         == 501
     )
@@ -210,10 +181,11 @@ def test_event_occurrence_search_escapes_like_wildcards_and_filters_before_count
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner, target = _actor(db), _actor(db)
-    board = Board(owner_id=owner.id, name=f"Search calendar {uuid7().hex[:12]}", status="active")
+    owner = _actor(db)
+    board = Board(scope="project", name=f"Search calendar {uuid7().hex[:12]}", status="active")
     db.add(board)
     db.flush()
+    board_group(db, board, [owner], AccessLevel.READ)
     visible_literal = BoardEvent(
         board_id=board.id,
         author_id=owner.id,
@@ -222,7 +194,6 @@ def test_event_occurrence_search_escapes_like_wildcards_and_filters_before_count
         start_date=date(2026, 7, 4),
         end_date=date(2026, 7, 4),
         timezone_name="UTC",
-        audience_kind="everyone",
     )
     visible_similar = BoardEvent(
         board_id=board.id,
@@ -232,20 +203,8 @@ def test_event_occurrence_search_escapes_like_wildcards_and_filters_before_count
         start_date=date(2026, 7, 5),
         end_date=date(2026, 7, 5),
         timezone_name="UTC",
-        audience_kind="everyone",
     )
-    hidden = BoardEvent(
-        board_id=board.id,
-        author_id=owner.id,
-        title="Budget 100%_ secret",
-        all_day=True,
-        start_date=date(2026, 7, 6),
-        end_date=date(2026, 7, 6),
-        timezone_name="UTC",
-        audience_kind="user",
-        audience_user_id=target.id,
-    )
-    db.add_all((visible_literal, visible_similar, hidden))
+    db.add_all((visible_literal, visible_similar))
     db.commit()
 
     root = f"/api/boards/{board.id}/events/occurrences"
@@ -276,9 +235,10 @@ def test_timed_event_reads_and_occurrences_survive_non_utc_postgres_session(
 ) -> None:
     db = integration_owner_db
     owner = _actor(db)
-    board = Board(owner_id=owner.id, name=f"Offset calendar {uuid7().hex[:12]}", status="active")
+    board = Board(scope="project", name=f"Offset calendar {uuid7().hex[:12]}", status="active")
     db.add(board)
     db.flush()
+    board_group(db, board, [owner], AccessLevel.READ)
     event = BoardEvent(
         board_id=board.id,
         author_id=owner.id,
@@ -289,7 +249,6 @@ def test_timed_event_reads_and_occurrences_survive_non_utc_postgres_session(
         timezone_name="America/New_York",
         recurrence="daily",
         repeat_until=date(2026, 3, 9),
-        audience_kind="everyone",
     )
     db.add(event)
     db.commit()

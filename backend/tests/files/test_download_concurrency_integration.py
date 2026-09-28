@@ -11,13 +11,12 @@ from fastapi import Depends, Request
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import event, inspect, select
-from sqlalchemy.orm import joinedload
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.main import create_app
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.router import update_workspace
@@ -39,13 +38,11 @@ def committed_logo(guarded_db):
     Image.new("RGB", (2, 2)).save(output, format="PNG")
     content = output.getvalue()
     with AuditSession(engine) as db:
-        role_id = db.scalar(select(Role.id).where(Role.role == "admin"))
-        assert role_id is not None
         actor = User(
             id=actor_id,
             email=f"logo-concurrency-{actor_id}@example.com",
             username=f"logo_{actor_id.hex[:12]}",
-            role_id=role_id,
+            role="admin",
             status="active",
         )
         db.add(actor)
@@ -123,7 +120,7 @@ def client_for(engine, actor_id, storage):
                 event.remove(db, "after_begin", mark_reader)
 
     def actor(db: Annotated[AuditSession, Depends(get_db)]):
-        return db.scalar(select(User).options(joinedload(User.role)).where(User.id == actor_id))
+        return db.scalar(select(User).where(User.id == actor_id))
 
     app.dependency_overrides[get_db] = database
     app.dependency_overrides[get_current_user] = actor
@@ -208,7 +205,7 @@ def test_logo_mutation_during_storage_read_prevents_stale_delivery(
                 else:
                     profile = db.scalar(select(WorkspaceProfile))
                     actor = db.scalar(
-                        select(User).options(joinedload(User.role)).where(User.id == actor_id)
+                        select(User).where(User.id == actor_id)
                     )
                     update_workspace(
                         WorkspaceUpdate(revision=profile.revision, logo_file_id=None), actor, db

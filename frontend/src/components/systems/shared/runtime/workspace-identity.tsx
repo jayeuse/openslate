@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, type ReactNode } from "react";
-import { clearAccessDraftStorageExcept } from "../../access/state/draft-journal";
+import { clearAccessDraftStorageExcept } from "../../access/state/draft-journal-storage";
 
 const VerifiedWorkspaceIdentityContext = createContext<string | null>(null);
 const WORKSPACE_SNAPSHOT_KEY = "openslate.sample.v1";

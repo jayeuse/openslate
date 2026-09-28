@@ -1,11 +1,13 @@
-"""Dashboard widgets block module purge while they retain query references."""
+"""Dashboard widgets block a module or field purge while they retain query references.
+
+A department purge removes the department's own Dashboards with their widgets.
+"""
 
 from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
 from uuid6 import uuid7
-from views.test_access import actor
 
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
@@ -36,7 +38,6 @@ def _closed_module(db) -> tuple[Department, Module]:
     module = Module(
         department_id=department.id,
         module_name=f"Closed module {uuid7().hex}",
-        is_schema_accepted=True,
         is_deleted=True,
         deleted_at=now,
     )
@@ -50,7 +51,7 @@ def test_module_purge_inventory_includes_deleted_widgets_and_archived_dashboards
     module_id = uuid7()
     dashboard = Dashboard(
         id=uuid7(),
-        owner_id=uuid7(),
+        department_id=uuid7(),
         name="Multi-module review",
         revision=3,
         is_deleted=True,
@@ -81,7 +82,6 @@ def test_module_purge_inventory_includes_deleted_widgets_and_archived_dashboards
         id=module_id,
         department_id=uuid7(),
         module_name="Archived source",
-        is_schema_accepted=True,
         is_deleted=True,
         deleted_at=now,
         updated_at=now,
@@ -150,26 +150,24 @@ def test_module_purge_inventory_includes_deleted_widgets_and_archived_dashboards
 def test_module_purge_blocks_archived_and_deleted_dashboard_widgets_without_deleting_dashboard(
     integration_db,
 ) -> None:
-    owner = actor(integration_db)
-    _, module = _closed_module(integration_db)
+    department, module = _closed_module(integration_db)
     other_department = Department(department_name=f"Other dashboard module {uuid7().hex}")
     integration_db.add(other_department)
     integration_db.flush()
     other_module = Module(
         department_id=other_department.id,
         module_name="Another module",
-        is_schema_accepted=True,
     )
     integration_db.add(other_module)
     integration_db.flush()
     now = datetime.now(UTC)
     archived_dashboard = Dashboard(
-        owner_id=owner.id,
+        department_id=department.id,
         name="Archived multi-module dashboard",
         is_deleted=True,
         deleted_at=now,
     )
-    active_dashboard = Dashboard(owner_id=owner.id, name="Active dashboard")
+    active_dashboard = Dashboard(department_id=department.id, name="Active dashboard")
     integration_db.add_all([archived_dashboard, active_dashboard])
     integration_db.flush()
     archived_target_widget = DashboardWidget(
@@ -236,9 +234,8 @@ def test_module_purge_blocks_archived_and_deleted_dashboard_widgets_without_dele
 
 @pytest.mark.integration
 def test_module_purge_plan_drifts_when_its_dashboard_and_widget_change(integration_db) -> None:
-    owner = actor(integration_db)
-    _, module = _closed_module(integration_db)
-    dashboard = Dashboard(owner_id=owner.id, name="Purge drift dashboard")
+    department, module = _closed_module(integration_db)
+    dashboard = Dashboard(department_id=department.id, name="Purge drift dashboard")
     integration_db.add(dashboard)
     integration_db.flush()
     widget = DashboardWidget(
@@ -329,8 +326,7 @@ def _field_chart_config(
 def test_field_purge_blocks_retained_widget_reference_then_preserves_dashboard_on_repair(
     integration_db, location: str, field_type: FieldType
 ) -> None:
-    owner = actor(integration_db)
-    _, module = _closed_module(integration_db)
+    department, module = _closed_module(integration_db)
     now = datetime.now(UTC)
     target = Field(
         module_id=module.id,
@@ -356,7 +352,7 @@ def test_field_purge_blocks_retained_widget_reference_then_preserves_dashboard_o
     archived = location == "date_field"
     deleted = location == "measure"
     dashboard = Dashboard(
-        owner_id=owner.id,
+        department_id=department.id,
         name=f"Field purge {location}",
         is_deleted=archived,
         deleted_at=now if archived else None,
@@ -414,3 +410,42 @@ def test_field_purge_blocks_retained_widget_reference_then_preserves_dashboard_o
             AuditLog.action == AuditAction.DELETE,
         )
     ) is not None
+
+
+@pytest.mark.integration
+def test_department_purge_removes_its_dashboards_and_widgets(integration_db) -> None:
+    department, module = _closed_module(integration_db)
+    department.is_deleted = True
+    department.deleted_at = datetime.now(UTC)
+    now = datetime.now(UTC)
+    active = Dashboard(department_id=department.id, name="Department dashboard")
+    archived = Dashboard(
+        department_id=department.id, name="Archived", is_deleted=True, deleted_at=now
+    )
+    integration_db.add_all([active, archived])
+    integration_db.flush()
+    widget = DashboardWidget(dashboard_id=active.id, position=0, config=_chart_config(module))
+    integration_db.add(widget)
+    integration_db.commit()
+    ids = (department.id, active.id, archived.id, widget.id)
+
+    plan = plan_lifecycle(integration_db, "department", department.id, "purge", None)
+
+    assert not any(
+        blocker.code.value == "purge_dashboard_dependency" for blocker in plan.blockers
+    )
+    assert set(plan.scope_ids["dashboards"]) == {active.id, archived.id}
+    assert plan.scope_ids["dashboard_widgets"] == (widget.id,)
+    execute_lifecycle(integration_db, plan)
+
+    department_id, active_id, archived_id, widget_id = ids
+    assert integration_db.get(Department, department_id) is None
+    assert integration_db.get(Dashboard, active_id) is None
+    assert integration_db.get(Dashboard, archived_id) is None
+    assert integration_db.get(DashboardWidget, widget_id) is None
+    deletions = integration_db.scalars(
+        select(AuditLog.entity_id).where(
+            AuditLog.entity_type == "dashboards", AuditLog.action == AuditAction.DELETE
+        )
+    ).all()
+    assert {active_id, archived_id} <= set(deletions)

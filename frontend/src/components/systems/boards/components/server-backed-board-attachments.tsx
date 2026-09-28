@@ -25,17 +25,16 @@ type EventAttachmentTarget = {
   boardId: string;
   contentId: string;
 };
-type AnnouncementAttachmentTarget = {
-  kind: "announcement";
+type PostAttachmentTarget = {
+  kind: "post";
   boardId: string;
   contentId: string;
   view: "published" | "draft";
 };
 type ReadOnlyTarget =
-  | EventAttachmentTarget
-  | (AnnouncementAttachmentTarget & { view: "published" });
+  EventAttachmentTarget | (PostAttachmentTarget & { view: "published" });
 type EditableTarget =
-  EventAttachmentTarget | (AnnouncementAttachmentTarget & { view: "draft" });
+  EventAttachmentTarget | (PostAttachmentTarget & { view: "draft" });
 
 type ReadOnlyProps = {
   access: "read";
@@ -111,7 +110,7 @@ function formatSize(bytes: number): string {
 function targetKey(target: BoardAttachmentTarget): string {
   return target.kind === "event"
     ? `event:${target.boardId}:${target.contentId}`
-    : `announcement:${target.boardId}:${target.contentId}:${target.view}`;
+    : `post:${target.boardId}:${target.contentId}:${target.view}`;
 }
 
 function scanFailure(file: BoardAttachmentFile): Error | null {
@@ -146,7 +145,7 @@ export function ServerBoardAttachments(props: Props) {
   const kind = props.target.kind;
   const boardId = props.target.boardId;
   const contentId = props.target.contentId;
-  const view = props.target.kind === "announcement" ? props.target.view : null;
+  const view = props.target.kind === "post" ? props.target.view : null;
   const sourceKey = targetKey(props.target);
   const stableTarget = useMemo<BoardAttachmentTarget>(
     () =>
@@ -485,9 +484,7 @@ export function ServerBoardAttachments(props: Props) {
   }
 
   const title =
-    props.target.kind === "event"
-      ? "Event attachments"
-      : "Announcement attachments";
+    props.target.kind === "event" ? "Event attachments" : "Post attachments";
   const bytes = pendingFile?.expectedSize ?? null;
 
   return (

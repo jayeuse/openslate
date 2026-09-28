@@ -21,6 +21,7 @@ const fieldTypeSchema = z.enum([
   "date",
   "datetime",
   "select",
+  "user",
 ]);
 const operatorSchema = z.enum([
   "eq",
@@ -151,40 +152,12 @@ const wireConfigSchema = z
   .strict()
   .refine(validConfig);
 
-const inputAudienceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("everyone") }).strict(),
-  z.object({ kind: z.literal("private") }).strict(),
-  z.object({ kind: z.literal("role"), roleId: uuidSchema }).strict(),
-  z.object({ kind: z.literal("user"), userId: uuidSchema }).strict(),
-]);
-const wireAudienceSchema = z
-  .object({
-    kind: z.enum(["everyone", "private", "role", "user"]),
-    role_id: uuidSchema.nullable(),
-    user_id: uuidSchema.nullable(),
-  })
-  .strict()
-  .refine(
-    ({ kind, role_id, user_id }) =>
-      (kind === "role" && role_id !== null && user_id === null) ||
-      (kind === "user" && user_id !== null && role_id === null) ||
-      ((kind === "everyone" || kind === "private") &&
-        role_id === null &&
-        user_id === null),
-  )
-  .transform(({ kind, role_id, user_id }) => ({
-    kind,
-    roleId: role_id,
-    userId: user_id,
-  }));
-
 const inputWidgetSchema = z
   .object({
     name: z.string().trim().min(1).max(80),
     widgetType: z.enum(["summary", "workload", "records", "chart"]),
     moduleId: uuidSchema,
     config: inputConfigSchema,
-    audience: inputAudienceSchema,
   })
   .strict();
 const wireWidgetSchema = z
@@ -196,7 +169,6 @@ const wireWidgetSchema = z
     module_id: uuidSchema,
     position: z.number().int().min(0).max(11),
     config: wireConfigSchema,
-    audience: wireAudienceSchema,
     created_at: timestampSchema,
     updated_at: timestampSchema,
   })
@@ -283,7 +255,6 @@ const safeCodes: Record<string, string> = {
   stale_revision: "Board changed; reload before saving",
   board_archived: "Restore the Board before changing widgets",
   widget_invalid: "Unable to save Board widget",
-  audience_invalid: "The selected audience is unavailable",
   widget_limit: "A Board can contain at most 12 widgets",
   widget_order_invalid: "Order must contain the visible Board widgets",
 };
@@ -338,12 +309,6 @@ function serializeField(field: z.output<typeof inputFieldSchema>) {
 }
 
 function serializeWidget(widget: z.output<typeof inputWidgetSchema>) {
-  const audience =
-    widget.audience.kind === "role"
-      ? { kind: "role", role_id: widget.audience.roleId }
-      : widget.audience.kind === "user"
-        ? { kind: "user", user_id: widget.audience.userId }
-        : { kind: widget.audience.kind };
   return {
     name: widget.name,
     widget_type: widget.widgetType,
@@ -358,7 +323,6 @@ function serializeWidget(widget: z.output<typeof inputWidgetSchema>) {
       })),
       metric: widget.config.metric && serializeField(widget.config.metric),
     },
-    audience,
   };
 }
 

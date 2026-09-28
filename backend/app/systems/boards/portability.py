@@ -17,10 +17,10 @@ from app.systems.boards.portability_schemas import (
 from app.systems.boards.schemas import BoardCreate
 from app.systems.boards.widget_schemas import BoardWidgetConfig, BoardWidgetSpec
 from app.systems.sandbox.departments.models import Department
-from app.systems.sandbox.fields.models import Field
+from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.query import comparison_value
-from app.systems.sandbox.records.query_schemas import FieldReference, QueryFilter
+from app.systems.sandbox.records.query_schemas import FieldReference, QueryFilter, Scalar
 
 MAX_PORTABLE_BOARD_BYTES = 1024 * 1024
 
@@ -28,9 +28,10 @@ MAX_PORTABLE_BOARD_BYTES = 1024 * 1024
 class PortabilityError(ValueError):
     """Safe domain rejection; the caller maps the code to its route-local HTTP shape."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, message: str | None = None) -> None:
         self.code = code
-        super().__init__(code)
+        self.message = message
+        super().__init__(message or code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +54,7 @@ def _invalid_json_constant(value: str) -> object:
 
 
 def parse_portable_board(raw: bytes) -> PortableBoardBundle:
-    """Accept only a bounded UTF-8 v2 bundle, with no unknown or duplicate keys."""
+    """Accept only a bounded UTF-8 v3 bundle, with no unknown or duplicate keys."""
 
     if len(raw) > MAX_PORTABLE_BOARD_BYTES:
         raise PortabilityError("board_bundle_too_large")
@@ -109,7 +110,6 @@ def _modules(
             Module.module_name.in_(sorted(module_names)),
             Module.is_deleted.is_(False),
             Module.deleted_at.is_(None),
-            Module.is_schema_accepted.is_(True),
         )
         .order_by(Module.id)
         .with_for_update()
@@ -119,7 +119,7 @@ def _modules(
     for row in rows:
         department_name = department_names.get(row.department_id)
         key = (department_name, row.module_name) if department_name is not None else None
-        if not _active(row) or not row.is_schema_accepted or key not in sources or key in found:
+        if not _active(row) or key not in sources or key in found:
             raise PortabilityError("board_source_unavailable")
         assert key is not None
         found[key] = row
@@ -169,18 +169,76 @@ def _field_reference(
     return FieldReference(field_id=field.id, expected_type=reference.expected_type)
 
 
+def _select_option_labels(field: Field) -> dict[str, str]:
+    options = field.config.get("options")
+    if not isinstance(options, list) or not options:
+        raise PortabilityError("board_source_unavailable")
+    labels: dict[str, str] = {}
+    for option in options:
+        if not isinstance(option, dict) or set(option) != {"id", "label"}:
+            raise PortabilityError("board_source_unavailable")
+        option_id, label = option["id"], option["label"]
+        if not isinstance(option_id, str) or not isinstance(label, str):
+            raise PortabilityError("board_source_unavailable")
+        if option_id in labels or label in labels.values():
+            raise PortabilityError("board_source_unavailable")
+        labels[option_id] = label
+    return labels
+
+
+def _map_select_value(
+    value: Scalar | list[Scalar] | None, options: dict[str, str]
+) -> str | list[str] | None:
+    if value is None:
+        return None
+    values = value if isinstance(value, list) else [value]
+    mapped: list[str] = []
+    for item in values:
+        if not isinstance(item, str) or item not in options:
+            raise PortabilityError("board_source_unavailable")
+        mapped.append(options[item])
+    return mapped if isinstance(value, list) else mapped[0]
+
+
+def select_filter_labels(
+    field: Field, value: Scalar | list[Scalar] | None
+) -> str | list[str] | None:
+    """Export a live select predicate by portable labels, never installation IDs."""
+
+    return _map_select_value(value, _select_option_labels(field))
+
+
+def _select_filter_ids(field: Field, value: Scalar | list[Scalar] | None) -> str | list[str] | None:
+    labels = _select_option_labels(field)
+    return _map_select_value(value, {label: option_id for option_id, label in labels.items()})
+
+
+def reject_nonportable_person_filter(field: Field, value: Scalar | list[Scalar] | None) -> None:
+    if field.type == FieldType.USER and value is not None:
+        raise PortabilityError(
+            "board_bundle_invalid",
+            "Person filter values cannot be transferred in a Board bundle",
+        )
+
+
 def _filter(
     reference: PortableQueryFilter, module_id: UUID, fields: dict[tuple[UUID, str], Field]
 ) -> QueryFilter:
     field = fields.get((module_id, reference.name))
     if field is None or field.type != reference.expected_type:
         raise PortabilityError("board_source_unavailable")
+    reject_nonportable_person_filter(field, reference.value)
     try:
+        value = (
+            _select_filter_ids(field, reference.value)
+            if field.type == FieldType.SELECT
+            else reference.value
+        )
         predicate = QueryFilter(
             field_id=field.id,
             expected_type=reference.expected_type,
             operator=reference.operator,
-            value=reference.value,
+            value=value,
         )
         comparison_value(field, predicate)
     except (HTTPException, ValidationError, ValueError) as error:
@@ -201,8 +259,6 @@ def resolve_portable_board(db: Session, bundle: PortableBoardBundle) -> Resolved
         for widget in configuration.widgets
     }
     department_names = {name for name, _ in source_keys}
-    if configuration.department_name is not None:
-        department_names.add(configuration.department_name)
     departments = _departments(db, department_names)
     modules = _modules(db, source_keys, departments)
     references: dict[UUID, set[str]] = {}
@@ -246,14 +302,5 @@ def resolve_portable_board(db: Session, bundle: PortableBoardBundle) -> Resolved
         except ValidationError as error:
             raise PortabilityError("board_source_unavailable") from error
 
-    board = BoardCreate(
-        name=configuration.name,
-        description=configuration.description,
-        department_id=(
-            departments[configuration.department_name].id
-            if configuration.department_name is not None
-            else None
-        ),
-        default_section=configuration.default_section,
-    )
+    board = BoardCreate(name=configuration.name, description=configuration.description)
     return ResolvedBoardConfiguration(board=board, widgets=tuple(widgets))

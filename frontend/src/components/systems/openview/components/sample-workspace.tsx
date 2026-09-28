@@ -28,7 +28,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { initialPeople, initialRoles } from "../../access/domain/model";
+import { initialPeople, initialRoles } from "../../shared/data/sample-people";
 import {
   useSampleState,
   useSampleStorage,

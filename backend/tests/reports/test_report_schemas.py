@@ -12,8 +12,7 @@ from app.systems.openview.reports.models import (
     ReportRunRow,
 )
 from app.systems.openview.reports.schemas import (
-    ReportAudience,
-    ReportCreate,
+        ReportCreate,
     ReportRecipe,
     ReportUpdate,
 )
@@ -107,36 +106,15 @@ def test_report_create_trims_bounded_metadata_and_does_not_accept_owner_input() 
 
     assert payload.name == "Weekly operations"
     assert payload.subtitle == "Open cases"
-    assert payload.audience.kind == "private"
-    with pytest.raises(ValidationError):
-        ReportCreate(
-            module_id=uuid7(),
-            name="Private report",
-            owner_id=uuid7(),
-            recipe=recipe,
-        )
+    for extra in ({"owner_id": uuid7()}, {"audience": {"kind": "everyone"}}):
+        with pytest.raises(ValidationError):
+            ReportCreate.model_validate(
+                {"module_id": uuid7(), "name": "Report", "recipe": recipe, **extra}
+            )
     with pytest.raises(ValidationError):
         ReportCreate(module_id=uuid7(), name="x" * 81, recipe=recipe)
     with pytest.raises(ValidationError):
         ReportCreate(module_id=uuid7(), name="Valid", subtitle="x" * 161, recipe=recipe)
-
-
-def test_report_audience_requires_exactly_the_matching_target() -> None:
-    role_id, user_id = uuid7(), uuid7()
-    assert ReportAudience(kind="role", role_id=role_id).role_id == role_id
-    assert ReportAudience(kind="user", user_id=user_id).user_id == user_id
-    for definition in (
-        {"kind": "role"},
-        {"kind": "user"},
-        {"kind": "private", "user_id": user_id},
-        {"kind": "everyone", "role_id": role_id},
-        {"kind": "role", "role_id": role_id, "user_id": user_id},
-        {"kind": "unknown"},
-    ):
-        with pytest.raises(ValidationError):
-            ReportAudience.model_validate(definition)
-    with pytest.raises(ValidationError):
-        ReportUpdate(revision=1, audience=None)
 
 
 def test_report_update_requires_revision_and_a_nonempty_valid_change() -> None:
@@ -150,6 +128,8 @@ def test_report_update_requires_revision_and_a_nonempty_valid_change() -> None:
         ReportUpdate(revision=0, name="Updated")
     with pytest.raises(ValidationError):
         ReportUpdate(revision=3, name=None)
+    with pytest.raises(ValidationError):
+        ReportUpdate.model_validate({"revision": 3, "audience": {"kind": "everyone"}})
 
 
 def test_report_update_accepts_source_switch_with_nonempty_recipe_contract() -> None:
@@ -164,28 +144,17 @@ def test_report_update_accepts_source_switch_with_nonempty_recipe_contract() -> 
         ReportUpdate(revision=4, module_id=module_id, recipe={"fields": []})
 
 
-def test_report_mapping_is_private_revisioned_and_module_scoped() -> None:
+def test_report_mapping_is_revisioned_and_module_scoped_without_an_owner() -> None:
     columns = Report.__table__.columns
     assert isinstance(columns["recipe"].type, JSONB)
     assert columns["recipe"].nullable is False
-    assert {foreign_key.target_fullname for foreign_key in columns["owner_id"].foreign_keys} == {
-        "users.id"
-    }
     assert {foreign_key.target_fullname for foreign_key in columns["module_id"].foreign_keys} == {
         "modules.id"
     }
     assert columns["revision"].nullable is False
     assert columns["subtitle"].nullable is True
-    assert columns["audience_kind"].nullable is False
-    assert columns["audience_kind"].server_default is not None
-    assert str(columns["audience_kind"].server_default.arg) == "'private'"
-    assert columns["audience_role_id"].nullable is True
-    assert columns["audience_user_id"].nullable is True
-    assert {key.target_fullname for key in columns["audience_role_id"].foreign_keys} == {"roles.id"}
-    assert {key.ondelete for key in columns["audience_role_id"].foreign_keys} == {"RESTRICT"}
-    assert {key.target_fullname for key in columns["audience_user_id"].foreign_keys} == {"users.id"}
-    assert {key.ondelete for key in columns["audience_user_id"].foreign_keys} == {"RESTRICT"}
-    assert not {"audience", "cadence", "timezone"}.intersection(columns.keys())
+    removed = {"owner_id", "audience_kind", "audience_user_id", "cadence", "timezone"}
+    assert not removed.intersection(columns.keys())
     assert Report.__audit_redacted_fields__ == frozenset({"recipe"})
 
 

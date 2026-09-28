@@ -17,7 +17,7 @@ In scope:
 
 - all nine field types;
 - field configuration and metadata;
-- module schema acceptance;
+- the record-create gate on active fields;
 - record create/update replacement semantics;
 - closed and relationship fields;
 - deterministic error aggregation;
@@ -30,7 +30,7 @@ Not in scope:
 
 - broad load or penetration testing;
 - defining new payload, text, field-count, or option-count limits;
-- changing lifecycle/schema-acceptance policy;
+- changing lifecycle policy;
 - changing audit redaction policy;
 - changing the validation contract as part of test execution.
 
@@ -46,24 +46,24 @@ Concurrency checks use independent engines, connections, and sessions. They use 
 
 | Rule | Contract | Automated evidence |
 |---|---|---|
-| R-001 | Supported types are text, number, decimal, int, boolean, date, datetime, select, and relationship; unsupported API input is `422`. | `test_field_schema_accepts_primitive_types`, `test_field_route_returns_clean_422_for_unsupported_type`, `test_field_validators_cover_every_type_and_return_clean_values` |
+| R-001 | Supported types are text, number, decimal, int, boolean, date, datetime, select, and relationship. | `test_field_schema_accepts_primitive_types`, `test_field_validators_cover_every_type_and_return_clean_values` |
 | R-002 | Field names are trimmed and contain 1–150 characters. | `test_field_schema_trims_name_and_enforces_one_to_150_character_boundaries` |
 | R-003 | Position is nonnegative; active module positions are unique. | Existing field schema tests plus `test_direct_sql_can_store_invalid_record_data_but_postgres_rejects_invalid_field_structure` |
-| R-004 | Configuration keys are type-specific and unknown/cross-type keys are rejected. | `test_field_schema_rejects_invalid_configuration`, `test_field_config_rejects_cross_type_configuration` |
+| R-004 | Configuration keys are type-specific and unknown/cross-type keys are rejected. | `test_field_config_rejects_invalid_select_options`, `test_field_config_rejects_cross_type_configuration` |
 | R-005 | Select options are a nonempty unique string list and values match exactly. | `test_select_config_preserves_embedded_strings_and_requires_exact_values` |
 | R-006 | Number/int reject booleans and non-finite/wrong numeric types and enforce inclusive bounds. | `test_field_validators_cover_every_type_and_return_clean_values`, shared contract fixture |
 | R-007 | Decimal values and bounds are canonical strings with 38 integer and 18 fractional digits, no exponent/plus/leading-zero syntax, and exact bounds. | `test_field_config_validates_text_and_canonicalizes_decimal_bounds`, `test_decimal_validation_enforces_lexical_limits_and_exact_bounds`, shared contract fixture |
 | R-008 | Text preserves its value and applies configured code-point length bounds. | `test_text_validation_preserves_whitespace_and_counts_unicode_codepoints` |
 | R-009 | Boolean/date/datetime require their exact wire types/profile; date and datetime calendar boundaries are checked. | `test_date_validation_accepts_calendar_boundaries_and_rejects_invalid_dates`, `test_datetime_validation_accepts_datetime_boundaries_and_rejects_invalid_dates`, `test_datetime_validation_requires_strict_timezone_aware_profile` |
 | R-010 | Relationship metadata is complete, relationship fields are not required, and relationship config is empty. | Existing field schema/module validation tests |
-| R-011 | Active field names and positions are unique per module at API and PostgreSQL layers. | Existing create/update tests, direct structural SQL test, `test_committed_duplicate_field_creation_returns_503_then_409_and_keeps_one_active_winner` |
-| R-012 | Schema acceptance requires at least one active, structurally valid, contiguous field set. | Existing module schema tests and `test_malformed_db_permitted_config_returns_controlled_schema_acceptance_conflict` |
+| R-011 | Active field names and positions are unique per module in the Sandbox publish and at the PostgreSQL layer. | Publication planning tests and the direct structural SQL test |
+| R-012 | A publish requires each active module to have at least one active, structurally valid, contiguous field set. | Existing module schema validator tests and publication tests |
 | R-013 | Unknown top-level field/record properties are currently ignored, while config keys are strict. | `test_top_level_extra_keys_are_ignored_by_field_and_record_schemas` |
-| R-014 | Field module and type are immutable through the API; effective changes invalidate acceptance. | Existing field-update tests and `test_effective_field_lifecycle_changes_clear_schema_acceptance` |
+| R-014 | Fields change only through the Sandbox publish; the field API is read-only. | `test_schema_catalog_routes_are_read_only_in_the_application_contract`, `test_removed_schema_write_routes_are_not_served` |
 | R-015 | Tightened required/config rules cannot invalidate active records. | Existing field-update impact tests |
-| R-016 | Reorder requires the complete active field set and normalizes positions. | Existing reorder tests |
-| R-017 | Field close/reopen transitions invalidate the parent module’s schema acceptance. | `test_replacement_update_preserves_closed_values_drops_optional_active_values`, `test_record_create_rejects_last_active_field_closed_module` |
-| R-018 | Record create requires an accepted active module with at least one active field; update does not use acceptance as its gate. | `test_record_create_requires_an_accepted_schema_after_module_lock` and PostgreSQL lifecycle tests |
+| R-016 | Field order comes only from the Sandbox document positions. | Publication tests |
+| R-017 | Field close/reopen transitions preserve stored record values. | `test_replacement_update_preserves_closed_values_drops_optional_active_values` |
+| R-018 | Record create requires an active module with at least one active field, checked after the module lock; a publish that creates a module makes it ready for records. | `test_record_create_rejects_module_whose_last_active_field_is_closed`, `test_field_close_and_record_create_serialize_on_parent_module_lock`, `test_record_create_succeeds_right_after_the_publish_that_creates_the_module` |
 | R-019 | Record keys are exact field UUID strings; malformed and unknown keys are rejected. | Existing aggregate/deterministic record mutation tests |
 | R-020 | Optional primitive null is accepted; required null and required empty text are rejected. | `test_optional_primitive_record_values_accept_null`, `test_required_text_record_values_reject_null_and_empty` |
 | R-021 | Every active primitive value uses its registered type validator and normalization. | `test_field_validators_cover_every_type_and_return_clean_values`, shared parity fixture |
@@ -77,7 +77,7 @@ Concurrency checks use independent engines, connections, and sessions. They use 
 | R-029 | Runtime-role direct SQL bypasses FastAPI semantic validation and ORM audit. | `test_runtime_role_can_store_invalid_record_data_without_orm_audit_and_rolls_back` |
 | R-030 | Relationship cardinality is application-enforced; all four flag combinations and hidden-edge reservation are covered. | `test_create_accepts_all_four_cardinalities`, `test_create_enforces_both_cardinalities`, existing hidden-edge PostgreSQL test |
 | R-031 | Contention can produce `503`; after the winner commits, a retry can produce deterministic `409`, with no losing mutation/audit. | duplicate-field race test and `test_single_target_race_returns_unavailable_then_committed_conflict` |
-| R-032 | Explicit-null decimal bounds mean unbounded and are preserved by runtime validation and applied migrations. | `test_migrated_explicit_null_decimal_config_is_accepted_as_an_unbounded_runtime_bound` |
+| R-032 | Explicit-null decimal bounds mean unbounded and are preserved by runtime validation and applied migrations. | `test_migrated_explicit_null_decimal_config_is_an_unbounded_runtime_bound` |
 
 ## Running checks
 
@@ -101,12 +101,11 @@ PostgreSQL separately enforces supported field types, nonnegative positions, and
 
 This is not an HTTP authorization bypass. It means runtime/owner credentials and PostgreSQL network access must remain private because dynamic semantics and ORM audit are application-level controls.
 
-### 3. Field lifecycle schema acceptance
+### 3. Field lifecycle and record creation
 
-Actual field close/reopen transitions invalidate the parent module under its existing lock.
-Creating a record with zero active fields returns the existing 409 schema-not-accepted
-response, including previously stale accepted modules. Existing record updates remain
-supported; data is not rewritten.
+Field close/reopen transitions run under the parent module lock. Creating a record in a
+module with zero active fields returns `409` with the detail `Module has no active fields`.
+Existing record updates remain supported; data is not rewritten.
 
 ### 4. Explicit-null decimal bounds
 

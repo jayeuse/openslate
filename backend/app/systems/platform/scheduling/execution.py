@@ -1,7 +1,9 @@
-"""Bounded scheduled Report execution with current owner-audience rechecks.
+"""Bounded scheduled Report execution as the workspace.
 
-The process-local worker invokes this coordinator after application startup;
-each attempt rechecks eligibility before creating a run or notification.
+The process-local worker invokes this coordinator after application startup.
+A scheduled run belongs to no user: it runs while the Report and its module are
+active, its audit entries carry no user and the label "Scheduled report: <name>",
+and every module reader at run time may open the run.
 """
 
 import logging
@@ -13,10 +15,8 @@ from uuid6 import uuid7
 
 from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
-from app.systems.access.policy.authorization import ActorLockMode, authorize_workspace_capabilities
-from app.systems.access.users.permissions import Capability
-from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.openview.reports.audience import capture_run_eligible_users
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, get_audit_context
+from app.systems.openview.reports.eligibility import capture_run_eligible_users
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
 from app.systems.openview.reports.run_service import (
     ReportSnapshot,
@@ -29,12 +29,13 @@ from app.systems.platform.scheduling.models import ScheduledWork, WorkKind, Work
 from app.systems.platform.scheduling.service import (
     MAX_CLAIM_BATCH,
     WorkClaim,
-    _eligible_owner,
     _locked_claim,
     _utc_instant,
     claim_due_work,
     complete_report_work,
     fail_report_work,
+    report_source,
+    scheduled_actor_label,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,26 +84,11 @@ def _finalize_claim(
             .with_for_update()
             .execution_options(populate_existing=True)
         )
-        # Check Workspace policy before locking the owner and its role. Access
-        # rule writes lock the policy version before those rows.
-        preflight_owner = _eligible_owner(db, report, lock=False) if report is not None else None
-        if preflight_owner is not None:
-            authorize_workspace_capabilities(
-                db,
-                actor_id=preflight_owner.id,
-                expected_role_id=preflight_owner.role_id,
-                capabilities=(Capability.RECORDS_READ, Capability.RECORDS_WRITE),
-                actor_lock_mode=ActorLockMode.UPDATE,
-            )
-        owner = (
-            _eligible_owner(db, report, lock=True)
-            if report is not None and preflight_owner is not None
-            else None
-        )
+        source = report_source(db, report, lock=True)
         work = _locked_claim(db, claim, _current(now))
         if work is None or work.report_id != report_id:
             return None
-        if owner is None or report is None:
+        if source is None or report is None:
             work.state = WorkState.CANCELED
             work.failure_code = "source_unavailable"
             work.lease_token = None
@@ -119,7 +105,12 @@ def _finalize_claim(
             db.commit()
             return None
 
-        validate_report_recipe(db, report.module_id, ReportRecipe.model_validate(report.recipe))
+        context = get_audit_context(db)
+        context.performed_by = None
+        context.actor_label = scheduled_actor_label(report)
+        validate_report_recipe(
+            db, report.module_id, ReportRecipe.model_validate(report.recipe), reader=None
+        )
         existing = db.scalar(
             select(ReportRun).where(
                 ReportRun.report_id == report.id,
@@ -176,14 +167,13 @@ def execute_report_claim(
             if work is not None and work.kind == WorkKind.REPORT_RUN and work.report_id is not None
             else None
         )
-        owner = _eligible_owner(db, report, lock=False) if report is not None else None
-        report_id = report.id if report is not None else None
-        owner_id = owner.id if owner is not None else None
-    if report_id is None or owner_id is None:
+        source = report_source(db, report, lock=False)
+        report_id = report.id if report is not None and source is not None else None
+    if report_id is None:
         return _finalize_claim(engine, claim, None, now=now)
 
     try:
-        snapshot = capture_report_snapshot(engine, report_id, owner_id)
+        snapshot = capture_report_snapshot(engine, report_id, None)
         return _finalize_claim(engine, claim, snapshot, now=now)
     except Exception:
         # This is the worker process boundary. A failed capture or final write

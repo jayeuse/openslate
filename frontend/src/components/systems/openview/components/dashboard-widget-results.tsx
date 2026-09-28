@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import type { OpenViewAggregateSnapshotResult } from "../adapters/analytics-api";
 import type { OpenViewDataSourceField } from "../adapters/views-api";
+import { openViewRecordFieldValue } from "../domain/record-display";
 import {
   type DraftWidget,
   type SnapshotState,
@@ -102,13 +103,16 @@ export function DashboardWidgetResults({
   );
   const recordsFields =
     widget.widgetType === "records"
-      ? widget.config.query.definition.columns.map((column, index) => ({
-          id: column.fieldId,
-          name:
-            fieldsByModule[widget.config.query.moduleId]?.find(
-              (field) => field.id === column.fieldId,
-            )?.name ?? `Field ${index + 1}`,
-        }))
+      ? widget.config.query.definition.columns.map((column, index) => {
+          const field = fieldsByModule[widget.config.query.moduleId]?.find(
+            (candidate) => candidate.id === column.fieldId,
+          );
+          return {
+            id: column.fieldId,
+            name: field?.name ?? `Field ${index + 1}`,
+            type: field?.type ?? column.expectedType,
+          };
+        })
       : [];
   const summaryTotalRecords =
     aggregateSnapshot?.items.reduce(
@@ -243,7 +247,9 @@ export function DashboardWidgetResults({
                   <TableRow key={record.id}>
                     {recordsFields.map((field) => (
                       <TableCell key={field.id}>
-                        {displayRecordValue(record.data[field.id])}
+                        {displayRecordValue(
+                          openViewRecordFieldValue(record, field),
+                        )}
                       </TableCell>
                     ))}
                   </TableRow>

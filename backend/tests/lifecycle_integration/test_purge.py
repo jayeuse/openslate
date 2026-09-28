@@ -10,13 +10,6 @@ from uuid6 import uuid7
 
 import app.systems.sandbox.lifecycle.execution as lifecycle_execution
 from app.systems.manage.audit.models import AuditLog
-from app.systems.sandbox.automations.models import (
-    AutomationEventState,
-    PublishedAutomationAction,
-    PublishedAutomationCondition,
-    PublishedAutomationEvent,
-    PublishedAutomationRun,
-)
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.exceptions import (
@@ -28,12 +21,19 @@ from app.systems.sandbox.lifecycle.schemas import LifecycleBlockerCode, Lifecycl
 from app.systems.sandbox.lifecycle.service import purge_lifecycle
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.models import SandboxBinding
+from app.systems.sandbox.record_triggers.models import (
+    RecordTriggerAction,
+    RecordTriggerCondition,
+    RecordTriggerEvent,
+    RecordTriggerRun,
+    TriggerEventState,
+)
 from app.systems.sandbox.records.models import Record
 from tests.lifecycle_integration.lifecycle_integration_support import (
     _close_rows,
     _item,
 )
-from tests.sandbox_automations.support import publish_automation
+from tests.sandbox_record_triggers.support import publish_trigger
 
 pytestmark = [
     pytest.mark.integration,
@@ -252,11 +252,11 @@ def test_record_purge_removes_only_incident_edges_and_preserves_other_rows(
     assert integration_db.get(type(external_unrelated_edge), external_unrelated_edge.id) is not None  # type: ignore[attr-defined]
 
 
-def test_record_purge_preflights_published_automation_history(
+def test_record_purge_preflights_record_trigger_history(
     integration_db: Session, lifecycle_graph: dict[str, object]
 ) -> None:
     source = _item(lifecycle_graph, "source")
-    event = PublishedAutomationEvent(
+    event = RecordTriggerEvent(
         record_id=source.id,  # type: ignore[attr-defined]
         module_id=source.module_id,  # type: ignore[attr-defined]
         event_kind="record-created",
@@ -265,7 +265,7 @@ def test_record_purge_preflights_published_automation_history(
         previous_values={},
         depth=0,
         action_budget=100,
-        state=AutomationEventState.PENDING,
+        state=TriggerEventState.PENDING,
         next_attempt_at=datetime.now(UTC),
     )
     integration_db.add(event)
@@ -275,8 +275,8 @@ def test_record_purge_preflights_published_automation_history(
     plan = plan_lifecycle(integration_db, LifecycleTargetType.RECORD, source.id, "purge", None)  # type: ignore[attr-defined]
 
     assert any(
-        blocker.code is LifecycleBlockerCode.PURGE_AUTOMATION_DEPENDENCY
-        and blocker.entity_type == "published_automation_events"
+        blocker.code is LifecycleBlockerCode.PURGE_TRIGGER_DEPENDENCY
+        and blocker.entity_type == "record_trigger_events"
         and blocker.entity_id == event.id
         for blocker in plan.blockers
     )
@@ -285,28 +285,28 @@ def test_record_purge_preflights_published_automation_history(
     assert integration_db.get(Record, source.id) is not None  # type: ignore[attr-defined]
 
 
-def test_module_purge_preflights_all_published_automation_dependencies(
+def test_module_purge_preflights_all_record_trigger_dependencies(
     integration_db: Session,
 ) -> None:
-    _actor, module, fields, definition = publish_automation(integration_db)
-    event = PublishedAutomationEvent(
+    _actor, module, fields, definition = publish_trigger(integration_db)
+    event = RecordTriggerEvent(
         module_id=module.id,
-        scheduled_automation_id=definition.id,
+        scheduled_trigger_id=definition.id,
         event_kind="schedule",
         changed_field_ids=[],
         values={},
         previous_values={},
         depth=0,
         action_budget=100,
-        state=AutomationEventState.PENDING,
+        state=TriggerEventState.PENDING,
         next_attempt_at=datetime.now(UTC),
     )
     integration_db.add(event)
     integration_db.flush()
     integration_db.add(
-        PublishedAutomationRun(
+        RecordTriggerRun(
             event_id=event.id,
-            automation_id=definition.id,
+            trigger_id=definition.id,
             state="succeeded",
             details={},
         )
@@ -319,13 +319,13 @@ def test_module_purge_preflights_all_published_automation_dependencies(
     assert {
         blocker.entity_type
         for blocker in plan.blockers
-        if blocker.code is LifecycleBlockerCode.PURGE_AUTOMATION_DEPENDENCY
+        if blocker.code is LifecycleBlockerCode.PURGE_TRIGGER_DEPENDENCY
     } == {
-        "published_automation_actions",
-        "published_automation_conditions",
-        "published_automation_definitions",
-        "published_automation_events",
-        "published_automation_runs",
+        "record_trigger_actions",
+        "record_trigger_conditions",
+        "record_triggers",
+        "record_trigger_events",
+        "record_trigger_runs",
         "sandbox_bindings",
     }
     with pytest.raises(LifecyclePreflightError):
@@ -333,14 +333,13 @@ def test_module_purge_preflights_all_published_automation_dependencies(
     assert integration_db.get(Module, module.id) is not None
 
 
-def test_field_purge_preflights_cross_module_automation_references_including_closed_condition(
+def test_field_purge_preflights_cross_module_trigger_references_including_closed_condition(
     integration_db: Session,
 ) -> None:
-    _actor, module, _fields, definition = publish_automation(integration_db)
+    _actor, module, _fields, definition = publish_trigger(integration_db)
     referenced_module = Module(
         department_id=module.department_id,
-        module_name=f"Automation references {uuid7()}",
-        is_schema_accepted=True,
+        module_name=f"Trigger references {uuid7()}",
     )
     integration_db.add(referenced_module)
     integration_db.flush()
@@ -353,19 +352,19 @@ def test_field_purge_preflights_cross_module_automation_references_including_clo
     integration_db.add(referenced_field)
     integration_db.flush()
     condition = integration_db.scalar(
-        select(PublishedAutomationCondition).where(
-            PublishedAutomationCondition.automation_id == definition.id
+        select(RecordTriggerCondition).where(
+            RecordTriggerCondition.trigger_id == definition.id
         )
     )
     action = integration_db.scalar(
-        select(PublishedAutomationAction).where(
-            PublishedAutomationAction.automation_id == definition.id
+        select(RecordTriggerAction).where(
+            RecordTriggerAction.trigger_id == definition.id
         )
     )
-    automation_binding = integration_db.scalar(
-        select(SandboxBinding).where(SandboxBinding.automation_id == definition.id)
+    trigger_binding = integration_db.scalar(
+        select(SandboxBinding).where(SandboxBinding.trigger_id == definition.id)
     )
-    assert condition is not None and action is not None and automation_binding is not None
+    assert condition is not None and action is not None and trigger_binding is not None
     definition.trigger_field_id = referenced_field.id
     definition.trigger_value_field_id = referenced_field.id
     condition.field_id = referenced_field.id
@@ -381,19 +380,19 @@ def test_field_purge_preflights_cross_module_automation_references_including_clo
         integration_db, LifecycleTargetType.FIELD, referenced_field.id, "purge", None
     )
 
-    automation_blockers = {
+    trigger_blockers = {
         (blocker.entity_type, blocker.entity_id)
         for blocker in plan.blockers
-        if blocker.code is LifecycleBlockerCode.PURGE_AUTOMATION_DEPENDENCY
+        if blocker.code is LifecycleBlockerCode.PURGE_TRIGGER_DEPENDENCY
     }
     assert {
-        ("published_automation_definitions", definition.id),
-        ("published_automation_conditions", condition.id),
-        ("published_automation_actions", action.id),
-        ("sandbox_bindings", automation_binding.id),
-    } <= automation_blockers
+        ("record_triggers", definition.id),
+        ("record_trigger_conditions", condition.id),
+        ("record_trigger_actions", action.id),
+        ("sandbox_bindings", trigger_binding.id),
+    } <= trigger_blockers
     assert any(
-        row.entity_type == "published_automation_conditions"
+        row.entity_type == "record_trigger_conditions"
         and row.entity_id == condition.id
         and row.is_deleted
         for row in plan.rows

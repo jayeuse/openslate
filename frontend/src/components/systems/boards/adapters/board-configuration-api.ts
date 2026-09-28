@@ -128,7 +128,7 @@ function parseBundleBytes(bytes: Uint8Array): PortableBoardBundle {
   try {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     const value: unknown = JSON.parse(text);
-    if (inspectBundleJson(text) !== "2") throw new ApiContractError();
+    if (inspectBundleJson(text) !== "3") throw new ApiContractError();
     const parsed = bundleSchema.safeParse(value);
     if (!parsed.success) throw new ApiContractError();
     return parsed.data;

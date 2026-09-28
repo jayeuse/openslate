@@ -21,8 +21,8 @@ class SandboxTestRoute:
 
 
 @dataclass(frozen=True, slots=True)
-class SandboxTestAutomationTrace:
-    automation_id: str
+class SandboxTestTriggerTrace:
+    trigger_id: str
     label: str
     outcome: str
 
@@ -31,5 +31,5 @@ class SandboxTestAutomationTrace:
 class SandboxTestResult:
     values: dict[str, TestValue]
     routes: tuple[SandboxTestRoute, ...]
-    automation_traces: tuple[SandboxTestAutomationTrace, ...]
+    trigger_traces: tuple[SandboxTestTriggerTrace, ...]
     issues: tuple[SandboxTestIssue, ...]

@@ -1,24 +1,13 @@
 "use client";
 
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  putOpenViewChartPreferences,
-  type OpenViewChartPreferenceConfig,
-} from "../adapters/chart-preferences-api";
 import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
 import {
   catalogFirstPageOptions,
-  chartPreferencesOptions,
   extendsRead,
   fieldsFirstPageOptions,
   invalidatesRecords,
@@ -91,7 +80,6 @@ export default function ServerBackedCharts() {
   const queryClient = useQueryClient();
   // A refusal of any cached OpenView read hides them all (openview-access.ts).
   const accessDenied = useOpenViewAccessDenied();
-  const preferencesQuery = useQuery(chartPreferencesOptions());
   const sourcesQuery = useQuery(catalogFirstPageOptions());
   const [sourcesExtension, setSourcesExtension] =
     useState<PageExtension<OpenViewDataSource> | null>(null);
@@ -101,13 +89,8 @@ export default function ServerBackedCharts() {
   >(null);
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [chosenModuleId, setChosenModuleId] = useState<string | null>(null);
-  const [preferredSourceResolved, setPreferredSourceResolved] = useState(false);
   const [fieldsExtension, setFieldsExtension] =
     useState<PageExtension<OpenViewDataSourceField> | null>(null);
-  const [preferenceMessage, setPreferenceMessage] = useState("");
-  const [preferencesSaving, setPreferencesSaving] = useState(false);
-  const [preferencesNotice, setPreferencesNotice] = useState("");
-  const [saveDenied, setSaveDenied] = useState<boolean | null>(null);
   const [invalidationRevision, setInvalidationRevision] = useState(0);
   const [chartType, setChartType] = useState<ChartType>("bar");
   const [dimensionId, setDimensionId] = useState("");
@@ -130,38 +113,10 @@ export default function ServerBackedCharts() {
   const appliedRef = useRef<AppliedSnapshot | null>(null);
   const appliedRequestSequence = useRef(0);
   const consumedInvalidationRevision = useRef(0);
-  const hydratedPreferenceKey = useRef("");
-  // A confirmed save asks the form to re-apply the saved settings. The cache
-  // keeps one identity for equal settings, so a repeated Reset needs this
-  // explicit request to restore controls edited since the last one.
-  const [preferenceHydration, setPreferenceHydration] = useState(0);
 
   useEffect(() => {
     appliedRef.current = applied;
   }, [applied]);
-
-  // Saved settings. A retry in flight clears the last failure message.
-  const preferencesLoading =
-    preferencesQuery.isFetching && preferencesQuery.data === undefined;
-  const preferencesLoaded = preferencesQuery.data !== undefined;
-  const preferenceConfig = preferencesQuery.data?.config ?? null;
-  const preferencesLoadError = preferencesQuery.isFetching
-    ? null
-    : preferencesQuery.error;
-  // A denial holds through a retry until a read succeeds again.
-  const preferencesLoadDenied =
-    accessDenied || isAuthorizationDenied(preferencesQuery.error);
-  const settingsDenied = saveDenied ?? preferencesLoadDenied;
-  const preferencesError =
-    preferenceMessage ||
-    (preferencesLoadError
-      ? preferencesLoadDenied
-        ? "Chart settings are unavailable. Sign in or ask for access, then retry."
-        : formatError(
-            preferencesLoadError,
-            "Saved chart settings could not be loaded.",
-          )
-      : "");
 
   // The data-source catalog: the cached first page plus loaded pages.
   const sourcesBase = sourcesQuery.data;
@@ -194,25 +149,7 @@ export default function ServerBackedCharts() {
         )
       : "";
 
-  // Saved settings choose the first data source once both reads settle,
-  // during render so a cached revisit never loads another source first.
-  if (
-    !preferredSourceResolved &&
-    !preferencesLoading &&
-    !preferencesQuery.isPending &&
-    !sourcesQuery.isPending
-  ) {
-    setPreferredSourceResolved(true);
-    if (
-      preferenceConfig &&
-      sources.some((source) => source.id === preferenceConfig.moduleId)
-    )
-      setChosenModuleId(preferenceConfig.moduleId);
-    else if (preferenceConfig && !sourcesDenied)
-      setPreferenceMessage(
-        "Saved chart settings refer to a data source you can no longer access.",
-      );
-  }
+  // Chart settings are not saved: they last while this page is open.
   const moduleId =
     chosenModuleId && sources.some((source) => source.id === chosenModuleId)
       ? chosenModuleId
@@ -258,7 +195,7 @@ export default function ServerBackedCharts() {
         : "";
 
   // A denied read withdraws the applied chart, as every read did before.
-  const readDenied = preferencesLoadDenied || sourcesDenied || fieldsDenied;
+  const readDenied = sourcesDenied || fieldsDenied;
   useEffect(() => {
     if (!readDenied) return;
     setApplied(null);
@@ -274,48 +211,6 @@ export default function ServerBackedCharts() {
         setInvalidationRevision((value) => value + 1);
     });
   }, []);
-
-  // Layout effect: a cached revisit paints the saved settings, not defaults.
-  useLayoutEffect(() => {
-    if (
-      preferencesLoading ||
-      !preferenceConfig ||
-      preferenceConfig.moduleId !== moduleId ||
-      !fieldsReady
-    )
-      return;
-    const key = JSON.stringify(preferenceConfig);
-    if (hydratedPreferenceKey.current === key) return;
-    hydratedPreferenceKey.current = key;
-    setChartType(preferenceConfig.chartType);
-    setDimensionId(preferenceConfig.dimensionId ?? "");
-    setDateFieldId(preferenceConfig.dateFieldId ?? "");
-    setAggregation(preferenceConfig.aggregation);
-    setMeasureId(preferenceConfig.measureId ?? "");
-    setFilterLogic(preferenceConfig.filterLogic);
-    setFromDate(preferenceConfig.fromDate ?? "");
-    setToDate(preferenceConfig.toDate ?? "");
-    setTop(preferenceConfig.top?.toString() ?? "");
-    setShowLegend(preferenceConfig.showLegend);
-    setShowValues(preferenceConfig.showValues);
-    setFilters(
-      preferenceConfig.filters.map((filter, index) => ({
-        id: index,
-        fieldId: filter.fieldId,
-        operator: filter.operator,
-        value: Array.isArray(filter.value)
-          ? filter.value.join(", ")
-          : String(filter.value ?? ""),
-      })),
-    );
-    setFilterSequence(preferenceConfig.filters.length);
-  }, [
-    fieldsReady,
-    moduleId,
-    preferenceConfig,
-    preferenceHydration,
-    preferencesLoading,
-  ]);
 
   const sourceName =
     sources.find((source) => source.id === moduleId)?.name ?? "Data source";
@@ -371,51 +266,6 @@ export default function ServerBackedCharts() {
     !queryLoading,
   );
 
-  const preferenceConfigDraft: OpenViewChartPreferenceConfig | null =
-    moduleId &&
-    sources.some((source) => source.id === moduleId) &&
-    fieldsReady &&
-    !filterValidation &&
-    dateWindowReady &&
-    (dateSeries ? selectedDateField && dateWindowValid : selectedDimension) &&
-    (aggregation === "count" || selectedMeasure)
-      ? {
-          version: 1,
-          moduleId,
-          chartType,
-          dimensionId: dateSeries ? null : selectedDimension!.id,
-          dateFieldId: selectedDateField?.id ?? null,
-          aggregation,
-          measureId: aggregation === "count" ? null : selectedMeasure!.id,
-          filterLogic,
-          filters: filters.map((filter) => {
-            const field = filterFields.find(
-              (candidate) => candidate.id === filter.fieldId,
-            )!;
-            return {
-              fieldId: field.id,
-              expectedType: field.type,
-              operator: filter.operator,
-              ...(EMPTY_OPERATORS.has(filter.operator)
-                ? {}
-                : { value: scalarForFilter(field, filter.value) }),
-            };
-          }),
-          fromDate:
-            dateSeries || categoricalDateWindowSelected ? fromDate : null,
-          toDate: dateSeries || categoricalDateWindowSelected ? toDate : null,
-          top: dateSeries
-            ? null
-            : top
-              ? (Number(top) as NonNullable<
-                  OpenViewChartPreferenceConfig["top"]
-                >)
-              : null,
-          showLegend,
-          showValues,
-        }
-      : null;
-
   const draftSignature = JSON.stringify({
     moduleId,
     chartType,
@@ -431,10 +281,6 @@ export default function ServerBackedCharts() {
     showLegend,
     showValues,
   });
-  const draftSignatureRef = useRef(draftSignature);
-  useLayoutEffect(() => {
-    draftSignatureRef.current = draftSignature;
-  }, [draftSignature]);
 
   async function loadMoreSources() {
     if (metadataLoading || !sourcesHasMore) return;
@@ -614,96 +460,6 @@ export default function ServerBackedCharts() {
     setFilterSequence((current) => current + 1);
   }
 
-  async function persistPreference(
-    config: OpenViewChartPreferenceConfig,
-    successMessage: string,
-  ) {
-    if (preferencesSaving) return;
-    const submittedDraftSignature = draftSignatureRef.current;
-    setPreferencesSaving(true);
-    setPreferenceMessage("");
-    setPreferencesNotice("");
-    try {
-      const response = await putOpenViewChartPreferences(config);
-      const confirmedConfig = response.config ?? config;
-      hydratedPreferenceKey.current =
-        draftSignatureRef.current === submittedDraftSignature
-          ? ""
-          : JSON.stringify(confirmedConfig);
-      queryClient.setQueryData(chartPreferencesOptions().queryKey, {
-        config: confirmedConfig,
-      });
-      setPreferenceHydration((value) => value + 1);
-      setSaveDenied(false);
-      setPreferencesNotice(successMessage);
-    } catch (error) {
-      if (isAuthorizationDenied(error)) {
-        setSaveDenied(true);
-        setApplied(null);
-        appliedRef.current = null;
-        setQueryError(AUTHORIZATION_ERROR);
-        setPreferenceMessage(
-          "Chart settings could not be saved without current access.",
-        );
-      } else {
-        setPreferenceMessage(
-          formatError(error, "Chart settings could not be saved."),
-        );
-      }
-    } finally {
-      setPreferencesSaving(false);
-    }
-  }
-
-  async function saveSettings() {
-    if (
-      !preferencesLoaded ||
-      settingsDenied ||
-      preferencesLoading ||
-      !preferenceConfigDraft
-    )
-      return;
-    await persistPreference(
-      preferenceConfigDraft,
-      "Chart settings saved for this account.",
-    );
-  }
-
-  async function resetSettings() {
-    const dimension = categoryFields[0];
-    const dateField = dateFields[0];
-    if (
-      !preferencesLoaded ||
-      settingsDenied ||
-      preferencesLoading ||
-      !moduleId ||
-      (!dimension && !dateField)
-    )
-      return;
-    const today = new Date();
-    const config: OpenViewChartPreferenceConfig = {
-      version: 1,
-      moduleId,
-      chartType: dimension ? "bar" : "line",
-      dimensionId: dimension?.id ?? null,
-      dateFieldId: dimension ? null : (dateField?.id ?? null),
-      aggregation: "count",
-      measureId: null,
-      filterLogic: "and",
-      filters: [],
-      fromDate: dimension
-        ? null
-        : new Date(today.getTime() - 29 * 86_400_000)
-            .toISOString()
-            .slice(0, 10),
-      toDate: dimension ? null : today.toISOString().slice(0, 10),
-      top: null,
-      showLegend: true,
-      showValues: true,
-    };
-    await persistPreference(config, "Chart settings reset for this account.");
-  }
-
   useEffect(() => {
     if (
       invalidationRevision <= consumedInvalidationRevision.current ||
@@ -756,9 +512,7 @@ export default function ServerBackedCharts() {
   // Only a first visit waits for the setup reads; a cached revisit renders
   // the form at once, and a retry after a failure keeps the form and its
   // retry alert in place.
-  const chartSetupColdLoad =
-    (sourcesQuery.isPending && sourcesQuery.isFetching) ||
-    (preferencesQuery.isPending && preferencesQuery.isFetching);
+  const chartSetupColdLoad = sourcesQuery.isPending && sourcesQuery.isFetching;
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
@@ -820,20 +574,7 @@ export default function ServerBackedCharts() {
             queryLoading,
             canRunQuery,
           }}
-          preferences={{
-            preferencesError,
-            preferencesNotice,
-            preferencesLoading,
-            preferencesLoaded,
-            preferencesSaving,
-            settingsDenied,
-            preferenceConfigDraft,
-          }}
           actions={{
-            retryPreferences: () => {
-              setPreferenceMessage("");
-              void preferencesQuery.refetch();
-            },
             retryCatalog: () => {
               setSourcesExtension(null);
               void sourcesQuery.refetch();
@@ -861,8 +602,6 @@ export default function ServerBackedCharts() {
             setShowLegend,
             setShowValues,
             addFilter,
-            saveSettings,
-            resetSettings,
             applySnapshot,
           }}
         />

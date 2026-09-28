@@ -5,12 +5,15 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies import require_fresh_exact_admin, require_roles
+from app.common.dependencies import require_admin, require_fresh_exact_admin
 from app.core.database import get_db
 from app.systems.access.identity.session_revocation import revoke_user_sessions
+from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.users.coordination import (
     ProfileValidationError,
     advance_token_cutoff,
@@ -18,21 +21,12 @@ from app.systems.access.users.coordination import (
     conflict,
     ensure_projected_admin_remains,
     forbidden,
-    lock_active_role,
     lock_user,
-    non_deleted_service_identity_count,
-    replace_department_memberships,
     unavailable,
     validate_identity_profile,
 )
 from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import (
-    IdentityKind,
-    Role,
-    User,
-    UserRole,
-    UserStatus,
-)
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.access.users.schemas import UserResponse, UserUpdate
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -42,7 +36,7 @@ from app.systems.manage.audit.service import (
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
-AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+AdminUser = Annotated[User, Depends(require_admin)]
 
 
 def _record_security_event(
@@ -88,13 +82,75 @@ def _record_outcome(
     )
 
 
+def _lock_groups(db: Session, group_ids: set[UUID]) -> dict[UUID, Group]:
+    if not group_ids:
+        return {}
+    rows = db.scalars(
+        select(Group)
+        .where(Group.id.in_(group_ids))
+        .order_by(Group.id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    ).all()
+    return {row.id: row for row in rows}
+
+
+def _lock_membership_groups(db: Session, user_id: UUID) -> dict[UUID, Group]:
+    """Lock the groups a user belongs to before the user row.
+
+    Every membership writer locks a group row before member and user rows
+    (see ``policy/delegation.py``), so a promotion takes the same order.
+    """
+
+    try:
+        group_ids = set(
+            db.scalars(select(GroupMember.group_id).where(GroupMember.user_id == user_id)).all()
+        )
+        return _lock_groups(db, group_ids)
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise unavailable("Unable to lock group memberships") from error
+
+
+def _leave_groups(db: Session, user: User, groups: dict[UUID, Group], actor_id: UUID) -> None:
+    """Remove every membership of a new administrator; administrators are not group members.
+
+    A membership saved before the user row was locked may name a group that
+    is not locked yet; it is locked now. No membership can be added while
+    the user row is locked, because adding one locks that row too.
+    """
+
+    try:
+        memberships = list(
+            db.scalars(
+                select(GroupMember)
+                .where(GroupMember.user_id == user.id)
+                .order_by(GroupMember.group_id)
+                .with_for_update()
+            ).all()
+        )
+        groups = {
+            **groups,
+            **_lock_groups(db, {item.group_id for item in memberships} - set(groups)),
+        }
+        for item in memberships:
+            db.delete(item)
+            group = groups[item.group_id]
+            group.revision += 1
+            group.performed_by = actor_id
+        db.flush()
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise unavailable("Unable to remove group memberships") from error
+
+
 def _require_user_patch(payload: UserUpdate) -> None:
     if not payload.model_fields_set:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="At least one non-null field is required",
         )
-    nullable_profile_fields = {"display_name", "job_title", "expires_at", "primary_department_id"}
+    nullable_profile_fields = {"display_name", "job_title", "expires_at"}
     if any(
         getattr(payload, field) is None
         for field in payload.model_fields_set
@@ -111,23 +167,21 @@ def _apply_profile_update(
     user: User,
     payload: UserUpdate,
     *,
-    destination_role: Role,
+    destination_role: str,
 ) -> None:
     fields = payload.model_fields_set
-    identity_kind = user.identity_kind or IdentityKind.INTERNAL.value
-    if identity_kind == IdentityKind.INTERNAL.value and "sponsor_user_id" in fields:
-        raise ProfileValidationError("Internal identities cannot have a sponsor")
+    if user.role != UserRole.GUEST.value and "sponsor_user_id" in fields:
+        raise ProfileValidationError("Only guests can have a sponsor")
     sponsor_user_id = (
         payload.sponsor_user_id if "sponsor_user_id" in fields else user.sponsor_user_id
     )
     expires_at = payload.expires_at if "expires_at" in fields else user.expires_at
-    if fields & {"role_id", "sponsor_user_id", "expires_at"}:
+    if fields & {"role", "sponsor_user_id", "expires_at"}:
         validate_identity_profile(
             db,
-            identity_kind=identity_kind,
+            role=destination_role,
             sponsor_user_id=sponsor_user_id,
             expires_at=expires_at,
-            role=destination_role,
         )
     if "display_name" in fields:
         user.display_name = payload.display_name
@@ -137,13 +191,6 @@ def _apply_profile_update(
         user.sponsor_user_id = sponsor_user_id
     if "expires_at" in fields:
         user.expires_at = expires_at
-    replace_department_memberships(
-        db,
-        user,
-        department_ids=payload.department_ids if "department_ids" in fields else None,
-        primary_department_id=payload.primary_department_id,
-        primary_requested="primary_department_id" in fields,
-    )
 
 
 @router.patch("/{user_id}", response_model=UserResponse)
@@ -156,24 +203,20 @@ def update_user(
     _require_user_patch(payload)
     admin = require_fresh_exact_admin(db, admin.id, serialize_admin_changes=True)
     actor_id = admin.id
+    membership_groups = (
+        _lock_membership_groups(db, user_id) if payload.role == UserRole.ADMIN else {}
+    )
     user = lock_user(db, user_id)
     target_id = user.id
     if user.is_deleted:
         raise conflict("User is deleted")
     if payload.status == UserStatus.DISABLED and user.status == UserStatus.PENDING.value:
         raise conflict("Pending invitations cannot be disabled")
-    role_change_requested = payload.role_id is not None and payload.role_id != user.role_id
-    requested_role_id = payload.role_id
-    destination_role = user.role
-    if role_change_requested and requested_role_id is not None:
-        destination_role = lock_active_role(db, requested_role_id)
-    if destination_role is None:
-        raise conflict("User role is not active")
-    if (
-        user.identity_kind or IdentityKind.INTERNAL.value
-    ) == IdentityKind.GUEST.value and destination_role.role == UserRole.ADMIN.value:
+    role_change_requested = payload.role is not None and payload.role != user.role
+    destination_role = payload.role.value if payload.role is not None else user.role
+    if role_change_requested and user.role == UserRole.GUEST.value:
         db.rollback()
-        raise conflict("Guest identities cannot be administrators")
+        raise conflict("A guest keeps the guest role; invite a member instead")
     destination_status = payload.status.value if payload.status is not None else user.status
     if payload.status == UserStatus.ACTIVE and not is_established_user(user):
         raise conflict("Unaccepted invitations require verified acceptance")
@@ -192,16 +235,13 @@ def update_user(
             ),
             expiry_requested="expires_at" in payload.model_fields_set,
         )
-    if payload.status == UserStatus.DISABLED and non_deleted_service_identity_count(
-        db, owner_id=user.id
-    ):
-        db.rollback()
-        raise conflict("Reassign service identities before disabling this user")
     try:
         _apply_profile_update(db, user, payload, destination_role=destination_role)
     except ProfileValidationError as error:
         db.rollback()
         raise conflict(str(error)) from error
+    if role_change_requested and destination_role == UserRole.ADMIN.value:
+        _leave_groups(db, user, membership_groups, actor_id)
     if payload.status == UserStatus.ACTIVE:
         return _activate_user(
             db,
@@ -209,8 +249,7 @@ def update_user(
             actor_id=actor_id,
             target_id=target_id,
             payload=payload,
-            role_change_requested=role_change_requested,
-            requested_role_id=requested_role_id,
+            destination_role=destination_role,
         )
     if payload.status == UserStatus.DISABLED:
         return _disable_user(
@@ -219,12 +258,9 @@ def update_user(
             actor_id=actor_id,
             target_id=target_id,
             payload=payload,
-            role_change_requested=role_change_requested,
             destination_role=destination_role,
         )
-    if role_change_requested:
-        user.role_id = destination_role.id
-        user.role = destination_role
+    user.role = destination_role
     if payload.username is not None:
         user.username = payload.username
     commit(db, "Username unavailable")
@@ -238,8 +274,7 @@ def _activate_user(
     actor_id: UUID,
     target_id: UUID,
     payload: UserUpdate,
-    role_change_requested: bool,
-    requested_role_id: UUID | None,
+    destination_role: str,
 ) -> User:
     operation_id = uuid7()
     _record_outcome(
@@ -250,22 +285,13 @@ def _activate_user(
         target_id,
     )
     try:
-        finalized_role = (
-            lock_active_role(db, requested_role_id)
-            if role_change_requested and requested_role_id is not None
-            else user.role
-        )
-        if finalized_role is None or finalized_role.is_deleted:
-            raise conflict("User role is not active")
         ensure_projected_admin_remains(
             db,
             user,
-            destination_role=finalized_role,
+            destination_role=destination_role,
             destination_status=UserStatus.ACTIVE.value,
         )
-        if role_change_requested:
-            user.role_id = finalized_role.id
-            user.role = finalized_role
+        user.role = destination_role
         if payload.username is not None:
             user.username = payload.username
         user.status = UserStatus.ACTIVE.value
@@ -299,8 +325,7 @@ def _disable_user(
     actor_id: UUID,
     target_id: UUID,
     payload: UserUpdate,
-    role_change_requested: bool,
-    destination_role: Role,
+    destination_role: str,
 ) -> User:
     operation_id = uuid7()
     _record_outcome(
@@ -310,9 +335,7 @@ def _disable_user(
         actor_id,
         target_id,
     )
-    if role_change_requested:
-        user.role_id = destination_role.id
-        user.role = destination_role
+    user.role = destination_role
     if payload.username is not None:
         user.username = payload.username
     user.status = UserStatus.DISABLED.value
@@ -354,8 +377,6 @@ def delete_user(
         raise conflict("User is already deleted")
     if target_id == actor_id:
         raise forbidden("You cannot delete your own account")
-    if user.role is None:
-        raise conflict("User role is not active")
     ensure_projected_admin_remains(
         db,
         user,
@@ -363,8 +384,6 @@ def delete_user(
         destination_status=user.status,
         destination_deleted=True,
     )
-    if non_deleted_service_identity_count(db, owner_id=user.id):
-        raise conflict("Reassign service identities before deleting this user")
     operation_id = uuid7()
     user.is_deleted = True
     user.deleted_at = datetime.now(UTC)
@@ -415,7 +434,6 @@ def restore_user(
         raise conflict("User is not deleted")
     if not is_established_user(user):
         raise conflict("Unaccepted invitations cannot be restored")
-    restored_role = lock_active_role(db, user.role_id)
     operation_id = uuid7()
     _record_outcome(
         "user.authentication_restore",
@@ -425,15 +443,12 @@ def restore_user(
         target_id,
     )
     try:
-        restored_role = lock_active_role(db, user.role_id)
         ensure_projected_admin_remains(
             db,
             user,
-            destination_role=restored_role,
+            destination_role=user.role,
             destination_status=UserStatus.ACTIVE.value,
         )
-        user.role = restored_role
-        user.role_id = restored_role.id
         user.is_deleted = False
         user.deleted_at = None
         user.status = UserStatus.ACTIVE.value

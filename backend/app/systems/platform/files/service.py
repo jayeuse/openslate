@@ -36,7 +36,7 @@ from app.systems.platform.files.validation_worker import validate_bounded
 
 
 def reserve(db: Session, user: User, payload: FileCreate) -> FileResponse:
-    authorize(db, user, payload.purpose, write=True)
+    authorize(db, user, payload.purpose, write=True, record_id=payload.record_id)
     lock_quota(db)
     require_capacity(db, payload.purpose, payload.expected_size)
     parent(db, payload.record_id, active=True, lock=True)
@@ -193,7 +193,7 @@ def download(
         if candidate.purpose != "workspace_logo" or candidate.is_deleted:
             raise error("file_not_found", "Logo not found", 404)
     else:
-        authorize(db, user, candidate.purpose)
+        authorize(db, user, candidate.purpose, record_id=candidate.record_id)
     file = load(db, file_id, lock=True, shared_lock=True)
     if file.state != "ready":
         raise error("file_not_ready", "File is not available")
@@ -210,7 +210,7 @@ def download(
     candidate = load(db, file_id)
     fresh_actor = fresh_user(db, actor_id)
     if not current_logo:
-        authorize(db, fresh_actor, candidate.purpose)
+        authorize(db, fresh_actor, candidate.purpose, record_id=candidate.record_id)
     file = load(db, file_id, lock=True, shared_lock=True)
     if file.state != "ready":
         raise error("file_not_ready", "File is not available")

@@ -32,10 +32,13 @@ from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.listing.schemas import PaginationMetadata, StandardListResponse
+from app.systems.access.policy.checks import module_hidden, module_level
+from app.systems.access.users.models import User
 from app.systems.sandbox.designs.date_values import parse_datetime
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import validate_field_value
 from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.display import FieldDisplayResolver, displayed_record
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_schemas import (
     SEARCHABLE_FIELD_TYPES,
@@ -69,7 +72,32 @@ def validate_definition(
     module_id: UUID,
     definition: QueryDefinition,
     extra_references: Sequence[FieldReference] = (),
+    *,
+    reader: User,
 ) -> dict[UUID, Field]:
+    """Validate a record query for one module that ``reader`` can read.
+
+    Every record read path compiles through this check, so a module the reader
+    cannot read is hidden from all of them.
+    """
+
+    if module_level(db, reader, module_id) is None:
+        raise module_hidden()
+    return validate_fields(db, module_id, definition, extra_references)
+
+
+def validate_fields(
+    db: Session,
+    module_id: UUID,
+    definition: QueryDefinition,
+    extra_references: Sequence[FieldReference] = (),
+) -> dict[UUID, Field]:
+    """Validate the field references of a record query, without an access check.
+
+    Only a caller that acts as the workspace, such as a scheduled Report run, uses
+    this directly. Every user read goes through :func:`validate_definition`.
+    """
+
     if db.get(Module, module_id) is None:
         raise invalid_view("The module no longer exists")
     fields = {
@@ -102,7 +130,6 @@ def comparison_value(field: Field, predicate: QueryFilter) -> Any:
         return None
     if predicate.operator in {"contains", "prefix", "suffix"} and field.type in (
         *TEXT_LIKE_FIELD_TYPES,
-        FieldType.SELECT,
     ):
         if not isinstance(predicate.value, str):
             raise HTTPException(422, detail="Filter value does not match the field type")
@@ -163,10 +190,18 @@ def compile_query(
     if definition.search:
         pattern = f"%{literal_pattern(definition.search)}%"
         search_conditions = [cast(Record.id, String).ilike(pattern, escape="\\")]
-        search_conditions.extend(
-            field_expression(fields[reference.field_id]).ilike(pattern, escape="\\")
-            for reference in definition.search_fields
-        )
+        for reference in definition.search_fields:
+            field = fields[reference.field_id]
+            expression = field_expression(field)
+            if field.type == FieldType.SELECT:
+                matching_ids = [
+                    option["id"]
+                    for option in field.config.get("options", [])
+                    if definition.search.casefold() in option["label"].casefold()
+                ]
+                search_conditions.append(expression.in_(matching_ids))
+            else:
+                search_conditions.append(expression.ilike(pattern, escape="\\"))
         statement = statement.where(or_(*search_conditions))
     filter_conditions = []
     for predicate in definition.filters:
@@ -192,14 +227,27 @@ def compile_query(
                     else expression.is_not(None)
                 )
             case "contains" | "prefix" | "suffix":
-                pattern = literal_pattern(value)
-                if predicate.operator == "contains":
-                    pattern = f"%{pattern}%"
-                elif predicate.operator == "prefix":
-                    pattern = f"{pattern}%"
+                if field.type == FieldType.SELECT:
+                    selected_label = next(
+                        option["label"]
+                        for option in field.config["options"]
+                        if option["id"] == value
+                    )
+                    matching_ids = [
+                        option["id"]
+                        for option in field.config["options"]
+                        if selected_label.casefold() in option["label"].casefold()
+                    ]
+                    condition = expression.in_(matching_ids)
                 else:
-                    pattern = f"%{pattern}"
-                condition = expression.ilike(pattern, escape="\\")
+                    pattern = literal_pattern(value)
+                    if predicate.operator == "contains":
+                        pattern = f"%{pattern}%"
+                    elif predicate.operator == "prefix":
+                        pattern = f"{pattern}%"
+                    else:
+                        pattern = f"%{pattern}"
+                    condition = expression.ilike(pattern, escape="\\")
             case "in":
                 condition = expression.in_(value)
             case "eq":
@@ -291,8 +339,10 @@ def projected_record(row: Row[tuple[Any, ...]]) -> RecordProjection:
     )
 
 
-def projected_record_response(row: Row[tuple[Any, ...]]) -> RecordResponse:
-    return RecordResponse.model_validate(projected_record(row))
+def projected_record_response(
+    row: Row[tuple[Any, ...]], resolver: FieldDisplayResolver
+) -> RecordResponse:
+    return displayed_record(projected_record(row), resolver)
 
 
 def _filtered_page(
@@ -331,8 +381,10 @@ def _filtered_page(
     return int(rows[0].total), [row for row in rows if row.id is not None]
 
 
-def query_records(db: Session, payload: RecordQuery) -> StandardListResponse[RecordResponse]:
-    fields = validate_definition(db, payload.module_id, payload.definition)
+def query_records(
+    db: Session, payload: RecordQuery, *, reader: User
+) -> StandardListResponse[RecordResponse]:
+    fields = validate_definition(db, payload.module_id, payload.definition, reader=reader)
     if payload.definition.filters or payload.definition.search:
         total, rows = _filtered_page(db, payload, fields)
     else:
@@ -342,8 +394,9 @@ def query_records(db: Session, payload: RecordQuery) -> StandardListResponse[Rec
         )
         projected_statement = projected_record_query(statement, payload.definition)
         rows = list(db.execute(projected_statement.limit(payload.limit).offset(payload.offset)))
+    resolver = FieldDisplayResolver(db, payload.module_id, fields.values())
     return StandardListResponse(
-        items=[projected_record_response(row) for row in rows],
+        items=[projected_record_response(row, resolver) for row in rows],
         pagination=PaginationMetadata(
             limit=payload.limit,
             offset=payload.offset,

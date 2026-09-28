@@ -7,8 +7,7 @@ export const draftIdentifier = z
   .max(256)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const MAX_RECORD_LENGTH = 32_768;
-export type AccessDraftOwner =
-  "rules" | "identity" | "role" | "group" | "defaults";
+export type AccessDraftOwner = "identity" | "group" | "settings";
 const submissionsBegunInDocument = new Set<string>();
 
 export type AccessDraftStorage = Pick<
@@ -248,4 +247,17 @@ export function clearDraftKeys(
   } catch {
     return false;
   }
+}
+
+export function clearAccessDraftStorageExcept(
+  userId: string | null,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  const keep = userId === null ? null : accessDraftUserStoragePrefix(userId);
+  return clearDraftKeys(
+    (key) =>
+      key.startsWith(ACCESS_DRAFT_STORAGE_PREFIX) &&
+      (keep === null || !key.startsWith(keep)),
+    storage,
+  );
 }

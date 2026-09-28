@@ -5,9 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from uuid6 import uuid7
 
 from app.systems.platform.events import router as events_router
-from app.systems.platform.events.hub import EventHub
+from app.systems.platform.events.hub import EventHub, EventViewer
 from app.systems.platform.events.router import BoundedSSEStreamingResponse, EventPrincipal
 
 
@@ -66,7 +67,7 @@ def test_response_releases_a_pre_reserved_slot_when_its_body_raises_after_yieldi
 
 
 def _user() -> object:
-    return SimpleNamespace(role=SimpleNamespace(role="member", permissions={}))
+    return EventViewer(user_id=uuid7(), role="member", module_ids=frozenset())
 
 
 def _request_with_hub(hub: EventHub) -> object:

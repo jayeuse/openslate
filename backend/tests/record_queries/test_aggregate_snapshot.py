@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import Engine, select, text
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies import get_current_user
@@ -19,7 +19,8 @@ from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import Role, User
+from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.sandbox.departments.models import Department
@@ -76,12 +77,13 @@ class _SnapshotFixture:
     engine: Engine
     actor: User
     session_id: UUID
-    role_id: UUID
+    group_id: UUID
     module_id: UUID
     dimension_id: UUID
     date_field_id: UUID
     record_ids: list[UUID]
     department_id: UUID
+    select_ids: dict[str, str]
 
     def grouped_payload(self) -> dict[str, object]:
         return {
@@ -107,24 +109,24 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
     engine = integration_owner_db.get_bind().engine
     actor_id = uuid7()
     session_id = uuid7()
-    role_id = uuid7()
+    group_id = uuid7()
     department_id = uuid7()
     module_id = uuid7()
     dimension_id = uuid7()
     date_field_id = uuid7()
     record_ids = [uuid7(), uuid7()]
     select_values = ["Alpha", "Beta"]
+    select_ids = {label: str(uuid7()) for label in (*select_values, "Missing", "Changed")}
     dimension_key = str(dimension_id)
     date_key = str(date_field_id)
 
     with Session(engine) as setup:
-        role = Role(id=role_id, role=f"snapshot-{role_id.hex}", permissions={"records.read": True})
         actor = User(
             id=actor_id,
             email=f"snapshot-{actor_id}@example.com",
             username=f"snapshot_{actor_id.hex[:12]}",
             status="active",
-            role=role,
+            role="member",
         )
         department = Department(id=department_id, department_name=f"snapshot-{department_id}")
         module = Module(
@@ -139,7 +141,11 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
             type=FieldType.SELECT,
             position=0,
             required=False,
-            config={"options": [*select_values, "Missing"]},
+            config={
+                "options": [
+                    {"id": option_id, "label": label} for label, option_id in select_ids.items()
+                ]
+            },
         )
         date_field = Field(
             id=date_field_id,
@@ -157,15 +163,26 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
             csrf_token_digest=uuid7().hex * 2,
             expires_at=datetime.now(UTC) + timedelta(days=1),
         )
-        setup.add_all([department, module, dimension, date_field, role, actor])
+        setup.add_all([department, module, dimension, date_field, actor])
         setup.flush()
         setup.add(db_session)
+        setup.add(Group(id=group_id, name=f"Snapshot {group_id.hex}"))
+        setup.flush()
+        setup.add(GroupMember(group_id=group_id, user_id=actor_id))
+        setup.add(
+            GroupAccess(
+                group_id=group_id,
+                department_id=department_id,
+                module_id=module_id,
+                level=AccessLevel.READ.value,
+            )
+        )
         setup.add_all(
             [
                 Record(
                     id=record_id,
                     module_id=module_id,
-                    data={dimension_key: value, date_key: day},
+                    data={dimension_key: select_ids[value], date_key: day},
                 )
                 for record_id, value, day in zip(
                     record_ids,
@@ -176,9 +193,7 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
             ]
         )
         setup.commit()
-        actor = setup.scalar(
-            select(User).options(joinedload(User.role)).where(User.id == actor_id)
-        )
+        actor = setup.scalar(select(User).where(User.id == actor_id))
         assert actor is not None
         setup.expunge(actor)
 
@@ -186,12 +201,13 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
         engine=engine,
         actor=actor,
         session_id=session_id,
-        role_id=role_id,
+        group_id=group_id,
         module_id=module_id,
         dimension_id=dimension_id,
         date_field_id=date_field_id,
         record_ids=record_ids,
         department_id=department_id,
+        select_ids=select_ids,
     )
     try:
         yield fixture
@@ -208,21 +224,23 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
                 text("DELETE FROM public.identity_sessions WHERE user_id = :actor_id"),
                 {"actor_id": actor_id},
             )
+            for table in ("group_access", "group_members"):
+                cleanup.execute(
+                    text(f"DELETE FROM public.{table} WHERE group_id = :id"), {"id": group_id}
+                )
+            cleanup.execute(text("DELETE FROM public.groups WHERE id = :id"), {"id": group_id})
             cleanup.execute(
                 text("DELETE FROM public.records WHERE module_id = :id"), {"id": module_id}
             )
             cleanup.execute(
                 text("DELETE FROM public.fields WHERE module_id = :id"), {"id": module_id}
             )
-            cleanup.execute(
-                text("DELETE FROM public.modules WHERE id = :id"), {"id": module_id}
-            )
+            cleanup.execute(text("DELETE FROM public.modules WHERE id = :id"), {"id": module_id})
             cleanup.execute(
                 text("DELETE FROM public.departments WHERE id = :id"),
                 {"id": department_id},
             )
             cleanup.execute(text("DELETE FROM public.users WHERE id = :id"), {"id": actor_id})
-            cleanup.execute(text("DELETE FROM public.roles WHERE id = :id"), {"id": role_id})
 
 
 def _post_snapshot(
@@ -264,15 +282,21 @@ def test_snapshot_returns_every_group_and_commits_safe_audit_event(
     with Session(snapshot_fixture.engine) as setup:
         dimension = setup.get(Field, snapshot_fixture.dimension_id)
         assert dimension is not None
-        values = [f"Category {index:03}" for index in range(105)]
-        dimension.config = {"options": values}
+        values = [f"Category {index:03}" for index in range(2, 105)]
+        new_options = {label: str(uuid7()) for label in values}
+        dimension.config = {
+            "options": [
+                {"id": option_id, "label": label}
+                for label, option_id in {**snapshot_fixture.select_ids, **new_options}.items()
+            ]
+        }
         setup.add_all(
             [
                 Record(
                     module_id=snapshot_fixture.module_id,
-                    data={str(snapshot_fixture.dimension_id): value},
+                    data={str(snapshot_fixture.dimension_id): new_options[value]},
                 )
-                for value in values[2:]
+                for value in values
             ]
         )
         setup.commit()
@@ -315,7 +339,7 @@ def test_snapshot_returns_a_complete_empty_group_result(
                 "field_id": str(snapshot_fixture.dimension_id),
                 "expected_type": "select",
                 "operator": "eq",
-                "value": "Missing",
+                "value": snapshot_fixture.select_ids["Missing"],
             }
         ],
     }
@@ -343,6 +367,7 @@ def test_date_series_snapshot_returns_the_full_explicit_window(
     _, count = aggregation.aggregate_snapshot(
         snapshot_fixture.engine,
         DateSeriesAggregateQuery.model_validate(payload),
+        reader_id=snapshot_fixture.actor.id,
     )
     assert count == 366
     response = _post_snapshot(snapshot_fixture, payload)
@@ -397,7 +422,7 @@ def test_snapshot_uses_one_repeatable_read_snapshot_during_concurrent_record_cha
         with Session(snapshot_fixture.engine) as writer:
             record = writer.get(Record, snapshot_fixture.record_ids[0])
             assert record is not None
-            record.data[str(snapshot_fixture.dimension_id)] = "Changed"
+            record.data[str(snapshot_fixture.dimension_id)] = snapshot_fixture.select_ids["Changed"]
             writer.commit()
         return original(snapshot, payload, fields)
 
@@ -405,6 +430,7 @@ def test_snapshot_uses_one_repeatable_read_snapshot_during_concurrent_record_cha
     response = aggregation.aggregate_snapshot(
         snapshot_fixture.engine,
         GroupedAggregateSnapshotQuery.model_validate(snapshot_fixture.grouped_payload()),
+        reader_id=snapshot_fixture.actor.id,
     )
 
     assert response[1] == 2
@@ -432,21 +458,24 @@ def test_snapshot_fails_closed_when_bucket_or_json_byte_limit_is_exceeded(
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("revoke", ["capability", "session"])
-def test_snapshot_rechecks_live_capability_and_session_before_release(
+@pytest.mark.parametrize("revoke", ["module_access", "session"])
+def test_snapshot_rechecks_live_module_access_and_session_before_release(
     snapshot_fixture: _SnapshotFixture,
     monkeypatch: pytest.MonkeyPatch,
     revoke: str,
 ) -> None:
     original = query_router.aggregate_snapshot
 
-    def revoke_after_snapshot(engine: Engine, payload: AggregateSnapshotQuery) -> tuple[bytes, int]:
-        result = original(engine, payload)
+    def revoke_after_snapshot(
+        engine: Engine, payload: AggregateSnapshotQuery, *, reader_id: UUID
+    ) -> tuple[bytes, int]:
+        result = original(engine, payload, reader_id=reader_id)
         with Session(engine) as writer:
-            if revoke == "capability":
-                role = writer.get(Role, snapshot_fixture.role_id)
-                assert role is not None
-                role.permissions = {"records.write": True}
+            if revoke == "module_access":
+                writer.execute(
+                    text("DELETE FROM public.group_access WHERE group_id = :id"),
+                    {"id": snapshot_fixture.group_id},
+                )
             else:
                 identity_session = writer.get(IdentitySession, snapshot_fixture.session_id)
                 assert identity_session is not None

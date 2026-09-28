@@ -59,7 +59,7 @@ export function ServerBoardPortabilityDisplay({
       e(
         "p",
         { className: "text-muted-foreground mt-1 text-sm" },
-        "Configurations copy Board structure only. They do not include record data, linked records, events, announcements, files, audiences, access grants, or placements.",
+        "A configuration holds the Board name, description and widgets. It does not include posts, events, files, record links or groups.",
       ),
     ),
     error
@@ -81,7 +81,7 @@ export function ServerBoardPortabilityDisplay({
       e(
         "p",
         { className: "text-muted-foreground text-sm" },
-        "Choose a Board configuration JSON file, up to 1 MiB. Import creates a new private Board; it never writes into the selected Board.",
+        "Choose a Board configuration JSON file, up to 1 MiB. Import creates a new project Board with no groups; it never writes into the selected Board.",
       ),
       e(
         "label",
@@ -251,8 +251,8 @@ export function ServerBackedBoardPortability({
       open: model.confirmation === "import" && !!model.selectedFileName,
       title: "Import Board configuration?",
       description:
-        "This creates a new private Board from structure only. Record data, files, events, announcements, links, grants, audiences and placements are not copied.",
-      action: "Create private Board",
+        "This creates a new project Board with no groups from the configuration. Posts, events, files and record links are not copied.",
+      action: "Create project Board",
       onConfirm: model.confirmAction,
       onCancel: () => model.setConfirmation(null),
       disabled: model.pending !== null,
@@ -267,7 +267,7 @@ export function ServerBackedBoardPortability({
         model.canDuplicate,
       title: "Duplicate Board structure?",
       description:
-        "This creates a new private Board from the current Board structure only. Record data, files, events, announcements, links, grants, audiences and placements are not copied.",
+        "This creates a new project Board with no groups and the widgets of the current Board. Posts, events, files and record links are not copied.",
       action: "Duplicate structure",
       onConfirm: model.confirmAction,
       onCancel: () => model.setConfirmation(null),

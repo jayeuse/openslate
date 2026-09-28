@@ -53,12 +53,7 @@ const visibleOccurrence: BoardEventOccurrencePage["items"][number] = {
     timezoneName: "Asia/Manila",
     recurrence: "none",
     repeatUntil: null,
-    audience: {
-      kind: "everyone",
-      roleId: null,
-      userId: null,
-      departmentId: null,
-    },
+    reminders: ["1d"],
     archived: false,
     revision: 1,
     boardRevision: 1,
@@ -185,7 +180,7 @@ test("calendar shows an edit action only for an explicitly authorized returned e
   expect(noAccess).not.toContain("Edit Visible planning session");
 });
 
-test("calendar offers archive only for a manager-approved returned event, not an author with edit access", () => {
+test("calendar renders archive only when the supplied event policy allows it", () => {
   const window = calendarWindowForMonth("2026-09");
   const manager = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
@@ -216,7 +211,12 @@ test("calendar offers archive only for a manager-approved returned event, not an
 
 test("event edit authority requires current Board edit and author or manager", () => {
   const event = visibleOccurrence.event;
-  const author = { view: true, edit: true, manage: false };
+  const author = {
+    level: "write" as const,
+    view: true,
+    edit: true,
+    manage: false,
+  };
   expect(canEditBoardEvent(event, boardId, authorId, author, true)).toBe(true);
   expect(canEditBoardEvent(event, boardId, eventId, author, true)).toBe(false);
   expect(
@@ -224,7 +224,7 @@ test("event edit authority requires current Board edit and author or manager", (
       event,
       boardId,
       eventId,
-      { ...author, manage: true },
+      { ...author, level: "manage" as const, manage: true },
       true,
     ),
   ).toBe(true);
@@ -233,7 +233,7 @@ test("event edit authority requires current Board edit and author or manager", (
       event,
       boardId,
       authorId,
-      { ...author, edit: false },
+      { ...author, level: "read" as const, edit: false },
       true,
     ),
   ).toBe(false);
@@ -252,9 +252,14 @@ test("event edit authority requires current Board edit and author or manager", (
   ).toBe(false);
 });
 
-test("event lifecycle requires Board manager access and current revision, not author edit", () => {
+test("event lifecycle fails closed for author edit without a viewer ID and requires current revision", () => {
   const event = visibleOccurrence.event;
-  const author = { view: true, edit: true, manage: false };
+  const author = {
+    level: "write" as const,
+    view: true,
+    edit: true,
+    manage: false,
+  };
   expect(
     prepareBoardEventLifecycleAction(
       event,
@@ -265,7 +270,12 @@ test("event lifecycle requires Board manager access and current revision, not au
       "archive",
     ),
   ).toBeNull();
-  const manager = { view: true, edit: false, manage: true };
+  const manager = {
+    level: "manage" as const,
+    view: true,
+    edit: true,
+    manage: true,
+  };
   expect(
     prepareBoardEventLifecycleAction(
       event,
@@ -369,7 +379,7 @@ test("event editor creates valid all-day series input and retains client draft o
     startDate: "2026-09-15",
     endDate: "2026-09-15",
     repeatUntil: "2026-10-15",
-    audience: { kind: "everyone" },
+    reminders: [],
   });
   expect(() =>
     boardEventInputFromDraft({ ...draft, end: "2026-09-14" }),
@@ -379,27 +389,26 @@ test("event editor creates valid all-day series input and retains client draft o
   ).toThrow(BoardEventDraftError);
 });
 
-test("event editor submits a chosen active target and rejects an unchosen target", () => {
+test("event editor sends reminder timings for a new event and only changed timings for an edit", () => {
   const draft = {
     ...newBoardEventDraft(boardId, 5, "2026-09-15"),
     title: "Department briefing",
-    audience: {
-      kind: "department" as const,
-      targetId: "00000000-0000-4000-8000-000000000004",
-    },
+    reminders: ["start" as const, "1d" as const],
   };
   expect(boardEventInputFromDraft(draft)).toMatchObject({
-    audience: {
-      kind: "department",
-      departmentId: "00000000-0000-4000-8000-000000000004",
-    },
+    reminders: ["1d", "start"],
   });
-  expect(() =>
-    boardEventInputFromDraft({
-      ...draft,
-      audience: { kind: "department", targetId: null },
-    }),
-  ).toThrow(BoardEventDraftError);
+  const existing = boardEventDraftFromEvent(visibleOccurrence.event);
+  expect(existing.reminders).toEqual(["1d"]);
+  expect(
+    boardEventInputFromDraft({ ...existing, title: "Renamed" }),
+  ).not.toHaveProperty("reminders");
+  expect(
+    boardEventInputFromDraft({ ...existing, reminders: ["15m", "1d"] }),
+  ).toMatchObject({ reminders: ["1d", "15m"] });
+  expect(
+    boardEventInputFromDraft({ ...existing, reminders: [] }),
+  ).toMatchObject({ reminders: [] });
 });
 
 test("event editor retains external links and rejects unsafe link input", () => {
@@ -486,7 +495,7 @@ test("intentional link replacement survives a conflict retry", () => {
   });
 });
 
-test("event editor updates timed series in its IANA timezone without changing a restricted audience", () => {
+test("event editor updates timed series in its IANA timezone", () => {
   const event = {
     ...visibleOccurrence.event,
     allDay: false as const,
@@ -496,18 +505,11 @@ test("event editor updates timed series in its IANA timezone without changing a 
     endAt: "2026-09-14T02:00:00Z",
     recurrence: "weekly" as const,
     repeatUntil: "2026-10-15",
-    audience: {
-      kind: "role" as const,
-      roleId: "00000000-0000-4000-8000-000000000090",
-      userId: null,
-      departmentId: null,
-    },
   };
   const draft = boardEventDraftFromEvent(event);
   expect(draft).toMatchObject({
     start: "2026-09-14T09:00",
     end: "2026-09-14T10:00",
-    audience: "keep",
   });
   const input = boardEventInputFromDraft(draft);
   expect(input).toMatchObject({

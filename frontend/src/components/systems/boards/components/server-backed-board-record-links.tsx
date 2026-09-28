@@ -5,6 +5,8 @@ import { ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { subscribeOpenViewInvalidations } from "@/components/systems/openview/adapters/invalidation-events";
+import { invalidatesRecords } from "@/components/systems/openview/adapters/openview-queries";
 import {
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
@@ -44,15 +46,22 @@ function errorText(error: unknown): string {
   return "Record links could not be updated. Try again.";
 }
 
-function recordLabel(
+export function recordTitleForLink(
   record: OpenViewRecord,
-  fields: OpenViewDataSourceField[],
+  titleField: Pick<OpenViewDataSourceField, "id" | "type"> | null,
 ): string {
-  for (const field of fields) {
-    const value = record.data[field.id];
-    if (typeof value === "string" && value.trim()) return value.slice(0, 100);
-  }
-  return `Record ${record.id.slice(0, 8)}`;
+  const fallback = `Record ${record.id.slice(0, 8)}`;
+  if (!titleField) return fallback;
+  const displayValue = record.displayValues[titleField.id];
+  if (typeof displayValue === "string" && displayValue.trim())
+    return displayValue.slice(0, 100);
+  if (titleField.type === "select" || titleField.type === "user")
+    return fallback;
+  const value = record.data[titleField.id];
+  if (typeof value === "string" && value.trim()) return value.slice(0, 100);
+  if (typeof value === "number" && Number.isFinite(value))
+    return String(value).slice(0, 100);
+  return fallback;
 }
 
 export function ServerBoardRecordLinks(props: Props) {
@@ -60,7 +69,7 @@ export function ServerBoardRecordLinks(props: Props) {
   const kind = props.target.kind;
   const boardId = props.target.boardId;
   const contentId = props.target.contentId;
-  const view = props.target.kind === "announcement" ? props.target.view : null;
+  const view = props.target.kind === "post" ? props.target.view : null;
   const target = useMemo<BoardRecordLinkTarget>(
     () =>
       kind === "event"
@@ -69,6 +78,7 @@ export function ServerBoardRecordLinks(props: Props) {
     [kind, boardId, contentId, view],
   );
   const [items, setItems] = useState<BoardRecordLink[]>([]);
+  const itemsRef = useRef<BoardRecordLink[] | null>(null);
   const [listStatus, setListStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
@@ -78,7 +88,9 @@ export function ServerBoardRecordLinks(props: Props) {
   const [sourceHasMore, setSourceHasMore] = useState(false);
   const [sourceError, setSourceError] = useState(false);
   const [moduleId, setModuleId] = useState("");
-  const [fields, setFields] = useState<OpenViewDataSourceField[]>([]);
+  const [titleField, setTitleField] = useState<OpenViewDataSourceField | null>(
+    null,
+  );
   const [records, setRecords] = useState<OpenViewRecord[]>([]);
   const [recordOffset, setRecordOffset] = useState(0);
   const [recordHasMore, setRecordHasMore] = useState(false);
@@ -87,7 +99,6 @@ export function ServerBoardRecordLinks(props: Props) {
   >("idle");
   const [search, setSearch] = useState("");
   const [recordId, setRecordId] = useState("");
-  const [label, setLabel] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -103,6 +114,22 @@ export function ServerBoardRecordLinks(props: Props) {
     busyChangeRef.current = busyChange;
   }, [busyChange]);
   useEffect(() => {
+    const refresh = () => setListReload((value) => value + 1);
+    return subscribeOpenViewInvalidations((event) => {
+      if (event.type === "resync") {
+        refresh();
+        return;
+      }
+      if (!invalidatesRecords(event.entity)) return;
+      if (
+        event.moduleId === undefined ||
+        itemsRef.current === null ||
+        itemsRef.current.some((item) => item.moduleId === event.moduleId)
+      )
+        refresh();
+    }, refresh);
+  }, [target]);
+  useEffect(() => {
     if (boardRevision !== null && contentRevision !== null)
       versionsRef.current = { boardRevision, contentRevision };
   }, [boardRevision, contentRevision]);
@@ -112,15 +139,18 @@ export function ServerBoardRecordLinks(props: Props) {
   }, [pending]);
   useEffect(() => {
     let active = true;
+    itemsRef.current = null;
     setListStatus("loading");
     void listBoardRecordLinks(target).then(
       (page) => {
         if (!active) return;
+        itemsRef.current = page.items;
         setItems(page.items);
         setListStatus("ready");
       },
       () => {
         if (!active) return;
+        itemsRef.current = [];
         setItems([]);
         setListStatus("error");
       },
@@ -152,25 +182,63 @@ export function ServerBoardRecordLinks(props: Props) {
     let active = true;
     setRecordStatus("loading");
     void (async () => {
-      const fieldPage = await listOpenViewDataSourceFields(moduleId, {
-        limit: 100,
-      });
-      if (fieldPage.pagination.hasMore)
-        throw new Error("This data source has too many fields to browse here.");
-      const nextFields = fieldPage.items;
-      const searchable = nextFields
+      const selectedSource = sources.find((source) => source.id === moduleId);
+      const selectedTitleFieldId = selectedSource?.titleFieldId ?? null;
+      const collectedFields: OpenViewDataSourceField[] = [];
+      let titleFieldFound = selectedTitleFieldId === null;
+      let nextOffset = 0;
+      for (let pageNumber = 0; pageNumber < 50; pageNumber += 1) {
+        const page = await listOpenViewDataSourceFields(moduleId, {
+          limit: 100,
+          offset: nextOffset,
+        });
+        collectedFields.push(...page.items);
+        if (
+          selectedTitleFieldId !== null &&
+          page.items.some((field) => field.id === selectedTitleFieldId)
+        ) {
+          titleFieldFound = true;
+        }
+        if (!page.pagination.hasMore || titleFieldFound) break;
+        if (page.items.length === 0)
+          throw new Error("Data source fields could not be loaded.");
+        nextOffset += page.items.length;
+      }
+      if (!titleFieldFound)
+        throw new Error("The selected Record title field is unavailable.");
+      const nextTitleField = selectedTitleFieldId
+        ? (collectedFields.find((field) => field.id === selectedTitleFieldId) ??
+          null)
+        : null;
+      const queryFields = collectedFields.slice(0, 100);
+      const searchable = queryFields
         .filter((field) =>
           ["text", "long_text", "email", "url", "select"].includes(field.type),
         )
         .map((field) => ({ fieldId: field.id, expectedType: field.type }));
+      const columns = queryFields
+        .slice(
+          0,
+          nextTitleField &&
+            !queryFields.some((field) => field.id === nextTitleField.id)
+            ? 99
+            : 100,
+        )
+        .map((field) => ({ fieldId: field.id, expectedType: field.type }));
+      if (
+        nextTitleField &&
+        !columns.some((column) => column.fieldId === nextTitleField.id)
+      )
+        columns.push({
+          fieldId: nextTitleField.id,
+          expectedType: nextTitleField.type,
+        });
       const page = await queryOpenViewRecords({
         moduleId,
         definition: {
           version: 1,
           logic: "and",
-          columns: nextFields
-            .slice(0, 100)
-            .map((field) => ({ fieldId: field.id, expectedType: field.type })),
+          columns,
           filters: [],
           sort: [],
           deleted: "exclude",
@@ -181,36 +249,35 @@ export function ServerBoardRecordLinks(props: Props) {
         offset: recordOffset,
       });
       if (!active) return;
-      setFields(nextFields);
+      setTitleField(nextTitleField);
       setRecords(page.items);
       setRecordHasMore(page.pagination.hasMore);
       setRecordStatus("ready");
     })().catch(() => {
       if (!active) return;
-      setFields([]);
+      setTitleField(null);
       setRecords([]);
       setRecordStatus("error");
     });
     return () => {
       active = false;
     };
-  }, [props.access, moduleId, recordOffset, search]);
+  }, [props.access, moduleId, recordOffset, search, sources]);
 
   async function mutate(action: "add" | "remove", linkId?: string) {
     if (!editable || editable.locked || pending) return;
-    if (action === "add" && (!recordId || !label.trim())) return;
+    if (action === "add" && !recordId) return;
     setPending(true);
     setError(null);
     setNotice(null);
     try {
       const versions = versionsRef.current ?? editable.versions;
       if (action === "add")
-        await addBoardRecordLink(editable.target, recordId, label, versions);
+        await addBoardRecordLink(editable.target, recordId, versions);
       else if (linkId)
         await removeBoardRecordLink(editable.target, linkId, versions);
       versionsRef.current = await editable.refreshVersions();
       setRecordId("");
-      setLabel("");
       setListReload((value) => value + 1);
       setNotice(action === "add" ? "Record linked." : "Record link removed.");
     } catch (operationError) {
@@ -287,6 +354,7 @@ export function ServerBoardRecordLinks(props: Props) {
                 setModuleId(event.currentTarget.value);
                 setRecordId("");
                 setRecordOffset(0);
+                setTitleField(null);
               }}
             >
               <option value="">Choose a data source</option>
@@ -349,16 +417,12 @@ export function ServerBoardRecordLinks(props: Props) {
                       onChange={(event) => {
                         const id = event.currentTarget.value;
                         setRecordId(id);
-                        const record = records.find(
-                          (candidate) => candidate.id === id,
-                        );
-                        if (record) setLabel(recordLabel(record, fields));
                       }}
                     >
                       <option value="">Choose a Record</option>
                       {records.map((record) => (
                         <option key={record.id} value={record.id}>
-                          {recordLabel(record, fields)}
+                          {recordTitleForLink(record, titleField)}
                         </option>
                       ))}
                     </select>
@@ -392,20 +456,10 @@ export function ServerBoardRecordLinks(props: Props) {
               )}
             </>
           )}
-          <label className="block space-y-1 text-sm">
-            <span>Link label</span>
-            <Input
-              className="bg-background text-foreground min-h-11 rounded-md"
-              maxLength={100}
-              value={label}
-              disabled={!selectedRecord || pending}
-              onChange={(event) => setLabel(event.currentTarget.value)}
-            />
-          </label>
           <Button
             type="button"
             className="min-h-11"
-            disabled={!selectedRecord || !label.trim() || pending}
+            disabled={!selectedRecord || pending}
             onClick={() => void mutate("add")}
           >
             Link Record

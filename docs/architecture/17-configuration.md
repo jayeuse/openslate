@@ -46,7 +46,7 @@ FastAPI settings are defined by [`backend/app/core/config/settings.py`](../../ba
 | Provider mail configuration visibility | `SMTP_HOST`, `SMTP_PORT`, `SMTP_ADMIN_EMAIL` | Non-secret facts projected into the API for readiness. Missing facts produce `not_configured`; presence does not prove email delivery. The API does not receive the SMTP password. |
 | Application policy | `LIFECYCLE_PURGE_ENABLED` | Explicitly controls the disabled-by-default purge path. |
 
-The development `.env` also contains `BACKEND_URL`, `FRONTEND_DEV_PORT`, `ADMIN_EMAIL`, `ADMIN_USERNAME`, and `SEED_ACCESS_TOKEN` for local launch, first-admin invitation, and optional sample-data tooling. `BACKEND_BIND_HOST` and `BACKEND_PORT` are local FastAPI settings; `FRONTEND_DEV_PORT` is the Next hot-reload port. The Next launcher receives only the required direct nonsecret development values and its derived HMR origin, never the complete root environment.
+The development `.env` also contains `BACKEND_URL`, `FRONTEND_DEV_PORT`, `ADMIN_EMAIL`, `ADMIN_USERNAME`, and `SEED_ACCESS_TOKEN` for local launch and first-admin invitation. `SEED_ACCESS_TOKEN` is reserved for sample-data tooling, which is retired during the schema redesign. `BACKEND_BIND_HOST` and `BACKEND_PORT` are local FastAPI settings; `FRONTEND_DEV_PORT` is the Next hot-reload port. The Next launcher receives only the required direct nonsecret development values and its derived HMR origin, never the complete root environment.
 
 ## Production Compose inputs and scanner paths
 

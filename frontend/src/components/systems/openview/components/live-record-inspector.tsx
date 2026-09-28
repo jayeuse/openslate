@@ -9,6 +9,7 @@ import type {
   OpenViewRecord,
 } from "../adapters/views-api";
 import type { OpenViewWindowQueryRequest } from "../adapters/window-api";
+import { openViewRecordFieldValue } from "../domain/record-display";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -90,7 +91,7 @@ export function LiveRecordInspector({
     fields.find((field) => field.id === primaryFieldId) ?? fields[0];
   const title = record
     ? primaryField
-      ? readableValue(record.data[primaryField.id])
+      ? readableValue(openViewRecordFieldValue(record, primaryField))
       : `Record ${record.id.slice(0, 8)}`
     : "";
 
@@ -127,7 +128,7 @@ export function LiveRecordInspector({
                     {field.name}
                   </dt>
                   <dd className="min-w-0 text-sm wrap-anywhere">
-                    {readableValue(record.data[field.id])}
+                    {readableValue(openViewRecordFieldValue(record, field))}
                   </dd>
                 </div>
               ))}

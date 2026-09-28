@@ -47,7 +47,6 @@ def test_close_plan_blocks_unbound_children_records_and_live_relationships(
         Module(
             department_id=department.id,
             module_name="Unmanaged module",
-            is_schema_accepted=False,
         )
     )
     integration_owner_db.flush()
@@ -110,7 +109,7 @@ def test_module_closure_inherits_to_its_bound_fields(
     )
 
 
-def test_preview_reports_non_label_structure_and_automation_changes(
+def test_preview_reports_non_label_structure_and_trigger_changes(
     integration_owner_db: Session,
 ) -> None:
     document = publishable_document()
@@ -285,7 +284,6 @@ def test_preview_blocks_names_already_used_by_unbound_live_structure(
         Module(
             department_id=operations.id,
             module_name="External module",
-            is_schema_accepted=False,
         )
     )
     integration_owner_db.flush()
@@ -412,7 +410,7 @@ def test_module_move_blocks_unbound_incoming_relationship(integration_owner_db: 
     _publisher, document = publish_structure(integration_owner_db)
     operations = bound_department(integration_owner_db, "sample-operations")
     requests = bound_module(integration_owner_db, "sample-requests")
-    outside = Module(department_id=operations.id, module_name="Outside Sandbox", is_schema_accepted=True)
+    outside = Module(department_id=operations.id, module_name="Outside Sandbox")
     integration_owner_db.add(outside)
     integration_owner_db.flush()
     integration_owner_db.add(Field(module_id=outside.id, name="Incoming request", type="relationship", position=0, required=False, config={}, relationship_target_module_id=requests.id, relationship_multiple_targets=False, relationship_multiple_sources=True))
@@ -456,7 +454,6 @@ def test_publish_rejects_record_data_drift_in_an_unbound_module(
     module = Module(
         department_id=department.id,
         module_name="Unbound record module",
-        is_schema_accepted=False,
     )
     integration_owner_db.add(module)
     integration_owner_db.flush()

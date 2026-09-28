@@ -2,19 +2,22 @@
 
 import asyncio
 import os
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from uuid6 import uuid7
 
 from app.core.config import get_settings
 from app.core.database.session import AuditSession
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.platform.events.hub import EventHub, PostgresInvalidationListener
+from app.systems.platform.events.hub import EventHub, EventViewer, PostgresInvalidationListener
 from app.systems.sandbox.departments.models import Department
 from tests.conftest import guarded_create_engine
+
+READABLE_MODULE = uuid7()
+
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(
@@ -35,9 +38,8 @@ async def _exercise_postgres_invalidation() -> None:
     committed_id: UUID | None = None
     hub = EventHub()
     subscriber = await hub.subscribe(
-        SimpleNamespace(
-            id="event-integration-user",
-            role=SimpleNamespace(role="member", permissions={"departments.read": True}),
+        EventViewer(
+            user_id="event-integration-user", role="member", module_ids=frozenset({READABLE_MODULE})
         )
     )
     listener = PostgresInvalidationListener(hub)
@@ -60,12 +62,9 @@ async def _exercise_postgres_invalidation() -> None:
         event = await asyncio.wait_for(subscriber.queue.get(), timeout=5)
         assert event is not None
         assert event.entity == "departments"
-        assert event.entity_id == committed_id
-        assert event.to_payload() == {
-            "entity": "departments",
-            "entity_id": str(committed_id),
-            "capability": "departments.read",
-        }
+        assert event.entity_id is None
+        assert event.all_authenticated
+        assert event.to_payload() == {"entity": "departments"}
 
         with AuditSession(runtime_engine) as db:
             db.info[AUDIT_CONTEXT_KEY] = AuditContext(

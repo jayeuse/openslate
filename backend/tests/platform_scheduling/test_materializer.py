@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.openview.reports.models import Report
 from app.systems.openview.reports.schedule_models import ReportSchedule
@@ -92,11 +92,9 @@ def test_unknown_timezone_and_non_utc_instant_fail_closed():
 
 def _subject(
     db: AuditSession, due: datetime
-) -> tuple[User, Report, ReportSchedule, Role, Module, Department]:
-    role = Role(
-        role=f"materializer-{uuid7().hex}",
-        permissions={"records.read": True, "records.write": True},
-    )
+) -> tuple[User, Report, ReportSchedule, str, Module, Department]:
+    # The materializer concerns scheduling; an administrator can always run the report.
+    role = "admin"
     owner = User(
         email=f"materializer-{uuid7().hex}@example.test",
         username=f"materializer_{uuid7().hex[:16]}",
@@ -109,11 +107,10 @@ def _subject(
     module = Module(
         department_id=department.id,
         module_name=f"Materializer {uuid7().hex}",
-        is_schema_accepted=True,
     )
     db.add(module)
     db.flush()
-    report = Report(owner_id=owner.id, module_id=module.id, name="Scheduled", recipe={})
+    report = Report(module_id=module.id, name="Scheduled", recipe={})
     db.add(report)
     db.flush()
     schedule = ReportSchedule(
@@ -143,7 +140,6 @@ def _committed_subject(due: datetime) -> Iterator[tuple[Engine, dict[str, UUID]]
                 "owner": owner.id,
                 "report": report.id,
                 "schedule": schedule.id,
-                "role": role.id,
                 "module": module.id,
                 "department": department.id,
             }
@@ -164,7 +160,6 @@ def _committed_subject(due: datetime) -> Iterator[tuple[Engine, dict[str, UUID]]
                     ("module", Module),
                     ("department", Department),
                     ("owner", User),
-                    ("role", Role),
                 ):
                     if (row := cleanup.get(model, ids[key])) is not None:
                         cleanup.delete(row)
@@ -279,18 +274,19 @@ def test_schedule_edits_replace_due_cursor_and_one_policy_is_enforced(integratio
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("unavailable", ["archived", "disabled_owner"])
-def test_unavailable_report_or_owner_disables_policy_without_enqueuing(
+@pytest.mark.parametrize("unavailable", ["archived", "closed_module"])
+def test_unavailable_report_or_source_disables_policy_without_enqueuing(
     integration_owner_db, unavailable
 ):
     db = integration_owner_db
     due = datetime(2026, 1, 1, 9, tzinfo=UTC)
-    owner, report, schedule, _role, _module, _department = _subject(db, due)
+    _owner, report, schedule, _role, module, _department = _subject(db, due)
     if unavailable == "archived":
         report.is_deleted = True
         report.deleted_at = due
     else:
-        owner.status = UserStatus.DISABLED.value
+        module.is_deleted = True
+        module.deleted_at = due
     db.flush()
     assert materialize_due_schedules(db, now=due) == []
     assert schedule.enabled is False
@@ -317,3 +313,18 @@ def test_report_schedule_table_grants_runtime_access_and_blocks_provider_roles(
                 )
                 is False
             )
+
+
+@pytest.mark.integration
+def test_disabled_schedule_editor_does_not_stop_materialization(integration_owner_db):
+    """A scheduled Report runs as the workspace, so no user account can stop it."""
+
+    db = integration_owner_db
+    due = datetime(2026, 1, 1, 9, tzinfo=UTC)
+    owner, report, schedule, _role, _module, _department = _subject(db, due)
+    owner.status = UserStatus.DISABLED.value
+    db.flush()
+
+    assert len(materialize_due_schedules(db, now=due)) == 1
+    assert schedule.enabled is True
+    assert db.scalar(select(ScheduledWork).where(ScheduledWork.report_id == report.id))

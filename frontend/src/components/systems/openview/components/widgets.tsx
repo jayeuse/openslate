@@ -60,7 +60,7 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import { cn } from "@/lib/utils";
-import { initialPeople, initialRoles } from "../../access/domain/model";
+import { initialPeople, initialRoles } from "../../shared/data/sample-people";
 import { useSampleState } from "../../shared/runtime/sample-state";
 import type { SampleRecord } from "../../shared/data/sample-data";
 import { OpenViewAudienceConfirmation } from "./audience-confirmation";

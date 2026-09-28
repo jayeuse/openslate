@@ -29,7 +29,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   parseSandboxDocument,
-  type SandboxDocumentV2,
+  type SandboxDocumentV4,
 } from "../domain/document";
 import type { SandboxOrganizationTemplate } from "../domain/templates";
 import { exportSandboxBundle } from "../state/api";
@@ -50,7 +50,7 @@ type Props = {
     note: string,
   ) => Promise<SandboxCommandResult<unknown>>;
   onImport: (
-    document: SandboxDocumentV2,
+    document: SandboxDocumentV4,
   ) => Promise<SandboxCommandResult<unknown>>;
   onApplyTemplate: (
     template: SandboxOrganizationTemplate,
@@ -58,7 +58,7 @@ type Props = {
   onDiscard: () => Promise<SandboxCommandResult<unknown>>;
 };
 
-function download(name: string, document: SandboxDocumentV2) {
+function download(name: string, document: SandboxDocumentV4) {
   const url = URL.createObjectURL(
     new Blob([JSON.stringify(document, null, 2)], { type: "application/json" }),
   );
@@ -88,7 +88,7 @@ export function SandboxHeaderActions({
   const [discardOpen, setDiscardOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [note, setNote] = useState("");
-  const [staged, setStaged] = useState<SandboxDocumentV2 | null>(null);
+  const [staged, setStaged] = useState<SandboxDocumentV4 | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   async function checkpoint() {

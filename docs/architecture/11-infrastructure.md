@@ -32,7 +32,7 @@ The role provisioner, [`backend/operations/provision_database_role.py`](../../ba
 
 Supabase Auth answers who signed in. OpenSlate keeps its own application user, invitation eligibility, identity session, role, group, and permission state in PostgreSQL. A Supabase user ID is explicitly bound to an OpenSlate profile; matching email alone does not create application access. The FastAPI authentication dependency verifies the provider credential and session, resolves the bound active profile, and evaluates current OpenSlate authorization for each request.
 
-Provider roles and user metadata do not grant application permissions. Workspace capabilities, roles, groups, Board grants, Report audiences, and account lifecycle rules remain backend decisions. The browser never receives the Supabase secret key or direct credentials for application tables. Relevant code is in [`supabase_auth.py`](../../backend/app/core/integrations/supabase_auth.py), [`provider_sessions.py`](../../backend/app/systems/access/identity/provider_sessions.py), and the Access authorization modules.
+Provider roles and user metadata do not grant application permissions. Workspace capabilities, roles, groups, Board groups, Report audiences, and account lifecycle rules remain backend decisions. The browser never receives the Supabase secret key or direct credentials for application tables. Relevant code is in [`supabase_auth.py`](../../backend/app/core/integrations/supabase_auth.py), [`provider_sessions.py`](../../backend/app/systems/access/identity/provider_sessions.py), and the Access authorization modules.
 
 ## Storage and scanning
 

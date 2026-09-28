@@ -37,6 +37,6 @@ class SandboxTestRun(BaseModel):
     module_id: Mapped[str] = mapped_column(String(1_000), nullable=False)
     input_values: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     event: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    automation_ids: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    trigger_ids: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     result: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     result_byte_count: Mapped[int] = mapped_column(Integer, nullable=False)

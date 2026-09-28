@@ -10,7 +10,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Action, Choice, Panel } from "../../shared/components/ui";
-import type { Person } from "../../access/domain/model";
+import type { Person } from "../../shared/data/sample-people";
 import type { SampleRecord } from "../../shared/data/sample-data";
 
 type RecordsProps = {

@@ -47,7 +47,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { Person } from "../../access/domain/model";
+import type { Person } from "../../shared/data/sample-people";
 import { EMOTES } from "../domain/model";
 
 const ProfilePopoverContext = createContext<{

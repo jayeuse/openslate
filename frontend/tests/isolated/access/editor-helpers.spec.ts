@@ -2,11 +2,9 @@ import { expect, test } from "@playwright/test";
 import {
   applyPatch,
   changedPatch,
-  closedDepartmentMemberships,
   hasThreeWayConflict,
   resolveThreeWayValue,
   sameList,
-  updateDepartmentSelection,
 } from "../../../src/components/systems/access/helpers/editor-helpers";
 
 test("three-way conflict detection ignores untouched or converged fields", () => {
@@ -51,47 +49,5 @@ test("changed patches copy only submitted fields and apply immutably", () => {
     name: "Member",
     grants: ["read"],
     enabled: true,
-  });
-});
-
-test("closed department memberships keep their names and can only be removed", () => {
-  const activeIds = new Set(["current"]);
-  const identity = {
-    departmentIds: ["closed", "current"],
-    departments: ["Former operations", "Current team"],
-    primaryDepartmentId: "closed",
-  };
-
-  expect(
-    closedDepartmentMemberships(
-      identity.departmentIds,
-      activeIds,
-      new Map([["closed", "Former operations"]]),
-    ),
-  ).toEqual([{ id: "closed", name: "Former operations" }]);
-  expect(closedDepartmentMemberships(["closed"], activeIds, new Map())).toEqual(
-    [{ id: "closed", name: "Closed department" }],
-  );
-  expect(
-    updateDepartmentSelection(identity, "closed", true, activeIds),
-  ).toEqual({
-    departmentIds: ["closed", "current"],
-    primaryDepartmentId: "closed",
-  });
-  expect(
-    updateDepartmentSelection(identity, "closed", false, activeIds),
-  ).toEqual({
-    departmentIds: ["current"],
-    primaryDepartmentId: "current",
-  });
-  expect(
-    updateDepartmentSelection(identity, "current", false, activeIds),
-  ).toEqual({
-    departmentIds: ["closed"],
-    primaryDepartmentId: "closed",
-  });
-  expect(updateDepartmentSelection(identity, "new", true, activeIds)).toEqual({
-    departmentIds: ["closed", "current"],
-    primaryDepartmentId: "closed",
   });
 });

@@ -29,7 +29,7 @@ def _user() -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid7(),
         email="admin@example.com",
-        role=SimpleNamespace(role="admin", permissions={}),
+        role="admin",
     )
 
 

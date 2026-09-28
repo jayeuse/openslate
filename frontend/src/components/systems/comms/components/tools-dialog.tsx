@@ -30,7 +30,7 @@ import {
   type Direct,
   threadMessages,
 } from "../domain/model";
-import { initialPeople, initialRoles } from "../../access/domain/model";
+import { initialPeople, initialRoles } from "../../shared/data/sample-people";
 import { INITIAL_RECORDS } from "../../shared/data/sample-data";
 import {
   recordScopeChange,

@@ -19,7 +19,7 @@ def test_standalone_fullstack_runner_loads_complete_model_registry() -> None:
             "from sqlalchemy.orm import configure_mappers; "
             "import tests.fullstack_runner; "
             "from app.core.integrations.supabase_auth import SupabaseAuthClient; "
-            "from app.systems.access.users.models import Role, User, UserStatus; "
+            "from app.systems.access.users.models import User, UserStatus; "
             "configure_mappers()",
         ],
         capture_output=True,

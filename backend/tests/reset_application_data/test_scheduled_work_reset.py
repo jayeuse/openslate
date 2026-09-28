@@ -12,34 +12,46 @@ from operations import reset_models, reset_planning
 
 
 def test_reset_includes_views_boards_dashboards_and_reports_in_safe_delete_order() -> None:
-    assert "saved_view_defaults" in reset_models.APPLICATION_TABLES
-    assert "saved_view_defaults" in reset_models.NON_PRESERVED_TABLES
-    assert "public.saved_view_defaults" in reset_models._LOCK_APPLICATION_STATEMENT
-    assert reset_models.DELETE_ORDER.index("saved_view_defaults") < reset_models.DELETE_ORDER.index(
-        "saved_views"
+    for removed in ("saved_view_defaults", "dashboard_defaults", "openview_chart_preferences"):
+        assert removed not in reset_models.APPLICATION_TABLES
+        assert removed not in reset_models.DELETE_ORDER
+        assert f"public.{removed}" not in reset_models._LOCK_APPLICATION_STATEMENT
+    assert "saved_views" in reset_models.NON_PRESERVED_TABLES
+    assert reset_models.DELETE_ORDER.index("dashboards") < reset_models.DELETE_ORDER.index(
+        "departments"
     )
-    for table in ("board_grants", "board_record_placements", "board_widgets", "boards"):
+    for removed in (
+        "board_grants",
+        "board_record_placements",
+        "board_favorites",
+        "board_homes",
+        "board_templates",
+        "board_announcement_personal_states",
+    ):
+        assert removed not in reset_models.APPLICATION_TABLES
+        assert f"public.{removed}" not in reset_models._LOCK_APPLICATION_STATEMENT
+    for table in ("board_groups", "board_widgets", "board_posts", "board_attachments", "boards"):
         assert table in reset_models.APPLICATION_TABLES
-        assert table in reset_models.NON_PRESERVED_TABLES
         assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
         assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
-    assert reset_models.DELETE_ORDER.index("board_grants") < reset_models.DELETE_ORDER.index(
-        "boards"
+    # The reset deletes every Board, then restores the one company Board.
+    assert "boards" not in reset_models.NON_PRESERVED_TABLES
+    assert "board_groups" in reset_models.NON_PRESERVED_TABLES
+    for child in ("board_groups", "board_widgets", "board_posts", "board_attachments"):
+        assert reset_models.DELETE_ORDER.index(child) < reset_models.DELETE_ORDER.index("boards")
+    assert reset_models.DELETE_ORDER.index("board_post_revisions") < (
+        reset_models.DELETE_ORDER.index("board_posts")
     )
-    assert reset_models.DELETE_ORDER.index("board_widgets") < reset_models.DELETE_ORDER.index(
-        "boards"
+    assert reset_models.DELETE_ORDER.index("board_record_links") < (
+        reset_models.DELETE_ORDER.index("records")
     )
     assert reset_models.DELETE_ORDER.index("boards") < reset_models.DELETE_ORDER.index(
         "departments"
     )
-    assert reset_models.DELETE_ORDER.index(
-        "board_record_placements"
-    ) < reset_models.DELETE_ORDER.index("boards")
-    assert reset_models.DELETE_ORDER.index(
-        "board_record_placements"
-    ) < reset_models.DELETE_ORDER.index("records")
+    assert reset_models.DELETE_ORDER.index("board_groups") < reset_models.DELETE_ORDER.index(
+        "groups"
+    )
     for table in (
-        "dashboard_defaults",
         "dashboard_widgets",
         "dashboards",
         "report_run_eligible_users",
@@ -51,9 +63,6 @@ def test_reset_includes_views_boards_dashboards_and_reports_in_safe_delete_order
         assert table in reset_models.NON_PRESERVED_TABLES
         assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
         assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
-    assert reset_models.DELETE_ORDER.index("dashboard_defaults") < reset_models.DELETE_ORDER.index(
-        "dashboards"
-    )
     assert reset_models.DELETE_ORDER.index("dashboard_widgets") < reset_models.DELETE_ORDER.index(
         "dashboards"
     )
@@ -98,31 +107,28 @@ def test_reset_counts_locks_and_deletes_scheduled_report_children_first() -> Non
     assert order.index("scheduled_work") < order.index("reports")
 
 
-def test_reset_counts_locks_and_deletes_memberships_before_departments() -> None:
-    table = "user_departments"
-    assert table in reset_models.APPLICATION_TABLES
-    assert table in reset_models.NON_PRESERVED_TABLES
-    assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
-    assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
-    assert reset_models.DELETE_ORDER.index(table) < reset_models.DELETE_ORDER.index("departments")
-
-
-def test_reset_counts_locks_and_deletes_board_templates() -> None:
-    table = "board_templates"
-    assert table in reset_models.APPLICATION_TABLES
-    assert table in reset_models.NON_PRESERVED_TABLES
-    assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
-    assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
-    assert table in reset_models.DELETE_ORDER
-
-
-def test_reset_counts_locks_and_deletes_board_personal_state_before_parents() -> None:
-    for table in ("board_favorites", "board_homes"):
+def test_reset_counts_locks_and_deletes_board_children_before_boards() -> None:
+    for table in ("board_event_reminders", "board_attachments", "board_record_links"):
         assert table in reset_models.APPLICATION_TABLES
         assert table in reset_models.NON_PRESERVED_TABLES
         assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
         assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
         assert reset_models.DELETE_ORDER.index(table) < reset_models.DELETE_ORDER.index("boards")
+    order = reset_models.DELETE_ORDER
+    assert order.index("scheduled_work") < order.index("board_event_reminders")
+    assert order.index("board_event_reminders") < order.index("board_events")
+
+
+def test_reset_counts_locks_and_deletes_group_access_before_its_targets() -> None:
+    for table in ("group_access", "group_members", "groups"):
+        assert table in reset_models.APPLICATION_TABLES
+        assert table in reset_models.NON_PRESERVED_TABLES
+        assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
+        assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
+    order = reset_models.DELETE_ORDER
+    assert order.index("group_access") < order.index("groups") < order.index("departments")
+    assert order.index("group_access") < order.index("modules")
+    assert order.index("group_members") < order.index("groups")
 
 
 def test_reset_counts_locks_and_deletes_board_events_before_board_and_author() -> None:
@@ -134,31 +140,18 @@ def test_reset_counts_locks_and_deletes_board_events_before_board_and_author() -
     assert reset_models.DELETE_ORDER.index(table) < reset_models.DELETE_ORDER.index("boards")
 
 
-def test_reset_counts_locks_and_deletes_announcement_revisions_before_parents() -> None:
-    for table in ("board_announcement_revisions", "board_announcements"):
+def test_reset_counts_locks_and_deletes_post_revisions_before_parents() -> None:
+    for table in ("board_post_revisions", "board_posts"):
         assert table in reset_models.APPLICATION_TABLES
         assert table in reset_models.NON_PRESERVED_TABLES
         assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
         assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
     order = reset_models.DELETE_ORDER
     assert order.index("in_app_notifications") < order.index("scheduled_work")
-    assert order.index("scheduled_work") < order.index("board_announcement_revisions")
-    assert order.index("board_announcement_revisions") < order.index("board_announcements")
-    assert order.index("board_announcements") < order.index("boards")
-    assert order.index("board_announcements") < order.index("departments")
-
-
-def test_reset_deletes_all_announcement_personal_state_before_announcements_and_users() -> None:
-    table = "board_announcement_personal_states"
-    assert table in reset_models.APPLICATION_TABLES
-    assert table in reset_models.NON_PRESERVED_TABLES
-    assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
-    assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
-    # DELETE_ORDER is executed without a user filter, including preserved-admin rows.
-    assert reset_models.DELETE_ORDER.count(table) == 1
-    assert reset_models.DELETE_ORDER.index(table) < reset_models.DELETE_ORDER.index(
-        "board_announcements"
-    )
+    assert order.index("scheduled_work") < order.index("board_post_revisions")
+    assert order.index("board_post_revisions") < order.index("board_posts")
+    assert order.index("board_posts") < order.index("boards")
+    assert order.index("board_posts") < order.index("departments")
 
 
 def test_reset_rejects_urls_that_do_not_match_the_attested_instance() -> None:

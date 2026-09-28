@@ -5,28 +5,29 @@ from uuid6 import uuid7
 
 from app.common.listing import StandardListRequest
 from app.common.listing.schemas import PaginationMetadata
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.openview.views.catalog import (
     DataSourceSort,
     FieldSort,
     list_data_source_fields,
     list_data_sources,
 )
-from app.systems.openview.views.schemas import (
-    ViewAudienceOptionResponse,
-    ViewDataSourceResponse,
-    ViewFieldResponse,
-)
+from app.systems.openview.views.schemas import ViewDataSourceResponse, ViewFieldResponse
 from app.systems.sandbox.fields.models import Field, FieldType
 
 
 def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
     module_id = uuid7()
     department_id = uuid7()
-    role_id = uuid7()
     field_id = uuid7()
+    option_id = uuid7()
     data_source = ViewDataSourceResponse.model_validate(
-        {"id": module_id, "name": "Equipment", "department_id": department_id}
+        {
+            "id": module_id,
+            "name": "Equipment",
+            "department_id": department_id,
+            "title_field_id": field_id,
+        }
     )
     field = ViewFieldResponse.model_validate(
         {
@@ -36,17 +37,15 @@ def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
             "type": FieldType.SELECT,
             "required": True,
             "position": 2,
-            "config": {"options": ["open", "closed"]},
+            "config": {"options": [{"id": str(option_id), "label": "Open"}]},
         }
-    )
-    audience = ViewAudienceOptionResponse.model_validate(
-        {"kind": "role", "id": role_id, "label": "Operations"}
     )
 
     assert data_source.model_dump(mode="json") == {
         "id": str(module_id),
         "name": "Equipment",
         "department_id": str(department_id),
+        "title_field_id": str(field_id),
     }
     assert field.model_dump(mode="json") == {
         "id": str(field_id),
@@ -55,12 +54,7 @@ def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
         "type": "select",
         "required": True,
         "position": 2,
-        "config": {"options": ["open", "closed"]},
-    }
-    assert audience.model_dump(mode="json") == {
-        "kind": "role",
-        "id": str(role_id),
-        "label": "Operations",
+        "config": {"options": [{"id": str(option_id), "label": "Open"}]},
     }
 
 
@@ -118,7 +112,7 @@ def test_field_catalog_filters_relationship_fields_before_offset_pagination() ->
     session = CatalogSession()
     result = list_data_source_fields(
         module_id,
-        User(id=uuid7(), status="active", role=Role(role="member", is_deleted=False)),
+        User(id=uuid7(), status="active", role="admin"),
         session,  # type: ignore[arg-type]
         StandardListRequest[FieldSort](limit=1, offset=0),
     )
@@ -127,12 +121,12 @@ def test_field_catalog_filters_relationship_fields_before_offset_pagination() ->
     assert result.pagination.total == 1
     assert result.pagination.has_more is False
     assert session.module_statement is not None
-    assert "modules.is_schema_accepted IS true" in str(
+    assert "modules.is_deleted IS false" in str(
         session.module_statement.compile(dialect=postgresql.dialect())  # type: ignore[attr-defined]
     )
 
 
-def test_data_source_catalog_only_lists_active_schema_accepted_modules(monkeypatch) -> None:
+def test_data_source_catalog_lists_every_active_module(monkeypatch) -> None:
     from types import SimpleNamespace
 
     import app.systems.openview.views.catalog as catalog
@@ -147,7 +141,7 @@ def test_data_source_catalog_only_lists_active_schema_accepted_modules(monkeypat
         )
 
     monkeypatch.setattr(catalog, "execute_standard_list", list_result)
-    user = User(id=uuid7(), status="active", role=Role(role="member", is_deleted=False))
+    user = User(id=uuid7(), status="active", role="admin")
     list_data_sources(
         user,
         object(),  # type: ignore[arg-type]
@@ -155,17 +149,16 @@ def test_data_source_catalog_only_lists_active_schema_accepted_modules(monkeypat
     )
 
     compiled = str(statements[0].compile(dialect=postgresql.dialect()))
-    assert "modules.is_schema_accepted IS true" in compiled
     assert "modules.is_deleted IS false" in compiled
 
 
-def test_create_module_guard_rejects_a_module_with_unaccepted_schema() -> None:
+def test_create_module_guard_rejects_an_inactive_module() -> None:
     from app.systems.openview.views.router import _active_module
 
     class RejectedModuleSession:
         def scalar(self, statement: object) -> None:
             compiled = str(statement.compile(dialect=postgresql.dialect()))  # type: ignore[attr-defined]
-            assert "modules.is_schema_accepted IS true" in compiled
+            assert "modules.is_deleted IS false" in compiled
             return None
 
     with pytest.raises(HTTPException) as error:

@@ -20,7 +20,6 @@ export type Department = BaseEntity & { department_name: string };
 export type Module = BaseEntity & {
   department_id: string;
   module_name: string;
-  is_schema_accepted: boolean;
 };
 export type FieldType =
   | "text"
@@ -67,18 +66,22 @@ export type Relationship = BaseEntity & {
   hidden_reasons: RelationshipHiddenReason[];
 };
 export type LifecycleTargetType =
-  "department" | "module" | "field" | "record" | "file";
+  "department" | "module" | "field" | "record" | "file" | "board";
 export type LifecycleOperation = "close" | "purge" | "reopen";
 export type LifecycleBlockerCode =
   | "closed_ancestor"
-  | "default_department_reference"
   | "module_name_conflict"
   | "field_name_conflict"
   | "field_position_conflict"
   | "schema_invalid"
   | "record_data_invalid"
+  | "title_field_selected"
   | "record_close_unsupported"
-  | "purge_automation_dependency"
+  | "purge_board_dependency"
+  | "purge_dashboard_dependency"
+  | "purge_report_dependency"
+  | "purge_report_run_dependency"
+  | "purge_trigger_dependency"
   | "purge_external_schema_dependency"
   | "purge_file_dependency";
 export type LifecycleErrorCode =
@@ -161,30 +164,6 @@ export type LifecycleMutationResponse = {
   operation_id: string | null;
 };
 export type LifecycleReopenRequest = { confirmed: true };
-export const CAPABILITIES = [
-  "departments.read",
-  "departments.write",
-  "fields.read",
-  "fields.write",
-  "modules.read",
-  "modules.write",
-  "records.read",
-  "records.write",
-  "relationships.read",
-  "relationships.write",
-] as const;
-export type Capability = (typeof CAPABILITIES)[number];
-export type RolePermissions = Partial<Record<Capability, boolean>>;
-export type Role = BaseEntity & {
-  role: string;
-  permissions: RolePermissions;
-};
-export type User = BaseEntity & {
-  email: string;
-  username: string;
-  status: "pending" | "active" | "disabled";
-  role_id: string;
-};
 export type AuditAction = "create" | "update" | "delete";
 export type AuditLog = {
   id: string;

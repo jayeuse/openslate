@@ -3,24 +3,11 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { BoardWidget } from "../adapters/board-widgets-api";
 import {
   canMutateBoardWidgets,
   useBoardWidgetManagement,
 } from "../hooks/use-board-widget-management";
 import { ConfirmAction } from "./ui";
-
-function audienceLabel(widget: BoardWidget): string {
-  switch (widget.audience.kind) {
-    case "private":
-      return "Private to its creator";
-    case "everyone":
-      return "Everyone with Board access";
-    case "role":
-    case "user":
-      return "Targeted audience";
-  }
-}
 
 export function ServerBoardWidgetManagement({
   boardId,
@@ -51,13 +38,12 @@ export function ServerBoardWidgetManagement({
   } | null>(null);
   const nameId = useId();
   const moduleId = useId();
-  const audienceId = useId();
   const settingsNameId = useId();
   const sizeId = useId();
   const pinnedId = useId();
   const { state, sources } = manager;
   const snapshot = state.status === "ready" ? state.snapshot : null;
-  const canEdit = boardActive && !!snapshot?.access.edit;
+  const canEdit = boardActive && !!snapshot?.access.manage;
   const busy = state.pending || state.status === "loading";
   const canMutate = canMutateBoardWidgets(state, boardActive);
   const mutationBlocked = busy || !canMutate;
@@ -84,7 +70,7 @@ export function ServerBoardWidgetManagement({
             Manage widgets
           </h2>
           <p className="text-muted-foreground text-sm">
-            Only widgets visible to you can be edited or reordered.
+            Everyone who can read this Board sees these widgets.
           </p>
         </div>
         <Button
@@ -142,9 +128,9 @@ export function ServerBoardWidgetManagement({
           Restore this Board before changing widgets.
         </p>
       )}
-      {snapshot && !snapshot.access.edit && (
+      {snapshot && !snapshot.access.manage && (
         <p className="text-muted-foreground text-sm">
-          You can view these widgets, but you cannot change them.
+          You can view these widgets. Only Board managers change them.
         </p>
       )}
 
@@ -159,7 +145,7 @@ export function ServerBoardWidgetManagement({
                 <div className="min-w-0">
                   <h3 className="font-medium break-words">{widget.name}</h3>
                   <p className="text-muted-foreground text-sm">
-                    {widget.widgetType} · {audienceLabel(widget)}
+                    {widget.widgetType}
                     {widget.config.pinned ? " · Pinned" : ""}
                   </p>
                 </div>
@@ -206,7 +192,7 @@ export function ServerBoardWidgetManagement({
                         mutationBlocked || snapshot.page.items.length >= 12
                       }
                       onClick={() => manager.duplicate(widget.id)}
-                      aria-label={`Duplicate ${widget.name} with the same audience`}
+                      aria-label={`Duplicate ${widget.name}`}
                     >
                       Duplicate
                     </Button>
@@ -229,7 +215,7 @@ export function ServerBoardWidgetManagement({
           ))}
           {snapshot.page.items.length === 0 && (
             <li className="text-muted-foreground rounded-xl border border-dashed p-4 text-sm">
-              No widgets are visible to you on this Board.
+              This Board has no widgets.
             </li>
           )}
         </ol>
@@ -244,10 +230,6 @@ export function ServerBoardWidgetManagement({
           <h3 data-slot="section-title" className="font-medium">
             Widget settings
           </h3>
-          <p className="text-muted-foreground text-sm">
-            Audience: {audienceLabel(state.draft.source)}. These settings keep
-            the widget’s existing audience.
-          </p>
           <div className="space-y-1">
             <label htmlFor={settingsNameId} className="text-sm font-medium">
               Widget name
@@ -339,8 +321,7 @@ export function ServerBoardWidgetManagement({
               Add summary widget
             </h3>
             <p className="text-muted-foreground text-sm">
-              New widgets start private. Share with everyone on this Board only
-              if you choose it below.
+              Everyone who can read this Board sees the new widget.
             </p>
           </div>
           <div className="space-y-1">
@@ -411,21 +392,6 @@ export function ServerBoardWidgetManagement({
               </Button>
             )}
           </div>
-          <label
-            htmlFor={audienceId}
-            className="flex min-h-11 items-center gap-3 text-sm"
-          >
-            <input
-              id={audienceId}
-              type="checkbox"
-              checked={state.summary.everyone}
-              disabled={mutationBlocked}
-              onChange={(event) =>
-                manager.changeSummary({ everyone: event.target.checked })
-              }
-            />
-            Everyone with Board access can see this widget
-          </label>
           <Button
             type="submit"
             className="min-h-11"

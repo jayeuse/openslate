@@ -7,6 +7,7 @@ import {
   type SetStateAction,
   useState,
 } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -27,6 +28,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { assignableUsersOptions } from "../adapters/openview-queries";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   OpenViewReport,
@@ -37,7 +39,6 @@ import type {
   OpenViewDataSourceField,
 } from "../adapters/views-api";
 import type { ReportDraft, ReportFilterDraft } from "./report-draft";
-import { ReportAudienceSelector } from "./report-audience-selector";
 
 type FilterOperator = ReportFilterDraft["operator"];
 const VALUELESS = new Set<FilterOperator>([
@@ -67,6 +68,28 @@ function fieldReference(
   field: OpenViewDataSourceField,
 ): OpenViewReportRecipe["fields"][number] {
   return { fieldId: field.id, expectedType: field.type };
+}
+
+function selectOptionsForField(
+  field: OpenViewDataSourceField | undefined,
+): Array<{ id: string; label: string }> {
+  if (!field || field.type !== "select" || !Array.isArray(field.config.options))
+    return [];
+  return field.config.options.flatMap((option) => {
+    if (typeof option !== "object" || option === null) return [];
+    const candidate = option as Record<string, unknown>;
+    return typeof candidate.id === "string" &&
+      typeof candidate.label === "string"
+      ? [{ id: candidate.id, label: candidate.label }]
+      : [];
+  });
+}
+
+function membershipIds(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function operatorsFor(type: OpenViewDataSourceField["type"]): FilterOperator[] {
@@ -148,8 +171,24 @@ export function ReportRecipeEditor({
   resetDraft,
 }: ReportRecipeEditorProps) {
   const [activeTab, setActiveTab] = useState("basics");
+  const [userSearch, setUserSearch] = useState("");
   const canEdit = !baselineReport?.isDeleted && !actionPending;
   const moduleFields = fieldsForModule === draft.moduleId ? fields : [];
+  const hasValuedUserFilter = draft.filters.some(
+    (filter) =>
+      filter.expectedType === "user" && !VALUELESS.has(filter.operator),
+  );
+  const assignableUsers = useQuery(
+    assignableUsersOptions(
+      draft.moduleId,
+      userSearch,
+      open && hasValuedUserFilter,
+    ),
+  );
+  const eligiblePeople =
+    assignableUsers.isSuccess && !assignableUsers.isFetching
+      ? assignableUsers.data.items
+      : [];
   const selectedSource = sources.find((source) => source.id === draft.moduleId);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -212,9 +251,6 @@ export function ReportRecipeEditor({
               </TabsTrigger>
               <TabsTrigger value="advanced" className="min-h-11">
                 Advanced
-              </TabsTrigger>
-              <TabsTrigger value="audience" className="min-h-11">
-                Audience
               </TabsTrigger>
             </TabsList>
             <TabsContent value="basics" keepMounted className="mt-4">
@@ -447,6 +483,69 @@ export function ReportRecipeEditor({
                   <p className="text-muted-foreground text-sm">
                     Keep only matching records. Add up to 10 conditions.
                   </p>
+                  {hasValuedUserFilter ? (
+                    <div className="grid max-w-xl gap-2">
+                      <Field>
+                        <FieldLabel htmlFor="report-eligible-user-search">
+                          Search eligible people
+                        </FieldLabel>
+                        <Input
+                          id="report-eligible-user-search"
+                          className="min-h-11"
+                          type="search"
+                          maxLength={100}
+                          value={userSearch}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setUserSearch(event.target.value)
+                          }
+                        />
+                        <FieldDescription>
+                          Only people who can read this data source can be
+                          selected.
+                        </FieldDescription>
+                      </Field>
+                      {assignableUsers.isFetching ? (
+                        <p
+                          role="status"
+                          className="text-muted-foreground text-sm"
+                        >
+                          Loading eligible people…
+                        </p>
+                      ) : null}
+                      {assignableUsers.isError ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p role="alert" className="text-destructive text-sm">
+                            Eligible people could not be loaded.
+                          </p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="min-h-11"
+                            disabled={!canEdit}
+                            onClick={() => void assignableUsers.refetch()}
+                          >
+                            Retry people
+                          </Button>
+                        </div>
+                      ) : null}
+                      {!assignableUsers.isFetching &&
+                      !assignableUsers.isError &&
+                      assignableUsers.data?.pagination.hasMore ? (
+                        <p className="text-muted-foreground text-sm">
+                          Showing the first 100 eligible people. Search to
+                          narrow the list.
+                        </p>
+                      ) : null}
+                      {!assignableUsers.isFetching &&
+                      !assignableUsers.isError &&
+                      assignableUsers.data?.items.length === 0 ? (
+                        <p className="text-muted-foreground text-sm">
+                          No eligible people match this search.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {draft.filters.length > 1 ? (
                     <Field>
                       <FieldLabel htmlFor="report-filter-logic">
@@ -472,6 +571,21 @@ export function ReportRecipeEditor({
                   <FieldGroup>
                     {draft.filters.map((filter) => {
                       const allowed = operatorsFor(filter.expectedType);
+                      const field = moduleFields.find(
+                        (entry) => entry.id === filter.fieldId,
+                      );
+                      const selectOptions = selectOptionsForField(field);
+                      const selectedChoiceIds = membershipIds(filter.value);
+                      const selectedChoiceIdSet = new Set(selectedChoiceIds);
+                      const unavailableChoiceCount = selectedChoiceIds.filter(
+                        (selectedId) =>
+                          !selectOptions.some(
+                            (option) => option.id === selectedId,
+                          ),
+                      ).length;
+                      const eligiblePersonSelected = eligiblePeople.some(
+                        (person) => person.id === filter.value,
+                      );
                       return (
                         <div
                           key={filter.key}
@@ -563,6 +677,156 @@ export function ReportRecipeEditor({
                                   <option value="true">True</option>
                                   <option value="false">False</option>
                                 </Select>
+                              ) : filter.expectedType === "select" &&
+                                filter.operator === "in" ? (
+                                <fieldset className="min-w-0 rounded-md border p-3">
+                                  <legend className="px-1 text-sm font-medium">
+                                    Value
+                                  </legend>
+                                  <p className="text-muted-foreground mb-2 text-sm">
+                                    Choose one or more options. You can select
+                                    up to 100.
+                                  </p>
+                                  <div className="max-h-48 space-y-2 overflow-y-auto">
+                                    {selectOptions.map((option) => {
+                                      const optionId = `report-filter-value-${filter.key}-${option.id}`;
+                                      const optionLabelId = `${optionId}-label`;
+                                      const checked = selectedChoiceIdSet.has(
+                                        option.id,
+                                      );
+                                      return (
+                                        <div
+                                          key={option.id}
+                                          className="flex min-h-8 items-center gap-2"
+                                        >
+                                          <Checkbox
+                                            id={optionId}
+                                            aria-labelledby={optionLabelId}
+                                            checked={checked}
+                                            disabled={
+                                              !canEdit ||
+                                              (!checked &&
+                                                selectedChoiceIds.length >= 100)
+                                            }
+                                            onCheckedChange={(nextChecked) => {
+                                              const current = membershipIds(
+                                                filter.value,
+                                              );
+                                              const next =
+                                                nextChecked === true
+                                                  ? current.includes(option.id)
+                                                    ? current
+                                                    : [...current, option.id]
+                                                  : current.filter(
+                                                      (selectedId) =>
+                                                        selectedId !==
+                                                        option.id,
+                                                    );
+                                              updateFilter(filter.key, {
+                                                value: next.join(", "),
+                                              });
+                                            }}
+                                          />
+                                          <label
+                                            id={optionLabelId}
+                                            htmlFor={optionId}
+                                            className="cursor-pointer text-sm"
+                                          >
+                                            {option.label}
+                                          </label>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  {unavailableChoiceCount > 0 ? (
+                                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                                      <p
+                                        role="alert"
+                                        className="text-destructive text-sm"
+                                      >
+                                        Some selected options are unavailable.
+                                      </p>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        className="min-h-9"
+                                        disabled={!canEdit}
+                                        onClick={() =>
+                                          updateFilter(filter.key, {
+                                            value: selectedChoiceIds
+                                              .filter((selectedId) =>
+                                                selectOptions.some(
+                                                  (option) =>
+                                                    option.id === selectedId,
+                                                ),
+                                              )
+                                              .join(", "),
+                                          })
+                                        }
+                                      >
+                                        Remove unavailable options
+                                      </Button>
+                                    </div>
+                                  ) : null}
+                                </fieldset>
+                              ) : filter.expectedType === "select" ? (
+                                <Select
+                                  id={`report-filter-value-${filter.key}`}
+                                  className="min-h-11"
+                                  value={filter.value}
+                                  disabled={!canEdit}
+                                  onValueChange={(value) =>
+                                    updateFilter(filter.key, { value })
+                                  }
+                                >
+                                  <option value="">Choose a value</option>
+                                  {filter.value &&
+                                  !selectOptions.some(
+                                    (option) => option.id === filter.value,
+                                  ) ? (
+                                    <option value={filter.value} disabled>
+                                      Unavailable option
+                                    </option>
+                                  ) : null}
+                                  {selectOptions.map((option) => (
+                                    <option key={option.id} value={option.id}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </Select>
+                              ) : filter.expectedType === "user" ? (
+                                <Select
+                                  id={`report-filter-value-${filter.key}`}
+                                  className="min-h-11"
+                                  value={filter.value}
+                                  disabled={
+                                    !canEdit ||
+                                    assignableUsers.isFetching ||
+                                    assignableUsers.isError
+                                  }
+                                  onValueChange={(value) =>
+                                    updateFilter(filter.key, { value })
+                                  }
+                                >
+                                  <option value="">
+                                    Choose an eligible person
+                                  </option>
+                                  {filter.value &&
+                                  assignableUsers.isSuccess &&
+                                  !assignableUsers.isFetching &&
+                                  !eligiblePersonSelected ? (
+                                    <option value={filter.value} disabled>
+                                      Selected person is not in the current
+                                      results
+                                    </option>
+                                  ) : null}
+                                  {eligiblePeople.map((person) => (
+                                    <option key={person.id} value={person.id}>
+                                      {person.displayName?.trim() ||
+                                        person.username}
+                                    </option>
+                                  ))}
+                                </Select>
                               ) : (
                                 <Input
                                   id={`report-filter-value-${filter.key}`}
@@ -577,12 +841,6 @@ export function ReportRecipeEditor({
                                   }
                                 />
                               )}
-                              {filter.operator === "in" ? (
-                                <FieldDescription>
-                                  Separate choices with commas; quote a choice
-                                  that contains a comma.
-                                </FieldDescription>
-                              ) : null}
                             </Field>
                           ) : null}
                           <Button
@@ -828,15 +1086,6 @@ export function ReportRecipeEditor({
                   </FieldLabel>
                 </Field>
               </div>
-            </TabsContent>
-            <TabsContent value="audience" keepMounted className="mt-4">
-              <ReportAudienceSelector
-                audience={draft.audience}
-                onChange={(audience) =>
-                  setDraft((current) => ({ ...current, audience }))
-                }
-                disabled={!canEdit}
-              />
             </TabsContent>
           </Tabs>
           <div className="border-border bg-card sticky bottom-0 z-10 flex flex-wrap items-center gap-2 border-t py-3">

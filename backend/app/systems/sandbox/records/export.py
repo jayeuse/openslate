@@ -15,12 +15,19 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.systems.access.policy.checks import module_hidden
+from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.designs.date_values import parse_datetime
 from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.records.display import (
+    UNAVAILABLE_OPTION,
+    UNAVAILABLE_USER,
+    FieldDisplayResolver,
+)
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query import (
     RecordProjection,
@@ -51,7 +58,13 @@ def safe_text(value: str) -> str:
     return value
 
 
-def format_cell(value: Any, field: Field, timezone: str, locale: str) -> str:
+def format_cell(
+    value: Any,
+    field: Field,
+    timezone: str,
+    locale: str,
+    resolver: FieldDisplayResolver | None = None,
+) -> str:
     if value is None:
         return ""
     if field.type == FieldType.DATE:
@@ -70,11 +83,29 @@ def format_cell(value: Any, field: Field, timezone: str, locale: str) -> str:
         return str(value)
     if field.type == FieldType.BOOLEAN:
         return "true" if value else "false"
+    if field.type == FieldType.SELECT:
+        if resolver is not None:
+            return safe_text(resolver.label(field, value))
+        label = next(
+            (
+                option["label"]
+                for option in field.config.get("options", [])
+                if option.get("id") == value
+            ),
+            UNAVAILABLE_OPTION,
+        )
+        return safe_text(label)
+    if field.type == FieldType.USER:
+        return safe_text(resolver.label(field, value) if resolver is not None else UNAVAILABLE_USER)
     return safe_text(str(value))
 
 
 def encode_csv(
-    rows: Iterable[Record | RecordProjection], fields: list[Field], timezone: str, locale: str
+    rows: Iterable[Record | RecordProjection],
+    fields: list[Field],
+    timezone: str,
+    locale: str,
+    resolver: FieldDisplayResolver | None = None,
 ) -> tuple[bytes, int]:
     result = bytearray()
     row_buffer = io.StringIO(newline="")
@@ -99,7 +130,7 @@ def encode_csv(
             [
                 str(row.id),
                 *[
-                    format_cell(row.data.get(str(field.id)), field, timezone, locale)
+                    format_cell(row.data.get(str(field.id)), field, timezone, locale, resolver)
                     for field in fields
                 ],
             ]
@@ -107,10 +138,15 @@ def encode_csv(
     return bytes(result), count
 
 
-def export_snapshot(engine: Engine, payload: RecordQuery) -> tuple[bytes, int]:
+def export_snapshot(engine: Engine, payload: RecordQuery, *, reader_id: UUID) -> tuple[bytes, int]:
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
         with Session(bind=connection) as snapshot:
-            fields = validate_definition(snapshot, payload.module_id, payload.definition)
+            reader = snapshot.get(User, reader_id)
+            if reader is None:
+                raise module_hidden()
+            fields = validate_definition(
+                snapshot, payload.module_id, payload.definition, reader=reader
+            )
             profile = snapshot.scalar(
                 select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
             )
@@ -126,11 +162,13 @@ def export_snapshot(engine: Engine, payload: RecordQuery) -> tuple[bytes, int]:
                 projected_record(row)
                 for row in snapshot.execute(statement.execution_options(yield_per=100))
             )
+            selected_fields = [fields[ref.field_id] for ref in payload.definition.columns]
             return encode_csv(
                 rows,
-                [fields[ref.field_id] for ref in payload.definition.columns],
+                selected_fields,
                 profile.timezone,
                 profile.locale,
+                FieldDisplayResolver(snapshot, payload.module_id, selected_fields),
             )
 
 

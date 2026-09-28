@@ -1,5 +1,6 @@
-"""External links stay within their Event or Announcement audience and snapshot."""
+"""External links on events and posts: bounded, redacted in audit, frozen in publications."""
 
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -9,42 +10,45 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.boards.announcement_models import (
-    BoardAnnouncementRevision,
-    publication_content_fingerprint,
-)
-from app.systems.boards.announcement_schemas import AnnouncementCreate
+from app.systems.access.policy.models import AccessLevel
 from app.systems.boards.event_models import BoardEvent
+from app.systems.boards.event_router import router as event_router
 from app.systems.boards.event_schemas import EventCreate
+from app.systems.boards.post_models import BoardPostRevision, publication_content_fingerprint
+from app.systems.boards.post_router import router as post_router
+from app.systems.boards.post_schemas import PostCreate
 from app.systems.manage.audit.models import AuditAction, AuditLog
-from tests.boards.test_announcement_routes import (
-    _actor as announcement_actor,
-)
-from tests.boards.test_announcement_routes import (
-    _board as announcement_board,
-)
-from tests.boards.test_announcement_routes import (
-    _client as announcement_client,
-)
-from tests.boards.test_announcement_routes import (
-    _create_payload,
-)
-from tests.boards.test_announcement_routes import (
-    _grant as announcement_grant,
-)
-from tests.boards.test_event_routes import _actor as event_actor
-from tests.boards.test_event_routes import _board as event_board
-from tests.boards.test_event_routes import _client as event_client
-from tests.boards.test_event_routes import _grant as event_grant
-from tests.boards.test_event_routes import _payload as event_payload
+from tests.boards.support import client, grant, member, project_board
+
+
+def _event_payload(board_revision: int, **changes: object) -> dict[str, object]:
+    start = datetime(2027, 1, 4, 9, tzinfo=UTC)
+    return {
+        "board_revision": board_revision,
+        "title": "Planning",
+        "all_day": False,
+        "start_at": start.isoformat().replace("+00:00", "Z"),
+        "end_at": (start + timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+        "timezone_name": "UTC",
+        **changes,
+    }
+
+
+def _post_payload(board_revision: int, **changes: object) -> dict[str, object]:
+    return {
+        "board_revision": board_revision,
+        "title": "Opening notice",
+        "body": "The office is open.",
+        **changes,
+    }
 
 
 def test_external_link_contract_accepts_bounded_http_urls_and_rejects_credentials() -> None:
     link = {"label": " Guide ", "url": "https://example.org/docs?topic=boards"}
-    event = EventCreate.model_validate({**event_payload(1), "links": [link]})
-    announcement = AnnouncementCreate.model_validate(_create_payload(1, links=[link]))
+    event = EventCreate.model_validate(_event_payload(1, links=[link]))
+    post = PostCreate.model_validate(_post_payload(1, links=[link]))
     assert event.links[0].label == "Guide"
-    assert announcement.links[0].url == "https://example.org/docs?topic=boards"
+    assert post.links[0].url == "https://example.org/docs?topic=boards"
     for invalid in (
         {"label": "", "url": "https://example.org"},
         {"label": "x" * 101, "url": "https://example.org"},
@@ -55,48 +59,42 @@ def test_external_link_contract_accepts_bounded_http_urls_and_rejects_credential
         {"label": "Extra", "url": "https://example.org", "owner_id": str(uuid7())},
     ):
         with pytest.raises(ValidationError):
-            EventCreate.model_validate({**event_payload(1), "links": [invalid]})
+            EventCreate.model_validate(_event_payload(1, links=[invalid]))
         with pytest.raises(ValidationError):
-            AnnouncementCreate.model_validate(_create_payload(1, links=[invalid]))
+            PostCreate.model_validate(_post_payload(1, links=[invalid]))
     with pytest.raises(ValidationError):
-        EventCreate.model_validate({**event_payload(1), "links": [link] * 21})
+        EventCreate.model_validate(_event_payload(1, links=[link] * 21))
     with pytest.raises(ValidationError):
-        AnnouncementCreate.model_validate(_create_payload(1, links=[link] * 21))
+        PostCreate.model_validate(_post_payload(1, links=[link] * 21))
+    with pytest.raises(ValidationError):
+        PostCreate.model_validate(_post_payload(1, audience={"kind": "everyone"}))
 
 
-def test_empty_links_preserve_legacy_publication_fingerprint() -> None:
-    content = {
-        "author_id": uuid7(),
-        "title": "Earlier notice",
-        "body": "Published before links",
-        "audience_kind": "everyone",
-    }
-    old_fingerprint = publication_content_fingerprint(**content)
-    assert publication_content_fingerprint(**content, links=[]) == old_fingerprint
+def test_the_publication_fingerprint_changes_with_links_and_nothing_else() -> None:
+    content = {"author_id": uuid7(), "title": "Notice", "body": "Body"}
+    plain = publication_content_fingerprint(**content)
+    assert publication_content_fingerprint(**content, links=[]) == plain
     assert (
         publication_content_fingerprint(
-            **content,
-            links=[{"label": "Guide", "url": "https://example.org/guide"}],
+            **content, links=[{"label": "Guide", "url": "https://example.org/guide"}]
         )
-        != old_fingerprint
+        != plain
     )
 
 
 @pytest.mark.integration
-def test_event_links_persist_but_never_leak_past_event_audience(
-    integration_owner_db: Session,
-) -> None:
+def test_event_links_persist_and_are_redacted_in_audit(integration_owner_db: Session) -> None:
     db = integration_owner_db
-    owner = event_actor(db, "link-owner")
-    viewer = event_actor(db, "link-viewer")
-    manager = event_actor(db, "link-manager")
-    board = event_board(db, owner)
-    event_grant(db, board, viewer, "view")
-    event_grant(db, board, manager, "manage")
+    author, reader = member(db), member(db)
+    board = project_board(db)
+    grant(db, board, [author], AccessLevel.WRITE)
+    grant(db, board, [reader], AccessLevel.READ)
     db.commit()
     root = f"/api/boards/{board.id}/events"
     link = {"label": "Agenda", "url": "https://example.org/private-agenda"}
-    created = event_client(db, owner).post(root, json={**event_payload(1), "links": [link]})
+    created = client(db, author, event_router).post(
+        root, json=_event_payload(board.revision, links=[link])
+    )
     assert created.status_code == 201
     event_id = created.json()["id"]
     event_audit = db.scalar(
@@ -114,90 +112,54 @@ def test_event_links_persist_but_never_leak_past_event_audience(
         with db.begin_nested():
             stored_event.links = [link] * 21
             db.flush()
-    assert event_client(db, viewer).get(f"{root}/{event_id}").json()["links"] == [link]
+    assert client(db, reader, event_router).get(f"{root}/{event_id}").json()["links"] == [link]
     replacement = {"label": "Agenda", "url": "https://example.org/private-agenda-v2"}
-    replaced = event_client(db, owner).patch(
+    db.refresh(board)
+    replaced = client(db, author, event_router).patch(
         f"{root}/{event_id}",
-        json={"board_revision": 2, "event_revision": 1, "links": [replacement]},
+        json={"board_revision": board.revision, "event_revision": 1, "links": [replacement]},
     )
     assert replaced.status_code == 200
-    assert event_client(db, viewer).get(f"{root}/{event_id}").json()["links"] == [replacement]
-    patched = event_client(db, owner).patch(
-        f"{root}/{event_id}",
-        json={
-            "board_revision": 3,
-            "event_revision": 2,
-            "audience": {"kind": "user", "user_id": str(viewer.id)},
-        },
-    )
-    assert patched.status_code == 200
-    hidden_list = event_client(db, manager).get(root)
-    assert hidden_list.status_code == 200
-    assert hidden_list.json()["pagination"]["total"] == 0
-    assert "private-agenda" not in hidden_list.text
-    assert event_client(db, manager).get(f"{root}/{event_id}").status_code == 404
-    assert event_client(db, viewer).get(f"{root}/{event_id}").json()["links"] == [replacement]
+    shown = client(db, reader, event_router).get(f"{root}/{event_id}").json()
+    assert shown["links"] == [replacement]
 
 
 @pytest.mark.integration
-def test_announcement_links_are_immutable_in_publications_and_bind_retry_key(
+def test_post_links_are_immutable_in_publications_and_bind_retry_key(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = announcement_actor(db, "link-owner")
-    manager = announcement_actor(db, "link-manager")
-    board = announcement_board(db, owner)
-    announcement_grant(db, board, manager, "manage")
+    author = member(db)
+    board = project_board(db)
+    grant(db, board, [author], AccessLevel.WRITE)
     db.commit()
-    root = f"/api/boards/{board.id}/announcements"
+    api = client(db, author, post_router)
+    root = f"/api/boards/{board.id}/posts"
     first_link = {"label": "Policy", "url": "https://example.org/policy-v1"}
     second_link = {"label": "Policy", "url": "https://example.org/policy-v2"}
-    created = announcement_client(db, owner).post(
-        root,
-        json=_create_payload(
-            1,
-            links=[first_link],
-            audience={"kind": "role", "role_id": str(owner.role_id)},
-        ),
-    )
+    created = api.post(root, json=_post_payload(1, links=[first_link]))
     assert created.status_code == 201
     item_id = created.json()["id"]
-    key = uuid7()
-    publish = {
-        "board_revision": 2,
-        "announcement_revision": 1,
-        "publication_key": str(key),
-    }
-    first = announcement_client(db, owner).post(f"{root}/{item_id}/publish", json=publish)
+    publish = {"board_revision": 2, "post_revision": 1, "publication_key": str(uuid7())}
+    first = api.post(f"{root}/{item_id}/publish", json=publish)
     assert first.status_code == 200
-    retry = announcement_client(db, owner).post(f"{root}/{item_id}/publish", json=publish)
-    assert retry.json() == first.json()
-    assert announcement_client(db, owner).get(f"{root}/{item_id}").json()["links"] == [first_link]
-    hidden_page = announcement_client(db, manager).get(root)
-    assert hidden_page.status_code == 200
-    assert hidden_page.json()["pagination"]["total"] == 0
-    assert "policy-v1" not in hidden_page.text
-    assert announcement_client(db, manager).get(f"{root}/{item_id}").status_code == 404
-    patched = announcement_client(db, owner).patch(
+    assert api.post(f"{root}/{item_id}/publish", json=publish).json() == first.json()
+    assert api.get(f"{root}/{item_id}").json()["links"] == [first_link]
+    patched = api.patch(
         f"{root}/{item_id}",
-        json={"board_revision": 3, "announcement_revision": 2, "links": [second_link]},
+        json={"board_revision": 3, "post_revision": 2, "links": [second_link]},
     )
     assert patched.status_code == 200
-    current_draft = announcement_client(db, owner).get(f"{root}/{item_id}?view=draft")
-    assert current_draft.json()["links"] == [second_link]
-    assert announcement_client(db, owner).get(f"{root}/{item_id}").json()["links"] == [first_link]
-    mismatch = announcement_client(db, owner).post(f"{root}/{item_id}/publish", json=publish)
+    assert api.get(f"{root}/{item_id}?view=draft").json()["links"] == [second_link]
+    assert api.get(f"{root}/{item_id}").json()["links"] == [first_link]
+    mismatch = api.post(f"{root}/{item_id}/publish", json=publish)
     assert mismatch.status_code == 409
     assert mismatch.json()["detail"]["code"] == "publication_key_conflict"
-    old_revision = db.scalar(
-        select(BoardAnnouncementRevision).where(
-            BoardAnnouncementRevision.announcement_id == item_id
-        )
-    )
+    old_revision = db.scalar(select(BoardPostRevision).where(BoardPostRevision.post_id == item_id))
     assert old_revision is not None and old_revision.links == [first_link]
     publication_audit = db.scalar(
         select(AuditLog).where(
-            AuditLog.entity_type == "board_announcement_revisions",
+            AuditLog.entity_type == "board_post_revisions",
             AuditLog.entity_id == old_revision.id,
             AuditLog.action == AuditAction.CREATE,
         )

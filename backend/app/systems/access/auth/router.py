@@ -11,7 +11,7 @@ from app.common.dependencies import (
     CurrentIdentity,
     get_current_identity,
     get_current_user,
-    require_roles,
+    require_admin,
 )
 from app.core.config import get_settings
 from app.core.config.development import browser_origin_is_permitted, is_relaxed_development
@@ -66,15 +66,14 @@ from app.systems.access.identity.schemas import (
     TokenResponse,
 )
 from app.systems.access.identity.session_revocation import revoke_session, revoke_user_sessions
+from app.systems.access.policy.scope import effective_levels
 from app.systems.access.users.acceptance import (
     begin_invitation_acceptance,
     record_invitation_acceptance_failure,
 )
 from app.systems.access.users.account_operations import router as account_operations_router
 from app.systems.access.users.coordination import InvitationConflict, InvitationError
-from app.systems.access.users.models import User, UserRole
-from app.systems.access.users.permissions import effective_permissions
-from app.systems.access.users.roles_router import router as roles_router
+from app.systems.access.users.models import User
 from app.systems.access.users.router import router as users_router
 from app.systems.access.users.schemas import (
     AuthMeResponse,
@@ -257,7 +256,7 @@ def logout(
 )
 def invite(
     payload: InvitationCreate,
-    admin: Annotated[User, Depends(require_roles(UserRole.ADMIN))],
+    admin: Annotated[User, Depends(require_admin)],
     db: Annotated[Session, Depends(get_db)],
 ) -> InvitationResponse:
     try:
@@ -278,7 +277,7 @@ def invite(
 def resend_invite(
     user_id: UUID,
     payload: InvitationResendRequest,
-    admin: Annotated[User, Depends(require_roles(UserRole.ADMIN))],
+    admin: Annotated[User, Depends(require_admin)],
     db: Annotated[Session, Depends(get_db)],
 ) -> InvitationResponse:
     try:
@@ -292,12 +291,18 @@ def resend_invite(
 
 
 @auth_router.get("/me", response_model=AuthMeResponse)
-def me(user: Annotated[User, Depends(get_current_user)]) -> AuthMeResponse:
+def me(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AuthMeResponse:
+    access = effective_levels(db, user)
     return AuthMeResponse.model_validate(
         {
             **UserResponse.model_validate(user).model_dump(),
-            "role": user.role.role,
-            "permissions": effective_permissions(user.role),
+            "access": [
+                {"department_id": department_id, "module_id": module_id, "level": level}
+                for department_id, module_id, level in access.entries()
+            ],
         }
     )
 
@@ -480,4 +485,3 @@ router.include_router(auth_router)
 router.include_router(template_router)
 router.include_router(users_router)
 router.include_router(account_operations_router)
-router.include_router(roles_router)

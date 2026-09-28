@@ -7,21 +7,19 @@ import {
 } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { getAuthMe } from "@/lib/auth-api";
-import { getOpenViewChartPreferences } from "./chart-preferences-api";
+import { listOpenViewDepartments } from "./departments-api";
 import {
   listOpenViewReports,
   listOpenViewSharedReportRuns,
 } from "./reports-api";
 import {
-  listOpenViewAudienceOptions,
+  listOpenViewAssignableUsers,
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
-  listOpenViewPersonalDefaults,
   listOpenViewSavedViews,
-  type OpenViewAudienceOption,
   type OpenViewDataSourceField,
+  type OpenViewAssignableUser,
   type OpenViewPage,
-  type OpenViewPersonalDefault,
   type OpenViewSavedView,
 } from "./views-api";
 
@@ -40,14 +38,17 @@ export const openViewKeys = {
   boundedCatalog: () => ["openview", "catalog", "bounded"] as const,
   /** The first catalog page (Charts and Reports load more on request). */
   catalogFirstPage: () => ["openview", "catalog", "first-page"] as const,
+  /** Readable departments, which own Dashboards and name data sources. */
+  departments: () => ["openview", "catalog", "departments"] as const,
   fields: ["openview", "fields"] as const,
+  assignableUsers: ["openview", "assignable-users"] as const,
+  assignableUsersPage: (moduleId: string, search: string) =>
+    ["openview", "assignable-users", moduleId, { search }] as const,
   fieldsFirstPage: (moduleId: string) =>
     ["openview", "fields", moduleId, "first-page"] as const,
   moduleWorkspaces: ["openview", "module-workspace"] as const,
   moduleWorkspace: (moduleId: string) =>
     ["openview", "module-workspace", moduleId] as const,
-  audiences: () => ["openview", "audiences"] as const,
-  chartPreferences: () => ["openview", "chart-preferences"] as const,
   reportLists: ["openview", "reports", "list"] as const,
   reportList: (deleted: "include" | "exclude") =>
     ["openview", "reports", "list", deleted] as const,
@@ -153,21 +154,18 @@ export type ModuleWorkspace = {
   views: OpenViewSavedView[];
   viewsHasMore: boolean;
   viewsNextOffset: number;
-  defaults: OpenViewPersonalDefault[];
-  defaultsHasMore: boolean;
-  defaultsNextOffset: number;
-};
-
-export type AudienceLists = {
-  roles: ItemBatch<OpenViewAudienceOption> | null;
-  people: ItemBatch<OpenViewAudienceOption> | null;
-  failed: boolean;
 };
 
 export const boundedCatalogOptions = () =>
   queryOptions({
     queryKey: openViewKeys.boundedCatalog(),
     queryFn: () => boundedItems((options) => listOpenViewDataSources(options)),
+  });
+
+export const departmentsOptions = () =>
+  queryOptions({
+    queryKey: openViewKeys.departments(),
+    queryFn: ({ signal }) => listOpenViewDepartments(signal),
   });
 
 export const catalogFirstPageOptions = () =>
@@ -188,18 +186,34 @@ export const fieldsFirstPageOptions = (moduleId: string) =>
     enabled: Boolean(moduleId),
   });
 
+export const assignableUsersOptions = (
+  moduleId: string,
+  search: string,
+  enabled = true,
+) =>
+  queryOptions({
+    queryKey: openViewKeys.assignableUsersPage(moduleId, search),
+    queryFn: (): Promise<OpenViewPage<OpenViewAssignableUser>> =>
+      listOpenViewAssignableUsers(moduleId, {
+        limit: CATALOG_PAGE_SIZE,
+        offset: 0,
+        search,
+      }),
+    enabled: Boolean(moduleId) && enabled,
+    staleTime: 0,
+  });
+
 export const moduleWorkspaceOptions = (moduleId: string) =>
   queryOptions({
     queryKey: openViewKeys.moduleWorkspace(moduleId),
     queryFn: async (): Promise<ModuleWorkspace> => {
-      const [fields, views, defaults] = await Promise.all([
+      const [fields, views] = await Promise.all([
         boundedItems((options) =>
           listOpenViewDataSourceFields(moduleId, options),
         ),
         boundedItems((options) =>
           listOpenViewSavedViews({ moduleId, deleted: "include", ...options }),
         ),
-        boundedItems((options) => listOpenViewPersonalDefaults(options)),
       ]);
       return {
         moduleId,
@@ -209,49 +223,9 @@ export const moduleWorkspaceOptions = (moduleId: string) =>
         views: views.items,
         viewsHasMore: views.hasMore,
         viewsNextOffset: views.nextOffset,
-        defaults: defaults.items,
-        defaultsHasMore: defaults.hasMore,
-        defaultsNextOffset: defaults.nextOffset,
       };
     },
     enabled: Boolean(moduleId),
-  });
-
-// Role and person choices only feed sharing, so a failed list keeps the last
-// loaded one and reports a scoped message. Only a denial fails the query.
-export const audienceOptions = () =>
-  queryOptions({
-    queryKey: openViewKeys.audiences(),
-    queryFn: async ({ client, queryKey }): Promise<AudienceLists> => {
-      const [roles, people] = await Promise.allSettled([
-        boundedItems((options) => listOpenViewAudienceOptions("role", options)),
-        boundedItems((options) => listOpenViewAudienceOptions("user", options)),
-      ]);
-      for (const result of [roles, people])
-        if (
-          result.status === "rejected" &&
-          isAuthorizationDenied(result.reason)
-        )
-          throw result.reason;
-      const previous = client.getQueryData<AudienceLists>(queryKey);
-      return {
-        roles:
-          roles.status === "fulfilled"
-            ? roles.value
-            : (previous?.roles ?? null),
-        people:
-          people.status === "fulfilled"
-            ? people.value
-            : (previous?.people ?? null),
-        failed: roles.status === "rejected" || people.status === "rejected",
-      };
-    },
-  });
-
-export const chartPreferencesOptions = () =>
-  queryOptions({
-    queryKey: openViewKeys.chartPreferences(),
-    queryFn: () => getOpenViewChartPreferences(),
   });
 
 export const reportListOptions = (deleted: "include" | "exclude") =>
@@ -279,14 +253,21 @@ const CATALOG_ENTITIES = new Set([
   "modules",
   "workspace_profiles",
 ]);
-const VIEW_METADATA_ENTITIES = new Set(["saved_views", "saved_view_defaults"]);
+const VIEW_METADATA_ENTITIES = new Set(["saved_views"]);
+const USER_DISPLAY_ENTITIES = new Set([
+  "group_access",
+  "group_members",
+  "groups",
+  "users",
+]);
 
 /** Entities whose change refreshes applied record results in a section. */
 export function invalidatesRecords(entity: string): boolean {
   return (
     entity === "records" ||
     entity === "relationships" ||
-    CATALOG_ENTITIES.has(entity)
+    CATALOG_ENTITIES.has(entity) ||
+    USER_DISPLAY_ENTITIES.has(entity)
   );
 }
 
@@ -297,8 +278,16 @@ export function openViewKeysForEntity(entity: string): QueryKey[] {
       openViewKeys.catalog,
       openViewKeys.fields,
       openViewKeys.moduleWorkspaces,
-      openViewKeys.audiences(),
+      openViewKeys.assignableUsers,
     ];
+  if (
+    entity === "departments" ||
+    entity === "group_access" ||
+    entity === "group_members" ||
+    entity === "groups" ||
+    entity === "users"
+  )
+    return [openViewKeys.assignableUsers];
   if (VIEW_METADATA_ENTITIES.has(entity))
     return [openViewKeys.moduleWorkspaces];
   return [];
@@ -316,10 +305,7 @@ export function prefetchOpenViewSection(
   if (section === "views")
     reads.push(client.prefetchQuery(boundedCatalogOptions()));
   if (section === "charts")
-    reads.push(
-      client.prefetchQuery(chartPreferencesOptions()),
-      client.prefetchQuery(catalogFirstPageOptions()),
-    );
+    reads.push(client.prefetchQuery(catalogFirstPageOptions()));
   if (section === "reports")
     reads.push(
       client.prefetchQuery(reportListOptions("exclude")),

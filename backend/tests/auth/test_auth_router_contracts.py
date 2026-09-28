@@ -28,7 +28,7 @@ from app.systems.access.identity.schemas import (
     PasswordChangeRequest,
     RefreshTokenRequest,
 )
-from app.systems.access.users.models import IdentityKind, Role, User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserRole, UserStatus
 
 
 def _request(
@@ -58,11 +58,11 @@ def _request(
     )
 
 
-def _role(kind: UserRole = UserRole.MEMBER) -> Role:
-    return Role(id=uuid7(), role=kind, permissions={}, is_deleted=False)
+def _role(kind: UserRole = UserRole.MEMBER) -> str:
+    return kind.value
 
 
-def _user(*, status: UserStatus = UserStatus.ACTIVE, role: Role | None = None) -> User:
+def _user(*, status: UserStatus = UserStatus.ACTIVE, role: str | None = None) -> User:
     selected_role = role or _role()
     now = datetime.now(UTC)
     return User(
@@ -70,9 +70,7 @@ def _user(*, status: UserStatus = UserStatus.ACTIVE, role: Role | None = None) -
         email="person@example.test",
         username="person",
         status=status.value,
-        role_id=selected_role.id,
         role=selected_role,
-        identity_kind=IdentityKind.INTERNAL.value,
         created_at=now,
         updated_at=now,
         is_deleted=False,

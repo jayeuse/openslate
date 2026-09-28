@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { AudienceRef } from "../domain/model";
 
 const uuidSchema = z.string().uuid();
 const timestampSchema = z.iso.datetime({ offset: true });
@@ -16,8 +15,8 @@ const fieldTypeSchema = z.enum([
   "date",
   "datetime",
   "select",
+  "user",
 ]);
-const audienceOptionKindSchema = z.enum(["role", "user"]);
 const queryFieldTypeSchema = fieldTypeSchema;
 const viewLayoutSchema = z.enum([
   "table",
@@ -343,51 +342,12 @@ const wirePresentationSchema = z
     }),
   );
 
-const audienceInputSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("private") }).strict(),
-  z.object({ kind: z.literal("everyone") }).strict(),
-  z.object({ kind: z.literal("role"), id: uuidSchema }).strict(),
-  z.object({ kind: z.literal("identity"), id: uuidSchema }).strict(),
-]);
-const wireAudienceSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("private"),
-      role_id: z.null().optional(),
-      user_id: z.null().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("everyone"),
-      role_id: z.null().optional(),
-      user_id: z.null().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("role"),
-      role_id: uuidSchema,
-      user_id: z.null().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("user"),
-      role_id: z.null().optional(),
-      user_id: uuidSchema,
-    })
-    .strict(),
-]);
-
 const savedViewResponseSchema = z
   .object({
     id: uuidSchema,
     module_id: uuidSchema,
-    owner_id: uuidSchema,
     name: z.string().min(1).max(200),
-    visibility: z.enum(["private", "workspace"]),
-    audience: wireAudienceSchema.optional(),
+    is_default: z.boolean(),
     definition: wireQueryDefinitionSchema,
     presentation: wirePresentationSchema,
     revision: z.number().int().min(1),
@@ -397,29 +357,11 @@ const savedViewResponseSchema = z
     updated_at: timestampSchema,
   })
   .strict()
-  .superRefine((view, context) => {
-    if (
-      view.audience &&
-      view.visibility !==
-        (view.audience.kind === "private" ? "private" : "workspace")
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Visibility must agree with audience",
-      });
-    }
-  })
   .transform((view) => ({
     id: view.id,
     moduleId: view.module_id,
-    ownerId: view.owner_id,
     name: view.name,
-    audience: view.audience
-      ? toDomainAudience(view.audience)
-      : view.visibility === "private"
-        ? ({ kind: "private" } as const)
-        : ({ kind: "everyone" } as const),
-    visibility: view.visibility,
+    isDefault: view.is_default,
     definition: view.definition,
     presentation: view.presentation,
     revision: view.revision,
@@ -429,32 +371,19 @@ const savedViewResponseSchema = z
     updatedAt: view.updated_at,
   }));
 
-function toDomainAudience(
-  audience: z.output<typeof wireAudienceSchema>,
-): AudienceRef {
-  switch (audience.kind) {
-    case "private":
-      return { kind: "private" };
-    case "everyone":
-      return { kind: "everyone" };
-    case "role":
-      return { kind: "role", id: audience.role_id };
-    case "user":
-      return { kind: "identity", id: audience.user_id };
-  }
-}
-
 const dataSourceSchema = z
   .object({
     id: uuidSchema,
     name: z.string().min(1),
     department_id: uuidSchema,
+    title_field_id: uuidSchema.nullable(),
   })
   .strict()
-  .transform(({ id, name, department_id }) => ({
+  .transform(({ id, name, department_id, title_field_id }) => ({
     id,
     name,
     departmentId: department_id,
+    titleFieldId: title_field_id,
   }));
 const fieldSchema = z
   .object({
@@ -468,35 +397,12 @@ const fieldSchema = z
   })
   .strict()
   .transform(({ module_id, ...field }) => ({ ...field, moduleId: module_id }));
-const audienceOptionSchema = z
-  .object({
-    kind: audienceOptionKindSchema,
-    id: uuidSchema,
-    label: z.string().min(1),
-  })
-  .strict()
-  .transform(({ kind, id, label }) => ({
-    kind: kind === "user" ? ("identity" as const) : kind,
-    id,
-    label,
-  }));
-const defaultSchema = z
-  .object({
-    module_id: uuidSchema,
-    view_id: uuidSchema,
-    revision: z.number().int().min(1),
-  })
-  .strict()
-  .transform(({ module_id, view_id, revision }) => ({
-    moduleId: module_id,
-    viewId: view_id,
-    revision,
-  }));
 const recordSchema = z
   .object({
     id: uuidSchema,
     module_id: uuidSchema,
-    data: z.record(z.string(), z.unknown()),
+    data: z.record(uuidSchema, z.unknown()),
+    display_values: z.record(uuidSchema, z.string()),
     created_at: timestampSchema,
     updated_at: timestampSchema,
     deleted_at: timestampSchema.nullable(),
@@ -507,6 +413,7 @@ const recordSchema = z
   .transform(
     ({
       module_id,
+      display_values,
       created_at,
       updated_at,
       deleted_at,
@@ -516,6 +423,7 @@ const recordSchema = z
     }) => ({
       ...record,
       moduleId: module_id,
+      displayValues: display_values,
       createdAt: created_at,
       updatedAt: updated_at,
       deletedAt: deleted_at,
@@ -531,16 +439,14 @@ function listSchema<Item extends z.ZodType>(item: Item) {
 }
 
 const dataSourceListSchema = listSchema(dataSourceSchema);
-const audienceOptionListSchema = listSchema(audienceOptionSchema);
 const savedViewListSchema = listSchema(savedViewResponseSchema);
-const defaultListSchema = listSchema(defaultSchema);
 const recordListSchema = listSchema(recordSchema);
 
 const savedViewCreateSchema = z
   .object({
     moduleId: uuidSchema,
     name: z.string().min(1).max(200),
-    audience: audienceInputSchema,
+    isDefault: z.boolean().default(false),
     definition: queryDefinitionSchema,
     presentation: presentationSchema,
   })
@@ -550,7 +456,7 @@ const savedViewUpdateSchema = z
     id: uuidSchema,
     revision: z.number().int().min(1),
     name: z.string().min(1).max(200).optional(),
-    audience: audienceInputSchema.optional(),
+    isDefault: z.boolean().optional(),
     definition: queryDefinitionSchema.optional(),
     presentation: presentationSchema.optional(),
   })
@@ -558,7 +464,7 @@ const savedViewUpdateSchema = z
   .superRefine((update, context) => {
     if (
       update.name === undefined &&
-      update.audience === undefined &&
+      update.isDefault === undefined &&
       update.definition === undefined &&
       update.presentation === undefined
     ) {
@@ -572,9 +478,6 @@ const archiveSchema = z
   .object({ id: uuidSchema, revision: z.number().int().min(1) })
   .strict();
 const restoreSchema = archiveSchema;
-const defaultSetSchema = z
-  .object({ moduleId: uuidSchema, viewId: uuidSchema })
-  .strict();
 const recordQuerySchema = z
   .object({
     moduleId: uuidSchema,
@@ -598,8 +501,6 @@ export type OpenViewPage<T> = {
 };
 export type OpenViewDataSource = z.output<typeof dataSourceSchema>;
 export type OpenViewDataSourceField = z.output<typeof fieldSchema>;
-export type OpenViewAudienceOption = z.output<typeof audienceOptionSchema>;
-export type OpenViewPersonalDefault = z.output<typeof defaultSchema>;
 export type OpenViewRecord = z.output<typeof recordSchema>;
 export type OpenViewConflict = {
   code: "stale_revision";
@@ -609,12 +510,6 @@ export type OpenViewConflict = {
 
 export {
   archiveSchema,
-  audienceInputSchema,
-  audienceOptionKindSchema,
-  audienceOptionListSchema,
-  defaultListSchema,
-  defaultSchema,
-  defaultSetSchema,
   dataSourceListSchema,
   fieldSchema,
   listSchema,

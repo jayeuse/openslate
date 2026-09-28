@@ -26,6 +26,8 @@ import { SavedReportsListSkeleton } from "./openview-skeletons";
 
 type SavedReportsPanelProps = {
   reports: OpenViewReport[];
+  /** Department names by module id; a Report belongs to its module's department. */
+  departmentNames: ReadonlyMap<string, string>;
   showArchived: boolean;
   selectedReportId: string | undefined;
   templateReportId: string;
@@ -42,10 +44,13 @@ type SavedReportsPanelProps = {
   onStartFromTemplate: () => void;
   onLoadMore: () => void;
   onOpenAvailableOutputs: () => void;
+  /** Whether the user may create Reports: copies and templates are new Reports. */
+  canCreate: boolean;
 };
 
 export function SavedReportsPanel({
   reports,
+  departmentNames,
   showArchived,
   selectedReportId,
   templateReportId,
@@ -62,12 +67,15 @@ export function SavedReportsPanel({
   onStartFromTemplate,
   onLoadMore,
   onOpenAvailableOutputs,
+  canCreate,
 }: SavedReportsPanelProps) {
   return (
     <Card className="min-w-0 self-start">
       <CardHeader>
         <CardTitle>Saved Reports</CardTitle>
-        <CardDescription>Only Reports you own appear here.</CardDescription>
+        <CardDescription>
+          Reports on data you can read. Module managers can change them.
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -122,37 +130,49 @@ export function SavedReportsPanel({
               </Empty>
             ) : null}
             <ul className="flex min-w-0 flex-col gap-2">
-              {reports.map((report) => (
-                <li key={report.id} className="flex min-w-0 gap-2">
-                  <Button
-                    type="button"
-                    variant={
-                      selectedReportId === report.id ? "secondary" : "outline"
-                    }
-                    className="min-h-11 min-w-0 flex-1 justify-start text-left"
-                    disabled={Boolean(actionPending)}
-                    onClick={() => onOpenReport(report)}
-                  >
-                    <span className="min-w-0 truncate">{report.name}</span>
-                    {report.isDeleted ? (
-                      <Badge variant="outline" className="ml-auto">
-                        Archived
-                      </Badge>
+              {reports.map((report) => {
+                const department = departmentNames.get(report.moduleId);
+                return (
+                  <li key={report.id} className="flex min-w-0 gap-2">
+                    <Button
+                      type="button"
+                      variant={
+                        selectedReportId === report.id ? "secondary" : "outline"
+                      }
+                      className="h-auto min-h-11 min-w-0 flex-1 justify-start py-1.5 text-left"
+                      disabled={Boolean(actionPending)}
+                      onClick={() => onOpenReport(report)}
+                    >
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate">{report.name}</span>
+                        {department ? (
+                          <span className="text-muted-foreground truncate text-xs font-normal">
+                            {department}
+                          </span>
+                        ) : null}
+                      </span>
+                      {report.isDeleted ? (
+                        <Badge variant="outline" className="ml-auto">
+                          Archived
+                        </Badge>
+                      ) : null}
+                    </Button>
+                    {canCreate ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="min-h-11"
+                        disabled={Boolean(actionPending) || report.isDeleted}
+                        onClick={() => onDuplicateReport(report.id)}
+                      >
+                        Duplicate
+                      </Button>
                     ) : null}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={Boolean(actionPending) || report.isDeleted}
-                    onClick={() => onDuplicateReport(report.id)}
-                  >
-                    Duplicate
-                  </Button>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
-            {!showArchived && reports.length > 0 ? (
+            {canCreate && !showArchived && reports.length > 0 ? (
               <div className="flex flex-wrap items-end gap-2">
                 <Field className="min-w-48 flex-1">
                   <FieldLabel htmlFor="report-template-source">

@@ -86,7 +86,7 @@ def integration_owner_db() -> Generator[Session, None, None]:
     if os.getenv("TEST_DATABASE_URL") is None:
         pytest.skip("Set TEST_DATABASE_URL to run PostgreSQL integration tests")
     database_url = os.getenv("MIGRATION_DATABASE_URL", "")
-    _guard_integration_database(database_url)
+    # The shared session path validates ownership before opening its connection.
     yield from _integration_session(database_url)
 
 

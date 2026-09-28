@@ -13,25 +13,6 @@ from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.records.query_schemas import FieldReference, QueryFilter
 
 
-class BoardWidgetAudience(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["private", "everyone", "role", "user"] = "everyone"
-    role_id: UUID | None = None
-    user_id: UUID | None = None
-
-    @model_validator(mode="after")
-    def matching_target(self) -> Self:
-        valid = (
-            (self.kind in {"private", "everyone"} and self.role_id is None and self.user_id is None)
-            or (self.kind == "role" and self.role_id is not None and self.user_id is None)
-            or (self.kind == "user" and self.role_id is None and self.user_id is not None)
-        )
-        if not valid:
-            raise ValueError("Audience target must match its kind")
-        return self
-
-
 class BoardWidgetConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
@@ -65,7 +46,6 @@ class BoardWidgetSpec(BaseModel):
     widget_type: Literal["summary", "workload", "records", "chart"]
     module_id: UUID
     config: BoardWidgetConfig
-    audience: BoardWidgetAudience = Field(default_factory=BoardWidgetAudience)
 
 
 class BoardWidgetWrite(BaseModel):
@@ -113,7 +93,6 @@ class BoardWidgetResponse(BaseModel):
     module_id: UUID
     position: int = Field(ge=0, lt=12)
     config: BoardWidgetConfig
-    audience: BoardWidgetAudience
     created_at: datetime
     updated_at: datetime
 

@@ -333,7 +333,7 @@ export function useServerBoardPortability({
       if (!mounted.current) return;
       if (kind === "import") setSelectedFile(null);
       if (kind === "import" || sourceSequence.current === sourceAtStart)
-        setNotice("Private Board created from structure only.");
+        setNotice("Project Board created with no groups.");
       onBoardCreated(created);
     } catch (caught) {
       if (

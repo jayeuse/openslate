@@ -1,4 +1,4 @@
-import type { Person, Role } from "../../access/domain/model";
+import type { Person, Role } from "../../shared/data/sample-people";
 import { useState } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";

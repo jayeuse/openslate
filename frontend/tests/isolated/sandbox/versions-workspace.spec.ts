@@ -5,14 +5,14 @@ import {
   validVersionSelection,
 } from "../../../src/components/systems/sandbox/components/versions-workspace";
 import type { SandboxVersion } from "../../../src/components/systems/sandbox/state/api";
-import type { SandboxDocumentV2 } from "../../../src/components/systems/sandbox/domain/document";
+import type { SandboxDocumentV4 } from "../../../src/components/systems/sandbox/domain/document";
 
-function document(): SandboxDocumentV2 {
+function document(): SandboxDocumentV4 {
   return {
     kind: "openslate-sandbox",
-    schemaVersion: 2,
+    schemaVersion: 4,
     design: { departments: [], modules: [], relationships: [], layout: {} },
-    automations: [
+    triggers: [
       {
         id: "notify",
         name: "Notify team",
@@ -37,16 +37,16 @@ function document(): SandboxDocumentV2 {
   };
 }
 
-test("version comparison includes changes in every canonical automation condition and action", () => {
+test("version comparison includes changes in every canonical trigger condition and action", () => {
   const before = document();
   const after = structuredClone(before);
-  after.automations[0].conditionGroup.conditions.push({
+  after.triggers[0].conditionGroup.conditions.push({
     id: "second",
     field: { moduleId: "requests", fieldId: "priority" },
     operator: ">=",
     value: { kind: "literal", value: 2 },
   });
-  after.automations[0].actions.push({
+  after.triggers[0].actions.push({
     id: "task",
     kind: "assign-task",
     assignee: "Operations",
@@ -54,7 +54,7 @@ test("version comparison includes changes in every canonical automation conditio
 
   const changes = canonicalVersionChanges(before, after);
   expect(
-    changes.filter((change) => change === "Automation changed: Notify team"),
+    changes.filter((change) => change === "Trigger changed: Notify team"),
   ).toHaveLength(1);
 });
 

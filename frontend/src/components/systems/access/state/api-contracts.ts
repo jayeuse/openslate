@@ -1,169 +1,270 @@
 import { z } from "zod";
 
-export const ACCESS_CAPABILITY_IDS = [
-  "departments.read",
-  "departments.write",
-  "modules.read",
-  "modules.write",
-  "fields.read",
-  "fields.write",
-  "records.read",
-  "records.write",
-  "relationships.read",
-  "relationships.write",
-] as const;
+// Response and request contracts of the Access API. Each schema mirrors one
+// backend Pydantic model; the source is named above it. Strict objects reject
+// fields the backend does not send, so a contract change fails visibly.
 
-export type AccessCapabilityId = (typeof ACCESS_CAPABILITY_IDS)[number];
-export type AccessUserStatus = "pending" | "active" | "disabled";
-export type AccessIdentityKind = "internal" | "guest";
+const uuid = z.uuid();
+const dateTime = z.iso.datetime({ offset: true });
+
+/** `app/systems/access/users/models.py` UserRole and UserStatus. */
+export const userRoleSchema = z.enum(["admin", "member", "guest"]);
+export const userStatusSchema = z.enum(["pending", "active", "disabled"]);
+/** `app/systems/access/policy/models.py` AccessLevel. */
+export const accessLevelSchema = z.enum(["read", "write", "manage"]);
+
+/** `app/common/listing/schemas.py` PaginationMetadata. */
+const paginationSchema = z.strictObject({
+  limit: z.number().int().positive().max(100),
+  offset: z.number().int().nonnegative(),
+  count: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  has_more: z.boolean(),
+});
+
+/** `app/common/listing/schemas.py` StandardListResponse. */
+export function pageSchema<Item extends z.ZodType>(item: Item) {
+  return z.strictObject({ items: z.array(item), pagination: paginationSchema });
+}
+
+/** `users/schemas.py` UserResponse. */
+export const userSchema = z.strictObject({
+  id: uuid,
+  email: z.string().min(1),
+  username: z.string().min(1),
+  status: userStatusSchema,
+  role: userRoleSchema,
+  display_name: z.string().nullable(),
+  job_title: z.string().nullable(),
+  sponsor_user_id: uuid.nullable(),
+  expires_at: dateTime.nullable(),
+  invitation_sent_at: dateTime.nullable(),
+  created_at: dateTime,
+  updated_at: dateTime,
+  deleted_at: dateTime.nullable(),
+  is_deleted: z.boolean(),
+  performed_by: uuid.nullable(),
+});
+
+/** `users/schemas.py` InvitationResponse. */
+export const invitationSchema = z.strictObject({
+  user: userSchema,
+  delivery: z.literal("email"),
+});
+
+/** `users/schemas.py` InvitationCreate (= UserCreate). */
+export const invitationCreateSchema = z.strictObject({
+  email: z.string().min(3).max(320),
+  username: z
+    .string()
+    .min(3)
+    .max(100)
+    .regex(/^[a-zA-Z0-9_-]+$/),
+  role: userRoleSchema.optional(),
+  group_ids: z.array(uuid).max(100).optional(),
+  display_name: z.string().max(200).nullable().optional(),
+  job_title: z.string().max(200).nullable().optional(),
+  sponsor_user_id: uuid.nullable().optional(),
+  expires_at: dateTime.nullable().optional(),
+});
+
+/**
+ * `users/schemas.py` UserUpdate. A role change cannot make a guest; status
+ * can only move between active and disabled.
+ */
+export const userPatchSchema = z.strictObject({
+  username: z
+    .string()
+    .min(3)
+    .max(100)
+    .regex(/^[a-zA-Z0-9_-]+$/)
+    .nullable()
+    .optional(),
+  role: z.enum(["admin", "member"]).nullable().optional(),
+  status: z.enum(["active", "disabled"]).nullable().optional(),
+  display_name: z.string().max(200).nullable().optional(),
+  job_title: z.string().max(200).nullable().optional(),
+  sponsor_user_id: uuid.nullable().optional(),
+  expires_at: dateTime.nullable().optional(),
+});
+
+/** `users/sessions_schemas.py` AdminSessionResponse. */
+export const sessionSchema = z.strictObject({
+  id: uuid,
+  created_at: dateTime,
+  refreshed_at: dateTime,
+  expires_at: dateTime,
+  user_agent: z.string().nullable(),
+  current: z.boolean(),
+});
+
+/**
+ * `GET /api/users/{user_id}/access` (administrators only): a person's
+ * effective access. A null module means the whole department. `groups` are
+ * the groups whose row gives the entry; an entry's level already applies the
+ * guest read limit, while each group keeps the level it grants. An active
+ * administrator is `unrestricted` and has no entries.
+ */
+export const userAccessSchema = z.strictObject({
+  user_id: uuid,
+  role: userRoleSchema,
+  unrestricted: z.boolean(),
+  entries: z.array(
+    z.strictObject({
+      department_id: uuid,
+      module_id: uuid.nullable(),
+      level: accessLevelSchema,
+      groups: z.array(
+        z.strictObject({
+          group_id: uuid,
+          name: z.string().min(1),
+          level: accessLevelSchema,
+        }),
+      ),
+    }),
+  ),
+});
+
+/** `policy/schemas.py` GroupAccessEntry: a null module means the whole department. */
+export const groupAccessEntrySchema = z.strictObject({
+  department_id: uuid,
+  module_id: uuid.nullable(),
+  level: accessLevelSchema,
+});
+
+/** `policy/schemas.py` GroupResponse. */
+export const groupSchema = z.strictObject({
+  id: uuid,
+  name: z.string().min(1).max(200),
+  description: z.string().max(2000),
+  revision: z.number().int().nonnegative(),
+  member_ids: z.array(uuid),
+  access: z.array(groupAccessEntrySchema),
+  created_at: dateTime,
+  updated_at: dateTime,
+  deleted_at: dateTime.nullable(),
+  is_deleted: z.boolean(),
+  performed_by: uuid.nullable(),
+});
+
+/** `policy/schemas.py` GroupCreate. */
+export const groupCreateSchema = z.strictObject({
+  name: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(2000).optional(),
+  member_ids: z.array(uuid).max(100).optional(),
+});
+
+/** `policy/schemas.py` GroupUpdate: name and description only (D14). */
+export const groupPatchSchema = z.strictObject({
+  name: z.string().trim().min(1).max(200).optional(),
+  description: z.string().trim().max(2000).optional(),
+});
+
+/** `policy/schemas.py` GroupAccessReplace. */
+export const groupAccessReplaceSchema = z.strictObject({
+  access: z.array(groupAccessEntrySchema).max(500),
+});
+
+/** `policy/schemas.py` GroupMembersReplace (D14). */
+export const groupMembersReplaceSchema = z.strictObject({
+  member_ids: z.array(uuid).max(100),
+});
+
+/**
+ * `policy/schemas.py` MemberCandidateResponse (D14). The route never lists
+ * administrators, so an administrator here is a contract change.
+ */
+export const memberCandidateSchema = z.strictObject({
+  id: uuid,
+  display_name: z.string().nullable(),
+  username: z.string().min(1),
+  email: z.string().min(1),
+  role: z.enum(["member", "guest"]),
+  status: userStatusSchema,
+});
+
+/** `sandbox/departments/schemas.py` DepartmentResponse. */
+export const departmentSchema = z.strictObject({
+  id: uuid,
+  department_name: z.string().min(1),
+  created_at: dateTime,
+  updated_at: dateTime,
+  deleted_at: dateTime.nullable(),
+  is_deleted: z.boolean(),
+  performed_by: uuid.nullable(),
+});
+
+/** `sandbox/modules/schemas.py` ModuleResponse. */
+export const moduleSchema = z.strictObject({
+  id: uuid,
+  department_id: uuid,
+  module_name: z.string().min(1),
+  title_field_id: uuid.nullable(),
+  created_at: dateTime,
+  updated_at: dateTime,
+  deleted_at: dateTime.nullable(),
+  is_deleted: z.boolean(),
+  performed_by: uuid.nullable(),
+});
+
+/**
+ * The invitation settings of `manage/workspace/schemas.py` WorkspaceResponse.
+ * Access reads only these fields of the workspace resource, so the object is
+ * not strict: Manage owns the rest of it.
+ */
+export const invitationSettingsSchema = z.object({
+  invitation_expiry_days: z.number().int().min(1).max(365),
+  guest_duration_days: z.number().int().min(1).max(365),
+  revision: z.number().int().positive(),
+});
+
+/**
+ * `manage/workspace/schemas.py` WorkspaceUpdate limited to the invitation
+ * settings. The revision travels in the body, not in If-Match.
+ */
+export const invitationSettingsPatchSchema = z
+  .strictObject({
+    revision: z.number().int().positive(),
+    invitation_expiry_days: z.number().int().min(1).max(365).optional(),
+    guest_duration_days: z.number().int().min(1).max(365).optional(),
+  })
+  .refine(
+    (patch) =>
+      patch.invitation_expiry_days !== undefined ||
+      patch.guest_duration_days !== undefined,
+    { message: "At least one invitation setting is required" },
+  );
+
+export type AccessUserRole = z.output<typeof userRoleSchema>;
+export type AccessUserStatus = z.output<typeof userStatusSchema>;
+export type AccessLevel = z.output<typeof accessLevelSchema>;
 export type AccessDeletedFilter = "exclude" | "include" | "only";
 export type AccessSortOrder = "asc" | "desc";
-
-export type AccessCapability = {
-  id: AccessCapabilityId;
-  label: string;
-  description: string;
-  group: string;
-};
-
-export type AccessPagination = {
-  limit: number;
-  offset: number;
-  count: number;
-  total: number;
-  has_more: boolean;
-};
-
 export type AccessPage<Item> = {
   items: Item[];
-  pagination: AccessPagination;
+  pagination: z.output<typeof paginationSchema>;
 };
+export type AccessVersioned<Data> = { data: Data; etag: string };
 
-export type AccessUser = {
-  id: string;
-  email: string;
-  username: string;
-  status: AccessUserStatus;
-  role_id: string;
-  display_name: string | null;
-  identity_kind: AccessIdentityKind;
-  job_title: string | null;
-  sponsor_user_id: string | null;
-  expires_at: string | null;
-  department_ids: string[];
-  primary_department_id: string | null;
-  invitation_sent_at: string | null;
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-  is_deleted: boolean;
-  performed_by: string | null;
-};
-
-export type AccessDepartment = {
-  id: string;
-  department_name: string;
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-  is_deleted: boolean;
-  performed_by: string | null;
-};
-
-export type AccessInvitationResponse = {
-  user: AccessUser;
-  delivery: "email";
-};
-
-export type AccessUserCreate = {
-  email: string;
-  username: string;
-  role_id?: string | null;
-  display_name?: string | null;
-  identity_kind?: AccessIdentityKind;
-  job_title?: string | null;
-  sponsor_user_id?: string | null;
-  expires_at?: string | null;
-  department_ids?: string[];
-  primary_department_id?: string | null;
-};
-
-export type AccessUserPatch = {
-  username?: string;
-  role_id?: string;
-  status?: Extract<AccessUserStatus, "active" | "disabled">;
-  display_name?: string | null;
-  job_title?: string | null;
-  sponsor_user_id?: string;
-  expires_at?: string | null;
-  department_ids?: string[];
-  primary_department_id?: string | null;
-};
-
-export type AccessRolePermissions = Partial<
-  Record<AccessCapabilityId, boolean>
+export type AccessUser = z.output<typeof userSchema>;
+export type AccessInvitationResponse = z.output<typeof invitationSchema>;
+export type AccessInvitationCreate = z.input<typeof invitationCreateSchema>;
+export type AccessUserPatch = z.input<typeof userPatchSchema>;
+export type AccessSession = z.output<typeof sessionSchema>;
+export type AccessUserAccess = z.output<typeof userAccessSchema>;
+export type AccessGroupAccessEntry = z.output<typeof groupAccessEntrySchema>;
+export type AccessGroup = z.output<typeof groupSchema>;
+export type AccessGroupCreate = z.input<typeof groupCreateSchema>;
+export type AccessGroupPatch = z.input<typeof groupPatchSchema>;
+export type AccessMemberCandidate = z.output<typeof memberCandidateSchema>;
+export type AccessDepartment = z.output<typeof departmentSchema>;
+export type AccessModule = z.output<typeof moduleSchema>;
+export type AccessInvitationSettings = z.output<
+  typeof invitationSettingsSchema
 >;
-
-export type AccessRole = {
-  id: string;
-  role: string;
-  description: string | null;
-  permissions: AccessRolePermissions;
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-  is_deleted: boolean;
-  performed_by: string | null;
-};
-
-export type AccessRoleCreate = {
-  role: string;
-  description?: string | null;
-  permissions?: AccessRolePermissions;
-};
-
-export type AccessRolePatch = {
-  role?: string;
-  description?: string | null;
-  permissions?: AccessRolePermissions;
-};
-
-export type AccessSession = {
-  id: string;
-  created_at: string;
-  refreshed_at: string;
-  expires_at: string;
-  user_agent: string | null;
-  current: boolean;
-};
-
-export type AccessCheckRequest = {
-  principal_kind: "user" | "service";
-  principal_id: string;
-  permission_id: AccessCapabilityId;
-  scope_kind: "workspace";
-};
-
-export type AccessCheckReason =
-  | "administrator_protected"
-  | "principal_inactive"
-  | "principal_deleted"
-  | "principal_expired"
-  | "invalid_input"
-  | "invalid_rule"
-  | "rule_allow"
-  | "rule_deny"
-  | "legacy_role_allow"
-  | "default_deny";
-
-export type AccessCheckResponse = AccessCheckRequest & {
-  policy_decision: "allow" | "deny";
-  reason: AccessCheckReason;
-  source_rule_id: string | null;
-  policy_revision: number;
-  checked_at: string;
-  runtime_supported: boolean;
-};
+export type AccessInvitationSettingsPatch = z.input<
+  typeof invitationSettingsPatchSchema
+>;
 
 export type RequestOptions = { signal?: AbortSignal };
 
@@ -178,470 +279,22 @@ export type StandardListOptions<SortBy extends string> = RequestOptions & {
 
 export type AccessUserListOptions = StandardListOptions<
   "email" | "username" | "created_at" | "updated_at"
-> & { role_id?: string };
-
-export type AccessRoleListOptions = StandardListOptions<
-  "role" | "created_at" | "updated_at"
->;
-
-export type AccessDepartmentListOptions = StandardListOptions<
-  "department_name" | "created_at" | "updated_at"
->;
-
-export type AccessSessionListOptions = RequestOptions & {
-  limit?: number;
-  offset?: number;
-};
-
-const capabilityIdSchema = z.enum(ACCESS_CAPABILITY_IDS);
-const dateTimeSchema = z.string().datetime({ offset: true });
-export const accessCheckRequestSchema = z.strictObject({
-  principal_kind: z.enum(["user", "service"]),
-  principal_id: z.string().uuid(),
-  permission_id: capabilityIdSchema,
-  scope_kind: z.literal("workspace"),
-});
-export const accessCheckResponseSchema = z.strictObject({
-  ...accessCheckRequestSchema.shape,
-  policy_decision: z.enum(["allow", "deny"]),
-  reason: z.enum([
-    "administrator_protected",
-    "principal_inactive",
-    "principal_deleted",
-    "principal_expired",
-    "invalid_input",
-    "invalid_rule",
-    "rule_allow",
-    "rule_deny",
-    "legacy_role_allow",
-    "default_deny",
-  ]),
-  source_rule_id: z.string().uuid().nullable(),
-  policy_revision: z.number().int().positive(),
-  checked_at: dateTimeSchema,
-  runtime_supported: z.boolean(),
-});
-const paginationSchema = z.strictObject({
-  limit: z.number().int().positive().max(100),
-  offset: z.number().int().nonnegative(),
-  count: z.number().int().nonnegative(),
-  total: z.number().int().nonnegative(),
-  has_more: z.boolean(),
-});
-export const capabilitySchema = z.strictObject({
-  id: capabilityIdSchema,
-  label: z.string().min(1),
-  description: z.string().min(1),
-  group: z.string().min(1),
-});
-export const userSchema = z.strictObject({
-  id: z.string().uuid(),
-  email: z.string().email(),
-  username: z.string().min(1),
-  status: z.enum(["pending", "active", "disabled"]),
-  role_id: z.string().uuid(),
-  display_name: z.string().nullable(),
-  identity_kind: z.enum(["internal", "guest"]),
-  job_title: z.string().nullable(),
-  sponsor_user_id: z.string().uuid().nullable(),
-  expires_at: dateTimeSchema.nullable(),
-  department_ids: z.array(z.string().uuid()),
-  primary_department_id: z.string().uuid().nullable(),
-  invitation_sent_at: dateTimeSchema.nullable(),
-  created_at: dateTimeSchema,
-  updated_at: dateTimeSchema,
-  deleted_at: dateTimeSchema.nullable(),
-  is_deleted: z.boolean(),
-  performed_by: z.string().uuid().nullable(),
-});
-export const departmentSchema = z.strictObject({
-  id: z.string().uuid(),
-  department_name: z.string().min(1),
-  created_at: dateTimeSchema,
-  updated_at: dateTimeSchema,
-  deleted_at: dateTimeSchema.nullable(),
-  is_deleted: z.boolean(),
-  performed_by: z.string().uuid().nullable(),
-});
-const rolePermissionsSchema = z
-  .record(z.string(), z.boolean())
-  .refine((permissions) =>
-    Object.keys(permissions).every((key) =>
-      ACCESS_CAPABILITY_IDS.includes(key as AccessCapabilityId),
-    ),
-  );
-export const roleSchema = z.strictObject({
-  id: z.string().uuid(),
-  role: z.string().min(1),
-  description: z.string().nullable(),
-  permissions: rolePermissionsSchema,
-  created_at: dateTimeSchema,
-  updated_at: dateTimeSchema,
-  deleted_at: dateTimeSchema.nullable(),
-  is_deleted: z.boolean(),
-  performed_by: z.string().uuid().nullable(),
-});
-export const invitationSchema = z.strictObject({
-  user: userSchema,
-  delivery: z.literal("email"),
-});
-export const sessionSchema = z.strictObject({
-  id: z.string().uuid(),
-  created_at: dateTimeSchema,
-  refreshed_at: dateTimeSchema,
-  expires_at: dateTimeSchema,
-  user_agent: z.string().nullable(),
-  current: z.boolean(),
-});
-export const accessGroupSchema = z.strictObject({
-  id: z.string().uuid(),
-  name: z.string().min(1).max(200),
-  description: z.string().max(2000),
-  revision: z.number().int().nonnegative(),
-  member_ids: z.array(z.string().uuid()).max(100),
-  created_at: dateTimeSchema,
-  updated_at: dateTimeSchema,
-  deleted_at: dateTimeSchema.nullable(),
-  is_deleted: z.boolean(),
-  performed_by: z.string().uuid().nullable(),
-});
-export const accessDefaultsSchema = z.strictObject({
-  id: z.string().uuid(),
-  default_role_id: z.string().uuid(),
-  group_ids: z.array(z.string().uuid()).max(100),
-  department_ids: z.array(z.string().uuid()).max(100),
-  invitation_expiry_days: z.number().int().min(1).max(365),
-  guest_duration_days: z.number().int().min(1).max(365),
-  service_duration_days: z.number().int().min(1).max(365),
-  default_deny: z.boolean(),
-  require_guest_sponsor: z.boolean(),
-  require_service_owner: z.boolean(),
-  revision: z.number().int().nonnegative(),
-  created_at: dateTimeSchema,
-  updated_at: dateTimeSchema,
-  deleted_at: dateTimeSchema.nullable(),
-  is_deleted: z.boolean(),
-  performed_by: z.string().uuid().nullable(),
-});
-export const serviceIdentitySchema = z.strictObject({
-  id: z.string().uuid(),
-  name: z.string().min(1).max(200),
-  purpose: z.string().min(1),
-  owner_id: z.string().uuid(),
-  role_id: z.string().uuid(),
-  expires_at: dateTimeSchema,
-  status: z.enum(["active", "disabled"]),
-  effective_status: z.enum(["active", "disabled", "expired", "deleted"]),
-  created_at: dateTimeSchema,
-  updated_at: dateTimeSchema,
-  deleted_at: dateTimeSchema.nullable(),
-  is_deleted: z.boolean(),
-  performed_by: z.string().uuid().nullable(),
-});
-const accessRuleSubjectKindSchema = z.enum([
-  "everyone",
-  "role",
-  "group",
-  "user",
-  "service",
-]);
-const accessRuleScopeKindSchema = z.enum([
-  "workspace",
-  "department",
-  "module",
-  "field",
-]);
-const accessRuleDecisionSchema = z.enum(["inherit", "allow", "deny"]);
-export const accessPolicyRuleCommandSchema = z
-  .strictObject({
-    subject_kind: accessRuleSubjectKindSchema,
-    subject_id: z.string().uuid().nullable(),
-    scope_kind: accessRuleScopeKindSchema,
-    scope_id: z.string().uuid().nullable(),
-    permission_id: capabilityIdSchema,
-    decision: accessRuleDecisionSchema,
-    starts_at: dateTimeSchema.nullable(),
-    ends_at: dateTimeSchema.nullable(),
-    locked: z.boolean(),
-  })
-  .superRefine((value, context) => {
-    if ((value.subject_kind === "everyone") !== (value.subject_id === null))
-      context.addIssue({ code: "custom", message: "Invalid rule subject." });
-    if ((value.scope_kind === "workspace") !== (value.scope_id === null))
-      context.addIssue({ code: "custom", message: "Invalid rule scope." });
-    if (
-      value.starts_at !== null &&
-      value.ends_at !== null &&
-      Date.parse(value.starts_at) >= Date.parse(value.ends_at)
-    )
-      context.addIssue({ code: "custom", message: "Invalid rule window." });
-  });
-export const accessPolicyRuleSchema = accessPolicyRuleCommandSchema.extend({
-  id: z.string().uuid(),
-  policy_version: z.number().int().positive(),
-  created_at: dateTimeSchema,
-  updated_at: dateTimeSchema,
-  deleted_at: dateTimeSchema.nullable(),
-  is_deleted: z.boolean(),
-  performed_by: z.string().uuid().nullable(),
-});
-export const accessPolicyRulePatchSchema = z
-  .strictObject({
-    subject_kind: accessRuleSubjectKindSchema.optional(),
-    subject_id: z.string().uuid().nullable().optional(),
-    scope_kind: accessRuleScopeKindSchema.optional(),
-    scope_id: z.string().uuid().nullable().optional(),
-    permission_id: capabilityIdSchema.optional(),
-    decision: accessRuleDecisionSchema.optional(),
-    starts_at: dateTimeSchema.nullable().optional(),
-    ends_at: dateTimeSchema.nullable().optional(),
-    locked: z.boolean().optional(),
-  })
-  .refine((value) => Object.keys(value).length > 0, {
-    message: "Rule patch must include at least one field",
-  });
-const accessPolicyRuleBatchOperationSchema = z.discriminatedUnion("type", [
-  z.strictObject({
-    type: z.literal("create"),
-    rule: accessPolicyRuleCommandSchema,
-  }),
-  z.strictObject({
-    type: z.literal("update"),
-    rule_id: z.string().uuid(),
-    patch: accessPolicyRulePatchSchema,
-  }),
-  z.strictObject({ type: z.literal("delete"), rule_id: z.string().uuid() }),
-]);
-export const accessPolicyRuleBatchRequestSchema = z.strictObject({
-  base_revision: z.number().int().positive(),
-  operations: z.array(accessPolicyRuleBatchOperationSchema).min(1).max(100),
-});
-const accessPolicyRuleBatchCountsSchema = z.strictObject({
-  created: z.number().int().nonnegative(),
-  updated: z.number().int().nonnegative(),
-  deleted: z.number().int().nonnegative(),
-  unchanged: z.number().int().nonnegative(),
-});
-const accessPolicyRuleBatchBlockerSchema = z.strictObject({
-  operation_index: z.number().int().nonnegative(),
-  code: z.string().min(1),
-  message: z.string().min(1),
-  rule_id: z.string().uuid().nullable(),
-});
-export const accessPolicyRuleBatchPreviewSchema = z.strictObject({
-  base_revision: z.number().int().positive(),
-  current_revision: z.number().int().positive(),
-  digest: z.string().regex(/^[0-9a-f]{64}$/),
-  can_apply: z.boolean(),
-  blockers: z.array(accessPolicyRuleBatchBlockerSchema),
-  counts: accessPolicyRuleBatchCountsSchema,
-  affected_principals: z.number().int().nonnegative().nullable(),
-});
-export const accessPolicyRuleBatchApplySchema = z.strictObject({
-  base_revision: z.number().int().positive(),
-  current_revision: z.number().int().positive(),
-  digest: z.string().regex(/^[0-9a-f]{64}$/),
-  counts: accessPolicyRuleBatchCountsSchema,
-  affected_principals: z.number().int().nonnegative().nullable(),
-});
-
-export function pageSchema<Item extends z.ZodType>(item: Item) {
-  return z.strictObject({ items: z.array(item), pagination: paginationSchema });
-}
-
-export type AccessVersioned<Data> = { data: Data; etag: string };
-
-export type AccessGroup = {
-  id: string;
-  name: string;
-  description: string;
-  revision: number;
-  member_ids: string[];
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-  is_deleted: boolean;
-  performed_by: string | null;
-};
-
-export type AccessGroupCreate = {
-  name: string;
-  description?: string;
-  member_ids?: string[];
-};
-
-export type AccessGroupPatch = {
-  name?: string;
-  description?: string;
-  member_ids?: string[];
-};
-
-export type AccessDefaults = {
-  id: string;
-  default_role_id: string;
-  group_ids: string[];
-  department_ids: string[];
-  invitation_expiry_days: number;
-  guest_duration_days: number;
-  service_duration_days: number;
-  default_deny: boolean;
-  require_guest_sponsor: boolean;
-  require_service_owner: boolean;
-  revision: number;
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-  is_deleted: boolean;
-  performed_by: string | null;
-};
-
-export type AccessDefaultsPatch = {
-  default_role_id?: string;
-  group_ids?: string[];
-  department_ids?: string[];
-  invitation_expiry_days?: number;
-  guest_duration_days?: number;
-  service_duration_days?: number;
-  default_deny?: boolean;
-  require_guest_sponsor?: boolean;
-  require_service_owner?: boolean;
-};
-
-export type AccessServiceIdentityStatus = "active" | "disabled";
-export type AccessServiceIdentityEffectiveStatus =
-  "active" | "disabled" | "expired" | "deleted";
-
-export type AccessRuleSubjectKind =
-  "everyone" | "role" | "group" | "user" | "service";
-export type AccessRuleScopeKind =
-  "workspace" | "department" | "module" | "field";
-export type AccessRuleDecision = "inherit" | "allow" | "deny";
-
-export type AccessPolicyRule = {
-  id: string;
-  subject_kind: AccessRuleSubjectKind;
-  subject_id: string | null;
-  scope_kind: AccessRuleScopeKind;
-  scope_id: string | null;
-  permission_id: AccessCapabilityId;
-  decision: AccessRuleDecision;
-  starts_at: string | null;
-  ends_at: string | null;
-  locked: boolean;
-  policy_version: number;
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-  is_deleted: boolean;
-  performed_by: string | null;
-};
-
-export type AccessPolicyRuleCreate = Omit<
-  AccessPolicyRule,
-  | "id"
-  | "policy_version"
-  | "created_at"
-  | "updated_at"
-  | "deleted_at"
-  | "is_deleted"
-  | "performed_by"
->;
-export type AccessPolicyRulePatch = Partial<AccessPolicyRuleCreate>;
-export type AccessPolicyRuleListOptions = StandardListOptions<
-  "created_at" | "updated_at" | "permission_id"
-> & {
-  subject_kind?: AccessRuleSubjectKind;
-  subject_id?: string;
-  scope_kind?: AccessRuleScopeKind;
-  scope_id?: string;
-  permission_id?: AccessCapabilityId;
-  decision?: AccessRuleDecision;
-  locked?: boolean;
-};
-
-export type AccessPolicyRuleBatchOperation =
-  | { type: "create"; rule: AccessPolicyRuleCreate }
-  | { type: "update"; rule_id: string; patch: AccessPolicyRulePatch }
-  | { type: "delete"; rule_id: string };
-
-export type AccessPolicyRuleBatchRequest = {
-  base_revision: number;
-  operations: AccessPolicyRuleBatchOperation[];
-};
-export type AccessPolicyRuleBatchPreview = {
-  base_revision: number;
-  digest: string;
-  can_apply: boolean;
-  current_revision: number;
-  blockers: {
-    operation_index: number;
-    code: string;
-    message: string;
-    rule_id: string | null;
-  }[];
-  counts: {
-    created: number;
-    updated: number;
-    deleted: number;
-    unchanged: number;
-  };
-  affected_principals: number | null;
-};
-export type AccessPolicyRuleBatchApply = {
-  base_revision: number;
-  current_revision: number;
-  digest: string;
-  counts: {
-    created: number;
-    updated: number;
-    deleted: number;
-    unchanged: number;
-  };
-  affected_principals: number | null;
-};
-
-export type AccessServiceIdentity = {
-  id: string;
-  name: string;
-  purpose: string;
-  owner_id: string;
-  role_id: string;
-  expires_at: string;
-  status: AccessServiceIdentityStatus;
-  effective_status: AccessServiceIdentityEffectiveStatus;
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-  is_deleted: boolean;
-  performed_by: string | null;
-};
-
-export type AccessServiceIdentityCreate = {
-  name: string;
-  purpose: string;
-  owner_id: string;
-  role_id: string;
-  expires_at: string;
-  status?: AccessServiceIdentityStatus;
-};
-
-export type AccessServiceIdentityPatch = {
-  name?: string;
-  purpose?: string;
-  owner_id?: string;
-  role_id?: string;
-  expires_at?: string;
-  status?: AccessServiceIdentityStatus;
-};
-
+> & { role?: AccessUserRole };
 export type AccessGroupListOptions = StandardListOptions<
   "name" | "created_at" | "updated_at"
 >;
-
-export type AccessServiceIdentityListOptions = StandardListOptions<
-  "name" | "expires_at" | "updated_at"
-> & {
-  status?: AccessServiceIdentityStatus;
-  owner_id?: string;
-  role_id?: string;
+export type AccessDepartmentListOptions = StandardListOptions<
+  "department_name" | "created_at" | "updated_at"
+>;
+export type AccessModuleListOptions = StandardListOptions<
+  "module_name" | "created_at" | "updated_at"
+> & { department_id?: string };
+/** Deleted accounts are never candidates, so there is no deleted filter. */
+export type AccessMemberCandidateListOptions = Omit<
+  StandardListOptions<"username" | "email" | "display_name">,
+  "deleted"
+>;
+export type AccessSessionListOptions = RequestOptions & {
+  limit?: number;
+  offset?: number;
 };

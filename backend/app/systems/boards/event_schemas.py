@@ -14,25 +14,13 @@ from app.systems.boards.content_links import ContentLink
 MAX_WINDOW_DAYS = 42
 
 
-class EventAudience(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+ReminderTiming = Literal["start", "15m", "1d"]
 
-    kind: Literal["everyone", "author", "role", "user", "department"] = "everyone"
-    role_id: UUID | None = None
-    user_id: UUID | None = None
-    department_id: UUID | None = None
 
-    @model_validator(mode="after")
-    def one_target(self) -> Self:
-        targets = (self.role_id, self.user_id, self.department_id)
-        expected = {"role": 0, "user": 1, "department": 2}.get(self.kind)
-        if (
-            any(value is not None for value in targets)
-            if expected is None
-            else any((value is None) == (index == expected) for index, value in enumerate(targets))
-        ):
-            raise ValueError("Audience target must match its kind")
-        return self
+def _distinct_timings(value: list[ReminderTiming] | None) -> list[ReminderTiming] | None:
+    if value is not None and len(set(value)) != len(value):
+        raise ValueError("Each reminder timing can appear once")
+    return value
 
 
 class EventDefinition(BaseModel):
@@ -50,7 +38,6 @@ class EventDefinition(BaseModel):
     timezone_name: str = Field(min_length=1, max_length=80)
     recurrence: Literal["none", "daily", "weekly", "monthly"] = "none"
     repeat_until: date | None = None
-    audience: EventAudience = Field(default_factory=EventAudience)
 
     @model_validator(mode="after")
     def valid_time(self) -> Self:
@@ -92,6 +79,12 @@ class EventDefinition(BaseModel):
 
 class EventCreate(EventDefinition):
     board_revision: int = Field(ge=1)
+    reminders: list[ReminderTiming] = Field(default_factory=list, max_length=3)
+
+    @field_validator("reminders")
+    @classmethod
+    def distinct_reminders(cls, value: list[ReminderTiming]) -> list[ReminderTiming]:
+        return _distinct_timings(value) or []
 
 
 class EventPatch(BaseModel):
@@ -111,7 +104,12 @@ class EventPatch(BaseModel):
     timezone_name: str | None = None
     recurrence: Literal["none", "daily", "weekly", "monthly"] | None = None
     repeat_until: date | None = None
-    audience: EventAudience | None = None
+    reminders: list[ReminderTiming] | None = Field(default=None, max_length=3)
+
+    @field_validator("reminders")
+    @classmethod
+    def distinct_reminders(cls, value: list[ReminderTiming] | None) -> list[ReminderTiming] | None:
+        return _distinct_timings(value)
 
     @model_validator(mode="after")
     def changed(self) -> Self:
@@ -159,7 +157,7 @@ class EventResponse(BaseModel):
     timezone_name: str
     recurrence: str
     repeat_until: date | None
-    audience: EventAudience
+    reminders: list[ReminderTiming]
     archived: bool
     revision: int
     board_revision: int

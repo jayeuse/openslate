@@ -17,6 +17,7 @@ import {
 } from "./live-calendar";
 import type { OpenViewWindowQueryRequest } from "../adapters/window-api";
 import type { OpenViewDataSourceField } from "../adapters/views-api";
+import { openViewRecordFieldValue } from "../domain/record-display";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -291,7 +292,7 @@ export function LiveTimeline({
           {result.items.map((row) => {
             const title = titleField
               ? recordTitle(
-                  row.data[titleField.id],
+                  openViewRecordFieldValue(row, titleField),
                   `Record ${row.id.slice(0, 8)}`,
                 )
               : `Record ${row.id.slice(0, 8)}`;
@@ -398,7 +399,8 @@ export function LiveTimeline({
                         key={field.id}
                         className="text-muted-foreground text-sm"
                       >
-                        {field.name}: {recordTitle(row.data[field.id], "—")}
+                        {field.name}:{" "}
+                        {recordTitle(openViewRecordFieldValue(row, field), "—")}
                       </p>
                     ))}
                   </div>

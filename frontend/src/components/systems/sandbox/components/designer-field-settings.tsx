@@ -20,6 +20,7 @@ import {
 import {
   Field as FormField,
   FieldError,
+  FieldDescription,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
@@ -33,6 +34,7 @@ import {
   type Field,
   type FieldConfig,
   type FieldTypeName,
+  type SelectOption,
 } from "../domain/model";
 import { dateValueInRange } from "../domain/date-values";
 import type { SandboxCommandResult } from "../state/commands";
@@ -44,6 +46,7 @@ type FieldDraft = {
   required: boolean;
   defaultValue: string;
   options: string;
+  selectOptions?: SelectOption[];
   maxLength: string;
   min: string;
   max: string;
@@ -62,12 +65,16 @@ function draftForField(field: Field): FieldDraft {
     type: normalized.type as FieldTypeName,
     required: field.required,
     defaultValue:
-      config.kind === "checkbox"
+      config.kind === "checkbox" || config.kind === "user"
         ? ""
         : config.defaultValue === null
           ? ""
           : String(config.defaultValue),
-    options: config.kind === "select" ? config.options.join(", ") : "",
+    options:
+      config.kind === "select"
+        ? config.options.map((option) => option.label).join(", ")
+        : "",
+    selectOptions: config.kind === "select" ? config.options : [],
     maxLength:
       config.kind === "text" ||
       config.kind === "long-text" ||
@@ -97,6 +104,58 @@ function draftForField(field: Field): FieldDraft {
         : "",
     checked: config.kind === "checkbox" ? config.defaultValue : false,
   };
+}
+
+function optionLabels(options: string): string[] {
+  return options
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function reconcileSelectOptions(
+  previousOptions: SelectOption[],
+  labels: string[],
+  newId: (index: number) => string,
+): SelectOption[] {
+  const reservedIds = new Set(
+    previousOptions
+      .filter((option) => labels.includes(option.label))
+      .map((option) => option.id),
+  );
+  const usedIds = new Set<string>();
+  return labels.map((label, index) => {
+    const exact = previousOptions.find(
+      (option) => option.label === label && !usedIds.has(option.id),
+    );
+    const samePosition = previousOptions[index];
+    const preserved =
+      exact ??
+      (samePosition &&
+      !reservedIds.has(samePosition.id) &&
+      !usedIds.has(samePosition.id)
+        ? samePosition
+        : undefined);
+    const id = preserved?.id ?? newId(index);
+    usedIds.add(id);
+    return { id, label };
+  });
+}
+
+function selectOptionsForDraft(
+  field: Field,
+  draft: FieldDraft,
+): SelectOption[] {
+  if (draft.type !== "Select") return [];
+  if (draft.selectOptions) return draft.selectOptions;
+  const previousConfig = normalizeField(field).config;
+  const previousOptions =
+    previousConfig.kind === "select" ? previousConfig.options : [];
+  return reconcileSelectOptions(
+    previousOptions,
+    optionLabels(draft.options),
+    (index) => `new:${index}`,
+  );
 }
 
 function optionalNumber(value: string): number | undefined {
@@ -239,11 +298,11 @@ export function buildField(field: Field, draft: FieldDraft): Field | string {
   } else if (type === "Checkbox") {
     config = { kind: "checkbox", defaultValue: draft.checked };
     value = String(draft.checked);
+  } else if (type === "User") {
+    config = { kind: "user" };
+    value = "";
   } else {
-    const rawOptions = draft.options
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean);
+    const rawOptions = optionLabels(draft.options);
     if (new Set(rawOptions).size !== rawOptions.length)
       return "Select options must be unique.";
     if (rawOptions.length === 0) return "Add at least one select option.";
@@ -251,13 +310,21 @@ export function buildField(field: Field, draft: FieldDraft): Field | string {
       return "Select fields support up to 100 options.";
     if (rawOptions.some((option) => option.length > 100))
       return "Each select option must be 100 characters or fewer.";
-    const defaultValue = draft.defaultValue.trim();
-    if (defaultValue && !rawOptions.includes(defaultValue))
+    const draftOptions = selectOptionsForDraft(field, draft);
+    const persistedIds = new Map<string, string>();
+    const selectOptions = draftOptions.map((option) => {
+      const id = option.id.startsWith("new:") ? crypto.randomUUID() : option.id;
+      persistedIds.set(option.id, id);
+      return { id, label: option.label };
+    });
+    const requestedDefault = draft.defaultValue.trim();
+    const defaultValue = persistedIds.get(requestedDefault) ?? "";
+    if (requestedDefault && !defaultValue)
       return "Default value must match a select option.";
     config = {
       kind: "select",
       defaultValue: defaultValue || null,
-      options: rawOptions,
+      options: selectOptions,
     };
     value = defaultValue;
     options = rawOptions.join(", ");
@@ -281,6 +348,7 @@ export function FieldSettings({
   onSave,
   onMove,
   onLifecycle,
+  titleFieldId,
   autoFocus = false,
   pending = false,
 }: {
@@ -290,10 +358,13 @@ export function FieldSettings({
   onSave: (field: Field) => Promise<SandboxCommandResult<unknown>>;
   onMove: (delta: number) => Promise<SandboxCommandResult<unknown>>;
   onLifecycle: () => Promise<SandboxCommandResult<unknown>>;
+  titleFieldId: string | null;
   autoFocus?: boolean;
   pending?: boolean;
 }) {
   const [draft, setDraft] = useState(() => draftForField(field));
+  const isRecordTitle = titleFieldId === field.id && !field.closed;
+  const selectOptions = selectOptionsForDraft(field, draft);
   const [error, setError] = useState("");
   useEffect(() => {
     setDraft(draftForField(field));
@@ -301,6 +372,20 @@ export function FieldSettings({
   }, [field]);
   const update = <K extends keyof FieldDraft>(key: K, value: FieldDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
+    setError("");
+  };
+  const updateOptions = (options: string) => {
+    const labels = optionLabels(options);
+    const newIds = labels.map(() => `new:${crypto.randomUUID()}`);
+    setDraft((current) => ({
+      ...current,
+      options,
+      selectOptions: reconcileSelectOptions(
+        current.selectOptions ?? [],
+        labels,
+        (index) => newIds[index],
+      ),
+    }));
     setError("");
   };
   const prefix = field.name;
@@ -359,6 +444,34 @@ export function FieldSettings({
             <FieldLabel htmlFor={controlId("default-checked")}>
               {prefix} default checked
             </FieldLabel>
+          </FormField>
+        ) : draft.type === "User" ? (
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Default value</p>
+            <FieldDescription>
+              User values are assigned on individual records, so this field has
+              no shared default user.
+            </FieldDescription>
+          </div>
+        ) : draft.type === "Select" ? (
+          <FormField>
+            <FieldLabel htmlFor={controlId("default-value")}>
+              {prefix} default value
+            </FieldLabel>
+            <NativeSelect
+              id={controlId("default-value")}
+              value={draft.defaultValue}
+              onChange={(event) =>
+                update("defaultValue", event.currentTarget.value)
+              }
+            >
+              <NativeSelectOption value="">No default</NativeSelectOption>
+              {selectOptions.map((option) => (
+                <NativeSelectOption key={option.id} value={option.id}>
+                  {option.label}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
           </FormField>
         ) : (
           <FormField>
@@ -465,7 +578,7 @@ export function FieldSettings({
             <Input
               id={controlId("options")}
               value={draft.options}
-              onChange={(event) => update("options", event.target.value)}
+              onChange={(event) => updateOptions(event.target.value)}
             />
           </FormField>
         ) : null}
@@ -480,6 +593,12 @@ export function FieldSettings({
         <FormField data-invalid={Boolean(error) || undefined}>
           <FieldError className="text-xs">{error}</FieldError>
         </FormField>
+        {isRecordTitle ? (
+          <p className="text-muted-foreground text-sm">
+            Selected as the record title. Choose another title field or clear
+            this setting before closing this field.
+          </p>
+        ) : null}
         <ButtonGroup
           aria-label={`${field.name} field actions`}
           className="w-full flex-wrap justify-between"
@@ -541,7 +660,7 @@ export function FieldSettings({
             <Button
               variant="outline"
               size="sm"
-              disabled={pending}
+              disabled={pending || isRecordTitle}
               onClick={async () => {
                 const result = await onLifecycle();
                 if (!result.ok) setError(result.error);

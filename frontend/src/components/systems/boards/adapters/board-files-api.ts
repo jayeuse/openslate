@@ -99,7 +99,7 @@ export type BoardAttachmentVersions = z.output<typeof revisions>;
 export type BoardAttachmentTarget =
   | { kind: "event"; boardId: string; contentId: string }
   | {
-      kind: "announcement";
+      kind: "post";
       boardId: string;
       contentId: string;
       view: "published" | "draft";
@@ -118,7 +118,7 @@ function contentPath(target: BoardAttachmentTarget): string {
   const { boardId, contentId } = ids(target);
   return target.kind === "event"
     ? `/boards/${boardId}/events/${contentId}/attachments`
-    : `/boards/${boardId}/announcements/${contentId}/attachments`;
+    : `/boards/${boardId}/posts/${contentId}/attachments`;
 }
 
 function checkedFile(
@@ -130,7 +130,7 @@ function checkedFile(
 }
 
 function checkWritableTarget(target: BoardAttachmentTarget): void {
-  if (target.kind === "announcement" && target.view !== "draft")
+  if (target.kind === "post" && target.view !== "draft")
     throw new ApiContractError();
 }
 
@@ -287,7 +287,7 @@ export async function listBoardAttachments(
   const { signal, ...optionInput } = rawOptions;
   const options = listOptions.parse(optionInput);
   const query = new URLSearchParams();
-  if (target.kind === "announcement") query.set("view", target.view);
+  if (target.kind === "post") query.set("view", target.view);
   query.set("limit", String(options.limit));
   query.set("offset", String(options.offset));
   const page = await apiFetch(
@@ -356,7 +356,7 @@ export async function downloadBoardAttachment(
 ): Promise<Blob> {
   const fileId = uuid.parse(rawFileId);
   const path = contentPath(target);
-  const suffix = target.kind === "announcement" ? `?view=${target.view}` : "";
+  const suffix = target.kind === "post" ? `?view=${target.view}` : "";
   return requestFileContent(
     `${path}/${fileId}/content${suffix}`,
     expectedSize,

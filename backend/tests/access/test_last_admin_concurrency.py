@@ -6,12 +6,11 @@ from threading import Event
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.systems.access.users.account_operations as account_operations
-from app.systems.access.users.models import IdentityKind, Role, User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.access.users.schemas import UserUpdate
 from tests.conftest import guarded_create_engine
 
@@ -30,17 +29,14 @@ def test_concurrent_self_disable_leaves_one_usable_administrator(
     engine = guarded_create_engine(os.environ["TEST_DATABASE_URL"], pool_size=3)
     first_id, second_id = uuid7(), uuid7()
     with Session(engine) as db:
-        admin_role = db.scalar(select(Role).where(Role.role == UserRole.ADMIN.value))
-        assert admin_role is not None
         for user_id in (first_id, second_id):
             db.add(
                 User(
                     id=user_id,
                     email=f"admin-{user_id.hex}@example.com",
                     username=f"admin_{user_id.hex[:16]}",
-                    role_id=admin_role.id,
+                    role=UserRole.ADMIN.value,
                     status=UserStatus.ACTIVE.value,
-                    identity_kind=IdentityKind.INTERNAL.value,
                 )
             )
         db.commit()

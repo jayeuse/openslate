@@ -5,7 +5,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
@@ -14,7 +14,7 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
     get_supabase_auth_client,
 )
-from app.systems.access.identity.eligibility import is_identity_eligible, is_internal_identity
+from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
@@ -49,18 +49,14 @@ def recover_local_admin(
     timestamp = utc_now()
     user = db.scalar(
         select(User)
-        .options(joinedload(User.role))
         .where(User.id == user_id)
         .with_for_update(of=User)
     )
     if (
         user is None
         or not is_identity_eligible(user, now=timestamp)
-        or not is_internal_identity(user)
         or user.status != UserStatus.ACTIVE.value
-        or user.role is None
-        or user.role.is_deleted
-        or user.role.role != UserRole.ADMIN
+        or user.role != UserRole.ADMIN.value
         or user.supabase_user_id is None
     ):
         db.rollback()

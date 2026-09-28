@@ -48,7 +48,7 @@ def create_file(payload: FileCreate, user: Actor, db: DB) -> FileResponse:
 def list_files(
     params: Annotated[FileListRequest, Query()], user: Actor, db: DB
 ) -> FileListResponse:
-    authorize(db, user, params.purpose)
+    authorize(db, user, params.purpose, record_id=params.record_id)
     if (params.purpose == "record_attachment") != (params.record_id is not None):
         raise error("file_parent_required", "Only attachment lists require a record", 422)
     parent(db, params.record_id, active=False)
@@ -62,7 +62,7 @@ def list_files(
 @router.get("/{file_id}", response_model=FileResponse)
 def get_file(file_id: UUID, user: Actor, db: DB) -> FileResponse:
     file = load(db, file_id)
-    authorize(db, user, file.purpose)
+    authorize(db, user, file.purpose, record_id=file.record_id)
     return FileResponse.model_validate(file)
 
 

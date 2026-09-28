@@ -12,7 +12,7 @@ from uuid6 import uuid7
 
 import app.systems.sandbox.publications.router as publication_router
 from app.common.dependencies.auth import CurrentIdentity
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleInvalidCredentials,
     LifecyclePasswordRateLimited,
@@ -21,14 +21,13 @@ from app.systems.sandbox.publications.schemas import PublicationRequest
 
 
 def _identity() -> CurrentIdentity:
-    role = Role(id=uuid7(), role="admin", permissions={}, is_deleted=False)
+    role = "admin"
     now = datetime.now(UTC)
     user = User(
         id=uuid7(),
         email="publisher@example.test",
         username="publisher",
         status=UserStatus.ACTIVE.value,
-        role_id=role.id,
         role=role,
         created_at=now,
         updated_at=now,
@@ -57,9 +56,10 @@ def test_failed_publication_password_commits_rate_limit_and_maps_rate_limit(
     database = Mock(spec=Session)
     identity = _identity()
     calls: list[str] = []
+    monkeypatch.setattr(publication_router, "require_live_session", lambda *_a, **_k: None)
     monkeypatch.setattr(
         publication_router,
-        "require_fresh_capabilities",
+        "require_fresh_exact_admin",
         lambda *_args, **_kwargs: calls.append("policy"),
     )
 
@@ -109,7 +109,8 @@ def test_publication_rechecks_authorization_after_password_transaction(
             raise HTTPException(status_code=403, detail="Forbidden")
         return identity.user
 
-    monkeypatch.setattr(publication_router, "require_fresh_capabilities", authorize)
+    monkeypatch.setattr(publication_router, "require_live_session", lambda *_a, **_k: None)
+    monkeypatch.setattr(publication_router, "require_fresh_exact_admin", authorize)
     monkeypatch.setattr(
         publication_router,
         "ProviderPasswordGrantClient",

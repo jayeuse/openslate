@@ -5,18 +5,9 @@ from unittest.mock import Mock
 import pytest
 from uuid6 import uuid7
 
-from app.systems.sandbox.automations.models import (
-    PublishedAutomationAction,
-    PublishedAutomationCondition,
-    PublishedAutomationDefinition,
-)
-from app.systems.sandbox.designs.schemas import AutomationDocument, DesignField
+from app.systems.sandbox.designs.schemas import DesignField, TriggerDocument
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.fields.validation import field_config
-from app.systems.sandbox.publications.automation_comparison import (
-    desired_automation_signature,
-    published_automation_signature,
-)
 from app.systems.sandbox.publications.close_rules import _module_has_unmanaged_fields
 from app.systems.sandbox.publications.models import SandboxBinding
 from app.systems.sandbox.publications.preflight import (
@@ -24,13 +15,24 @@ from app.systems.sandbox.publications.preflight import (
     structure_name_blockers,
 )
 from app.systems.sandbox.publications.rules import (
-    _automation_blockers,
     _field_key,
+    _trigger_blockers,
     operational_config,
     relationship_metadata,
 )
+from app.systems.sandbox.publications.trigger_comparison import (
+    desired_trigger_signature,
+    record_trigger_signature,
+)
+from app.systems.sandbox.record_triggers.models import (
+    RecordTrigger,
+    RecordTriggerAction,
+    RecordTriggerCondition,
+)
 from tests.sandbox_designs.fixtures import sample_document
-from tests.sandbox_test_runs.fixtures import sandbox_document
+from tests.sandbox_test_runs.fixtures import option_id, sandbox_document
+
+SELECT_OPTION_ID = str(uuid7())
 
 
 def test_field_binding_key_is_module_scoped() -> None:
@@ -69,8 +71,15 @@ def test_relationship_cardinality_maps_to_live_edge_constraints() -> None:
         ("Checkbox", {"kind": "checkbox", "defaultValue": False}, {"defaultValue": False}),
         (
             "Select",
-            {"kind": "select", "defaultValue": "Open", "options": ["Open"]},
-            {"defaultValue": "Open", "options": ["Open"]},
+            {
+                "kind": "select",
+                "defaultValue": SELECT_OPTION_ID,
+                "options": [{"id": SELECT_OPTION_ID, "label": "Open"}],
+            },
+            {
+                "defaultValue": SELECT_OPTION_ID,
+                "options": [{"id": SELECT_OPTION_ID, "label": "Open"}],
+            },
         ),
     ],
 )
@@ -109,8 +118,8 @@ def test_text_default_is_not_mistaken_for_a_numeric_length() -> None:
     }
 
 
-def test_automation_semantic_signature_detects_trigger_condition_and_action_edits() -> None:
-    desired = sandbox_document().automations[0]
+def test_trigger_semantic_signature_detects_trigger_condition_and_action_edits() -> None:
+    desired = sandbox_document().triggers[0]
     module_id = uuid7()
     priority_id = uuid7()
     status_id = uuid7()
@@ -135,25 +144,25 @@ def test_automation_semantic_signature_detects_trigger_condition_and_action_edit
             field_id=score_id,
         ),
     }
-    live = PublishedAutomationDefinition(
+    live = RecordTrigger(
         module_id=module_id,
         name=desired.name,
         enabled=True,
         priority=10,
-        trigger_kind="record-created",
+        event_kind="record-created",
         condition_operator="all",
     )
     conditions = [
-        PublishedAutomationCondition(
+        RecordTriggerCondition(
             field_id=priority_id,
             position=0,
             operator="=",
             value_kind="literal",
-            literal_value={"value": "High"},
+            literal_value={"value": option_id("priority", "High")},
         )
     ]
     actions = [
-        PublishedAutomationAction(
+        RecordTriggerAction(
             target_field_id=status_id,
             position=0,
             kind="set-field",
@@ -162,40 +171,40 @@ def test_automation_semantic_signature_detects_trigger_condition_and_action_edit
         )
     ]
 
-    live_signature = published_automation_signature(live, conditions, actions)
-    assert desired_automation_signature(desired, module_bindings, field_bindings) == live_signature
+    live_signature = record_trigger_signature(live, conditions, actions)
+    assert desired_trigger_signature(desired, module_bindings, field_bindings) == live_signature
 
-    variants: list[AutomationDocument] = []
+    variants: list[TriggerDocument] = []
     trigger_changed = desired.model_dump(by_alias=True, mode="json")
     trigger_changed["trigger"] = {
         "kind": "field-changed",
         "moduleId": "requests",
         "fieldId": "priority",
     }
-    variants.append(AutomationDocument.model_validate(trigger_changed))
+    variants.append(TriggerDocument.model_validate(trigger_changed))
     condition_changed = desired.model_dump(by_alias=True, mode="json")
     condition_changed["conditionGroup"]["conditions"][0]["value"]["value"] = "Low"
-    variants.append(AutomationDocument.model_validate(condition_changed))
+    variants.append(TriggerDocument.model_validate(condition_changed))
     action_changed = desired.model_dump(by_alias=True, mode="json")
     action_changed["actions"][0]["value"]["value"] = "Done"
-    variants.append(AutomationDocument.model_validate(action_changed))
+    variants.append(TriggerDocument.model_validate(action_changed))
 
     assert all(
-        desired_automation_signature(variant, module_bindings, field_bindings) != live_signature
+        desired_trigger_signature(variant, module_bindings, field_bindings) != live_signature
         for variant in variants
     )
 
 
-def test_relationship_scoped_automation_references_block_publication() -> None:
+def test_relationship_scoped_trigger_references_block_publication() -> None:
     document = sandbox_document()
-    base = document.automations[0].model_dump(by_alias=True, mode="json")
-    variants: list[AutomationDocument] = []
+    base = document.triggers[0].model_dump(by_alias=True, mode="json")
+    variants: list[TriggerDocument] = []
 
-    condition_field = AutomationDocument.model_validate(base)
+    condition_field = TriggerDocument.model_validate(base)
     condition_field.condition_group.conditions[0].field.relationship_id = "request-equipment"
     variants.append(condition_field)
 
-    condition_value_payload = AutomationDocument.model_validate(base).model_dump(
+    condition_value_payload = TriggerDocument.model_validate(base).model_dump(
         by_alias=True, mode="json"
     )
     condition_value_payload["conditionGroup"]["conditions"][0]["value"] = {
@@ -204,13 +213,13 @@ def test_relationship_scoped_automation_references_block_publication() -> None:
         "fieldId": "priority",
         "relationshipId": "request-equipment",
     }
-    variants.append(AutomationDocument.model_validate(condition_value_payload))
+    variants.append(TriggerDocument.model_validate(condition_value_payload))
 
-    action_target = AutomationDocument.model_validate(base)
+    action_target = TriggerDocument.model_validate(base)
     action_target.actions[0].target.relationship_id = "request-equipment"
     variants.append(action_target)
 
-    trigger_value_payload = AutomationDocument.model_validate(base).model_dump(
+    trigger_value_payload = TriggerDocument.model_validate(base).model_dump(
         by_alias=True, mode="json"
     )
     trigger_value_payload["trigger"] = {
@@ -225,12 +234,12 @@ def test_relationship_scoped_automation_references_block_publication() -> None:
             "relationshipId": "request-equipment",
         },
     }
-    variants.append(AutomationDocument.model_validate(trigger_value_payload))
+    variants.append(TriggerDocument.model_validate(trigger_value_payload))
 
     assert all(
-        "automation_relationship_reference_unsupported"
-        in {blocker.code for blocker in _automation_blockers(document, automation)}
-        for automation in variants
+        "trigger_relationship_reference_unsupported"
+        in {blocker.code for blocker in _trigger_blockers(document, record_trigger)}
+        for record_trigger in variants
     )
 
 

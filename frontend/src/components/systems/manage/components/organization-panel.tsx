@@ -222,14 +222,12 @@ export function OrganizationPanel({
             variant="ghost"
             className="h-auto min-h-12 w-full justify-start gap-3 rounded-lg px-3 py-3 text-left whitespace-normal"
           >
-            <Link href="/access?view=identities">
+            <Link href="/access?view=people">
               <UsersRound className="size-5 shrink-0" aria-hidden="true" />
               <span className="min-w-0 flex-1">
-                <span className="block font-medium">
-                  People and permissions
-                </span>
+                <span className="block font-medium">People and groups</span>
                 <span className="text-muted-foreground block text-sm font-normal">
-                  Manage your team and access.
+                  Invite people and choose what they can open.
                 </span>
               </span>
               <ArrowUpRight className="size-4 shrink-0" aria-hidden="true" />

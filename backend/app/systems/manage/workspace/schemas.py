@@ -37,6 +37,8 @@ class WorkspaceUpdate(_WorkspaceRequest):
     logo_file_id: UUID | None = None
     timezone: str | None = Field(default=None, max_length=64)
     locale: str | None = Field(default=None, max_length=35)
+    invitation_expiry_days: int | None = Field(default=None, ge=1, le=365)
+    guest_duration_days: int | None = Field(default=None, ge=1, le=365)
 
     @field_validator(
         "display_name",
@@ -101,6 +103,9 @@ class WorkspaceUpdate(_WorkspaceRequest):
         for field in {"timezone", "locale"} & self.model_fields_set:
             if getattr(self, field) is None:
                 raise ValueError(f"{field.capitalize()} must not be blank")
+        for field in {"invitation_expiry_days", "guest_duration_days"} & self.model_fields_set:
+            if getattr(self, field) is None:
+                raise ValueError(f"{field} must not be null")
         if "display_name" in self.model_fields_set and self.display_name is None:
             raise ValueError("Display name must not be blank")
         return self
@@ -117,6 +122,8 @@ class WorkspaceResponse(BaseModel):
     logo_file_id: UUID | None
     timezone: str
     locale: str
+    invitation_expiry_days: int
+    guest_duration_days: int
     revision: int
     created_at: datetime
     updated_at: datetime

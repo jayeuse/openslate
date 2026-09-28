@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  accessNavigationFor,
   getWorkspaceLocation,
   getWorkspaceNavigation,
   isWorkspaceNavigationItemActive,
@@ -16,6 +17,7 @@ function item(
   const group = getWorkspaceNavigation(
     pathname,
     new URLSearchParams(search),
+    "all",
   ).find((entry) => entry.id === groupId);
   return group?.items.find((entry) => entry.id === itemId);
 }
@@ -24,6 +26,7 @@ test("active section selection uses stable IDs when rendered copy changes", () =
   const boards = getWorkspaceNavigation(
     "/boards",
     new URLSearchParams("section=calendar"),
+    "all",
   ).find((entry) => entry.id === "boards");
   const calendar = boards?.items.find((entry) => entry.id === "calendar");
 
@@ -43,65 +46,131 @@ test("active section selection uses stable IDs when rendered copy changes", () =
   ).toBe(true);
 });
 
-test("Access keeps one Permissions entry while legacy views highlight it", () => {
+const departmentId = "00000000-0000-4000-8000-0000000000d1";
+const moduleId = "00000000-0000-4000-8000-0000000000e1";
+
+test("Access navigation follows the signed-in role and manage access", () => {
+  expect(accessNavigationFor({ role: "admin", access: [] })).toBe("all");
+  expect(
+    accessNavigationFor({
+      role: "member",
+      access: [
+        { departmentId, moduleId: null, level: "read" },
+        { departmentId, moduleId, level: "manage" },
+      ],
+    }),
+  ).toBe("groups");
+  expect(
+    accessNavigationFor({
+      role: "member",
+      access: [{ departmentId, moduleId: null, level: "write" }],
+    }),
+  ).toBe("none");
+  expect(accessNavigationFor({ role: "member", access: [] })).toBe("none");
+  // A guest never manages, even if an entry claims it.
+  expect(
+    accessNavigationFor({
+      role: "guest",
+      access: [{ departmentId, moduleId: null, level: "manage" }],
+    }),
+  ).toBe("none");
+  // Unknown identity (loading or failed) fails closed.
+  expect(accessNavigationFor(undefined)).toBe("none");
+});
+
+test("Access lists Overview, People and Groups for administrators", () => {
   const access = getWorkspaceNavigation(
     "/access",
-    new URLSearchParams("view=permissions"),
+    new URLSearchParams("view=groups"),
+    "all",
   ).find((entry) => entry.id === "access");
 
   expect(
     access?.items.map((entry) => [entry.id, entry.label, entry.href]),
   ).toEqual([
     ["overview", "Overview", "/access?view=overview"],
-    ["identities", "People & services", "/access?view=identities"],
-    ["permissions", "Permissions", "/access?view=permissions"],
+    ["people", "People", "/access?view=people"],
+    ["groups", "Groups", "/access?view=groups"],
   ]);
-
+  expect(access?.href).toBe("/access?view=overview");
   expect(
     isWorkspaceNavigationItemActive(
       "access",
-      "permissions",
+      "groups",
       "/access",
-      new URLSearchParams("view=permissions"),
+      new URLSearchParams("view=groups"),
     ),
   ).toBe(true);
-  for (const legacyView of ["roles", "groups", "rules"]) {
+});
+
+test("a department manager sees only the Groups entry of Access", () => {
+  const access = getWorkspaceNavigation(
+    "/sandbox",
+    new URLSearchParams(),
+    "groups",
+  ).find((entry) => entry.id === "access");
+
+  expect(access?.items.map((entry) => [entry.id, entry.href])).toEqual([
+    ["groups", "/access?view=groups"],
+  ]);
+  expect(access?.href).toBe("/access?view=groups");
+  expect(
+    getWorkspaceLocation(
+      "/access",
+      new URLSearchParams("view=overview"),
+      "",
+      "groups",
+    ),
+  ).toEqual({
+    workspace: { label: "Access", href: "/access?view=groups" },
+    section: "Groups",
+  });
+});
+
+test("Access is absent from the navigation without administrator or manage access", () => {
+  const groups = getWorkspaceNavigation(
+    "/sandbox",
+    new URLSearchParams(),
+    "none",
+  );
+
+  expect(groups.map((group) => group.id)).not.toContain("access");
+  expect(
+    getWorkspaceLocation("/access", new URLSearchParams(), "", "none"),
+  ).toBeNull();
+});
+
+test("retired Access views open the Access overview", () => {
+  for (const retired of [
+    "identities",
+    "permissions",
+    "roles",
+    "rules",
+    "simulator",
+    "reviews",
+  ]) {
     expect(
       isWorkspaceNavigationItemActive(
         "access",
-        "permissions",
+        "overview",
         "/access",
-        new URLSearchParams(`view=${legacyView}`),
+        new URLSearchParams(`view=${retired}`),
       ),
+      retired,
     ).toBe(true);
   }
-  expect(
-    isWorkspaceNavigationItemActive(
-      "access",
-      "identities",
-      "/access",
-      new URLSearchParams("view=simulator"),
-    ),
-  ).toBe(true);
-  expect(
-    isWorkspaceNavigationItemActive(
-      "access",
-      "overview",
-      "/access",
-      new URLSearchParams("view=reviews"),
-    ),
-  ).toBe(true);
 });
 
 test("Sandbox uses the simplified sections while legacy links still open the matching area", () => {
   const navigation = getWorkspaceNavigation(
     "/sandbox",
     new URLSearchParams("section=simulation"),
+    "all",
   ).find((entry) => entry.id === "sandbox");
 
   expect(navigation?.items.map((entry) => [entry.id, entry.label])).toEqual([
     ["build", "Build"],
-    ["automations", "Automations"],
+    ["triggers", "Triggers"],
     ["test", "Test"],
     ["history", "History"],
   ]);
@@ -136,11 +205,11 @@ test("sidebar section links preserve the active board while changing its section
 
 test("sidebar section links retain only each screen's relevant deep-link context", () => {
   expect(
-    item("/access", "view=identities&user=ana", "access", "identities")?.href,
-  ).toBe("/access?view=identities&user=ana");
+    item("/access", "view=people&user=ana", "access", "people")?.href,
+  ).toBe("/access?view=people&user=ana");
   expect(
-    item("/access", "view=identities&user=ana", "access", "permissions")?.href,
-  ).toBe("/access?view=permissions");
+    item("/access", "view=people&user=ana", "access", "groups")?.href,
+  ).toBe("/access?view=groups");
   expect(
     item(
       "/openview",
@@ -158,9 +227,9 @@ test("sidebar section links retain only each screen's relevant deep-link context
     )?.href,
   ).toBe("/openview?section=views&module=incidents");
   expect(
-    item("/sandbox", "rule=approval&inspect=orders", "sandbox", "automations")
+    item("/sandbox", "rule=approval&inspect=orders", "sandbox", "triggers")
       ?.href,
-  ).toBe("/sandbox?section=automations&rule=approval&inspect=orders");
+  ).toBe("/sandbox?section=triggers&rule=approval&inspect=orders");
   expect(
     item("/platform", "file=contract.pdf", "platform", "files")?.href,
   ).toBe("/platform?section=files&file=contract.pdf");
@@ -262,7 +331,7 @@ test("sidebar highlights the same section as Access, OpenView, and Sandbox deep 
   expect(
     isWorkspaceNavigationItemActive(
       "access",
-      "identities",
+      "people",
       "/access",
       new URLSearchParams("user=sample-eli"),
     ),
@@ -278,41 +347,65 @@ test("sidebar highlights the same section as Access, OpenView, and Sandbox deep 
   expect(
     isWorkspaceNavigationItemActive(
       "sandbox",
-      "automations",
+      "triggers",
       "/sandbox",
-      new URLSearchParams("section=AUTOMATION"),
+      new URLSearchParams("section=TRIGGER"),
     ),
   ).toBe(true);
 });
 
 test("every workspace lists its default section first", () => {
-  for (const group of getWorkspaceNavigation("/", new URLSearchParams())) {
+  for (const group of getWorkspaceNavigation(
+    "/",
+    new URLSearchParams(),
+    "all",
+  )) {
     expect(group.href, group.id).toBe(group.items[0]?.href);
   }
 });
 
 test("the workspace location names the open section and links its workspace", () => {
   expect(
-    getWorkspaceLocation("/sandbox", new URLSearchParams("section=history")),
+    getWorkspaceLocation(
+      "/sandbox",
+      new URLSearchParams("section=history"),
+      "",
+      "all",
+    ),
   ).toEqual({
     workspace: { label: "Sandbox", href: "/sandbox?section=build" },
     section: "History",
   });
   expect(
-    getWorkspaceLocation("/sandbox", new URLSearchParams("section=designer"))
-      ?.section,
+    getWorkspaceLocation(
+      "/sandbox",
+      new URLSearchParams("section=designer"),
+      "",
+      "all",
+    )?.section,
   ).toBe("Build");
   expect(
-    getWorkspaceLocation("/platform", new URLSearchParams("file=sample-file")),
+    getWorkspaceLocation(
+      "/platform",
+      new URLSearchParams("file=sample-file"),
+      "",
+      "all",
+    ),
   ).toEqual({
     workspace: { label: "Platform", href: "/platform?section=search" },
     section: "File library",
   });
-  expect(getWorkspaceLocation("/comms", new URLSearchParams())).toBeNull();
+  expect(
+    getWorkspaceLocation("/comms", new URLSearchParams(), "", "all"),
+  ).toBeNull();
 });
 
 test("every workspace describes what it holds in one short line", () => {
-  const groups = getWorkspaceNavigation("/sandbox", new URLSearchParams());
+  const groups = getWorkspaceNavigation(
+    "/sandbox",
+    new URLSearchParams(),
+    "all",
+  );
 
   expect(groups.map((group) => [group.id, group.description])).toEqual([
     ["sandbox", "Design departments and records"],

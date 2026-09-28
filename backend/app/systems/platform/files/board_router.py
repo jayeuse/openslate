@@ -7,18 +7,13 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Res
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import (
-    require_fresh_exact_admin,
-    require_legacy_capability,
-    require_roles,
-)
+from app.common.dependencies import require_admin, require_fresh_exact_admin, require_non_guest
 from app.common.listing import execute_standard_list
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.boards.attachment_models import (
-    BoardAnnouncementRevisionAttachment,
-    BoardContentAttachment,
+    BoardAttachment,
+    BoardPostRevisionAttachment,
 )
 from app.systems.platform.files import service
 from app.systems.platform.files.access import authorize_board_file, error, fresh_user, load
@@ -51,8 +46,8 @@ def _private_cache(response: Response) -> None:
 
 
 router = APIRouter(prefix="/boards", tags=["board files"], dependencies=[Depends(_private_cache)])
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
-Admin = Annotated[User, Depends(require_roles("admin"))]
+Writer = Annotated[User, Depends(require_non_guest)]
+Admin = Annotated[User, Depends(require_admin)]
 Database = Annotated[Session, Depends(get_db)]
 Store = Annotated[StorageBackend, Depends(get_storage)]
 
@@ -63,14 +58,14 @@ def _unlinked(db: Session, actor: User, board_id: UUID, file_id: UUID) -> File:
     if file.board_id != board_id or file.purpose != "board_attachment":
         raise error("file_not_found", "File not found", 404)
     active = db.scalar(
-        select(BoardContentAttachment.id).where(
-            BoardContentAttachment.file_id == file_id,
-            BoardContentAttachment.is_linked.is_(True),
+        select(BoardAttachment.id).where(
+            BoardAttachment.file_id == file_id,
+            BoardAttachment.is_linked.is_(True),
         )
     )
     published = db.scalar(
-        select(BoardAnnouncementRevisionAttachment.id).where(
-            BoardAnnouncementRevisionAttachment.file_id == file_id
+        select(BoardPostRevisionAttachment.id).where(
+            BoardPostRevisionAttachment.file_id == file_id
         )
     )
     if active is not None or published is not None:
@@ -100,14 +95,14 @@ def list_unlinked_board_files(
 ) -> FileListResponse:
     authorize_board_file(db, fresh_user(db, actor.id), board_id, write=True)
     active = exists(
-        select(BoardContentAttachment.id).where(
-            BoardContentAttachment.file_id == File.id,
-            BoardContentAttachment.is_linked.is_(True),
+        select(BoardAttachment.id).where(
+            BoardAttachment.file_id == File.id,
+            BoardAttachment.is_linked.is_(True),
         )
     )
     published = exists(
-        select(BoardAnnouncementRevisionAttachment.id).where(
-            BoardAnnouncementRevisionAttachment.file_id == File.id
+        select(BoardPostRevisionAttachment.id).where(
+            BoardPostRevisionAttachment.file_id == File.id
         )
     )
     statement = select(File).where(

@@ -3,7 +3,7 @@
 > **Scope:** FastAPI application boundaries and request execution.
 
 `app/main.py` assembles API routers, configuration, database lifecycle, audit
-listeners, the event hub, and process-local automation, report-scheduling, and
+listeners, the event hub, and process-local record trigger, report-scheduling, and
 provider-signout workers. Supabase Auth delivers invitation and recovery mail;
 the file scanner is a separate operator-started process. The stack is FastAPI
 with synchronous SQLAlchemy 2; browsers never access the application database
@@ -73,16 +73,17 @@ services add their object, audience and lifecycle checks. See
 | Area | Implemented responsibility | Main source boundary |
 | --- | --- | --- |
 | Access | Identity, invitations/recovery, users/roles/groups, workspace policy and service-identity metadata | `app/systems/access/` |
-| Sandbox | Operational schema, Records, relationships, lifecycle, design documents, publication, automations and test-run evidence | `app/systems/sandbox/` |
-| OpenView | Saved Views, Chart preferences, Dashboards, report definitions, frozen runs and schedules | `app/systems/openview/` |
-| Boards | Grants, content, announcements, events/reminders, widgets, attachments, record links and configuration portability | `app/systems/boards/` |
+| Sandbox | Operational schema, Records, relationships, lifecycle, design documents, publication, record triggers and test-run evidence | `app/systems/sandbox/` |
+| OpenView | Department Dashboards, shared saved Views, report definitions, frozen runs and schedules | `app/systems/openview/` |
+| Boards | Scoped Boards and project Board groups, posts and their revisions, events with author-set reminders, tiles, attachments, record links and configuration portability | `app/systems/boards/` |
 | Manage | Workspace profile, transactional audit and security-event inspection | `app/systems/manage/` |
 | Platform | Private Storage files, authenticated invalidations, and in-app scheduled-work references | `app/systems/platform/` |
 
 Comms remains reserved. Report and Dashboard configurations do not grant access
 to their source Records. Report capture uses a repeatable-read snapshot, then
-rechecks authorization and recipe state before storing the run and its eligible
-audience. Stored report rows retain ordinary audit behavior.
+rechecks authorization and recipe state before storing the run and the users who
+can read its module. A scheduled run acts as the workspace. Stored report rows
+retain ordinary audit behavior.
 
 Sandbox document validation builds identifier and scenario-link indexes within
 each validation call. Those indexes avoid repeated scans of large documents and
@@ -91,7 +92,7 @@ Duplicate-ID documents remain repairable inputs, so the validator preserves its
 issue ordering and its existing first/last occurrence lookup behavior. The
 implementation is `sandbox/designs/validation.py`.
 
-Publication planning batches bound targets and active automation children into
+Publication planning batches bound targets and active record trigger children into
 an explicit object owned by that plan call. Name and unmanaged-field checks
 also batch database reads while retaining document-order decisions. The full
 live-state digest reads structural scalar columns and fetches complete Record
@@ -110,7 +111,7 @@ cache or narrower freshness guarantee is introduced. These boundaries live in
 explains the cursor mechanism.
 
 In-app notification listing applies current eligibility before counting and
-paging. It then batches only the returned page's announcement and reminder
+paging. It then batches only the returned page's post and reminder
 reference columns, with at most one lookup for each kind present. These maps
 last only for that response and contain no content bodies; they do not cache
 authorization or change the separately locked, audited mark-read operation.
@@ -118,12 +119,19 @@ The implementation is `platform/scheduling/notification_router.py`.
 
 ## Background ownership and failure boundaries
 
-The lifespan owns the PostgreSQL event listener, automation and Report/Board
+The lifespan owns the PostgreSQL event listener, record trigger and Report/Board
 scheduling threads, and provider sign-out retries. Each worker creates its own
 sessions, claims bounded durable work, and applies its existing lease/retry
 rules. Automatic
-automation and scheduling threads are disabled in `ENVIRONMENT=test`; their
+record trigger and scheduling threads are disabled in `ENVIRONMENT=test`; their
 bounded `run_once` entrypoints support explicit isolated verification.
+
+A record trigger acts only on the record that started it, and its only action
+is "set field". It runs as the workspace, not as the administrator who
+published it: a publisher who is later disabled or loses access does not stop
+the trigger. Its changes have no user in `performed_by`; their audit entries
+carry `actor_label = "Trigger: <name>"`. Loop protection limits a chain of
+trigger events to depth 10 and 100 applied actions.
 Invitation and recovery email use Supabase Auth rather than an application SMTP
 outbox. The separate `app.systems.platform.files.worker` process owns scanner
 leadership and file-job recovery.

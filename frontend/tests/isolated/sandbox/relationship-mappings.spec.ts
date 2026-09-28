@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   type Design,
   type Field,
+  relationshipFieldTypesAreCompatible,
 } from "../../../src/components/systems/sandbox/domain/model";
 import { validateSandboxDesign } from "../../../src/components/systems/sandbox/domain/validation";
 import { configuredSandboxDesign as initialDesign } from "../../helpers/sandbox-fixtures";
@@ -101,6 +102,51 @@ test("relationship mappings reject Select sources whose options the target canno
 
   expect(validateSandboxDesign(design).map((issue) => issue.code)).toContain(
     "relationship.mapping_type_incompatible",
+  );
+});
+
+test("Select relationship compatibility follows labels across independent option IDs", () => {
+  const source = {
+    id: "source-status",
+    name: "Status",
+    type: "Select",
+    required: true,
+    value: "11111111-1111-4111-8111-111111111111",
+    options: "",
+    closed: false,
+    config: {
+      kind: "select",
+      defaultValue: "11111111-1111-4111-8111-111111111111",
+      options: [
+        { id: "11111111-1111-4111-8111-111111111111", label: "Open" },
+        { id: "22222222-2222-4222-8222-222222222222", label: "Closed" },
+      ],
+    },
+  } as unknown as Field;
+  const target = {
+    ...source,
+    id: "target-status",
+    config: {
+      kind: "select",
+      defaultValue: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      options: [
+        { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", label: "Open" },
+        { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", label: "Closed" },
+      ],
+    },
+  } as unknown as Field;
+
+  expect(relationshipFieldTypesAreCompatible(source, target)).toBe(true);
+
+  const missingTargetLabel = {
+    ...target,
+    config: {
+      ...target.config,
+      options: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", label: "Open" }],
+    },
+  } as unknown as Field;
+  expect(relationshipFieldTypesAreCompatible(source, missingTargetLabel)).toBe(
+    false,
   );
 });
 

@@ -40,7 +40,6 @@ if __package__:
     from .reset_planning import (  # type: ignore[import-not-found]
         _read_alembic_head,
         _read_profile,
-        _read_roles,
         required_environment,
         validate_local_database_url,
     )
@@ -67,7 +66,6 @@ else:
     from reset_planning import (
         _read_alembic_head,
         _read_profile,
-        _read_roles,
         required_environment,
         validate_local_database_url,
     )
@@ -83,7 +81,7 @@ __all__ = (
     "APPLICATION_TABLES", "DELETE_ORDER", "NON_PRESERVED_TABLES", "ResetError", "ResetPlan",
     "_LOCK_APPLICATION_STATEMENT", "_RESET_ADVISORY_LOCK_KEY", "_parser", "_print_plan",
     "_psycopg_database_url", "_read_alembic_head", "_read_profile",
-    "_read_roles", "ResetStorage", "_validate_postconditions", "apply_reset", "build_reset_plan",
+    "ResetStorage", "_validate_postconditions", "apply_reset", "build_reset_plan",
     "main", "require_api_stopped", "required_environment", "required_storage_environment",
     "validate_local_database_url",
 )
@@ -109,13 +107,13 @@ def build_reset_plan(
 ) -> ResetPlan:
     return _build_reset_plan(
         connection, sample_email, storage_object_keys=storage_object_keys,
-        read_profile_fn=_read_profile, read_roles_fn=_read_roles,
+        read_profile_fn=_read_profile,
     )
 
 
 def _validate_postconditions(connection: Any, plan: ResetPlan) -> None:
     _execution_validate_postconditions(
-        connection, plan, read_profile_fn=_read_profile, read_roles_fn=_read_roles,
+        connection, plan, read_profile_fn=_read_profile,
     )
 
 
@@ -137,7 +135,7 @@ def apply_reset(
         require_api_stopped(backend_host, backend_port)
     _execute_reset(
         connection, plan, execute=execute, stdin_is_tty=stdin_is_tty, confirmation=confirmation,
-        storage=storage, auth=auth, read_profile_fn=_read_profile, read_roles_fn=_read_roles,
+        storage=storage, auth=auth, read_profile_fn=_read_profile,
         build_plan_fn=build_reset_plan,
     )
 

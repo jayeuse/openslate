@@ -1,4 +1,4 @@
-"""Record shortcuts scoped to a visible Board Event or Announcement."""
+"""Record shortcuts scoped to a visible Board Event or Post."""
 
 from typing import Annotated, Literal
 from uuid import UUID
@@ -7,13 +7,12 @@ from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user, require_non_guest
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
 from app.systems.boards.record_link_models import (
-    BoardAnnouncementRevisionRecordLink,
-    BoardContentRecordLink,
+    BoardPostRevisionRecordLink,
+    BoardRecordLink,
 )
 from app.systems.boards.record_link_service import link_record, listed_links, unlink_record
 from app.systems.platform.files.access import fresh_user
@@ -28,11 +27,11 @@ router = APIRouter(
     tags=["board record links"],
     dependencies=[
         Depends(_private_cache),
-        Depends(require_legacy_capability(Capability.RECORDS_READ)),
+        Depends(get_current_user),
     ],
 )
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
+Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -40,7 +39,6 @@ class RecordLinkCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     record_id: UUID
-    label: str = Field(min_length=1, max_length=100)
     board_revision: int = Field(ge=1)
     content_revision: int = Field(ge=1)
 
@@ -69,15 +67,16 @@ class RecordLinkList(BaseModel):
 
 
 def _response(
-    link: BoardContentRecordLink | BoardAnnouncementRevisionRecordLink,
-    active_modules: dict[UUID, UUID],
+    link: BoardRecordLink | BoardPostRevisionRecordLink,
+    active_records: dict[UUID, tuple[UUID, str]],
 ) -> RecordLinkResponse:
-    available = active_modules.get(link.record_id) == link.module_id
+    current = active_records.get(link.record_id)
+    available = current is not None and current[0] == link.module_id
     return RecordLinkResponse(
         id=link.id,
         record_id=link.record_id,
         module_id=link.module_id,
-        label=link.label,
+        label=current[1] if available and current is not None else "Record unavailable",
         available=available,
         url=(f"/openview?module={link.module_id}&record={link.record_id}" if available else None),
     )
@@ -94,7 +93,7 @@ def _list(
     limit: int,
     offset: int,
 ) -> RecordLinkList:
-    links, active_modules = listed_links(
+    links, active_records = listed_links(
         db,
         fresh_user(db, actor.id),
         board_id,
@@ -105,7 +104,7 @@ def _list(
         offset=offset,
     )
     return RecordLinkList(
-        items=[_response(link, active_modules) for link in links[:limit]],
+        items=[_response(link, active_records) for link in links[:limit]],
         limit=limit,
         offset=offset,
         has_more=len(links) > limit,
@@ -135,21 +134,20 @@ def create_event_record_link(
     db: Database,
     response: Response,
 ) -> RecordLinkResponse:
-    link = link_record(
+    link, title = link_record(
         db,
         fresh_user(db, actor.id),
         board_id,
         "event",
         event_id,
         payload.record_id,
-        payload.label,
         board_revision=payload.board_revision,
         content_revision=payload.content_revision,
     )
     response.headers["Location"] = (
         f"/api/boards/{board_id}/events/{event_id}/record-links/{link.id}"
     )
-    return _response(link, {link.record_id: link.module_id})
+    return _response(link, {link.record_id: (link.module_id, title)})
 
 
 @router.delete("/{board_id}/events/{event_id}/record-links/{link_id}", status_code=204)
@@ -174,11 +172,11 @@ def delete_event_record_link(
 
 
 @router.get(
-    "/{board_id}/announcements/{announcement_id}/record-links", response_model=RecordLinkList
+    "/{board_id}/posts/{post_id}/record-links", response_model=RecordLinkList
 )
-def list_announcement_record_links(
+def list_post_record_links(
     board_id: UUID,
-    announcement_id: UUID,
+    post_id: UUID,
     actor: Reader,
     db: Database,
     view: Literal["published", "draft"] = "published",
@@ -189,8 +187,8 @@ def list_announcement_record_links(
         db,
         actor,
         board_id,
-        "announcement",
-        announcement_id,
+        "post",
+        post_id,
         view=view,
         limit=limit,
         offset=offset,
@@ -198,41 +196,40 @@ def list_announcement_record_links(
 
 
 @router.post(
-    "/{board_id}/announcements/{announcement_id}/record-links",
+    "/{board_id}/posts/{post_id}/record-links",
     response_model=RecordLinkResponse,
     status_code=201,
 )
-def create_announcement_record_link(
+def create_post_record_link(
     board_id: UUID,
-    announcement_id: UUID,
+    post_id: UUID,
     payload: RecordLinkCreate,
     actor: Writer,
     db: Database,
     response: Response,
 ) -> RecordLinkResponse:
-    link = link_record(
+    link, title = link_record(
         db,
         fresh_user(db, actor.id),
         board_id,
-        "announcement",
-        announcement_id,
+        "post",
+        post_id,
         payload.record_id,
-        payload.label,
         board_revision=payload.board_revision,
         content_revision=payload.content_revision,
     )
     response.headers["Location"] = (
-        f"/api/boards/{board_id}/announcements/{announcement_id}/record-links/{link.id}"
+        f"/api/boards/{board_id}/posts/{post_id}/record-links/{link.id}"
     )
-    return _response(link, {link.record_id: link.module_id})
+    return _response(link, {link.record_id: (link.module_id, title)})
 
 
 @router.delete(
-    "/{board_id}/announcements/{announcement_id}/record-links/{link_id}", status_code=204
+    "/{board_id}/posts/{post_id}/record-links/{link_id}", status_code=204
 )
-def delete_announcement_record_link(
+def delete_post_record_link(
     board_id: UUID,
-    announcement_id: UUID,
+    post_id: UUID,
     link_id: UUID,
     payload: RecordLinkRevision,
     actor: Writer,
@@ -242,8 +239,8 @@ def delete_announcement_record_link(
         db,
         fresh_user(db, actor.id),
         board_id,
-        "announcement",
-        announcement_id,
+        "post",
+        post_id,
         link_id,
         board_revision=payload.board_revision,
         content_revision=payload.content_revision,

@@ -15,7 +15,7 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
 )
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 
 
@@ -86,15 +86,6 @@ def test_invitation_persists_pending_profile_before_provider_email(
 ) -> None:
     db = Mock(spec=Session)
     actor_id, operation_id, provider_id = uuid7(), uuid7(), uuid7()
-    role = Role(role="admin", permissions={})
-    role.id = uuid7()
-    defaults = SimpleNamespace(
-        role=role,
-        guest_duration_days=14,
-        invitation_expiry_days=7,
-        department_ids=(),
-        group_ids=(),
-    )
     payload = InvitationCreate(email="person@example.test", username="person")
     events: list[str] = []
     db.scalar.return_value = None
@@ -108,9 +99,7 @@ def test_invitation_persists_pending_profile_before_provider_email(
 
     db.flush.side_effect = assign_user_id
     monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
-    monkeypatch.setattr(service, "load_creation_defaults", lambda *_args: defaults)
     monkeypatch.setattr(service, "validate_identity_profile", lambda *_args, **_kw: None)
-    monkeypatch.setattr(service, "resolve_department_memberships", lambda *_args: ())
     monkeypatch.setattr(service, "append_security_event", lambda *_args: None)
     monkeypatch.setattr(service, "_record_invitation_failure", lambda *_args: None)
     monkeypatch.setattr(service, "uuid7", lambda: operation_id)
@@ -259,15 +248,13 @@ def test_bootstrap_reconcile_rejects_nonsole_pending_admin(
         provider_invitation_operation_id=operation_id,
         supabase_user_id=None,
         invitation_sent_at=None,
-        role_id=uuid7(),
+        role="admin",
     )
     client = Mock()
     monkeypatch.setattr(service, "_lock_profile", lambda *_args: profile)
     db.scalar.return_value = profile
-    monkeypatch.setattr(
-        service, "_lock_admin_role", lambda *_args: SimpleNamespace(id=profile.role_id)
-    )
-    monkeypatch.setattr(service, "_other_non_deleted_assignment_exists", lambda *_args: True)
+    monkeypatch.setattr(service, "_lock_administrator_changes", lambda *_args: None)
+    monkeypatch.setattr(service, "_other_administrator_exists", lambda *_args: True)
 
     with pytest.raises(InvitationError):
         service.reconcile_invitation(db, local_id, actor_id=None, bootstrap=True, client=client)

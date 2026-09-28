@@ -2,7 +2,7 @@
 
 > **Scope:** OpenSlate's application schema in self-hosted Supabase PostgreSQL, provider-schema ownership, private file bytes, and schema delivery.
 
-Supabase Database is PostgreSQL and the sole relational datastore. Supabase initializes and owns provider schemas; OpenSlate uses the `public` schema for application tables. FastAPI owns application data access, and Alembic owns application schema changes only. The active Alembic lineage starts at the fresh-install root [`c4ec36fc30cc`](../../backend/migrations/versions/c4ec36fc30cc_self_hosted_supabase_application_.py), which requires that no existing `public` relations be owned by `openslate_owner` except `alembic_version`. Earlier vanilla PostgreSQL revisions remain archived under [`backend/migrations/history/vanilla_postgresql`](../../backend/migrations/history/vanilla_postgresql/); the current lineage does not import an existing installation.
+Supabase Database is PostgreSQL and the sole relational datastore. Supabase initializes and owns provider schemas; OpenSlate uses the `public` schema for application tables. FastAPI owns application data access, and Alembic owns application schema changes only. The active fresh-install root [`089c54b88aa6`](../../backend/migrations/versions/089c54b88aa6_schema_redesign_fresh_root.py) requires that no existing `public` relations be owned by `openslate_owner` except `alembic_version`. The prior Supabase baseline and schema-redesign revisions are preserved unchanged under [`history/schema_redesign`](../../backend/migrations/history/schema_redesign/); earlier vanilla PostgreSQL revisions remain under [`history/vanilla_postgresql`](../../backend/migrations/history/vanilla_postgresql/). Neither archive is active. This root does not import an existing installation; never stamp an existing database onto it.
 
 ## Ownership and roles
 
@@ -27,7 +27,76 @@ local build duration is not a production downtime guarantee. See PostgreSQL's
 
 `files` stores application metadata, immutable object keys, scan state, and nullable `enc_version`. File bytes are stored in the private Supabase Storage `openslate-quarantine` and `openslate-ready` buckets, accessed through the server-only Storage API adapter. FastAPI authorizes upload, download, and deletion; the OpenSlate worker scans quarantined bytes with ClamAV before promotion and makes a clean verdict durable before download is allowed. A file row or guessed object key alone never grants byte access. There is no selectable local-filesystem storage adapter.
 
-OpenView persists owner-private Dashboards and widget configurations in [`dashboards` and `dashboard_widgets`](../../backend/app/systems/openview/dashboards/models.py), with a bounded refresh cadence on each Dashboard. [`openview_chart_preferences`](../../backend/app/systems/openview/charts/models.py) stores one versioned Chart configuration per user. These rows contain settings rather than materialized Record results; each data view queries authorized Records when rendered. The historical revisions [`7d08f4310c7b`](../../backend/migrations/history/vanilla_postgresql/7d08f4310c7b_add_chart_preferences_and_dashboard_.py) and [`a1a581d48771`](../../backend/migrations/history/vanilla_postgresql/a1a581d48771_complete_chart_preference_audit_foreign_.py) describe the earlier vanilla PostgreSQL evolution. The fresh-install Supabase baseline already includes the current preference table, Dashboard checks, and audit foreign key.
+OpenView persists department Dashboards and widget configurations in [`dashboards` and `dashboard_widgets`](../../backend/app/systems/openview/dashboards/models.py). Each Dashboard has a required `department_id` (foreign key to `departments`, `ON DELETE RESTRICT`), a non-negative `position` and a bounded refresh cadence. [`saved_views`](../../backend/app/systems/openview/views/models.py) and [`reports`](../../backend/app/systems/openview/reports/models.py) belong to a module and have no owner or audience columns. The partial unique index `uq_saved_views_module_default` on `saved_views (module_id) WHERE is_default AND NOT is_deleted` allows one active default view for each module. These rows contain settings rather than materialized Record results; each data view queries authorized Records when rendered. The archived revision [`22c73bf93a9d`](../../backend/migrations/history/schema_redesign/22c73bf93a9d_make_openview_content_belong_to_.py) removed the personal tables `dashboard_defaults`, `saved_view_defaults` and `openview_chart_preferences` during development. The active root creates the final shared structure directly. The historical revisions [`7d08f4310c7b`](../../backend/migrations/history/vanilla_postgresql/7d08f4310c7b_add_chart_preferences_and_dashboard_.py) and [`a1a581d48771`](../../backend/migrations/history/vanilla_postgresql/a1a581d48771_complete_chart_preference_audit_foreign_.py) describe the earlier vanilla PostgreSQL evolution.
+
+`report_run_eligible_users` records the module readers at the time each run is created. A run read also requires current read access on the module.
+
+## Fresh-root construction and lifecycle
+
+The root was produced by Alembic autogeneration from the final registered
+SQLAlchemy models against an empty application schema. Review supplements
+autogeneration with deferred `use_alter` foreign keys, the final Board functions
+and triggers, explicit grants/default privileges, and the Workspace, empty
+version-4 Sandbox, and Company Board seeds. Table column order follows the
+archived chain so schema-only dumps remain comparable. No provider object is
+created or changed.
+
+To reproduce equivalence, provision two separately owned disposable Supabase
+instances: apply the archived chain to one and the root to the other, run
+`alembic check` on both, and compare complete `public` schema-only dumps with
+ownership and ACLs retained. Exclude only dump header/time lines and randomized
+restrict tokens. Compare database/role privileges and blank-install seed values
+separately; omit only generated Company Board IDs and timestamps from seed
+equality. Do not normalize schema differences away.
+
+The root's downgrade removes its application tables and owned routines; it is
+destructive, not a data-preserving rollback. Reinstallation recreates blank
+singletons. Existing installations require a separately approved fresh
+initialization or supported restoration, not a revision stamp. Recreating the
+provider volume also removes Auth and Storage state and requires explicit
+approval under the installation procedure.
+
+## Field values and record titles
+
+Sandbox documents use version 4. A select field stores `config.options` as
+`[{id, label}]`, with unique UUID option IDs and labels; record JSON stores the
+option ID. Renaming an option changes its display label without rewriting
+record values. Equality and membership filters compare IDs, while select search
+and contains matching use current labels. See [field validation](../../backend/app/systems/sandbox/fields/validation.py)
+and the [query compiler](../../backend/app/systems/sandbox/records/query.py).
+
+A `user` field stores a user UUID. Live record creation, explicit assignments,
+restores and trigger assignments validate current active module readers
+through the application access policy. PATCH `data` replaces the active field
+values and revalidates explicitly included person IDs; a PATCH without `data`
+retains existing values. Moving a record between modules remains unsupported. The module-scoped
+`GET /api/modules/{id}/assignable-users` response exposes only ID, display name
+and username to module readers; it does not expose email addresses. Sandbox's
+draft simulator uses explicitly simulated UUIDs rather than live assignments.
+
+Record responses retain raw IDs in `data` and add transient `display_values`
+for select labels and eligible person names. Group keys remain IDs; their
+labels, CSV cells and report capture use the same
+[display resolver](../../backend/app/systems/sandbox/records/display.py).
+A person who no longer qualifies displays as `Unavailable user`; stored IDs are
+not rewritten. Captured report output remains a snapshot of its run.
+
+Version-3 Board bundles carry field references by name and type. Select filter
+values are exported as labels and rebound to target option IDs. Person output
+fields and value-free checks remain portable, but export, duplication, and
+import reject filters containing a specific person ID: there is no
+cross-installation person binding. Live person filters remain supported. See
+[Board portability](../../backend/app/systems/boards/portability.py).
+
+`modules.title_field_id` is a nullable, restricted foreign key to `fields`.
+Publication requires an active field of the same module with an allowed text,
+numeric or select type. Board links and revision links store record references,
+not copied labels: authorized reads resolve the current title, falling back to
+`Record <first eight ID characters>` when empty. Without source-record access,
+the link displays `Record unavailable` and no destination URL. Closing a whole
+module preserves its title selection; standalone removal of the selected field
+requires clearing or changing the selection first. Subtree purge clears doomed
+module pointers before deleting fields in the audited transaction.
 
 ## Record reads and projections
 

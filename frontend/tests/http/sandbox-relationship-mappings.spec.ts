@@ -1,13 +1,16 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/test";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { migrateSandboxFileV1 } from "../../src/components/systems/sandbox/domain/document";
 import {
   initialDesign,
   type Design,
 } from "../../src/components/systems/sandbox/domain/model";
 import { publicationFieldKey } from "../../src/components/systems/sandbox/components/publish-change-groups";
-import { configuredSandboxDesign } from "../helpers/sandbox-fixtures";
+import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import {
+  configuredSandboxDesign,
+  sandboxDocumentFromDesign,
+} from "../helpers/sandbox-fixtures";
 
 type SandboxOptions = {
   importFailure?: string;
@@ -65,11 +68,7 @@ async function openAuthenticatedSandbox(
   let documentReads = 0;
   let documentWrites = 0;
   let versions = options.versions ?? [];
-  let document = migrateSandboxFileV1({
-    kind: "openslate-sandbox",
-    schemaVersion: 1,
-    design: structuredClone(designFixture),
-  });
+  let document = sandboxDocumentFromDesign(designFixture);
   await page.route("**/api/auth/session", async (route) => {
     await route.fulfill({
       contentType: "application/json",
@@ -204,7 +203,7 @@ async function openAuthenticatedSandbox(
       }),
     });
   });
-  await page.route("**/api/sandbox/automation-runs?*", async (route) => {
+  await page.route("**/api/sandbox/trigger-runs?*", async (route) => {
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({ items: [] }),
@@ -226,7 +225,7 @@ async function openAuthenticatedSandbox(
           modules: 0,
           fields: 0,
           relationships: 0,
-          automations: 0,
+          triggers: 0,
         },
         warnings: [],
         blockers: [],
@@ -272,11 +271,11 @@ test("an organization template replaces the empty draft only after confirmation"
   const document = sandbox.document();
   expect(document.design.departments.length).toBeGreaterThanOrEqual(3);
   expect(document.design.modules.length).toBeGreaterThanOrEqual(6);
-  expect(document.automations.length).toBeGreaterThanOrEqual(3);
+  expect(document.triggers.length).toBeGreaterThanOrEqual(3);
   expect(document.scenarios).toEqual([]);
 });
 
-test("a detailed template remains usable when moving from Automations to Test", async ({
+test("a detailed template remains usable when moving from Triggers to Test", async ({
   page,
 }) => {
   const pageErrors: string[] = [];
@@ -294,7 +293,7 @@ test("a detailed template remains usable when moving from Automations to Test", 
   await page
     .getByRole("button", { name: "Use Inventory & procurement" })
     .click();
-  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Recent activity" }),
   ).toBeVisible();
@@ -341,7 +340,7 @@ test("an empty Sandbox renders no placeholder entities and can create its first 
 
   await expect(
     page.getByText(
-      "0 departments · 0 modules · 0 fields · 0 relationships · 0 automations",
+      "0 departments · 0 modules · 0 fields · 0 relationships · 0 triggers",
     ),
   ).toHaveCount(2);
   await expect(page.getByText("Service requests", { exact: true })).toHaveCount(
@@ -355,6 +354,29 @@ test("an empty Sandbox renders no placeholder entities and can create its first 
   await expect(
     page.getByText("Finance", { exact: true }).first(),
   ).toBeVisible();
+});
+
+test("an empty trigger list explains how to start and offers no save", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, initialDesign);
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+
+  const settings = page.getByRole("region", { name: "Trigger settings" });
+  await expect(settings).toContainText(
+    "Select or create a trigger to edit its settings.",
+  );
+  await expect(
+    settings.getByRole("button", { name: "Save triggers" }),
+  ).toHaveCount(0);
+  await expect(
+    settings.getByRole("button", { name: "Discard changes" }),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "New trigger" }).click();
+  await expect(
+    settings.getByRole("button", { name: "Save triggers" }),
+  ).toBeEnabled();
 });
 
 test("the Build canvas owns most of a wide screen and one workbench switches Structure and Properties", async ({
@@ -556,10 +578,10 @@ test("an empty Sandbox authors and persists a complete connected organization", 
     .getByRole("button", { name: "Create relationship" })
     .click();
 
-  await page.getByRole("link", { name: "Automations", exact: true }).click();
-  await page.getByRole("button", { name: "New automation" }).click();
-  await page.getByLabel("Automation name").fill("Notify inventory intake");
-  await page.getByRole("button", { name: "Save automations" }).click();
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  await page.getByRole("button", { name: "New trigger" }).click();
+  await page.getByLabel("Trigger name").fill("Notify inventory intake");
+  await page.getByRole("button", { name: "Save triggers" }).click();
 
   const document = sandbox.document();
   expect(document.design.departments).toHaveLength(1);
@@ -568,14 +590,52 @@ test("an empty Sandbox authors and persists a complete connected organization", 
     1,
   );
   expect(document.design.relationships).toHaveLength(1);
-  expect(document.automations).toHaveLength(1);
+  expect(document.triggers).toHaveLength(1);
   expect(document.scenarios).toEqual([]);
 });
 
-test("a dirty automation draft protects browser exits", async ({ page }) => {
+test("creating a Select field saves a typed default as its choice ID", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    structuredClone(configuredSandboxDesign),
+  );
+  await page.getByRole("button", { name: "Add field", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "Field name", exact: true })
+    .fill("Review stage");
+  await page.getByLabel("Field type", { exact: true }).selectOption("Select");
+  await page
+    .getByLabel("Select options (comma separated)", { exact: true })
+    .fill("Open, On hold");
+  await page.getByLabel("Default value", { exact: true }).fill("Open");
+  await page.getByRole("button", { name: "Create field" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(1);
+
+  const created = sandbox
+    .document()
+    .design.modules.flatMap((item) => item.fields)
+    .find((field) => field.name === "Review stage");
+  expect(created?.config.kind).toBe("select");
+  if (created?.config.kind !== "select")
+    throw new Error("The saved Select field is required");
+  expect(created.config.options.map((option) => option.label)).toEqual([
+    "Open",
+    "On hold",
+  ]);
+  const openId = created.config.options.find(
+    (option) => option.label === "Open",
+  )?.id;
+  expect(openId).toBeTruthy();
+  expect(created.config.defaultValue).toBe(openId);
+  expect(created.config.options[1]?.id).not.toBe(openId);
+});
+
+test("a dirty trigger draft protects browser exits", async ({ page }) => {
   await openAuthenticatedSandbox(page);
-  await page.getByRole("link", { name: "Automations", exact: true }).click();
-  await page.getByLabel("Automation name").fill("Unsaved automation name");
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  await page.getByLabel("Trigger name").fill("Unsaved trigger name");
 
   await expect
     .poll(() =>
@@ -588,7 +648,7 @@ test("a dirty automation draft protects browser exits", async ({ page }) => {
     .toBe(true);
 });
 
-test("automation editing is locked while its save is pending", async ({
+test("trigger editing is locked while its save is pending", async ({
   page,
 }) => {
   let releaseSave = () => {};
@@ -596,16 +656,16 @@ test("automation editing is locked while its save is pending", async ({
     releaseSave = resolve;
   });
   await openAuthenticatedSandbox(page, configuredSandboxDesign, { saveDelay });
-  await page.getByRole("link", { name: "Automations", exact: true }).click();
-  const name = page.getByLabel("Automation name");
-  await name.fill("Pending automation save");
-  await page.getByRole("button", { name: "Save automations" }).click();
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  const name = page.getByLabel("Trigger name");
+  await name.fill("Pending trigger save");
+  await page.getByRole("button", { name: "Save triggers" }).click();
 
   try {
     await expect(name).toBeDisabled();
-    await expect(page.getByLabel("Trigger", { exact: true })).toBeDisabled();
+    await expect(page.getByLabel("Event", { exact: true })).toBeDisabled();
     await expect(
-      page.getByRole("button", { name: "Automation options" }),
+      page.getByRole("button", { name: "Trigger options" }),
     ).toBeDisabled();
   } finally {
     releaseSave();
@@ -635,7 +695,7 @@ test("running and clearing tests protect browser exits until each request settle
         moduleId: string;
         values: Record<string, unknown>;
         event: { kind: "record-created" };
-        automationIds?: string[];
+        triggerIds?: string[];
       };
       await runDelay;
       await route.fulfill({
@@ -646,11 +706,11 @@ test("running and clearing tests protect browser exits until each request settle
           documentRevision: 1,
           input: { moduleId: request.moduleId, values: request.values },
           event: request.event,
-          automationIds: request.automationIds ?? null,
+          triggerIds: request.triggerIds ?? null,
           result: {
             values: request.values,
             routes: [],
-            automationTraces: [],
+            triggerTraces: [],
             issues: [],
           },
         }),
@@ -714,12 +774,10 @@ test("running and clearing tests protect browser exits until each request settle
   ).toBeVisible();
 });
 
-test("an automation issue opens the automation it identifies", async ({
-  page,
-}) => {
+test("a trigger issue opens the trigger it identifies", async ({ page }) => {
   const design = structuredClone(configuredSandboxDesign);
   const first = design.rules[0];
-  if (!first) throw new Error("configured automation is unavailable");
+  if (!first) throw new Error("configured trigger is unavailable");
   design.rules.push({
     ...structuredClone(first),
     id: "sample-follow-up",
@@ -728,8 +786,8 @@ test("an automation issue opens the automation it identifies", async ({
   await openAuthenticatedSandbox(page, design, {
     issues: [
       {
-        code: "automation.invalid",
-        message: "Review the follow-up automation",
+        code: "trigger.invalid",
+        message: "Review the follow-up trigger",
         targetId: "sample-follow-up",
       },
     ],
@@ -737,11 +795,11 @@ test("an automation issue opens the automation it identifies", async ({
 
   await page
     .getByRole("button", {
-      name: "Review: Review the follow-up automation",
+      name: "Review: Review the follow-up trigger",
     })
     .click();
 
-  await expect(page.getByLabel("Automation name")).toHaveValue(
+  await expect(page.getByLabel("Trigger name")).toHaveValue(
     "Follow-up request alert",
   );
 });
@@ -771,7 +829,7 @@ test("designer commands are ignored while a design save is pending", async ({
   }
 });
 
-test("Build undo preserves an automation that was saved afterward", async ({
+test("Build undo preserves a trigger that was saved afterward", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(page);
@@ -780,16 +838,16 @@ test("Build undo preserves an automation that was saved afterward", async ({
   await page.getByRole("menuitem", { name: "Auto-arrange" }).click();
   await expect(page.getByText("Canvas automatically arranged.")).toBeVisible();
 
-  await page.getByRole("link", { name: "Automations", exact: true }).click();
-  await page.getByLabel("Automation name").fill("Saved urgent request alert");
-  await page.getByRole("button", { name: "Save automations" }).click();
-  await expect(page.getByLabel("Automation name")).toBeEnabled();
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  await page.getByLabel("Trigger name").fill("Saved urgent request alert");
+  await page.getByRole("button", { name: "Save triggers" }).click();
+  await expect(page.getByLabel("Trigger name")).toBeEnabled();
 
   await page.getByRole("link", { name: "Build", exact: true }).click();
   await page.getByRole("button", { name: "Undo" }).click();
 
   await expect
-    .poll(() => sandbox.document().automations[0]?.name)
+    .poll(() => sandbox.document().triggers[0]?.name)
     .toBe("Saved urgent request alert");
 });
 
@@ -1379,8 +1437,8 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
           time: "09:00",
           weekday: null,
         },
-        automationIds: null,
-        result: { values: {}, routes: [], automationTraces: [], issues: [] },
+        triggerIds: null,
+        result: { values: {}, routes: [], triggerTraces: [], issues: [] },
       },
     ],
   });
@@ -1413,15 +1471,15 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
   await expect(clear).toBeEnabled();
 });
 
-test("automation flow preview and summary follow the unsaved rule draft", async ({
+test("trigger flow preview and summary follow the unsaved rule draft", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(page);
-  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
 
   const flow = page.getByRole("region", { name: "Flow preview" });
-  const summary = page.getByRole("region", { name: "Automation summary" });
-  const settings = page.getByRole("region", { name: "Automation settings" });
+  const summary = page.getByRole("region", { name: "Trigger summary" });
+  const settings = page.getByRole("region", { name: "Trigger settings" });
   await expect(settings).toBeVisible();
   await expect(
     flow.getByRole("button", { name: "Edit trigger" }),
@@ -1433,7 +1491,7 @@ test("automation flow preview and summary follow the unsaved rule draft", async 
     flow.getByRole("button", { name: "Edit action 1" }),
   ).toBeVisible();
 
-  const savedAutomations = sandbox.document().automations;
+  const savedTriggers = sandbox.document().triggers;
   await page
     .getByLabel("Condition 1 field")
     .selectOption({ label: "Priority" });
@@ -1447,7 +1505,7 @@ test("automation flow preview and summary follow the unsaved rule draft", async 
     flow.getByRole("button", { name: "Edit condition 1" }),
   ).toContainText("Needs immediate review");
   await expect(summary).toContainText("Needs immediate review");
-  expect(sandbox.document().automations).toEqual(savedAutomations);
+  expect(sandbox.document().triggers).toEqual(savedTriggers);
 
   await page.getByLabel("Condition group operator").selectOption("any");
   await expect(flow).toContainText(/any condition/i);
@@ -1471,18 +1529,18 @@ test("automation flow preview and summary follow the unsaved rule draft", async 
     0,
   );
 
-  await page.getByLabel("Trigger", { exact: true }).selectOption("schedule");
+  await page.getByLabel("Event", { exact: true }).selectOption("schedule");
   await expect(
     flow.getByRole("button", { name: "Edit trigger" }),
   ).toContainText(/schedule/i);
   await expect(summary).toContainText(/schedule/i);
 });
 
-test("keyboard activation on an automation flow node focuses its editor", async ({
+test("keyboard activation on a trigger flow node focuses its editor", async ({
   page,
 }) => {
   await openAuthenticatedSandbox(page);
-  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
 
   const flow = page.getByRole("region", { name: "Flow preview" });
   const condition = page.getByLabel("Condition 1 field");
@@ -1494,35 +1552,33 @@ test("keyboard activation on an automation flow node focuses its editor", async 
   await expect(condition).toBeFocused();
 });
 
-test("Automation Studio layout screenshots can be captured for theme and viewport review", async ({
+test("Trigger Studio layout screenshots can be captured for theme and viewport review", async ({
   page,
 }) => {
   test.skip(
-    process.env.AUTOMATION_LAYOUT_SCREENSHOTS !== "1",
-    "Set AUTOMATION_LAYOUT_SCREENSHOTS=1 to capture layout evidence",
+    process.env.TRIGGER_LAYOUT_SCREENSHOTS !== "1",
+    "Set TRIGGER_LAYOUT_SCREENSHOTS=1 to capture layout evidence",
   );
 
   const screenshotDirectory = resolve(
     "..",
-    ".agent-runtime/automations-layout-20260925",
+    ".agent-runtime/triggers-layout-20260925",
   );
   await mkdir(screenshotDirectory, { recursive: true });
   await openAuthenticatedSandbox(page);
-  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
   await expect(
     page.getByRole("region", { name: "Flow preview" }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "New automation" }).click();
-  await page.getByLabel("Automation name").fill("Service request follow-up");
-  await page
-    .getByLabel("Trigger", { exact: true })
-    .selectOption("field-changed");
-  const settings = page.getByRole("region", { name: "Automation settings" });
+  await page.getByRole("button", { name: "New trigger" }).click();
+  await page.getByLabel("Trigger name").fill("Service request follow-up");
+  await page.getByLabel("Event", { exact: true }).selectOption("field-changed");
+  const settings = page.getByRole("region", { name: "Trigger settings" });
   await settings
-    .getByLabel("Trigger module")
+    .getByLabel("Event module")
     .selectOption({ label: "Service requests" });
-  await settings.getByLabel("Trigger field").selectOption({ label: "Status" });
+  await settings.getByLabel("Event field").selectOption({ label: "Status" });
   await page.getByRole("button", { name: "Add condition" }).click();
   await settings
     .getByLabel("Condition 1 field")
@@ -1558,7 +1614,7 @@ test("Automation Studio layout screenshots can be captured for theme and viewpor
     await page.screenshot({
       path: join(
         screenshotDirectory,
-        `automation-${view.width}-${view.theme}.png`,
+        `trigger-${view.width}-${view.theme}.png`,
       ),
       fullPage: true,
       animations: "disabled",
@@ -1566,19 +1622,19 @@ test("Automation Studio layout screenshots can be captured for theme and viewpor
   }
 });
 
-test("automation panels resize with their requested minimum widths and remain usable", async ({
+test("trigger panels resize with their requested minimum widths and remain usable", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1920, height: 1200 });
   await openAuthenticatedSandbox(page);
-  await page.getByRole("link", { name: "Automations", exact: true }).click();
-  const list = page.getByRole("complementary", { name: "Automation list" });
-  const settings = page.getByRole("region", { name: "Automation settings" });
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  const list = page.getByRole("complementary", { name: "Trigger list" });
+  const settings = page.getByRole("region", { name: "Trigger settings" });
   const listHandle = page.getByRole("separator", {
-    name: "Resize automation list",
+    name: "Resize trigger list",
   });
   const settingsHandle = page.getByRole("separator", {
-    name: "Resize automation settings",
+    name: "Resize trigger settings",
   });
   await expect(listHandle).toBeVisible();
   const width = async (locator: typeof list) =>
@@ -1603,9 +1659,9 @@ test("automation panels resize with their requested minimum widths and remain us
   await drag(settingsHandle, 1500);
   await expect.poll(() => width(settings)).toBeCloseTo(13 * rem, 0);
   await settings
-    .getByLabel("Automation name")
+    .getByLabel("Trigger name")
     .fill("Narrow settings stay editable");
-  await expect(settings.getByLabel("Automation name")).toHaveValue(
+  await expect(settings.getByLabel("Trigger name")).toHaveValue(
     "Narrow settings stay editable",
   );
   await expect
@@ -1617,11 +1673,11 @@ test("automation panels resize with their requested minimum widths and remain us
       ),
     )
     .toBeLessThanOrEqual(0);
-  if (process.env.AUTOMATION_LAYOUT_SCREENSHOTS === "1") {
+  if (process.env.TRIGGER_LAYOUT_SCREENSHOTS === "1") {
     await page.screenshot({
       path: resolve(
         "..",
-        ".agent-runtime/automations-layout-20260925/automation-resized-minimum.png",
+        ".agent-runtime/triggers-layout-20260925/trigger-resized-minimum.png",
       ),
       fullPage: true,
       animations: "disabled",
@@ -1646,12 +1702,12 @@ test("automation panels resize with their requested minimum widths and remain us
       )
       .toBeLessThanOrEqual(1);
     await expect(
-      settings.getByRole("button", { name: "Save automations", exact: true }),
+      settings.getByRole("button", { name: "Save triggers", exact: true }),
     ).toBeVisible();
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(settingsHandle).toBeHidden();
-  await expect(settings.getByLabel("Automation name")).toHaveValue(
+  await expect(settings.getByLabel("Trigger name")).toHaveValue(
     "Narrow settings stay editable",
   );
   await expect
@@ -1663,6 +1719,325 @@ test("automation panels resize with their requested minimum widths and remain us
       ),
     )
     .toBeLessThanOrEqual(0);
+});
+
+test("editing select choices preserves IDs, even when a label matches the default ID", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const statusField = design.modules[0]?.fields.find(
+    (field) => field.name === "Status",
+  );
+  if (!statusField) throw new Error("The Status select field is required");
+  statusField.value = "Open";
+  const sandbox = await openAuthenticatedSandbox(page, design);
+  const readStatusField = () => {
+    const raw: unknown = JSON.parse(JSON.stringify(sandbox.document()));
+    const document = raw as {
+      design: {
+        modules: Array<{
+          fields: Array<{
+            name: string;
+            config: {
+              kind: string;
+              defaultValue: unknown;
+              options: Array<{ id: string; label: string }>;
+            };
+          }>;
+        }>;
+      };
+    };
+    const field = document.design.modules
+      .flatMap((module) => module.fields)
+      .find((candidate) => candidate.name === "Status");
+    if (!field || field.config.kind !== "select")
+      throw new Error("The saved Status select field is required");
+    return field.config;
+  };
+  const before = readStatusField();
+  const originalIds = Object.fromEntries(
+    before.options.map((option) => [option.label, option.id]),
+  );
+  const openId = originalIds.Open;
+  expect(openId).toBeTruthy();
+  expect(before.defaultValue).toBe(openId);
+  const idShapedLabel = openId;
+
+  await page.getByRole("button", { name: "Show Status settings" }).click();
+  const settings = page.getByLabel("Status field settings");
+  await settings
+    .getByLabel("Status options")
+    .fill(`${idShapedLabel}, Open, In progress, Complete`);
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(1);
+
+  const inserted = readStatusField();
+  expect(inserted.options.find((option) => option.label === "Open")?.id).toBe(
+    originalIds.Open,
+  );
+  expect(
+    inserted.options.find((option) => option.label === "In progress")?.id,
+  ).toBe(originalIds["In progress"]);
+  expect(
+    inserted.options.find((option) => option.label === "Complete")?.id,
+  ).toBe(originalIds.Complete);
+  const insertedId = inserted.options.find(
+    (option) => option.label === idShapedLabel,
+  )?.id;
+  expect(insertedId).toBeTruthy();
+  expect(Object.values(originalIds)).not.toContain(insertedId);
+  expect(inserted.defaultValue).toBe(openId);
+
+  await settings
+    .getByLabel("Status options")
+    .fill(`Complete, ${idShapedLabel}, Open, In progress`);
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(2);
+  const reordered = readStatusField();
+  expect(reordered.options.map((option) => [option.label, option.id])).toEqual([
+    ["Complete", originalIds.Complete],
+    [idShapedLabel, insertedId],
+    ["Open", openId],
+    ["In progress", originalIds["In progress"]],
+  ]);
+
+  await settings
+    .getByLabel("Status options")
+    .fill(`Complete, ${idShapedLabel}, Active, In progress`);
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(3);
+
+  const after = readStatusField();
+  expect(after.options.find((option) => option.label === "Active")?.id).toBe(
+    openId,
+  );
+  expect(after.defaultValue).toBe(openId);
+
+  await settings
+    .getByLabel("Status options")
+    .fill(`Complete, ${idShapedLabel}, In progress`);
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect(
+    settings.getByText("Default value must match a select option."),
+  ).toBeVisible();
+  expect(sandbox.documentWrites()).toBe(3);
+  await settings.getByLabel("Status default value").selectOption("");
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(4);
+  expect(readStatusField().defaultValue).toBeNull();
+
+  const optionsInput = settings.getByLabel("Status options");
+  const defaultInput = settings.getByLabel("Status default value");
+  await optionsInput.fill(
+    `Complete, ${idShapedLabel}, In progress, Draft choice`,
+  );
+  await defaultInput.selectOption({ label: "Draft choice" });
+  await optionsInput.fill(
+    `Draft choice, Complete, ${idShapedLabel}, In progress`,
+  );
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(5);
+  const savedNewChoice = readStatusField();
+  const draftChoiceId = savedNewChoice.options.find(
+    (option) => option.label === "Draft choice",
+  )?.id;
+  expect(draftChoiceId).toBeTruthy();
+  expect(savedNewChoice.defaultValue).toBe(draftChoiceId);
+  expect(
+    savedNewChoice.options.find((option) => option.label === "Complete")?.id,
+  ).toBe(originalIds.Complete);
+  await captureOpenViewReview(page, "sandbox-stable-select-choice", {
+    beforeScreenshot: async (capturePage, viewport) => {
+      if (viewport.width < 640) {
+        const propertiesTab = capturePage.getByRole("tab", {
+          name: "Properties",
+        });
+        await expect(propertiesTab).toHaveCount(1);
+        if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
+          await propertiesTab.click();
+        const showSettings = capturePage
+          .getByLabel("Status field settings")
+          .getByRole("button", { name: "Show Status settings", exact: true });
+        if (await showSettings.isVisible()) await showSettings.click();
+      }
+    },
+  });
+});
+
+test("removing an unsaved selected choice requires an explicit new default", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const sandbox = await openAuthenticatedSandbox(page, design);
+  await page.getByRole("button", { name: "Show Status settings" }).click();
+  const settings = page.getByLabel("Status field settings");
+  const optionsInput = settings.getByLabel("Status options");
+  await optionsInput.fill("Temporary, Open, In progress, Complete");
+  await settings
+    .getByLabel("Status default value")
+    .selectOption({ label: "Temporary" });
+  await optionsInput.fill("Open, In progress, Complete");
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect(
+    settings.getByText("Default value must match a select option."),
+  ).toBeVisible();
+  expect(sandbox.documentWrites()).toBe(0);
+  await settings.getByLabel("Status default value").selectOption("");
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(1);
+});
+
+test("the Designer saves a module record title field in the current v4 draft", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  const design = structuredClone(configuredSandboxDesign);
+  const targetModule = design.modules[0];
+  const titleField = targetModule?.fields.find(
+    (field) => field.name === "Title",
+  );
+  if (!targetModule || !titleField)
+    throw new Error("A module with a title field is required");
+  const sandbox = await openAuthenticatedSandbox(page, design);
+
+  await page
+    .getByLabel("Record title field", { exact: true })
+    .selectOption(titleField.id);
+  await expect.poll(sandbox.documentWrites).toBe(1);
+
+  const raw: unknown = JSON.parse(JSON.stringify(sandbox.document()));
+  const document = raw as {
+    design: { modules: Array<{ id: string; titleFieldId: string | null }> };
+  };
+  expect(
+    document.design.modules.find((item) => item.id === targetModule.id)
+      ?.titleFieldId,
+  ).toBe(titleField.id);
+  const titleSelector = page.getByLabel("Record title field", { exact: true });
+  await expect(titleSelector).toHaveValue(titleField.id);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+
+  const titleSettings = page.getByLabel(`${titleField.name} field settings`);
+  await titleSettings
+    .getByRole("button", { name: `Show ${titleField.name} settings` })
+    .click();
+  const closeField = titleSettings.getByRole("button", {
+    name: "Close field",
+  });
+  await expect(
+    titleSettings.getByText(/selected as the record title/i),
+  ).toBeVisible();
+  await expect(closeField).toBeDisabled();
+  await captureOpenViewReview(page, "sandbox-selected-record-title", {
+    beforeScreenshot: async (capturePage, viewport) => {
+      if (viewport.width < 640) {
+        const propertiesTab = capturePage.getByRole("tab", {
+          name: "Properties",
+        });
+        await expect(propertiesTab).toHaveCount(1);
+        if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
+          await propertiesTab.click();
+        const showSettings = capturePage
+          .getByLabel("Title field settings")
+          .getByRole("button", { name: "Show Title settings", exact: true });
+        if (await showSettings.isVisible()) await showSettings.click();
+      }
+    },
+  });
+
+  await titleSelector.selectOption("");
+  await expect.poll(sandbox.documentWrites).toBe(2);
+  await expect(
+    titleSettings.getByText(/selected as the record title/i),
+  ).toHaveCount(0);
+  const showSettings = titleSettings.getByRole("button", {
+    name: "Show Title settings",
+    exact: true,
+  });
+  if (await showSettings.isVisible()) await showSettings.click();
+  await expect(closeField).toBeEnabled();
+});
+
+test("Sandbox Test treats User values as simulated UUIDs without live eligibility lookup", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const targetModule = design.modules[0];
+  if (!targetModule) throw new Error("A test module is required");
+  targetModule.fields.push({
+    id: "sandbox-assignee",
+    name: "Assigned user",
+    type: "User",
+    required: true,
+    value: "",
+    options: "",
+    closed: false,
+  });
+  const requestPaths: string[] = [];
+  page.on("request", (request) => {
+    requestPaths.push(new URL(request.url()).pathname);
+  });
+  await openAuthenticatedSandbox(page, design);
+  let submitted: Record<string, unknown> | undefined;
+  await page.route("**/api/sandbox/tests", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const input = route.request().postDataJSON() as {
+      moduleId: string;
+      values: Record<string, unknown>;
+      event: { kind: string };
+    };
+    submitted = input.values;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "00000000-0000-4000-8000-000000000041",
+        createdAt: "2026-09-25T10:00:00Z",
+        documentRevision: 1,
+        input: { moduleId: input.moduleId, values: input.values },
+        event: input.event,
+        triggerIds: null,
+        result: {
+          values: input.values,
+          routes: [],
+          triggerTraces: [],
+          issues: [],
+        },
+      }),
+    });
+  });
+  await page.getByRole("link", { name: "Test", exact: true }).click();
+  const setup = page.getByRole("region", { name: "Test setup", exact: true });
+  await expect(
+    setup.getByText(/simulat(?:ed|ion).*UUID|UUID.*simulat(?:ed|ion)/i),
+  ).toBeVisible();
+  await expect(
+    setup.getByText(
+      /eligibility.*(?:not|never).*(?:check|verify)|(?:does not|never).*(?:check|verify).*eligibility/i,
+    ),
+  ).toBeVisible();
+
+  const simulatedUserId = "00000000-0000-4000-8000-000000000042";
+  await setup
+    .getByLabel("Assigned user", { exact: true })
+    .fill(simulatedUserId);
+  await captureOpenViewReview(page, "sandbox-simulated-user-input");
+  await setup.getByRole("button", { name: "Run test", exact: true }).click();
+  await expect
+    .poll(() => submitted?.["sandbox-assignee"])
+    .toBe(simulatedUserId);
+  expect(
+    requestPaths.filter((path) =>
+      /\/api\/(?:users(?:\/|$)|modules\/[^/]+\/assignable-users(?:\/|$))/.test(
+        path,
+      ),
+    ),
+  ).toEqual([]);
 });
 
 test("Test field search preserves hidden edits in the submitted temporary values", async ({
@@ -1699,10 +2074,10 @@ test("Test field search preserves hidden edits in the submitted temporary values
         documentRevision: 1,
         input: { moduleId: request.moduleId, values: request.values },
         event: request.event,
-        automationIds: null,
+        triggerIds: null,
         result: {
           values: { ...request.values, "sample-field-Status": "Complete" },
-          automationTraces: [],
+          triggerTraces: [],
           routes: [],
           issues: [],
         },
@@ -1843,7 +2218,7 @@ test("Test comparisons use saved inputs, preserve typed values, and distinguish 
   const base = {
     documentRevision: 1,
     event: { kind: "record-created" },
-    automationIds: null,
+    triggerIds: null,
   };
   await openAuthenticatedSandbox(page, design, {
     testRuns: [
@@ -1857,7 +2232,7 @@ test("Test comparisons use saved inputs, preserve typed values, and distinguish 
         },
         result: {
           values: { "review-field": false },
-          automationTraces: [],
+          triggerTraces: [],
           routes: [],
           issues: [
             {
@@ -1886,14 +2261,14 @@ test("Test comparisons use saved inputs, preserve typed values, and distinguish 
             "review-field": true,
             "sample-field-Title": null,
           },
-          automationTraces: [
+          triggerTraces: [
             {
-              automationId: "sample-urgent",
+              triggerId: "sample-urgent",
               label: "Review request",
               outcome: "Applied",
             },
             {
-              automationId: "sample-urgent",
+              triggerId: "sample-urgent",
               label: "Review request",
               outcome: "No changes",
             },
@@ -2105,11 +2480,7 @@ test("History comparison stays tied to compared versions while inspecting anothe
     ),
     historyVersionFixture(3, "Before import"),
   ];
-  const before = migrateSandboxFileV1({
-    kind: "openslate-sandbox",
-    schemaVersion: 1,
-    design: structuredClone(configuredSandboxDesign),
-  });
+  const before = sandboxDocumentFromDesign(configuredSandboxDesign);
   const after = structuredClone(before);
   after.design.modules[0].name = "Updated requests";
   let reads = 0;
@@ -2288,16 +2659,12 @@ test("History change groups keep large comparisons scannable without hiding acce
 }) => {
   const first = historyVersionFixture(1, "Full setup", "published");
   const second = historyVersionFixture(2, "Empty checkpoint");
-  const before = migrateSandboxFileV1({
-    kind: "openslate-sandbox",
-    schemaVersion: 1,
-    design: structuredClone(configuredSandboxDesign),
-  });
+  const before = sandboxDocumentFromDesign(configuredSandboxDesign);
   const after = structuredClone(before);
   after.design.modules = [];
   after.design.departments = [];
   after.design.relationships = [];
-  after.automations = [];
+  after.triggers = [];
   await openAuthenticatedSandbox(page, configuredSandboxDesign, {
     versions: [second, first],
   });
@@ -2374,7 +2741,7 @@ test("a Test result from an older draft says so and can show its module on the c
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const repeated = {
-    code: "automation_invalid",
+    code: "trigger_invalid",
     message: "A set field action has an invalid value.",
     targetId: null,
   };
@@ -2387,11 +2754,11 @@ test("a Test result from an older draft says so and can show its module on the c
         documentRevision: 1,
         input: { moduleId: "sample-requests", values: {} },
         event: { kind: "record-created" },
-        automationIds: null,
+        triggerIds: null,
         result: {
           values: {},
           routes: [],
-          automationTraces: [],
+          triggerTraces: [],
           issues: [repeated, repeated, repeated],
         },
       },
@@ -2435,14 +2802,14 @@ test("a Test run plays out on the canvas in three still steps", async ({
           values: { "sample-field-Status": "Open" },
         },
         event: { kind: "field-changed", fieldId: "sample-field-Status" },
-        automationIds: null,
+        triggerIds: null,
         result: {
           values: {
             "sample-field-Status": "Open",
             "sample-field-Priority": "High",
           },
           routes: [],
-          automationTraces: [],
+          triggerTraces: [],
           issues: [],
         },
       },
@@ -2465,7 +2832,7 @@ test("a Test run plays out on the canvas in three still steps", async ({
   await expect(row("Priority")).not.toHaveAttribute("data-test-mark");
 
   await page.getByRole("button", { name: "Next step" }).click();
-  await expect(page.getByText("Step 2 of 3: Automations")).toBeVisible();
+  await expect(page.getByText("Step 2 of 3: Triggers")).toBeVisible();
   await page.getByRole("button", { name: "Next step" }).click();
   await expect(page.getByText("Step 3 of 3: Result")).toBeVisible();
   await expect(page.getByText("Priority: Not provided → High")).toBeVisible();

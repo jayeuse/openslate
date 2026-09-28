@@ -10,6 +10,7 @@ import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from secrets import token_urlsafe
 from typing import BinaryIO
@@ -24,7 +25,8 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.core.config.provider_instance import assert_provider_instance
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
+from app.systems.sandbox.departments.models import Department
 from tests.conftest import guarded_create_engine
 from tests.postgres_runtime import write_worker_database_manifest
 
@@ -95,14 +97,14 @@ def provider_identity(tmp_path: Path) -> Iterator[ProviderIdentity]:
         provider_user_id = UUID(created.json()["id"])
 
         with Session(owner_engine) as db:
-            role = db.scalar(select(Role).where(Role.role == "admin"))
+            role = "admin"
             if role is None:
                 raise AssertionError("baseline application admin role is missing")
             created_user = User(
                 email=email,
                 username=f"provider-sse-{uuid4().hex}",
                 status=UserStatus.ACTIVE.value,
-                role_id=role.id,
+                role=role,
                 supabase_user_id=provider_user_id,
             )
             db.add(created_user)
@@ -189,14 +191,16 @@ def test_two_api_processes_deliver_opaque_invalidation_and_recheck_revoked_sessi
                 stream_lines = iter(stream.iter_lines())
                 _require_resync(_read_sse_event(stream_lines))
 
-                created = client_b.post(
-                    "/api/departments",
-                    json={"department_name": department_name},
+                department_id = _seed_closed_department(
+                    provider_identity.owner_engine, department_name
+                )
+                reopened = client_b.post(
+                    f"/api/departments/{department_id}/reopen",
+                    json={"confirmed": True},
                     headers=auth_headers,
                 )
-                if created.status_code != 201:
+                if reopened.status_code != 200:
                     raise AssertionError("authorized department mutation failed through API B")
-                department_id = UUID(created.json()["id"])
 
                 event_name, event_data = _read_sse_event(stream_lines)
                 if event_name != "invalidate":
@@ -207,11 +211,7 @@ def test_two_api_processes_deliver_opaque_invalidation_and_recheck_revoked_sessi
                     event_payload = json.loads(event_data)
                 except ValueError:
                     raise AssertionError("SSE invalidation was not valid JSON") from None
-                expected_payload = {
-                    "capability": "departments.read",
-                    "entity": "departments",
-                    "entity_id": str(department_id),
-                }
+                expected_payload = {"entity": "departments"}
                 if event_payload != expected_payload:
                     raise AssertionError("SSE did not contain only opaque invalidation metadata")
 
@@ -256,6 +256,19 @@ def test_two_api_processes_deliver_opaque_invalidation_and_recheck_revoked_sessi
             api_process.stop()
         if department_id is not None:
             with provider_identity.owner_engine.begin() as connection:
+                # Reopening the department creates its Board, which references it.
+                connection.execute(
+                    text(
+                        "DELETE FROM public.audit_logs WHERE entity_type = 'boards' "
+                        "AND entity_id IN (SELECT id FROM public.boards "
+                        "WHERE department_id = :department_id)"
+                    ),
+                    {"department_id": department_id},
+                )
+                connection.execute(
+                    text("DELETE FROM public.boards WHERE department_id = :department_id"),
+                    {"department_id": department_id},
+                )
                 connection.execute(
                     text(
                         "DELETE FROM public.audit_logs "
@@ -267,6 +280,22 @@ def test_two_api_processes_deliver_opaque_invalidation_and_recheck_revoked_sessi
                     text("DELETE FROM public.departments WHERE id = :department_id"),
                     {"department_id": department_id},
                 )
+
+
+def _seed_closed_department(owner_engine: Engine, department_name: str) -> UUID:
+    """Commit a closed department without an invalidation; API B then reopens it."""
+
+    with Session(owner_engine) as db:
+        department = Department(
+            department_name=department_name,
+            is_deleted=True,
+            deleted_at=datetime.now(UTC),
+        )
+        db.add(department)
+        db.flush()
+        department_id = department.id
+        db.commit()
+    return department_id
 
 
 def _synthetic_password() -> str:

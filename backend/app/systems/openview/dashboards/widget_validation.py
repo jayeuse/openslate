@@ -1,9 +1,12 @@
 """Live source validation for saved Dashboard widget configurations."""
 
+from uuid import UUID
+
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.systems.access.users.models import User
 from app.systems.openview.dashboards.schemas import (
     DashboardAggregateConfig,
     DashboardChartConfig,
@@ -30,8 +33,10 @@ def _invalid_dashboard() -> HTTPException:
     )
 
 
-def validate_dashboard_widgets(db: Session, widgets: list[DashboardWidgetSpec]) -> None:
-    """Reject inactive modules or stale field references before saving any widget."""
+def validate_dashboard_widgets(
+    db: Session, user: User, department_id: UUID, widgets: list[DashboardWidgetSpec]
+) -> None:
+    """Reject stale field references and modules that are inactive or in another department."""
     module_ids = {widget.config.query.module_id for widget in widgets}
     if not module_ids:
         return
@@ -40,8 +45,8 @@ def validate_dashboard_widgets(db: Session, widgets: list[DashboardWidgetSpec]) 
             select(Module.id)
             .where(
                 Module.id.in_(module_ids),
+                Module.department_id == department_id,
                 Module.is_deleted.is_(False),
-                Module.is_schema_accepted.is_(True),
             )
             .order_by(Module.id)
             .with_for_update()
@@ -52,11 +57,7 @@ def validate_dashboard_widgets(db: Session, widgets: list[DashboardWidgetSpec]) 
 
     for widget in widgets:
         config = widget.config
-        query: (
-            DashboardRecordsQuery
-            | GroupedAggregateSnapshotQuery
-            | DateSeriesAggregateQuery
-        )
+        query: DashboardRecordsQuery | GroupedAggregateSnapshotQuery | DateSeriesAggregateQuery
         if isinstance(config, DashboardRecordsConfig):
             query = config.query
             additional_references: tuple[FieldReference | None, ...] = ()
@@ -71,9 +72,7 @@ def validate_dashboard_widgets(db: Session, widgets: list[DashboardWidgetSpec]) 
             else:
                 additional_references = (query.date_field, query.measure)
         references = tuple(
-            reference
-            for reference in additional_references
-            if reference is not None
+            reference for reference in additional_references if reference is not None
         )
         try:
             fields = validate_definition(
@@ -81,6 +80,7 @@ def validate_dashboard_widgets(db: Session, widgets: list[DashboardWidgetSpec]) 
                 query.module_id,
                 query.definition,
                 extra_references=references,
+                reader=user,
             )
         except HTTPException as error:
             if error.status_code == status.HTTP_409_CONFLICT:

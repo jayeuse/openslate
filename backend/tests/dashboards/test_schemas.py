@@ -16,6 +16,8 @@ from app.systems.sandbox.records.query_schemas import (
     GroupedAggregateSnapshotQuery,
 )
 
+DEPARTMENT = uuid7()
+
 
 def _group_widget(*, chart_type: str = "bar") -> dict[str, object]:
     module_id = uuid7()
@@ -173,15 +175,25 @@ def test_chart_contract_rejects_unbounded_filters_and_non_uuid_references():
         DashboardWidgetSpec.model_validate(invalid_reference)
 
 
-def test_dashboard_contract_is_private_chart_only_bounded_and_revisioned():
+def test_dashboard_contract_belongs_to_a_department_and_is_bounded_and_revisioned():
     widget = _group_widget()
-    dashboard = DashboardCreate.model_validate({"name": "Operations", "widgets": [widget]})
+    dashboard = DashboardCreate.model_validate(
+        {"department_id": DEPARTMENT, "name": "Operations", "widgets": [widget]}
+    )
     assert dashboard.name == "Operations"
     assert len(dashboard.widgets) == 1
-    assert DashboardCreate(name="Empty").widgets == []
+    assert DashboardCreate(department_id=DEPARTMENT, name="Empty").widgets == []
 
     with pytest.raises(ValidationError):
-        DashboardCreate.model_validate({"name": "Shared", "audience": {"kind": "everyone"}})
+        DashboardCreate.model_validate({"name": "No department"})
+    with pytest.raises(ValidationError):
+        DashboardCreate.model_validate(
+            {"department_id": DEPARTMENT, "name": "Shared", "audience": {"kind": "everyone"}}
+        )
+    with pytest.raises(ValidationError):
+        DashboardCreate.model_validate(
+            {"department_id": DEPARTMENT, "name": "Negative", "position": -1}
+        )
     with pytest.raises(ValidationError):
         DashboardWidgetSpec.model_validate({**widget, "widget_type": "text"})
     with pytest.raises(ValidationError):
@@ -192,7 +204,9 @@ def test_dashboard_contract_is_private_chart_only_bounded_and_revisioned():
             }
         )
     with pytest.raises(ValidationError):
-        DashboardCreate.model_validate({"name": "Too many", "widgets": [widget] * 13})
+        DashboardCreate.model_validate(
+            {"department_id": DEPARTMENT, "name": "Too many", "widgets": [widget] * 13}
+        )
 
     assert DashboardUpdate.model_validate({"revision": 2, "widgets": []}).widgets == []
     with pytest.raises(ValidationError):
@@ -209,7 +223,12 @@ def test_dashboard_supports_all_live_widget_types_and_persisted_refresh_cadence(
         _group_widget(),
     ]
     dashboard = DashboardCreate.model_validate(
-        {"name": "Operations", "refresh_cadence": "one-minute", "widgets": widgets}
+        {
+            "department_id": DEPARTMENT,
+            "name": "Operations",
+            "refresh_cadence": "one-minute",
+            "widgets": widgets,
+        }
     )
 
     assert [widget.widget_type for widget in dashboard.widgets] == [
@@ -219,10 +238,15 @@ def test_dashboard_supports_all_live_widget_types_and_persisted_refresh_cadence(
         "chart",
     ]
     assert dashboard.refresh_cadence == "one-minute"
-    assert DashboardCreate(name="Manual").refresh_cadence == "manual"
-    assert DashboardUpdate.model_validate(
-        {"revision": 1, "refresh_cadence": "five-minutes"}
-    ).refresh_cadence == "five-minutes"
+    assert DashboardCreate(department_id=DEPARTMENT, name="Manual").refresh_cadence == "manual"
+    assert (
+        DashboardUpdate.model_validate(
+            {"revision": 1, "refresh_cadence": "five-minutes"}
+        ).refresh_cadence
+        == "five-minutes"
+    )
 
     with pytest.raises(ValidationError):
-        DashboardCreate.model_validate({"name": "Unknown cadence", "refresh_cadence": "hourly"})
+        DashboardCreate.model_validate(
+            {"department_id": DEPARTMENT, "name": "Unknown cadence", "refresh_cadence": "hourly"}
+        )

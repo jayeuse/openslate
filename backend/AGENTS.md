@@ -9,7 +9,7 @@ The deployment profile is one full stack per client (single tenant, micro–medi
 - `app/core/` owns cross-cutting infrastructure: typed config, database/`AuditSession`/model registry, Supabase JWT verification and Auth integration, middleware, and other integrations.
 - `app/common/` owns shared dependencies/auth, standard listing, documented exceptions, and normalization.
 - `app/systems/<page>/<capability>/` owns domain features (`models.py`, `schemas.py`, `router.py`); add `service.py` only for coordination such as locking or multi-entity invariants.
-- `sandbox` owns departments, modules, fields, records, relationships, and lifecycle; `access` owns auth and users; `openview` owns views; `manage` owns workspace and audit; `platform` owns files. `reports`, `businesses`, and `admin` remain nested placeholders, while `boards` and `comms` remain reserved. This physical grouping does not restrict cross-domain audit, lifecycle, or file services. Read `migrations/AGENTS.md` before schema work.
+- `sandbox` owns departments, modules, fields, records, relationships, and lifecycle; `access` owns auth and users; `openview` owns views; `boards` owns the company, department and project Boards; `manage` owns workspace and audit; `platform` owns files. `reports`, `businesses`, and `admin` remain nested placeholders, while `comms` remains reserved. This physical grouping does not restrict cross-domain audit, lifecycle, or file services. Read `migrations/AGENTS.md` before schema work.
 
 ## Tooling and style
 
@@ -35,18 +35,18 @@ The deployment profile is one full stack per client (single tenant, micro–medi
 
 ## API conventions
 
-- Routers register under `/api` in `app/main.py`; the auth router aggregates users, roles, and invitations, which must not be registered separately.
-- Use exactly ten flat `<feature>.read`/`<feature>.write` capabilities. Malformed permission documents fail closed; literal `admin` has all capabilities. Users, roles, invitations, audit, and purge are administrator-only.
+- Routers register under `/api` in `app/main.py`; the auth router aggregates users and invitations, which must not be registered separately.
+- Take every read and write filter from `app/systems/access/policy/scope.py` (`effective_levels`, `allowed_module_ids`, `level_for`) through `policy/checks.py`; never add a parallel permission check. Admins manage everything; a guest never writes. Users, groups, invitations, purge, the Sandbox, CSV export, audit detail/export, and security events are administrator-only. Department managers may list audit entries only for an explicitly selected department where they have department-level `manage`; module-level `manage` is insufficient. A user with department `manage` may also read and replace the members of a group whose live access rows all fall inside departments they manage (`policy/delegation.py`, `EffectiveAccess.manages_all`). Renaming a group or changing its access stays administrator-only.
 - List endpoints use `StandardListRequest`/`StandardListResponse` and `ListQuerySpec`: explicit sort enum, allowlisted columns, default sort, UUID tie-breaker, and offset pagination (never keyset).
 - Keep errors route-local `HTTPException` shapes (for example lifecycle `{"detail":{"code","message"}}` and record validation with `code`, `message`, `errors`, `truncated`); do not add a global envelope.
-- Ordinary `DELETE` on departments/modules/fields returns `close_required`; hierarchical close/reopen/purge belongs to lifecycle, never CRUD.
+- Departments, modules, and fields expose only `GET` routes; the Sandbox publish is the only way to change them. Hierarchical close/reopen/purge belongs to lifecycle, never CRUD.
 
 ## Tests and scripts
 
 - Follow the root non-negotiable test workflow: focused case, passing feature batch, affected PostgreSQL integration, then pre-push gates. Run full suites only when preparing to push; edits, commits, and routine handoffs use focused checks.
 - Run `COVERAGE_BASE_REF=<base-ref> uv run python -m tests.fullstack_runner --backend-coverage-only` for the full backend coverage gate only when preparing to push. The configured pytest default is 90%; the runner includes complete disposable PostgreSQL tests and the changed-line gate. Use `uv run pytest --no-cov -k <name>` for focused iteration; this does not satisfy the coverage gate.
 - PostgreSQL integration tests require the runner-owned disposable Supabase stack and application database at the current Alembic head, explicit mutation flag, generated run identity, and private provider/database credentials manifest. Never reuse a personal or customer instance. Tests use `pytest.mark.integration`; override `get_db`/`get_current_user` with `dependency_overrides` and build rows with local `make_*` helpers, not a factory module.
-- `operations/` contains backend-owned operator commands. `supabase_keys.py --output <new-private-path>` creates a new owner-only key file without printing values; it does not assemble the full installation environment. `provision_database_role.py` provisions the application owner/runtime roles and narrowly scoped Auth-session read; `provision_storage.py` creates the private quarantine and ready buckets; `bootstrap_admin.py` sends the first administrator's provider invitation after the API is available. `seed_sample_data.py` seeds through the API with an admin token; `reset_application_data.py` is dry-run by default and requires `--execute`, a TTY, and exact digest confirmation. Repository-wide automation remains in root `scripts/`.
+- `operations/` contains backend-owned operator commands. `supabase_keys.py --output <new-private-path>` creates a new owner-only key file without printing values; it does not assemble the full installation environment. `provision_database_role.py` provisions the application owner/runtime roles and narrowly scoped Auth-session read; `provision_storage.py` creates the private quarantine and ready buckets; `bootstrap_admin.py` sends the first administrator's provider invitation after the API is available. `reset_application_data.py` is dry-run by default and requires `--execute`, a TTY, and exact digest confirmation. Repository-wide automation remains in root `scripts/`.
 
 ## TDD and coverage
 

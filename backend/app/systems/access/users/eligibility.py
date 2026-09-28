@@ -1,13 +1,12 @@
 """Invitation-derived eligibility rules for local user profiles."""
 
-from uuid import UUID
+from datetime import datetime
 
-from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.systems.access.users.models import User, UserDepartment, UserStatus
-from app.systems.sandbox.departments.models import Department
+from app.systems.access.identity.eligibility import is_identity_eligible
+from app.systems.access.users.models import User, UserStatus
 
 
 def is_established_user(user: User, *, status_value: str | None = None) -> bool:
@@ -39,25 +38,11 @@ def established_user_clause() -> ColumnElement[bool]:
     )
 
 
-def has_active_department_membership(db: Session, user_id: UUID, department_id: UUID) -> bool:
-    """Resolve current membership without trusting a caller-supplied audience claim."""
+def is_active_account(user: User, *, now: datetime | None = None) -> bool:
+    """Return whether an account can act now: active, accepted, unexpired, not deleted."""
 
-    statement = (
-        select(UserDepartment.id)
-        .join(User, User.id == UserDepartment.user_id)
-        .join(Department, Department.id == UserDepartment.department_id)
-        .where(
-            UserDepartment.user_id == user_id,
-            UserDepartment.department_id == department_id,
-            UserDepartment.is_deleted.is_(False),
-            UserDepartment.deleted_at.is_(None),
-            User.status == UserStatus.ACTIVE.value,
-            established_user_clause(),
-            User.is_deleted.is_(False),
-            User.deleted_at.is_(None),
-            Department.is_deleted.is_(False),
-            Department.deleted_at.is_(None),
-        )
-        .limit(1)
+    return (
+        user.status == UserStatus.ACTIVE.value
+        and is_established_user(user)
+        and is_identity_eligible(user, now=now)
     )
-    return db.scalar(statement) is not None

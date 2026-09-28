@@ -8,28 +8,22 @@ import {
   getOpenViewReport,
   getOpenViewReportConflict,
   getOpenViewReportRun,
-  listOpenViewReportAudienceRoles,
-  listOpenViewReportAudienceUsers,
   listOpenViewReports,
   listOpenViewReportRuns,
   listOpenViewSharedReportRuns,
   restoreOpenViewReport,
   updateOpenViewReport,
   type OpenViewReport,
-  type OpenViewReportCreateInput,
 } from "../../../src/components/systems/openview/adapters/reports-api";
 
 const moduleId = "00000000-0000-4000-8000-000000000101";
 const textFieldId = "00000000-0000-4000-8000-000000000102";
 const statusFieldId = "00000000-0000-4000-8000-000000000103";
 const amountFieldId = "00000000-0000-4000-8000-000000000104";
-const ownerId = "00000000-0000-4000-8000-000000000105";
 const reportId = "00000000-0000-4000-8000-000000000106";
 const runId = "00000000-0000-4000-8000-000000000107";
 const idempotencyKey = "00000000-0000-4000-8000-000000000108";
 const otherReportId = "00000000-0000-4000-8000-000000000109";
-const roleId = "00000000-0000-4000-8000-000000000110";
-const targetUserId = "00000000-0000-4000-8000-000000000111";
 const timestamp = "2026-09-23T00:00:00Z";
 
 type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
@@ -113,13 +107,11 @@ const wireRecipe = {
 function reportResponse(overrides: Record<string, unknown> = {}) {
   return {
     id: reportId,
-    owner_id: ownerId,
     module_id: moduleId,
     name: "Active work",
     subtitle: "Current operational records",
     revision: 4,
     recipe: wireRecipe,
-    audience: { kind: "private", role_id: null, user_id: null },
     is_deleted: false,
     created_at: timestamp,
     updated_at: timestamp,
@@ -138,20 +130,18 @@ const pagination = {
 function expectedReport(): OpenViewReport {
   return {
     id: reportId,
-    ownerId,
     moduleId,
     name: "Active work",
     subtitle: "Current operational records",
     revision: 4,
     recipe,
-    audience: { kind: "private", roleId: null, userId: null },
     isDeleted: false,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
 }
 
-test("lists and reads owner-private Reports with strict recipe mapping", async () => {
+test("lists and reads department Reports with strict recipe mapping", async () => {
   const mock = installFetch((input) =>
     String(input).includes("?")
       ? jsonResponse({ items: [reportResponse()], pagination })
@@ -238,166 +228,40 @@ test("creates and updates revisioned recipe metadata using the report wire DTO",
   }
 });
 
-test("creates and updates Reports with exclusive audience targets", async () => {
+test("creates and updates Reports without owner or audience fields", async () => {
   const mock = installFetch((_input, init) =>
-    jsonResponse(
-      reportResponse({
-        audience:
-          init?.method === "POST"
-            ? { kind: "role", role_id: roleId, user_id: null }
-            : { kind: "user", role_id: null, user_id: targetUserId },
-      }),
-      init?.method === "POST" ? 201 : 200,
-    ),
+    jsonResponse(reportResponse(), init?.method === "POST" ? 201 : 200),
   );
   try {
     await expect(
-      createOpenViewReport({
-        moduleId,
-        name: "Active work",
-        recipe,
-        audience: { kind: "role", roleId },
-      }),
-    ).resolves.toMatchObject({
-      audience: { kind: "role", roleId, userId: null },
-    });
-    expect(JSON.parse(String(mock.requests[0]?.init?.body)).audience).toEqual({
-      kind: "role",
-      role_id: roleId,
-      user_id: null,
-    });
+      createOpenViewReport({ moduleId, name: "Active work", recipe }),
+    ).resolves.toEqual(expectedReport());
+    const created = JSON.parse(String(mock.requests[0]?.init?.body));
+    expect(Object.keys(created).sort()).toEqual([
+      "module_id",
+      "name",
+      "recipe",
+    ]);
 
-    await expect(
-      updateOpenViewReport({
-        id: reportId,
-        revision: 4,
-        audience: { kind: "user", userId: targetUserId },
-      }),
-    ).resolves.toMatchObject({
-      audience: { kind: "user", roleId: null, userId: targetUserId },
-    });
+    await updateOpenViewReport({ id: reportId, revision: 4, name: "Renamed" });
     expect(JSON.parse(String(mock.requests[1]?.init?.body))).toEqual({
       revision: 4,
-      audience: { kind: "user", role_id: null, user_id: targetUserId },
+      name: "Renamed",
     });
 
     await expect(
       createOpenViewReport({
         moduleId,
-        name: "Invalid target",
+        name: "Audience is gone",
         recipe,
-        audience: {
-          kind: "private",
-          roleId,
-        } as unknown as OpenViewReportCreateInput["audience"],
-      }),
+        audience: { kind: "everyone" },
+      } as unknown as Parameters<typeof createOpenViewReport>[0]),
     ).rejects.toThrow();
     expect(mock.requests).toHaveLength(2);
   } finally {
     mock.restore();
   }
 });
-
-test("lists bounded, minimal Report audience choices without cached profile data", async () => {
-  const mock = installFetch((input) =>
-    jsonResponse({
-      items: String(input).includes("audience-roles")
-        ? [{ id: roleId, role: "Viewer" }]
-        : [{ id: targetUserId, username: "Ada" }],
-      pagination: {
-        ...pagination,
-        limit: String(input).includes("audience-roles") ? 1 : 25,
-      },
-    }),
-  );
-  try {
-    await expect(
-      listOpenViewReportAudienceRoles({ limit: 1, search: "  View  " }),
-    ).resolves.toEqual({
-      items: [{ id: roleId, role: "Viewer" }],
-      pagination: { limit: 1, offset: 0, count: 1, total: 1, hasMore: false },
-    });
-    expect(String(mock.requests[0]?.input)).toBe(
-      "/api/reports/audience-roles?limit=1&offset=0&search=View",
-    );
-    expect(mock.requests[0]?.init?.cache).toBe("no-store");
-
-    await expect(
-      listOpenViewReportAudienceUsers({ id: targetUserId }),
-    ).resolves.toEqual({
-      items: [{ id: targetUserId, username: "Ada" }],
-      pagination: { limit: 25, offset: 0, count: 1, total: 1, hasMore: false },
-    });
-    expect(String(mock.requests[1]?.input)).toBe(
-      `/api/reports/audience-users?limit=25&offset=0&id=${targetUserId}`,
-    );
-    expect(mock.requests[1]?.init?.cache).toBe("no-store");
-  } finally {
-    mock.restore();
-  }
-});
-
-test("Report audience choices reject unbounded input and extra profile data", async () => {
-  const mock = installFetch(() =>
-    jsonResponse({
-      items: [
-        { id: targetUserId, username: "Ada", email: "private@example.test" },
-      ],
-      pagination,
-    }),
-  );
-  try {
-    await expect(
-      listOpenViewReportAudienceUsers({ limit: 101 }),
-    ).rejects.toThrow();
-    await expect(
-      listOpenViewReportAudienceRoles({ id: "not-a-uuid" }),
-    ).rejects.toThrow();
-    expect(mock.requests).toHaveLength(0);
-    await expect(listOpenViewReportAudienceUsers()).rejects.toBeInstanceOf(
-      ApiContractError,
-    );
-  } finally {
-    mock.restore();
-  }
-});
-
-for (const kind of ["roles", "users"] as const) {
-  test(`rejects over-limit ${kind} Report audience choices from the server`, async () => {
-    const mock = installFetch(() =>
-      jsonResponse({
-        items:
-          kind === "roles"
-            ? [
-                { id: roleId, role: "Viewer" },
-                { id: otherReportId, role: "Editor" },
-              ]
-            : [
-                { id: targetUserId, username: "Ada" },
-                { id: otherReportId, username: "Ben" },
-              ],
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: 2,
-          total: 3,
-          has_more: true,
-        },
-      }),
-    );
-    try {
-      const request =
-        kind === "roles"
-          ? listOpenViewReportAudienceRoles
-          : listOpenViewReportAudienceUsers;
-      await expect(request({ limit: 1 })).rejects.toBeInstanceOf(
-        ApiContractError,
-      );
-    } finally {
-      mock.restore();
-    }
-  });
-}
 
 test("rejects malformed IDs, revisions, and recipe values before sending", async () => {
   const mock = installFetch(() => jsonResponse(reportResponse()));
@@ -663,8 +527,6 @@ test("does not expose a private server message from a stale Report conflict", ()
 test("JSON Report methods do not expose server error text or details", async () => {
   const calls = [
     () => listOpenViewReports(),
-    () => listOpenViewReportAudienceRoles(),
-    () => listOpenViewReportAudienceUsers(),
     () => listOpenViewReportRuns(reportId),
     () => getOpenViewReport(reportId),
     () => createOpenViewReport({ moduleId, name: "Active work", recipe }),
@@ -773,10 +635,12 @@ test("does not expose malformed wire responses or unsafe CSV error bodies", asyn
     malformed.restore();
   }
 
-  const invalidAudience = installFetch(() =>
+  // A stored owner or audience is no longer part of the contract.
+  const staleShape = installFetch(() =>
     jsonResponse(
       reportResponse({
-        audience: { kind: "private", role_id: ownerId, user_id: null },
+        owner_id: reportId,
+        audience: { kind: "private", user_id: null },
       }),
     ),
   );
@@ -785,7 +649,7 @@ test("does not expose malformed wire responses or unsafe CSV error bodies", asyn
       ApiContractError,
     );
   } finally {
-    invalidAudience.restore();
+    staleShape.restore();
   }
 
   const conflictMock = installFetch(() =>

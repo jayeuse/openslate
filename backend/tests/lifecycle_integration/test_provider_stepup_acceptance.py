@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import bindparam, select, text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -12,7 +12,10 @@ from uuid6 import uuid7
 from app.core.config import get_settings
 from app.main import create_app
 from app.systems.access.identity.rate_limits import login_fingerprint
-from app.systems.access.users.models import Role, User, UserRole
+from app.systems.access.users.models import User, UserRole
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.modules.models import Module
 
 pytest_plugins = ("tests.auth.test_provider_auth_integration",)
 pytestmark = pytest.mark.integration
@@ -20,18 +23,32 @@ pytestmark = pytest.mark.integration
 
 def _bind_provider_account_as_admin(owner: Engine, provider_id: UUID, local_id: UUID) -> None:
     with Session(owner) as db:
-        role = db.scalar(
-            select(Role).where(
-                Role.role == UserRole.ADMIN.value,
-                Role.is_deleted.is_(False),
-            )
-        )
         user = db.get(User, local_id)
-        assert role is not None
         assert user is not None
-        user.role_id = role.id
+        user.role = UserRole.ADMIN.value
         user.supabase_user_id = provider_id
         db.commit()
+
+
+def _seed_protected_module(owner: Engine, suffix: str) -> tuple[UUID, UUID, UUID]:
+    """Commit the lifecycle target directly; the Sandbox publish owns schema writes."""
+
+    with Session(owner) as db:
+        department = Department(department_name=f"Step-up {suffix}")
+        module = Module(department=department, module_name=f"Protected {suffix}")
+        field = Field(
+            module=module,
+            name=f"Label {suffix}",
+            type=FieldType.TEXT,
+            required=False,
+            position=0,
+            config={},
+        )
+        db.add_all([department, module, field])
+        db.flush()
+        identifiers = (department.id, module.id, field.id)
+        db.commit()
+    return identifiers
 
 
 def _cleanup_stepup_rows(
@@ -132,34 +149,11 @@ def test_real_provider_stepup_retries_consumes_and_rejects_replay(provider_accou
         assert original_sessions[0]["current"] is True
 
         suffix = uuid7().hex[:12]
-        department = client.post("/api/departments", json={"department_name": f"Step-up {suffix}"})
-        assert department.status_code == 201
-        department_id = UUID(department.json()["id"])
+        department_id, module_id, field_id = _seed_protected_module(owner, suffix)
         department_ids.add(department_id)
-
-        module = client.post(
-            "/api/modules",
-            json={
-                "department_id": str(department_id),
-                "module_name": f"Protected {suffix}",
-            },
-        )
-        assert module.status_code == 201
-        module_id = UUID(module.json()["id"])
         module_ids.add(module_id)
-
+        field_ids.add(field_id)
         module_id_path = str(module_id)
-        field = client.post(
-            "/api/fields",
-            json={
-                "module_id": module_id_path,
-                "name": f"Label {suffix}",
-                "type": "text",
-                "position": 0,
-            },
-        )
-        assert field.status_code == 201
-        field_ids.add(UUID(field.json()["id"]))
 
         preview = client.post(f"/api/modules/{module_id_path}/close/preview")
         assert preview.status_code == 200
@@ -200,7 +194,9 @@ def test_real_provider_stepup_retries_consumes_and_rejects_replay(provider_accou
             "Provider password verification must not admit another application session"
         )
 
-        reopened = client.post(f"/api/modules/{module_id_path}/restore")
+        reopened = client.post(
+            f"/api/modules/{module_id_path}/reopen", json={"confirmed": True}
+        )
         assert reopened.status_code == 200
         after_reopen = client.get(f"/api/modules/{module_id_path}")
         assert after_reopen.status_code == 200

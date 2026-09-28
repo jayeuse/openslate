@@ -33,7 +33,7 @@ class WorkState(StrEnum):
 
 class WorkKind(StrEnum):
     REPORT_RUN = "report-run"
-    ANNOUNCEMENT_PUBLISH = "announcement-publish"
+    POST_PUBLISH = "post-publish"
     EVENT_REMINDER = "event-reminder"
 
 
@@ -44,20 +44,21 @@ class ScheduledWork(Base):
     __audit_enabled__: ClassVar[bool] = False
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('report-run', 'announcement-publish', 'event-reminder')",
+            "kind IN ('report-run', 'post-publish', 'event-reminder')",
             name="ck_scheduled_work_kind",
         ),
         CheckConstraint(
-            "(kind = 'report-run' AND report_id IS NOT NULL AND announcement_id IS NULL "
-            "AND reminder_id IS NULL "
+            "(kind = 'report-run' AND report_id IS NOT NULL AND post_id IS NULL "
+            "AND reminder_id IS NULL AND occurrence_start_at IS NULL "
             "AND source_revision IS NULL AND scheduling_actor_id IS NULL "
             "AND publication_result_id IS NULL) OR "
-            "(kind = 'announcement-publish' AND report_id IS NULL "
-            "AND reminder_id IS NULL "
-            "AND announcement_id IS NOT NULL AND source_revision IS NOT NULL "
+            "(kind = 'post-publish' AND report_id IS NULL "
+            "AND reminder_id IS NULL AND occurrence_start_at IS NULL "
+            "AND post_id IS NOT NULL AND source_revision IS NOT NULL "
             "AND source_revision > 0 AND scheduling_actor_id IS NOT NULL AND run_id IS NULL) OR "
-            "(kind = 'event-reminder' AND report_id IS NULL AND announcement_id IS NULL "
-            "AND reminder_id IS NOT NULL AND source_revision IS NULL "
+            "(kind = 'event-reminder' AND report_id IS NULL AND post_id IS NULL "
+            "AND reminder_id IS NOT NULL AND occurrence_start_at IS NOT NULL "
+            "AND source_revision IS NULL "
             "AND scheduling_actor_id IS NULL AND publication_result_id IS NULL "
             "AND run_id IS NULL)",
             name="ck_scheduled_work_source",
@@ -77,17 +78,15 @@ class ScheduledWork(Base):
         CheckConstraint(
             "(kind = 'report-run' AND ((state = 'succeeded' AND run_id IS NOT NULL) "
             "OR (state <> 'succeeded' AND run_id IS NULL))) OR "
-            "(kind = 'announcement-publish' AND "
+            "(kind = 'post-publish' AND "
             "((state = 'succeeded' AND publication_result_id IS NOT NULL) "
             "OR (state <> 'succeeded' AND publication_result_id IS NULL))) OR "
             "(kind = 'event-reminder' AND run_id IS NULL AND publication_result_id IS NULL)",
             name="ck_scheduled_work_run",
         ),
         UniqueConstraint("report_id", "scheduled_for", name="uq_scheduled_work_report_occurrence"),
-        UniqueConstraint(
-            "announcement_id", "source_revision", name="uq_scheduled_work_announcement_occurrence"
-        ),
-        UniqueConstraint("reminder_id", name="uq_scheduled_work_reminder"),
+        UniqueConstraint("post_id", "source_revision", name="uq_scheduled_work_post_occurrence"),
+        UniqueConstraint("reminder_id", "occurrence_start_at", name="uq_scheduled_work_reminder"),
         UniqueConstraint("run_id", name="uq_scheduled_work_run"),
         Index("ix_scheduled_work_due", "kind", "state", "next_attempt_at", "id"),
         Index("ix_scheduled_work_expired", "kind", "state", "lease_expires_at", "id"),
@@ -102,18 +101,21 @@ class ScheduledWork(Base):
     report_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("reports.id", ondelete="RESTRICT"), nullable=True
     )
-    announcement_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("board_announcements.id", ondelete="RESTRICT"), nullable=True
+    post_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("board_posts.id", ondelete="RESTRICT"), nullable=True
     )
     reminder_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("board_event_reminders.id", ondelete="RESTRICT"), nullable=True
+    )
+    occurrence_start_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     source_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     scheduling_actor_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
     publication_result_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("board_announcement_revisions.id", ondelete="RESTRICT"), nullable=True
+        ForeignKey("board_post_revisions.id", ondelete="RESTRICT"), nullable=True
     )
     scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

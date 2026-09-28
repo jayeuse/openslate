@@ -11,7 +11,7 @@ from uuid import UUID
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import Uuid, column, select, table
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
@@ -73,8 +73,6 @@ def _eligible_user(user: User | None, provider_user_id: UUID, now: datetime) -> 
         and user.status == UserStatus.ACTIVE.value
         and is_identity_eligible(user, now=now)
         and is_established_user(user)
-        and user.role is not None
-        and not user.role.is_deleted
     )
 
 
@@ -107,7 +105,6 @@ def admit_provider_session(
         raise InvalidCredentials("Invalid credentials")
     user = db.scalar(
         select(User)
-        .options(joinedload(User.role), selectinload(User.department_memberships))
         .where(User.supabase_user_id == claims.user_id)
         .with_for_update(of=User)
     )
@@ -164,7 +161,6 @@ def resolve_provider_session(
         return None
     user = db.scalar(
         select(User)
-        .options(joinedload(User.role), selectinload(User.department_memberships))
         .where(User.id == session.user_id)
     )
     if not _eligible_user(user, claims.user_id, timestamp):

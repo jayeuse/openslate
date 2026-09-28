@@ -14,6 +14,7 @@ import type {
   OpenViewQueryDefinition,
   OpenViewRecord,
 } from "../adapters/views-api";
+import { openViewRecordFieldValue } from "../domain/record-display";
 import type { RecordInspectionPage } from "./live-record-inspector";
 
 const GROUP_PAGE_SIZE = 12;
@@ -99,7 +100,7 @@ function KanbanMemberCards({
     >
       {rows.map((row) => {
         const title = primaryField
-          ? valueText(row.data[primaryField.id])
+          ? valueText(openViewRecordFieldValue(row, primaryField))
           : "Untitled record";
         return (
           <li key={row.id} className="min-w-0">
@@ -118,7 +119,7 @@ function KanbanMemberCards({
                 {secondaryField ? (
                   <p className="text-muted-foreground mt-1 text-sm break-words">
                     {secondaryField.name}:{" "}
-                    {valueText(row.data[secondaryField.id])}
+                    {valueText(openViewRecordFieldValue(row, secondaryField))}
                   </p>
                 ) : null}
               </header>
@@ -130,7 +131,7 @@ function KanbanMemberCards({
                         {field.name}
                       </dt>
                       <dd className="break-words">
-                        {valueText(row.data[field.id])}
+                        {valueText(openViewRecordFieldValue(row, field))}
                       </dd>
                     </div>
                   ))}

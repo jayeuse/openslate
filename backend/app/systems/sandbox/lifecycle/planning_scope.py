@@ -270,7 +270,7 @@ def _row_state(entity_type: str, row: object) -> LifecycleRowState:
             "department_name",
             "module_id",
             "module_name",
-            "is_schema_accepted",
+            "title_field_id",
             "name",
             "type",
             "required",

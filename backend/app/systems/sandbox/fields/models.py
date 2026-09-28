@@ -26,6 +26,7 @@ class FieldType(StrEnum):
     DATE = "date"
     DATETIME = "datetime"
     SELECT = "select"
+    USER = "user"
     RELATIONSHIP = "relationship"
 
 
@@ -35,7 +36,7 @@ class Field(BaseModel):
         CheckConstraint("position >= 0", name="ck_fields_position_nonnegative"),
         CheckConstraint(
             "type IN ('text', 'long_text', 'email', 'url', 'number', 'decimal', 'int', "
-            "'boolean', 'date', 'datetime', 'select', 'relationship')",
+            "'boolean', 'date', 'datetime', 'select', 'user', 'relationship')",
             name="ck_fields_type",
         ),
         CheckConstraint(

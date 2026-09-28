@@ -1,71 +1,71 @@
-"""Designer-to-publication conversion and automation planning rules."""
+"""Designer-to-publication conversion and trigger planning rules."""
 
 import json
 from hashlib import sha256
 
 from app.systems.sandbox.designs.schemas import (
-    AutomationDocument,
     DesignField,
     RelationshipDocument,
     SandboxDocument,
+    TriggerDocument,
 )
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.fields.validation import field_config
 from app.systems.sandbox.publications.schemas import PublicationBlocker
 
 
-def _automation_blockers(
-    document: SandboxDocument, automation: AutomationDocument
+def _trigger_blockers(
+    document: SandboxDocument, record_trigger: TriggerDocument
 ) -> list[PublicationBlocker]:
     blockers: list[PublicationBlocker] = []
-    trigger = automation.trigger
+    trigger = record_trigger.trigger
     module_id = getattr(trigger, "module_id", None)
     if trigger.kind == "schedule" and module_id is None:
         blockers.append(
             PublicationBlocker(
                 code="schedule_module_required",
                 message="Schedules require a module",
-                target_id=automation.id,
+                target_id=record_trigger.id,
             )
         )
     if trigger.kind != "schedule" and module_id is None:
         blockers.append(
             PublicationBlocker(
-                code="automation_module_required",
-                message="Automation trigger requires a module",
-                target_id=automation.id,
+                code="trigger_module_required",
+                message="Trigger event requires a module",
+                target_id=record_trigger.id,
             )
         )
     trigger_value = getattr(trigger, "value", None)
-    blockers.extend(_value_scope_blockers(module_id, trigger_value, automation.id))
-    for condition in automation.condition_group.conditions:
-        blockers.extend(_reference_scope_blockers(condition.field, automation.id))
+    blockers.extend(_value_scope_blockers(module_id, trigger_value, record_trigger.id))
+    for condition in record_trigger.condition_group.conditions:
+        blockers.extend(_reference_scope_blockers(condition.field, record_trigger.id))
         if module_id is not None and condition.field.module_id != module_id:
             blockers.append(
                 PublicationBlocker(
-                    code="automation_cross_module_reference",
+                    code="trigger_cross_module_reference",
                     message="Conditions must use the trigger module",
-                    target_id=automation.id,
+                    target_id=record_trigger.id,
                 )
             )
-        blockers.extend(_value_scope_blockers(module_id, condition.value, automation.id))
-    for action in automation.actions:
+        blockers.extend(_value_scope_blockers(module_id, condition.value, record_trigger.id))
+    for action in record_trigger.actions:
         if action.kind != "set-field":
             blockers.append(
                 PublicationBlocker(
-                    code="automation_action_unsupported",
+                    code="trigger_action_unsupported",
                     message="Only Set field actions can be published",
-                    target_id=automation.id,
+                    target_id=record_trigger.id,
                 )
             )
             continue
-        blockers.extend(_reference_scope_blockers(action.target, automation.id))
+        blockers.extend(_reference_scope_blockers(action.target, record_trigger.id))
         if module_id is not None and action.target.module_id != module_id:
             blockers.append(
                 PublicationBlocker(
-                    code="automation_cross_module_reference",
+                    code="trigger_cross_module_reference",
                     message="Set field must target the trigger module",
-                    target_id=automation.id,
+                    target_id=record_trigger.id,
                 )
             )
         target = _document_field(document, action.target.module_id, action.target.field_id)
@@ -78,17 +78,18 @@ def _automation_blockers(
             "Date/Time",
             "Checkbox",
             "Select",
+            "User",
             "Email",
             "URL",
         }:
             blockers.append(
                 PublicationBlocker(
-                    code="automation_target_not_primitive",
+                    code="trigger_target_not_primitive",
                     message="Set field actions must target primitive fields",
-                    target_id=automation.id,
+                    target_id=record_trigger.id,
                 )
             )
-        blockers.extend(_value_scope_blockers(module_id, action.value, automation.id))
+        blockers.extend(_value_scope_blockers(module_id, action.value, record_trigger.id))
     return blockers
 
 
@@ -100,8 +101,8 @@ def _value_scope_blockers(
     if reference_module is not None and reference_module != module_id:
         blockers.append(
             PublicationBlocker(
-                code="automation_cross_module_reference",
-                message="Automation values must use the trigger module",
+                code="trigger_cross_module_reference",
+                message="Trigger values must use the trigger module",
                 target_id=target_id,
             )
         )
@@ -113,8 +114,8 @@ def _reference_scope_blockers(reference: object, target_id: str) -> list[Publica
         return []
     return [
         PublicationBlocker(
-            code="automation_relationship_reference_unsupported",
-            message="Relationship-based automation references are not supported yet",
+            code="trigger_relationship_reference_unsupported",
+            message="Relationship-based trigger references are not supported yet",
             target_id=target_id,
         )
     ]
@@ -139,6 +140,7 @@ def _field_type(field: DesignField) -> str:
         "Date/Time": "datetime",
         "Checkbox": "boolean",
         "Select": "select",
+        "User": "user",
     }[field.type]
 
 

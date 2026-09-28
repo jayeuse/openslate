@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
 from app.core.integrations.supabase_auth import (
@@ -58,7 +58,6 @@ def complete_recovery(
     try:
         local = db.scalar(
             select(User)
-            .options(joinedload(User.role))
             .where(User.supabase_user_id == provider_user.id)
             .with_for_update(of=User)
         )
@@ -68,8 +67,6 @@ def complete_recovery(
             or local.status != UserStatus.ACTIVE.value
             or not is_identity_eligible(local)
             or not is_established_user(local)
-            or local.role is None
-            or local.role.is_deleted
         ):
             raise ActionTokenInvalid("Recovery token is invalid")
         revoke_user_sessions(db, local.id, except_session_id=None)
@@ -93,7 +90,6 @@ def complete_invitation(
     try:
         local = db.scalar(
             select(User)
-            .options(joinedload(User.role))
             .where(User.supabase_user_id == provider_user.id)
             .with_for_update(of=User)
         )
@@ -104,8 +100,6 @@ def complete_invitation(
             or local.invitation_sent_at is None
             or local.provider_invitation_operation_id is None
             or not is_identity_eligible(local)
-            or local.role is None
-            or local.role.is_deleted
             or provider_user.app_metadata.get("openslate_user_id") != str(local.id)
             or provider_user.app_metadata.get("openslate_invitation_operation_id")
             != str(local.provider_invitation_operation_id)

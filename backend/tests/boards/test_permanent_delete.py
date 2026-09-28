@@ -15,17 +15,12 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.policy.models import Group
+from app.systems.access.users.models import User
 from app.systems.boards import lifecycle_router
-from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import (
-    Board,
-    BoardGrant,
-    BoardRecordPlacement,
-    BoardWidget,
-)
-from app.systems.boards.personal_models import BoardFavorite, BoardHome
+from app.systems.boards.models import Board, BoardGroup, BoardWidget
+from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditLog
 from app.systems.sandbox.departments.models import Department
@@ -33,7 +28,6 @@ from app.systems.sandbox.lifecycle.exceptions import LifecycleInvalidTarget
 from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.lifecycle.router import router as sandbox_lifecycle_router
 from app.systems.sandbox.lifecycle.schemas import (
-    LifecycleBlockerCode,
     LifecycleOperation,
     LifecycleTargetType,
 )
@@ -45,10 +39,9 @@ pytestmark = pytest.mark.integration
 
 
 def _actor(db: Session, *, admin: bool, password: str | None = None) -> User:
-    role = db.scalar(select(Role).where(Role.role == "admin")) if admin else None
+    role = "admin" if admin else None
     if role is None:
-        role = Role(role=f"board-purge-{uuid7().hex}", permissions={"records.read": True})
-        db.add(role)
+        role = "member"
         db.flush()
     user_id = uuid7()
     email = f"board-purge-{user_id.hex}@example.test"
@@ -63,7 +56,6 @@ def _actor(db: Session, *, admin: bool, password: str | None = None) -> User:
         supabase_user_id=provider_user_id,
         username=f"purge_{user_id.hex[:12]}",
         status="active",
-        role_id=role.id,
         role=role,
     )
     db.add(actor)
@@ -79,7 +71,11 @@ def _client(db: Session, actor: User) -> TestClient:
     return TestClient(app)
 
 
-def _board_graph(db: Session, actor: User) -> tuple[Board, dict[str, UUID], Record, Department]:
+def _board_graph(
+    db: Session, actor: User, *, scope: str = "project"
+) -> tuple[Board, dict[str, UUID], Record, Department]:
+    """An archived Board with one of each child; only project Boards are purged on their own."""
+
     board_department = Department(department_name=f"Board purge {uuid7().hex}")
     source_department = Department(department_name=f"Board source {uuid7().hex}")
     db.add_all([board_department, source_department])
@@ -89,33 +85,24 @@ def _board_graph(db: Session, actor: User) -> tuple[Board, dict[str, UUID], Reco
     db.flush()
     record = Record(module_id=module.id, data={"name": "keep"})
     board = Board(
-        owner_id=actor.id,
-        department_id=board_department.id,
+        scope=scope,
+        department_id=board_department.id if scope == "department" else None,
         name="Archive me",
         status="archived",
     )
-    db.add_all([record, board])
+    group = Group(name=f"Purge group {uuid7().hex}")
+    db.add_all([record, board, group])
     db.flush()
     children = [
-        BoardGrant(
-            board_id=board.id,
-            principal_type="everyone",
-            permission="view",
-            effect="allow",
-        ),
-        BoardRecordPlacement(board_id=board.id, record_id=record.id),
+        BoardGroup(board_id=board.id, group_id=group.id, level="read"),
         BoardWidget(
             board_id=board.id,
             module_id=module.id,
-            creator_id=actor.id,
             name="Source records",
             position=0,
             widget_type="records",
             config={},
-            audience_kind="everyone",
         ),
-        BoardFavorite(user_id=actor.id, board_id=board.id),
-        BoardHome(user_id=actor.id, board_id=board.id),
         BoardEvent(
             board_id=board.id,
             author_id=actor.id,
@@ -125,36 +112,33 @@ def _board_graph(db: Session, actor: User) -> tuple[Board, dict[str, UUID], Reco
             start_date=date(2026, 9, 23),
             end_date=date(2026, 9, 23),
             timezone_name="UTC",
-            audience_kind="everyone",
         ),
     ]
     db.add_all(children)
     db.flush()
-    announcement = BoardAnnouncement(
+    post = BoardPost(
         board_id=board.id,
         author_id=actor.id,
-        title="Soft-deleted announcement title",
-        body="Private announcement working body",
+        title="Soft-deleted post title",
+        body="Private post working body",
         status="published",
-        audience_kind="everyone",
         is_deleted=True,
         deleted_at=datetime.now(UTC),
     )
-    db.add(announcement)
+    db.add(post)
     db.flush()
-    revision = BoardAnnouncementRevision(
-        announcement_id=announcement.id,
+    revision = BoardPostRevision(
+        post_id=post.id,
         publication_number=1,
         publication_key=uuid7(),
         content_fingerprint="a" * 64,
         author_id=actor.id,
-        title="Published announcement title",
+        title="Published post title",
         body="Private published body",
-        audience_kind="everyone",
         published_at=datetime.now(UTC),
     )
     db.add(revision)
-    children.extend((announcement, revision))
+    children.extend((post, revision))
     db.commit()
     return board, {child.__tablename__: child.id for child in children}, record, board_department
 
@@ -174,25 +158,23 @@ def test_board_purge_preview_requires_admin_toggle_and_closed_board_and_lists_al
     admin = _actor(db, admin=True)
     member = _actor(db, admin=False)
     board, children, _, _ = _board_graph(db, admin)
-    archived = BoardAnnouncement(
+    archived = BoardPost(
         board_id=board.id,
         author_id=admin.id,
-        title="Archived announcement title",
+        title="Archived post title",
         body="Private archived body",
         status="archived",
-        audience_kind="everyone",
     )
     db.add(archived)
     db.flush()
-    archived_revision = BoardAnnouncementRevision(
-        announcement_id=archived.id,
+    archived_revision = BoardPostRevision(
+        post_id=archived.id,
         publication_number=1,
         publication_key=uuid7(),
         content_fingerprint="b" * 64,
         author_id=admin.id,
         title=archived.title,
         body=archived.body,
-        audience_kind="everyone",
         published_at=datetime.now(UTC),
     )
     db.add(archived_revision)
@@ -225,11 +207,11 @@ def test_board_purge_preview_requires_admin_toggle_and_closed_board_and_lists_al
     assert {(row["entity_type"], row["entity_id"]) for row in payload["impact"]["rows"]} == {
         ("boards", str(board.id)),
         *((table, str(row_id)) for table, row_id in children.items()),
-        ("board_announcements", str(archived.id)),
-        ("board_announcement_revisions", str(archived_revision.id)),
+        ("board_posts", str(archived.id)),
+        ("board_post_revisions", str(archived_revision.id)),
     }
     assert "Private event details" not in response.text
-    assert "Private announcement working body" not in response.text
+    assert "Private post working body" not in response.text
     assert "Private published body" not in response.text
     assert "Private archived body" not in response.text
     assert "Archive me" not in response.text
@@ -247,7 +229,7 @@ def test_board_purge_preview_requires_admin_toggle_and_closed_board_and_lists_al
     assert _client(db, admin).post(path).status_code == 200
 
 
-def test_confirmed_board_purge_deletes_eight_children_but_preserves_sources_and_audits(
+def test_confirmed_board_purge_deletes_its_children_but_preserves_sources_and_audits(
     integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = integration_owner_db
@@ -255,16 +237,7 @@ def test_confirmed_board_purge_deletes_eight_children_but_preserves_sources_and_
     admin = _actor(db, admin=True, password=password)
     set_audit_actor(db, admin.id)
     board, children, record, department = _board_graph(db, admin)
-    department.is_deleted = True
-    department.deleted_at = datetime.now(UTC)
-    db.commit()
-    before = plan_lifecycle(
-        db, LifecycleTargetType.DEPARTMENT, department.id, LifecycleOperation.PURGE, admin.id
-    )
-    assert any(
-        blocker.code is LifecycleBlockerCode.PURGE_BOARD_DEPENDENCY for blocker in before.blockers
-    )
-    untouched = Board(owner_id=admin.id, name="Keep this Board")
+    untouched = Board(scope="project", name="Keep this Board")
     db.add(untouched)
     db.commit()
     _enabled(monkeypatch, True)
@@ -286,20 +259,11 @@ def test_confirmed_board_purge_deletes_eight_children_but_preserves_sources_and_
     assert result.headers["Cache-Control"] == "no-store"
     assert result.json()["impact"]["impact_digest"] == preview.json()["impact"]["impact_digest"]
     assert db.get(Board, board.id) is None
-    for model in (
-        BoardGrant, BoardRecordPlacement, BoardWidget, BoardFavorite, BoardHome,
-        BoardEvent, BoardAnnouncement, BoardAnnouncementRevision,
-    ):
+    for model in (BoardGroup, BoardWidget, BoardEvent, BoardPost, BoardPostRevision):
         assert db.get(model, children[model.__tablename__]) is None
     assert db.get(Record, record.id) is not None
     assert db.get(Department, department.id) is not None
     assert db.get(Board, untouched.id) is not None
-    after = plan_lifecycle(
-        db, LifecycleTargetType.DEPARTMENT, department.id, LifecycleOperation.PURGE, admin.id
-    )
-    assert not any(
-        blocker.code is LifecycleBlockerCode.PURGE_BOARD_DEPENDENCY for blocker in after.blockers
-    )
     deleted = db.scalars(
         select(AuditLog).where(
             AuditLog.action == "delete",
@@ -347,15 +311,14 @@ def test_board_purge_rejects_new_published_revision_after_preview(
     client = _client(db, admin)
     path = f"/api/boards/{board.id}/purge"
     token = client.post(f"{path}/preview").json()["token"]
-    revision = BoardAnnouncementRevision(
-        announcement_id=children["board_announcements"],
+    revision = BoardPostRevision(
+        post_id=children["board_posts"],
         publication_number=2,
         publication_key=uuid7(),
         content_fingerprint="c" * 64,
         author_id=admin.id,
         title="Another published title",
         body="Another private published body",
-        audience_kind="everyone",
         published_at=datetime.now(UTC),
     )
     db.add(revision)
@@ -369,7 +332,7 @@ def test_board_purge_rejects_new_published_revision_after_preview(
     assert denied.status_code == 409
     assert denied.json()["detail"]["code"] == "impact_changed"
     assert db.get(Board, board.id) is not None
-    assert db.get(BoardAnnouncementRevision, revision.id) is not None
+    assert db.get(BoardPostRevision, revision.id) is not None
 
 
 def test_board_purge_rejects_wrong_confirmation_and_target_bound_token(
@@ -379,7 +342,7 @@ def test_board_purge_rejects_wrong_confirmation_and_target_bound_token(
     password = token_urlsafe(32)
     admin = _actor(db, admin=True, password=password)
     board, _, _, _ = _board_graph(db, admin)
-    other = Board(owner_id=admin.id, name="Another", status="archived")
+    other = Board(scope="project", name="Another", status="archived")
     db.add(other)
     db.commit()
     _enabled(monkeypatch, True)
@@ -439,10 +402,7 @@ def test_board_purge_rolls_back_child_deletes_on_commit_failure(
     assert failed.status_code == 409
     assert failed.json()["detail"]["code"] == "board_purge_conflict"
     assert db.get(Board, board.id) is not None
-    for model in (
-        BoardGrant, BoardRecordPlacement, BoardWidget, BoardFavorite, BoardHome,
-        BoardEvent, BoardAnnouncement, BoardAnnouncementRevision,
-    ):
+    for model in (BoardGroup, BoardWidget, BoardEvent, BoardPost, BoardPostRevision):
         assert db.get(model, children[model.__tablename__]) is not None
 
 
@@ -456,15 +416,12 @@ def test_board_purge_rechecks_fresh_admin_after_password_step_up(
     _enabled(monkeypatch, True)
     path = f"/api/boards/{board.id}/purge"
     token = _client(db, admin).post(f"{path}/preview").json()["token"]
-    member_role = Role(role=f"board-demoted-{uuid7().hex}", permissions={})
-    db.add(member_role)
-    db.flush()
     actor_id = admin.id
-    assert admin.role.role == "admin"
+    assert admin.role == "admin"
     db.expunge(admin)
     fresh_actor = db.get(User, actor_id)
     assert fresh_actor is not None
-    fresh_actor.role_id = member_role.id
+    fresh_actor.role = "member"
     db.commit()
 
     denied = _client(db, admin).post(

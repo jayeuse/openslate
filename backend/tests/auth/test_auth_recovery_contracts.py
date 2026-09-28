@@ -1,6 +1,6 @@
 """Recovery, invitation, and dependency contracts for local Identity routes."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -19,11 +19,8 @@ from app.core.integrations.supabase_auth import (
     ProviderTokens,
     ProviderUser,
 )
-from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.schemas import ActionTokenCompleteRequest, RecoveryRequest
-from app.systems.access.policy.models import AccessPolicyVersion
-from app.systems.access.users.models import IdentityKind, UserRole, UserStatus
-from app.systems.access.users.permissions import Capability
+from app.systems.access.users.models import UserRole, UserStatus
 from tests.auth.test_auth_router_contracts import _request, _role, _user
 
 pytestmark = pytest.mark.usefixtures("local_auth_router_settings")
@@ -53,9 +50,8 @@ def _action(monkeypatch, db, *, pending=False):
     monkeypatch.setattr(auth_router, "get_supabase_auth_client", lambda: client)
     db.scalar.return_value = user
     db.scalars.return_value = []
-    monkeypatch.setattr(acceptance, "_lock_admin_role", lambda *_a: None)
+    monkeypatch.setattr(acceptance, "_lock_administrator_changes", lambda *_a: None)
     monkeypatch.setattr(acceptance, "_lock_profile", lambda *_a: user)
-    monkeypatch.setattr(acceptance, "_lock_role_any_state", lambda *_a: user.role)
     events = []
     monkeypatch.setattr(
         acceptance, "_security_event", lambda **kw: events.append(kw["outcome"].value)
@@ -228,10 +224,9 @@ def test_dependency_authorization_fails_closed_for_stale_admin_and_setup_identit
         dependencies.get_current_user(setup)
     assert setup_denied.value.status_code == 401
 
-    admin_role = _role(UserRole.ADMIN)
-    actor = _user(role=admin_role)
+    actor = _user(role=_role(UserRole.ADMIN))
     db = Mock(spec=Session)
-    db.scalar.side_effect = [admin_role, actor]
+    db.scalar.side_effect = [actor]
     assert dependencies.require_fresh_exact_admin(db, actor.id) is actor
 
     db.scalar.side_effect = SQLAlchemyError("database unavailable")
@@ -239,70 +234,29 @@ def test_dependency_authorization_fails_closed_for_stale_admin_and_setup_identit
         dependencies.require_fresh_exact_admin(db, actor.id)
     assert unavailable.value.status_code == 503
 
-    assert dependencies.require_roles(UserRole.ADMIN)(actor) is actor
+    assert dependencies.require_admin(actor) is actor
     with pytest.raises(HTTPException) as denied:
-        dependencies.require_roles(UserRole.ADMIN)(_user())
+        dependencies.require_admin(_user())
     assert denied.value.status_code == 403
 
 
-def test_guest_with_an_inconsistent_admin_role_cannot_obtain_admin_authority() -> None:
-    admin_role = _role(UserRole.ADMIN)
-    guest = _user(role=admin_role)
-    guest.identity_kind = IdentityKind.GUEST.value
+def test_fresh_exact_admin_rejects_a_member_that_was_an_administrator() -> None:
+    demoted = _user(role=_role(UserRole.MEMBER))
     db = Mock(spec=Session)
-    db.scalar.side_effect = [admin_role, guest]
+    db.scalar.side_effect = [demoted]
 
     with pytest.raises(HTTPException) as exact_admin_denied:
-        dependencies.require_fresh_exact_admin(db, guest.id)
+        dependencies.require_fresh_exact_admin(db, demoted.id)
     assert exact_admin_denied.value.status_code == 403
-
-    with pytest.raises(HTTPException) as role_denied:
-        dependencies.require_roles(UserRole.ADMIN)(guest)
-    assert role_denied.value.status_code == 403
-
-    with pytest.raises(HTTPException) as capability_denied:
-        dependencies.require_legacy_capability(Capability.DEPARTMENTS_READ)(guest)
-    assert capability_denied.value.status_code == 403
+    db.rollback.assert_called_once()
 
 
-def test_fresh_exact_admin_and_capability_reloads_reject_an_expired_identity() -> None:
-    now = datetime.now(UTC)
-    admin_role = _role(UserRole.ADMIN)
-    actor = _user(role=admin_role)
-    actor.expires_at = now
+def test_fresh_exact_admin_rejects_an_expired_identity() -> None:
+    actor = _user(role=_role(UserRole.ADMIN))
+    actor.expires_at = datetime.now(UTC)
     exact_admin_db = Mock(spec=Session)
-    exact_admin_db.scalar.side_effect = [admin_role, actor]
+    exact_admin_db.scalar.side_effect = [actor]
 
     with pytest.raises(HTTPException) as exact_admin_denied:
         dependencies.require_fresh_exact_admin(exact_admin_db, actor.id)
     assert exact_admin_denied.value.status_code == 403
-
-    member_role = _role()
-    member_role.permissions = {Capability.DEPARTMENTS_READ.value: True}
-    actor.role_id = member_role.id
-    actor.role = member_role
-    session = IdentitySession(
-        id=uuid7(),
-        user_id=actor.id,
-        refresh_token_digest="refresh-digest",
-        csrf_token_digest="csrf-digest",
-        expires_at=now + timedelta(days=1),
-    )
-    capabilities_db = Mock(spec=Session)
-    capabilities_db.get.return_value = session
-    policy_version = AccessPolicyVersion(singleton_key="workspace", revision=1)
-    policy_version.is_deleted = False
-    capabilities_db.scalar.side_effect = [policy_version, member_role, actor]
-    capabilities_db.execute.return_value.all.return_value = []
-    capabilities_db.scalars.return_value.all.return_value = []
-
-    with pytest.raises(HTTPException) as capabilities_denied:
-        dependencies.require_fresh_capabilities(
-            capabilities_db,
-            actor_id=actor.id,
-            session_id=session.id,
-            expected_role_id=member_role.id,
-            capabilities=(Capability.DEPARTMENTS_READ,),
-        )
-    assert capabilities_denied.value.status_code == 403
-    assert capabilities_db.scalar.call_args_list[2].args[0]._for_update_arg.read is False

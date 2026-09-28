@@ -7,14 +7,15 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
-from sqlalchemy import Engine, func, select, text
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.access.policy.models import AccessRule
+from app.systems.access.policy.models import GroupMember
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
+from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.reports.report_run_support import _RunFixture as _RunFixture
@@ -88,25 +89,84 @@ def test_manual_report_run_freezes_grouped_csv_and_replays_key(
         assert (
             observer.scalar(
                 select(func.count()).select_from(ReportRunRow).where(ReportRunRow.run_id == run_id)
-            )
-            == 3
         )
+        == 3
+    )
 
 
-def test_manual_report_run_denies_foreign_and_incomplete_capabilities(
+def test_report_capture_resolves_current_select_label_and_freezes_each_run(
+    report_run_fixture: _RunFixture,
+) -> None:
+    fixture = report_run_fixture
+    option_id = str(uuid7())
+    with AuditSession(fixture.owner_engine) as writer:
+        writer.info[AUDIT_CONTEXT_KEY] = AuditContext(
+            performed_by=fixture.owner_id,
+            request_id=uuid7(),
+            request_method="PATCH",
+            request_path="/api/report-run-test/select-label",
+        )
+        field = writer.get(Field, fixture.note_field_id)
+        report = writer.get(Report, fixture.report_id)
+        assert field is not None and report is not None
+        field.type = FieldType.SELECT
+        field.config = {"options": [{"id": option_id, "label": "Needs review"}]}
+        recipe = dict(report.recipe)
+        recipe["fields"] = [
+            {**reference, "expected_type": "select"}
+            if reference["field_id"] == str(field.id)
+            else reference
+            for reference in recipe["fields"]
+        ]
+        report.recipe = recipe
+        for record in writer.scalars(select(Record).where(Record.module_id == fixture.module_id)):
+            record.data = {**record.data, str(field.id): option_id}
+        writer.commit()
+
+    path = f"/api/reports/{fixture.report_id}/runs"
+    first = fixture.client.post(path, headers=fixture.headers(key=uuid7()))
+    assert first.status_code == 201, first.text
+    first_csv = fixture.client.get(f"{path}/{first.json()['id']}/csv", headers=fixture.headers())
+    assert first_csv.status_code == 200
+    assert "Needs review" in first_csv.text and option_id not in first_csv.text
+
+    with AuditSession(fixture.owner_engine) as writer:
+        writer.info[AUDIT_CONTEXT_KEY] = AuditContext(
+            performed_by=fixture.owner_id,
+            request_id=uuid7(),
+            request_method="PATCH",
+            request_path="/api/report-run-test/select-rename",
+        )
+        field = writer.get(Field, fixture.note_field_id)
+        assert field is not None
+        field.config = {"options": [{"id": option_id, "label": "Ready for review"}]}
+        writer.commit()
+    second = fixture.client.post(path, headers=fixture.headers(key=uuid7()))
+    assert second.status_code == 201, second.text
+    second_csv = fixture.client.get(
+        f"{path}/{second.json()['id']}/csv", headers=fixture.headers()
+    )
+    assert second_csv.status_code == 200
+    assert "Ready for review" in second_csv.text and option_id not in second_csv.text
+    assert fixture.client.get(
+        f"{path}/{first.json()['id']}/csv", headers=fixture.headers()
+    ).content == first_csv.content
+
+
+def test_every_non_guest_module_reader_runs_a_report_and_a_guest_cannot(
     report_run_fixture: _RunFixture,
 ) -> None:
     fixture = report_run_fixture
     path = f"/api/reports/{fixture.report_id}/runs"
     assert fixture.client.post(path, headers=fixture.headers(key=uuid7())).status_code == 201
-    foreign = fixture.client.post(
+    other_reader = fixture.client.post(
         path, headers=fixture.headers(fixture.outsider_token, key=uuid7())
     )
-    assert foreign.status_code == 404
-    write_only = fixture.client.post(
-        path, headers=fixture.headers(fixture.write_only_token, key=uuid7())
+    assert other_reader.status_code == 201
+    guest = fixture.client.post(
+        path, headers=fixture.headers(fixture.guest_token, key=uuid7())
     )
-    assert write_only.status_code == 403
+    assert guest.status_code == 403
     assert fixture.client.post(path, headers=fixture.headers()).status_code == 422
     malformed = fixture.client.post(
         path,
@@ -115,7 +175,7 @@ def test_manual_report_run_denies_foreign_and_incomplete_capabilities(
     assert malformed.status_code == 422
 
 
-def test_report_run_and_output_require_workspace_access_policy(
+def test_report_run_and_output_require_module_read_at_run_and_read_time(
     report_run_fixture: _RunFixture,
 ) -> None:
     fixture = report_run_fixture
@@ -124,69 +184,49 @@ def test_report_run_and_output_require_workspace_access_policy(
     created = fixture.client.post(path, headers=fixture.headers(key=first_key))
     assert created.status_code == 201, created.text
     run_id = created.json()["id"]
-    rule_id = uuid7()
     with AuditSession(fixture.owner_engine) as writer:
         writer.info[AUDIT_CONTEXT_KEY] = AuditContext(
             performed_by=fixture.owner_id,
             request_id=uuid7(),
-            request_method="POST",
+            request_method="DELETE",
             request_path="/api/report-run-test/access-boundary",
         )
-        writer.add(
-            AccessRule(
-                id=rule_id,
-                subject_kind="user",
-                subject_id=fixture.owner_id,
-                scope_kind="workspace",
-                scope_id=None,
-                permission_id="records.read",
-                decision="deny",
-                policy_version=1,
-            )
+        membership = writer.scalar(
+            select(GroupMember).where(GroupMember.user_id == fixture.owner_id)
         )
+        assert membership is not None
+        writer.delete(membership)
         writer.commit()
-    try:
-        direct_query = fixture.client.post(
-            "/api/records/query",
-            headers=fixture.headers(),
-            json={
-                "module_id": str(fixture.module_id),
-                "definition": {
-                    "version": 1,
-                    "columns": [
-                        {
-                            "field_id": str(fixture.note_field_id),
-                            "expected_type": "text",
-                        }
-                    ],
-                },
+
+    direct_query = fixture.client.post(
+        "/api/records/query",
+        headers=fixture.headers(),
+        json={
+            "module_id": str(fixture.module_id),
+            "definition": {
+                "version": 1,
+                "columns": [{"field_id": str(fixture.note_field_id), "expected_type": "text"}],
             },
-        )
-        assert direct_query.status_code == 403
-        assert fixture.client.post(path, headers=fixture.headers(key=first_key)).status_code == 403
-        denied_run = fixture.client.post(path, headers=fixture.headers(key=uuid7()))
-        assert denied_run.status_code == 403
-        assert fixture.client.get(path, headers=fixture.headers()).status_code == 403
-        assert fixture.client.get(f"{path}/{run_id}", headers=fixture.headers()).status_code == 403
+        },
+    )
+    assert direct_query.status_code == 404
+    assert fixture.client.post(path, headers=fixture.headers(key=first_key)).status_code == 404
+    assert fixture.client.post(path, headers=fixture.headers(key=uuid7())).status_code == 404
+    assert fixture.client.get(path, headers=fixture.headers()).status_code == 404
+    assert fixture.client.get(f"{path}/{run_id}", headers=fixture.headers()).status_code == 404
+    assert fixture.client.get(f"{path}/{run_id}/csv", headers=fixture.headers()).status_code == 404
+    shared = fixture.client.get("/api/reports/shared-runs", headers=fixture.headers())
+    assert shared.status_code == 200
+    assert shared.json()["pagination"]["total"] == 0
+    with Session(fixture.owner_engine) as observer:
         assert (
-            fixture.client.get(f"{path}/{run_id}/csv", headers=fixture.headers()).status_code == 403
-        )
-        assert (
-            fixture.client.get("/api/reports/shared-runs", headers=fixture.headers()).status_code
-            == 403
-        )
-        with Session(fixture.owner_engine) as observer:
-            assert (
-                observer.scalar(
-                    select(func.count())
-                    .select_from(ReportRun)
-                    .where(ReportRun.report_id == fixture.report_id)
-                )
-                == 1
+            observer.scalar(
+                select(func.count())
+                .select_from(ReportRun)
+                .where(ReportRun.report_id == fixture.report_id)
             )
-    finally:
-        with fixture.owner_engine.begin() as cleanup:
-            cleanup.execute(text("DELETE FROM public.access_rules WHERE id = :id"), {"id": rule_id})
+            == 1
+        )
 
 
 def test_empty_grouped_run_is_frozen_and_unavailable_source_adds_no_run(
@@ -261,8 +301,8 @@ def test_source_purged_after_snapshot_rolls_back_run_and_rows(
     router_module = importlib.import_module("app.systems.openview.reports.router")
     original = router_module.capture_report_snapshot
 
-    def purge_after_snapshot(engine: Engine, report_id: UUID, owner_id: UUID):
-        snapshot = original(engine, report_id, owner_id)
+    def purge_after_snapshot(engine: Engine, report_id: UUID, actor_id: UUID | None):
+        snapshot = original(engine, report_id, actor_id)
         with AuditSession(fixture.owner_engine) as writer:
             writer.info[AUDIT_CONTEXT_KEY] = AuditContext(
                 performed_by=fixture.owner_id,

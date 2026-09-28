@@ -1,193 +1,152 @@
-"""Fail-closed Board access evaluation."""
+"""The level of a user on a Board, from the Board scope and the access function.
 
-from collections.abc import Iterable
+1. An inactive account has no level. An administrator manages every Board.
+2. Every active account reads the company Board; only administrators post on it.
+3. A department Board follows the department: the level of the department row,
+   or ``read`` when the user reads only some modules of the department. The same
+   rule decides who receives the Board's notifications.
+4. A project Board follows ``board_groups``: the highest level of the user's groups.
+5. A guest is limited to ``read``.
+
+``read`` lets a user see posts, events and tiles. ``write`` lets them add posts and
+events and change their own. ``manage`` also lets them pin posts, change tiles and
+change the posts and events of other users.
+"""
+
+from typing import Any
 from uuid import UUID
 
-from app.systems.access.identity.eligibility import is_identity_eligible
-from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import Role, User, UserRole, UserStatus
-from app.systems.access.users.permissions import Capability, has_capability
-from app.systems.boards.models import (
-    Board,
-    BoardGrant,
-    BoardGrantEffect,
-    BoardPermission,
-    BoardPrincipalType,
-)
+from sqlalchemy import Select, and_, false, or_, select, true
+from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
-_PRINCIPAL_PRIORITY = {
-    BoardPrincipalType.EVERYONE: 1,
-    BoardPrincipalType.ROLE: 2,
-    BoardPrincipalType.USER: 3,
-}
-_MISSING = object()
-_IMPLIED_PERMISSIONS = {
-    BoardPermission.VIEW: frozenset(BoardPermission),
-    BoardPermission.EDIT: frozenset({BoardPermission.EDIT, BoardPermission.MANAGE}),
-    BoardPermission.MANAGE: frozenset({BoardPermission.MANAGE}),
-}
+from app.core.base_model import utc_now
+from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
+from app.systems.access.policy.scope import effective_levels, includes, rank
+from app.systems.access.users.eligibility import established_user_clause, is_active_account
+from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.boards.models import Board, BoardGroup, BoardScope
 
 
-def _active_entity(value: object) -> bool:
-    return (
-        getattr(value, "is_deleted", None) is False
-        and getattr(value, "deleted_at", _MISSING) is None
+def _capped(user: User, level: AccessLevel | None) -> AccessLevel | None:
+    if level is not None and user.role == UserRole.GUEST.value:
+        return AccessLevel.READ
+    return level
+
+
+def project_level(db: Session, user: User, board_id: UUID) -> AccessLevel | None:
+    """The highest ``board_groups`` level of the user's live groups on one Board."""
+
+    levels = db.scalars(
+        select(BoardGroup.level)
+        .join(Group, Group.id == BoardGroup.group_id)
+        .join(GroupMember, GroupMember.group_id == Group.id)
+        .where(
+            BoardGroup.board_id == board_id,
+            BoardGroup.is_deleted.is_(False),
+            Group.is_deleted.is_(False),
+            GroupMember.is_deleted.is_(False),
+            GroupMember.user_id == user.id,
+        )
+    ).all()
+    found = [AccessLevel(level) for level in levels]
+    return max(found, key=rank) if found else None
+
+
+def board_level(db: Session, user: User, board: Board) -> AccessLevel | None:
+    """Return the user's level on the Board, or None when the user cannot read it."""
+
+    if not is_active_account(user) or board.is_deleted or board.deleted_at is not None:
+        return None
+    if user.role == UserRole.ADMIN.value:
+        return AccessLevel.MANAGE
+    if board.scope == BoardScope.COMPANY.value:
+        return AccessLevel.READ
+    if board.scope == BoardScope.DEPARTMENT.value:
+        if board.department_id is None:
+            return None
+        access = effective_levels(db, user)
+        level = access.department_level(board.department_id)
+        if level is None and board.department_id in access.module_departments.values():
+            level = AccessLevel.READ
+        return _capped(user, level)
+    if board.scope == BoardScope.PROJECT.value:
+        return _capped(user, project_level(db, user, board.id))
+    return None
+
+
+def has_level(db: Session, user: User, board: Board, required: AccessLevel) -> bool:
+    return includes(board_level(db, user, board), required)
+
+
+def visible_board_clause(user: User) -> ColumnElement[bool]:
+    """SQL form of ``board_level(...) is not None`` over each ``boards`` row."""
+
+    if not is_active_account(user):
+        return false()
+    if user.role == UserRole.ADMIN.value:
+        return true()
+    memberships = (
+        select(GroupMember.group_id)
+        .join(Group, Group.id == GroupMember.group_id)
+        .where(
+            GroupMember.user_id == user.id,
+            GroupMember.is_deleted.is_(False),
+            Group.is_deleted.is_(False),
+        )
+    )
+    department_rows = select(GroupAccess.department_id).where(
+        GroupAccess.group_id.in_(memberships), GroupAccess.is_deleted.is_(False)
+    )
+    project_rows = select(BoardGroup.board_id).where(
+        BoardGroup.group_id.in_(memberships), BoardGroup.is_deleted.is_(False)
+    )
+    return or_(
+        Board.scope == BoardScope.COMPANY.value,
+        and_(
+            Board.scope == BoardScope.DEPARTMENT.value,
+            Board.department_id.in_(department_rows),
+        ),
+        and_(Board.scope == BoardScope.PROJECT.value, Board.id.in_(project_rows)),
     )
 
 
-def _active_actor(actor: User | None) -> Role | None:
-    if actor is None or not _active_entity(actor) or not is_identity_eligible(actor):
-        return None
-    role = getattr(actor, "role", None)
-    actor_id = getattr(actor, "id", None)
-    role_id = getattr(actor, "role_id", None)
-    if (
-        not isinstance(role, Role)
-        or not _active_entity(role)
-        or getattr(actor, "status", None) != UserStatus.ACTIVE.value
-        or not is_established_user(actor)
-        or not isinstance(actor_id, UUID)
-        or not isinstance(role_id, UUID)
-        or getattr(role, "id", None) != role_id
-    ):
-        return None
-    return role
+def _active_accounts() -> Select[tuple[UUID]]:
+    timestamp = utc_now()
+    return select(User.id).where(
+        User.status == UserStatus.ACTIVE.value,
+        User.is_deleted.is_(False),
+        User.deleted_at.is_(None),
+        or_(User.expires_at.is_(None), User.expires_at > timestamp),
+        established_user_clause(),
+    )
 
 
-def _principal_priority(grant: BoardGrant, actor: User, role: Role, board_id: UUID) -> int | None:
-    if getattr(grant, "board_id", None) != board_id or not _active_entity(grant):
-        return None
+def board_reader_ids(db: Session, board: Board) -> frozenset[UUID]:
+    """Every active account that can read the Board now, for notifications.
 
-    raw_type = getattr(grant, "principal_type", None)
-    if not isinstance(raw_type, str):
-        return None
-    try:
-        principal_type = BoardPrincipalType(raw_type)
-    except ValueError:
-        return None
-
-    user_id = getattr(grant, "principal_user_id", None)
-    role_id = getattr(grant, "principal_role_id", None)
-    if principal_type is BoardPrincipalType.USER:
-        if role_id is not None or not isinstance(user_id, UUID) or user_id != actor.id:
-            return None
-    elif principal_type is BoardPrincipalType.ROLE:
-        if user_id is not None or not isinstance(role_id, UUID) or role_id != role.id:
-            return None
-    elif user_id is not None or role_id is not None:
-        return None
-
-    return _PRINCIPAL_PRIORITY[principal_type]
-
-
-def can_access_board(
-    board: Board | None,
-    actor: User | None,
-    action: str | BoardPermission,
-    grants: Iterable[BoardGrant],
-) -> bool:
-    """Check the global record gate and the Board's most-specific ACL rules.
-
-    View grants are required for reads; edit/manage grants are required for
-    mutations. Active creators and admins retain Board authority after the
-    global capability gate. For other principals, higher Board permissions
-    imply lower ones; explicit view denial also denies edit and manage.
-    Identity grants outrank role and everyone grants, while deny wins among
-    decisions at the same priority.
+    This is the set of users for whom :func:`board_level` is not None.
     """
 
-    if board is None or actor is None or not _active_entity(board):
-        return False
-    board_id = getattr(board, "id", None)
-    if not isinstance(board_id, UUID):
-        return False
-
-    try:
-        requested = BoardPermission(action)
-    except (TypeError, ValueError):
-        return False
-
-    role = _active_actor(actor)
-    if role is None:
-        return False
-    required_capability = (
-        Capability.RECORDS_READ if requested is BoardPermission.VIEW else Capability.RECORDS_WRITE
+    if board.is_deleted or board.deleted_at is not None:
+        return frozenset()
+    admins: Any = User.role == UserRole.ADMIN.value
+    statement = _active_accounts()
+    if board.scope == BoardScope.COMPANY.value:
+        return frozenset(db.scalars(statement).all())
+    member_groups = (
+        select(GroupMember.user_id)
+        .join(Group, Group.id == GroupMember.group_id)
+        .where(GroupMember.is_deleted.is_(False), Group.is_deleted.is_(False))
     )
-    if not has_capability(role, required_capability):
-        return False
-    return _board_permission_granted(board, actor, role, requested, grants)
-
-
-def can_read_board_grants(
-    board: Board | None,
-    actor: User | None,
-    grants: Iterable[BoardGrant],
-) -> bool:
-    """Allow a global reader to inspect grants only when they manage the Board.
-
-    Listing access rules is a read operation and does not require the global
-    records.write capability. Mutations continue to use :func:`can_access_board`
-    with ``manage``, which does require records.write.
-    """
-
-    if board is None or actor is None or not _active_entity(board):
-        return False
-    if not isinstance(getattr(board, "id", None), UUID):
-        return False
-    role = _active_actor(actor)
-    if role is None or not has_capability(role, Capability.RECORDS_READ):
-        return False
-    return _board_permission_granted(board, actor, role, BoardPermission.MANAGE, grants)
-
-
-def _board_permission_granted(
-    board: Board,
-    actor: User,
-    role: Role,
-    requested: BoardPermission,
-    grants: Iterable[BoardGrant],
-) -> bool:
-    board_id = getattr(board, "id", None)
-    if not isinstance(board_id, UUID):
-        return False
-    if getattr(board, "owner_id", None) == actor.id or role.role == UserRole.ADMIN.value:
-        return True
-
-    matching: list[tuple[int, BoardPermission, BoardGrantEffect]] = []
-    for grant in grants:
-        priority = _principal_priority(grant, actor, role, board_id)
-        if priority is None:
-            continue
-        raw_permission = getattr(grant, "permission", None)
-        raw_effect = getattr(grant, "effect", None)
-        if not isinstance(raw_permission, str) or not isinstance(raw_effect, str):
-            continue
-        try:
-            permission = BoardPermission(raw_permission)
-            effect = BoardGrantEffect(raw_effect)
-        except ValueError:
-            continue
-        matching.append((priority, permission, effect))
-
-    allowed_permissions = _IMPLIED_PERMISSIONS[requested]
-    denied_permissions = {requested}
-    if requested is not BoardPermission.VIEW:
-        denied_permissions.add(BoardPermission.VIEW)
-
-    decisions = [
-        (priority, effect)
-        for priority, permission, effect in matching
-        if (effect is BoardGrantEffect.ALLOW and permission in allowed_permissions)
-        or (effect is BoardGrantEffect.DENY and permission in denied_permissions)
-    ]
-    if not decisions:
-        return False
-
-    highest_priority = max(priority for priority, _ in decisions)
-    highest_priority_effects = {
-        effect for priority, effect in decisions if priority == highest_priority
-    }
-    return (
-        BoardGrantEffect.ALLOW in highest_priority_effects
-        and BoardGrantEffect.DENY not in highest_priority_effects
-    )
+    if board.scope == BoardScope.DEPARTMENT.value and board.department_id is not None:
+        readers = member_groups.join(GroupAccess, GroupAccess.group_id == Group.id).where(
+            GroupAccess.is_deleted.is_(False), GroupAccess.department_id == board.department_id
+        )
+    elif board.scope == BoardScope.PROJECT.value:
+        readers = member_groups.join(BoardGroup, BoardGroup.group_id == Group.id).where(
+            BoardGroup.is_deleted.is_(False), BoardGroup.board_id == board.id
+        )
+    else:
+        return frozenset()
+    return frozenset(db.scalars(statement.where(or_(admins, User.id.in_(readers)))).all())

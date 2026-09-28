@@ -10,10 +10,11 @@ from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
+from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
-from app.systems.openview.reports.audience import capture_run_eligible_users
+from app.systems.openview.reports.eligibility import capture_run_eligible_users
 from app.systems.openview.reports.models import Report, ReportRun
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
 from app.systems.platform.scheduling.service import (
@@ -26,15 +27,13 @@ from app.systems.platform.scheduling.service import (
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import guarded_create_engine
+from tests.rbac.support import make_group_access
 
 pytestmark = pytest.mark.integration
 
 
-def _subject(db: AuditSession) -> tuple[User, Report, Role, Module, Department]:
-    role = Role(
-        role=f"report-schedule-{uuid7().hex}",
-        permissions={"records.read": True, "records.write": True},
-    )
+def _subject(db: AuditSession) -> tuple[User, Report, GroupAccess, Module, Department]:
+    role = "member"
     owner = User(
         email=f"report-schedule-{uuid7().hex}@example.test",
         username=f"report_schedule_{uuid7().hex[:16]}",
@@ -47,14 +46,15 @@ def _subject(db: AuditSession) -> tuple[User, Report, Role, Module, Department]:
     module = Module(
         department_id=department.id,
         module_name=f"Report schedule {uuid7().hex}",
-        is_schema_accepted=True,
     )
     db.add(module)
     db.flush()
-    report = Report(owner_id=owner.id, module_id=module.id, name="Scheduled", recipe={})
+    # The owner reads the report module through one group.
+    grant = make_group_access(db, [owner], department, module, level=AccessLevel.READ)
+    report = Report(module_id=module.id, name="Scheduled", recipe={})
     db.add(report)
     db.flush()
-    return owner, report, role, module, department
+    return owner, report, grant, module, department
 
 
 def _run(db: AuditSession, report: Report, work: ScheduledWork) -> ReportRun:
@@ -76,7 +76,7 @@ def _run(db: AuditSession, report: Report, work: ScheduledWork) -> ReportRun:
 
 def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integration_owner_db):
     db = integration_owner_db
-    owner, report, _role, _module, _department = _subject(db)
+    owner, report, _grant, _module, _department = _subject(db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
     work = queue_report_occurrence(db, report.id, scheduled_for=now)
     duplicate = queue_report_occurrence(db, report.id, scheduled_for=now)
@@ -120,7 +120,7 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
     with pytest.raises(IntegrityError), db.begin_nested():
         db.delete(work)
         db.flush()
-    other_role = Role(role=f"report-other-{uuid7().hex}", permissions={"records.read": True})
+    other_role = "member"
     other = User(
         email=f"report-other-{uuid7().hex}@example.test",
         username=f"report_other_{uuid7().hex[:16]}",
@@ -135,17 +135,18 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
     )
 
 
-def test_completion_rechecks_owner_capability_and_current_user_read_is_private(
+def test_completion_needs_no_reader_and_a_lost_read_hides_the_notification(
     integration_owner_db,
 ):
+    """The workspace completes the run; the current module read decides who sees it."""
+
     db = integration_owner_db
-    owner, report, role, _module, _department = _subject(db)
-    other_role = Role(role=f"report-other-{uuid7().hex}", permissions={"records.read": True})
+    owner, report, grant, _module, _department = _subject(db)
     other = User(
         email=f"report-other-{uuid7().hex}@example.test",
         username=f"report_other_{uuid7().hex[:16]}",
         status=UserStatus.ACTIVE.value,
-        role=other_role,
+        role="member",
     )
     db.add(other)
     db.flush()
@@ -153,85 +154,53 @@ def test_completion_rechecks_owner_capability_and_current_user_read_is_private(
     work = queue_report_occurrence(db, report.id, scheduled_for=now)
     claim = claim_due_work(db, now=now)[0]
     run = _run(db, report, work)
-    assert list_current_user_notifications(db, other.id) == []
 
-    role.permissions = {"records.write": True}
-    assert not complete_report_work(db, claim, run.id, now=now)
-    assert work.state == WorkState.CANCELED
-    assert list_current_user_notifications(db, owner.id) == []
-
-
-@pytest.mark.parametrize("audience_kind", ["role", "user"])
-def test_owner_excluded_by_current_report_audience_can_queue_work_for_readers(
-    integration_owner_db, audience_kind
-):
-    db = integration_owner_db
-    owner, report, _role, _module, _department = _subject(db)
-    other_role = Role(
-        role=f"report-audience-{uuid7().hex}",
-        permissions={"records.read": True, "records.write": True},
-    )
-    other = User(
-        email=f"report-audience-{uuid7().hex}@example.test",
-        username=f"report_audience_{uuid7().hex[:16]}",
-        status=UserStatus.ACTIVE.value,
-        role=other_role,
-    )
-    db.add(other)
+    grant.is_deleted = True
+    grant.deleted_at = now
     db.flush()
-    report.audience_kind = audience_kind
-    report.audience_role_id = other_role.id if audience_kind == "role" else None
-    report.audience_user_id = other.id if audience_kind == "user" else None
+    assert complete_report_work(db, claim, run.id, now=now)
+    assert work.state == WorkState.SUCCEEDED
+    assert list_current_user_notifications(db, owner.id) == []
+    assert list_current_user_notifications(db, other.id) == []
+    grant.is_deleted = False
+    grant.deleted_at = None
+    db.flush()
+    assert len(list_current_user_notifications(db, owner.id)) == 1
+
+
+def test_report_occurrence_queues_while_nobody_can_read_the_module(integration_owner_db):
+    db = integration_owner_db
+    _owner, report, grant, _module, _department = _subject(db)
+    grant.is_deleted = True
+    grant.deleted_at = datetime(2026, 1, 1, tzinfo=UTC)
+    db.flush()
 
     work = queue_report_occurrence(db, report.id, scheduled_for=datetime(2026, 1, 1, tzinfo=UTC))
+
     assert db.scalar(select(ScheduledWork).where(ScheduledWork.report_id == report.id)) == work
-    assert list_current_user_notifications(db, owner.id) == []
 
 
-def test_notification_visibility_follows_current_report_audience_and_owner_role(
-    integration_owner_db,
-):
+def test_report_occurrence_refuses_an_archived_report_or_a_closed_module(integration_owner_db):
     db = integration_owner_db
-    owner, report, role, _module, _department = _subject(db)
-    other_role = Role(
-        role=f"report-audience-{uuid7().hex}",
-        permissions={"records.read": True, "records.write": True},
-    )
-    other = User(
-        email=f"report-audience-{uuid7().hex}@example.test",
-        username=f"report_audience_{uuid7().hex[:16]}",
-        status=UserStatus.ACTIVE.value,
-        role=other_role,
-    )
-    db.add(other)
-    db.flush()
+    _owner, report, _grant, module, _department = _subject(db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
-    work = queue_report_occurrence(db, report.id, scheduled_for=now)
-    claim = claim_due_work(db, now=now)[0]
-    run = _run(db, report, work)
-    assert complete_report_work(db, claim, run.id, now=now)
-    assert len(list_current_user_notifications(db, owner.id)) == 1
-
-    report.audience_kind = "role"
-    report.audience_role_id = role.id
-    assert len(list_current_user_notifications(db, owner.id)) == 1
-    owner.role_id = other_role.id
-    assert list_current_user_notifications(db, owner.id) == []
-    report.audience_role_id = other_role.id
-    assert len(list_current_user_notifications(db, owner.id)) == 1
-
-    report.audience_kind = "user"
-    report.audience_role_id = None
-    report.audience_user_id = other.id
-    assert list_current_user_notifications(db, owner.id) == []
-    assert list_current_user_notifications(db, other.id) == []
-    report.audience_user_id = owner.id
-    assert len(list_current_user_notifications(db, owner.id)) == 1
+    module.is_deleted = True
+    module.deleted_at = now
+    db.flush()
+    with pytest.raises(ValueError):
+        queue_report_occurrence(db, report.id, scheduled_for=now)
+    module.is_deleted = False
+    module.deleted_at = None
+    report.is_deleted = True
+    report.deleted_at = now
+    db.flush()
+    with pytest.raises(ValueError):
+        queue_report_occurrence(db, report.id, scheduled_for=now)
 
 
 def test_failed_work_retries_with_backoff_then_stops_after_five_attempts(integration_owner_db):
     db = integration_owner_db
-    _owner, report, _role, _module, _department = _subject(db)
+    _owner, report, _grant, _module, _department = _subject(db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
     work = queue_report_occurrence(db, report.id, scheduled_for=now)
     for attempt in range(1, 6):
@@ -255,11 +224,12 @@ def test_concurrent_claim_skips_locked_due_row_and_claims_next():
     try:
         with AuditSession(engine) as setup:
             setup.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
-            owner, report, role, module, department = _subject(setup)
+            owner, report, grant, module, department = _subject(setup)
             ids.update(
                 owner=owner.id,
                 report=report.id,
-                role=role.id,
+                grant=grant.id,
+                group=grant.group_id,
                 module=module.id,
                 department=department.id,
             )
@@ -285,11 +255,19 @@ def test_concurrent_claim_skips_locked_due_row_and_claims_next():
                     ("first", ScheduledWork),
                     ("second", ScheduledWork),
                     ("report", Report),
+                    ("grant", GroupAccess),
                     ("module", Module),
                     ("department", Department),
-                    ("owner", User),
-                    ("role", Role),
                 ):
+                    if key in ids and (row := cleanup.get(model, ids[key])) is not None:
+                        cleanup.delete(row)
+                        cleanup.flush()
+                for membership in cleanup.scalars(
+                    select(GroupMember).where(GroupMember.group_id == ids["group"])
+                ):
+                    cleanup.delete(membership)
+                cleanup.flush()
+                for key, model in (("group", Group), ("owner", User)):
                     if key in ids and (row := cleanup.get(model, ids[key])) is not None:
                         cleanup.delete(row)
                         cleanup.flush()

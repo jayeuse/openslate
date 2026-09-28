@@ -72,11 +72,16 @@ def test_comparison_rejects_wrong_literal_type(kind, value):
 
 def test_removed_select_option_requires_explicit_repair():
     item = field(FieldType.SELECT)
-    item.config = {"options": ["new"]}
+    item.config = {"options": [{"id": str(uuid7()), "label": "new"}]}
     with pytest.raises(HTTPException) as error:
         comparison_value(
             item,
-            QueryFilter(field_id=item.id, expected_type="select", operator="in", value=["old"]),
+            QueryFilter(
+                field_id=item.id,
+                expected_type="select",
+                operator="in",
+                value=[str(uuid7())],
+            ),
         )
     assert error.value.status_code == 409
     assert error.value.detail["code"] == "view_invalid"

@@ -10,7 +10,7 @@ const otherNotificationId = "00000000-0000-4000-8000-000000000202";
 const reportId = "00000000-0000-4000-8000-000000000203";
 const runId = "00000000-0000-4000-8000-000000000204";
 const boardId = "00000000-0000-4000-8000-000000000205";
-const announcementId = "00000000-0000-4000-8000-000000000206";
+const postId = "00000000-0000-4000-8000-000000000206";
 const publicationRevisionId = "00000000-0000-4000-8000-000000000207";
 const eventId = "00000000-0000-4000-8000-000000000208";
 const timestamp = "2026-09-23T00:00:00+00:00";
@@ -142,15 +142,15 @@ test("marks one notification read without a body or inferred report authority", 
   }
 });
 
-test("accepts reference-only Board announcement and Event reminder variants", async () => {
+test("accepts reference-only Board post and Event reminder variants", async () => {
   const mock = installFetch(() =>
     jsonResponse({
       items: [
         {
           id: notificationId,
-          kind: "announcement-publish",
+          kind: "post-publish",
           board_id: boardId,
-          announcement_id: announcementId,
+          post_id: postId,
           publication_revision_id: publicationRevisionId,
           status: "unread",
           scheduled_for: timestamp,
@@ -163,6 +163,7 @@ test("accepts reference-only Board announcement and Event reminder variants", as
           board_id: boardId,
           event_id: eventId,
           occurrence_id: `${eventId}:2026-09-23`,
+          occurrence_start_at: timestamp,
           status: "read",
           scheduled_for: timestamp,
           created_at: timestamp,
@@ -177,9 +178,9 @@ test("accepts reference-only Board announcement and Event reminder variants", as
     expect(result.items).toEqual([
       {
         id: notificationId,
-        kind: "announcement-publish",
+        kind: "post-publish",
         boardId,
-        announcementId,
+        postId,
         publicationRevisionId,
         status: "unread",
         scheduledFor: timestamp,
@@ -192,6 +193,7 @@ test("accepts reference-only Board announcement and Event reminder variants", as
         boardId,
         eventId,
         occurrenceId: `${eventId}:2026-09-23`,
+        occurrenceStartAt: timestamp,
         status: "read",
         scheduledFor: timestamp,
         createdAt: timestamp,

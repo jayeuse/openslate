@@ -486,7 +486,7 @@ test("provider invitation and recovery emails complete through rendered forms", 
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByRole("button", { name: "Request recovery" }).click();
   await expect(page.getByRole("status")).toHaveText(
-    "If an eligible account matches that email, recovery instructions will be sent.",
+    "If an account matches that email, we will send recovery instructions.",
   );
 
   const recoveryLink = await waitForMailpitActionLink(
@@ -510,7 +510,7 @@ test("provider invitation and recovery emails complete through rendered forms", 
   await page.getByLabel("New password", { exact: true }).fill(replayPassword);
   await page.getByLabel("Confirm new password").fill(replayPassword);
   await page.getByRole("button", { name: "Reset password" }).click();
-  await expect(page.getByRole("alert")).toHaveText(
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText(
     "We could not reset your password. Check the requirements and try again.",
   );
 

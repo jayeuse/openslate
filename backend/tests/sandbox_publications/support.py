@@ -5,7 +5,7 @@ from hashlib import sha256
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.service import read_document, replace_document
@@ -19,13 +19,13 @@ from tests.sandbox_designs.fixtures import sample_document
 
 
 def actor(db: Session) -> User:
-    role = db.scalar(select(Role).where(Role.role == "admin"))
+    role = "admin"
     assert role is not None
     value = User(
         email="publication-owner@example.test",
         username="publication-owner",
         status=UserStatus.ACTIVE.value,
-        role_id=role.id,
+        role=role,
     )
     db.add(value)
     db.flush()
@@ -34,7 +34,7 @@ def actor(db: Session) -> User:
 
 def publishable_document() -> SandboxDocument:
     document = sample_document().model_copy(deep=True)
-    document.automations = []
+    document.triggers = []
     document.scenarios = []
     return document
 

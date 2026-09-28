@@ -30,8 +30,8 @@ function notificationTitle(item: OpenViewReportNotification): string {
   switch (item.kind) {
     case "report-run":
       return "Scheduled report run";
-    case "announcement-publish":
-      return "Board announcement";
+    case "post-publish":
+      return "Board post";
     case "event-reminder":
       return "Event reminder";
   }
@@ -41,7 +41,7 @@ function notificationTimeLabel(item: OpenViewReportNotification): string {
   switch (item.kind) {
     case "report-run":
       return "Scheduled";
-    case "announcement-publish":
+    case "post-publish":
       return "Publication time";
     case "event-reminder":
       return "Reminder due";
@@ -221,10 +221,10 @@ export default function ConnectedReportNotifications() {
                 {item.kind !== "report-run" && (
                   <a
                     className="text-primary focus-visible:outline-ring inline-flex min-h-11 items-center text-sm underline focus-visible:outline-2 focus-visible:outline-offset-2"
-                    href={`/boards?board=${encodeURIComponent(item.boardId)}&section=${item.kind === "announcement-publish" ? "announcements" : "calendar"}`}
+                    href={`/boards?board=${encodeURIComponent(item.boardId)}&section=${item.kind === "post-publish" ? "posts" : "calendar"}`}
                   >
-                    {item.kind === "announcement-publish"
-                      ? "Open Board announcements"
+                    {item.kind === "post-publish"
+                      ? "Open Board posts"
                       : "Open Board calendar"}
                   </a>
                 )}

@@ -22,6 +22,8 @@ import {
   type OpenViewAggregateResult,
   type OpenViewAggregateSnapshotResult,
 } from "../../openview/adapters/analytics-api";
+import { subscribeOpenViewInvalidations } from "../../openview/adapters/invalidation-events";
+import { invalidatesRecords } from "../../openview/adapters/openview-queries";
 
 export type LiveWidgetData =
   | {
@@ -98,7 +100,6 @@ function widgetSignature(widget: BoardWidget): string {
     widget.moduleId,
     widget.widgetType,
     widget.config,
-    widget.audience,
   ]);
 }
 
@@ -306,8 +307,34 @@ export function useLiveBoardWidgets(
 ) {
   const [state, setState] = useState<LiveWidgetsState>(emptyLiveWidgetsState);
   const [retryKey, setRetryKey] = useState(0);
+  const [invalidationKey, setInvalidationKey] = useState(0);
   const sequence = useRef(0);
+  const stateRef = useRef(state);
   const key = boardId === null ? null : `${boardId}:${workspaceToday ?? ""}`;
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    if (boardId === null || key === null) return;
+    const refresh = () => setInvalidationKey((value) => value + 1);
+    return subscribeOpenViewInvalidations((event) => {
+      if (event.type === "resync") {
+        refresh();
+        return;
+      }
+      if (!invalidatesRecords(event.entity)) return;
+      const current = stateRef.current;
+      if (
+        current.key !== key ||
+        (current.status !== "ready" && current.items.length === 0) ||
+        event.moduleId === undefined ||
+        current.items.some((item) => item.widget.moduleId === event.moduleId)
+      )
+        refresh();
+    }, refresh);
+  }, [boardId, key]);
 
   useEffect(() => {
     if (boardId === null || key === null) {
@@ -422,7 +449,7 @@ export function useLiveBoardWidgets(
     return () => {
       sequence.current += 1;
     };
-  }, [boardId, key, workspaceToday, refreshKey, retryKey]);
+  }, [boardId, key, workspaceToday, refreshKey, retryKey, invalidationKey]);
 
   return {
     state:

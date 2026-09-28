@@ -15,13 +15,32 @@ const sessionResponse = z.discriminatedUnion("authenticated", [
   }),
   z.object({ authenticated: z.literal(false) }),
 ]);
+const accessLevel = z.enum(["read", "write", "manage"]);
 const authMeResponse = z.object({
   id: z.string().uuid(),
-  role_id: z.string().uuid(),
+  role: z.enum(["admin", "member", "guest"]),
+  access: z.array(
+    z.object({
+      department_id: z.string().uuid(),
+      module_id: z.string().uuid().nullable(),
+      level: accessLevel,
+    }),
+  ),
 });
 
 export type SessionStatus = z.output<typeof sessionResponse>;
-export type AuthMe = { id: string; roleId: string };
+export type AccessLevel = z.output<typeof accessLevel>;
+/** A module entry wins over its department entry. An admin has no entries. */
+export type AccessEntry = {
+  departmentId: string;
+  moduleId: string | null;
+  level: AccessLevel;
+};
+export type AuthMe = {
+  id: string;
+  role: "admin" | "member" | "guest";
+  access: AccessEntry[];
+};
 
 export async function getAuthMe(signal?: AbortSignal): Promise<AuthMe> {
   const current = await apiFetch("/auth/me", authMeResponse, {
@@ -29,7 +48,15 @@ export async function getAuthMe(signal?: AbortSignal): Promise<AuthMe> {
     signal,
     refreshOnUnauthorized: false,
   });
-  return { id: current.id, roleId: current.role_id };
+  return {
+    id: current.id,
+    role: current.role,
+    access: current.access.map((entry) => ({
+      departmentId: entry.department_id,
+      moduleId: entry.module_id,
+      level: entry.level,
+    })),
+  };
 }
 
 export async function signIn(email: string, password: string) {

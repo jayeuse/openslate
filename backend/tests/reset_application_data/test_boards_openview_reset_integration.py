@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from psycopg import connect
 
-from app.systems.boards.announcement_models import publication_content_fingerprint
+from app.systems.boards.post_models import publication_content_fingerprint
 from operations import reset_application_data as reset
 from operations import reset_execution as execution
 from tests.conftest import _guard_integration_database
@@ -32,7 +32,7 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
     auth = Mock()
     admin_id, member_id, session_id = uuid4(), uuid4(), uuid4()
     admin_provider_id, member_provider_id = uuid4(), uuid4()
-    department_id = uuid4()
+    department_id, group_id = uuid4(), uuid4()
     admin_email = f"reset-admin-{admin_id}@example.test"
 
     def cleanup() -> None:
@@ -40,10 +40,9 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
         _guard_integration_database(owner_url)
         with connect(database_url) as database:
             with database.cursor() as cursor:
-                cursor.execute(
-                    "DELETE FROM public.user_departments WHERE department_id = %s",
-                    (department_id,),
-                )
+                for table in ("board_groups", "group_access", "group_members"):
+                    cursor.execute(f"DELETE FROM public.{table} WHERE group_id = %s", (group_id,))
+                cursor.execute("DELETE FROM public.groups WHERE id = %s", (group_id,))
                 cursor.execute(
                     "DELETE FROM public.users WHERE id IN (%s, %s)", (admin_id, member_id)
                 )
@@ -52,25 +51,19 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
     request.addfinalizer(cleanup)
     with connect(database_url) as database:
         with database.cursor() as cursor:
-            cursor.execute("SELECT id FROM public.roles WHERE role = 'admin'")
-            (admin_role_id,) = cursor.fetchone()
-            cursor.execute("SELECT id FROM public.roles WHERE role = 'member'")
-            (member_role_id,) = cursor.fetchone()
             cursor.execute(
-                "INSERT INTO public.users (id, email, supabase_user_id, username, status, role_id) "
-                "VALUES (%s, %s, %s, %s, 'active', %s), "
-                "(%s, %s, %s, %s, 'active', %s)",
+                "INSERT INTO public.users (id, email, supabase_user_id, username, status, role) "
+                "VALUES (%s, %s, %s, %s, 'active', 'admin'), "
+                "(%s, %s, %s, %s, 'active', 'member')",
                 (
                     admin_id,
                     admin_email,
                     admin_provider_id,
                     f"reset_admin_{admin_id.hex[:12]}",
-                    admin_role_id,
                     member_id,
                     f"reset-member-{member_id}@example.test",
                     member_provider_id,
                     f"reset_member_{member_id.hex[:12]}",
-                    member_role_id,
                 ),
             )
             cursor.execute(
@@ -108,10 +101,17 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 (department_id, f"reset-{admin_id}"),
             )
             cursor.execute(
-                "INSERT INTO public.user_departments "
-                "(id, user_id, department_id, is_primary, performed_by) "
-                "VALUES (%s, %s, %s, true, %s)",
-                (uuid4(), member_id, department_id, admin_id),
+                "INSERT INTO public.groups (id, name, performed_by) VALUES (%s, %s, %s)",
+                (group_id, f"reset-group-{group_id.hex[:12]}", admin_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.group_members (id, group_id, user_id) VALUES (%s, %s, %s)",
+                (uuid4(), group_id, member_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.group_access (id, group_id, department_id, level) "
+                "VALUES (%s, %s, %s, 'read')",
+                (uuid4(), group_id, department_id),
             )
             cursor.execute(
                 "INSERT INTO public.modules (id, department_id, module_name) VALUES (%s, %s, %s)",
@@ -130,8 +130,8 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             )
             dashboard_id, widget_id = uuid4(), uuid4()
             cursor.execute(
-                "INSERT INTO public.dashboards (id, owner_id, name) VALUES (%s, %s, %s)",
-                (dashboard_id, member_id, f"reset-dashboard-{dashboard_id.hex[:12]}"),
+                "INSERT INTO public.dashboards (id, department_id, name) VALUES (%s, %s, %s)",
+                (dashboard_id, department_id, f"reset-dashboard-{dashboard_id.hex[:12]}"),
             )
             cursor.execute(
                 "INSERT INTO public.dashboard_widgets "
@@ -139,84 +139,62 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "VALUES (%s, %s, 0, 'chart', '{}'::jsonb)",
                 (widget_id, dashboard_id),
             )
-            board_id, record_id = uuid4(), uuid4()
+            board_id, project_board_id, record_id = uuid4(), uuid4(), uuid4()
             cursor.execute(
-                "INSERT INTO public.boards (id, owner_id, department_id, name) "
-                "VALUES (%s, %s, %s, %s)",
-                (board_id, member_id, department_id, "Reset board"),
+                "INSERT INTO public.boards (id, scope, department_id, name) "
+                "VALUES (%s, 'department', %s, %s), (%s, 'project', NULL, %s)",
+                (board_id, department_id, "Reset board", project_board_id, "Reset project"),
             )
+            cursor.execute(
+                "INSERT INTO public.board_groups (id, board_id, group_id, level) "
+                "VALUES (%s, %s, %s, 'write')",
+                (uuid4(), project_board_id, group_id),
+            )
+            event_id = uuid4()
             cursor.execute(
                 "INSERT INTO public.board_events(id,board_id,author_id,title,all_day,"
-                "start_date,end_date,timezone_name,audience_kind) VALUES "
-                "(%s,%s,%s,'R',true,current_date,current_date,'UTC','author')",
-                (uuid4(), board_id, member_id),
-            )
-            announcement_id = uuid4()
-            cursor.execute(
-                "INSERT INTO public.board_announcements "
-                "(id, board_id, author_id, title, body, status, audience_kind) "
-                "VALUES (%s, %s, %s, 'Reset notice', 'Private notice', 'published', 'author')",
-                (announcement_id, board_id, member_id),
+                "start_date,end_date,timezone_name) VALUES "
+                "(%s,%s,%s,'R',true,current_date,current_date,'UTC')",
+                (event_id, board_id, member_id),
             )
             cursor.execute(
-                "INSERT INTO public.board_announcement_revisions "
-                "(id, announcement_id, publication_number, publication_key, "
-                "content_fingerprint, author_id, title, body, "
-                "audience_kind, published_at) VALUES "
-                "(%s, %s, 1, %s, %s, %s, 'Reset notice', 'Private notice', 'author', now())",
+                "INSERT INTO public.board_event_reminders (id, board_id, event_id, timing) "
+                "VALUES (%s, %s, %s, '1d')",
+                (uuid4(), board_id, event_id),
+            )
+            post_id = uuid4()
+            cursor.execute(
+                "INSERT INTO public.board_posts "
+                "(id, board_id, author_id, title, body, status) "
+                "VALUES (%s, %s, %s, 'Reset notice', 'Private notice', 'published')",
+                (post_id, board_id, member_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.board_post_revisions "
+                "(id, post_id, publication_number, publication_key, "
+                "content_fingerprint, author_id, title, body, published_at) VALUES "
+                "(%s, %s, 1, %s, %s, %s, 'Reset notice', 'Private notice', now())",
                 (
                     uuid4(),
-                    announcement_id,
+                    post_id,
                     uuid4(),
                     publication_content_fingerprint(
                         author_id=member_id,
                         title="Reset notice",
                         body="Private notice",
-                        audience_kind="author",
                     ),
                     member_id,
-                ),
-            )
-            cursor.execute(
-                "INSERT INTO public.board_announcement_personal_states "
-                "(id, user_id, announcement_id, read, bookmarked) "
-                "VALUES (%s, %s, %s, true, true)",
-                (uuid4(), member_id, announcement_id),
-            )
-            for table in ("board_favorites", "board_homes"):
-                cursor.execute(
-                    f"INSERT INTO public.{table} (id, user_id, board_id) VALUES (%s, %s, %s)",
-                    (uuid4(), member_id, board_id),
-                )
-            cursor.execute(
-                "INSERT INTO public.board_templates (id, name, bundle) VALUES (%s, %s, %s::jsonb)",
-                (
-                    uuid4(),
-                    "Reset template",
-                    '{"kind":"openslate-board","version":2,"configuration":'
-                    '{"name":"Reset","description":null,"department_name":null,'
-                    '"default_section":"overview","widgets":[]}}',
                 ),
             )
             cursor.execute(
                 "INSERT INTO public.records (id, module_id) VALUES (%s, %s)",
                 (record_id, module_id),
             )
-            cursor.execute(
-                "INSERT INTO public.board_record_placements (id, board_id, record_id) "
-                "VALUES (%s, %s, %s)",
-                (uuid4(), board_id, record_id),
-            )
-            cursor.execute(
-                "INSERT INTO public.dashboard_defaults (id, user_id, dashboard_id) "
-                "VALUES (%s, %s, %s)",
-                (uuid4(), member_id, dashboard_id),
-            )
             report_id, run_id = uuid4(), uuid4()
             cursor.execute(
-                "INSERT INTO public.reports (id, owner_id, module_id, name, recipe) "
-                "VALUES (%s, %s, %s, %s, '{}'::jsonb)",
-                (report_id, member_id, module_id, "Reset report"),
+                "INSERT INTO public.reports (id, module_id, name, recipe) "
+                "VALUES (%s, %s, %s, '{}'::jsonb)",
+                (report_id, module_id, "Reset report"),
             )
             cursor.execute(
                 "INSERT INTO public.report_schedules "
@@ -269,15 +247,14 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             database, admin_email, storage_object_keys=storage.list_object_keys()
         )
         for table in (
-            "user_departments "
-            "board_announcement_personal_states board_announcement_revisions "
-            "board_announcements board_events "
-            "board_favorites board_homes boards board_record_placements board_templates "
-            "dashboard_defaults dashboard_widgets dashboards reports report_schedules "
+            "groups group_members group_access board_groups board_event_reminders "
+            "board_post_revisions board_posts board_events "
+            "dashboard_widgets dashboards reports report_schedules "
             "report_runs report_run_rows report_run_eligible_users "
             "scheduled_work in_app_notifications"
         ).split():
             assert plan.counts[table] == 1
+        assert plan.counts["boards"] == 3
         assert plan.impact_digest != plan_before_dashboard.impact_digest
         execution.apply_reset(
             database,
@@ -299,24 +276,26 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             assert cursor.fetchone() == (0,)
             cursor.execute("SELECT count(*) FROM public.departments")
             assert cursor.fetchone() == (0,)
-            cursor.execute("SELECT count(*) FROM public.user_departments")
-            assert cursor.fetchone() == (0,)
+            for table in ("groups", "group_members", "group_access"):
+                cursor.execute(f"SELECT count(*) FROM public.{table}")
+                assert cursor.fetchone() == (0,)
             for table in (
-                "board_announcement_personal_states board_announcement_revisions "
-                "board_announcements board_events "
-                "board_record_placements boards board_templates dashboard_widgets "
-                "dashboard_defaults dashboards reports report_schedules report_runs "
+                "board_groups board_event_reminders board_post_revisions "
+                "board_posts board_events dashboard_widgets "
+                "dashboards reports report_schedules report_runs "
                 "report_run_rows report_run_eligible_users scheduled_work in_app_notifications"
             ).split():
                 cursor.execute(f"SELECT count(*) FROM public.{table}")
                 assert cursor.fetchone() == (0,), table
+            cursor.execute("SELECT scope, status FROM public.boards")
+            assert cursor.fetchall() == [("company", "active")]
             cursor.execute("SELECT logo_file_id FROM public.workspace_profiles")
             assert cursor.fetchone() == (None,)
             cursor.execute(
                 "SELECT revision, document->>'schemaVersion', performed_by "
                 "FROM public.sandbox_documents"
             )
-            assert cursor.fetchone() == (1, "2", None)
+            assert cursor.fetchone() == (1, "4", None)
             cursor.execute(
                 "SELECT sequence, kind, label, performed_by FROM public.sandbox_versions"
             )

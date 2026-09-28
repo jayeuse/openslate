@@ -99,7 +99,6 @@ def test_record_audit_redaction_preserves_data_and_historical_snapshots(
     module = Module(
         department=department,
         module_name="Governance export",
-        is_schema_accepted=True,
     )
     renamed = Field(
         module=module,

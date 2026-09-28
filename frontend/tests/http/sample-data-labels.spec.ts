@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/test";
 
 async function openSignedIn(page: Page, path: string) {
   await page.route("**/api/auth/session", (route) =>

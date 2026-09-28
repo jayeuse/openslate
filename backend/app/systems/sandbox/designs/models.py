@@ -28,7 +28,7 @@ class SandboxDocument(BaseModel):
     __tablename__ = "sandbox_documents"
     __table_args__ = (
         CheckConstraint("singleton_key = true", name="ck_sandbox_documents_singleton_key"),
-        CheckConstraint("schema_version = 2", name="ck_sandbox_documents_schema_version"),
+        CheckConstraint("schema_version = 4", name="ck_sandbox_documents_schema_version"),
         CheckConstraint("revision > 0", name="ck_sandbox_documents_revision_positive"),
         CheckConstraint("byte_count >= 0", name="ck_sandbox_documents_byte_count_nonnegative"),
         CheckConstraint(
@@ -42,7 +42,7 @@ class SandboxDocument(BaseModel):
         Boolean, default=True, server_default=text("true"), nullable=False
     )
     schema_version: Mapped[int] = mapped_column(
-        Integer, default=2, server_default=text("2"), nullable=False
+        Integer, default=4, server_default=text("4"), nullable=False
     )
     revision: Mapped[int] = mapped_column(
         Integer, default=1, server_default=text("1"), nullable=False
@@ -69,6 +69,9 @@ class SandboxVersion(BaseModel):
         CheckConstraint(
             "kind IN ('checkpoint', 'published', 'imported')",
             name="ck_sandbox_versions_kind",
+        ),
+        CheckConstraint(
+            "snapshot ->> 'schemaVersion' = '4'", name="ck_sandbox_versions_schema_version"
         ),
         UniqueConstraint("document_id", "sequence", name="uq_sandbox_versions_document_sequence"),
         Index("ix_sandbox_versions_source_version", "source_version_id"),

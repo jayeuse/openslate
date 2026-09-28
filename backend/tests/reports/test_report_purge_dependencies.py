@@ -6,7 +6,6 @@ import pytest
 from uuid6 import uuid7
 from views.test_access import actor
 
-from app.systems.boards.models import Board, BoardRecordPlacement
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.lifecycle.exceptions import (
@@ -40,7 +39,6 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
     db.flush()
     record = Record(module_id=module.id, data={}, is_deleted=True, deleted_at=now)
     report = Report(
-        owner_id=owner.id,
         module_id=module.id,
         name="Archived report",
         recipe={"version": 1},
@@ -72,11 +70,6 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
         deleted_at=now,
     )
     db.add(row)
-    board = Board(owner_id=owner.id, name="Retained shortcut")
-    db.add(board)
-    db.flush()
-    placement = BoardRecordPlacement(board_id=board.id, record_id=record.id)
-    db.add(placement)
     db.commit()
 
     for target_type, target_id in (
@@ -98,7 +91,6 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
             execute_lifecycle(db, plan)
         assert db.get(Record, record.id) is not None
         assert db.get(ReportRunRow, row.id) is not None
-        assert db.get(BoardRecordPlacement, placement.id) is not None
 
     module_plan = plan_lifecycle(db, "module", module.id, "purge", owner.id)
     assert any(
@@ -132,7 +124,6 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
     with pytest.raises(LifecyclePlanDriftError):
         execute_lifecycle(db, stale_plan)
     assert db.get(ReportRunRow, later_row.id) is not None
-    assert db.get(BoardRecordPlacement, placement.id) is not None
 
 
 def test_archived_report_recipe_blocks_empty_module_purge(integration_db) -> None:
@@ -151,7 +142,6 @@ def test_archived_report_recipe_blocks_empty_module_purge(integration_db) -> Non
     db.add(module)
     db.flush()
     report = Report(
-        owner_id=owner.id,
         module_id=module.id,
         name="Archived empty report",
         recipe={"version": 1},

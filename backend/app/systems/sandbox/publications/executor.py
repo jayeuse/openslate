@@ -14,11 +14,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.sandbox.automations.models import (
-    PublishedAutomationAction,
-    PublishedAutomationCondition,
-    PublishedAutomationDefinition,
-)
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.designs.service import (
     _append_version,
@@ -28,7 +23,6 @@ from app.systems.sandbox.designs.service import (
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import validate_module_schema
 from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.publications.automation_mutations import apply_published_automations
 from app.systems.sandbox.publications.binding_keys import normalize_legacy_field_bindings
 from app.systems.sandbox.publications.models import SandboxBinding, SandboxPublication
 from app.systems.sandbox.publications.planner import (
@@ -45,6 +39,13 @@ from app.systems.sandbox.publications.schemas import PublicationResponse, Public
 from app.systems.sandbox.publications.structure_mutations import (
     close_removed_structure,
     stage_bound_names_and_positions,
+    sync_department_boards,
+)
+from app.systems.sandbox.publications.trigger_mutations import apply_record_triggers
+from app.systems.sandbox.record_triggers.models import (
+    RecordTrigger,
+    RecordTriggerAction,
+    RecordTriggerCondition,
 )
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
@@ -151,8 +152,10 @@ def apply_publication(
     departments = _apply_departments(db, document, bindings, actor_id)
     modules = _apply_modules(db, document, bindings, departments, actor_id)
     fields = _apply_fields(db, document, bindings, modules, actor_id)
+    _apply_title_fields(document, modules, fields, actor_id)
     _apply_relationships(db, document, bindings, modules, actor_id)
     close_removed_structure(db, document, bindings, actor_id, retired)
+    sync_department_boards(db, actor_id)
     version = _append_version(
         db,
         row=document_row,
@@ -180,7 +183,7 @@ def apply_publication(
     )
     db.add(publication)
     db.flush()
-    apply_published_automations(
+    apply_record_triggers(
         db,
         document,
         bindings,
@@ -191,7 +194,7 @@ def apply_publication(
         plan.workspace_timezone,
         actor_id,
     )
-    _accept_schemas(db, modules)
+    _validate_schemas(db, modules)
     _assert_no_record_or_edge_changes(db)
     response = PublicationResponse(
         id=publication.id,
@@ -239,9 +242,9 @@ def _lock_operational_rows(db: Session) -> None:
         Field,
         Record,
         RelationshipEdge,
-        PublishedAutomationDefinition,
-        PublishedAutomationCondition,
-        PublishedAutomationAction,
+        RecordTrigger,
+        RecordTriggerCondition,
+        RecordTriggerAction,
     ):
         db.scalars(select(model).order_by(model.id).with_for_update()).all()
 
@@ -285,7 +288,6 @@ def _apply_modules(
             row = Module(
                 department_id=department.id,
                 module_name=desired.name,
-                is_schema_accepted=False,
                 is_deleted=closed,
                 deleted_at=datetime.now(UTC) if closed else None,
                 performed_by=actor_id,
@@ -299,7 +301,6 @@ def _apply_modules(
             closed = desired.closed or department.is_deleted
             row.is_deleted = closed
             row.deleted_at = datetime.now(UTC) if closed else None
-            row.is_schema_accepted = False
             row.performed_by = actor_id
         result[desired.id] = row
     return result
@@ -344,6 +345,42 @@ def _apply_fields(
             if not closed:
                 active_position += 1
     return result
+
+
+def _apply_title_fields(
+    document: Any,
+    modules: dict[str, Module],
+    fields: dict[str, Field],
+    actor_id: UUID,
+) -> None:
+    """Resolve draft title selections only after their live field bindings exist."""
+
+    for desired in document.design.modules:
+        module = modules[desired.id]
+        selected = (
+            fields.get(_field_key(desired.id, desired.title_field_id))
+            if desired.title_field_id is not None
+            else None
+        )
+        if desired.title_field_id is not None and (
+            selected is None
+            or selected.module_id != module.id
+            or (selected.is_deleted and not module.is_deleted)
+            or selected.type
+            not in {
+                FieldType.TEXT,
+                FieldType.LONG_TEXT,
+                FieldType.EMAIL,
+                FieldType.URL,
+                FieldType.INTEGER,
+                FieldType.NUMBER,
+                FieldType.DECIMAL,
+                FieldType.SELECT,
+            }
+        ):
+            raise PublicationError("title_field_invalid", "Choose an active title field")
+        module.title_field_id = selected.id if selected is not None else None
+        module.performed_by = actor_id
 
 
 def _apply_relationships(
@@ -401,7 +438,7 @@ def _apply_relationships(
             row.performed_by = actor_id
 
 
-def _accept_schemas(db: Session, modules: dict[str, Module]) -> None:
+def _validate_schemas(db: Session, modules: dict[str, Module]) -> None:
     for module in modules.values():
         if module.is_deleted:
             continue
@@ -411,7 +448,6 @@ def _accept_schemas(db: Session, modules: dict[str, Module]) -> None:
             ).all()
         )
         validate_module_schema(active)
-        module.is_schema_accepted = True
 
 
 def _bind(db: Session, kind: str, sandbox_id: str, actor_id: UUID, **target: UUID) -> None:

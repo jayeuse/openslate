@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.main import create_app
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from tests.auth.test_provider_email_integration import _email_action
 
 pytest_plugins = ("tests.auth.test_provider_email_integration",)
@@ -38,12 +38,12 @@ def test_reconcile_binds_existing_marked_provider_user_and_delivers_invitation(
             admin = db.get(User, admin_id)
             assert admin is not None
             admin.supabase_user_id = admin_provider_id
-            admin.role_id = db.scalar(select(Role.id).where(Role.role == "admin"))
+            admin.role = "admin"
             pending = User(
                 email=recipient_email,
                 username=f"reconcile-{uuid4().hex[:16]}",
                 status="pending",
-                role_id=db.scalar(select(Role.id).where(Role.role == "member")),
+                role="member",
                 provider_invitation_operation_id=operation_id,
             )
             db.add(pending)

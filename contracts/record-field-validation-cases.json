@@ -58,9 +58,9 @@
     },
     {
       "type": "select",
-      "config": { "options": ["open", "closed"] },
-      "valid": "open",
-      "normalized": "open",
+      "config": { "options": [{ "id": "00000000-0000-0000-0000-000000000001", "label": "open" }, { "id": "00000000-0000-0000-0000-000000000002", "label": "closed" }] },
+      "valid": "00000000-0000-0000-0000-000000000001",
+      "normalized": "00000000-0000-0000-0000-000000000001",
       "invalid": "unknown",
       "validAccepted": true
     },

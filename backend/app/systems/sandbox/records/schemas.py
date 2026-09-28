@@ -19,7 +19,6 @@ class RecordUpdate(BaseModel):
     data: dict[str, Any] | None = None
 
 
-
 class RecordResponse(RecordCreate):
     id: UUID
     created_at: datetime
@@ -27,5 +26,6 @@ class RecordResponse(RecordCreate):
     deleted_at: datetime | None
     is_deleted: bool
     performed_by: UUID | None
+    display_values: dict[str, str] = Field(default_factory=dict)
 
     model_config = ConfigDict(from_attributes=True)

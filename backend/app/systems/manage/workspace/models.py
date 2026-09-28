@@ -26,6 +26,14 @@ class WorkspaceProfile(BaseModel):
             "is_deleted = false AND deleted_at IS NULL",
             name="ck_workspace_profiles_not_deleted",
         ),
+        CheckConstraint(
+            "invitation_expiry_days BETWEEN 1 AND 365",
+            name="ck_workspace_profiles_invitation_expiry_days_range",
+        ),
+        CheckConstraint(
+            "guest_duration_days BETWEEN 1 AND 365",
+            name="ck_workspace_profiles_guest_duration_days_range",
+        ),
         UniqueConstraint("singleton_key", name="uq_workspace_profiles_singleton_key"),
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset(
@@ -50,6 +58,12 @@ class WorkspaceProfile(BaseModel):
     )
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
     locale: Mapped[str] = mapped_column(String(35), nullable=False)
+    invitation_expiry_days: Mapped[int] = mapped_column(
+        Integer, default=7, server_default=text("7"), nullable=False
+    )
+    guest_duration_days: Mapped[int] = mapped_column(
+        Integer, default=30, server_default=text("30"), nullable=False
+    )
     revision: Mapped[int] = mapped_column(
         Integer,
         default=1,

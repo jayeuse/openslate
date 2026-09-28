@@ -38,13 +38,11 @@ export type WidgetManagementSnapshot = {
 export function createSummaryWidgetInput(
   name: string,
   moduleId: string,
-  everyone: boolean,
 ): BoardWidgetInput {
   return {
     name: name.trim(),
     widgetType: "summary",
     moduleId,
-    audience: everyone ? { kind: "everyone" } : { kind: "private" },
     config: {
       version: 1,
       fields: [],
@@ -79,24 +77,8 @@ function sameWidgetVersion(
     current.name === original.name &&
     current.widgetType === original.widgetType &&
     current.moduleId === original.moduleId &&
-    JSON.stringify(current.config) === JSON.stringify(original.config) &&
-    JSON.stringify(current.audience) === JSON.stringify(original.audience)
+    JSON.stringify(current.config) === JSON.stringify(original.config)
   );
-}
-
-function inputAudience(widget: BoardWidget): BoardWidgetInput["audience"] {
-  switch (widget.audience.kind) {
-    case "private":
-      return { kind: "private" };
-    case "everyone":
-      return { kind: "everyone" };
-    case "role":
-      if (!widget.audience.roleId) throw new ApiContractError();
-      return { kind: "role", roleId: widget.audience.roleId };
-    case "user":
-      if (!widget.audience.userId) throw new ApiContractError();
-      return { kind: "user", userId: widget.audience.userId };
-  }
 }
 
 export function updateInputForWidgetDraft(
@@ -113,7 +95,6 @@ export function updateInputForWidgetDraft(
       size: draft.size,
       pinned: draft.pinned,
     },
-    audience: inputAudience(widget),
   };
 }
 
@@ -190,8 +171,8 @@ export async function loadWidgetSourcePage(offset: number) {
   return page;
 }
 
-type SummaryDraft = { name: string; moduleId: string; everyone: boolean };
-const blankSummary: SummaryDraft = { name: "", moduleId: "", everyone: false };
+type SummaryDraft = { name: string; moduleId: string };
+const blankSummary: SummaryDraft = { name: "", moduleId: "" };
 
 type ManagerState = {
   key: string | null;
@@ -266,7 +247,7 @@ export function canMutateBoardWidgets(
   return (
     boardActive &&
     state.status === "ready" &&
-    state.snapshot?.access.edit === true &&
+    state.snapshot?.access.manage === true &&
     !state.pending &&
     !state.conflict &&
     !state.archiveLocked
@@ -283,7 +264,7 @@ export function widgetManagerAfterConflict(
   snapshot: WidgetManagementSnapshot,
 ): ManagerState {
   const draft =
-    snapshot.access.edit && previous.draft
+    snapshot.access.manage && previous.draft
       ? retainWidgetDraftAfterConflict(previous.draft, snapshot.page.items)
       : null;
   const archiveLocked =
@@ -293,7 +274,7 @@ export function widgetManagerAfterConflict(
     status: "ready",
     snapshot,
     draft,
-    summary: snapshot.access.edit ? previous.summary : blankSummary,
+    summary: snapshot.access.manage ? previous.summary : blankSummary,
     pending: false,
     conflict: !sameDraftSource(draft, snapshot),
     archiveLocked,
@@ -398,7 +379,7 @@ export function useBoardWidgetManagement({
         if (request !== sequence.current) return;
         setState((previous) => {
           const draft =
-            snapshot.access.edit && previous.draft
+            snapshot.access.manage && previous.draft
               ? retainWidgetDraftAfterConflict(
                   previous.draft,
                   snapshot.page.items,
@@ -410,12 +391,12 @@ export function useBoardWidgetManagement({
             status: "ready",
             snapshot,
             draft,
-            summary: snapshot.access.edit ? previous.summary : blankSummary,
+            summary: snapshot.access.manage ? previous.summary : blankSummary,
             conflict: !sameDraftSource(draft, snapshot),
             error: null,
           };
         });
-        if (!snapshot.access.edit || !boardActive) return;
+        if (!snapshot.access.manage || !boardActive) return;
         const sourceRequest = ++sourceSequence.current;
         setSources({ ...emptySources, key: boardId, status: "loading" });
         void loadWidgetSourcePage(0)
@@ -561,7 +542,7 @@ export function useBoardWidgetManagement({
         error: null,
         notice: message,
       }));
-      if (!snapshot.access.edit) {
+      if (!snapshot.access.manage) {
         sourceSequence.current += 1;
         setSources({ ...emptySources, key: boardId });
       }
@@ -598,7 +579,7 @@ export function useBoardWidgetManagement({
         try {
           const snapshot = await loadWidgetManagementSnapshot(boardId);
           if (request !== sequence.current) return;
-          if (!snapshot.access.edit) {
+          if (!snapshot.access.manage) {
             sourceSequence.current += 1;
             setSources({ ...emptySources, key: boardId });
           }
@@ -671,7 +652,6 @@ export function useBoardWidgetManagement({
           createSummaryWidgetInput(
             current.summary.name,
             current.summary.moduleId,
-            current.summary.everyone,
           ),
         ),
       "Summary widget created.",
@@ -702,7 +682,7 @@ export function useBoardWidgetManagement({
         widgetId,
         snapshot.page.boardRevision,
       );
-    }, "Widget duplicated with the same audience.");
+    }, "Widget duplicated.");
   }
 
   function move(widgetId: string, direction: -1 | 1) {
@@ -710,7 +690,7 @@ export function useBoardWidgetManagement({
       const ids = reorderVisibleWidgetIds(snapshot.page, widgetId, direction);
       if (!ids) throw new ApiContractError();
       return reorderBoardWidgets(boardId, snapshot.page.boardRevision, ids);
-    }, "Visible widgets reordered.");
+    }, "Widgets reordered.");
   }
 
   function remove(widgetId: string) {
@@ -725,7 +705,7 @@ export function useBoardWidgetManagement({
     if (
       currentSources.status !== "ready" ||
       !currentSources.hasMore ||
-      !current.snapshot?.access.edit ||
+      !current.snapshot?.access.manage ||
       !boardActive ||
       pending.current
     )

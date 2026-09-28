@@ -278,33 +278,22 @@ def _assert_after_reset(
     try:
         with engine.connect() as connection:
             queries = {
-                "admin": "SELECT u.id, u.email, u.supabase_user_id, u.status, r.role "
-                "FROM public.users AS u JOIN public.roles AS r ON r.id = u.role_id",
-                "defaults": "SELECT singleton_key, invitation_expiry_days, guest_duration_days, "
-                "service_duration_days, default_deny, require_guest_sponsor, "
-                "require_service_owner, revision, deleted_at, is_deleted, performed_by "
-                "FROM public.access_policy_defaults",
-                "versions": "SELECT singleton_key, revision, deleted_at, is_deleted, "
-                "performed_by FROM public.access_policy_versions",
+                "admin": "SELECT u.id, u.email, u.supabase_user_id, u.status, u.role "
+                "FROM public.users AS u",
+                "invitations": "SELECT invitation_expiry_days, guest_duration_days "
+                "FROM public.workspace_profiles",
                 "workspace": "SELECT logo_file_id FROM public.workspace_profiles",
                 "sandbox": "SELECT singleton_key, schema_version, revision, performed_by, "
                 "deleted_at, is_deleted FROM public.sandbox_documents",
             }
             state = {name: _row(connection, query) for name, query in queries.items()}
-            roles = tuple(
-                connection.execute(text("SELECT role FROM public.roles ORDER BY role")).scalars()
-            )
     finally:
         engine.dispose()
     if state["admin"] != (admin_id, admin_email, admin_provider_id, "active", "admin"):
         pytest.fail("The CLI did not preserve exactly the configured administrator profile")
-    if roles != ("admin", "member"):
-        pytest.fail("The CLI did not preserve the expected application roles")
-    if state["defaults"] != ("workspace", 7, 30, 90, True, True, True, 1, None, False, None):
-        pytest.fail("The CLI did not restore the Access policy singleton")
-    if state["versions"] != ("workspace", 1, None, False, None):
-        pytest.fail("The CLI did not restore the Access policy version singleton")
-    if state["workspace"] != (None,) or state["sandbox"] != (True, 2, 1, None, None, False):
+    if state["invitations"] != (7, 30):
+        pytest.fail("The CLI did not restore the invitation settings")
+    if state["workspace"] != (None,) or state["sandbox"] != (True, 4, 1, None, None, False):
         pytest.fail("The CLI did not restore the workspace and Sandbox defaults")
     if provider_state != (True, False):
         pytest.fail("The CLI did not retain only the administrator Auth identity")

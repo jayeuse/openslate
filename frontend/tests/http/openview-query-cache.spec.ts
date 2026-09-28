@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -24,10 +24,10 @@ function pageOf<T>(items: T[], limit = 25) {
   };
 }
 
-function report(id: string, ownerId: string, name: string) {
+// Each person reads a different department's Report; the cache must not mix them.
+function report(id: string, _readerId: string, name: string) {
   return {
     id,
-    owner_id: ownerId,
     module_id: moduleId,
     name,
     subtitle: null,
@@ -41,7 +41,6 @@ function report(id: string, ownerId: string, name: string) {
       group_by: null,
       include_row_count: false,
     },
-    audience: { kind: "private", role_id: null, user_id: null },
     is_deleted: false,
     created_at: timestamp,
     updated_at: timestamp,
@@ -115,28 +114,12 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       contentType: "application/json",
       body: JSON.stringify({
         id: activeUser,
-        role_id: departmentId,
-        role: "member",
-        permissions: ["records.read", "records.write"],
+        // An administrator manages every department, so Reports can be created.
+        role: "admin",
+        access: [],
       }),
     }),
   );
-  await page.route("**/api/charts/preferences", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ config: null }),
-    }),
-  );
-  // Audience options need records.read like the catalog, so they follow
-  // the catalog's refusal and hold.
-  await page.route("**/api/views/audience-options**", async (route) => {
-    if (catalogHold) await catalogHold;
-    if (catalogDenied) return route.fulfill(forbidden);
-    return route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify(pageOf([], 100)),
-    });
-  });
   await page.route("**/api/views/data-sources**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     // Fields need records.read like the catalog: they follow its refusal.
@@ -155,6 +138,7 @@ async function installOpenViewApi(page: Page): Promise<Api> {
               (laterPage ?? []).map((source) => ({
                 ...source,
                 department_id: departmentId,
+                title_field_id: null,
               })),
               100,
             ),
@@ -166,7 +150,14 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       if (catalogDenied) return route.fulfill(forbidden);
       if (laterPagesRefused || laterPage) {
         const first = pageOf(
-          [{ id: moduleId, name: "Assets", department_id: departmentId }],
+          [
+            {
+              id: moduleId,
+              name: "Assets",
+              department_id: departmentId,
+              title_field_id: null,
+            },
+          ],
           100,
         );
         return route.fulfill({
@@ -181,7 +172,14 @@ async function installOpenViewApi(page: Page): Promise<Api> {
         contentType: "application/json",
         body: JSON.stringify(
           pageOf(
-            [{ id: moduleId, name: "Assets", department_id: departmentId }],
+            [
+              {
+                id: moduleId,
+                name: "Assets",
+                department_id: departmentId,
+                title_field_id: null,
+              },
+            ],
             100,
           ),
         ),
@@ -450,7 +448,11 @@ test("a Views denial stays in force while its Retry is in flight", async ({
   await expect.poll(() => api.catalogReads.length).toBe(2);
 
   api.denyCatalog(true);
-  await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
+  // Module-scoped changes carry their module (D10); the notice still applies.
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "modules",
+    module_id: moduleId,
+  });
   await expect(denial.first()).toBeVisible();
   await expect(source).toHaveCount(0);
 
@@ -841,14 +843,25 @@ test("a slow Reports list shows its skeleton only after the reserve delay", asyn
   await expect(
     page.getByRole("heading", { name: "Reports", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "New Report" })).toBeVisible();
+  // New Report waits only for the signed-in identity, which the query cache
+  // hands over on a zero-delay timer; the held list stays loading.
+  const newReport = page.getByRole("button", { name: "New Report" });
+  await expect
+    .poll(
+      async () => {
+        await page.clock.runFor(1);
+        return newReport.count();
+      },
+      { intervals: [50] },
+    )
+    .toBe(1);
   await expect(
     page.locator('[data-slot="loading-region"][aria-busy="true"]'),
   ).toHaveCount(1);
   const label = page.getByRole("status").filter({
     hasText: "Loading Reports…",
   });
-  await page.clock.runFor(250);
+  await page.clock.runFor(240);
   await expect(label).toHaveCount(0);
   await page.clock.runFor(100);
   await expect(label).toBeVisible();

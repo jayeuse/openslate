@@ -1,4 +1,4 @@
-"""Roster-restricted Report output reads and metadata-only discovery."""
+"""Report output reads for users who were module readers at run time and still are."""
 
 from datetime import datetime
 from typing import Annotated, Any, Literal, cast
@@ -10,12 +10,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, load_only
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_capability
+from app.common.dependencies import get_current_user
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
+from app.systems.access.policy.checks import module_filter
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
-from app.systems.openview.reports.audience import run_audience_clause
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunEligibleUser
 from app.systems.openview.reports.run_service import REPORT_RUN_METADATA_COLUMNS
 from app.systems.openview.reports.schemas import (
@@ -25,7 +25,8 @@ from app.systems.openview.reports.schemas import (
 )
 
 router = APIRouter()
-Reader = Annotated[User, Depends(require_capability(Capability.RECORDS_READ))]
+# A run is readable only by an eligible user who can still read the report module.
+Reader = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 RUN_LIST_SPEC = ListQuerySpec(
@@ -65,7 +66,10 @@ def _report_for_output(db: Session, user: User, report_id: UUID) -> Report:
     report = db.scalar(
         select(Report)
         .options(load_only(Report.id, Report.is_deleted, raiseload=True))
-        .where(Report.id == report_id, run_audience_clause(user))
+        .where(
+            Report.id == report_id,
+            module_filter(db, user, AccessLevel.READ, Report.module_id),
+        )
     )
     if report is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Report not found")
@@ -117,7 +121,7 @@ def discover_shared_report_runs(
             ReportRun.is_deleted.is_(False),
             Report.is_deleted.is_(False),
             Report.deleted_at.is_(None),
-            run_audience_clause(user),
+            module_filter(db, user, AccessLevel.READ, Report.module_id),
         )
     )
     result = execute_standard_list(db, statement, params, RUN_LIST_SPEC)

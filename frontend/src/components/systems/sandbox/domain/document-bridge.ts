@@ -14,18 +14,19 @@ import {
   type RuleTrigger,
 } from "./model";
 import type {
-  SandboxAutomation,
-  SandboxAutomationAction,
-  SandboxAutomationCondition,
-  SandboxAutomationTrigger,
+  SandboxTrigger,
+  SandboxTriggerAction,
+  SandboxTriggerCondition,
+  SandboxTriggerEvent,
   SandboxDocumentDesign,
   SandboxDocumentField,
-  SandboxDocumentV2,
+  SandboxDocumentV4,
   SandboxFieldReference,
   SandboxLayoutBox,
   SandboxRelationship,
   SandboxValueSource,
 } from "./document";
+import { SANDBOX_DOCUMENT_SCHEMA_VERSION } from "./document";
 
 function legacyFieldValue(config: FieldConfig): string {
   if (
@@ -45,7 +46,9 @@ function legacyFieldValue(config: FieldConfig): string {
 }
 
 function legacyFieldOptions(config: FieldConfig): string {
-  return config.kind === "select" ? config.options.join(", ") : "";
+  return config.kind === "select"
+    ? config.options.map((option) => option.label).join(", ")
+    : "";
 }
 
 function documentFieldToLegacy(field: SandboxDocumentField): Field {
@@ -94,7 +97,7 @@ function legacyValue(value: SandboxValueSource): string {
   return `Value from ${value.moduleId}.${value.fieldId}${relationship}`;
 }
 
-function projectTrigger(trigger: SandboxAutomationTrigger): RuleTrigger {
+function projectTrigger(trigger: SandboxTriggerEvent): RuleTrigger {
   switch (trigger.kind) {
     case "record-created":
       return { kind: "new-record", moduleId: trigger.moduleId };
@@ -122,8 +125,8 @@ function projectTrigger(trigger: SandboxAutomationTrigger): RuleTrigger {
   }
 }
 
-function projectCondition(automation: SandboxAutomation): RuleCondition {
-  const condition = automation.conditionGroup.conditions[0];
+function projectCondition(recordTrigger: SandboxTrigger): RuleCondition {
+  const condition = recordTrigger.conditionGroup.conditions[0];
   if (!condition) return { kind: "always" };
   return {
     kind: "field-comparison",
@@ -134,9 +137,7 @@ function projectCondition(automation: SandboxAutomation): RuleCondition {
   };
 }
 
-function projectAction(
-  action: SandboxAutomationAction | undefined,
-): RuleAction {
+function projectAction(action: SandboxTriggerAction | undefined): RuleAction {
   if (!action) return { kind: "notification", message: "" };
   switch (action.kind) {
     case "notification":
@@ -164,32 +165,32 @@ function projectAction(
   }
 }
 
-function projectAutomation(
-  automation: SandboxAutomation,
+function projectRecordTrigger(
+  recordTrigger: SandboxTrigger,
   design: Design,
 ): Rule {
   const config: RuleConfig = {
-    trigger: projectTrigger(automation.trigger),
-    condition: projectCondition(automation),
-    action: projectAction(automation.actions[0]),
+    trigger: projectTrigger(recordTrigger.trigger),
+    condition: projectCondition(recordTrigger),
+    action: projectAction(recordTrigger.actions[0]),
   };
   const labels = ruleConfigLabels(config, design);
   return {
-    id: automation.id,
-    name: automation.name,
-    enabled: automation.enabled,
+    id: recordTrigger.id,
+    name: recordTrigger.name,
+    enabled: recordTrigger.enabled,
     ...labels,
     config,
   };
 }
 
 /**
- * Adapts the v2 persisted document for the current single-condition,
+ * Adapts the v4 persisted document for the current single-condition,
  * single-action Designer UI. The projection deliberately does not flatten the
  * original document: `mergeProjectedDesign` uses the matching projection to
- * retain richer automations when the Designer did not edit them.
+ * retain richer triggers when the Designer did not edit them.
  */
-export function projectSandboxDocument(document: SandboxDocumentV2): Design {
+export function projectSandboxDocument(document: SandboxDocumentV4): Design {
   const layout = structuredClone(document.design.layout) as SandboxCanvasLayout;
   const designWithoutRules: Omit<Design, "rules"> = {
     layout,
@@ -203,6 +204,7 @@ export function projectSandboxDocument(document: SandboxDocumentV2): Design {
       department: sandboxModule.departmentId,
       name: sandboxModule.name,
       closed: sandboxModule.closed,
+      titleFieldId: sandboxModule.titleFieldId,
       fields: sandboxModule.fields.map((field) => documentFieldToLegacy(field)),
       x: document.design.layout[sandboxModule.id]?.x ?? 0,
       y: document.design.layout[sandboxModule.id]?.y ?? 0,
@@ -221,14 +223,16 @@ export function projectSandboxDocument(document: SandboxDocumentV2): Design {
   const structuralDesign: Design = { ...designWithoutRules, rules: [] };
   return {
     ...structuralDesign,
-    rules: document.automations
-      .map((automation, index) => ({ automation, index }))
+    rules: document.triggers
+      .map((recordTrigger, index) => ({ trigger: recordTrigger, index }))
       .sort(
         (left, right) =>
-          left.automation.priority - right.automation.priority ||
+          left.trigger.priority - right.trigger.priority ||
           left.index - right.index,
       )
-      .map(({ automation }) => projectAutomation(automation, structuralDesign)),
+      .map(({ trigger: recordTrigger }) =>
+        projectRecordTrigger(recordTrigger, structuralDesign),
+      ),
   };
 }
 
@@ -275,7 +279,7 @@ function fieldReference(
 function documentTrigger(
   trigger: RuleTrigger,
   design: Design,
-): SandboxAutomationTrigger {
+): SandboxTriggerEvent {
   switch (trigger.kind) {
     case "new-record":
       return { kind: "record-created", moduleId: trigger.moduleId };
@@ -309,12 +313,12 @@ function documentTrigger(
 function documentConditions(
   rule: RuleConfig,
   design: Design,
-  automationId: string,
-): SandboxAutomationCondition[] {
+  triggerId: string,
+): SandboxTriggerCondition[] {
   if (rule.condition.kind === "always") return [];
   return [
     {
-      id: `${automationId}:condition`,
+      id: `${triggerId}:condition`,
       field: fieldReference(rule.condition.moduleId, rule.condition.fieldId),
       operator: rule.condition.operator,
       value: legacyLiteral(
@@ -328,30 +332,30 @@ function documentConditions(
 function documentAction(
   action: RuleAction,
   design: Design,
-  automationId: string,
-): SandboxAutomationAction {
+  triggerId: string,
+): SandboxTriggerAction {
   switch (action.kind) {
     case "notification":
       return {
-        id: `${automationId}:action`,
+        id: `${triggerId}:action`,
         kind: "notification",
         message: action.message,
       };
     case "channel-message":
       return {
-        id: `${automationId}:action`,
+        id: `${triggerId}:action`,
         kind: "channel-message",
         channel: action.channel,
       };
     case "assign-task":
       return {
-        id: `${automationId}:action`,
+        id: `${triggerId}:action`,
         kind: "assign-task",
         assignee: action.assignee,
       };
     case "update-field":
       return {
-        id: `${automationId}:action`,
+        id: `${triggerId}:action`,
         kind: "set-field",
         target: fieldReference(action.moduleId, action.fieldId),
         value: legacyLiteral(
@@ -361,7 +365,7 @@ function documentAction(
       };
     case "create-record":
       return {
-        id: `${automationId}:action`,
+        id: `${triggerId}:action`,
         kind: "create-record",
         moduleId: action.moduleId,
         values: [
@@ -377,11 +381,11 @@ function documentAction(
   }
 }
 
-function documentAutomation(
+function documentRecordTrigger(
   rule: Rule,
   design: Design,
   priority: number,
-): SandboxAutomation {
+): SandboxTrigger {
   const normalized = normalizeRule(rule, design);
   return {
     id: normalized.id,
@@ -431,6 +435,7 @@ function documentDesign(nextDesign: Design): SandboxDocumentDesign {
       departmentId: sandboxModule.department,
       name: sandboxModule.name,
       closed: sandboxModule.closed,
+      titleFieldId: sandboxModule.titleFieldId ?? null,
       fields: sandboxModule.fields.map((field) => {
         const normalized = normalizeField(field);
         return {
@@ -464,16 +469,16 @@ function sameValue(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function mergeExistingAutomation(
-  automation: SandboxAutomation,
+function mergeExistingTrigger(
+  recordTrigger: SandboxTrigger,
   previousRule: Rule,
   nextRule: Rule,
   previousDesign: Design,
   nextDesign: Design,
-): SandboxAutomation {
+): SandboxTrigger {
   const previous = normalizeRule(previousRule, previousDesign);
   const next = normalizeRule(nextRule, nextDesign);
-  const merged = structuredClone(automation);
+  const merged = structuredClone(recordTrigger);
   merged.name = next.name;
   merged.enabled = next.enabled;
   if (!sameValue(previous.config.trigger, next.config.trigger))
@@ -499,18 +504,18 @@ function sameRuleOrder(
 }
 
 /**
- * Applies legacy Designer edits to a v2 document without serializing through
- * the v1 file format. Each unchanged projected rule part retains its original
+ * Applies legacy Designer edits to a v4 document without serializing through
+ * the file format. Each unchanged projected rule part retains its original
  * richer canonical data; an edited legacy part becomes only the one-step form
  * that the current Designer can express.
  */
 export function mergeProjectedDesign(
-  document: SandboxDocumentV2,
+  document: SandboxDocumentV4,
   previousProjected: Design,
   nextDesign: Design,
-): SandboxDocumentV2 {
+): SandboxDocumentV4 {
   const existing = new Map(
-    document.automations.map((automation) => [automation.id, automation]),
+    document.triggers.map((recordTrigger) => [recordTrigger.id, recordTrigger]),
   );
   const previousRules = new Map(
     previousProjected.rules.map((rule) => [rule.id, rule]),
@@ -519,29 +524,29 @@ export function mergeProjectedDesign(
     previousProjected.rules,
     nextDesign.rules,
   );
-  const automations = nextDesign.rules.map((rule, priority) => {
+  const triggers = nextDesign.rules.map((rule, priority) => {
     const previous = previousRules.get(rule.id);
-    const automation = existing.get(rule.id);
-    if (automation && previous)
-      return mergeExistingAutomation(
-        automation,
+    const recordTrigger = existing.get(rule.id);
+    if (recordTrigger && previous)
+      return mergeExistingTrigger(
+        recordTrigger,
         previous,
         rule,
         previousProjected,
         nextDesign,
       );
-    return documentAutomation(rule, nextDesign, priority);
+    return documentRecordTrigger(rule, nextDesign, priority);
   });
   return {
     kind: "openslate-sandbox",
-    schemaVersion: 2,
+    schemaVersion: SANDBOX_DOCUMENT_SCHEMA_VERSION,
     design: documentDesign(nextDesign),
-    automations: orderChanged
-      ? automations.map((automation, priority) => ({
-          ...automation,
+    triggers: orderChanged
+      ? triggers.map((recordTrigger, priority) => ({
+          ...recordTrigger,
           priority,
         }))
-      : automations,
+      : triggers,
     scenarios: structuredClone(document.scenarios),
     ...(document.versions === undefined
       ? {}

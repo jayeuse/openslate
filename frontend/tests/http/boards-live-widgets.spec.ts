@@ -43,7 +43,6 @@ const widget: BoardWidget = {
     refresh: "manual",
     pinned: false,
   },
-  audience: { kind: "everyone", roleId: null, userId: null },
   createdAt: timestamp,
   updatedAt: timestamp,
 };
@@ -65,7 +64,6 @@ const wireWidget = {
     refresh: "manual",
     pinned: false,
   },
-  audience: { kind: "everyone", role_id: null, user_id: null },
   created_at: timestamp,
   updated_at: timestamp,
 };
@@ -272,6 +270,7 @@ test("widget state clears on Board switch, changed configuration, and revoked ac
           id: recordId,
           moduleId,
           data: { [fieldId]: "Private value" },
+          displayValues: {},
           createdAt: timestamp,
           updatedAt: timestamp,
           deletedAt: null,
@@ -474,6 +473,103 @@ function displayState(items: LiveWidgetItem[]): LiveWidgetsState {
   return { key, sequence: 1, status: "ready", items, error: null };
 }
 
+test("record widgets show authorized select and person labels instead of stored IDs", async () => {
+  const statusFieldId = "00000000-0000-4000-8000-000000000011";
+  const assigneeFieldId = "00000000-0000-4000-8000-000000000012";
+  const choiceId = "00000000-0000-4000-8000-000000000013";
+  const assigneeId = "00000000-0000-4000-8000-000000000014";
+  const recordsWidget: BoardWidget = {
+    ...widget,
+    id: otherBoardId,
+    name: "Assignment queue",
+    config: {
+      ...widget.config,
+      fields: [
+        { fieldId: statusFieldId, expectedType: "select" },
+        { fieldId: assigneeFieldId, expectedType: "user" },
+      ],
+    },
+  };
+  const mock = mockFetch((path) => {
+    if (
+      path === `/api/views/data-sources/${moduleId}/fields?limit=100&offset=0`
+    )
+      return Response.json({
+        items: [
+          {
+            id: statusFieldId,
+            module_id: moduleId,
+            name: "Status",
+            type: "select",
+            required: false,
+            position: 0,
+            config: { options: [{ id: choiceId, label: "In progress" }] },
+          },
+          {
+            id: assigneeFieldId,
+            module_id: moduleId,
+            name: "Assignee",
+            type: "user",
+            required: false,
+            position: 1,
+            config: {},
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 2,
+          total: 2,
+          has_more: false,
+        },
+      });
+    if (path === "/api/records/query")
+      return Response.json({
+        items: [
+          {
+            id: recordId,
+            module_id: moduleId,
+            data: {
+              [statusFieldId]: choiceId,
+              [assigneeFieldId]: assigneeId,
+            },
+            display_values: {
+              [statusFieldId]: "In progress",
+              [assigneeFieldId]: "Alex Reader",
+            },
+            created_at: timestamp,
+            updated_at: timestamp,
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        pagination: {
+          limit: 5,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  try {
+    const plan = buildBoardWidgetQueryPlan(recordsWidget);
+    if (plan.kind !== "records") throw new Error("Expected a records widget");
+    const data = await loadLiveWidgetData(plan);
+    const html = renderWidgets(displayState([widgetItem(recordsWidget, data)]));
+
+    expect(renderedText(html)).toContain("Status In progress");
+    expect(renderedText(html)).toContain("Assignee Alex Reader");
+    expect(html).not.toContain(choiceId);
+    expect(html).not.toContain(assigneeId);
+  } finally {
+    mock.restore();
+  }
+});
+
 test("live Board Overview renders exact summary count and escaped returned record values", () => {
   const summary = {
     ...widget,
@@ -511,6 +607,7 @@ test("live Board Overview renders exact summary count and escaped returned recor
               id: recordId,
               moduleId,
               data: { [fieldId]: "Private <script>value</script>" },
+              displayValues: {},
               createdAt: timestamp,
               updatedAt: timestamp,
               deletedAt: null,
@@ -538,24 +635,22 @@ test("live Board Overview renders exact summary count and escaped returned recor
   expect(html).not.toContain("sample-board");
 });
 
-test("record summary cards pair the exact count with returned source and audience metadata", () => {
+test("record summary cards show the exact count of each summary", () => {
   const summary = {
     ...widget,
     name: "Operations summary",
     widgetType: "summary" as const,
     config: { ...widget.config, pinned: true },
   };
-  const roleSummary = {
+  const targetedSummary = {
     ...summary,
     id: otherBoardId,
-    name: "Role summary",
-    audience: { kind: "role" as const, roleId: otherBoardId, userId: null },
+    name: "Targeted summary",
   };
   const privateSummary = {
     ...summary,
     id: "00000000-0000-4000-8000-000000000007",
     name: "Private summary",
-    audience: { kind: "private" as const, roleId: null, userId: null },
   };
   const data = (total: number): LiveWidgetData => ({
     kind: "records",
@@ -574,7 +669,7 @@ test("record summary cards pair the exact count with returned source and audienc
   const html = renderWidgets(
     displayState([
       widgetItem(summary, data(24)),
-      widgetItem(roleSummary, data(18)),
+      widgetItem(targetedSummary, data(18)),
       widgetItem(privateSummary, data(42)),
     ]),
   );
@@ -586,9 +681,7 @@ test("record summary cards pair the exact count with returned source and audienc
   expect(text).toContain("18 Matching records");
   expect(text).toContain("42 Matching records");
   expect(html).not.toContain(moduleId);
-  expect(html).toContain("Everyone with Board access");
-  expect(html).toContain("Targeted audience");
-  expect(html).toContain("Private to its creator");
+  expect(html).not.toContain("audience");
   expect(html).toContain("Pinned");
 });
 
@@ -618,6 +711,7 @@ test("records card does not show values when a selected field label is missing",
               id: recordId,
               moduleId,
               data: { [fieldId]: "Private salary" },
+              displayValues: {},
               createdAt: timestamp,
               updatedAt: timestamp,
               deletedAt: null,
@@ -743,7 +837,7 @@ test("live Board Overview renders supported group and date charts with exact val
 
 test("live Board Overview makes empty, unavailable, loading, error, and retained refresh states clear", () => {
   const empty = renderWidgets(displayState([]));
-  expect(empty).toContain("No widgets visible");
+  expect(empty).toContain("No widgets yet");
   const loading = renderWidgets({ ...displayState([]), status: "loading" });
   expect(loading).toContain("Loading Board widgets");
   const denied = renderWidgets({

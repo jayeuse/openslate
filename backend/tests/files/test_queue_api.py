@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.platform.files import service
 from app.systems.platform.files.providers import get_scanner, transfer_slot
 from app.systems.platform.files.router import router
@@ -37,7 +37,7 @@ def test_scan_endpoint_returns_202_location_without_provider_access(monkeypatch)
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_current_user] = lambda: User(
-        id=actor_id, status="active", is_deleted=False, role=Role(role="admin", is_deleted=False)
+        id=actor_id, status="active", is_deleted=False, role="admin"
     )
     app.dependency_overrides[get_db] = lambda: None
 

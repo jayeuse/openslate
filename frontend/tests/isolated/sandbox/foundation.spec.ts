@@ -8,10 +8,6 @@ import {
 import { configuredSandboxDesign } from "../../helpers/sandbox-fixtures";
 import { validateSandboxDesign } from "../../../src/components/systems/sandbox/domain/validation";
 import {
-  exportSandboxFile,
-  parseSandboxFile,
-} from "../../../src/components/systems/sandbox/helpers/file-format";
-import {
   canvasFieldId,
   updateProjectedField,
 } from "../../../src/components/systems/sandbox/helpers/bridge";
@@ -30,7 +26,7 @@ test("new Sandbox workspaces start without placeholder entities", () => {
   });
 });
 
-test("sandbox field configuration has ten canonical types and normalizes legacy select values", () => {
+test("sandbox field configuration includes User and assigns stable IDs to legacy select choices", () => {
   expect(FIELD_TYPES.map((type) => type.name)).toEqual([
     "Text",
     "Long text",
@@ -40,24 +36,33 @@ test("sandbox field configuration has ten canonical types and normalizes legacy 
     "Date/Time",
     "Checkbox",
     "Select",
+    "User",
     "Email",
     "URL",
   ]);
-  expect(
-    normalizeField({
-      id: "status",
-      name: "Status",
-      type: "Select",
-      required: false,
-      value: "Open",
-      options: " Open, Closed, Open ",
-      closed: false,
-    }).config,
-  ).toEqual({
-    kind: "select",
-    defaultValue: "Open",
-    options: ["Open", "Closed"],
+  const normalized = normalizeField({
+    id: "status",
+    name: "Status",
+    type: "Select",
+    required: false,
+    value: "Open",
+    options: " Open, Closed, Open ",
+    closed: false,
   });
+  expect(normalized.config.kind).toBe("select");
+  if (normalized.config.kind !== "select")
+    throw new Error("Status must remain a select field");
+  expect(normalized.config.options.map((option) => option.label)).toEqual([
+    "Open",
+    "Closed",
+  ]);
+  const selected = normalized.config.options.find(
+    (option) => option.label === "Open",
+  );
+  expect(normalized.config.defaultValue).toBe(selected?.id);
+  expect(selected?.id).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+  );
 });
 
 test("canvas field type changes replace incompatible saved configuration", () => {
@@ -161,53 +166,4 @@ test("field validation issues retain module-scoped identity when field IDs repea
       moduleId: "sample-equipment",
     }),
   ]);
-});
-
-test("sandbox JSON round-trips and rejected imports never expose a replacement", () => {
-  const serialized = exportSandboxFile({ design: fixture() });
-  const parsed = parseSandboxFile(serialized);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) throw new Error(parsed.error);
-  expect(parsed.file.kind).toBe("openslate-sandbox");
-  expect(parsed.file.schemaVersion).toBe(1);
-  expect(parsed.file.design).toEqual(fixture());
-
-  for (const text of [
-    "{not-json",
-    JSON.stringify({
-      kind: "openslate-sandbox",
-      schemaVersion: 2,
-      design: fixture(),
-    }),
-    "x".repeat(2 * 1024 * 1024 + 1),
-  ]) {
-    const rejected = parseSandboxFile(text);
-    expect(rejected.ok).toBe(false);
-    expect("file" in rejected).toBe(false);
-  }
-});
-
-test("sandbox import rejects unknown root and nested properties", () => {
-  const design = fixture();
-  const nested = structuredClone(design) as Design & {
-    departments: Array<
-      Design["departments"][number] & { unexpected?: boolean }
-    >;
-  };
-  nested.departments[0].unexpected = true;
-
-  for (const value of [
-    {
-      kind: "openslate-sandbox",
-      schemaVersion: 1,
-      design,
-      unexpected: true,
-    },
-    { kind: "openslate-sandbox", schemaVersion: 1, design: nested },
-  ]) {
-    const result = parseSandboxFile(JSON.stringify(value));
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Unknown properties must not be accepted");
-    expect(result.error).toContain("unknown property");
-  }
 });

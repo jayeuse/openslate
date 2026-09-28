@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user
 from app.common.listing import (
     ListQuerySpec,
     SortOrder,
@@ -22,9 +22,10 @@ from app.common.listing import (
 from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
-from app.systems.boards.announcement_models import BoardAnnouncement
+from app.systems.boards.event_models import BoardEvent
+from app.systems.boards.post_models import BoardPost
 from app.systems.boards.reminder_models import BoardEventReminder
+from app.systems.boards.reminder_service import occurrence_at
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkKind
 from app.systems.platform.scheduling.service import current_user_notification_query
 
@@ -36,7 +37,7 @@ def _private_cache(response: Response) -> None:
 router = APIRouter(
     prefix="/notifications", tags=["notifications"], dependencies=[Depends(_private_cache)]
 )
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
+Reader = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -62,10 +63,10 @@ class ReportNotificationResponse(NotificationResponse):
     run_id: UUID
 
 
-class AnnouncementNotificationResponse(NotificationResponse):
-    kind: Literal["announcement-publish"]
+class PostNotificationResponse(NotificationResponse):
+    kind: Literal["post-publish"]
     board_id: UUID
-    announcement_id: UUID
+    post_id: UUID
     publication_revision_id: UUID
 
 
@@ -74,11 +75,12 @@ class EventReminderNotificationResponse(NotificationResponse):
     board_id: UUID
     event_id: UUID
     occurrence_id: str
+    occurrence_start_at: datetime
 
 
 NotificationItem = Annotated[
     ReportNotificationResponse
-    | AnnouncementNotificationResponse
+    | PostNotificationResponse
     | EventReminderNotificationResponse,
     Field(discriminator="kind"),
 ]
@@ -101,13 +103,26 @@ def _not_found() -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, detail="Notification not found")
 
 
+def _reminder_events(db: Session, reminder_ids: set[UUID]) -> dict[UUID, BoardEvent]:
+    if not reminder_ids:
+        return {}
+    return {
+        reminder_id: event
+        for reminder_id, event in db.execute(
+            select(BoardEventReminder.id, BoardEvent)
+            .join(BoardEvent, BoardEvent.id == BoardEventReminder.event_id)
+            .where(BoardEventReminder.id.in_(reminder_ids))
+        ).tuples()
+    }
+
+
 def _response(
     db: Session,
     notification: InAppNotification,
     work: ScheduledWork,
     *,
-    announcement_board_ids: dict[UUID, UUID] | None = None,
-    event_reminder_fields: dict[UUID, tuple[UUID, UUID, str]] | None = None,
+    post_board_ids: dict[UUID, UUID] | None = None,
+    reminder_events: dict[UUID, BoardEvent] | None = None,
 ) -> NotificationItem:
     common = dict(
         id=notification.id,
@@ -122,47 +137,50 @@ def _response(
         return ReportNotificationResponse(
             **common, kind="report-run", report_id=work.report_id, run_id=work.run_id
         )
-    if work.kind == WorkKind.ANNOUNCEMENT_PUBLISH:
-        if work.announcement_id is None or work.publication_result_id is None:
+    if work.kind == WorkKind.POST_PUBLISH:
+        if work.post_id is None or work.publication_result_id is None:
             raise _not_found()
-        if announcement_board_ids is None:
-            announcement = db.get(BoardAnnouncement, work.announcement_id)
-            if announcement is None:
+        if post_board_ids is None:
+            post = db.get(BoardPost, work.post_id)
+            if post is None:
                 raise _not_found()
-            board_id = announcement.board_id
+            board_id = post.board_id
         else:
-            page_board_id = announcement_board_ids.get(work.announcement_id)
+            page_board_id = post_board_ids.get(work.post_id)
             if page_board_id is None:
                 raise _not_found()
             board_id = page_board_id
-        return AnnouncementNotificationResponse(
+        return PostNotificationResponse(
             **common,
-            kind="announcement-publish",
+            kind="post-publish",
             board_id=board_id,
-            announcement_id=work.announcement_id,
+            post_id=work.post_id,
             publication_revision_id=work.publication_result_id,
         )
-    if work.kind == WorkKind.EVENT_REMINDER and work.reminder_id is not None:
-        if event_reminder_fields is None:
-            reminder = db.get(BoardEventReminder, work.reminder_id)
-            if reminder is None:
-                raise _not_found()
-            board_id, event_id, occurrence_id = (
-                reminder.board_id,
-                reminder.event_id,
-                reminder.occurrence_id,
-            )
-        else:
-            reference = event_reminder_fields.get(work.reminder_id)
-            if reference is None:
-                raise _not_found()
-            board_id, event_id, occurrence_id = reference
+    if (
+        work.kind == WorkKind.EVENT_REMINDER
+        and work.reminder_id is not None
+        and work.occurrence_start_at is not None
+    ):
+        event = (
+            reminder_events.get(work.reminder_id)
+            if reminder_events is not None
+            else _reminder_events(db, {work.reminder_id}).get(work.reminder_id)
+        )
+        if event is None:
+            raise _not_found()
+        occurrence = occurrence_at(event, work.occurrence_start_at)
         return EventReminderNotificationResponse(
             **common,
             kind="event-reminder",
-            board_id=board_id,
-            event_id=event_id,
-            occurrence_id=occurrence_id,
+            board_id=event.board_id,
+            event_id=event.id,
+            occurrence_id=(
+                occurrence.id
+                if occurrence is not None
+                else f"{event.id}:{work.occurrence_start_at.date().isoformat()}"
+            ),
+            occurrence_start_at=work.occurrence_start_at,
         )
     raise _not_found()
 
@@ -188,52 +206,36 @@ def list_notifications(
     }
     page_entries = [(item, work_by_id[item.work_id]) for item in result.items]
 
-    announcement_ids = {
-        work.announcement_id
+    post_ids = {
+        work.post_id
         for _, work in page_entries
-        if work.kind == WorkKind.ANNOUNCEMENT_PUBLISH
-        and work.announcement_id is not None
+        if work.kind == WorkKind.POST_PUBLISH and work.post_id is not None
     }
-    announcement_board_ids = (
+    post_board_ids = (
         {
-            announcement_id: board_id
-            for announcement_id, board_id in db.execute(
-                select(BoardAnnouncement.id, BoardAnnouncement.board_id).where(
-                    BoardAnnouncement.id.in_(announcement_ids)
-                )
+            post_id: board_id
+            for post_id, board_id in db.execute(
+                select(BoardPost.id, BoardPost.board_id).where(BoardPost.id.in_(post_ids))
             )
         }
-        if announcement_ids
+        if post_ids
         else {}
     )
-    reminder_ids = {
-        work.reminder_id
-        for _, work in page_entries
-        if work.kind == WorkKind.EVENT_REMINDER
-        and work.reminder_id is not None
-    }
-    event_reminder_fields = (
+    reminder_events = _reminder_events(
+        db,
         {
-            reminder_id: (board_id, event_id, occurrence_id)
-            for reminder_id, board_id, event_id, occurrence_id in db.execute(
-                select(
-                    BoardEventReminder.id,
-                    BoardEventReminder.board_id,
-                    BoardEventReminder.event_id,
-                    BoardEventReminder.occurrence_id,
-                ).where(BoardEventReminder.id.in_(reminder_ids))
-            )
-        }
-        if reminder_ids
-        else {}
+            work.reminder_id
+            for _, work in page_entries
+            if work.kind == WorkKind.EVENT_REMINDER and work.reminder_id is not None
+        },
     )
     items = [
         _response(
             db,
             item,
             work,
-            announcement_board_ids=announcement_board_ids,
-            event_reminder_fields=event_reminder_fields,
+            post_board_ids=post_board_ids,
+            reminder_events=reminder_events,
         )
         for item, work in page_entries
     ]

@@ -36,7 +36,6 @@ def _event(
         timezone_name=timezone_name,
         recurrence=recurrence,
         repeat_until=repeat_until,
-        audience_kind="everyone",
     )
 
 

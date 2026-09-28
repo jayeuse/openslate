@@ -1,12 +1,11 @@
-import type { OpenViewChartPreferenceConfig } from "../adapters/chart-preferences-api";
 import type {
   OpenViewDataSourceField,
   OpenViewQueryDefinition,
 } from "../adapters/views-api";
 
 export type ChartType = "bar" | "line" | "pie";
-export type Aggregation = OpenViewChartPreferenceConfig["aggregation"];
-export type FilterLogic = OpenViewChartPreferenceConfig["filterLogic"];
+export type Aggregation = "count" | "sum" | "average";
+export type FilterLogic = OpenViewQueryDefinition["logic"];
 export type FilterOperator =
   OpenViewQueryDefinition["filters"][number]["operator"];
 export type FilterDraft = {
@@ -23,6 +22,7 @@ export const CATEGORICAL_TYPES = new Set([
   "email",
   "url",
   "select",
+  "user",
   "boolean",
 ]);
 export const EMPTY_OPERATORS = new Set<FilterOperator>([
@@ -53,6 +53,7 @@ export function operatorsFor(field: OpenViewDataSourceField): FilterOperator[] {
     return [...COMMON_FILTER_OPERATORS, "contains", "prefix", "suffix"];
   }
   if (field.type === "select") return [...COMMON_FILTER_OPERATORS, "contains"];
+  if (field.type === "user") return COMMON_FILTER_OPERATORS;
   if (
     NUMERIC_TYPES.has(field.type) ||
     ["date", "datetime"].includes(field.type)

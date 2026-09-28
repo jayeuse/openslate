@@ -4,6 +4,7 @@ import type {
   OpenViewDataSourceField,
   OpenViewRecord,
 } from "../adapters/views-api";
+import { openViewRecordFieldValue } from "../domain/record-display";
 
 type LiveRecordCardLayout = "grid" | "gallery";
 
@@ -66,7 +67,7 @@ export function LiveRecordCards({
     >
       {rows.map((row) => {
         const primaryValue = primaryField
-          ? recordValue(row.data[primaryField.id])
+          ? recordValue(openViewRecordFieldValue(row, primaryField))
           : "Untitled record";
         return (
           <li key={row.id} className="min-w-0">
@@ -105,7 +106,7 @@ export function LiveRecordCards({
                     className={`text-muted-foreground mt-1 text-sm ${wrap ? "break-words" : "truncate whitespace-nowrap"}`}
                   >
                     {secondaryField.name}:{" "}
-                    {recordValue(row.data[secondaryField.id])}
+                    {recordValue(openViewRecordFieldValue(row, secondaryField))}
                   </p>
                 ) : null}
               </header>
@@ -129,7 +130,7 @@ export function LiveRecordCards({
                           wrap ? "break-words" : "truncate whitespace-nowrap"
                         }
                       >
-                        {recordValue(row.data[field.id])}
+                        {recordValue(openViewRecordFieldValue(row, field))}
                       </dd>
                     </div>
                   ))}

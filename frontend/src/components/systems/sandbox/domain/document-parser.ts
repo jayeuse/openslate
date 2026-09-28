@@ -11,7 +11,7 @@ import {
   type SandboxLayoutBox,
   type SandboxFieldMapping,
   type SandboxScenarioLink,
-  type SandboxDocumentV2,
+  type SandboxDocumentV4,
   type SandboxFieldValue,
   type SandboxDocumentField,
   type SandboxDocumentDesign,
@@ -20,13 +20,15 @@ import {
   type SandboxRelationship,
   type SandboxFieldReference,
   type SandboxValueSource,
-  type SandboxAutomationTrigger,
-  type SandboxAutomationAction,
-  type SandboxAutomationCondition,
-  type SandboxAutomation,
+  type SandboxTriggerEvent,
+  type SandboxTriggerAction,
+  type SandboxTriggerCondition,
+  type SandboxTrigger,
   type SandboxScenarioTemplate,
   type SandboxSyntheticRecord,
   type SandboxVersionSnapshot,
+  SANDBOX_DOCUMENT_SCHEMA_VERSION,
+  SANDBOX_OLDER_FORMAT_MESSAGE,
 } from "./document-types";
 
 type UnknownRecord = Record<string, unknown>;
@@ -54,6 +56,17 @@ function array(value: unknown, label: string): unknown[] {
 function string(value: unknown, label: string): string {
   if (typeof value !== "string") throw new Error(`${label} must be a string`);
   return value;
+}
+
+function uuid(value: unknown, label: string): string {
+  const parsed = string(value, label);
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      parsed,
+    )
+  )
+    throw new Error(`${label} must be a UUID`);
+  return parsed;
 }
 
 function boundedString(
@@ -211,25 +224,37 @@ function parseFieldConfig(value: unknown): FieldConfig {
       defaultValue: boolean(source.defaultValue, "field config defaultValue"),
     };
   }
+  if (kind === "user") {
+    exactKeys(source, ["kind"], "field config");
+    return { kind };
+  }
   if (kind === "select") {
     exactKeys(source, ["kind", "defaultValue", "options"], "field config");
     if (source.defaultValue !== null && typeof source.defaultValue !== "string")
       throw new Error("field config defaultValue must be a string or null");
-    const options = array(source.options, "field config options").map((item) =>
-      boundedString(
-        item,
-        "field config option",
-        SANDBOX_DOCUMENT_LIMITS.selectOptionCharacters,
-      ),
+    const options = array(source.options, "field config options").map(
+      (item) => {
+        const option = record(item, "field config option");
+        exactKeys(option, ["id", "label"], "field config option");
+        return {
+          id: uuid(option.id, "field config option id"),
+          label: boundedString(
+            option.label,
+            "field config option label",
+            SANDBOX_DOCUMENT_LIMITS.selectOptionCharacters,
+          ),
+        };
+      },
     );
     if (
       options.length > SANDBOX_DOCUMENT_LIMITS.selectOptions ||
-      new Set(options).size !== options.length
+      new Set(options.map((option) => option.id)).size !== options.length ||
+      new Set(options.map((option) => option.label)).size !== options.length
     )
       throw new Error("field config options are invalid");
     if (
       source.defaultValue !== null &&
-      !options.includes(source.defaultValue as string)
+      !options.some((option) => option.id === source.defaultValue)
     )
       throw new Error("field config defaultValue must be a select option");
     return {
@@ -281,7 +306,10 @@ function parseField(value: unknown): SandboxDocumentField {
     ...(description === undefined ? {} : { description }),
     config,
   };
-  if (!valueMatchesField(config.defaultValue, field, false))
+  if (
+    config.kind !== "user" &&
+    !valueMatchesField(config.defaultValue, field, false)
+  )
     throw new Error("field config defaultValue does not match its field");
   return field;
 }
@@ -353,7 +381,17 @@ function valueMatchesField(
     case "checkbox":
       return typeof value === "boolean";
     case "select":
-      return typeof value === "string" && field.config.options.includes(value);
+      return (
+        typeof value === "string" &&
+        field.config.options.some((option) => option.id === value)
+      );
+    case "user":
+      return (
+        typeof value === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          value,
+        )
+      );
     case "date":
       return (
         typeof value === "string" &&
@@ -456,10 +494,14 @@ function parseDesign(value: unknown, semantic = true): SandboxDocumentDesign {
     const source = record(item, "module");
     exactKeys(
       source,
-      ["id", "departmentId", "name", "closed", "fields"],
+      ["id", "departmentId", "name", "closed", "titleFieldId", "fields"],
       "module",
     );
     const fields = array(source.fields, "module fields").map(parseField);
+    const titleFieldId =
+      source.titleFieldId === null
+        ? null
+        : boundedString(source.titleFieldId, "module titleFieldId");
     return {
       id: boundedString(source.id, "module id"),
       departmentId: boundedString(source.departmentId, "module departmentId"),
@@ -469,6 +511,7 @@ function parseDesign(value: unknown, semantic = true): SandboxDocumentDesign {
         SANDBOX_DOCUMENT_LIMITS.nameCharacters,
       ),
       closed: boolean(source.closed, "module closed"),
+      titleFieldId,
       fields,
     };
   });
@@ -500,6 +543,27 @@ function parseDesign(value: unknown, semantic = true): SandboxDocumentDesign {
         sandboxModule.fields.map((field) => field.id),
         "field IDs",
       );
+    if (semantic && sandboxModule.titleFieldId !== null) {
+      const titleField = sandboxModule.fields.find(
+        (field) => field.id === sandboxModule.titleFieldId,
+      );
+      if (
+        !titleField ||
+        titleField.closed ||
+        ![
+          "Text",
+          "Long text",
+          "Email",
+          "URL",
+          "Integer",
+          "Number",
+          "Select",
+        ].includes(titleField.type)
+      )
+        throw new Error(
+          "module titleFieldId must refer to an active title field",
+        );
+    }
   }
   const parsedRelationships = relationships.map((item): SandboxRelationship => {
     const source = record(item, "relationship");
@@ -634,7 +698,9 @@ function compatibleFields(
   if (sourceKind === "select") {
     if (targetKind !== "select") return false;
     const targetOptions = target.config.options;
-    return source.config.options.every((item) => targetOptions.includes(item));
+    return source.config.options.every((item) =>
+      targetOptions.some((candidate) => candidate.label === item.label),
+    );
   }
   if (sourceKind === "number" || sourceKind === "integer") {
     if (targetKind !== "number" && sourceKind !== targetKind) return false;
@@ -758,18 +824,18 @@ function parseValueSource(value: unknown): SandboxValueSource {
   throw new Error("value source kind is invalid");
 }
 
-function parseAutomationTrigger(value: unknown): SandboxAutomationTrigger {
-  const source = record(value, "automation trigger");
-  const kind = string(source.kind, "automation trigger kind");
+function parseTriggerEvent(value: unknown): SandboxTriggerEvent {
+  const source = record(value, "trigger event");
+  const kind = string(source.kind, "trigger event kind");
   if (kind === "record-created") {
-    exactKeys(source, ["kind", "moduleId"], "automation trigger");
+    exactKeys(source, ["kind", "moduleId"], "trigger event");
     return {
       kind,
       moduleId: boundedString(source.moduleId, "trigger moduleId"),
     };
   }
   if (kind === "field-changed") {
-    exactKeys(source, ["kind", "moduleId", "fieldId"], "automation trigger");
+    exactKeys(source, ["kind", "moduleId", "fieldId"], "trigger event");
     return {
       kind,
       moduleId: boundedString(source.moduleId, "trigger moduleId"),
@@ -780,7 +846,7 @@ function parseAutomationTrigger(value: unknown): SandboxAutomationTrigger {
     exactKeys(
       source,
       ["kind", "moduleId", "fieldId", "operator", "value"],
-      "automation trigger",
+      "trigger event",
     );
     return {
       kind,
@@ -794,7 +860,7 @@ function parseAutomationTrigger(value: unknown): SandboxAutomationTrigger {
     exactKeys(
       source,
       ["kind", "moduleId", "frequency", "time", "weekday"],
-      "automation trigger",
+      "trigger event",
     );
     const frequency = string(source.frequency, "schedule frequency");
     const weekday =
@@ -820,15 +886,15 @@ function parseAutomationTrigger(value: unknown): SandboxAutomationTrigger {
       ...(weekday === undefined ? {} : { weekday }),
     };
   }
-  throw new Error("automation trigger kind is invalid");
+  throw new Error("trigger event kind is invalid");
 }
 
-function parseAutomationAction(value: unknown): SandboxAutomationAction {
-  const source = record(value, "automation action");
-  const id = boundedString(source.id, "automation action id");
-  const kind = string(source.kind, "automation action kind");
+function parseTriggerAction(value: unknown): SandboxTriggerAction {
+  const source = record(value, "trigger action");
+  const id = boundedString(source.id, "trigger action id");
+  const kind = string(source.kind, "trigger action kind");
   if (kind === "notification") {
-    exactKeys(source, ["id", "kind", "message"], "automation action");
+    exactKeys(source, ["id", "kind", "message"], "trigger action");
     return {
       id,
       kind,
@@ -836,7 +902,7 @@ function parseAutomationAction(value: unknown): SandboxAutomationAction {
     };
   }
   if (kind === "channel-message") {
-    exactKeys(source, ["id", "kind", "channel"], "automation action");
+    exactKeys(source, ["id", "kind", "channel"], "trigger action");
     return {
       id,
       kind,
@@ -844,7 +910,7 @@ function parseAutomationAction(value: unknown): SandboxAutomationAction {
     };
   }
   if (kind === "assign-task") {
-    exactKeys(source, ["id", "kind", "assignee"], "automation action");
+    exactKeys(source, ["id", "kind", "assignee"], "trigger action");
     return {
       id,
       kind,
@@ -852,7 +918,7 @@ function parseAutomationAction(value: unknown): SandboxAutomationAction {
     };
   }
   if (kind === "set-field") {
-    exactKeys(source, ["id", "kind", "target", "value"], "automation action");
+    exactKeys(source, ["id", "kind", "target", "value"], "trigger action");
     return {
       id,
       kind,
@@ -861,11 +927,7 @@ function parseAutomationAction(value: unknown): SandboxAutomationAction {
     };
   }
   if (kind === "create-record") {
-    exactKeys(
-      source,
-      ["id", "kind", "moduleId", "values"],
-      "automation action",
-    );
+    exactKeys(source, ["id", "kind", "moduleId", "values"], "trigger action");
     const values = array(source.values, "create record values").map((item) => {
       const source = record(item, "create record value");
       exactKeys(source, ["fieldId", "value"], "create record value");
@@ -881,7 +943,7 @@ function parseAutomationAction(value: unknown): SandboxAutomationAction {
       values,
     };
   }
-  throw new Error("automation action kind is invalid");
+  throw new Error("trigger action kind is invalid");
 }
 
 function fieldForReference(
@@ -924,28 +986,26 @@ function validateValueSource(
     throw new Error("literal value does not match its field");
 }
 
-type AutomationReference = {
+type TriggerReference = {
   moduleId: string;
   relationshipId?: string;
   fieldId?: string;
 };
 
-function automationReferences(
-  automation: SandboxAutomation,
-): AutomationReference[] {
-  const references: AutomationReference[] = [];
+function triggerReferences(recordTrigger: SandboxTrigger): TriggerReference[] {
+  const references: TriggerReference[] = [];
   const addField = (reference: SandboxFieldReference) =>
     references.push(reference);
   const addValue = (source: SandboxValueSource) => {
     if (source.kind === "field-reference") addField(source);
   };
-  if (automation.trigger.kind === "threshold-crossed")
-    addValue(automation.trigger.value);
-  for (const condition of automation.conditionGroup.conditions) {
+  if (recordTrigger.trigger.kind === "threshold-crossed")
+    addValue(recordTrigger.trigger.value);
+  for (const condition of recordTrigger.conditionGroup.conditions) {
     addField(condition.field);
     addValue(condition.value);
   }
-  for (const action of automation.actions) {
+  for (const action of recordTrigger.actions) {
     if (action.kind === "set-field") {
       addField(action.target);
       addValue(action.value);
@@ -957,11 +1017,11 @@ function automationReferences(
   return references;
 }
 
-function validateAutomationReachability(
-  automation: SandboxAutomation,
+function validateTriggerReachability(
+  recordTrigger: SandboxTrigger,
   design: SandboxDocumentDesign,
 ): void {
-  const references = automationReferences(automation);
+  const references = triggerReferences(recordTrigger);
   const directModules = [
     ...new Set(
       references
@@ -970,27 +1030,25 @@ function validateAutomationReachability(
     ),
   ];
   const origin =
-    automation.trigger.kind === "schedule"
+    recordTrigger.trigger.kind === "schedule"
       ? directModules.length === 0
         ? undefined
         : directModules.length === 1
           ? directModules[0]
           : (() => {
-              throw new Error(
-                "schedule automation references multiple modules",
-              );
+              throw new Error("schedule trigger references multiple modules");
             })()
-      : automation.trigger.moduleId;
+      : recordTrigger.trigger.moduleId;
   for (const reference of references) {
     if (reference.fieldId !== undefined)
       fieldForReference(reference as SandboxFieldReference, design);
     if (reference.relationshipId === undefined) {
       if (origin !== undefined && reference.moduleId !== origin)
-        throw new Error("automation direct reference is not reachable");
+        throw new Error("trigger direct reference is not reachable");
       continue;
     }
     if (origin === undefined || reference.moduleId === origin)
-      throw new Error("automation relationship reference has no remote module");
+      throw new Error("trigger relationship reference has no remote module");
     const relationship = design.relationships.find(
       (item) => item.id === reference.relationshipId,
     );
@@ -1003,20 +1061,20 @@ function validateAutomationReachability(
           relationship.sourceModuleId === reference.moduleId)
       )
     )
-      throw new Error("automation relationship reference is not reachable");
+      throw new Error("trigger relationship reference is not reachable");
   }
 }
 
-function parseAutomations(
+function parseTriggers(
   value: unknown,
   design: SandboxDocumentDesign,
   semantic = true,
-): SandboxAutomation[] {
-  const items = array(value, "automations");
-  if (items.length > SANDBOX_DOCUMENT_LIMITS.automations)
-    throw new Error("Automation limit exceeded");
-  const automations = items.map((item): SandboxAutomation => {
-    const source = record(item, "automation");
+): SandboxTrigger[] {
+  const items = array(value, "triggers");
+  if (items.length > SANDBOX_DOCUMENT_LIMITS.triggers)
+    throw new Error("Trigger limit exceeded");
+  const triggers = items.map((item): SandboxTrigger => {
+    const source = record(item, "trigger");
     exactKeys(
       source,
       [
@@ -1028,7 +1086,7 @@ function parseAutomations(
         "conditionGroup",
         "actions",
       ],
-      "automation",
+      "trigger",
     );
     const conditionGroup = record(source.conditionGroup, "condition group");
     exactKeys(conditionGroup, ["operator", "conditions"], "condition group");
@@ -1040,63 +1098,63 @@ function parseAutomations(
       throw new Error("condition group operator is invalid");
     const conditions = array(
       conditionGroup.conditions,
-      "automation conditions",
-    ).map((item): SandboxAutomationCondition => {
-      const source = record(item, "automation condition");
+      "trigger conditions",
+    ).map((item): SandboxTriggerCondition => {
+      const source = record(item, "trigger condition");
       exactKeys(
         source,
         ["id", "field", "operator", "value"],
-        "automation condition",
+        "trigger condition",
       );
       return {
-        id: boundedString(source.id, "automation condition id"),
+        id: boundedString(source.id, "trigger condition id"),
         field: parseFieldReference(source.field, "condition field"),
         operator: comparisonOperator(source.operator, "condition operator"),
         value: parseValueSource(source.value),
       };
     });
-    const actions = array(source.actions, "automation actions").map(
-      parseAutomationAction,
+    const actions = array(source.actions, "trigger actions").map(
+      parseTriggerAction,
     );
     if (
-      conditions.length > SANDBOX_DOCUMENT_LIMITS.conditionsPerAutomation ||
+      conditions.length > SANDBOX_DOCUMENT_LIMITS.conditionsPerTrigger ||
       actions.length === 0 ||
-      actions.length > SANDBOX_DOCUMENT_LIMITS.actionsPerAutomation
+      actions.length > SANDBOX_DOCUMENT_LIMITS.actionsPerTrigger
     )
-      throw new Error("automation condition or action limit exceeded");
-    const priority = finiteNumber(source.priority, "automation priority");
+      throw new Error("trigger condition or action limit exceeded");
+    const priority = finiteNumber(source.priority, "trigger priority");
     if (!Number.isInteger(priority) || priority < -10_000 || priority > 10_000)
-      throw new Error("automation priority is invalid");
+      throw new Error("trigger priority is invalid");
     return {
-      id: boundedString(source.id, "automation id"),
+      id: boundedString(source.id, "trigger id"),
       name: boundedString(
         source.name,
-        "automation name",
+        "trigger name",
         SANDBOX_DOCUMENT_LIMITS.nameCharacters,
       ),
-      enabled: boolean(source.enabled, "automation enabled"),
+      enabled: boolean(source.enabled, "trigger enabled"),
       priority,
-      trigger: parseAutomationTrigger(source.trigger),
+      trigger: parseTriggerEvent(source.trigger),
       conditionGroup: { operator, conditions },
       actions,
     };
   });
   if (semantic)
     assertUnique(
-      automations.map((item) => item.id),
-      "automation IDs",
+      triggers.map((item) => item.id),
+      "trigger IDs",
     );
   if (semantic)
-    for (const automation of automations)
-      validateAutomation(automation, design);
-  return automations;
+    for (const recordTrigger of triggers)
+      validateTrigger(recordTrigger, design);
+  return triggers;
 }
 
-function validateAutomation(
-  automation: SandboxAutomation,
+function validateTrigger(
+  recordTrigger: SandboxTrigger,
   design: SandboxDocumentDesign,
 ): void {
-  const trigger = automation.trigger;
+  const trigger = recordTrigger.trigger;
   if (trigger.kind !== "schedule") {
     const triggerField =
       "fieldId" in trigger
@@ -1106,7 +1164,7 @@ function validateAutomation(
       !design.modules.some((item) => item.id === trigger.moduleId) ||
       (triggerField && !fieldForReference(triggerField, design))
     )
-      throw new Error("automation trigger reference does not exist");
+      throw new Error("trigger event reference does not exist");
     if (trigger.kind === "threshold-crossed")
       validateValueSource(
         trigger.value,
@@ -1114,19 +1172,19 @@ function validateAutomation(
         fieldForReference(triggerField!, design),
       );
   }
-  for (const condition of automation.conditionGroup.conditions) {
+  for (const condition of recordTrigger.conditionGroup.conditions) {
     const field = fieldForReference(condition.field, design);
     validateValueSource(condition.value, design, field);
   }
   assertUnique(
-    automation.conditionGroup.conditions.map((item) => item.id),
-    "automation condition IDs",
+    recordTrigger.conditionGroup.conditions.map((item) => item.id),
+    "trigger condition IDs",
   );
   assertUnique(
-    automation.actions.map((item) => item.id),
-    "automation action IDs",
+    recordTrigger.actions.map((item) => item.id),
+    "trigger action IDs",
   );
-  for (const action of automation.actions) {
+  for (const action of recordTrigger.actions) {
     if (action.kind === "set-field")
       validateValueSource(
         action.value,
@@ -1151,7 +1209,7 @@ function validateAutomation(
       }
     }
   }
-  validateAutomationReachability(automation, design);
+  validateTriggerReachability(recordTrigger, design);
 }
 
 function parseScenarios(
@@ -1291,10 +1349,10 @@ function validateScenario(
 function parseDocumentContents(
   source: UnknownRecord,
   semantic = true,
-): Omit<SandboxDocumentV2, "kind" | "schemaVersion" | "versions"> {
+): Omit<SandboxDocumentV4, "kind" | "schemaVersion" | "versions"> {
   return {
     design: parseDesign(source.design, semantic),
-    automations: [],
+    triggers: [],
     scenarios: [],
   };
 }
@@ -1312,12 +1370,12 @@ function parseVersion(value: unknown, semantic = true): SandboxVersionSnapshot {
   const documentSource = record(source.document, "version document");
   exactKeys(
     documentSource,
-    ["design", "automations", "scenarios"],
+    ["design", "triggers", "scenarios"],
     "version document",
   );
   const contents = parseDocumentContents(documentSource, semantic);
-  contents.automations = parseAutomations(
-    documentSource.automations,
+  contents.triggers = parseTriggers(
+    documentSource.triggers,
     contents.design,
     semantic,
   );
@@ -1347,23 +1405,24 @@ function parseVersion(value: unknown, semantic = true): SandboxVersionSnapshot {
   };
 }
 
-function parseDocument(value: unknown, semantic = true): SandboxDocumentV2 {
+function parseDocument(value: unknown, semantic = true): SandboxDocumentV4 {
   const source = record(value, "sandbox document");
+  if (
+    typeof source.schemaVersion === "number" &&
+    source.schemaVersion < SANDBOX_DOCUMENT_SCHEMA_VERSION
+  )
+    throw new Error(SANDBOX_OLDER_FORMAT_MESSAGE);
   exactKeys(
     source,
-    ["kind", "schemaVersion", "design", "automations", "scenarios", "versions"],
+    ["kind", "schemaVersion", "design", "triggers", "scenarios", "versions"],
     "sandbox document",
   );
   if (source.kind !== "openslate-sandbox")
     throw new Error("File kind must be openslate-sandbox");
-  if (source.schemaVersion !== 2)
+  if (source.schemaVersion !== SANDBOX_DOCUMENT_SCHEMA_VERSION)
     throw new Error("Sandbox schema version is not supported");
   const contents = parseDocumentContents(source, semantic);
-  contents.automations = parseAutomations(
-    source.automations,
-    contents.design,
-    semantic,
-  );
+  contents.triggers = parseTriggers(source.triggers, contents.design, semantic);
   contents.scenarios = parseScenarios(
     source.scenarios,
     contents.design,
@@ -1380,7 +1439,7 @@ function parseDocument(value: unknown, semantic = true): SandboxDocumentV2 {
   assertUnique(versions?.map((item) => item.id) ?? [], "version snapshot IDs");
   return {
     kind: "openslate-sandbox",
-    schemaVersion: 2,
+    schemaVersion: SANDBOX_DOCUMENT_SCHEMA_VERSION,
     ...contents,
     ...(versions === undefined ? {} : { versions }),
   };
@@ -1390,7 +1449,7 @@ function parseDocument(value: unknown, semantic = true): SandboxDocumentV2 {
 export function parseSandboxDocumentValue(
   value: unknown,
   semantic = true,
-): SandboxDocumentV2 {
+): SandboxDocumentV4 {
   return parseDocument(value, semantic);
 }
 

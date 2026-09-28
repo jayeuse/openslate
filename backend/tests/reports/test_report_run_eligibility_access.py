@@ -1,4 +1,7 @@
-"""Run-time recipient snapshots and current audience checks using real bearer auth."""
+"""Run-time reader snapshots and current module read checks using real bearer auth.
+
+Every module reader at run time may open a run, while they can still read the module.
+"""
 
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
@@ -13,14 +16,13 @@ from uuid6 import uuid7
 
 from app.core.database import get_db
 from app.core.database.session import AuditSession
-from app.systems.access.policy.models import AccessRule
 from app.systems.access.users.models import User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.openview.reports.models import ReportRunEligibleUser
 from app.systems.platform.scheduling.execution import execute_due_report_runs
-from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
+from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork
 from app.systems.platform.scheduling.notification_router import router as notification_router
-from tests.platform_scheduling.test_execution import NOW, _counts
+from tests.platform_scheduling.test_execution import NOW
 from tests.reports.test_report_run_routes import _RunFixture
 
 pytestmark = pytest.mark.integration
@@ -32,12 +34,6 @@ def test_expired_identity_is_not_captured_for_new_report_run(
 ) -> None:
     fixture = report_run_fixture
     outsider_id = fixture.outsider_id
-    expanded = fixture.client.patch(
-        f"/api/reports/{fixture.report_id}",
-        headers=fixture.headers(),
-        json={"revision": 1, "audience": {"kind": "everyone"}},
-    )
-    assert expanded.status_code == 200, expanded.text
     with Session(fixture.owner_engine) as db:
         outsider = db.get(User, outsider_id)
         assert outsider is not None
@@ -53,106 +49,44 @@ def test_expired_identity_is_not_captured_for_new_report_run(
         assert db.get(ReportRunEligibleUser, (UUID(created.json()["id"]), outsider_id)) is None
 
 
-def test_scheduled_report_is_not_captured_when_workspace_access_denies_owner(
-    scheduled_report: _RunFixture,
-) -> None:
-    fixture = scheduled_report
-    rule_id = uuid7()
-    with AuditSession(fixture.owner_engine) as writer:
-        writer.info[AUDIT_CONTEXT_KEY] = AuditContext(
-            performed_by=fixture.owner_id,
-            request_id=uuid7(),
-            request_method="POST",
-            request_path="/api/report-run-test/scheduled-access-denial",
-        )
-        writer.add(
-            AccessRule(
-                id=rule_id,
-                subject_kind="user",
-                subject_id=fixture.owner_id,
-                scope_kind="workspace",
-                scope_id=None,
-                permission_id="records.read",
-                decision="deny",
-                policy_version=1,
-            )
-        )
-        writer.commit()
-
-    try:
-        assert execute_due_report_runs(fixture.runtime_engine, now=NOW) == []
-        with Session(fixture.owner_engine) as observer:
-            work = observer.scalar(
-                select(ScheduledWork).where(ScheduledWork.report_id == fixture.report_id)
-            )
-            assert work is not None
-            assert work.state == WorkState.PENDING, (
-                work.state,
-                work.failure_code,
-                work.attempt_count,
-            )
-            assert work.attempt_count == 1
-            assert _counts(observer, fixture.report_id) == (0, 0)
-    finally:
-        with fixture.owner_engine.begin() as cleanup:
-            cleanup.execute(text("DELETE FROM public.access_rules WHERE id = :id"), {"id": rule_id})
-
-
-def test_audience_expansion_grants_only_future_runs_and_current_access(
+def test_every_module_reader_opens_a_run_until_they_lose_module_read(
     report_run_fixture: _RunFixture,
 ) -> None:
+    """S3-7 and S4-5: the roster is the module readers; a lost read hides the run."""
+
     fixture = report_run_fixture
     path = f"/api/reports/{fixture.report_id}/runs"
-    first_key = uuid7()
-    first = fixture.client.post(path, headers=fixture.headers(key=first_key))
-    assert first.status_code == 201, first.text
-    first_id = UUID(first.json()["id"])
-    outsider_id = fixture.outsider_id
-    with Session(fixture.owner_engine) as db:
-        assert db.get(ReportRunEligibleUser, (first_id, fixture.owner_id)) is not None
-        assert db.get(ReportRunEligibleUser, (first_id, outsider_id)) is None
-
-    expanded = fixture.client.patch(
-        f"/api/reports/{fixture.report_id}",
-        headers=fixture.headers(),
-        json={"revision": 1, "audience": {"kind": "everyone"}},
-    )
-    assert expanded.status_code == 200, expanded.text
+    created = fixture.client.post(path, headers=fixture.headers(key=uuid7()))
+    assert created.status_code == 201, created.text
+    run_id = UUID(created.json()["id"])
     outsider_headers = fixture.headers(fixture.outsider_token)
-    assert fixture.client.get(f"{path}/{first_id}", headers=outsider_headers).status_code == 404
-    assert fixture.client.get(f"{path}/{first_id}/csv", headers=outsider_headers).status_code == 404
-    assert fixture.client.get(path, headers=outsider_headers).json()["pagination"]["total"] == 0
-
-    second_key = uuid7()
-    second = fixture.client.post(path, headers=fixture.headers(key=second_key))
-    assert second.status_code == 201, second.text
-    second_id = UUID(second.json()["id"])
+    guest_headers = fixture.headers(fixture.guest_token)
     with Session(fixture.owner_engine) as db:
-        assert db.get(ReportRunEligibleUser, (second_id, outsider_id)) is not None
-    assert fixture.client.get(f"{path}/{second_id}", headers=outsider_headers).status_code == 200
-    exported = fixture.client.get(f"{path}/{second_id}/csv", headers=outsider_headers)
-    assert exported.status_code == 200
-    assert exported.headers["cache-control"] == "private, no-store"
-    listing = fixture.client.get(path, headers=outsider_headers)
-    assert listing.status_code == 200
-    assert [item["id"] for item in listing.json()["items"]] == [str(second_id)]
+        for user_id in (fixture.owner_id, fixture.outsider_id, fixture.guest_id):
+            assert db.get(ReportRunEligibleUser, (run_id, user_id)) is not None
+
+    for headers in (outsider_headers, guest_headers):
+        assert fixture.client.get(f"{path}/{run_id}", headers=headers).status_code == 200
+        exported = fixture.client.get(f"{path}/{run_id}/csv", headers=headers)
+        assert exported.status_code == 200
+        assert exported.headers["cache-control"] == "private, no-store"
     discovery = fixture.client.get("/api/reports/shared-runs", headers=outsider_headers)
     assert discovery.status_code == 200
-    assert discovery.headers["cache-control"] == "private, no-store"
-    assert [item["id"] for item in discovery.json()["items"]] == [str(second_id)]
+    assert [item["id"] for item in discovery.json()["items"]] == [str(run_id)]
     assert discovery.json()["items"][0]["report_name"] == "Operations snapshot"
-    assert discovery.json()["items"][0]["status"] == "succeeded"
     assert "recipe" not in discovery.json()["items"][0]
 
-    narrowed = fixture.client.patch(
-        f"/api/reports/{fixture.report_id}",
-        headers=fixture.headers(),
-        json={"revision": 2, "audience": {"kind": "user", "user_id": str(outsider_id)}},
-    )
-    assert narrowed.status_code == 200, narrowed.text
-    assert fixture.client.get(f"{path}/{second_id}", headers=fixture.headers()).status_code == 404
-    assert fixture.client.post(path, headers=fixture.headers(key=second_key)).status_code == 404
-    assert fixture.client.get(f"{path}/{second_id}", headers=outsider_headers).status_code == 200
+    with fixture.owner_engine.begin() as writer:
+        writer.execute(
+            text("DELETE FROM public.group_members WHERE user_id = :id"),
+            {"id": fixture.outsider_id},
+        )
+    assert fixture.client.get(f"{path}/{run_id}", headers=outsider_headers).status_code == 404
+    assert fixture.client.get(f"{path}/{run_id}/csv", headers=outsider_headers).status_code == 404
+    assert fixture.client.get(path, headers=outsider_headers).status_code == 404
+    shared = fixture.client.get("/api/reports/shared-runs", headers=outsider_headers)
+    assert shared.json()["pagination"]["total"] == 0
+    assert fixture.client.get(f"{path}/{run_id}", headers=guest_headers).status_code == 200
 
 
 def test_missing_roster_and_lost_current_capability_fail_closed(
@@ -175,49 +109,51 @@ def test_missing_roster_and_lost_current_capability_fail_closed(
     assert fixture.client.post(path, headers=fixture.headers(key=key)).status_code == 404
 
 
-def test_roster_excludes_write_only_profiles(report_run_fixture: _RunFixture) -> None:
+def test_roster_includes_a_reading_guest_and_excludes_a_user_without_module_read(
+    report_run_fixture: _RunFixture,
+) -> None:
     fixture = report_run_fixture
     path = f"/api/reports/{fixture.report_id}/runs"
-    changed = fixture.client.patch(
-        f"/api/reports/{fixture.report_id}",
-        headers=fixture.headers(),
-        json={"revision": 1, "audience": {"kind": "everyone"}},
-    )
-    assert changed.status_code == 200, changed.text
     run = fixture.client.post(path, headers=fixture.headers(key=uuid7()))
     assert run.status_code == 201, run.text
     run_id = UUID(run.json()["id"])
-    write_only_id = fixture.write_only_id
     with Session(fixture.owner_engine) as db:
-        assert db.get(ReportRunEligibleUser, (run_id, write_only_id)) is None
+        assert db.get(ReportRunEligibleUser, (run_id, fixture.guest_id)) is not None
+
+    with fixture.owner_engine.begin() as writer:
+        writer.execute(
+            text("DELETE FROM public.group_members WHERE user_id = :id"),
+            {"id": fixture.outsider_id},
+        )
+    second = fixture.client.post(path, headers=fixture.headers(key=uuid7()))
+    assert second.status_code == 201, second.text
+    second_id = UUID(second.json()["id"])
+    with Session(fixture.owner_engine) as db:
+        assert db.get(ReportRunEligibleUser, (second_id, fixture.guest_id)) is not None
+        assert db.get(ReportRunEligibleUser, (second_id, fixture.outsider_id)) is None
 
 
-def test_owner_excluded_schedule_delivers_one_reference_only_notice_to_eligible_reader(
+def test_scheduled_run_notifies_each_reader_until_they_lose_module_read(
     scheduled_report: _RunFixture,
 ) -> None:
     fixture = scheduled_report
     outsider_id = fixture.outsider_id
-    changed = fixture.client.patch(
-        f"/api/reports/{fixture.report_id}",
-        headers=fixture.headers(),
-        json={"revision": 1, "audience": {"kind": "user", "user_id": str(outsider_id)}},
-    )
-    assert changed.status_code == 200, changed.text
 
     completed = execute_due_report_runs(fixture.runtime_engine, now=NOW)
     assert len(completed) == 1
     run_id = completed[0]
     assert execute_due_report_runs(fixture.runtime_engine, now=NOW) == []
     with Session(fixture.owner_engine) as db:
-        roster = db.get(ReportRunEligibleUser, (run_id, outsider_id))
-        assert roster is not None
-        assert db.get(ReportRunEligibleUser, (run_id, fixture.owner_id)) is None
         work = db.scalar(select(ScheduledWork).where(ScheduledWork.report_id == fixture.report_id))
         assert work is not None
         notices = db.scalars(
             select(InAppNotification).where(InAppNotification.work_id == work.id)
         ).all()
-        assert [notice.recipient_id for notice in notices] == [outsider_id]
+        assert {notice.recipient_id for notice in notices} == {
+            fixture.owner_id,
+            outsider_id,
+            fixture.guest_id,
+        }
 
     app = FastAPI()
     app.include_router(notification_router, prefix="/api")
@@ -251,13 +187,18 @@ def test_owner_excluded_schedule_delivers_one_reference_only_notice_to_eligible_
             "created_at",
             "read_at",
         }
-        owner_page = client.get("/api/notifications", headers=fixture.headers())
-        assert owner_page.status_code == 200
-        assert owner_page.json()["pagination"]["total"] == 0
+        csv_path = f"/api/reports/{fixture.report_id}/runs/{run_id}/csv"
+        outsider_headers = fixture.headers(fixture.outsider_token)
+        assert fixture.client.get(csv_path, headers=outsider_headers).status_code == 200
 
-    csv_path = f"/api/reports/{fixture.report_id}/runs/{run_id}/csv"
-    assert (
-        fixture.client.get(csv_path, headers=fixture.headers(fixture.outsider_token)).status_code
-        == 200
-    )
-    assert fixture.client.get(csv_path, headers=fixture.headers()).status_code == 404
+        with fixture.owner_engine.begin() as writer:
+            writer.execute(
+                text("DELETE FROM public.group_members WHERE user_id = :id"),
+                {"id": outsider_id},
+            )
+        hidden = client.get("/api/notifications", headers=outsider_headers)
+        assert hidden.status_code == 200
+        assert hidden.json()["pagination"]["total"] == 0
+        assert fixture.client.get(csv_path, headers=outsider_headers).status_code == 404
+        owner_page = client.get("/api/notifications", headers=fixture.headers())
+        assert owner_page.json()["pagination"]["total"] == 1

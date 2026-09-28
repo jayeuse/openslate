@@ -13,7 +13,6 @@ from psycopg import connect
 from operations import reset_application_data as reset
 from operations import reset_execution as execution
 from operations import reset_planning
-from operations.reset_models import ACCESS_POLICY_DEFAULTS_ID, ACCESS_POLICY_VERSION_ID
 from tests.conftest import _guard_integration_database
 
 
@@ -35,11 +34,8 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
     admin_id, member_id, guest_id, session_id = uuid4(), uuid4(), uuid4(), uuid4()
     admin_provider_id, member_provider_id, guest_provider_id = uuid4(), uuid4(), uuid4()
     department_id, file_id = uuid4(), uuid4()
-    group_id, membership_id = uuid4(), uuid4()
-    default_group_id, default_department_id = uuid4(), uuid4()
-    service_identity_id, rule_id, user_department_id = uuid4(), uuid4(), uuid4()
+    group_id, membership_id, access_id = uuid4(), uuid4(), uuid4()
     admin_email = f"reset-admin-{admin_id}@example.test"
-    member_role_id = None
 
     def cleanup() -> None:
         _guard_integration_database(runtime_url)
@@ -51,41 +47,12 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                     "WHERE logo_file_id = %s",
                     (file_id,),
                 )
-                cursor.execute("DELETE FROM public.access_rules WHERE id = %s", (rule_id,))
+                cursor.execute("DELETE FROM public.group_access WHERE id = %s", (access_id,))
+                cursor.execute("DELETE FROM public.group_members WHERE id = %s", (membership_id,))
+                cursor.execute("DELETE FROM public.groups WHERE id = %s", (group_id,))
                 cursor.execute(
-                    "DELETE FROM public.access_group_members WHERE id = %s", (membership_id,)
-                )
-                cursor.execute(
-                    "DELETE FROM public.access_default_groups WHERE id = %s", (default_group_id,)
-                )
-                cursor.execute(
-                    "DELETE FROM public.access_default_departments WHERE id = %s",
-                    (default_department_id,),
-                )
-                cursor.execute(
-                    "DELETE FROM public.user_departments WHERE id = %s", (user_department_id,)
-                )
-                cursor.execute(
-                    "DELETE FROM public.service_identities WHERE id = %s",
-                    (service_identity_id,),
-                )
-                cursor.execute("DELETE FROM public.access_groups WHERE id = %s", (group_id,))
-                if member_role_id is not None:
-                    cursor.execute(
-                        "UPDATE public.access_policy_defaults SET singleton_key = 'workspace', "
-                        "default_role_id = %s, invitation_expiry_days = 7, "
-                        "guest_duration_days = 30, "
-                        "service_duration_days = 90, default_deny = true, "
-                        "require_guest_sponsor = true, require_service_owner = true, revision = 1, "
-                        "deleted_at = NULL, is_deleted = false, performed_by = NULL "
-                        "WHERE id = %s",
-                        (member_role_id, ACCESS_POLICY_DEFAULTS_ID),
-                    )
-                cursor.execute(
-                    "UPDATE public.access_policy_versions SET singleton_key = 'workspace', "
-                    "revision = 1, deleted_at = NULL, is_deleted = false, performed_by = NULL "
-                    "WHERE id = %s",
-                    (ACCESS_POLICY_VERSION_ID,),
+                    "UPDATE public.workspace_profiles SET invitation_expiry_days = 7, "
+                    "guest_duration_days = 30"
                 )
                 cursor.execute(
                     "DELETE FROM public.identity_sessions WHERE user_id IN (%s, %s, %s)",
@@ -111,40 +78,32 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
     request.addfinalizer(cleanup)
     with connect(database_url) as database:
         with database.cursor() as cursor:
-            cursor.execute("SELECT id FROM public.roles WHERE role = 'admin'")
-            (admin_role_id,) = cursor.fetchone()
-            cursor.execute("SELECT id FROM public.roles WHERE role = 'member'")
-            (member_role_id,) = cursor.fetchone()
             cursor.execute(
                 "INSERT INTO public.users "
-                "(id, email, supabase_user_id, username, status, role_id, display_name, "
-                "identity_kind, "
+                "(id, email, supabase_user_id, username, status, role, display_name, "
                 "sponsor_user_id, expires_at, job_title, invitation_sent_at, "
                 "invitation_accepted_at, tokens_valid_after) "
-                "VALUES (%s, %s, %s, %s, 'active', %s, 'Reset Administrator', "
-                "'internal', NULL, NULL, "
+                "VALUES (%s, %s, %s, %s, 'active', 'admin', 'Reset Administrator', "
+                "NULL, NULL, "
                 "'Operations', now() - interval '1 day', now() - interval '1 day', "
-                "now() - interval '1 day'), (%s, %s, %s, %s, 'active', %s, "
-                "'Reset Member', 'internal', "
+                "now() - interval '1 day'), (%s, %s, %s, %s, 'active', 'member', "
+                "'Reset Member', "
                 "NULL, NULL, 'Member', NULL, NULL, NULL), "
-                "(%s, %s, %s, %s, 'active', %s, 'Reset Guest', "
-                "'guest', %s, now() + interval '30 days', NULL, NULL, NULL, NULL)",
+                "(%s, %s, %s, %s, 'active', 'guest', 'Reset Guest', "
+                "%s, now() + interval '30 days', NULL, NULL, NULL, NULL)",
                 (
                     admin_id,
                     admin_email,
                     admin_provider_id,
                     f"reset_admin_{admin_id.hex[:12]}",
-                    admin_role_id,
                     member_id,
                     f"reset-member-{member_id}@example.test",
                     member_provider_id,
                     f"reset_member_{member_id.hex[:12]}",
-                    member_role_id,
                     guest_id,
                     f"reset-guest-{guest_id}@example.test",
                     guest_provider_id,
                     f"reset_guest_{guest_id.hex[:12]}",
-                    member_role_id,
                     member_id,
                 ),
             )
@@ -189,94 +148,48 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
             )
             cursor.execute("UPDATE public.workspace_profiles SET logo_file_id = %s", (file_id,))
             cursor.execute(
-                "INSERT INTO public.access_groups (id, name, description, performed_by) "
+                "INSERT INTO public.groups (id, name, description, performed_by) "
                 "VALUES (%s, %s, %s, %s)",
                 (group_id, f"Reset Group {group_id}", "temporary fixture", admin_id),
             )
             cursor.execute(
-                "INSERT INTO public.access_group_members (id, group_id, user_id, performed_by) "
+                "INSERT INTO public.group_members (id, group_id, user_id, performed_by) "
                 "VALUES (%s, %s, %s, %s)",
                 (membership_id, group_id, member_id, admin_id),
             )
             cursor.execute(
-                "INSERT INTO public.access_default_groups "
-                "(id, policy_defaults_id, group_id, performed_by) VALUES (%s, %s, %s, %s)",
-                (default_group_id, ACCESS_POLICY_DEFAULTS_ID, group_id, admin_id),
+                "INSERT INTO public.group_access "
+                "(id, group_id, department_id, level, performed_by) "
+                "VALUES (%s, %s, %s, 'write', %s)",
+                (access_id, group_id, department_id, admin_id),
             )
             cursor.execute(
-                "INSERT INTO public.access_default_departments "
-                "(id, policy_defaults_id, department_id, performed_by) "
-                "VALUES (%s, %s, %s, %s)",
-                (default_department_id, ACCESS_POLICY_DEFAULTS_ID, department_id, admin_id),
-            )
-            cursor.execute(
-                "INSERT INTO public.service_identities "
-                "(id, name, purpose, owner_id, role_id, expires_at, performed_by) "
-                "VALUES (%s, 'Reset Service', 'temporary reset fixture', %s, %s, "
-                "now() + interval '30 days', %s)",
-                (service_identity_id, member_id, member_role_id, admin_id),
-            )
-            cursor.execute(
-                "INSERT INTO public.access_rules "
-                "(id, subject_kind, subject_id, scope_kind, scope_id, permission_id, decision, "
-                "policy_version, performed_by) "
-                "VALUES (%s, 'user', %s, 'department', %s, 'departments.read', 'allow', 2, %s)",
-                (rule_id, member_id, department_id, admin_id),
-            )
-            cursor.execute(
-                "INSERT INTO public.user_departments "
-                "(id, user_id, department_id, is_primary, performed_by) "
-                "VALUES (%s, %s, %s, true, %s)",
-                (user_department_id, member_id, department_id, admin_id),
-            )
-            cursor.execute(
-                "UPDATE public.access_policy_defaults SET default_role_id = %s, "
-                "invitation_expiry_days = 14, guest_duration_days = 45, "
-                "service_duration_days = 120, revision = 9, performed_by = %s "
-                "WHERE id = %s",
-                (admin_role_id, admin_id, ACCESS_POLICY_DEFAULTS_ID),
-            )
-            cursor.execute(
-                "UPDATE public.access_policy_versions SET revision = 9, is_deleted = true, "
-                "deleted_at = now(), performed_by = %s WHERE id = %s",
-                (admin_id, ACCESS_POLICY_VERSION_ID),
+                "UPDATE public.workspace_profiles SET invitation_expiry_days = 14, "
+                "guest_duration_days = 45"
             )
         database.commit()
         plan = reset.build_reset_plan(
             database, admin_email, storage_object_keys=storage.list_object_keys()
         )
-        assert all(
-            plan.counts[name] == 1
-            for name in (
-                "access_default_departments",
-                "access_default_groups",
-                "access_group_members",
-                "access_groups",
-                "access_rules",
-                "service_identities",
-                "user_departments",
-                "access_policy_defaults",
-                "access_policy_versions",
-            )
-        )
-        changed_defaults = replace(
+        assert all(plan.counts[name] == 1 for name in ("groups", "group_members", "group_access"))
+        assert (
+            plan.workspace_snapshot.invitation_expiry_days,
+            plan.workspace_snapshot.guest_duration_days,
+        ) == (14, 45)
+        changed_settings = replace(
             plan,
-            access_policy_defaults_snapshot=replace(
-                plan.access_policy_defaults_snapshot,
-                invitation_expiry_days=plan.access_policy_defaults_snapshot.invitation_expiry_days
-                + 1,
-            ),
+            workspace_snapshot=replace(plan.workspace_snapshot, guest_duration_days=46),
         )
-        assert reset_planning._impact_digest(changed_defaults) != plan.impact_digest
-        restore_access_policy = execution._reset_access_policy_singletons
+        assert reset_planning._impact_digest(changed_settings) != plan.impact_digest
+        restore_sandbox = execution._reset_sandbox_workspace
 
-        def fail_after_access_policy_write(connection, locked_plan) -> None:
-            restore_access_policy(connection, locked_plan)
+        def fail_after_access_deletes(connection) -> None:
+            restore_sandbox(connection)
             raise RuntimeError("injected Access reset failure")
 
         with monkeypatch.context() as injected_failure:
             injected_failure.setattr(
-                execution, "_reset_access_policy_singletons", fail_after_access_policy_write
+                execution, "_reset_sandbox_workspace", fail_after_access_deletes
             )
             with pytest.raises(reset.ResetError, match="Provider accounts.*profiles were retained"):
                 execution.apply_reset(
@@ -291,25 +204,12 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
         with database.cursor() as cursor:
             cursor.execute("SELECT id FROM public.users ORDER BY id")
             assert set(cursor.fetchall()) == {(admin_id,), (member_id,), (guest_id,)}
-            for table_name in (
-                "access_default_departments",
-                "access_default_groups",
-                "access_group_members",
-                "access_groups",
-                "access_rules",
-                "service_identities",
-                "user_departments",
-            ):
+            for table_name in ("groups", "group_members", "group_access"):
                 cursor.execute(f"SELECT count(*) FROM public.{table_name}")
                 assert cursor.fetchone() == (1,)
             cursor.execute("SELECT count(*) FROM public.files WHERE id = %s", (file_id,))
             assert cursor.fetchone() == (1,)
-        assert reset_planning._read_access_policy_defaults(database) == (
-            plan.access_policy_defaults_snapshot
-        )
-        assert reset_planning._read_access_policy_version(database) == (
-            plan.access_policy_version_snapshot
-        )
+        assert reset_planning._read_workspace(database) == plan.workspace_snapshot
         assert storage.list_object_keys() == plan.storage_object_keys
         execution.apply_reset(
             database,
@@ -331,59 +231,22 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
             assert cursor.fetchone() == (0,)
             cursor.execute("SELECT count(*) FROM public.departments")
             assert cursor.fetchone() == (0,)
-            for table_name in (
-                "access_default_departments",
-                "access_default_groups",
-                "access_group_members",
-                "access_groups",
-                "access_rules",
-                "service_identities",
-                "user_departments",
-            ):
+            for table_name in ("groups", "group_members", "group_access"):
                 cursor.execute(f"SELECT count(*) FROM public.{table_name}")
                 assert cursor.fetchone() == (0,)
             cursor.execute(
-                "SELECT id, singleton_key, default_role_id, invitation_expiry_days, "
-                "guest_duration_days, service_duration_days, default_deny, "
-                "require_guest_sponsor, require_service_owner, revision, deleted_at, is_deleted, "
-                "performed_by FROM public.access_policy_defaults"
+                "SELECT invitation_expiry_days, guest_duration_days FROM public.workspace_profiles"
             )
-            assert cursor.fetchone() == (
-                ACCESS_POLICY_DEFAULTS_ID,
-                "workspace",
-                member_role_id,
-                7,
-                30,
-                90,
-                True,
-                True,
-                True,
-                1,
-                None,
-                False,
-                None,
-            )
+            assert cursor.fetchone() == (7, 30)
             cursor.execute(
-                "SELECT id, singleton_key, revision, deleted_at, is_deleted, performed_by "
-                "FROM public.access_policy_versions"
-            )
-            assert cursor.fetchone() == (
-                ACCESS_POLICY_VERSION_ID,
-                "workspace",
-                1,
-                None,
-                False,
-                None,
-            )
-            cursor.execute(
-                "SELECT identity_kind, sponsor_user_id, expires_at, display_name, job_title, "
+                "SELECT role, sponsor_user_id, expires_at, display_name, job_title, "
                 "invitation_sent_at, invitation_accepted_at, tokens_valid_after "
                 "FROM public.users WHERE id = %s",
                 (admin_id,),
             )
             preserved_profile = cursor.fetchone()
             assert preserved_profile[:5] == (
-                "internal",
+                "admin",
                 None,
                 None,
                 "Reset Administrator",
@@ -400,7 +263,7 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                 "SELECT revision, document->>'schemaVersion', performed_by "
                 "FROM public.sandbox_documents"
             )
-            assert cursor.fetchone() == (1, "2", None)
+            assert cursor.fetchone() == (1, "4", None)
             cursor.execute(
                 "SELECT sequence, kind, label, performed_by FROM public.sandbox_versions"
             )

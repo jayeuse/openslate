@@ -10,7 +10,6 @@ import {
 import {
   uuid,
   revision,
-  audienceInput,
   eventWire,
   mutationWire,
   eventListWire,
@@ -29,6 +28,7 @@ import type {
   BoardEventOccurrenceOptions,
   BoardEventCreateInput,
   BoardEventPatchInput,
+  BoardEventReminderTiming,
 } from "./board-events-schemas";
 export type {
   BoardEvent,
@@ -39,17 +39,8 @@ export type {
   BoardEventOccurrenceOptions,
   BoardEventCreateInput,
   BoardEventPatchInput,
+  BoardEventReminderTiming,
 };
-
-function wireAudience(audience: z.output<typeof audienceInput>) {
-  if (audience.kind === "role")
-    return { kind: audience.kind, role_id: audience.roleId };
-  if (audience.kind === "user")
-    return { kind: audience.kind, user_id: audience.userId };
-  if (audience.kind === "department")
-    return { kind: audience.kind, department_id: audience.departmentId };
-  return { kind: audience.kind };
-}
 
 const safeCodes = new Map<string, { status: number; message: string }>([
   [
@@ -69,10 +60,6 @@ const safeCodes = new Map<string, { status: number; message: string }>([
     { status: 409, message: "Restore the event before editing it" },
   ],
   ["event_not_archived", { status: 409, message: "Archive the event first" }],
-  [
-    "audience_unavailable",
-    { status: 409, message: "The selected audience is unavailable" },
-  ],
   [
     "event_limit_reached",
     { status: 409, message: "The Board has too many active events" },
@@ -209,9 +196,7 @@ export async function createBoardEvent(
     timezone_name: input.timezoneName,
     recurrence: input.recurrence,
     ...(input.repeatUntil !== undefined && { repeat_until: input.repeatUntil }),
-    ...(input.audience !== undefined && {
-      audience: wireAudience(input.audience),
-    }),
+    ...(input.reminders !== undefined && { reminders: input.reminders }),
   };
   return eventJson(`/boards/${boardId}/events`, mutationWire, {
     method: "POST",
@@ -250,8 +235,7 @@ export async function updateBoardEvent(
     const value = input[key as keyof typeof patchWireNames];
     if (value !== undefined) body[wireName] = value;
   }
-  if (input.audience !== undefined)
-    body.audience = wireAudience(input.audience);
+  if (input.reminders !== undefined) body.reminders = input.reminders;
   const result = await eventJson(
     `/boards/${boardId}/events/${eventId}`,
     mutationWire,

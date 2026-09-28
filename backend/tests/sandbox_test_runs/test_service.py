@@ -20,7 +20,7 @@ from app.systems.sandbox.test_runs.service import (
     list_runs,
     read_run,
 )
-from tests.sandbox_test_runs.fixtures import sandbox_document
+from tests.sandbox_test_runs.fixtures import option_id, sandbox_document
 
 
 def test_create_persists_an_immutable_temporary_input_snapshot() -> None:
@@ -35,8 +35,8 @@ def test_create_persists_an_immutable_temporary_input_snapshot() -> None:
     assert run.document_revision == 1
     assert run.document_hash == row.content_hash
     assert run.module_id == "requests"
-    assert run.input_values == {"priority": "High", "status": "", "score": 0}
-    assert run.automation_ids is None
+    assert run.input_values == {"priority": option_id("priority", "High"), "status": "", "score": 0}
+    assert run.trigger_ids is None
     assert response.result.values["status"] == "Triaged"
     assert response.result.values["score"] == 10
     assert database.add.call_count == 1
@@ -113,7 +113,7 @@ def _request() -> SandboxTestRunCreateRequest:
         {
             "expectedRevision": 1,
             "moduleId": "requests",
-            "values": {"priority": "High", "status": "", "score": 0},
+            "values": {"priority": option_id("priority", "High"), "status": "", "score": 0},
             "event": {"kind": "record-created"},
         }
     )
@@ -124,7 +124,7 @@ def _document_row() -> SandboxDocumentRow:
     return SandboxDocumentRow(
         id=uuid7(),
         singleton_key=True,
-        schema_version=2,
+        schema_version=4,
         revision=1,
         document=document.model_dump(by_alias=True, mode="json"),
         content_hash="0" * 64,

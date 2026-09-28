@@ -9,7 +9,7 @@ import {
   FieldLegend,
 } from "@/components/ui/field";
 import { Separator } from "@/components/ui/separator";
-import type { Person } from "../../access/domain/model";
+import type { Person } from "../../shared/data/sample-people";
 import { INITIAL_RECORDS } from "../../shared/data/sample-data";
 import { useSampleState } from "../../shared/runtime/sample-state";
 import { Choice, Toggle } from "../../shared/components/ui";

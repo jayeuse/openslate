@@ -1,4 +1,8 @@
-"""Committed scheduled Report execution against runner-owned PostgreSQL."""
+"""Committed scheduled Report execution against runner-owned PostgreSQL.
+
+A scheduled run acts as the workspace: no user decides whether it runs, and
+every module reader at run time may open it and gets one notification.
+"""
 
 from datetime import UTC, datetime, timedelta
 
@@ -7,9 +11,10 @@ from sqlalchemy import bindparam, func, select, text
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.access.policy.models import AccessRule
-from app.systems.access.users.models import Role, User
+from app.systems.access.policy.models import GroupMember
+from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.openview.reports.models import (
     Report,
     ReportRun,
@@ -96,11 +101,11 @@ def _counts(db: AuditSession, report_id):
     return runs, notices
 
 
-def test_due_report_commits_frozen_run_rows_work_and_one_notification(scheduled_report):
+def test_due_report_runs_as_the_workspace_and_notifies_every_module_reader(scheduled_report):
     from app.systems.platform.scheduling.execution import execute_due_report_runs
 
     subject = scheduled_report
-    expected = capture_report_snapshot(subject.runtime_engine, subject.report_id, subject.owner_id)
+    expected = capture_report_snapshot(subject.runtime_engine, subject.report_id, None)
     assert len(expected.rows) == 3
 
     completed = execute_due_report_runs(subject.runtime_engine, now=NOW)
@@ -121,6 +126,54 @@ def test_due_report_commits_frozen_run_rows_work_and_one_notification(scheduled_
         assert run is not None and run.idempotency_key == work.id
         assert run.csv_bytes == expected.csv_bytes
         assert [(row.record_id, row.cells) for row in rows] == expected.rows
+        readers = {subject.owner_id, subject.outsider_id, subject.guest_id}
+        assert _counts(db, subject.report_id) == (1, len(readers))
+        roster = set(
+            db.scalars(
+                select(ReportRunEligibleUser.user_id).where(
+                    ReportRunEligibleUser.run_id == completed[0]
+                )
+            )
+        )
+        assert roster == readers
+        created = db.scalar(
+            select(AuditLog).where(
+                AuditLog.entity_type == "report_runs",
+                AuditLog.entity_id == completed[0],
+                AuditLog.action == AuditAction.CREATE,
+            )
+        )
+        assert created is not None
+        assert created.performed_by is None
+        assert created.actor_label == "Scheduled report: Operations snapshot"
+
+
+def test_scheduled_report_runs_after_every_editor_is_disabled(scheduled_report):
+    """S4-4: nobody's account decides whether a scheduled Report runs."""
+
+    from app.systems.platform.scheduling.execution import execute_due_report_runs
+
+    subject = scheduled_report
+    with AuditSession(subject.owner_engine) as db:
+        db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
+        for user_id in (subject.owner_id, subject.outsider_id):
+            user = db.get(User, user_id)
+            assert user is not None
+            user.status = UserStatus.DISABLED.value
+        db.commit()
+
+    completed = execute_due_report_runs(subject.runtime_engine, now=NOW)
+
+    assert len(completed) == 1
+    with AuditSession(subject.owner_engine) as db:
+        roster = set(
+            db.scalars(
+                select(ReportRunEligibleUser.user_id).where(
+                    ReportRunEligibleUser.run_id == completed[0]
+                )
+            )
+        )
+        assert roster == {subject.guest_id}
         assert _counts(db, subject.report_id) == (1, 1)
 
 
@@ -149,10 +202,7 @@ def test_revision_change_after_capture_retries_without_orphan_run(scheduled_repo
         assert _counts(db, subject.report_id) == (0, 0)
 
 
-@pytest.mark.parametrize(
-    "change",
-    ["archive", "source", "permission", "audience_role", "audience_user", "workspace_access"],
-)
+@pytest.mark.parametrize("change", ["archive", "source", "reader_removed"])
 def test_unavailable_report_after_capture_cancels_without_output(
     scheduled_report, monkeypatch, change
 ):
@@ -160,27 +210,13 @@ def test_unavailable_report_after_capture_cancels_without_output(
 
     subject = scheduled_report
     original = execution.capture_report_snapshot
-    access_rule_id = uuid7()
-    outsider_id = subject.outsider_id
 
-    def remove_access_after_capture(engine, report_id, owner_id):
-        snapshot = original(engine, report_id, owner_id)
+    def remove_access_after_capture(engine, report_id, actor_id):
+        assert actor_id is None
+        snapshot = original(engine, report_id, actor_id)
         with AuditSession(subject.owner_engine) as db:
             db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
-            if change == "workspace_access":
-                db.add(
-                    AccessRule(
-                        id=access_rule_id,
-                        subject_kind="user",
-                        subject_id=owner_id,
-                        scope_kind="workspace",
-                        scope_id=None,
-                        permission_id="records.read",
-                        decision="deny",
-                        policy_version=1,
-                    )
-                )
-            elif change == "archive":
+            if change == "archive":
                 report = db.get(Report, report_id)
                 assert report is not None
                 report.is_deleted = True
@@ -188,60 +224,42 @@ def test_unavailable_report_after_capture_cancels_without_output(
             elif change == "source":
                 module = db.get(Module, subject.module_id)
                 assert module is not None
-                module.is_schema_accepted = False
-            elif change == "permission":
-                user = db.get(User, owner_id)
-                assert user is not None
-                role = db.get(Role, user.role_id)
-                assert role is not None
-                role.permissions = {"records.write": True}
+                module.is_deleted = True
+                module.deleted_at = NOW
             else:
-                report = db.get(Report, report_id)
-                assert report is not None
-                other = db.get(User, outsider_id)
-                assert other is not None
-                report.audience_kind = "role" if change == "audience_role" else "user"
-                report.audience_role_id = other.role_id if change == "audience_role" else None
-                report.audience_user_id = other.id if change == "audience_user" else None
+                membership = db.scalar(
+                    select(GroupMember).where(GroupMember.user_id == subject.owner_id)
+                )
+                assert membership is not None
+                db.delete(membership)
             db.commit()
         return snapshot
 
     monkeypatch.setattr(execution, "capture_report_snapshot", remove_access_after_capture)
-    try:
-        completed = execution.execute_due_report_runs(subject.runtime_engine, now=NOW)
-        with AuditSession(subject.owner_engine) as db:
-            work = db.scalar(
-                select(ScheduledWork).where(ScheduledWork.report_id == subject.report_id)
+    completed = execution.execute_due_report_runs(subject.runtime_engine, now=NOW)
+    with AuditSession(subject.owner_engine) as db:
+        work = db.scalar(select(ScheduledWork).where(ScheduledWork.report_id == subject.report_id))
+        assert work is not None
+        if change == "reader_removed":
+            # A reader who leaves does not stop the run; they are just not eligible.
+            assert len(completed) == 1
+            assert work.state == WorkState.SUCCEEDED
+            assert _counts(db, subject.report_id) == (1, 2)
+            assert db.get(ReportRunEligibleUser, (completed[0], subject.outsider_id)) is not None
+            assert db.get(ReportRunEligibleUser, (completed[0], subject.owner_id)) is None
+            recipients = set(
+                db.scalars(
+                    select(InAppNotification.recipient_id).where(
+                        InAppNotification.work_id == work.id
+                    )
+                )
             )
-            assert work is not None
-            if change.startswith("audience_"):
-                assert len(completed) == 1
-                assert work.state == WorkState.SUCCEEDED
-                assert _counts(db, subject.report_id) == (1, 1)
-                assert db.get(ReportRunEligibleUser, (completed[0], outsider_id)) is not None
-                assert db.get(ReportRunEligibleUser, (completed[0], subject.owner_id)) is None
-                notice = db.scalar(
-                    select(InAppNotification).where(InAppNotification.work_id == work.id)
-                )
-                assert notice is not None and notice.recipient_id == outsider_id
-            elif change == "workspace_access":
-                assert completed == []
-                assert work.state == WorkState.PENDING
-                assert work.failure_code == "run_failed"
-                assert work.attempt_count == 1
-                assert _counts(db, subject.report_id) == (0, 0)
-            else:
-                assert completed == []
-                assert work.state == WorkState.CANCELED
-                assert work.failure_code == "source_unavailable"
-                assert _counts(db, subject.report_id) == (0, 0)
-    finally:
-        if change == "workspace_access":
-            with subject.owner_engine.begin() as cleanup:
-                cleanup.execute(
-                    text("DELETE FROM public.access_rules WHERE id = :id"),
-                    {"id": access_rule_id},
-                )
+            assert recipients == {subject.outsider_id, subject.guest_id}
+        else:
+            assert completed == []
+            assert work.state == WorkState.CANCELED
+            assert work.failure_code == "source_unavailable"
+            assert _counts(db, subject.report_id) == (0, 0)
 
 
 def test_lost_lease_after_capture_cannot_save_or_notify(scheduled_report, monkeypatch):
@@ -348,4 +366,4 @@ def test_capture_failure_rolls_back_and_retries_once(scheduled_report, monkeypat
     )
     assert len(completed) == 1 and attempts == 2
     with AuditSession(subject.owner_engine) as db:
-        assert _counts(db, subject.report_id) == (1, 1)
+        assert _counts(db, subject.report_id) == (1, 3)

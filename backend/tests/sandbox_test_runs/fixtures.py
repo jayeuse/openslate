@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from uuid import NAMESPACE_URL, uuid5
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
+
+
+def option_id(field_id: str, label: str) -> str:
+    return str(uuid5(NAMESPACE_URL, f"sandbox-test:{field_id}:{label}"))
+
+
+def _options(field_id: str, labels: tuple[str, ...]) -> list[dict[str, str]]:
+    return [{"id": option_id(field_id, label), "label": label} for label in labels]
 
 
 def sandbox_document() -> SandboxDocument:
     return SandboxDocument.model_validate(
         {
             "kind": "openslate-sandbox",
-            "schemaVersion": 2,
+            "schemaVersion": 4,
             "design": {
                 "departments": [
                     {"id": "operations", "name": "Operations"},
@@ -30,8 +39,8 @@ def sandbox_document() -> SandboxDocument:
                                 "required": True,
                                 "config": {
                                     "kind": "select",
-                                    "defaultValue": "Low",
-                                    "options": ["Low", "High"],
+                                    "defaultValue": option_id("priority", "Low"),
+                                    "options": _options("priority", ("Low", "High")),
                                 },
                             },
                             {
@@ -59,8 +68,8 @@ def sandbox_document() -> SandboxDocument:
                                 "type": "Select",
                                 "config": {
                                     "kind": "select",
-                                    "defaultValue": "Low",
-                                    "options": ["Low", "High"],
+                                    "defaultValue": option_id("priority-copy", "Low"),
+                                    "options": _options("priority-copy", ("Low", "High")),
                                 },
                             }
                         ],
@@ -80,7 +89,7 @@ def sandbox_document() -> SandboxDocument:
                 ],
                 "layout": {},
             },
-            "automations": [
+            "triggers": [
                 {
                     "id": "mark-high",
                     "name": "Mark high requests",
@@ -94,7 +103,10 @@ def sandbox_document() -> SandboxDocument:
                                 "id": "is-high",
                                 "field": {"moduleId": "requests", "fieldId": "priority"},
                                 "operator": "=",
-                                "value": {"kind": "literal", "value": "High"},
+                                "value": {
+                                    "kind": "literal",
+                                    "value": option_id("priority", "High"),
+                                },
                             }
                         ],
                     },

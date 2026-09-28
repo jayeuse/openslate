@@ -28,7 +28,7 @@ from app.core.config.settings import DOTENV_PATH
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.access.users.service import invite_user, reconcile_invitation
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
@@ -72,19 +72,9 @@ def _invitation(email: str, username: str) -> InvitationCreate:
         raise BootstrapError("ADMIN_EMAIL and ADMIN_USERNAME must be valid") from None
 
 
-def _active_role(db: AuditSession, role: UserRole) -> Role:
-    result = db.scalar(select(Role).where(Role.role == role, Role.is_deleted.is_(False)))
-    if result is None:
-        raise BootstrapError(f"The active {role.value} role is not configured")
-    return result
-
-
-def _validate_schema_and_roles(db: AuditSession) -> tuple[Role, Role]:
-    """Touch the local profile table and require both seeded Auth roles."""
-    db.scalar(select(User.id).limit(1))
-    member_role = _active_role(db, UserRole.MEMBER)
-    admin_role = _active_role(db, UserRole.ADMIN)
-    return member_role, admin_role
+def _validate_schema(db: AuditSession) -> None:
+    """Touch the local profile table, including its role column."""
+    db.scalar(select(User.id, User.role).limit(1))
 
 
 def _matching_profile(db: AuditSession, invitation: InvitationCreate) -> User | None:
@@ -99,31 +89,25 @@ def _matching_profile(db: AuditSession, invitation: InvitationCreate) -> User | 
     return email_profile or username_profile
 
 
-def _admin_assignment_count(
-    db: AuditSession,
-    admin_role: Role,
-    *,
-    excluded_user_id: UUID | None = None,
-) -> int:
+def _admin_assignment_count(db: AuditSession, *, excluded_user_id: UUID | None = None) -> int:
     statement = (
         select(func.count())
         .select_from(User)
-        .join(Role, User.role_id == Role.id)
-        .where(User.is_deleted.is_(False), Role.id == admin_role.id)
+        .where(User.is_deleted.is_(False), User.role == UserRole.ADMIN.value)
     )
     if excluded_user_id is not None:
         statement = statement.where(User.id != excluded_user_id)
     return int(db.scalar(statement) or 0)
 
 
-def _is_exact_admin_reservation(user: User, invitation: InvitationCreate, admin_role: Role) -> bool:
+def _is_exact_admin_reservation(user: User, invitation: InvitationCreate) -> bool:
     try:
         normalized_email = normalize_email(user.email)
         normalized_username = normalize_username(user.username)
     except ValueError:
         return False
     return bool(
-        user.role_id == admin_role.id
+        user.role == UserRole.ADMIN.value
         and user.status == UserStatus.PENDING.value
         and not user.is_deleted
         and user.provider_invitation_operation_id is not None
@@ -136,16 +120,12 @@ def _is_exact_admin_reservation(user: User, invitation: InvitationCreate, admin_
 def _provision(settings: Settings, invitation: InvitationCreate) -> BootstrapResult:
     with AuditSession(get_engine()) as db:
         db.info[AUDIT_CONTEXT_KEY] = AuditContext()
-        _, admin_role = _validate_schema_and_roles(db)
+        _validate_schema(db)
         existing_profile = _matching_profile(db, invitation)
 
         if existing_profile is not None:
-            if _is_exact_admin_reservation(existing_profile, invitation, admin_role):
-                if not _admin_assignment_count(
-                    db,
-                    admin_role,
-                    excluded_user_id=existing_profile.id,
-                ):
+            if _is_exact_admin_reservation(existing_profile, invitation):
+                if not _admin_assignment_count(db, excluded_user_id=existing_profile.id):
                     reconcile_invitation(db, existing_profile.id, actor_id=None, bootstrap=True)
                     return BootstrapResult(
                         existing_profile.id,
@@ -156,13 +136,13 @@ def _provision(settings: Settings, invitation: InvitationCreate) -> BootstrapRes
                 raise BootstrapError("An administrator reservation already exists")
             raise BootstrapError("Email or username is already associated with another profile")
 
-        if _admin_assignment_count(db, admin_role):
+        if _admin_assignment_count(db):
             raise BootstrapError("An administrator reservation already exists")
 
         try:
             user = invite_user(
                 db,
-                invitation.model_copy(update={"role_id": admin_role.id}),
+                invitation.model_copy(update={"role": UserRole.ADMIN}),
                 actor_id=None,
                 bootstrap=True,
             )

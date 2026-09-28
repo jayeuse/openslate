@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { ApiContractError } from "../../../src/lib/api";
-import type { SandboxDocumentV2 } from "../../../src/components/systems/sandbox/domain/document";
+import type { SandboxDocumentV4 } from "../../../src/components/systems/sandbox/domain/document";
 import {
   SANDBOX_REQUEST_BODY_LIMIT_BYTES,
   createSandboxVersion,
@@ -12,7 +12,7 @@ import {
   getSandboxVersion,
   importSandboxBundle,
   listAllSandboxVersions,
-  listSandboxAutomationRuns,
+  listSandboxTriggerRuns,
   listSandboxTests,
   listSandboxVersions,
   loadSandboxDocument,
@@ -25,9 +25,9 @@ import {
 
 const versionId = "00000000-0000-4000-8000-000000000001";
 
-const document: SandboxDocumentV2 = {
+const document: SandboxDocumentV4 = {
   kind: "openslate-sandbox",
-  schemaVersion: 2,
+  schemaVersion: 4,
   design: {
     departments: [{ id: "operations", name: "Operations", closed: false }],
     modules: [
@@ -36,6 +36,7 @@ const document: SandboxDocumentV2 = {
         departmentId: "operations",
         name: "Requests",
         closed: false,
+        titleFieldId: "title",
         fields: [
           {
             id: "title",
@@ -54,7 +55,7 @@ const document: SandboxDocumentV2 = {
       requests: { x: 24, y: 48, width: 280, height: 160 },
     },
   },
-  automations: [],
+  triggers: [],
   scenarios: [],
 };
 
@@ -69,9 +70,9 @@ const documentResponse = {
   hasUnpublishedChanges: true,
 };
 
-const repairableDocument: SandboxDocumentV2 = {
+const repairableDocument: SandboxDocumentV4 = {
   ...document,
-  automations: [
+  triggers: [
     {
       id: "notify-missing-module",
       name: "Notify missing module",
@@ -90,7 +91,7 @@ const repairableDocument: SandboxDocumentV2 = {
   ],
 };
 
-const documentWithVersions: SandboxDocumentV2 = {
+const documentWithVersions: SandboxDocumentV4 = {
   ...document,
   versions: [
     {
@@ -99,7 +100,7 @@ const documentWithVersions: SandboxDocumentV2 = {
       kind: "checkpoint",
       document: {
         design: document.design,
-        automations: document.automations,
+        triggers: document.triggers,
         scenarios: document.scenarios,
       },
       published: false,
@@ -169,12 +170,12 @@ test("normalizes nullable optional fields emitted by the backend document model"
         }>;
       }>;
     };
-    automations: unknown[];
+    triggers: unknown[];
   };
   const field = backendDocument.design.modules[0]!.fields[0]!;
   field.description = null;
   field.config.maxLength = null;
-  backendDocument.automations = [
+  backendDocument.triggers = [
     {
       id: "notify-open",
       name: "Notify open request",
@@ -219,7 +220,7 @@ test("normalizes nullable optional fields emitted by the backend document model"
             },
           ],
         },
-        automations: [
+        triggers: [
           {
             conditionGroup: {
               conditions: [
@@ -257,8 +258,8 @@ test("loads repairable drafts with server-reported semantic issues", async () =>
     document: repairableDocument,
     issues: [
       {
-        code: "automation.trigger_module_missing",
-        message: "Automation trigger module does not exist",
+        code: "trigger.trigger_module_missing",
+        message: "Trigger trigger module does not exist",
         targetId: "notify-missing-module",
       },
     ],
@@ -527,7 +528,7 @@ test("uses the review and publish contract with a durable idempotency key", asyn
       modules: 1,
       fields: 0,
       relationships: 0,
-      automations: 0,
+      triggers: 0,
     },
     warnings: [],
     blockers: [],
@@ -601,7 +602,7 @@ test("normalizes a publication blocker without a target from the backend", async
       modules: 0,
       fields: 0,
       relationships: 0,
-      automations: 0,
+      triggers: 0,
     },
     warnings: [],
     blockers: [
@@ -636,11 +637,11 @@ test("sends temporary Test inputs to the test endpoint without changing the Sand
     documentRevision: 7,
     input: { moduleId: "requests", values: { title: "Check pump" } },
     event: { kind: "field-changed", fieldId: "title" },
-    automationIds: ["set-status"],
+    triggerIds: ["set-status"],
     result: {
       values: { title: "Check pump" },
       routes: [],
-      automationTraces: [],
+      triggerTraces: [],
       issues: [],
     },
   };
@@ -652,7 +653,7 @@ test("sends temporary Test inputs to the test endpoint without changing the Sand
         moduleId: "requests",
         values: { title: "Check pump" },
         event: { kind: "field-changed", fieldId: "title" },
-        automationIds: ["set-status"],
+        triggerIds: ["set-status"],
       }),
     ).resolves.toEqual(run);
     expect(mock.requests[0].input).toBe("/api/sandbox/tests");
@@ -662,7 +663,7 @@ test("sends temporary Test inputs to the test endpoint without changing the Sand
         moduleId: "requests",
         values: { title: "Check pump" },
         event: { kind: "field-changed", fieldId: "title" },
-        automationIds: ["set-status"],
+        triggerIds: ["set-status"],
       }),
     );
     expect(document).not.toHaveProperty("testInput");
@@ -683,11 +684,11 @@ test("accepts a daily Test response where the backend serializes weekday as null
       time: "09:00",
       weekday: null,
     },
-    automationIds: null,
+    triggerIds: null,
     result: {
       values: { title: "Check pump" },
       routes: [],
-      automationTraces: [],
+      triggerTraces: [],
       issues: [],
     },
   };
@@ -706,12 +707,12 @@ test("accepts a daily Test response where the backend serializes weekday as null
   }
 });
 
-test("loads bounded recent published automation activity", async () => {
+test("loads bounded recent published trigger activity", async () => {
   const run = {
     id: "00000000-0000-4000-8000-000000000004",
     createdAt: "2026-09-21T00:02:00Z",
-    automationId: "00000000-0000-4000-8000-000000000005",
-    automationName: "Set request status",
+    triggerId: "00000000-0000-4000-8000-000000000005",
+    triggerName: "Set request status",
     eventKind: "field-changed",
     state: "succeeded",
     details: { actionsApplied: 1, recordsMatched: 1 },
@@ -728,7 +729,7 @@ test("loads bounded recent published automation activity", async () => {
     }),
   );
   try {
-    await expect(listSandboxAutomationRuns()).resolves.toEqual({
+    await expect(listSandboxTriggerRuns()).resolves.toEqual({
       items: [run],
       limit: 20,
       offset: 0,
@@ -737,11 +738,11 @@ test("loads bounded recent published automation activity", async () => {
       hasMore: false,
     });
     expect(mock.requests[0]).toMatchObject({
-      input: "/api/sandbox/automation-runs?limit=20&offset=0",
+      input: "/api/sandbox/trigger-runs?limit=20&offset=0",
       init: { cache: "no-store" },
     });
-    expect(() => listSandboxAutomationRuns({ limit: 51 })).toThrow(
-      "Automation run limit must be between 1 and 50",
+    expect(() => listSandboxTriggerRuns({ limit: 51 })).toThrow(
+      "Trigger run limit must be between 1 and 50",
     );
   } finally {
     mock.restore();

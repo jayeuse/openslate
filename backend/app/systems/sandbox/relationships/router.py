@@ -4,10 +4,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_capability
+from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.access.users.permissions import Capability
+from app.systems.sandbox.relationships.access import require_link_change, require_readable_link
 from app.systems.sandbox.relationships.schemas import (
     RelationshipAssignment,
     RelationshipCreate,
@@ -36,8 +36,9 @@ from app.systems.sandbox.relationships.service import (
 )
 
 router = APIRouter(prefix="/relationships", tags=["relationships"])
-RelationshipReadUser = Annotated[User, Depends(require_capability(Capability.RELATIONSHIPS_READ))]
-RelationshipWriteUser = Annotated[User, Depends(require_capability(Capability.RELATIONSHIPS_WRITE))]
+# A link is visible only when the user can read both records' modules.
+RelationshipReadUser = Annotated[User, Depends(get_current_user)]
+RelationshipWriteUser = Annotated[User, Depends(get_current_user)]
 
 
 def _raise_service_error(error: RelationshipError) -> HTTPException:
@@ -46,12 +47,12 @@ def _raise_service_error(error: RelationshipError) -> HTTPException:
 
 @router.get("", response_model=RelationshipListResponse)
 def list_relationships(
-    _: RelationshipReadUser,
+    user: RelationshipReadUser,
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[RelationshipListRequest, Query()],
 ) -> RelationshipListResponse:
     try:
-        items, pagination = list_relationships_service(db, params)
+        items, pagination = list_relationships_service(db, params, reader=user)
     except RelationshipError as error:
         raise _raise_service_error(error) from error
     return RelationshipListResponse(items=items, pagination=pagination)
@@ -60,21 +61,24 @@ def list_relationships(
 @router.get("/{relationship_id}", response_model=RelationshipResponse)
 def get_relationship(
     relationship_id: UUID,
-    _: RelationshipReadUser,
+    user: RelationshipReadUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> RelationshipResponse:
     try:
-        return relationship_response(get_relationship_service(db, relationship_id))
+        edge = get_relationship_service(db, relationship_id)
     except RelationshipError as error:
         raise _raise_service_error(error) from error
+    require_readable_link(db, user, edge)
+    return relationship_response(edge)
 
 
 @router.post("", response_model=RelationshipResponse, status_code=status.HTTP_201_CREATED)
 def create_relationship(
     payload: RelationshipCreate,
-    _: RelationshipWriteUser,
+    user: RelationshipWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> RelationshipResponse:
+    require_link_change(db, user, payload.source_record_id, payload.target_record_id)
     try:
         return relationship_response(
             create_relationship_service(
@@ -91,9 +95,15 @@ def create_relationship(
 @router.delete("/{relationship_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_relationship(
     relationship_id: UUID,
-    _: RelationshipWriteUser,
+    user: RelationshipWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
+    try:
+        edge = get_relationship_service(db, relationship_id)
+    except RelationshipError as error:
+        raise _raise_service_error(error) from error
+    require_readable_link(db, user, edge)
+    require_link_change(db, user, edge.source_record_id, edge.target_record_id)
     try:
         unlink_relationship_service(db, relationship_id)
     except RelationshipError as error:
@@ -109,9 +119,10 @@ def assign_relationship(
     field_id: UUID,
     source_record_id: UUID,
     payload: RelationshipAssignment,
-    _: RelationshipWriteUser,
+    user: RelationshipWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> RelationshipResponse | None:
+    require_link_change(db, user, source_record_id, payload.target_record_id, field_id=field_id)
     try:
         edge = assign_relationship_service(
             db,

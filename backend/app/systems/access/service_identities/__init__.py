@@ -1,1 +1,0 @@
-"""Metadata-only service identities."""

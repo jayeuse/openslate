@@ -1,11 +1,21 @@
 "use client";
 
+/**
+ * A change notice. `moduleId` names the module of a module-scoped change; the
+ * server sends it only to users who can read that module.
+ */
 export type OpenViewInvalidation =
-  { type: "resync" } | { type: "invalidate"; entity: string };
+  | { type: "resync" }
+  | { type: "invalidate"; entity: string; moduleId?: string };
 
 type Listener = (event: OpenViewInvalidation) => void;
 
-function invalidationEntity(data: string): string | null {
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function invalidationPayload(
+  data: string,
+): { entity: string; moduleId?: string } | null {
   try {
     const payload: unknown = JSON.parse(data);
     if (
@@ -16,7 +26,14 @@ function invalidationEntity(data: string): string | null {
       !/^[a-z][a-z0-9_]{0,63}$/.test(payload.entity)
     )
       return null;
-    return payload.entity;
+    if (!("module_id" in payload) || payload.module_id === undefined)
+      return { entity: payload.entity };
+    if (
+      typeof payload.module_id !== "string" ||
+      !UUID_PATTERN.test(payload.module_id)
+    )
+      return null;
+    return { entity: payload.entity, moduleId: payload.module_id };
   } catch {
     return null;
   }
@@ -55,8 +72,8 @@ function openStream(): EventSource {
   });
   source.addEventListener("invalidate", (event: Event) => {
     if (!(event instanceof MessageEvent)) return;
-    const entity = invalidationEntity(event.data);
-    if (entity !== null) emit({ type: "invalidate", entity });
+    const payload = invalidationPayload(event.data);
+    if (payload !== null) emit({ type: "invalidate", ...payload });
   });
   source.addEventListener("error", () => {
     if (errorNotified) return;

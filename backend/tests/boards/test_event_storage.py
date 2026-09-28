@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from app.core.database import Base, model_registry  # noqa: F401
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
 from app.systems.manage.audit.models import AuditAction, AuditLog
@@ -24,9 +24,9 @@ def test_board_event_series_is_registered_for_migrations() -> None:
 
 
 @pytest.mark.integration
-def test_event_series_enforces_temporal_audience_and_recurrence_modes(integration_owner_db) -> None:
+def test_event_series_enforces_temporal_and_recurrence_modes(integration_owner_db) -> None:
     db = integration_owner_db
-    role = db.scalar(select(Role).where(Role.role == "member"))
+    role = "member"
     assert role is not None
     owner_id, author_id = uuid7(), uuid7()
     owner = User(
@@ -34,19 +34,19 @@ def test_event_series_enforces_temporal_audience_and_recurrence_modes(integratio
         email=f"event-owner-{owner_id.hex}@example.test",
         username=f"event_owner_{owner_id.hex[:12]}",
         status="active",
-        role_id=role.id,
+        role=role,
     )
     author = User(
         id=author_id,
         email=f"event-author-{author_id.hex}@example.test",
         username=f"event_author_{author_id.hex[:12]}",
         status="active",
-        role_id=role.id,
+        role=role,
     )
     department = Department(department_name=f"Event department {uuid7().hex}")
     db.add_all([owner, author, department])
     db.flush()
-    board = Board(owner_id=owner.id, department_id=department.id, name="Events")
+    board = Board(scope="department", department_id=department.id, name="Events")
     db.add(board)
     db.flush()
 
@@ -62,8 +62,6 @@ def test_event_series_enforces_temporal_audience_and_recurrence_modes(integratio
         timezone_name="Asia/Manila",
         recurrence="monthly",
         repeat_until=date(2026, 4, 30),
-        audience_kind="department",
-        audience_department_id=department.id,
     )
     timed_start = datetime(2026, 9, 14, 1, 0, tzinfo=UTC)
     timed = BoardEvent(
@@ -74,7 +72,6 @@ def test_event_series_enforces_temporal_audience_and_recurrence_modes(integratio
         start_at=timed_start,
         end_at=timed_start + timedelta(hours=1),
         timezone_name="Asia/Manila",
-        audience_kind="author",
     )
     db.add_all([all_day, timed])
     db.flush()
@@ -102,7 +99,6 @@ def test_event_series_enforces_temporal_audience_and_recurrence_modes(integratio
         "start_date": date(2026, 9, 14),
         "end_date": date(2026, 9, 14),
         "timezone_name": "Asia/Manila",
-        "audience_kind": "everyone",
     }
     invalid_overrides = (
         {"end_date": date(2026, 9, 13)},
@@ -110,9 +106,6 @@ def test_event_series_enforces_temporal_audience_and_recurrence_modes(integratio
         {"recurrence": "daily"},
         {"recurrence": "weekly", "repeat_until": date(2026, 9, 13)},
         {"recurrence": "yearly", "repeat_until": date(2027, 9, 14)},
-        {"audience_kind": "role"},
-        {"audience_role_id": role.id},
-        {"audience_kind": "department", "audience_department_id": uuid7()},
         {"timezone_name": "   "},
         {"title": "   "},
         {"details": "x" * 4001},
@@ -124,13 +117,7 @@ def test_event_series_enforces_temporal_audience_and_recurrence_modes(integratio
                 db.add(BoardEvent(**(base | override)))
                 db.flush()
 
-    for audience_kind, reference in (
-        ("everyone", {}),
-        ("author", {}),
-        ("role", {"audience_role_id": role.id}),
-        ("user", {"audience_user_id": owner.id}),
-    ):
-        db.add(BoardEvent(**(base | {"audience_kind": audience_kind} | reference)))
+    db.add(BoardEvent(**base))
     db.flush()
 
     board.status = "archived"
@@ -162,9 +149,6 @@ def _assert_event_schema_and_privileges(connection: Connection) -> None:
     expected_indexes = {
         "ix_board_events_board_id",
         "ix_board_events_author_id",
-        "ix_board_events_audience_role_id",
-        "ix_board_events_audience_user_id",
-        "ix_board_events_audience_department_id",
     }
     actual_indexes = set(
         connection.scalars(
@@ -184,17 +168,11 @@ def _assert_event_schema_and_privileges(connection: Connection) -> None:
             )
         )
     }
-    for suffix in (
-        "author_id_users",
-        "board_id_boards",
-        "audience_role_id_roles",
-        "audience_user_id_users",
-        "audience_department_id_departments",
-    ):
+    for suffix in ("author_id_users", "board_id_boards"):
         assert constraints[f"fk_board_events_{suffix}"] == ("f", "r")
     assert constraints["fk_board_events_performed_by_users"] == ("f", "n")
+    assert "ck_board_events_audience" not in constraints
     for name in (
-        "audience",
         "temporal_mode",
         "recurrence",
         "all_day_repeat_until",

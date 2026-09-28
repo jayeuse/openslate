@@ -7,23 +7,24 @@ from collections.abc import Mapping, Sequence
 from math import isfinite
 from typing import cast
 from urllib.parse import urlparse
+from uuid import UUID
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
-from app.systems.sandbox.test_runs.automation_values import (
-    MISSING,
-    UNRESOLVED,
-    automation_issue,
-    automation_value,
-    compare,
-    selected_automations,
-)
 from app.systems.sandbox.test_runs.relationships import relationship_routes
 from app.systems.sandbox.test_runs.results import (
-    SandboxTestAutomationTrace,
     SandboxTestIssue,
     SandboxTestResult,
+    SandboxTestTriggerTrace,
 )
 from app.systems.sandbox.test_runs.schemas import TestValue
+from app.systems.sandbox.test_runs.trigger_values import (
+    MISSING,
+    UNRESOLVED,
+    compare,
+    resolve_trigger_value,
+    selected_triggers,
+    trigger_issue,
+)
 from app.systems.sandbox.test_runs.value_validation import date_is_valid as _date_is_valid
 from app.systems.sandbox.test_runs.value_validation import number_is_valid as _number_is_valid
 from app.systems.sandbox.test_runs.value_validation import within_length as _within_length
@@ -35,7 +36,7 @@ def evaluate_test(
     module_id: str,
     values: Mapping[str, TestValue],
     event: Mapping[str, object],
-    automation_ids: Sequence[str] | None,
+    trigger_ids: Sequence[str] | None,
 ) -> SandboxTestResult:
     design = _mapping(document.design.model_dump(by_alias=True, mode="json"), "design")
     modules = _modules(design)
@@ -46,7 +47,7 @@ def evaluate_test(
         return SandboxTestResult(
             values={},
             routes=(),
-            automation_traces=(),
+            trigger_traces=(),
             issues=(
                 SandboxTestIssue(
                     "module_invalid", "Choose an active module before running a test."
@@ -67,17 +68,17 @@ def evaluate_test(
         return SandboxTestResult(
             values=result_values,
             routes=tuple(routes),
-            automation_traces=(),
+            trigger_traces=(),
             issues=tuple(issues),
         )
 
-    traces = _apply_automations(
+    traces = _apply_triggers(
         document=document,
         module_id=module_id,
         module=module,
         values=result_values,
         event=event,
-        automation_ids=automation_ids,
+        trigger_ids=trigger_ids,
         issues=issues,
     )
     routes = relationship_routes(
@@ -91,7 +92,7 @@ def evaluate_test(
     return SandboxTestResult(
         values=result_values,
         routes=tuple(routes),
-        automation_traces=tuple(traces),
+        trigger_traces=tuple(traces),
         issues=tuple(issues),
     )
 
@@ -227,7 +228,18 @@ def _value_is_valid(value: TestValue, field: Mapping[str, object]) -> bool:
         )
     if kind == "select":
         options = config.get("options")
-        return isinstance(value, str) and isinstance(options, list) and value in options
+        return (
+            isinstance(value, str)
+            and isinstance(options, list)
+            and any(isinstance(option, Mapping) and option.get("id") == value for option in options)
+        )
+    if kind == "user":
+        if not isinstance(value, str):
+            return False
+        try:
+            return str(UUID(value)) == value
+        except ValueError:
+            return False
     if kind == "date":
         return isinstance(value, str) and _date_is_valid(value, config, is_datetime=False)
     if kind == "datetime":
@@ -235,73 +247,73 @@ def _value_is_valid(value: TestValue, field: Mapping[str, object]) -> bool:
     return False
 
 
-def _apply_automations(
+def _apply_triggers(
     *,
     document: SandboxDocument,
     module_id: str,
     module: Mapping[str, object],
     values: dict[str, TestValue],
     event: Mapping[str, object],
-    automation_ids: Sequence[str] | None,
+    trigger_ids: Sequence[str] | None,
     issues: list[SandboxTestIssue],
-) -> list[SandboxTestAutomationTrace]:
-    automations = [
+) -> list[SandboxTestTriggerTrace]:
+    triggers = [
         cast(Mapping[str, object], item.model_dump(by_alias=True, mode="json"))
-        for item in document.automations
+        for item in document.triggers
     ]
     by_id: dict[str, Mapping[str, object]] = {}
-    for automation in automations:
-        automation_id = _string(automation.get("id"))
-        if automation_id is not None:
-            by_id[automation_id] = automation
-    selected = selected_automations(by_id, automation_ids, issues)
-    traces: list[SandboxTestAutomationTrace] = []
+    for record_trigger in triggers:
+        trigger_id = _string(record_trigger.get("id"))
+        if trigger_id is not None:
+            by_id[trigger_id] = record_trigger
+    selected = selected_triggers(by_id, trigger_ids, issues)
+    traces: list[SandboxTestTriggerTrace] = []
     fields = _fields(module)
     budget = 100
     event_values = dict(values)
     for depth in range(11):
         previous = dict(values)
-        for automation in sorted(selected, key=lambda item: cast(int, item["priority"])):
-            automation_id = _string(automation.get("id"))
-            label = _string(automation.get("name"))
-            if automation_id is None or label is None:
+        for record_trigger in sorted(selected, key=lambda item: cast(int, item["priority"])):
+            trigger_id = _string(record_trigger.get("id"))
+            label = _string(record_trigger.get("name"))
+            if trigger_id is None or label is None:
                 continue
-            if not _boolean(automation.get("enabled")):
-                if automation_ids is not None and depth == 0:
+            if not _boolean(record_trigger.get("enabled")):
+                if trigger_ids is not None and depth == 0:
                     traces.append(
-                        SandboxTestAutomationTrace(automation_id, label, "Skipped — disabled")
+                        SandboxTestTriggerTrace(trigger_id, label, "Skipped — disabled")
                     )
                 continue
             if not _trigger_matches(
-                automation.get("trigger"), module_id, fields, event_values, event
+                record_trigger.get("trigger"), module_id, fields, event_values, event
             ):
                 if depth == 0:
-                    traces.append(SandboxTestAutomationTrace(automation_id, label, "Not triggered"))
+                    traces.append(SandboxTestTriggerTrace(trigger_id, label, "Not triggered"))
                 continue
-            conditions_ok = _conditions_match(automation, module_id, fields, values, issues)
+            conditions_ok = _conditions_match(record_trigger, module_id, fields, values, issues)
             if conditions_ok is None:
-                traces.append(SandboxTestAutomationTrace(automation_id, label, "Needs attention"))
+                traces.append(SandboxTestTriggerTrace(trigger_id, label, "Needs attention"))
                 continue
             if not conditions_ok:
                 traces.append(
-                    SandboxTestAutomationTrace(automation_id, label, "Conditions not met")
+                    SandboxTestTriggerTrace(trigger_id, label, "Conditions not met")
                 )
                 continue
             applied, supported = _apply_actions(
-                automation, module_id, fields, values, issues, action_budget=budget
+                record_trigger, module_id, fields, values, issues, action_budget=budget
             )
             budget -= applied
             if applied:
-                traces.append(SandboxTestAutomationTrace(automation_id, label, "Applied"))
+                traces.append(SandboxTestTriggerTrace(trigger_id, label, "Applied"))
             elif not supported:
-                traces.append(SandboxTestAutomationTrace(automation_id, label, "Needs attention"))
+                traces.append(SandboxTestTriggerTrace(trigger_id, label, "Needs attention"))
             else:
-                traces.append(SandboxTestAutomationTrace(automation_id, label, "No changes"))
+                traces.append(SandboxTestTriggerTrace(trigger_id, label, "No changes"))
             if budget == 0:
                 issues.append(
                     SandboxTestIssue(
-                        "automation_budget_exhausted",
-                        "Automation test stopped after 100 field changes.",
+                        "trigger_budget_exhausted",
+                        "Trigger test stopped after 100 field changes.",
                     )
                 )
                 return traces
@@ -328,7 +340,7 @@ def _trigger_matches(
     event_values: Mapping[str, TestValue],
     event: Mapping[str, object],
 ) -> bool:
-    trigger = _mapping(raw_trigger, "automation trigger")
+    trigger = _mapping(raw_trigger, "trigger event")
     kind = _string(trigger.get("kind"))
     if kind is None or trigger.get("moduleId") != module_id:
         return False
@@ -362,7 +374,7 @@ def _trigger_matches(
         ):
             return False
         operator = _string(trigger.get("operator"))
-        threshold = automation_value(trigger.get("value"), module_id, event_values)
+        threshold = resolve_trigger_value(trigger.get("value"), module_id, event_values)
         if (
             field_id is None
             or field_id not in fields
@@ -385,34 +397,34 @@ def _trigger_matches(
 
 
 def _conditions_match(
-    automation: Mapping[str, object],
+    record_trigger: Mapping[str, object],
     module_id: str,
     fields: Mapping[str, Mapping[str, object]],
     values: Mapping[str, TestValue],
     issues: list[SandboxTestIssue],
 ) -> bool | None:
-    automation_id = _string(automation.get("id"))
-    group = _mapping(automation.get("conditionGroup"), "automation conditions")
+    trigger_id = _string(record_trigger.get("id"))
+    group = _mapping(record_trigger.get("conditionGroup"), "trigger conditions")
     mode = _string(group.get("operator"))
     raw_conditions = group.get("conditions")
     if mode not in {"all", "any"} or not isinstance(raw_conditions, list):
-        automation_issue(issues, automation_id, "Automation conditions need attention.")
+        trigger_issue(issues, trigger_id, "Trigger conditions need attention.")
         return None
     matched: list[bool] = []
     for raw_condition in raw_conditions:
-        condition = _mapping(raw_condition, "automation condition")
-        field = _mapping(condition.get("field"), "automation condition field")
+        condition = _mapping(raw_condition, "trigger condition")
+        field = _mapping(condition.get("field"), "trigger condition field")
         if field.get("moduleId") != module_id or field.get("relationshipId") is not None:
-            automation_issue(
-                issues, automation_id, "Automation conditions must use the selected module."
+            trigger_issue(
+                issues, trigger_id, "Trigger conditions must use the selected module."
             )
             return None
         field_id = _string(field.get("fieldId"))
         operator = _string(condition.get("operator"))
-        right = automation_value(condition.get("value"), module_id, values)
+        right = resolve_trigger_value(condition.get("value"), module_id, values)
         if field_id is None or field_id not in fields or operator is None or right is UNRESOLVED:
-            automation_issue(
-                issues, automation_id, "Automation conditions refer to an unavailable field."
+            trigger_issue(
+                issues, trigger_id, "Trigger conditions refer to an unavailable field."
             )
             return None
         field_kind = _string(_mapping(fields[field_id].get("config"), "field config").get("kind"))
@@ -421,7 +433,7 @@ def _conditions_match(
 
 
 def _apply_actions(
-    automation: Mapping[str, object],
+    record_trigger: Mapping[str, object],
     module_id: str,
     fields: Mapping[str, Mapping[str, object]],
     values: dict[str, TestValue],
@@ -429,24 +441,24 @@ def _apply_actions(
     *,
     action_budget: int,
 ) -> tuple[int, bool]:
-    automation_id = _string(automation.get("id"))
-    raw_actions = automation.get("actions")
+    trigger_id = _string(record_trigger.get("id"))
+    raw_actions = record_trigger.get("actions")
     if not isinstance(raw_actions, list):
-        automation_issue(issues, automation_id, "Automation actions need attention.")
+        trigger_issue(issues, trigger_id, "Trigger actions need attention.")
         return False, False
     changed = 0
     supported = True
     for raw_action in raw_actions:
         if changed >= action_budget:
             break
-        action = _mapping(raw_action, "automation action")
+        action = _mapping(raw_action, "trigger action")
         if action.get("kind") != "set-field":
-            automation_issue(
-                issues, automation_id, "This automation action is not supported in tests."
+            trigger_issue(
+                issues, trigger_id, "This trigger action is not supported in tests."
             )
             supported = False
             continue
-        target = _mapping(action.get("target"), "automation action target")
+        target = _mapping(action.get("target"), "trigger action target")
         field_id = _string(target.get("fieldId"))
         if (
             target.get("moduleId") != module_id
@@ -454,21 +466,21 @@ def _apply_actions(
             or field_id is None
             or field_id not in fields
         ):
-            automation_issue(
-                issues, automation_id, "Set field actions must target the selected module."
+            trigger_issue(
+                issues, trigger_id, "Set field actions must target the selected module."
             )
             supported = False
             continue
-        value = automation_value(action.get("value"), module_id, values)
+        value = resolve_trigger_value(action.get("value"), module_id, values)
         if value is UNRESOLVED:
-            automation_issue(issues, automation_id, "A set field action has an invalid value.")
+            trigger_issue(issues, trigger_id, "A set field action has an invalid value.")
             supported = False
             continue
         if value is MISSING:
             continue
         candidate = cast(TestValue, value)
         if not _value_is_valid(candidate, fields[field_id]):
-            automation_issue(issues, automation_id, "A set field action has an invalid value.")
+            trigger_issue(issues, trigger_id, "A set field action has an invalid value.")
             supported = False
             continue
         if field_id not in values or values[field_id] != candidate:

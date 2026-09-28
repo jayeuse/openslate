@@ -10,32 +10,19 @@ from uuid6 import uuid7
 
 import app.systems.access.users.service as user_service
 from app.core.integrations.supabase_auth import ProviderUser, SupabaseAuthUnavailable
-from app.systems.access.policy.service import CreationDefaults
 from app.systems.access.users.coordination import InvitationConflict, InvitationError
-from app.systems.access.users.models import (
-    IdentityKind,
-    Role,
-    User,
-    UserRole,
-    UserStatus,
-)
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 
 
-def _role(name: UserRole = UserRole.MEMBER) -> Role:
-    return Role(id=uuid7(), role=name, permissions={}, is_deleted=False)
-
-
-def _user(role: Role, *, status: UserStatus = UserStatus.ACTIVE, deleted: bool = False) -> User:
+def _user(*, status: UserStatus = UserStatus.ACTIVE, deleted: bool = False) -> User:
     now = datetime.now(UTC)
     return User(
         id=uuid7(),
         email=f"{uuid7().hex}@example.com",
-        username=f"user_{uuid7().hex[:12]}",
-        identity_kind=IdentityKind.INTERNAL.value,
+        username=f"user_{uuid7().hex[-12:]}",
+        role=UserRole.MEMBER.value,
         status=status.value,
-        role_id=role.id,
-        role=role,
         created_at=now,
         updated_at=now,
         is_deleted=deleted,
@@ -43,28 +30,11 @@ def _user(role: Role, *, status: UserStatus = UserStatus.ACTIVE, deleted: bool =
     )
 
 
-def _invitation(role_id=None) -> InvitationCreate:
-    return InvitationCreate(email="person@example.com", username="person", role_id=role_id)
+def _invitation() -> InvitationCreate:
+    return InvitationCreate(email="person@example.com", username="person")
 
 
 pytestmark = pytest.mark.usefixtures("local_identity_security_events")
-
-
-@pytest.fixture(autouse=True)
-def _creation_defaults_for_invitation_mocks(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Preserve each invitation test's pre-existing role-query setup."""
-
-    def defaults(db: Session) -> CreationDefaults:
-        role = db.scalar(Mock())
-        return CreationDefaults(
-            role=role if isinstance(role, Role) else _role(),
-            group_ids=(),
-            department_ids=(),
-            invitation_expiry_days=7,
-            guest_duration_days=30,
-        )
-
-    monkeypatch.setattr(user_service, "load_creation_defaults", defaults)
 
 
 def test_invitation_requires_actor_outside_bootstrap() -> None:
@@ -74,7 +44,7 @@ def test_invitation_requires_actor_outside_bootstrap() -> None:
 
 def test_invitation_rejects_duplicate_email_or_username() -> None:
     db = Mock(spec=Session)
-    db.scalar.side_effect = [_role(), _user(_role())]
+    db.scalar.side_effect = [_user()]
 
     with pytest.raises(InvitationConflict):
         user_service.invite_user(db, _invitation(), bootstrap=True)
@@ -86,7 +56,7 @@ def test_invitation_keeps_duplicate_conflict_when_failure_audit_cannot_persist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    db.scalar.side_effect = [_role(), _user(_role())]
+    db.scalar.side_effect = [_user()]
     monkeypatch.setattr(
         user_service,
         "_security_event",
@@ -101,7 +71,7 @@ def test_invitation_keeps_duplicate_conflict_when_failure_audit_cannot_persist(
 
 def _initial_invitation(monkeypatch: pytest.MonkeyPatch):
     db = Mock(spec=Session)
-    db.scalar.side_effect = [_role(), None]
+    db.scalar.side_effect = [None]
     provider = Mock()
     outcomes = []
     monkeypatch.setattr(

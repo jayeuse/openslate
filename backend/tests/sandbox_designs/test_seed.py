@@ -17,11 +17,11 @@ def test_default_document_contains_no_placeholder_entities() -> None:
     assert seed.design.modules == []
     assert seed.design.relationships == []
     assert seed.design.layout == {}
-    assert seed.automations == []
+    assert seed.triggers == []
     assert seed.scenarios == []
 
 
-def test_empty_document_round_trips_through_the_v2_contract() -> None:
+def test_empty_document_round_trips_through_the_v4_contract() -> None:
     seed = empty_document()
     restored = type(seed).model_validate(seed.model_dump(by_alias=True, mode="json"))
 
@@ -33,21 +33,26 @@ def test_empty_document_round_trips_through_the_v2_contract() -> None:
 
 @pytest.mark.integration
 def test_fresh_baseline_seeds_only_the_empty_shared_document(integration_owner_db) -> None:
-    rows = integration_owner_db.connection().execute(
-        text(
-            "SELECT id, schema_version, revision, document, content_hash, byte_count "
-            "FROM public.sandbox_documents WHERE singleton_key"
+    rows = (
+        integration_owner_db.connection()
+        .execute(
+            text(
+                "SELECT id, schema_version, revision, document, content_hash, byte_count "
+                "FROM public.sandbox_documents WHERE singleton_key"
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
 
     assert len(rows) == 1
     assert rows[0] == {
         "id": UUID("00000000-0000-7000-8000-000000000005"),
-        "schema_version": 2,
+        "schema_version": 4,
         "revision": 1,
         "document": EMPTY_SANDBOX_DOCUMENT,
-        "content_hash": "34d294fb849433b5b53deb50502a21d22ef2e5383b6d93de0eb9cb21ee6d127f",
-        "byte_count": 150,
+        "content_hash": "04f9b3ef33555fb4855ca982ae27408d5842b936e1b730190c8cb5a472ae57d3",
+        "byte_count": 147,
     }
 
 

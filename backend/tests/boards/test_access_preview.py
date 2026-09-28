@@ -11,10 +11,11 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.boards.access import can_access_board
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.access_preview_router import router
-from app.systems.boards.models import Board, BoardGrant, BoardPermission
+from app.systems.boards.models import Board
+from tests.boards.support import board_group, project_board
 
 pytestmark = pytest.mark.integration
 
@@ -22,25 +23,23 @@ pytestmark = pytest.mark.integration
 def _user(
     db: Session,
     *,
-    permissions: dict[str, bool] | None = None,
-    role: Role | None = None,
+    role: str = "member",
     username: str | None = None,
     status: UserStatus = UserStatus.ACTIVE,
     deleted: bool = False,
     invitation_sent_at: datetime | None = None,
 ) -> User:
-    if role is None:
-        role = Role(role=f"preview-role-{uuid7().hex}", permissions=permissions or {})
-        db.add(role)
-        db.flush()
+    guest = role == "guest"
+    sponsor = _user(db) if guest else None
     user_id = uuid7()
     user = User(
         id=user_id,
         email=f"preview-{user_id.hex}@example.test",
         username=username or f"preview_{user_id.hex[:20]}",
         status=status.value,
-        role_id=role.id,
         role=role,
+        sponsor_user_id=sponsor.id if sponsor is not None else None,
+        expires_at=datetime.now(UTC) + timedelta(days=30) if guest else None,
         is_deleted=deleted,
         invitation_sent_at=invitation_sent_at,
     )
@@ -50,36 +49,10 @@ def _user(
 
 
 def _board_for_manager(db: Session) -> tuple[User, Board]:
-    manager = _user(db, permissions={"records.read": True})
-    owner = _user(db, role=manager.role)
-    board = Board(owner_id=owner.id, name="Access preview test")
-    db.add(board)
-    db.flush()
-    _grant(db, board, "user", "manage", "allow", user_id=manager.id)
+    manager = _user(db)
+    board = project_board(db, "Access preview test")
+    board_group(db, board, [manager], AccessLevel.MANAGE)
     return manager, board
-
-
-def _grant(
-    db: Session,
-    board: Board,
-    principal_type: str,
-    permission: str,
-    effect: str,
-    *,
-    user_id: UUID | None = None,
-    role_id: UUID | None = None,
-) -> None:
-    db.add(
-        BoardGrant(
-            board_id=board.id,
-            principal_type=principal_type,
-            principal_user_id=user_id,
-            principal_role_id=role_id,
-            permission=permission,
-            effect=effect,
-        )
-    )
-    db.flush()
 
 
 def _client(db: Session, actor: User | None) -> TestClient:
@@ -91,75 +64,58 @@ def _client(db: Session, actor: User | None) -> TestClient:
     return TestClient(app)
 
 
-def _preview(client: TestClient, board: Board, target: User | UUID) -> dict[str, bool]:
+def _preview(client: TestClient, board: Board, target: User | UUID) -> dict[str, object]:
     target_id = target.id if isinstance(target, User) else target
     response = client.get(f"/api/boards/{board.id}/access-preview?user_id={target_id}")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     payload = response.json()
-    assert set(payload) == {"view", "edit", "manage"}
+    assert set(payload) == {"level", "read", "write", "manage"}
     return payload
 
 
-def test_manager_preview_matches_board_acl_global_gates_and_tie_denial(
+def _levels(level: str | None) -> dict[str, object]:
+    rank = {None: 0, "read": 1, "write": 2, "manage": 3}[level]
+    return {"level": level, "read": rank >= 1, "write": rank >= 2, "manage": rank >= 3}
+
+
+def test_manager_preview_shows_board_group_levels_and_the_guest_limit(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
     manager, board = _board_for_manager(db)
-    fully_gated = _user(db, permissions={"records.read": True, "records.write": True})
-    tied_deny = _user(db, role=fully_gated.role)
-    write_only = _user(db, permissions={"records.write": True})
-    _grant(db, board, "everyone", "manage", "allow")
-    _grant(db, board, "role", "view", "deny", role_id=fully_gated.role.id)
-    _grant(db, board, "user", "manage", "allow", user_id=fully_gated.id)
-    _grant(db, board, "user", "manage", "allow", user_id=tied_deny.id)
-    _grant(db, board, "user", "view", "deny", user_id=tied_deny.id)
-    grants = db.query(BoardGrant).filter(BoardGrant.board_id == board.id).all()
+    writer, reader, outsider = _user(db), _user(db), _user(db)
+    guest = _user(db, role="guest")
+    board_group(db, board, [writer, guest], AccessLevel.WRITE)
+    board_group(db, board, [reader], AccessLevel.READ)
     client = _client(db, manager)
 
-    for target in (fully_gated, tied_deny, write_only):
-        expected = {
-            permission.value: can_access_board(board, target, permission, grants)
-            for permission in BoardPermission
-        }
-        assert _preview(client, board, target) == expected
-    assert _preview(client, board, fully_gated) == {
-        "view": True,
-        "edit": True,
-        "manage": True,
-    }
-    assert _preview(client, board, tied_deny) == {
-        "view": False,
-        "edit": False,
-        "manage": False,
-    }
-    assert _preview(client, board, write_only) == {
-        "view": False,
-        "edit": True,
-        "manage": True,
-    }
+    assert _preview(client, board, writer) == _levels("write")
+    assert _preview(client, board, reader) == _levels("read")
+    assert _preview(client, board, guest) == _levels("read")
+    assert _preview(client, board, outsider) == _levels(None)
+    assert _preview(client, board, manager) == _levels("manage")
 
 
-def test_preview_and_chooser_require_board_manager_with_global_read(
+def test_preview_and_chooser_require_board_manager(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
     manager, board = _board_for_manager(db)
-    target = _user(db, permissions={"records.read": True})
-    outsider = _user(db, role=manager.role)
-    no_read = _user(db, permissions={})
-    _grant(db, board, "user", "manage", "allow", user_id=no_read.id)
+    target = _user(db, role="guest")
+    outsider, reader = _user(db), _user(db)
+    board_group(db, board, [reader], AccessLevel.READ)
     paths = (
         f"/api/boards/{board.id}/access-preview?user_id={target.id}",
         f"/api/boards/{board.id}/preview-users",
     )
     for path in paths:
         assert _client(db, None).get(path).status_code == 401
-        assert _client(db, no_read).get(path).status_code == 403
         hidden = _client(db, outsider).get(path)
         missing = _client(db, outsider).get(path.replace(str(board.id), str(uuid7())))
         assert hidden.status_code == missing.status_code == 404
         assert hidden.json() == missing.json() == {"detail": "Board not found"}
+        assert _client(db, reader).get(path).status_code == 403
         assert _client(db, manager).get(path).status_code == 200
 
 
@@ -172,13 +128,10 @@ def test_preview_rejects_unavailable_target_without_leaking_identity_state(
     pending = _user(db, status=UserStatus.PENDING)
     deleted = _user(db, deleted=True)
     unaccepted = _user(db, invitation_sent_at=datetime.now(UTC))
-    inactive_role = _user(db)
-    inactive_role.role.is_deleted = True
-    db.flush()
     client = _client(db, manager)
     missing = client.get(f"/api/boards/{board.id}/access-preview?user_id={uuid7()}")
     assert missing.status_code == 404
-    for target in (disabled, pending, deleted, unaccepted, inactive_role):
+    for target in (disabled, pending, deleted, unaccepted):
         response = client.get(f"/api/boards/{board.id}/access-preview?user_id={target.id}")
         assert response.status_code == 404
         assert response.json() == missing.json()
@@ -194,9 +147,6 @@ def test_preview_user_chooser_filters_before_bounded_pagination_and_exposes_no_p
     _user(db, username="choice_pending", status=UserStatus.PENDING)
     _user(db, username="choice_deleted", deleted=True)
     _user(db, username="choice_unaccepted", invitation_sent_at=datetime.now(UTC))
-    inactive_role = _user(db, username="choice_bad_role")
-    inactive_role.role.is_deleted = True
-    db.flush()
     client = _client(db, manager)
 
     response = client.get(f"/api/boards/{board.id}/preview-users?search=choice_&limit=2&offset=1")
@@ -240,59 +190,41 @@ def test_expired_active_identity_is_hidden_from_preview_and_chooser(
     assert direct.json() == missing.json()
 
 
-def test_my_access_returns_only_the_authenticated_readers_effective_permissions(
+def test_my_access_returns_only_the_readers_own_level(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
     manager, board = _board_for_manager(db)
-    owner = db.get(User, board.owner_id)
-    assert owner is not None
-    reader = _user(db, permissions={"records.read": True})
-    writer = _user(db, permissions={"records.read": True, "records.write": True})
-    _grant(db, board, "user", "view", "allow", user_id=reader.id)
-    _grant(db, board, "user", "manage", "allow", user_id=writer.id)
-    _grant(db, board, "user", "edit", "deny", user_id=writer.id)
+    reader = _user(db, role="guest")
+    writer = _user(db)
+    board_group(db, board, [reader, writer], AccessLevel.MANAGE)
+    board_group(db, board, [writer], AccessLevel.WRITE)
     client = _client(db, reader)
 
     response = client.get(f"/api/boards/{board.id}/my-access")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, no-store"
-    assert response.json() == {"view": True, "edit": False, "manage": False}
-    assert _client(db, writer).get(f"/api/boards/{board.id}/my-access").json() == {
-        "view": True,
-        "edit": False,
-        "manage": True,
-    }
-    assert _client(db, owner).get(f"/api/boards/{board.id}/my-access").json() == {
-        "view": True,
-        "edit": False,
-        "manage": False,
-    }
-    assert _client(db, manager).get(f"/api/boards/{board.id}/my-access").json() == {
-        "view": True,
-        "edit": False,
-        "manage": False,
-    }
+    assert response.json() == _levels("read")
+    assert _client(db, writer).get(f"/api/boards/{board.id}/my-access").json() == _levels("manage")
+    assert _client(db, manager).get(f"/api/boards/{board.id}/my-access").json() == _levels(
+        "manage"
+    )
 
 
-def test_my_access_hides_invisible_boards_and_requires_global_read(
+def test_my_access_hides_invisible_boards(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
     _, board = _board_for_manager(db)
-    outsider = _user(db, permissions={"records.read": True})
-    write_only = _user(db, permissions={"records.write": True})
-    denied = _user(db, permissions={"records.read": True, "records.write": True})
-    inactive = _user(db, permissions={"records.read": True}, status=UserStatus.DISABLED)
-    _grant(db, board, "user", "manage", "allow", user_id=denied.id)
-    _grant(db, board, "user", "view", "deny", user_id=denied.id)
+    outsider = _user(db, role="guest")
+    inactive = _user(db, status=UserStatus.DISABLED)
+    board_group(db, board, [inactive], AccessLevel.MANAGE)
     path = f"/api/boards/{board.id}/my-access"
 
     assert _client(db, None).get(path).status_code == 401
-    assert _client(db, write_only).get(path).status_code == 403
     missing = _client(db, outsider).get(f"/api/boards/{uuid7()}/my-access")
     assert missing.status_code == 404
-    for actor in (outsider, denied, inactive):
+    for actor in (outsider, inactive):
         hidden = _client(db, actor).get(path)
         assert hidden.status_code == 404
         assert hidden.json() == missing.json() == {"detail": "Board not found"}
@@ -302,17 +234,14 @@ def test_my_access_keeps_archived_board_readable_but_hides_soft_deleted_board(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _user(db, permissions={"records.read": True, "records.write": True})
-    board = Board(owner_id=owner.id, name="Archived access")
-    db.add(board)
-    db.flush()
+    manager, board = _board_for_manager(db)
     board.status = "archived"
     db.flush()
-    client = _client(db, owner)
+    client = _client(db, manager)
 
     archived = client.get(f"/api/boards/{board.id}/my-access")
     assert archived.status_code == 200
-    assert archived.json() == {"view": True, "edit": True, "manage": True}
+    assert archived.json() == _levels("manage")
 
     board.is_deleted = True
     board.deleted_at = datetime.now(UTC)

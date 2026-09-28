@@ -1,17 +1,23 @@
 import type { FieldConfig, FieldTypeName } from "./model";
 
+/** The Sandbox document format version that this client reads and writes. */
+export const SANDBOX_DOCUMENT_SCHEMA_VERSION = 4;
+/** Shown when a file or saved design uses a format before version 4. */
+export const SANDBOX_OLDER_FORMAT_MESSAGE =
+  "This design uses an older format and cannot be opened.";
+
 export const SANDBOX_DOCUMENT_LIMITS = {
   fileBytes: 5 * 1024 * 1024,
   departments: 100,
   modules: 500,
   fields: 5_000,
   relationships: 1_000,
-  automations: 500,
+  triggers: 500,
   scenarios: 500,
   recordsPerScenario: 5_000,
   fieldMappings: 1_000,
-  conditionsPerAutomation: 20,
-  actionsPerAutomation: 20,
+  conditionsPerTrigger: 20,
+  actionsPerTrigger: 20,
   versions: 50,
   nameCharacters: 80,
   textCharacters: 1_000,
@@ -46,6 +52,7 @@ export type SandboxDocumentModule = {
   departmentId: string;
   name: string;
   closed: boolean;
+  titleFieldId: string | null;
   fields: SandboxDocumentField[];
 };
 export type SandboxFieldMapping = {
@@ -68,7 +75,7 @@ export type SandboxFieldReference = {
 export type SandboxValueSource =
   | { kind: "literal"; value: SandboxFieldValue }
   | ({ kind: "field-reference" } & SandboxFieldReference);
-export type SandboxAutomationTrigger =
+export type SandboxTriggerEvent =
   | { kind: "record-created"; moduleId: string }
   | { kind: "field-changed"; moduleId: string; fieldId: string }
   | {
@@ -87,13 +94,13 @@ export type SandboxAutomationTrigger =
       weekday?: number;
     };
 export type SandboxComparisonOperator = ">" | ">=" | "<" | "<=" | "=" | "!=";
-export type SandboxAutomationCondition = {
+export type SandboxTriggerCondition = {
   id: string;
   field: SandboxFieldReference;
   operator: SandboxComparisonOperator;
   value: SandboxValueSource;
 };
-export type SandboxAutomationAction =
+export type SandboxTriggerAction =
   | { id: string; kind: "notification"; message: string }
   | { id: string; kind: "channel-message"; channel: string }
   | { id: string; kind: "assign-task"; assignee: string }
@@ -109,17 +116,17 @@ export type SandboxAutomationAction =
       moduleId: string;
       values: Array<{ fieldId: string; value: SandboxValueSource }>;
     };
-export type SandboxAutomation = {
+export type SandboxTrigger = {
   id: string;
   name: string;
   enabled: boolean;
   priority: number;
-  trigger: SandboxAutomationTrigger;
+  trigger: SandboxTriggerEvent;
   conditionGroup: {
     operator: "all" | "any";
-    conditions: SandboxAutomationCondition[];
+    conditions: SandboxTriggerCondition[];
   };
-  actions: SandboxAutomationAction[];
+  actions: SandboxTriggerAction[];
 };
 export type SandboxSyntheticRecord = {
   id: string;
@@ -147,18 +154,18 @@ export type SandboxVersionSnapshot = {
   id: string;
   label: string;
   kind: "checkpoint" | "published" | "imported";
-  document: Omit<SandboxDocumentV2, "kind" | "schemaVersion" | "versions">;
+  document: Omit<SandboxDocumentV4, "kind" | "schemaVersion" | "versions">;
   published: boolean;
   date: string;
   note?: string;
 };
-export type SandboxDocumentV2 = {
+export type SandboxDocumentV4 = {
   kind: "openslate-sandbox";
-  schemaVersion: 2;
+  schemaVersion: typeof SANDBOX_DOCUMENT_SCHEMA_VERSION;
   design: SandboxDocumentDesign;
-  automations: SandboxAutomation[];
+  triggers: SandboxTrigger[];
   scenarios: SandboxScenarioTemplate[];
   versions?: SandboxVersionSnapshot[];
 };
 export type SandboxDocumentParseResult =
-  { ok: true; document: SandboxDocumentV2 } | { ok: false; error: string };
+  { ok: true; document: SandboxDocumentV4 } | { ok: false; error: string };

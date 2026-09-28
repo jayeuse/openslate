@@ -2,122 +2,82 @@
 
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, ShieldCheck } from "lucide-react";
 
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   GuardedWorkspaceLink,
   useWorkspaceNavigationGuard,
 } from "@/components/workspace-navigation-guard";
+import {
+  accessNavigationFor,
+  type AccessNavigation,
+} from "@/components/workspace-navigation";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
-import { useAccessController } from "./state/controller";
+import { authMeOptions } from "./adapters/access-queries";
+import { DiscardChangesDialog } from "./components/people-fields";
+import { GroupsView } from "./components/groups-view";
+import { OverviewView } from "./components/overview-view";
+import { PeopleView } from "./components/people-view";
 import {
   AccessDraftNavigationProvider,
   useAccessDraftNavigation,
 } from "./state/draft-navigation";
-import {
-  GovernanceDialogs,
-  type GovernanceDialogTarget,
-} from "./components/governance-dialogs";
-import { IdentitiesView } from "./components/identities-view";
-import {
-  OverviewView,
-  type AccessOverviewDestination,
-} from "./components/overview-view";
-import {
-  PermissionsView,
-  type PermissionSubjectFilter,
-} from "./components/permissions-view";
 
-const accessViews = [
-  { id: "overview", label: "Overview" },
-  { id: "identities", label: "People & services" },
-  { id: "permissions", label: "Permissions" },
-] as const;
+const accessViews = {
+  overview: {
+    title: "Access overview",
+    description: "See who has access and where it needs attention.",
+  },
+  people: {
+    title: "People",
+    description: "Invite people, set their role, and review their sessions.",
+  },
+  groups: {
+    title: "Groups",
+    description: "Give groups read, write, or manage access to departments.",
+  },
+} as const;
 
-const accessPanelClass = "min-h-0 flex-1 overflow-y-auto overscroll-contain";
-
-type AccessView = (typeof accessViews)[number]["id"];
-type PendingAccessNavigation = { href: string; resume: () => void };
+type AccessView = keyof typeof accessViews;
 
 function isAccessView(value: string | null): value is AccessView {
-  return accessViews.some((view) => view.id === value);
+  return value !== null && Object.hasOwn(accessViews, value);
 }
 
-function permissionsFilter(
-  view: string | null,
-  type: string | null,
-): PermissionSubjectFilter {
-  const requested = view === "roles" || view === "groups" ? view : type;
-  return requested === "roles" ||
-    requested === "groups" ||
-    requested === "identities" ||
-    requested === "all"
-    ? requested
-    : "shared";
+/** The tab a URL opens for this person. Managers only ever see Groups. */
+function viewFor(
+  access: Exclude<AccessNavigation, "none">,
+  searchParams: URLSearchParams,
+): AccessView {
+  if (access === "groups") return "groups";
+  const requested = searchParams.get("view");
+  if (isAccessView(requested)) return requested;
+  return searchParams.has("user") ? "people" : "overview";
 }
 
-function AccessFallback() {
-  return (
-    <div
-      className="h-full space-y-5 overflow-hidden p-3 sm:px-5 sm:py-4"
-      role="status"
-      aria-label="Opening Access"
-    >
-      <div className="space-y-2">
-        <Skeleton className="h-9 w-40" />
-        <Skeleton className="h-5 w-full max-w-xl" />
-      </div>
-      <Skeleton className="h-11 w-full" />
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }, (_, index) => (
-          <Skeleton key={index} className="h-28 w-full" />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function AccessReadError({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="flex h-full items-center justify-center p-5" role="alert">
-      <div className="w-full max-w-lg space-y-4 rounded-lg border p-6">
-        <div>
-          <h1 data-slot="page-title" className="text-xl font-semibold">
-            Access data is unavailable
-          </h1>
-          <p className="text-muted-foreground mt-2 text-sm">{message}</p>
-        </div>
-        <Button className="min-h-11" onClick={onRetry}>
-          Retry
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-export default function SampleAccess() {
+export default function AccessPage() {
   const userId = useVerifiedWorkspaceUserId();
   return (
-    <Suspense fallback={<AccessFallback />}>
+    <Suspense fallback={<AccessFrame title="Access" description="" />}>
       <AccessDraftNavigationProvider key={userId}>
         <AccessControlCenter />
       </AccessDraftNavigationProvider>
@@ -129,322 +89,192 @@ function AccessControlCenter() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const controller = useAccessController();
-  const { hasUnsavedDraft, discardUnsavedDrafts } = useAccessDraftNavigation();
-  const [governanceDialog, setGovernanceDialog] =
-    useState<GovernanceDialogTarget | null>(null);
-  const [pendingNavigation, setPendingNavigation] =
-    useState<PendingAccessNavigation | null>(null);
-  const [navigationNotice, setNavigationNotice] = useState("");
-  const commandPending = controller.isPending();
-  const resource = controller.resource;
-  const readReady = resource.status === "ready";
-
+  const identity = useQuery(authMeOptions());
+  const access = identity.data ? accessNavigationFor(identity.data) : null;
   const requestedView = searchParams.get("view");
-  const requestedUser = searchParams.get("user");
-  const hasUserDeepLink =
-    readReady &&
-    requestedUser !== null &&
-    [
-      ...controller.state.identities,
-      ...controller.state.deletedIdentities.map((item) => item.identity),
-    ].some((identity) => identity.id === requestedUser);
-  const activeView: AccessView =
-    requestedView === "simulator"
-      ? "identities"
-      : requestedView === "reviews"
-        ? "overview"
-        : requestedView === "roles" ||
-            requestedView === "groups" ||
-            requestedView === "rules"
-          ? "permissions"
-          : isAccessView(requestedView)
-            ? requestedView
-            : hasUserDeepLink
-              ? "identities"
-              : "overview";
+  const navigationBlock = useUnsavedDraftGuard();
 
+  // A manager's links always name the Groups tab, so the sidebar and the
+  // breadcrumb agree with what the page shows.
   useEffect(() => {
-    if (!readReady || requestedUser === null || hasUserDeepLink) return;
-    const next = new URLSearchParams(searchParams.toString());
-    next.delete("user");
-    const query = next.toString();
-    router.replace(`${pathname}${query ? `?${query}` : ""}` as Route);
-  }, [
-    hasUserDeepLink,
-    pathname,
-    readReady,
-    requestedUser,
-    router,
-    searchParams,
-  ]);
+    if (access === "groups" && requestedView !== "groups")
+      router.replace(`${pathname}?view=groups` as Route);
+  }, [access, pathname, requestedView, router]);
 
-  const guardWorkspaceNavigation = useCallback(
+  if (identity.isError)
+    return (
+      <AccessFrame title="Access" description="">
+        <div role="alert" className="max-w-lg space-y-4 rounded-lg border p-6">
+          <div>
+            <h2 className="text-base font-semibold">
+              Access data is unavailable
+            </h2>
+            <p className="text-muted-foreground mt-1 text-sm">
+              Your permissions could not be loaded. Try again.
+            </p>
+          </div>
+          <Button className="min-h-11" onClick={() => void identity.refetch()}>
+            Retry
+          </Button>
+        </div>
+      </AccessFrame>
+    );
+
+  if (access === "none")
+    return (
+      <AccessFrame title="Access" description="">
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyTitle>Access is managed by administrators</EmptyTitle>
+            <EmptyDescription>
+              Ask an administrator or a department manager to change your
+              groups.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </AccessFrame>
+    );
+
+  const view = access === null ? null : viewFor(access, searchParams);
+  const copy = view === null ? null : accessViews[view];
+  const description =
+    access === "groups"
+      ? "Change who is in the groups you manage."
+      : (copy?.description ?? "");
+
+  return (
+    <AccessFrame
+      title={copy?.title ?? "Access"}
+      description={description}
+      showSecurityLink={access === "all" && view === "overview"}
+    >
+      <LoadingRegion
+        loading={identity.isPending}
+        label="Loading Access…"
+        skeleton={<Skeleton className="h-40 w-full" />}
+      >
+        {view === "people" ? (
+          <PeopleView />
+        ) : view === "groups" ? (
+          <GroupsView mode={access === "all" ? "admin" : "manager"} />
+        ) : view === "overview" ? (
+          <OverviewView />
+        ) : null}
+      </LoadingRegion>
+      {navigationBlock}
+    </AccessFrame>
+  );
+}
+
+type PendingNavigation = { resume: () => void };
+
+/**
+ * Holds workspace navigation while an Access editor has unsaved changes and
+ * asks before discarding them. A reload or tab close gets the browser's own
+ * warning.
+ */
+function useUnsavedDraftGuard(): ReactNode {
+  const { hasUnsavedDraft, discardUnsavedDrafts } = useAccessDraftNavigation();
+  const [pending, setPending] = useState<PendingNavigation | null>(null);
+  const [notice, setNotice] = useState("");
+
+  const guard = useCallback(
     (href: string, resume: () => void) => {
-      if (commandPending) {
-        setNavigationNotice(
-          "Finish the Access change before switching views or leaving this page.",
-        );
-        return false;
-      }
-      if (!hasUnsavedDraft) {
-        setNavigationNotice("");
+      if (!hasUnsavedDraft) return true;
+      if (new URL(href, window.location.origin).href === window.location.href)
         return true;
-      }
-      if (
-        typeof window !== "undefined" &&
-        new URL(href, window.location.origin).href === window.location.href
-      )
-        return true;
-
-      let resumed = false;
-      setNavigationNotice("");
-      setPendingNavigation({
-        href,
-        resume: () => {
-          if (resumed) return;
-          resumed = true;
-          resume();
-        },
-      });
+      setNotice("");
+      setPending({ resume });
       return false;
     },
-    [commandPending, hasUnsavedDraft],
+    [hasUnsavedDraft],
   );
-
-  useWorkspaceNavigationGuard(guardWorkspaceNavigation);
+  useWorkspaceNavigationGuard(guard);
 
   useEffect(() => {
-    if (!hasUnsavedDraft && !commandPending) return;
-    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+    if (!hasUnsavedDraft) return;
+    const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
-    window.addEventListener("beforeunload", warnBeforeUnload);
-    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
-  }, [commandPending, hasUnsavedDraft]);
-
-  function accessViewHref(view: AccessView): string {
-    const next = new URLSearchParams();
-    next.set("view", view);
-    if (view === "identities") {
-      const user = searchParams.get("user");
-      if (user) next.set("user", user);
-    }
-    return `${pathname}?${next.toString()}`;
-  }
-
-  function pushAccessView(view: AccessView) {
-    setNavigationNotice("");
-    router.push(accessViewHref(view) as Route);
-  }
-
-  function requestAccessNavigation(href: string, resume: () => void) {
-    if (guardWorkspaceNavigation(href, resume)) resume();
-  }
-
-  function navigate(view: AccessView) {
-    const href = accessViewHref(view);
-    requestAccessNavigation(href, () => pushAccessView(view));
-  }
-
-  function navigateFromOverview(destination: AccessOverviewDestination) {
-    if (
-      destination === "defaults" ||
-      destination === "import" ||
-      destination === "export"
-    ) {
-      requestAccessNavigation(
-        `${pathname}?view=overview&action=${destination}`,
-        () => {
-          setGovernanceDialog(destination);
-        },
-      );
-      return;
-    }
-    if (
-      destination === "roles" ||
-      destination === "groups" ||
-      destination === "rules"
-    ) {
-      const next = new URLSearchParams({ view: "permissions" });
-      if (destination === "rules") next.set("configure", "everyone");
-      else next.set("type", destination);
-      const href = `${pathname}?${next.toString()}`;
-      requestAccessNavigation(href, () => router.push(href as Route));
-      return;
-    }
-    navigate(destination);
-  }
-
-  function discardAndContinueNavigation() {
-    if (commandPending) {
-      setNavigationNotice(
-        "Finish the Access change before switching views or leaving this page.",
-      );
-      return;
-    }
-    const transition = pendingNavigation;
-    if (!transition) return;
-    if (!discardUnsavedDrafts()) {
-      setNavigationNotice(
-        "The browser could not clear your saved Access draft. Keep editing or clear this site's browser data before leaving.",
-      );
-      return;
-    }
-    setPendingNavigation(null);
-    transition.resume();
-  }
-
-  if (resource.status === "loading") return <AccessFallback />;
-  if (resource.status === "error")
-    return (
-      <AccessReadError message={resource.error} onRetry={resource.reload} />
-    );
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasUnsavedDraft]);
 
   return (
+    <>
+      {notice ? (
+        <Alert role="status" variant="warning">
+          {notice}
+        </Alert>
+      ) : null}
+      <DiscardChangesDialog
+        open={pending !== null}
+        title="Discard unsaved changes?"
+        description="You have changes in Access that are not saved. Leaving this page discards them."
+        onKeep={() => setPending(null)}
+        onDiscard={() => {
+          const next = pending;
+          if (!next) return;
+          if (!discardUnsavedDrafts()) {
+            setNotice(
+              "Your draft could not be cleared from this browser. Keep editing, or try again.",
+            );
+            setPending(null);
+            return;
+          }
+          setPending(null);
+          next.resume();
+        }}
+      />
+    </>
+  );
+}
+
+function AccessFrame({
+  title,
+  description,
+  showSecurityLink = false,
+  children,
+}: {
+  title: string;
+  description: string;
+  showSecurityLink?: boolean;
+  children?: ReactNode;
+}) {
+  return (
     <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 p-3 sm:px-5 sm:py-4">
-      <header
-        className={
-          activeView === "overview" ||
-          activeView === "identities" ||
-          activeView === "permissions"
-            ? "flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
-            : "flex shrink-0 items-start justify-between gap-3"
-        }
-      >
+      <header className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h1
             data-slot="page-title"
             className="text-2xl font-semibold tracking-tight sm:text-3xl"
           >
-            {activeView === "overview"
-              ? "Access overview"
-              : activeView === "identities"
-                ? "People & services"
-                : "Permissions"}
+            {title}
           </h1>
-          <p className="text-muted-foreground mt-1 max-w-3xl text-sm">
-            {activeView === "overview"
-              ? "Manage who has access and what they can do."
-              : activeView === "identities"
-                ? "Manage internal people, sponsored guests, and services."
-                : "Choose who, see their members, and set what they can do."}
-          </p>
-        </div>
-        <Button
-          asChild
-          variant="outline"
-          className="min-h-11 w-full shrink-0 px-3 sm:w-auto"
-        >
-          <GuardedWorkspaceLink href="/manage?view=security">
-            <ShieldCheck aria-hidden="true" />
-            Sign-in & security
-            <ArrowUpRight aria-hidden="true" />
-          </GuardedWorkspaceLink>
-        </Button>
-      </header>
-
-      {navigationNotice ? (
-        <Alert role="status" variant="warning">
-          {navigationNotice}
-        </Alert>
-      ) : null}
-      {resource.refreshing || resource.error ? (
-        <Alert role="status" variant="warning">
-          <span>
-            {resource.refreshing
-              ? "Refreshing Access data…"
-              : `Access data could not be refreshed. Showing the last available result. ${resource.error}`}
-          </span>
-          {!resource.refreshing && resource.error ? (
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={resource.reload}
-            >
-              Retry refresh
-            </Button>
+          {description ? (
+            <p className="text-muted-foreground mt-1 max-w-3xl text-sm">
+              {description}
+            </p>
           ) : null}
-        </Alert>
-      ) : null}
-
-      <div className={accessPanelClass}>
-        {activeView === "overview" ? (
-          <OverviewView
-            controller={controller}
-            onNavigate={navigateFromOverview}
-          />
+        </div>
+        {showSecurityLink ? (
+          <Button
+            asChild
+            variant="outline"
+            className="min-h-11 w-full shrink-0 px-3 sm:w-auto"
+          >
+            <GuardedWorkspaceLink href="/manage?view=security">
+              <ShieldCheck aria-hidden="true" />
+              Sign-in & security
+              <ArrowUpRight aria-hidden="true" />
+            </GuardedWorkspaceLink>
+          </Button>
         ) : null}
-        {activeView === "identities" ? (
-          <IdentitiesView controller={controller} />
-        ) : null}
-        {activeView === "permissions" ? (
-          <PermissionsView
-            controller={controller}
-            initialFilter={permissionsFilter(
-              requestedView,
-              searchParams.get("type"),
-            )}
-            initialOpen={
-              requestedView === "rules" ||
-              searchParams.get("configure") === "everyone"
-            }
-            routeIntent={JSON.stringify([
-              requestedView,
-              searchParams.get("type"),
-              searchParams.get("configure"),
-            ])}
-          />
-        ) : null}
-        <GovernanceDialogs
-          controller={controller}
-          dialog={governanceDialog}
-          onDialogChange={setGovernanceDialog}
-          showLauncher={false}
-        />
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {children}
       </div>
-
-      <AlertDialog
-        open={pendingNavigation !== null}
-        onOpenChange={(open) => {
-          if (!open && !commandPending) setPendingNavigation(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Discard unsaved Access changes?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Your Access draft has unsaved changes. Leaving this page will
-              discard them.
-            </AlertDialogDescription>
-            {commandPending ? (
-              <p role="status" className="text-muted-foreground text-sm">
-                Finish the Access change before continuing.
-              </p>
-            ) : null}
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={() => setPendingNavigation(null)}
-            >
-              Keep editing
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              className="min-h-11"
-              disabled={commandPending}
-              onClick={discardAndContinueNavigation}
-            >
-              Discard and continue
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

@@ -1,17 +1,17 @@
 import { expect, test } from "@playwright/test";
 import {
-  addAutomationAction,
-  addAutomationCondition,
-  automationRunStatus,
-  automationPublicationBlockers,
+  addTriggerAction,
+  addTriggerCondition,
+  triggerRunStatus,
+  triggerPublicationBlockers,
   fieldReferenceOptionValue,
   scheduleFrequencyChange,
-  defaultAutomation,
+  defaultTrigger,
   sandboxFieldsAreDirectionallyCompatible,
   validateFieldLiteral,
-} from "../../../src/components/systems/sandbox/components/automation-studio";
+} from "../../../src/components/systems/sandbox/components/trigger-studio";
 import type {
-  SandboxAutomationTrigger,
+  SandboxTriggerEvent,
   SandboxFieldReference,
 } from "../../../src/components/systems/sandbox/domain/document";
 import type { SandboxDocumentDesign } from "../../../src/components/systems/sandbox/domain/document";
@@ -25,6 +25,7 @@ const design: SandboxDocumentDesign = {
       departmentId: "operations",
       name: "Requests",
       closed: false,
+      titleFieldId: null,
       fields: [
         {
           id: "title",
@@ -43,7 +44,10 @@ const design: SandboxDocumentDesign = {
           config: {
             kind: "select",
             defaultValue: null,
-            options: ["Open", "On hold"],
+            options: [
+              { id: "open", label: "Open" },
+              { id: "on-hold", label: "On hold" },
+            ],
           },
         },
       ],
@@ -56,14 +60,14 @@ const design: SandboxDocumentDesign = {
   },
 };
 
-test("new automations author only same-module Set field actions", () => {
-  const automation = defaultAutomation(design);
-  const expanded = addAutomationAction(
-    addAutomationCondition(automation, design),
+test("new triggers author only same-module Set field actions", () => {
+  const recordTrigger = defaultTrigger(design);
+  const expanded = addTriggerAction(
+    addTriggerCondition(recordTrigger, design),
     design,
   );
 
-  expect(automation.actions).toEqual([
+  expect(recordTrigger.actions).toEqual([
     expect.objectContaining({
       kind: "set-field",
       target: { moduleId: "requests", fieldId: "title" },
@@ -79,28 +83,28 @@ test("new automations author only same-module Set field actions", () => {
 });
 
 test("imported unsupported actions block publication until removed", () => {
-  const automation = {
-    ...defaultAutomation(design),
+  const recordTrigger = {
+    ...defaultTrigger(design),
     actions: [
       { id: "old-action", kind: "notification" as const, message: "Legacy" },
     ],
   };
-  expect(automationPublicationBlockers([automation], design)).toEqual([
-    "New automation: notification is not supported for publishing.",
+  expect(triggerPublicationBlockers([recordTrigger], design)).toEqual([
+    "New trigger: notification is not supported for publishing.",
   ]);
 });
 
-test("scheduled automations require a module before publishing", () => {
-  const automation = {
-    ...defaultAutomation(design),
+test("scheduled triggers require a module before publishing", () => {
+  const recordTrigger = {
+    ...defaultTrigger(design),
     trigger: {
       kind: "schedule" as const,
       frequency: "daily" as const,
       time: "09:00",
     },
   };
-  expect(automationPublicationBlockers([automation], design)).toContain(
-    "New automation: scheduled automations need a module.",
+  expect(triggerPublicationBlockers([recordTrigger], design)).toContain(
+    "New trigger: scheduled triggers need a module.",
   );
 });
 
@@ -111,31 +115,31 @@ test("a publish retry keeps the same idempotency key after an uncertain result",
   );
 });
 
-test("successful automation activity distinguishes changes from no-op runs", () => {
+test("successful trigger activity distinguishes changes from no-op runs", () => {
   const base = {
     id: "run-1",
     createdAt: "2026-09-21T00:00:00Z",
-    automationId: "automation-1",
-    automationName: "Review order",
+    triggerId: "trigger-1",
+    triggerName: "Review order",
     eventKind: "field-changed" as const,
     state: "succeeded" as const,
     attempts: 1,
   };
 
   expect(
-    automationRunStatus({
+    triggerRunStatus({
       ...base,
       details: { recordsMatched: 1, actionsApplied: 0 },
     }),
   ).toBe("No change needed");
   expect(
-    automationRunStatus({
+    triggerRunStatus({
       ...base,
       details: { recordsMatched: 1, actionsApplied: 1 },
     }),
   ).toBe("Completed");
   expect(
-    automationRunStatus({
+    triggerRunStatus({
       ...base,
       details: {
         recordsMatched: 100,
@@ -147,7 +151,7 @@ test("successful automation activity distinguishes changes from no-op runs", () 
 });
 
 test("switching a schedule to weekly stores the displayed default weekday", () => {
-  const daily: SandboxAutomationTrigger = {
+  const daily: SandboxTriggerEvent = {
     kind: "schedule",
     moduleId: "requests",
     frequency: "daily",
@@ -182,7 +186,7 @@ test("field-reference controls encode stored values exactly like their options",
   ).toBe("request-customer|requests|status");
 });
 
-test("automation Date/Time constraints compare offset values as instants", () => {
+test("trigger Date/Time constraints compare offset values as instants", () => {
   const source = {
     id: "source-time",
     name: "Source time",

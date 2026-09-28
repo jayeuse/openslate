@@ -18,6 +18,7 @@ def _field(**changes: object) -> FieldMetadata:
         required=False,
         closed=False,
         select_options=frozenset(),
+        select_labels=frozenset(),
         max_length=None,
         minimum=None,
         maximum=None,
@@ -25,6 +26,8 @@ def _field(**changes: object) -> FieldMetadata:
         earliest=None,
         latest=None,
     )
+    if "select_options" in changes and "select_labels" not in changes:
+        changes["select_labels"] = changes["select_options"]
     return replace(base, **changes)
 
 

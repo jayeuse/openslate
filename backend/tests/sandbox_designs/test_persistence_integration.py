@@ -37,7 +37,7 @@ def test_replace_checkpoint_restore_and_stale_revision_are_persistent_and_audite
     assert initial.document.design.modules == []
     assert initial.document.design.relationships == []
     assert initial.document.design.layout == {}
-    assert initial.document.automations == []
+    assert initial.document.triggers == []
     assert initial.document.scenarios == []
     assert (
         integration_owner_db.scalar(

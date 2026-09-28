@@ -10,11 +10,13 @@ export const FIELD_TYPES = [
   { name: "Date/Time", kind: "datetime" },
   { name: "Checkbox", kind: "checkbox" },
   { name: "Select", kind: "select" },
+  { name: "User", kind: "user" },
   { name: "Email", kind: "email" },
   { name: "URL", kind: "url" },
 ] as const;
 
 export type FieldTypeName = (typeof FIELD_TYPES)[number]["name"];
+export type SelectOption = { id: string; label: string };
 export type FieldConfig =
   | {
       kind: "text" | "long-text" | "email" | "url";
@@ -35,7 +37,8 @@ export type FieldConfig =
       latest?: string;
     }
   | { kind: "checkbox"; defaultValue: boolean }
-  | { kind: "select"; defaultValue: string | null; options: string[] };
+  | { kind: "select"; defaultValue: string | null; options: SelectOption[] }
+  | { kind: "user" };
 
 export type SandboxDesignTarget = {
   kind: "department" | "module" | "field" | "link";
@@ -59,6 +62,7 @@ export type Module = {
   name: string;
   closed: boolean;
   fields: Field[];
+  titleFieldId?: string | null;
   x: number;
   y: number;
 };
@@ -169,7 +173,9 @@ export function relationshipFieldTypesAreCompatible(
       sourceConfig.kind === "select" &&
       targetConfig.kind === "select" &&
       sourceConfig.options.every((option) =>
-        targetConfig.options.includes(option),
+        targetConfig.options.some(
+          (candidate) => candidate.label === option.label,
+        ),
       )
     );
   }
@@ -265,6 +271,24 @@ function numericDefault(value: string): number | null {
   return Number(value);
 }
 
+function stableLegacyOptionId(fieldId: string, label: string): string {
+  // Legacy in-memory Designer fixtures contain labels only. Give those labels
+  // deterministic UUIDs so repeated projections do not manufacture changes;
+  // all newly authored and persisted v4 options carry their own IDs.
+  const input = `${fieldId}\u0000${label}`;
+  const hashes = [2166136261, 2246822519, 3266489917, 668265263];
+  for (let index = 0; index < input.length; index += 1) {
+    const code = input.charCodeAt(index);
+    for (let part = 0; part < hashes.length; part += 1) {
+      hashes[part] = Math.imul(hashes[part] ^ (code + part * 131), 16777619);
+    }
+  }
+  const hex = hashes
+    .map((hash) => (hash >>> 0).toString(16).padStart(8, "0"))
+    .join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 export function normalizeField(field: Field): Field & { config: FieldConfig } {
   const type = canonicalFieldType(field.type) ?? "Text";
   let config: FieldConfig;
@@ -299,19 +323,37 @@ export function normalizeField(field: Field): Field & { config: FieldConfig } {
           ? field.config
           : { kind: "checkbox", defaultValue: field.value === "true" };
       break;
+    case "User":
+      config = { kind: "user" };
+      break;
     case "Select": {
       const rawOptions =
         field.config?.kind === "select"
           ? field.config.options
-          : field.options.split(",");
-      const options = [
-        ...new Set(rawOptions.map((option) => option.trim()).filter(Boolean)),
-      ];
+          : field.options
+              .split(",")
+              .map((label) => label.trim())
+              .filter(Boolean)
+              .map((label) => ({
+                id: stableLegacyOptionId(field.id, label),
+                label,
+              }));
+      const options: SelectOption[] = [];
+      for (const rawOption of rawOptions) {
+        const label = rawOption.label.trim();
+        if (!label || options.some((option) => option.label === label))
+          continue;
+        options.push({ id: rawOption.id, label });
+      }
       const rawDefault =
         field.config?.kind === "select"
           ? field.config.defaultValue
           : field.value.trim() || null;
-      config = { kind: "select", defaultValue: rawDefault, options };
+      const defaultValue =
+        options.find((option) => option.id === rawDefault)?.id ??
+        options.find((option) => option.label === rawDefault)?.id ??
+        rawDefault;
+      config = { kind: "select", defaultValue, options };
       break;
     }
     case "Text":
@@ -472,7 +514,7 @@ export const counts = (d: Design) =>
       "field",
     ),
     countOf(d.relationships.length, "relationship"),
-    countOf(d.rules.length, "automation"),
+    countOf(d.rules.length, "trigger"),
   ].join(" · ");
 export function reorder<T>(items: T[], index: number, delta: number): T[] {
   const next = [...items];
@@ -600,7 +642,7 @@ export function changesFrom(
     changes.push("Module order changed");
 
   const compareNamedGroup = <T extends { id: string; name: string }>(
-    name: "Relationship" | "Automation",
+    name: "Relationship" | "Trigger",
     before: T[],
     after: T[],
   ) => {
@@ -615,7 +657,7 @@ export function changesFrom(
     if (orderChanged(before, after)) changes.push(`${name} order changed`);
   };
   compareNamedGroup("Relationship", previous.relationships, next.relationships);
-  compareNamedGroup("Automation", previous.rules, next.rules);
+  compareNamedGroup("Trigger", previous.rules, next.rules);
   if (
     JSON.stringify(previous.layout ?? compactDefaultLayout) !==
     JSON.stringify(next.layout ?? compactDefaultLayout)

@@ -14,7 +14,7 @@ const widgetId = "00000000-0000-4000-8000-000000000002";
 const duplicateId = "00000000-0000-4000-8000-000000000003";
 const moduleId = "00000000-0000-4000-8000-000000000004";
 const fieldId = "00000000-0000-4000-8000-000000000005";
-const roleId = "00000000-0000-4000-8000-000000000006";
+const targetId = "00000000-0000-4000-8000-000000000006";
 const timestamp = "2026-09-23T00:00:00Z";
 
 type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
@@ -59,7 +59,6 @@ function widgetResponse(id = widgetId) {
     module_id: moduleId,
     position: 0,
     config,
-    audience: { kind: "everyone", role_id: null, user_id: null },
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -72,10 +71,9 @@ const widgetInput = {
   config: {
     fields: [{ fieldId, expectedType: "text" as const }],
   },
-  audience: { kind: "everyone" as const },
 };
 
-test("widget list is a server-filtered page with no manager audience override", async () => {
+test("widget list is a bounded page of the Board widgets", async () => {
   const mock = installFetch(() =>
     jsonResponse({
       items: [widgetResponse()],
@@ -94,8 +92,8 @@ test("widget list is a server-filtered page with no manager audience override", 
       id: widgetId,
       boardId,
       config: { fields: [{ fieldId, expectedType: "text" }] },
-      audience: { kind: "everyone", roleId: null, userId: null },
     });
+    expect(page.items[0]).not.toHaveProperty("audience");
     expect(page.pagination).toEqual({
       limit: 1,
       offset: 0,
@@ -172,7 +170,6 @@ test("widget create, patch, duplicate, reorder and delete send revisioned contra
         widget_type: "records",
         module_id: moduleId,
         config,
-        audience: { kind: "everyone" },
       },
     });
     expect(JSON.parse(String(mock.requests[2]?.init?.body))).toEqual({
@@ -190,7 +187,7 @@ test("widget create, patch, duplicate, reorder and delete send revisioned contra
   }
 });
 
-test("widget inputs reject invalid audience, source, filters and order before fetch", async () => {
+test("widget inputs reject audience, invalid source, filters and order before fetch", async () => {
   const mock = installFetch(() =>
     jsonResponse({ widget: widgetResponse(), board_revision: 2 }),
   );
@@ -205,20 +202,14 @@ test("widget inputs reject invalid audience, source, filters and order before fe
     await expect(
       createBoardWidget(boardId, 1, {
         ...widgetInput,
-        ownerId: roleId,
+        ownerId: targetId,
       } as never),
     ).rejects.toThrow();
     await expect(
       createBoardWidget(boardId, 1, {
         ...widgetInput,
-        audience: { kind: "role" } as never,
-      }),
-    ).rejects.toThrow();
-    await expect(
-      createBoardWidget(boardId, 1, {
-        ...widgetInput,
-        audience: undefined as never,
-      }),
+        audience: { kind: "everyone" },
+      } as never),
     ).rejects.toThrow();
     await expect(
       createBoardWidget(boardId, 1, {
@@ -249,44 +240,10 @@ test("widget inputs reject invalid audience, source, filters and order before fe
   }
 });
 
-test("role audience is explicit and its target is serialized without actor inference", async () => {
-  const mock = installFetch(() =>
-    jsonResponse(
-      {
-        widget: {
-          ...widgetResponse(),
-          audience: { kind: "role", role_id: roleId, user_id: null },
-        },
-        board_revision: 2,
-      },
-      201,
-    ),
-  );
-  try {
-    const created = await createBoardWidget(boardId, 1, {
-      ...widgetInput,
-      audience: { kind: "role", roleId },
-    });
-    expect(created.widget.audience).toEqual({
-      kind: "role",
-      roleId,
-      userId: null,
-    });
-    expect(
-      JSON.parse(String(mock.requests[0]?.init?.body)).widget.audience,
-    ).toEqual({
-      kind: "role",
-      role_id: roleId,
-    });
-  } finally {
-    mock.restore();
-  }
-});
-
-test("widget responses reject private extras, malformed audience and foreign board IDs", async () => {
+test("widget responses reject private extras, audience fields and foreign board IDs", async () => {
   const privateDto = installFetch(() =>
     jsonResponse({
-      items: [{ ...widgetResponse(), creator_id: roleId }],
+      items: [{ ...widgetResponse(), creator_id: targetId }],
       pagination: { limit: 25, offset: 0, count: 1, total: 1, has_more: false },
       board_revision: 1,
     }),
@@ -303,7 +260,7 @@ test("widget responses reject private extras, malformed audience and foreign boa
       {
         widget: {
           ...widgetResponse(),
-          audience: { kind: "role", role_id: null, user_id: null },
+          audience: { kind: "everyone", user_id: null },
         },
         board_revision: 2,
       },
@@ -319,7 +276,10 @@ test("widget responses reject private extras, malformed audience and foreign boa
   }
   const foreign = installFetch(() =>
     jsonResponse(
-      { widget: { ...widgetResponse(), board_id: roleId }, board_revision: 2 },
+      {
+        widget: { ...widgetResponse(), board_id: targetId },
+        board_revision: 2,
+      },
       201,
     ),
   );

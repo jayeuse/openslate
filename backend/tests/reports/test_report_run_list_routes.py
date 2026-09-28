@@ -88,19 +88,18 @@ def test_report_run_list_does_not_select_saved_recipe(
     assert all("recipe" not in statement.lower() for statement in statements)
 
 
-def test_report_run_list_enforces_owner_capability_and_archive_state(
+def test_report_run_list_shows_runs_to_module_readers_and_respects_archive_state(
     report_run_fixture: _RunFixture,
 ) -> None:
     fixture = report_run_fixture
     path = f"/api/reports/{fixture.report_id}/runs"
-    assert fixture.client.post(path, headers=fixture.headers(key=uuid7())).status_code == 201
-    assert (
-        fixture.client.get(path, headers=fixture.headers(fixture.outsider_token)).status_code == 404
-    )
-    assert (
-        fixture.client.get(path, headers=fixture.headers(fixture.write_only_token)).status_code
-        == 403
-    )
+    created = fixture.client.post(path, headers=fixture.headers(key=uuid7()))
+    assert created.status_code == 201
+    # Every module reader at run time, a guest included, reads the run list.
+    for token in (fixture.outsider_token, fixture.guest_token):
+        listed = fixture.client.get(path, headers=fixture.headers(token))
+        assert listed.status_code == 200
+        assert [item["id"] for item in listed.json()["items"]] == [created.json()["id"]]
     assert fixture.client.get(path).status_code == 401
     archived = fixture.client.delete(
         f"/api/reports/{fixture.report_id}?revision=1", headers=fixture.headers()

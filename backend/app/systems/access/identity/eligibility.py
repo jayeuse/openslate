@@ -1,4 +1,4 @@
-"""Shared account-expiry and identity-kind decisions for local authentication."""
+"""Shared account-expiry decisions for local authentication."""
 
 from datetime import UTC, datetime
 
@@ -6,7 +6,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.base_model import utc_now
-from app.systems.access.users.models import IdentityKind, User
+from app.systems.access.users.models import User
 
 
 def is_identity_eligible(user: User, *, now: datetime | None = None) -> bool:
@@ -29,9 +29,3 @@ def identity_eligible_clause(*, now: datetime | None = None) -> ColumnElement[bo
         User.is_deleted.is_(False),
         or_(User.expires_at.is_(None), User.expires_at > timestamp),
     )
-
-
-def is_internal_identity(user: User) -> bool:
-    """Return whether this persisted identity can hold the administrator role."""
-
-    return user.identity_kind == IdentityKind.INTERNAL.value

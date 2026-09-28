@@ -116,6 +116,16 @@ function formatUtc(value: string): string {
   }).format(new Date(value))} UTC`;
 }
 
+function scheduleSummary(schedule: OpenViewReportSchedule): string {
+  const cadence =
+    schedule.cadence === "weekly"
+      ? `Weekly on ${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][schedule.weekday ?? 0]}`
+      : schedule.cadence === "monthly"
+        ? `Monthly on day ${schedule.monthDay}`
+        : "Daily";
+  return `${schedule.enabled ? "" : "Paused · "}${cadence} at ${schedule.localTime} (${schedule.timezoneName})`;
+}
+
 function policySignature(draft: ReportScheduleDraft): string {
   try {
     return JSON.stringify(reportSchedulePolicyFrom(draft));
@@ -126,12 +136,15 @@ function policySignature(draft: ReportScheduleDraft): string {
 
 type ReportScheduleControlsProps = {
   reportId: string;
+  /** Only a manager of the Report module changes its schedule. */
+  canManage: boolean;
   disabled: boolean;
   disabledReason?: string;
 };
 
 export function ReportScheduleControls({
   reportId,
+  canManage,
   disabled,
   disabledReason,
 }: ReportScheduleControlsProps) {
@@ -195,7 +208,7 @@ export function ReportScheduleControls({
   }, [reportId, loadVersion]);
 
   const changed = policySignature(draft) !== policySignature(baselineDraft);
-  const unavailable = disabled || saving || loadState !== "ready";
+  const unavailable = !canManage || disabled || saving || loadState !== "ready";
 
   async function save(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -248,7 +261,7 @@ export function ReportScheduleControls({
           reason instanceof ReportScheduleDraftError
             ? reason.message
             : conflict?.code === "schedule_ineligible"
-              ? "This Report cannot be enabled for scheduling right now. Save the policy disabled or retry after its access and source are updated."
+              ? "This Report cannot be enabled for scheduling right now because its data source is closed. Save the schedule turned off, or reopen the data source."
               : (conflict?.message ??
                 (reason instanceof ApiError && reason.status === 404
                   ? "The Report or schedule changed. Reload the saved schedule before retrying."
@@ -284,8 +297,9 @@ export function ReportScheduleControls({
       <CardHeader>
         <CardTitle>Schedule</CardTitle>
         <CardDescription>
-          Choose a local wall-clock time for future runs. The server determines
-          the next due time.
+          {canManage
+            ? "Choose a local time for future runs. The server determines the next due time."
+            : "Read the saved schedule and its next run."}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -353,171 +367,189 @@ export function ReportScheduleControls({
                   : "No next run is scheduled."}
               </p>
             )}
-            {disabledReason ? (
+            {!canManage ? (
+              <div className="text-muted-foreground space-y-1 text-sm">
+                <p>
+                  {schedule ? scheduleSummary(schedule) : "No saved schedule."}
+                </p>
+                <p>Only a manager of this module changes the schedule.</p>
+              </div>
+            ) : disabledReason ? (
               <p className="text-muted-foreground text-sm">{disabledReason}</p>
             ) : null}
-            <form
-              onSubmit={(event) => void save(event)}
-              className="flex flex-col gap-4"
-            >
-              <Field className="min-h-11 flex-row items-center gap-3">
-                <Checkbox
-                  id={`report-schedule-enabled-${reportId}`}
-                  checked={draft.enabled}
-                  disabled={unavailable}
-                  onCheckedChange={(value) =>
-                    updateDraft({ enabled: value === true })
-                  }
-                />
-                <FieldLabel htmlFor={`report-schedule-enabled-${reportId}`}>
-                  Enable scheduled runs
-                </FieldLabel>
-              </Field>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field>
-                  <FieldLabel htmlFor={`report-schedule-cadence-${reportId}`}>
-                    Repeat
-                  </FieldLabel>
-                  <Select
-                    id={`report-schedule-cadence-${reportId}`}
-                    className="min-h-11"
-                    value={draft.cadence}
-                    onValueChange={(value) =>
-                      updateDraft({
-                        cadence: value as ReportScheduleDraft["cadence"],
-                      })
-                    }
+            {canManage ? (
+              <form
+                onSubmit={(event) => void save(event)}
+                className="flex flex-col gap-4"
+              >
+                <p className="text-muted-foreground text-sm">
+                  Scheduled runs use workspace access. People who could read
+                  this report’s module when a run was created can open that
+                  output while they still have access.
+                </p>
+                <Field className="min-h-11 flex-row items-center gap-3">
+                  <Checkbox
+                    id={`report-schedule-enabled-${reportId}`}
+                    checked={draft.enabled}
                     disabled={unavailable}
-                  >
-                    <SelectItem value="daily">Daily</SelectItem>
-                    <SelectItem value="weekly">Weekly</SelectItem>
-                    <SelectItem value="monthly">Monthly</SelectItem>
-                  </Select>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor={`report-schedule-time-${reportId}`}>
-                    Local time
-                  </FieldLabel>
-                  <Input
-                    id={`report-schedule-time-${reportId}`}
-                    className="min-h-11"
-                    type="time"
-                    value={draft.localTime}
-                    disabled={unavailable}
-                    onChange={(event) =>
-                      updateDraft({ localTime: event.target.value })
+                    onCheckedChange={(value) =>
+                      updateDraft({ enabled: value === true })
                     }
                   />
+                  <FieldLabel htmlFor={`report-schedule-enabled-${reportId}`}>
+                    Enable scheduled runs
+                  </FieldLabel>
                 </Field>
-                {draft.cadence === "weekly" ? (
+                <div className="grid gap-4 sm:grid-cols-2">
                   <Field>
-                    <FieldLabel htmlFor={`report-schedule-weekday-${reportId}`}>
-                      Weekday
+                    <FieldLabel htmlFor={`report-schedule-cadence-${reportId}`}>
+                      Repeat
                     </FieldLabel>
                     <Select
-                      id={`report-schedule-weekday-${reportId}`}
+                      id={`report-schedule-cadence-${reportId}`}
                       className="min-h-11"
-                      value={String(draft.weekday)}
+                      value={draft.cadence}
                       onValueChange={(value) =>
-                        updateDraft({ weekday: Number(value) })
+                        updateDraft({
+                          cadence: value as ReportScheduleDraft["cadence"],
+                        })
                       }
                       disabled={unavailable}
                     >
-                      {[
-                        "Monday",
-                        "Tuesday",
-                        "Wednesday",
-                        "Thursday",
-                        "Friday",
-                        "Saturday",
-                        "Sunday",
-                      ].map((day, index) => (
-                        <SelectItem key={day} value={String(index)}>
-                          {day}
-                        </SelectItem>
-                      ))}
+                      <SelectItem value="daily">Daily</SelectItem>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                      <SelectItem value="monthly">Monthly</SelectItem>
                     </Select>
                   </Field>
-                ) : null}
-                {draft.cadence === "monthly" ? (
                   <Field>
-                    <FieldLabel
-                      htmlFor={`report-schedule-month-day-${reportId}`}
-                    >
-                      Day of month
+                    <FieldLabel htmlFor={`report-schedule-time-${reportId}`}>
+                      Local time
                     </FieldLabel>
                     <Input
-                      id={`report-schedule-month-day-${reportId}`}
+                      id={`report-schedule-time-${reportId}`}
                       className="min-h-11"
-                      type="number"
-                      min={1}
-                      max={31}
-                      step={1}
-                      value={draft.monthDay}
+                      type="time"
+                      value={draft.localTime}
                       disabled={unavailable}
                       onChange={(event) =>
-                        updateDraft({ monthDay: event.target.value })
+                        updateDraft({ localTime: event.target.value })
                       }
                     />
                   </Field>
+                  {draft.cadence === "weekly" ? (
+                    <Field>
+                      <FieldLabel
+                        htmlFor={`report-schedule-weekday-${reportId}`}
+                      >
+                        Weekday
+                      </FieldLabel>
+                      <Select
+                        id={`report-schedule-weekday-${reportId}`}
+                        className="min-h-11"
+                        value={String(draft.weekday)}
+                        onValueChange={(value) =>
+                          updateDraft({ weekday: Number(value) })
+                        }
+                        disabled={unavailable}
+                      >
+                        {[
+                          "Monday",
+                          "Tuesday",
+                          "Wednesday",
+                          "Thursday",
+                          "Friday",
+                          "Saturday",
+                          "Sunday",
+                        ].map((day, index) => (
+                          <SelectItem key={day} value={String(index)}>
+                            {day}
+                          </SelectItem>
+                        ))}
+                      </Select>
+                    </Field>
+                  ) : null}
+                  {draft.cadence === "monthly" ? (
+                    <Field>
+                      <FieldLabel
+                        htmlFor={`report-schedule-month-day-${reportId}`}
+                      >
+                        Day of month
+                      </FieldLabel>
+                      <Input
+                        id={`report-schedule-month-day-${reportId}`}
+                        className="min-h-11"
+                        type="number"
+                        min={1}
+                        max={31}
+                        step={1}
+                        value={draft.monthDay}
+                        disabled={unavailable}
+                        onChange={(event) =>
+                          updateDraft({ monthDay: event.target.value })
+                        }
+                      />
+                    </Field>
+                  ) : null}
+                  <Field className="sm:col-span-2">
+                    <FieldLabel
+                      htmlFor={`report-schedule-timezone-${reportId}`}
+                    >
+                      Timezone
+                    </FieldLabel>
+                    <Input
+                      id={`report-schedule-timezone-${reportId}`}
+                      className="min-h-11"
+                      value={draft.timezoneName}
+                      disabled={unavailable}
+                      onChange={(event) =>
+                        updateDraft({ timezoneName: event.target.value })
+                      }
+                      autoComplete="off"
+                    />
+                    <FieldDescription>
+                      Use an IANA name such as Asia/Manila. Local clocks adjust
+                      for daylight saving time where applicable.
+                    </FieldDescription>
+                  </Field>
+                </div>
+                {error ? (
+                  <Alert role="alert" variant="destructive">
+                    {error}
+                  </Alert>
                 ) : null}
-                <Field className="sm:col-span-2">
-                  <FieldLabel htmlFor={`report-schedule-timezone-${reportId}`}>
-                    Timezone
-                  </FieldLabel>
-                  <Input
-                    id={`report-schedule-timezone-${reportId}`}
-                    className="min-h-11"
-                    value={draft.timezoneName}
-                    disabled={unavailable}
-                    onChange={(event) =>
-                      updateDraft({ timezoneName: event.target.value })
-                    }
-                    autoComplete="off"
-                  />
-                  <FieldDescription>
-                    Use an IANA name such as Asia/Manila. Local clocks adjust
-                    for daylight saving time where applicable.
-                  </FieldDescription>
-                </Field>
-              </div>
-              {error ? (
-                <Alert role="alert" variant="destructive">
-                  {error}
-                </Alert>
-              ) : null}
-              {notice ? (
-                <p role="status" className="text-sm">
-                  {notice}
-                </p>
-              ) : null}
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="submit"
-                  className="min-h-11"
-                  disabled={
-                    unavailable || stale || (Boolean(schedule) && !changed)
-                  }
-                >
-                  {saving
-                    ? "Saving schedule…"
-                    : schedule
-                      ? "Save schedule"
-                      : "Create schedule"}
-                </Button>
-                {stale ? (
+                {notice ? (
+                  <p role="status" className="text-sm">
+                    {notice}
+                  </p>
+                ) : null}
+                <div className={canManage ? "flex flex-wrap gap-2" : "hidden"}>
                   <Button
-                    type="button"
-                    variant="outline"
+                    type="submit"
                     className="min-h-11"
-                    disabled={saving}
-                    onClick={reload}
+                    disabled={
+                      unavailable || stale || (Boolean(schedule) && !changed)
+                    }
                   >
-                    Reload latest schedule
+                    {saving
+                      ? "Saving schedule…"
+                      : schedule
+                        ? "Save schedule"
+                        : "Create schedule"}
                   </Button>
-                ) : null}
-              </div>
-            </form>
+                  {stale ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      disabled={saving}
+                      onClick={reload}
+                    >
+                      Reload latest schedule
+                    </Button>
+                  ) : null}
+                </div>
+              </form>
+            ) : null}
           </>
         ) : null}
       </CardContent>

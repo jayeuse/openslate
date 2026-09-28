@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { initialPeople } from "../../../src/components/systems/access/domain/model";
+import { initialPeople } from "../../../src/components/systems/shared/data/sample-people";
 import {
   createCommsConfiguration,
   DEFAULT_COMMS_PREFERENCES,

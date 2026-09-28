@@ -19,7 +19,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import httpx
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.core.config.instance import assert_instance_target, instance_target_for_process
@@ -128,7 +128,7 @@ def wait_for(url, process, *, verify: bool = True):
 
 def seed(owner_url, run_id, database_environment):
     """Owner-only fixture setup, guarded by a brand-new empty application DB."""
-    from app.systems.access.users.models import Role, User, UserStatus
+    from app.systems.access.users.models import User, UserStatus
 
     target = instance_target_for_process(owner_url, "openslate_owner", database_environment)
     assert_provider_instance(
@@ -146,14 +146,11 @@ def seed(owner_url, run_id, database_environment):
             for role in ("admin", "member"):
                 email = f"p5-{run_id}-{role}@example.com"
                 password = f"P5-{secrets.token_urlsafe(24)}!9"
-                role_row = db.scalar(select(Role).where(Role.role == role))
-                if role_row is None:
-                    raise RuntimeError("baseline role seeds are unavailable")
                 user = User(
                     email=email,
                     username=f"p5-{role}",
                     status=UserStatus.ACTIVE.value,
-                    role_id=role_row.id,
+                    role=role,
                 )
                 db.add(user)
                 db.flush()

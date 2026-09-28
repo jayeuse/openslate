@@ -10,7 +10,7 @@ import {
 import {
   initialPeople,
   initialRoles,
-} from "../../../src/components/systems/access/domain/model";
+} from "../../../src/components/systems/shared/data/sample-people";
 import {
   initialReport,
   initialReportTemplates,

@@ -3,13 +3,99 @@ import io
 
 from record_queries.test_database import request_for, setup_rows
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
+from app.systems.access.users.models import User
 from app.systems.sandbox.departments.models import Department
-from app.systems.sandbox.fields.models import Field
+from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records import export as exporter
 from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.records.query_schemas import RecordQuery
+from tests.rbac.support import add_department, add_module, add_user
+
+
+def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -> None:
+    engine = query_db.get_bind().engine
+    with AuditSession(engine) as setup:
+        department = add_department(setup)
+        module = add_module(setup, department)
+        actor = add_user(setup, "field-export-actor", role="admin")
+        assignee = add_user(setup, "field-export-assignee", role="admin")
+        assignee.display_name = "Avery Person"
+        option_id = str(uuid7())
+        select_field = Field(
+            module_id=module.id,
+            name="Status",
+            type=FieldType.SELECT,
+            position=0,
+            required=False,
+            config={"options": [{"id": option_id, "label": "Pending"}]},
+        )
+        user_field = Field(
+            module_id=module.id,
+            name="Assignee",
+            type="user",
+            position=1,
+            required=False,
+            config={},
+        )
+        setup.add_all((select_field, user_field))
+        setup.flush()
+        record = Record(
+            module_id=module.id,
+            data={str(select_field.id): option_id, str(user_field.id): str(assignee.id)},
+        )
+        setup.add(record)
+        setup.commit()
+        record_id, select_id, user_field_id = record.id, select_field.id, user_field.id
+        module_id, department_id = module.id, department.id
+        actor_id, assignee_id = actor.id, assignee.id
+
+    payload = RecordQuery(
+        module_id=module_id,
+        definition={
+            "columns": [
+                {"field_id": select_id, "expected_type": "select"},
+                {"field_id": user_field_id, "expected_type": "user"},
+            ]
+        },
+    )
+    try:
+        first, count = exporter.export_snapshot(engine, payload, reader_id=actor_id)
+        assert count == 1
+        assert list(csv.reader(io.StringIO(first.decode()))) == [
+            ["Record ID", "Status", "Assignee"],
+            [str(record_id), "Pending", "Avery Person"],
+        ]
+        with AuditSession(engine) as writer:
+            field = writer.get(Field, select_id)
+            assert field is not None
+            field.config = {"options": [{"id": option_id, "label": "Awaiting review"}]}
+            writer.commit()
+        renamed, count = exporter.export_snapshot(engine, payload, reader_id=actor_id)
+        assert count == 1
+        assert list(csv.reader(io.StringIO(renamed.decode())))[1] == [
+            str(record_id),
+            "Awaiting review",
+            "Avery Person",
+        ]
+    finally:
+        with AuditSession(engine) as cleanup:
+            for model, ids in (
+                (Record, [record_id]),
+                (Field, [select_id, user_field_id]),
+                (Module, [module_id]),
+                (Department, [department_id]),
+                (User, [actor_id, assignee_id]),
+            ):
+                for identifier in ids:
+                    row = cleanup.get(model, identifier)
+                    if row is not None:
+                        cleanup.delete(row)
+                cleanup.flush()
+            cleanup.commit()
 
 
 def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, monkeypatch):
@@ -17,6 +103,7 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
     engine = query_db.get_bind().engine
     with AuditSession(engine) as setup:
         module, field, rows = setup_rows(setup, "text", ["original", "second"])
+        reader_id = add_user(setup, "export-reader", role="admin").id
         setup.commit()
         module_id, field_id, department_id = module.id, field.id, module.department_id
         row_ids = [row.id for row in rows]
@@ -25,16 +112,16 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
         payload.offset = 1
     original_encoder = exporter.encode_csv
 
-    def update_after_snapshot_started(rows, fields, timezone, locale):
+    def update_after_snapshot_started(rows, fields, timezone, locale, resolver):
         with AuditSession(engine) as writer:
             record = writer.get(Record, row_ids[0])
             record.data = {str(field_id): "changed"}
             writer.commit()
-        return original_encoder(rows, fields, timezone, locale)
+        return original_encoder(rows, fields, timezone, locale, resolver)
 
     monkeypatch.setattr(exporter, "encode_csv", update_after_snapshot_started)
     try:
-        content, count = exporter.export_snapshot(engine, payload)
+        content, count = exporter.export_snapshot(engine, payload, reader_id=reader_id)
         parsed = list(csv.reader(io.StringIO(content.decode())))
         assert count == 2
         assert [row[1] for row in parsed[1:]] == ["original", "second"]
@@ -47,6 +134,7 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
                 (Field, [field_id]),
                 (Module, [module_id]),
                 (Department, [department_id]),
+                (User, [reader_id]),
             ):
                 for identifier in ids:
                     cleanup.delete(cleanup.get(model, identifier))
@@ -62,19 +150,19 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
     from app.common.dependencies import get_current_user
     from app.core.database import get_db
     from app.main import app
-    from app.systems.access.users.models import Role, User
+    from app.systems.access.users.models import User
     from app.systems.manage.audit.models import SecurityEvent
 
     engine = query_db.get_bind().engine
     actor_id = uuid7()
     with AuditSession(engine) as setup:
-        role = setup.scalar(select(Role).where(Role.role == "admin"))
+        role = "admin"
         assert role is not None
         actor = User(
             id=actor_id,
             email=f"p7-export-{actor_id}@example.com",
             username=f"p7_export_{actor_id.hex[:12]}",
-            role_id=role.id,
+            role=role,
             status="active",
         )
         setup.add(actor)

@@ -24,7 +24,7 @@ _UUID = (
 _FILE_ROUTE = re.compile(rf"/api/files/{_UUID}/(content|reconcile|purge)")
 _BOARD_FILE_ROUTE = re.compile(rf"/api/boards/{_UUID}/files/{_UUID}/(content|reconcile|purge)")
 _BOARD_CONTENT_ROUTE = re.compile(
-    rf"/api/boards/{_UUID}/(?:events|announcements)/{_UUID}/attachments/{_UUID}/content"
+    rf"/api/boards/{_UUID}/(?:events|posts)/{_UUID}/attachments/{_UUID}/content"
 )
 
 

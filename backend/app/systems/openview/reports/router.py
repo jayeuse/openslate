@@ -1,4 +1,9 @@
-"""Owner-private Report recipes, retained runs, and revisioned lifecycle."""
+"""Report recipes, retained runs, and revisioned lifecycle.
+
+Every reader of the module reads its Reports and runs them on demand (a guest
+never writes a run). Only ``manage`` on the module creates, changes or deletes a
+Report.
+"""
 
 from datetime import UTC, datetime
 from typing import Annotated, Any, cast
@@ -13,23 +18,20 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.common.dependencies import (
     CurrentIdentity,
     get_current_identity,
-    require_all_capabilities,
-    require_fresh_capabilities,
-    require_legacy_capability,
+    get_current_user,
+    require_non_guest,
 )
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
-from app.systems.access.users.models import User, UserStatus
-from app.systems.access.users.permissions import Capability
-from app.systems.openview.reports.audience import (
-    audience_columns,
-    capture_run_eligible_users,
-    report_audience,
-    run_audience_clause,
-    validate_audience,
+from app.systems.access.policy.checks import (
+    module_filter,
+    require_fresh_module_access,
+    require_module_access,
 )
-from app.systems.openview.reports.audience_router import router as audience_router
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User
 from app.systems.openview.reports.deletion_service import delete_report_tree
+from app.systems.openview.reports.eligibility import capture_run_eligible_users
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
 from app.systems.openview.reports.run_reader_router import (
     accessible_run,
@@ -57,14 +59,11 @@ def _private_cache(response: Response) -> None:
 
 
 router = APIRouter(prefix="/reports", tags=["reports"], dependencies=[Depends(_private_cache)])
-router.include_router(audience_router)
 router.include_router(run_reader_router)
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
-RunWriter = Annotated[
-    User,
-    Depends(require_all_capabilities(Capability.RECORDS_READ, Capability.RECORDS_WRITE)),
-]
+Reader = Annotated[User, Depends(get_current_user)]
+# Changing a Report needs ``manage`` on its module; each route checks the module.
+Writer = Annotated[User, Depends(get_current_user)]
+RunWriter = Annotated[User, Depends(require_non_guest)]
 Identity = Annotated[CurrentIdentity, Depends(get_current_identity)]
 Database = Annotated[Session, Depends(get_db)]
 
@@ -79,6 +78,8 @@ REPORT_LIST_SPEC = ListQuerySpec(
     deleted_field=cast(ColumnElement[bool], Report.is_deleted),
     search_fields=(cast(ColumnElement[str], Report.name),),
 )
+
+
 def _not_found() -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, detail="Report not found")
 
@@ -94,45 +95,34 @@ def _invalid_report() -> HTTPException:
     return _conflict("report_invalid", "The Report source or selected fields are unavailable")
 
 
-def _owner_clause(user: User) -> ColumnElement[bool]:
-    role = user.role
-    if (
-        user.status != UserStatus.ACTIVE.value
-        or user.is_deleted
-        or user.deleted_at is not None
-        or role is None
-        or role.is_deleted
-        or role.deleted_at is not None
-        or role.id != user.role_id
-    ):
-        return Report.id.is_(None)
-    return Report.owner_id == user.id
+def _readable(db: Session, user: User) -> ColumnElement[bool]:
+    """Every user who can read the Report module reads the Report."""
+
+    return module_filter(db, user, AccessLevel.READ, Report.module_id)
 
 
 def _report(
-    db: Session, user: User, report_id: UUID, *, lock: bool = False, run_access: bool = False
+    db: Session, user: User, report_id: UUID, *, lock: bool = False, manage: bool = False
 ) -> Report:
-    statement = select(Report).where(Report.id == report_id, _owner_clause(user))
-    if run_access:
-        statement = statement.where(run_audience_clause(user))
+    statement = select(Report).where(Report.id == report_id, _readable(db, user))
     if lock:
         statement = statement.with_for_update().execution_options(populate_existing=True)
     report = db.scalar(statement)
     if report is None:
         raise _not_found()
+    if manage:
+        require_module_access(db, user, report.module_id, AccessLevel.MANAGE)
     return report
 
 
 def _response(report: Report) -> ReportResponse:
     return ReportResponse(
         id=report.id,
-        owner_id=report.owner_id,
         module_id=report.module_id,
         name=report.name,
         subtitle=report.subtitle,
         revision=report.revision,
         recipe=ReportRecipe.model_validate(report.recipe),
-        audience=report_audience(report),
         is_deleted=report.is_deleted,
         created_at=report.created_at,
         updated_at=report.updated_at,
@@ -153,7 +143,7 @@ def list_reports(
     db: Database,
     params: Annotated[ReportListRequest, Query()],
 ) -> StandardListResponse[ReportResponse]:
-    statement = select(Report).where(_owner_clause(user))
+    statement = select(Report).where(_readable(db, user))
     if params.module_id is not None:
         statement = statement.where(Report.module_id == params.module_id)
     result = execute_standard_list(db, statement, params, REPORT_LIST_SPEC)
@@ -170,18 +160,13 @@ def create_report(
     db: Database,
     response: Response,
 ) -> ReportResponse:
-    validate_report_recipe(db, payload.module_id, payload.recipe)
-    validate_audience(db, payload.audience)
-    audience_kind, role_id, audience_user_id = audience_columns(payload.audience)
+    require_module_access(db, user, payload.module_id, AccessLevel.MANAGE)
+    validate_report_recipe(db, payload.module_id, payload.recipe, reader=user)
     report = Report(
-        owner_id=user.id,
         module_id=payload.module_id,
         name=payload.name,
         subtitle=payload.subtitle,
         recipe=payload.recipe.model_dump(mode="json"),
-        audience_kind=audience_kind,
-        audience_role_id=role_id,
-        audience_user_id=audience_user_id,
     )
     db.add(report)
     _commit(db)
@@ -202,7 +187,7 @@ def update_report(
     user: Writer,
     db: Database,
 ) -> ReportResponse:
-    report = _report(db, user, report_id, lock=True)
+    report = _report(db, user, report_id, lock=True, manage=True)
     if report.revision != payload.revision:
         raise _conflict(
             "stale_revision",
@@ -212,10 +197,10 @@ def update_report(
     if report.is_deleted:
         raise _conflict("report_archived", "Restore the Report before editing it")
     module_id = payload.module_id if payload.module_id is not None else report.module_id
+    if module_id != report.module_id:
+        require_module_access(db, user, module_id, AccessLevel.MANAGE)
     recipe = payload.recipe or ReportRecipe.model_validate(report.recipe)
-    validate_report_recipe(db, module_id, recipe)
-    if payload.audience is not None:
-        validate_audience(db, payload.audience)
+    validate_report_recipe(db, module_id, recipe, reader=user)
 
     changes: dict[str, object] = {}
     for key in ("module_id", "name", "subtitle"):
@@ -227,13 +212,6 @@ def update_report(
         stored_recipe = payload.recipe.model_dump(mode="json")
         if stored_recipe != report.recipe:
             changes["recipe"] = stored_recipe
-    if payload.audience is not None:
-        kind, role_id, user_id = audience_columns(payload.audience)
-        for key, value in (
-            ("audience_kind", kind), ("audience_role_id", role_id), ("audience_user_id", user_id)
-        ):
-            if value != getattr(report, key):
-                changes[key] = value
     for key, value in changes.items():
         setattr(report, key, value)
     if changes:
@@ -250,7 +228,7 @@ def archive_report(
     user: Writer,
     db: Database,
 ) -> Response:
-    report = _report(db, user, report_id, lock=True)
+    report = _report(db, user, report_id, lock=True, manage=True)
     if report.revision != revision:
         raise _conflict(
             "stale_revision",
@@ -273,7 +251,7 @@ def restore_report(
     user: Writer,
     db: Database,
 ) -> ReportResponse:
-    report = _report(db, user, report_id, lock=True)
+    report = _report(db, user, report_id, lock=True, manage=True)
     if report.revision != payload.revision:
         raise _conflict(
             "stale_revision",
@@ -299,7 +277,7 @@ def permanently_delete_report(
 ) -> Response:
     """Remove an archived recipe and every frozen snapshot in one audited transaction."""
     try:
-        report = _report(db, user, report_id, lock=True)
+        report = _report(db, user, report_id, lock=True, manage=True)
         if report.revision != revision:
             raise _conflict(
                 "stale_revision",
@@ -331,7 +309,7 @@ def create_report_run(
     db: Database,
     response: Response,
 ) -> ReportRunResponse:
-    report = _report(db, user, report_id, run_access=True)
+    report = _report(db, user, report_id)
     if report.is_deleted:
         raise _conflict("report_archived", "Restore the Report before running it")
     existing = db.scalar(
@@ -351,17 +329,17 @@ def create_report_run(
     db.rollback()
     snapshot = capture_report_snapshot(engine, report_id, actor_id)
 
-    # Report writes lock the recipe before policy targets; keep the same order
-    # when finalizing a run so an audience edit cannot invert the lock graph.
+    # Report writes lock the recipe before access rows; keep the same order
+    # when finalizing a run so a concurrent edit cannot invert the lock graph.
     _report(db, user, report_id, lock=True)
-    fresh_actor = require_fresh_capabilities(
+    fresh_actor = require_fresh_module_access(
         db,
         actor_id=actor_id,
         session_id=identity.session_id,
-        expected_role_id=user.role_id,
-        capabilities=(Capability.RECORDS_READ, Capability.RECORDS_WRITE),
+        module_id=snapshot.module_id,
+        level=AccessLevel.READ,
     )
-    report = _report(db, fresh_actor, report_id, run_access=True)
+    report = _report(db, fresh_actor, report_id)
     if report.is_deleted:
         raise _conflict("report_archived", "Restore the Report before running it")
     existing = db.scalar(
@@ -384,7 +362,9 @@ def create_report_run(
             "Report changed while the run was being prepared",
             current_revision=report.revision,
         )
-    validate_report_recipe(db, report.module_id, ReportRecipe.model_validate(report.recipe))
+    validate_report_recipe(
+        db, report.module_id, ReportRecipe.model_validate(report.recipe), reader=fresh_actor
+    )
     run = ReportRun(
         report_id=report.id,
         module_id=snapshot.module_id,

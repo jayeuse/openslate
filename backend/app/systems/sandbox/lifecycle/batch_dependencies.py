@@ -8,25 +8,10 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.systems.boards.models import Board
-from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
-from app.systems.openview.views.models import SavedView, SavedViewDefault
+from app.systems.openview.views.models import SavedView
 from app.systems.platform.files.models import File
-from app.systems.sandbox.automations.models import (
-    PublishedAutomationAction,
-    PublishedAutomationCondition,
-    PublishedAutomationDefinition,
-    PublishedAutomationEvent,
-    PublishedAutomationRun,
-)
-from app.systems.sandbox.lifecycle.board_announcement_dependencies import (
-    load_announcement_purge_dependencies,
-)
-from app.systems.sandbox.lifecycle.board_event_dependencies import (
-    load_board_event_purge_dependencies,
-)
-from app.systems.sandbox.lifecycle.board_placement_dependencies import (
-    load_board_placement_purge_dependencies,
+from app.systems.sandbox.lifecycle.access_dependencies import (
+    load_group_access_purge_dependencies,
 )
 from app.systems.sandbox.lifecycle.board_record_link_dependencies import (
     load_board_record_link_purge_dependencies,
@@ -34,8 +19,11 @@ from app.systems.sandbox.lifecycle.board_record_link_dependencies import (
 from app.systems.sandbox.lifecycle.board_widget_dependencies import (
     load_board_widget_purge_dependencies,
 )
-from app.systems.sandbox.lifecycle.membership_dependencies import (
-    load_membership_purge_dependencies,
+from app.systems.sandbox.lifecycle.dashboard_dependencies import (
+    load_dashboard_purge_dependencies,
+)
+from app.systems.sandbox.lifecycle.department_board_dependencies import (
+    load_department_board_purge_dependencies,
 )
 from app.systems.sandbox.lifecycle.planning_scope import LifecycleScope, row_state
 from app.systems.sandbox.lifecycle.report_dependencies import load_report_purge_dependencies
@@ -46,6 +34,13 @@ from app.systems.sandbox.lifecycle.schemas import (
     LifecycleTargetType,
 )
 from app.systems.sandbox.publications.models import SandboxBinding
+from app.systems.sandbox.record_triggers.models import (
+    RecordTrigger,
+    RecordTriggerAction,
+    RecordTriggerCondition,
+    RecordTriggerEvent,
+    RecordTriggerRun,
+)
 
 
 @dataclass(frozen=True)
@@ -58,25 +53,6 @@ class PurgeDependencies:
 def fingerprint(values: object) -> str:
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode()).hexdigest()
-
-
-def _widget_references_field(config: dict[str, object], field_ids: set[str]) -> bool:
-    query = config.get("query")
-    if not isinstance(query, dict):
-        return False
-    references: list[object] = [query.get(key) for key in ("dimension", "date_field", "measure")]
-    definition = query.get("definition")
-    if isinstance(definition, dict):
-        for key in ("columns", "filters", "sort", "search_fields"):
-            entries = definition.get(key)
-            if isinstance(entries, list):
-                references.extend(entries)
-    return any(
-        isinstance(reference, dict)
-        and isinstance(reference.get("field_id"), str)
-        and reference["field_id"] in field_ids
-        for reference in references
-    )
 
 
 def load_purge_dependencies(
@@ -94,23 +70,11 @@ def load_purge_dependencies(
         else []
     )
     departments_by_id = {department.id: department for department in scope.departments}
-    membership_rows, membership_blockers, membership_ids = load_membership_purge_dependencies(
+    access_rows, group_access_ids = load_group_access_purge_dependencies(
+        db, department_ids, module_ids, fingerprint
+    )
+    board_rows, board_blockers, department_board_ids = load_department_board_purge_dependencies(
         db, department_ids, departments_by_id, fingerprint
-    )
-    boards = (
-        list(
-            db.scalars(
-                select(Board).where(Board.department_id.in_(department_ids)).order_by(Board.id)
-            )
-        )
-        if department_ids
-        else []
-    )
-    board_event_rows, board_event_blockers, board_event_ids = load_board_event_purge_dependencies(
-        db, department_ids, departments_by_id, fingerprint
-    )
-    announcement_rows, announcement_blockers, announcement_ids = (
-        load_announcement_purge_dependencies(db, department_ids, departments_by_id, fingerprint)
     )
     field_ids = [field.id for field in scope.fields]
     files = (
@@ -118,12 +82,18 @@ def load_purge_dependencies(
         if record_ids
         else []
     )
-    placement_rows, placement_blockers, placement_ids, placement_board_ids = (
-        load_board_placement_purge_dependencies(db, record_ids, fingerprint)
-    )
     record_link_rows, record_link_blockers, record_link_ids, record_link_board_ids = (
         load_board_record_link_purge_dependencies(db, record_ids, fingerprint)
     )
+    department_owned_record_link_ids = set(department_board_ids["board_record_links"])
+    department_owned_revision_link_ids = set(
+        department_board_ids["board_post_revision_record_links"]
+    )
+    cascade_link_ids = department_owned_record_link_ids | department_owned_revision_link_ids
+    record_link_rows = [row for row in record_link_rows if row.entity_id not in cascade_link_ids]
+    record_link_blockers = [
+        blocker for blocker in record_link_blockers if blocker.entity_id not in cascade_link_ids
+    ]
     report_rows, report_blockers, report_ids = load_report_purge_dependencies(
         db, module_ids, record_ids, fingerprint
     )
@@ -145,66 +115,38 @@ def load_purge_dependencies(
     board_widget_rows, board_widget_blockers, board_widget_ids = (
         load_board_widget_purge_dependencies(db, widget_module_ids, target_field, fingerprint)
     )
-    dashboard_widgets = (
-        list(
-            db.scalars(
-                select(DashboardWidget)
-                .where(
-                    DashboardWidget.config["query"]["module_id"]
-                    .as_string()
-                    .in_([str(module_id) for module_id in widget_module_ids])
-                )
-                .order_by(DashboardWidget.id)
-            ).all()
-        )
-        if widget_module_ids
-        else []
-    )
-    if target is LifecycleTargetType.FIELD:
-        field_ids_as_text = {str(field_id) for field_id in field_ids}
-        dashboard_widgets = [
-            widget
-            for widget in dashboard_widgets
-            if _widget_references_field(widget.config, field_ids_as_text)
-        ]
-    dashboard_ids = sorted({widget.dashboard_id for widget in dashboard_widgets})
-    dashboards = (
-        list(
-            db.scalars(
-                select(Dashboard).where(Dashboard.id.in_(dashboard_ids)).order_by(Dashboard.id)
-            ).all()
-        )
-        if dashboard_ids
-        else []
-    )
-    view_ids = [view.id for view in views]
-    view_defaults = (
-        list(
-            db.scalars(
-                select(SavedViewDefault)
-                .where(SavedViewDefault.view_id.in_(view_ids))
-                .order_by(SavedViewDefault.id)
-            )
-        )
-        if view_ids
-        else []
+    department_owned_widget_ids = set(department_board_ids["board_widgets"])
+    board_widget_rows = [
+        row for row in board_widget_rows if row.entity_id not in department_owned_widget_ids
+    ]
+    board_widget_blockers = [
+        blocker
+        for blocker in board_widget_blockers
+        if blocker.entity_id not in department_owned_widget_ids
+    ]
+    dashboard_rows, dashboard_blockers, dashboard_ids = load_dashboard_purge_dependencies(
+        db,
+        department_ids,
+        widget_module_ids,
+        field_ids if target is LifecycleTargetType.FIELD else [],
+        target_field,
+        scope.modules,
+        fingerprint,
     )
     definition_filters = []
     if module_ids:
-        definition_filters.append(PublishedAutomationDefinition.module_id.in_(module_ids))
+        definition_filters.append(RecordTrigger.module_id.in_(module_ids))
     if field_ids:
         definition_filters.extend(
             (
-                PublishedAutomationDefinition.trigger_field_id.in_(field_ids),
-                PublishedAutomationDefinition.trigger_value_field_id.in_(field_ids),
+                RecordTrigger.trigger_field_id.in_(field_ids),
+                RecordTrigger.trigger_value_field_id.in_(field_ids),
             )
         )
     definitions = (
         list(
             db.scalars(
-                select(PublishedAutomationDefinition)
-                .where(or_(*definition_filters))
-                .order_by(PublishedAutomationDefinition.id)
+                select(RecordTrigger).where(or_(*definition_filters)).order_by(RecordTrigger.id)
             )
         )
         if definition_filters
@@ -214,27 +156,27 @@ def load_purge_dependencies(
     action_filters = []
     condition_filters = []
     if definition_ids:
-        action_filters.append(PublishedAutomationAction.automation_id.in_(definition_ids))
-        condition_filters.append(PublishedAutomationCondition.automation_id.in_(definition_ids))
+        action_filters.append(RecordTriggerAction.trigger_id.in_(definition_ids))
+        condition_filters.append(RecordTriggerCondition.trigger_id.in_(definition_ids))
     if field_ids:
         action_filters.extend(
             (
-                PublishedAutomationAction.target_field_id.in_(field_ids),
-                PublishedAutomationAction.value_field_id.in_(field_ids),
+                RecordTriggerAction.target_field_id.in_(field_ids),
+                RecordTriggerAction.value_field_id.in_(field_ids),
             )
         )
         condition_filters.extend(
             (
-                PublishedAutomationCondition.field_id.in_(field_ids),
-                PublishedAutomationCondition.value_field_id.in_(field_ids),
+                RecordTriggerCondition.field_id.in_(field_ids),
+                RecordTriggerCondition.value_field_id.in_(field_ids),
             )
         )
     actions = (
         list(
             db.scalars(
-                select(PublishedAutomationAction)
+                select(RecordTriggerAction)
                 .where(or_(*action_filters))
-                .order_by(PublishedAutomationAction.id)
+                .order_by(RecordTriggerAction.id)
             )
         )
         if action_filters
@@ -243,9 +185,9 @@ def load_purge_dependencies(
     conditions = (
         list(
             db.scalars(
-                select(PublishedAutomationCondition)
+                select(RecordTriggerCondition)
                 .where(or_(*condition_filters))
-                .order_by(PublishedAutomationCondition.id)
+                .order_by(RecordTriggerCondition.id)
             )
         )
         if condition_filters
@@ -253,17 +195,17 @@ def load_purge_dependencies(
     )
     event_filters = []
     if record_ids:
-        event_filters.append(PublishedAutomationEvent.record_id.in_(record_ids))
+        event_filters.append(RecordTriggerEvent.record_id.in_(record_ids))
     if module_ids:
-        event_filters.append(PublishedAutomationEvent.module_id.in_(module_ids))
+        event_filters.append(RecordTriggerEvent.module_id.in_(module_ids))
     if definition_ids:
-        event_filters.append(PublishedAutomationEvent.scheduled_automation_id.in_(definition_ids))
+        event_filters.append(RecordTriggerEvent.scheduled_trigger_id.in_(definition_ids))
     events = (
         list(
             db.scalars(
-                select(PublishedAutomationEvent)
+                select(RecordTriggerEvent)
                 .where(or_(*event_filters))
-                .order_by(PublishedAutomationEvent.id)
+                .order_by(RecordTriggerEvent.id)
             )
         )
         if event_filters
@@ -272,15 +214,13 @@ def load_purge_dependencies(
     event_ids = [event.id for event in events]
     run_filters = []
     if definition_ids:
-        run_filters.append(PublishedAutomationRun.automation_id.in_(definition_ids))
+        run_filters.append(RecordTriggerRun.trigger_id.in_(definition_ids))
     if event_ids:
-        run_filters.append(PublishedAutomationRun.event_id.in_(event_ids))
+        run_filters.append(RecordTriggerRun.event_id.in_(event_ids))
     runs = (
         list(
             db.scalars(
-                select(PublishedAutomationRun)
-                .where(or_(*run_filters))
-                .order_by(PublishedAutomationRun.id)
+                select(RecordTriggerRun).where(or_(*run_filters)).order_by(RecordTriggerRun.id)
             )
         )
         if run_filters
@@ -294,7 +234,7 @@ def load_purge_dependencies(
     if field_ids:
         binding_filters.append(SandboxBinding.field_id.in_(field_ids))
     if definition_ids:
-        binding_filters.append(SandboxBinding.automation_id.in_(definition_ids))
+        binding_filters.append(SandboxBinding.trigger_id.in_(definition_ids))
     bindings = (
         list(
             db.scalars(
@@ -304,10 +244,9 @@ def load_purge_dependencies(
         if binding_filters
         else []
     )
-    rows = membership_rows + board_event_rows + announcement_rows + placement_rows
+    rows = access_rows + board_rows
     rows += record_link_rows + report_rows + board_widget_rows
-    blockers = membership_blockers + board_event_blockers + announcement_blockers
-    blockers += placement_blockers + record_link_blockers
+    blockers = board_blockers + record_link_blockers
     blockers += report_blockers + board_widget_blockers
     for file in files:
         state = row_state("files", file)
@@ -348,116 +287,30 @@ def load_purge_dependencies(
         state.state_fingerprint = fingerprint(
             {
                 key: getattr(view, key)
-                for key in ("module_id", "owner_id", "revision", "visibility", "name", "definition")
+                for key in ("module_id", "revision", "is_default", "name", "definition")
             }
         )
         rows.append(state)
-    dashboards_by_id = {dashboard.id: dashboard for dashboard in dashboards}
-    modules_by_id = {str(module.id): module for module in scope.modules}
-    source_label = f"Field {target_field.name!r}" if target_field is not None else "the Module"
-    for dashboard in dashboards:
-        state = row_state("dashboards", dashboard)
-        state.state_fingerprint = fingerprint(
-            {
-                "owner_id": dashboard.owner_id,
-                "name": dashboard.name,
-                "revision": dashboard.revision,
-            }
-        )
-        rows.append(state)
-    for widget in dashboard_widgets:
-        state = row_state("dashboard_widgets", widget)
-        state.state_fingerprint = fingerprint(
-            {
-                "dashboard_id": widget.dashboard_id,
-                "position": widget.position,
-                "widget_type": widget.widget_type,
-                "config": widget.config,
-            }
-        )
-        rows.append(state)
-        widget_dashboard = dashboards_by_id.get(widget.dashboard_id)
-        query_config = widget.config.get("query")
-        module_id = query_config.get("module_id") if isinstance(query_config, dict) else None
-        module = modules_by_id.get(module_id) if isinstance(module_id, str) else None
-        dashboard_name = widget_dashboard.name if widget_dashboard is not None else ""
-        blockers.append(
-            LifecycleBlocker(
-                code=LifecycleBlockerCode.PURGE_DASHBOARD_DEPENDENCY,
-                entity_type="dashboard_widgets",
-                entity_id=widget.id,
-                detail=(
-                    f"Remove or update the saved query in Dashboard {dashboard_name!r} before "
-                    f"purging {source_label}; purge will not delete the Dashboard or its "
-                    "other widgets"
-                ),
-                conflicting_entity_type="dashboards",
-                conflicting_entity_id=widget.dashboard_id,
-                field_id=target_field.id if target_field is not None else None,
-                field_name=target_field.name if target_field is not None else None,
-                module_id=module.id if module is not None else None,
-                module_name=module.module_name if module is not None else None,
-            )
-        )
-    for default in view_defaults:
-        state = row_state("saved_view_defaults", default)
-        state.state_fingerprint = fingerprint(
-            {key: getattr(default, key) for key in ("user_id", "module_id", "view_id")}
-        )
-        rows.append(state)
-    for board in boards:
-        state = row_state("boards", board)
-        state.state_fingerprint = fingerprint(
-            {
-                key: getattr(board, key)
-                for key in (
-                    "department_id",
-                    "owner_id",
-                    "name",
-                    "description",
-                    "status",
-                    "default_section",
-                    "revision",
-                )
-            }
-        )
-        rows.append(state)
-        department = (
-            departments_by_id.get(board.department_id) if board.department_id is not None else None
-        )
-        blockers.append(
-            LifecycleBlocker(
-                code=LifecycleBlockerCode.PURGE_BOARD_DEPENDENCY,
-                entity_type="boards",
-                entity_id=board.id,
-                detail=(
-                    "Reassign or clear this Board's Department assignment before purging the "
-                    "Department; this operation will not delete the Board or its grants"
-                ),
-                conflicting_entity_type="departments",
-                conflicting_entity_id=board.department_id,
-                department_id=board.department_id,
-                department_name=(department.department_name if department is not None else None),
-            )
-        )
-    automation_dependencies = (
-        ("published_automation_definitions", definitions),
-        ("published_automation_conditions", conditions),
-        ("published_automation_actions", actions),
-        ("published_automation_events", events),
-        ("published_automation_runs", runs),
+    rows += dashboard_rows
+    blockers += dashboard_blockers
+    trigger_dependencies = (
+        ("record_triggers", definitions),
+        ("record_trigger_conditions", conditions),
+        ("record_trigger_actions", actions),
+        ("record_trigger_events", events),
+        ("record_trigger_runs", runs),
         ("sandbox_bindings", bindings),
     )
-    for entity_type, dependencies in automation_dependencies:
+    for entity_type, dependencies in trigger_dependencies:
         for dependency in dependencies:
             rows.append(row_state(entity_type, dependency))
             blockers.append(
                 LifecycleBlocker(
-                    code=LifecycleBlockerCode.PURGE_AUTOMATION_DEPENDENCY,
+                    code=LifecycleBlockerCode.PURGE_TRIGGER_DEPENDENCY,
                     entity_type=entity_type,
                     entity_id=dependency.id,
                     detail=(
-                        "Remove the published automation configuration or execution history "
+                        "Remove the record trigger configuration or execution history "
                         "that references this item before purging it"
                     ),
                 )
@@ -466,34 +319,43 @@ def load_purge_dependencies(
         tuple(rows),
         tuple(blockers),
         {
-            "user_departments": membership_ids,
+            "group_access": group_access_ids,
+            **department_board_ids,
             "boards": tuple(
                 sorted(
-                    {board.id for board in boards}
-                    | placement_board_ids
+                    set(department_board_ids["boards"])
                     | record_link_board_ids
                     | set(board_widget_ids["boards"])
-                    | set(board_event_ids["boards"])
-                    | set(announcement_ids["boards"])
                 )
             ),
-            "board_events": board_event_ids["board_events"],
-            "board_announcements": announcement_ids["board_announcements"],
-            "board_announcement_revisions": announcement_ids["board_announcement_revisions"],
-            "board_record_placements": placement_ids,
             **record_link_ids,
-            "board_widgets": board_widget_ids["board_widgets"],
+            "board_record_links": tuple(
+                sorted(
+                    set(department_board_ids["board_record_links"])
+                    | set(record_link_ids["board_record_links"])
+                )
+            ),
+            "board_post_revision_record_links": tuple(
+                sorted(
+                    set(department_board_ids["board_post_revision_record_links"])
+                    | set(record_link_ids["board_post_revision_record_links"])
+                )
+            ),
+            "board_widgets": tuple(
+                sorted(
+                    set(department_board_ids["board_widgets"])
+                    | set(board_widget_ids["board_widgets"])
+                )
+            ),
             **report_ids,
-            "dashboards": tuple(dashboard.id for dashboard in dashboards),
-            "dashboard_widgets": tuple(widget.id for widget in dashboard_widgets),
+            **dashboard_ids,
             "files": tuple(file.id for file in files),
             "saved_views": tuple(view.id for view in views),
-            "saved_view_defaults": tuple(default.id for default in view_defaults),
-            "published_automation_definitions": tuple(definition.id for definition in definitions),
-            "published_automation_conditions": tuple(condition.id for condition in conditions),
-            "published_automation_actions": tuple(action.id for action in actions),
-            "published_automation_events": tuple(event.id for event in events),
-            "published_automation_runs": tuple(run.id for run in runs),
+            "record_triggers": tuple(definition.id for definition in definitions),
+            "record_trigger_conditions": tuple(condition.id for condition in conditions),
+            "record_trigger_actions": tuple(action.id for action in actions),
+            "record_trigger_events": tuple(event.id for event in events),
+            "record_trigger_runs": tuple(run.id for run in runs),
             "sandbox_bindings": tuple(binding.id for binding in bindings),
         },
     )

@@ -15,17 +15,17 @@ import {
   useWorkspaceNavigationRequest,
   type WorkspaceNavigationGuard,
 } from "@/components/workspace-navigation-guard";
+import { useQuery } from "@tanstack/react-query";
 import {
   ChevronDown,
   Eye,
   History,
-  Home,
   LayoutDashboard,
   RefreshCw,
   Settings2,
-  Star,
   X,
 } from "lucide-react";
+import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,22 +56,18 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { BoardManagementBoard } from "../adapters/board-management-api";
-import {
-  listBoardDepartments,
-  type BoardDepartmentChoice,
-} from "../adapters/board-departments-api";
+import type {
+  BoardManagementBoard,
+  BoardScope,
+} from "../adapters/board-management-api";
 import { ServerBackedBoardActivity } from "./server-backed-board-activity";
 import { ServerBackedBoardAccessPreview } from "./server-backed-board-access-preview";
-import { ServerBackedBoardAnnouncementEditor } from "./server-backed-board-announcement-editor";
-import { ServerBackedBoardAnnouncementLifecycle } from "./server-backed-board-announcement-lifecycle";
-import { ServerBackedBoardAnnouncements } from "./server-backed-board-announcements";
+import { ServerBackedBoardPostEditor } from "./server-backed-board-post-editor";
+import { ServerBackedBoardPostLifecycle } from "./server-backed-board-post-lifecycle";
+import { ServerBackedBoardPosts } from "./server-backed-board-posts";
 import { ServerBackedBoardCalendar } from "./server-backed-board-calendar";
-import { ServerBackedBoardGrants } from "./server-backed-board-grants";
 import { ServerBackedBoardManagement } from "./server-backed-board-management";
-import { ServerBackedBoardPlacements } from "./server-backed-board-placements";
 import { ServerBackedBoardPortability } from "./server-backed-board-portability";
-import { ServerBackedBoardTemplates } from "./server-backed-board-templates";
 import { ServerBackedBoardWidgets } from "./server-backed-board-widgets";
 import { ServerBoardWidgetManagement } from "./server-backed-board-widget-management";
 import { BoardEmpty, ConfirmAction } from "./ui";
@@ -86,6 +82,23 @@ import {
 } from "../hooks/use-server-boards";
 
 const PAGE_SIZE = 25;
+
+const SCOPE_LABELS: Record<BoardScope, string> = {
+  company: "Company",
+  department: "Department",
+  project: "Project",
+};
+
+/** The subtitle of a Board that has no description of its own. */
+export function boardScopeDescription(board: {
+  scope: BoardScope;
+  name: string;
+}): string {
+  if (board.scope === "company") return "Updates for everyone in the company.";
+  if (board.scope === "department")
+    return `Updates for the ${board.name} department.`;
+  return "Updates for the groups on this project.";
+}
 
 type BoardActivitySelection = {
   boardId: string;
@@ -112,13 +125,13 @@ export function isSelectedBoardWidgetManagerOpen(
   return selectedBoardId !== null && selectedBoardId === currentBoardId;
 }
 
-export function isSelectedBoardAnnouncementManagerOpen(
+export function isSelectedBoardPostManagerOpen(
   selectedBoardId: string | null,
   currentBoardId: string | null,
   section: BoardSection,
 ): boolean {
   return (
-    section === "announcements" &&
+    section === "posts" &&
     selectedBoardId !== null &&
     selectedBoardId === currentBoardId
   );
@@ -149,9 +162,9 @@ export function boardSearchEmptyCopy(
           "Try another search, clear the search, or choose an archived Board from the switcher.",
       }
     : {
-        title: "No active Boards yet",
+        title: "No active Boards",
         description:
-          "Create a Board to share updates, announcements, and dates with your team.",
+          "Your account cannot open any active Board. Ask an administrator for access.",
       };
 }
 
@@ -234,8 +247,20 @@ function BoardsLoadingHeader() {
           >
             <RefreshCw aria-hidden="true" />
           </Button>
-          <Button type="button" variant="outline" className="min-h-11" disabled>
-            Board menu <ChevronDown data-icon="inline-end" />
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 min-w-11"
+            aria-label="Board menu"
+            disabled
+          >
+            <Settings2 className="sm:hidden" aria-hidden="true" />
+            <span className="hidden sm:inline">Board menu</span>
+            <ChevronDown
+              className="hidden sm:inline"
+              data-icon="inline-end"
+              aria-hidden="true"
+            />
           </Button>
         </>
       }
@@ -259,7 +284,7 @@ function BoardsSkeleton({ section }: { section: BoardSection | null }) {
       </div>
       {section === "calendar" ? (
         <Skeleton className="h-[28rem] rounded-xl" />
-      ) : section === "announcements" ? (
+      ) : section === "posts" ? (
         <div className="flex min-w-0 flex-col gap-4">
           <Skeleton className="h-32 rounded-xl" />
           <Skeleton className="h-32 rounded-xl" />
@@ -294,33 +319,23 @@ function ServerBackedBoardsContent() {
   const searchParams = useSearchParams();
   const route = parseBoardRoute(searchParams.toString());
   const [statusFilter, setStatusFilter] = useState<BoardListStatus>("active");
-  const [departmentFilter, setDepartmentFilter] = useState<string | null>(null);
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [scopeFilter, setScopeFilter] = useState<BoardScope | null>(null);
   const [searchDraft, setSearchDraft] = useState("");
   const [appliedSearch, setAppliedSearch] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const [browsing, setBrowsing] = useState(false);
-  const [departmentChoices, setDepartmentChoices] = useState<
-    BoardDepartmentChoice[]
-  >([]);
-  const [departmentChoicesStatus, setDepartmentChoicesStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("idle");
-  const [departmentChoicesRetry, setDepartmentChoicesRetry] = useState(0);
   const [managementMode, setManagementMode] = useState<
     "create" | "manage" | null
   >(null);
-  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [portabilityOpen, setPortabilityOpen] = useState(false);
   const [activitySelection, setActivitySelection] =
     useState<BoardActivitySelection | null>(null);
   const [previewSelection, setPreviewSelection] =
     useState<BoardActivitySelection | null>(null);
-  const [grantsSelection, setGrantsSelection] =
-    useState<BoardActivitySelection | null>(null);
   const [widgetSelection, setWidgetSelection] = useState<string | null>(null);
-  const [announcementManagerSelection, setAnnouncementManagerSelection] =
-    useState<string | null>(null);
+  const [postManagerSelection, setPostManagerSelection] = useState<
+    string | null
+  >(null);
   const [draftState, setDraftState] = useState<{
     boardId: string;
     section: BoardSection;
@@ -335,10 +350,12 @@ function ServerBackedBoardsContent() {
     statusFilter,
     offset,
     appliedSearch,
-    departmentFilter,
-    favoritesOnly,
+    scopeFilter,
   );
+  const identity = useQuery(authMeOptions());
+  const isAdmin = identity.data?.role === "admin";
   const board = resource.selectedBoard;
+  const canManage = board?.level === "manage";
   const activityOpen = isSelectedBoardActivityOpen(
     activitySelection,
     board?.id ?? null,
@@ -349,48 +366,21 @@ function ServerBackedBoardsContent() {
     board?.id ?? null,
     resource.detail.sequence,
   );
-  const grantsOpen = isSelectedBoardActivityOpen(
-    grantsSelection,
-    board?.id ?? null,
-    resource.detail.sequence,
-  );
   const widgetsOpen = isSelectedBoardWidgetManagerOpen(
     widgetSelection,
     board?.id ?? null,
   );
-  const announcementManagerOpen = isSelectedBoardAnnouncementManagerOpen(
-    announcementManagerSelection,
+  const postManagerOpen = isSelectedBoardPostManagerOpen(
+    postManagerSelection,
     board?.id ?? null,
-    resolveBoardSection(route, board),
+    resolveBoardSection(route),
   );
   const closeActivity = useCallback(() => setActivitySelection(null), []);
   const closePreview = useCallback(() => setPreviewSelection(null), []);
-  const closeGrants = useCallback(() => setGrantsSelection(null), []);
   const closeWidgets = useCallback(() => setWidgetSelection(null), []);
-  const closeAnnouncementManager = useCallback(
-    () => setAnnouncementManagerSelection(null),
-    [],
-  );
-  const section = resolveBoardSection(route, board);
+  const closePostManager = useCallback(() => setPostManagerSelection(null), []);
+  const section = resolveBoardSection(route);
 
-  useEffect(() => {
-    if (!browsing) return;
-    const controller = new AbortController();
-    setDepartmentChoicesStatus("loading");
-    void listBoardDepartments(controller.signal).then(
-      (departments) => {
-        if (controller.signal.aborted) return;
-        setDepartmentChoices(departments);
-        setDepartmentChoicesStatus("ready");
-      },
-      () => {
-        if (controller.signal.aborted) return;
-        setDepartmentChoices([]);
-        setDepartmentChoicesStatus("error");
-      },
-    );
-    return () => controller.abort();
-  }, [browsing, departmentChoicesRetry]);
   const currentDraftState =
     draftState !== null &&
     board !== null &&
@@ -438,9 +428,9 @@ function ServerBackedBoardsContent() {
       updateDraftState(boardId, "calendar", dirty, pending),
     [updateDraftState],
   );
-  const onAnnouncementDraftStateChange = useCallback(
+  const onPostDraftStateChange = useCallback(
     (boardId: string, dirty: boolean, pending: boolean) =>
-      updateDraftState(boardId, "announcements", dirty, pending),
+      updateDraftState(boardId, "posts", dirty, pending),
     [updateDraftState],
   );
 
@@ -450,20 +440,9 @@ function ServerBackedBoardsContent() {
     window.addEventListener("beforeunload", preventUnload);
     return () => window.removeEventListener("beforeunload", preventUnload);
   }, [currentDraftState]);
-  const isFavorite =
-    board !== null &&
-    (resource.personal.data?.favoriteBoardIds.includes(board.id) ?? false);
-  const isHome =
-    board !== null && resource.personal.data?.homeBoardId === board.id;
   const currentListPage =
     resource.list.key ===
-    boardListKey(
-      statusFilter,
-      offset,
-      appliedSearch,
-      departmentFilter,
-      favoritesOnly,
-    )
+    boardListKey(statusFilter, offset, appliedSearch, scopeFilter)
       ? resource.list.data
       : null;
 
@@ -482,27 +461,13 @@ function ServerBackedBoardsContent() {
   }, [previewSelection, previewOpen, closePreview]);
 
   useEffect(() => {
-    if (grantsSelection && !grantsOpen) closeGrants();
-  }, [grantsSelection, grantsOpen, closeGrants]);
-
-  useEffect(() => {
     if (widgetSelection && !widgetsOpen) closeWidgets();
   }, [widgetSelection, widgetsOpen, closeWidgets]);
 
   useEffect(() => {
-    if (announcementManagerSelection && !announcementManagerOpen)
-      closeAnnouncementManager();
-  }, [
-    announcementManagerSelection,
-    announcementManagerOpen,
-    closeAnnouncementManager,
-  ]);
+    if (postManagerSelection && !postManagerOpen) closePostManager();
+  }, [postManagerSelection, postManagerOpen, closePostManager]);
 
-  const awaitingPersonal =
-    route.kind === "none" &&
-    resource.personal.data === null &&
-    (resource.personal.status === "idle" ||
-      resource.personal.status === "loading");
   const awaitingList =
     route.kind === "none" &&
     currentListPage === null &&
@@ -511,7 +476,7 @@ function ServerBackedBoardsContent() {
     resource.candidate !== null &&
     board === null &&
     (resource.detail.status === "idle" || resource.detail.status === "loading");
-  const loading = awaitingPersonal || awaitingList || awaitingDetail;
+  const loading = awaitingList || awaitingDetail;
 
   const choices = currentListPage?.items ?? [];
   const selectedOutsidePage =
@@ -522,7 +487,7 @@ function ServerBackedBoardsContent() {
   ].map((choice) => ({
     value: choice.id,
     label: choice.name,
-    description: `${choice.status === "archived" ? "Archived" : "Active"}${resource.personal.data?.favoriteBoardIds.includes(choice.id) ? " · Favorite" : ""}`,
+    description: `${SCOPE_LABELS[choice.scope]}${choice.status === "archived" ? " · Archived" : ""}`,
   }));
   const unavailable =
     route.kind === "invalid-board" ||
@@ -542,15 +507,13 @@ function ServerBackedBoardsContent() {
   );
 
   function navigateToBoard(target: BoardManagementBoard) {
-    const href = boardUrl(target.id, target.defaultSection);
+    const href = boardUrl(target.id, "overview");
     const resume = () => {
       closeActivity();
       closePreview();
-      closeGrants();
       closeWidgets();
-      closeAnnouncementManager();
+      closePostManager();
       setManagementMode(null);
-      setTemplatesOpen(false);
       setPortabilityOpen(false);
       setBrowsing(false);
       router.push(href, { scroll: false });
@@ -566,18 +529,14 @@ function ServerBackedBoardsContent() {
 
   function resetBoardFilters() {
     setStatusFilter("active");
-    setDepartmentFilter(null);
-    setFavoritesOnly(false);
+    setScopeFilter(null);
     setSearchDraft("");
     setAppliedSearch(null);
     setOffset(0);
   }
 
   const hasBoardFilters =
-    statusFilter !== "active" ||
-    departmentFilter !== null ||
-    favoritesOnly ||
-    appliedSearch !== null;
+    statusFilter !== "active" || scopeFilter !== null || appliedSearch !== null;
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
@@ -683,34 +642,27 @@ function ServerBackedBoardsContent() {
                   onValueChange={changeStatus}
                 />
                 <SearchSelect
-                  label="Department"
-                  value={departmentFilter ?? ""}
-                  placeholder="All departments"
+                  label="Board type"
+                  value={scopeFilter ?? ""}
+                  placeholder="All Board types"
                   options={[
-                    { value: "", label: "All departments" },
-                    ...departmentChoices.map((department) => ({
-                      value: department.id,
-                      label: department.name,
-                    })),
+                    { value: "", label: "All Board types" },
+                    { value: "company", label: "Company" },
+                    { value: "department", label: "Departments" },
+                    { value: "project", label: "Projects" },
                   ]}
-                  onValueChange={(departmentId) => {
-                    setDepartmentFilter(departmentId || null);
+                  onValueChange={(value) => {
+                    setScopeFilter(
+                      value === "company" ||
+                        value === "department" ||
+                        value === "project"
+                        ? value
+                        : null,
+                    );
                     setOffset(0);
                   }}
                 />
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    variant={favoritesOnly ? "default" : "outline"}
-                    className="min-h-11"
-                    aria-pressed={favoritesOnly}
-                    onClick={() => {
-                      setFavoritesOnly((value) => !value);
-                      setOffset(0);
-                    }}
-                  >
-                    <Star data-icon="inline-start" /> Favorites only
-                  </Button>
                   <Button
                     type="button"
                     variant="ghost"
@@ -720,33 +672,6 @@ function ServerBackedBoardsContent() {
                   >
                     Reset filters
                   </Button>
-                  {departmentChoicesStatus === "loading" && (
-                    <span
-                      className="text-muted-foreground text-sm"
-                      role="status"
-                    >
-                      Loading departments…
-                    </span>
-                  )}
-                  {departmentChoicesStatus === "error" && (
-                    <span
-                      className="flex items-center gap-2 text-sm"
-                      role="alert"
-                    >
-                      Department choices are unavailable.
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        onClick={() => {
-                          setDepartmentChoicesStatus("idle");
-                          setDepartmentChoicesRetry((value) => value + 1);
-                        }}
-                      >
-                        Retry departments
-                      </Button>
-                    </span>
-                  )}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-muted-foreground text-sm">
@@ -792,9 +717,9 @@ function ServerBackedBoardsContent() {
           description={
             board?.description ||
             (board
-              ? "Your team's updates, events, and records."
+              ? boardScopeDescription(board)
               : noBoards
-                ? "Create your first Board to share updates with your team."
+                ? "No Board is open to your account yet."
                 : "Choose a Board to get started.")
           }
           actions={
@@ -810,113 +735,81 @@ function ServerBackedBoardsContent() {
               >
                 <RefreshCw aria-hidden="true" />
               </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={<Button variant="outline" className="min-h-11" />}
-                >
-                  Board menu <ChevronDown data-icon="inline-end" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-56">
-                  {board && (
-                    <>
-                      <DropdownMenuItem
-                        className="min-h-11"
-                        onClick={() => setManagementMode("manage")}
-                      >
-                        <Settings2 />
-                        Manage Board
-                      </DropdownMenuItem>
+              {((board && canManage) || isAdmin) && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        variant="outline"
+                        className="min-h-11 min-w-11"
+                        aria-label="Board menu"
+                      />
+                    }
+                  >
+                    <Settings2 className="sm:hidden" aria-hidden="true" />
+                    <span className="hidden sm:inline">Board menu</span>
+                    <ChevronDown
+                      className="hidden sm:inline"
+                      data-icon="inline-end"
+                      aria-hidden="true"
+                    />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-56">
+                    {board && canManage && (
+                      <>
+                        <DropdownMenuItem
+                          className="min-h-11"
+                          onClick={() => setManagementMode("manage")}
+                        >
+                          <Settings2 />
+                          {board.scope === "project"
+                            ? "Manage Board and groups"
+                            : "Manage Board"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="min-h-11"
+                          onClick={() =>
+                            setPreviewSelection({
+                              boardId: board.id,
+                              detailSequence: resource.detail.sequence,
+                            })
+                          }
+                        >
+                          <Eye /> Preview access
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="min-h-11"
+                          onClick={() =>
+                            setActivitySelection({
+                              boardId: board.id,
+                              detailSequence: resource.detail.sequence,
+                            })
+                          }
+                        >
+                          <History /> View activity
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                    {board && canManage && isAdmin && <DropdownMenuSeparator />}
+                    {isAdmin && (
                       <DropdownMenuGroup>
                         <DropdownMenuItem
                           className="min-h-11"
-                          disabled={
-                            !resource.personal.data ||
-                            resource.preferencePending
-                          }
-                          onClick={() => {
-                            void resource.saveFavorite(board.id, !isFavorite);
-                          }}
+                          onClick={() => setManagementMode("create")}
                         >
-                          <Star />
-                          {isFavorite
-                            ? "Remove from favorites"
-                            : "Add to favorites"}
+                          New project Board
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="min-h-11"
-                          disabled={
-                            !resource.personal.data ||
-                            resource.preferencePending ||
-                            (board.status === "archived" && !isHome)
-                          }
-                          onClick={() => {
-                            void resource.saveHome(isHome ? null : board.id);
-                          }}
+                          onClick={() => setPortabilityOpen(true)}
                         >
-                          <Home />
-                          {isHome ? "Clear home board" : "Set as home board"}
+                          Configurations
                         </DropdownMenuItem>
                       </DropdownMenuGroup>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        className="min-h-11"
-                        onClick={() =>
-                          setGrantsSelection({
-                            boardId: board.id,
-                            detailSequence: resource.detail.sequence,
-                          })
-                        }
-                      >
-                        Manage access
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="min-h-11"
-                        onClick={() =>
-                          setPreviewSelection({
-                            boardId: board.id,
-                            detailSequence: resource.detail.sequence,
-                          })
-                        }
-                      >
-                        <Eye /> Preview access
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="min-h-11"
-                        onClick={() =>
-                          setActivitySelection({
-                            boardId: board.id,
-                            detailSequence: resource.detail.sequence,
-                          })
-                        }
-                      >
-                        <History /> View activity
-                      </DropdownMenuItem>
-
-                      <DropdownMenuSeparator />
-                    </>
-                  )}
-                  <DropdownMenuGroup>
-                    <DropdownMenuItem
-                      className="min-h-11"
-                      onClick={() => setManagementMode("create")}
-                    >
-                      New Board
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="min-h-11"
-                      onClick={() => setTemplatesOpen(true)}
-                    >
-                      Templates
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="min-h-11"
-                      onClick={() => setPortabilityOpen(true)}
-                    >
-                      Configurations
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </>
           }
         />
@@ -933,6 +826,7 @@ function ServerBackedBoardsContent() {
       {board && (
         <ServerBackedBoardManagement
           mode="manage"
+          isAdmin={isAdmin}
           open={managementMode === "manage"}
           onOpenChange={(open) => setManagementMode(open ? "manage" : null)}
           board={board}
@@ -943,9 +837,8 @@ function ServerBackedBoardsContent() {
           onAccessDenied={() => {
             closeActivity();
             closePreview();
-            closeGrants();
             closeWidgets();
-            closeAnnouncementManager();
+            closePostManager();
             resource.revokeAccess();
           }}
           onPurged={() => {
@@ -953,9 +846,8 @@ function ServerBackedBoardsContent() {
             const resume = () => {
               closeActivity();
               closePreview();
-              closeGrants();
               closeWidgets();
-              closeAnnouncementManager();
+              closePostManager();
               setBrowsing(false);
               router.push(href, { scroll: false });
               resource.refresh();
@@ -965,45 +857,13 @@ function ServerBackedBoardsContent() {
         />
       )}
 
-      <Sheet open={templatesOpen} onOpenChange={setTemplatesOpen}>
-        <SheetContent className="w-full gap-6 overflow-y-auto sm:w-[min(92vw,40rem)]">
-          <SheetHeader className="pr-10">
-            <SheetTitle>Board templates</SheetTitle>
-            <SheetDescription>
-              Create a private Board from a saved structure or save the current
-              Board as a template.
-            </SheetDescription>
-          </SheetHeader>
-          <Button
-            variant="ghost"
-            size="icon"
-            type="button"
-            aria-label="Close Board templates"
-            className="absolute top-3 right-3 size-11"
-            onClick={() => setTemplatesOpen(false)}
-          >
-            <X />
-          </Button>
-          {templatesOpen && (
-            <ServerBackedBoardTemplates
-              board={board}
-              refreshKey={resource.detail.sequence}
-              onBoardCreated={(created) => {
-                resource.refresh();
-                navigateToBoard(created);
-              }}
-            />
-          )}
-        </SheetContent>
-      </Sheet>
-
       <Sheet open={portabilityOpen} onOpenChange={setPortabilityOpen}>
         <SheetContent className="w-full gap-6 overflow-y-auto sm:w-[min(92vw,40rem)]">
           <SheetHeader className="pr-10">
             <SheetTitle>Board configurations</SheetTitle>
             <SheetDescription>
-              Import, export or duplicate a Board’s structure without copying
-              its content or access rules.
+              Import, export or duplicate a Board’s widgets as a new project
+              Board. Posts, events, files and groups are not copied.
             </SheetDescription>
           </SheetHeader>
           <Button
@@ -1057,12 +917,6 @@ function ServerBackedBoardsContent() {
             </div>
           </Alert>
         )}
-        {resource.personal.error && (
-          <Alert variant="warning">{resource.personal.error}</Alert>
-        )}
-        {resource.preferenceError && (
-          <Alert variant="destructive">{resource.preferenceError}</Alert>
-        )}
         {board && resource.detail.error && (
           <Alert variant="warning">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1108,27 +962,19 @@ function ServerBackedBoardsContent() {
                 <RefreshCw data-icon="inline-start" /> Retry Board
               </Button>
             )}
-            {/* The same actions as the Board menu, so an empty workspace has a
+            {/* The same action as the Board menu, so an empty workspace has a
                 first step in view. The server still decides who may create. */}
             {!unavailable &&
               !resource.list.error &&
               !appliedSearch &&
-              noBoards && (
-                <div className="flex flex-wrap justify-center gap-2">
-                  <Button
-                    className="min-h-11"
-                    onClick={() => setManagementMode("create")}
-                  >
-                    New Board
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="min-h-11"
-                    onClick={() => setTemplatesOpen(true)}
-                  >
-                    Use a template
-                  </Button>
-                </div>
+              noBoards &&
+              isAdmin && (
+                <Button
+                  className="min-h-11"
+                  onClick={() => setManagementMode("create")}
+                >
+                  New project Board
+                </Button>
               )}
           </BoardEmpty>
         ) : (
@@ -1145,7 +991,7 @@ function ServerBackedBoardsContent() {
                 refreshKey={resource.detail.sequence}
                 onDraftStateChange={onCalendarDraftStateChange}
               />
-            ) : section === "announcements" ? (
+            ) : section === "posts" ? (
               <div className="flex min-w-0 flex-col gap-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -1153,46 +999,44 @@ function ServerBackedBoardsContent() {
                       data-slot="section-title"
                       className="text-2xl font-semibold tracking-tight"
                     >
-                      Announcements
+                      Posts
                     </h2>
                     <p className="text-muted-foreground mt-1 text-sm">
-                      Stay up to date with your team.
+                      Everyone who can open this Board reads its posts.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {board.status === "active" && (
+                    {board.status === "active" && canManage && (
                       <Button
                         type="button"
                         variant="outline"
                         className="min-h-11"
-                        onClick={() =>
-                          setAnnouncementManagerSelection(board.id)
-                        }
+                        onClick={() => setPostManagerSelection(board.id)}
                       >
-                        Manage announcements
+                        Manage posts
                       </Button>
                     )}
-                    <ServerBackedBoardAnnouncementEditor
+                    <ServerBackedBoardPostEditor
                       key={`editor:${board.id}`}
                       boardId={board.id}
                       boardRevision={board.revision}
                       boardStatus={board.status}
                       refreshKey={resource.detail.sequence}
                       onPublished={() => resource.refresh()}
-                      onDraftStateChange={onAnnouncementDraftStateChange}
+                      onDraftStateChange={onPostDraftStateChange}
                     />
                   </div>
                 </div>
-                <ServerBackedBoardAnnouncements
+                <ServerBackedBoardPosts
                   key={board.id}
                   boardId={board.id}
                   refreshKey={resource.detail.sequence}
                 />
 
                 <Sheet
-                  open={announcementManagerOpen}
+                  open={postManagerOpen}
                   onOpenChange={(open) => {
-                    if (!open) closeAnnouncementManager();
+                    if (!open) closePostManager();
                   }}
                 >
                   <SheetContent
@@ -1200,14 +1044,14 @@ function ServerBackedBoardsContent() {
                     className="w-full overflow-y-auto sm:max-w-2xl"
                   >
                     <SheetHeader>
-                      <SheetTitle>Manage announcements</SheetTitle>
+                      <SheetTitle>Manage posts</SheetTitle>
                       <SheetDescription>
-                        Archive, restore, or permanently delete announcements
-                        you are allowed to manage.
+                        Archive and restore posts, or delete drafts that were
+                        never published.
                       </SheetDescription>
                     </SheetHeader>
-                    {announcementManagerOpen && (
-                      <ServerBackedBoardAnnouncementLifecycle
+                    {postManagerOpen && (
+                      <ServerBackedBoardPostLifecycle
                         key={`lifecycle:${board.id}`}
                         boardId={board.id}
                         boardStatus={board.status}
@@ -1215,7 +1059,7 @@ function ServerBackedBoardsContent() {
                         onChanged={() => resource.refresh()}
                         onAccessDenied={(boardId) => {
                           if (board.id !== boardId) return;
-                          closeAnnouncementManager();
+                          closePostManager();
                           resource.revokeAccess();
                         }}
                       />
@@ -1237,26 +1081,21 @@ function ServerBackedBoardsContent() {
                       Record summaries and shortcuts for your team.
                     </p>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    onClick={() => setWidgetSelection(board.id)}
-                  >
-                    Manage widgets
-                  </Button>
+                  {canManage && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      onClick={() => setWidgetSelection(board.id)}
+                    >
+                      Manage widgets
+                    </Button>
+                  )}
                 </div>
                 <ServerBackedBoardWidgets
                   key={board.id}
                   boardId={board.id}
                   refreshKey={resource.detail.sequence}
-                />
-                <ServerBackedBoardPlacements
-                  key={`placements:${board.id}`}
-                  boardId={board.id}
-                  boardActive={board.status === "active"}
-                  refreshKey={resource.detail.sequence}
-                  onAccessDenied={resource.revokeAccess}
                 />
               </div>
             )}
@@ -1270,7 +1109,7 @@ function ServerBackedBoardsContent() {
                 <SheetHeader className="pr-10">
                   <SheetTitle>Board activity</SheetTitle>
                   <SheetDescription>
-                    Changes to this Board that are available to your account.
+                    Changes to this Board, its groups and its widgets.
                   </SheetDescription>
                 </SheetHeader>
                 <Button
@@ -1303,8 +1142,8 @@ function ServerBackedBoardsContent() {
                 <SheetHeader className="pr-10">
                   <SheetTitle>Preview Board access</SheetTitle>
                   <SheetDescription>
-                    Check Board-level permissions for an active person without
-                    changing your own access.
+                    Check the level an active person has on this Board without
+                    changing any access.
                   </SheetDescription>
                 </SheetHeader>
                 <Button
@@ -1327,44 +1166,6 @@ function ServerBackedBoardsContent() {
               </SheetContent>
             </Sheet>
             <Sheet
-              open={grantsOpen}
-              onOpenChange={(open) => {
-                if (!open) closeGrants();
-              }}
-            >
-              <SheetContent className="w-full gap-6 overflow-y-auto sm:w-[min(92vw,44rem)]">
-                <SheetHeader className="pr-10">
-                  <SheetTitle>Manage Board access</SheetTitle>
-                  <SheetDescription>
-                    Grant rules affect Board permissions. Content audiences may
-                    narrow what a person can see further.
-                  </SheetDescription>
-                </SheetHeader>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  type="button"
-                  aria-label="Close Board access rules"
-                  className="absolute top-3 right-3 size-11"
-                  onClick={closeGrants}
-                >
-                  <X />
-                </Button>
-                {grantsOpen && (
-                  <ServerBackedBoardGrants
-                    key={board.id}
-                    boardId={board.id}
-                    boardActive={board.status === "active"}
-                    refreshKey={resource.detail.sequence}
-                    onAccessDenied={() => {
-                      closeGrants();
-                      resource.refresh();
-                    }}
-                  />
-                )}
-              </SheetContent>
-            </Sheet>
-            <Sheet
               open={widgetsOpen}
               onOpenChange={(open) => {
                 if (!open) closeWidgets();
@@ -1374,8 +1175,8 @@ function ServerBackedBoardsContent() {
                 <SheetHeader className="pr-10">
                   <SheetTitle>Manage Board widgets</SheetTitle>
                   <SheetDescription>
-                    Add and arrange widgets visible to you. Widget audiences
-                    still control who can see each one.
+                    Add and arrange the widgets that everyone who can open this
+                    Board sees.
                   </SheetDescription>
                 </SheetHeader>
                 <Button
@@ -1411,7 +1212,7 @@ function ServerBackedBoardsContent() {
       <ConfirmAction
         open={pendingNavigation !== null}
         title="Discard unsaved Board changes?"
-        description="Your unsaved Event or announcement changes will be lost."
+        description="Your unsaved Event or post changes will be lost."
         action="Discard changes"
         disabled={currentDraftState?.pending ?? false}
         onCancel={() => setPendingNavigation(null)}

@@ -43,36 +43,25 @@ from app.core.readiness import (
 from app.core.static_site import StaticSite
 from app.systems.access.auth.aggregate_router import router as auth_router
 from app.systems.access.identity.provider_signout_worker import ProviderSignoutWorker
-from app.systems.access.policy import router as access_policy_router
+from app.systems.access.policy.configuration_router import router as access_policy_router
 from app.systems.boards.access_preview_router import router as board_access_preview_router
 from app.systems.boards.activity_router import router as board_activity_router
-from app.systems.boards.announcement_author_router import (
-    router as board_announcement_authors_router,
-)
-from app.systems.boards.announcement_manage_state_router import (
-    router as board_announcement_manage_router,
-)
-from app.systems.boards.announcement_personal_router import (
-    router as board_announcement_personal_router,
-)
-from app.systems.boards.announcement_router import router as board_announcements_router
 from app.systems.boards.attachment_router import router as board_attachments_router
 from app.systems.boards.event_author_router import router as board_event_authors_router
 from app.systems.boards.event_router import router as board_events_router
-from app.systems.boards.grant_router import router as board_grants_router
+from app.systems.boards.group_router import router as board_groups_router
 from app.systems.boards.lifecycle_router import router as board_lifecycle_router
-from app.systems.boards.personal_router import router as board_personal_router
-from app.systems.boards.placement_router import router as board_placements_router
 from app.systems.boards.portability_router import router as board_portability_router
+from app.systems.boards.post_author_router import router as board_post_authors_router
+from app.systems.boards.post_manage_state_router import router as board_post_manage_router
+from app.systems.boards.post_revision_router import router as board_post_revisions_router
+from app.systems.boards.post_router import router as board_posts_router
 from app.systems.boards.record_link_router import router as board_record_links_router
-from app.systems.boards.reminder_router import router as board_reminders_router
 from app.systems.boards.router import router as boards_router
-from app.systems.boards.template_router import router as board_templates_router
 from app.systems.boards.widget_router import router as board_widgets_router
 from app.systems.manage.audit.router import internal_security_events_router, security_events_router
 from app.systems.manage.audit.router import router as audit_router
 from app.systems.manage.workspace.router import router as workspace_router
-from app.systems.openview.charts.router import router as chart_preferences_router
 from app.systems.openview.dashboards.router import router as dashboards_router
 from app.systems.openview.reports.router import router as reports_router
 from app.systems.openview.reports.schedule_router import router as report_schedule_router
@@ -89,15 +78,14 @@ from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router as files_router
 from app.systems.platform.scheduling.notification_router import router as notifications_router
 from app.systems.platform.scheduling.worker import ReportSchedulingWorker
-from app.systems.sandbox.automations.router import router as sandbox_automations_router
-from app.systems.sandbox.automations.worker import AutomationWorker
 from app.systems.sandbox.departments.router import router as departments_router
 from app.systems.sandbox.designs.router import router as sandbox_designs_router
-from app.systems.sandbox.fields.router import module_fields_router
 from app.systems.sandbox.fields.router import router as fields_router
 from app.systems.sandbox.lifecycle.router import router as lifecycle_router
 from app.systems.sandbox.modules.router import router as modules_router
 from app.systems.sandbox.publications.router import router as sandbox_publications_router
+from app.systems.sandbox.record_triggers.router import router as sandbox_record_triggers_router
+from app.systems.sandbox.record_triggers.worker import TriggerWorker
 from app.systems.sandbox.records.query_router import router as record_queries_router
 from app.systems.sandbox.records.router import router as records_router
 from app.systems.sandbox.relationships.router import router as relationships_router
@@ -166,7 +154,7 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             expected_user="openslate_runtime",
         )
     app.state.events_listener.start()
-    app.state.automation_worker.start()
+    app.state.trigger_worker.start()
     report_worker = getattr(app.state, "report_scheduling_worker", None)
     signout_worker = getattr(app.state, "provider_signout_worker", None)
     try:
@@ -178,9 +166,9 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         signout_stopped = signout_worker.stop() if signout_worker is not None else True
         report_stopped = report_worker.stop() if report_worker is not None else True
-        automation_stopped = app.state.automation_worker.stop()
+        trigger_stopped = app.state.trigger_worker.stop()
         app.state.events_listener.stop()
-        if automation_stopped and report_stopped and signout_stopped:
+        if trigger_stopped and report_stopped and signout_stopped:
             dispose_readiness_resources()
             dispose_database_resources()
         else:
@@ -189,11 +177,11 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
                     "operational_attention", reason_code="provider_signout_shutdown_incomplete",
                     upstream="supabase-auth",
                 )
-            if not automation_stopped:
+            if not trigger_stopped:
                 log_event(
                     "operational_attention",
-                    reason_code="sandbox_automation_shutdown_incomplete",
-                    upstream="sandbox-automations",
+                    reason_code="sandbox_trigger_shutdown_incomplete",
+                    upstream="sandbox-triggers",
                 )
             if not report_stopped:
                 log_event(
@@ -222,7 +210,7 @@ def create_app() -> FastAPI:
     events_hub = EventHub(max_subscribers=subscriber_capacity(settings.server_max_concurrency))
     app.state.events_hub = events_hub
     app.state.events_listener = PostgresInvalidationListener(events_hub)
-    app.state.automation_worker = AutomationWorker(settings)
+    app.state.trigger_worker = TriggerWorker(settings)
     app.state.report_scheduling_worker = ReportSchedulingWorker(settings)
     app.state.provider_signout_worker = ProviderSignoutWorker(settings)
 
@@ -349,34 +337,28 @@ def create_app() -> FastAPI:
     app.include_router(departments_router, prefix="/api")
     app.include_router(sandbox_designs_router, prefix="/api")
     app.include_router(sandbox_publications_router, prefix="/api")
-    app.include_router(sandbox_automations_router, prefix="/api")
+    app.include_router(sandbox_record_triggers_router, prefix="/api")
     app.include_router(sandbox_test_runs_router, prefix="/api")
     app.include_router(modules_router, prefix="/api")
     app.include_router(fields_router, prefix="/api")
-    app.include_router(module_fields_router, prefix="/api")
     app.include_router(record_queries_router, prefix="/api")
     app.include_router(records_router, prefix="/api")
-    app.include_router(board_personal_router, prefix="/api")
     app.include_router(board_portability_router, prefix="/api")
-    app.include_router(board_templates_router, prefix="/api")
     app.include_router(board_access_preview_router, prefix="/api")
     app.include_router(board_activity_router, prefix="/api")
-    app.include_router(board_grants_router, prefix="/api")
+    app.include_router(board_groups_router, prefix="/api")
     app.include_router(board_lifecycle_router, prefix="/api")
     app.include_router(board_widgets_router, prefix="/api")
-    app.include_router(board_placements_router, prefix="/api")
     app.include_router(board_event_authors_router, prefix="/api")
     app.include_router(board_events_router, prefix="/api")
-    app.include_router(board_reminders_router, prefix="/api")
     app.include_router(board_record_links_router, prefix="/api")
-    app.include_router(board_announcement_authors_router, prefix="/api")
-    app.include_router(board_announcement_manage_router, prefix="/api")
-    app.include_router(board_announcement_personal_router, prefix="/api")
-    app.include_router(board_announcements_router, prefix="/api")
+    app.include_router(board_post_authors_router, prefix="/api")
+    app.include_router(board_post_manage_router, prefix="/api")
+    app.include_router(board_post_revisions_router, prefix="/api")
+    app.include_router(board_posts_router, prefix="/api")
     app.include_router(board_attachments_router, prefix="/api")
     app.include_router(board_files_router, prefix="/api")
     app.include_router(boards_router, prefix="/api")
-    app.include_router(chart_preferences_router, prefix="/api")
     app.include_router(dashboards_router, prefix="/api")
     app.include_router(reports_router, prefix="/api")
     app.include_router(report_schedule_router, prefix="/api")

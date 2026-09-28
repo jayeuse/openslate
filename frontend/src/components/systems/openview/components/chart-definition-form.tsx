@@ -1,23 +1,10 @@
 "use client";
 
 import type { Dispatch, FormEvent, SetStateAction } from "react";
-import {
-  CalendarDays,
-  Filter,
-  MoreHorizontal,
-  SlidersHorizontal,
-} from "lucide-react";
+import { CalendarDays, Filter, SlidersHorizontal } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -36,7 +23,6 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import type { OpenViewChartPreferenceConfig } from "../adapters/chart-preferences-api";
 import type {
   OpenViewDataSource,
   OpenViewDataSourceField,
@@ -89,18 +75,7 @@ type ChartDefinitionDraft = {
   canRunQuery: boolean;
 };
 
-type ChartDefinitionPreferences = {
-  preferencesError: string;
-  preferencesNotice: string;
-  preferencesLoading: boolean;
-  preferencesLoaded: boolean;
-  preferencesSaving: boolean;
-  settingsDenied: boolean;
-  preferenceConfigDraft: OpenViewChartPreferenceConfig | null;
-};
-
 type ChartDefinitionActions = {
-  retryPreferences: () => void;
   retryCatalog: () => void;
   retryFields: () => void;
   loadMoreSources: () => Promise<void>;
@@ -119,22 +94,18 @@ type ChartDefinitionActions = {
   setShowLegend: Dispatch<SetStateAction<boolean>>;
   setShowValues: Dispatch<SetStateAction<boolean>>;
   addFilter: () => void;
-  saveSettings: () => Promise<void>;
-  resetSettings: () => Promise<void>;
   applySnapshot: (event?: FormEvent<HTMLFormElement>) => Promise<void>;
 };
 
 type ChartDefinitionFormProps = {
   catalog: ChartDefinitionCatalog;
   draft: ChartDefinitionDraft;
-  preferences: ChartDefinitionPreferences;
   actions: ChartDefinitionActions;
 };
 
 export function ChartDefinitionForm({
   catalog,
   draft,
-  preferences,
   actions,
 }: ChartDefinitionFormProps) {
   const {
@@ -176,16 +147,6 @@ export function ChartDefinitionForm({
     canRunQuery,
   } = draft;
   const {
-    preferencesError,
-    preferencesNotice,
-    preferencesLoading,
-    preferencesLoaded,
-    preferencesSaving,
-    settingsDenied,
-    preferenceConfigDraft,
-  } = preferences;
-  const {
-    retryPreferences,
     retryCatalog,
     retryFields,
     loadMoreSources,
@@ -204,8 +165,6 @@ export function ChartDefinitionForm({
     setShowLegend,
     setShowValues,
     addFilter,
-    saveSettings,
-    resetSettings,
     applySnapshot,
   } = actions;
 
@@ -221,31 +180,6 @@ export function ChartDefinitionForm({
   return (
     <Card className="w-full min-w-0 print:hidden">
       <CardContent>
-        {preferencesError ? (
-          <Alert
-            role="alert"
-            variant="warning"
-            className="mb-4 flex flex-wrap items-center justify-between gap-3"
-          >
-            <span>{preferencesError}</span>
-            {!settingsDenied ? (
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                disabled={preferencesLoading}
-                onClick={() => retryPreferences()}
-              >
-                Retry saved settings
-              </Button>
-            ) : null}
-          </Alert>
-        ) : null}
-        {preferencesNotice ? (
-          <p role="status" className="text-muted-foreground mb-4 text-sm">
-            {preferencesNotice}
-          </p>
-        ) : null}
         {sourcesError ? (
           <Alert
             role="alert"
@@ -529,6 +463,8 @@ export function ChartDefinitionForm({
                     </PopoverDescription>
                   </PopoverHeader>
                   <ChartFilterControls
+                    key={moduleId}
+                    moduleId={moduleId}
                     filterFields={filterFields}
                     filters={filters}
                     filterLogic={filterLogic}
@@ -755,56 +691,6 @@ export function ChartDefinitionForm({
                 </PopoverContent>
               </Popover>
 
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                disabled={
-                  !preferencesLoaded ||
-                  preferencesLoading ||
-                  preferencesSaving ||
-                  settingsDenied ||
-                  !preferenceConfigDraft
-                }
-                onClick={() => void saveSettings()}
-              >
-                {preferencesSaving ? "Saving settings…" : "Save settings"}
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      aria-label="Chart settings"
-                    />
-                  }
-                >
-                  <MoreHorizontal aria-hidden="true" />
-                  <span className="sr-only">Chart settings</span>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel>
-                      Personal chart settings
-                    </DropdownMenuLabel>
-                    <DropdownMenuItem
-                      disabled={
-                        !preferencesLoaded ||
-                        preferencesLoading ||
-                        preferencesSaving ||
-                        settingsDenied ||
-                        !moduleId ||
-                        (categoryFields.length === 0 && dateFields.length === 0)
-                      }
-                      onClick={() => void resetSettings()}
-                    >
-                      Reset settings
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
               <Button
                 type="submit"
                 className="min-h-11 sm:ml-auto"

@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.listing.schemas import PaginationMetadata
+from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.records.display import FieldDisplayResolver
 from app.systems.sandbox.records.query import (
     compile_query,
     field_expression,
@@ -72,7 +74,9 @@ def _window_condition(
     )
 
 
-def query_window_records(db: Session, payload: WindowRecordQuery) -> WindowRecordResponse:
+def query_window_records(
+    db: Session, payload: WindowRecordQuery, *, reader: User
+) -> WindowRecordResponse:
     references = tuple(
         reference
         for reference in (payload.date_field, payload.start_field, payload.end_field)
@@ -82,6 +86,7 @@ def query_window_records(db: Session, payload: WindowRecordQuery) -> WindowRecor
         db,
         payload.module_id,
         payload.definition,
+        reader=reader,
         extra_references=references,
     )
     timezone_name = (
@@ -95,13 +100,12 @@ def query_window_records(db: Session, payload: WindowRecordQuery) -> WindowRecor
     statement = compile_query(payload.module_id, payload.definition, fields).where(
         _window_condition(payload, fields, timezone_name)
     )
-    total = db.scalar(
-        select(func.count()).select_from(statement.order_by(None).subquery())
-    ) or 0
+    total = db.scalar(select(func.count()).select_from(statement.order_by(None).subquery())) or 0
     projected_statement = projected_record_query(statement, payload.definition)
     rows = db.execute(projected_statement.limit(payload.limit).offset(payload.offset)).all()
+    resolver = FieldDisplayResolver(db, payload.module_id, fields.values())
     return WindowRecordResponse(
-        items=[projected_record_response(row) for row in rows],
+        items=[projected_record_response(row, resolver) for row in rows],
         pagination=PaginationMetadata(
             limit=payload.limit,
             offset=payload.offset,

@@ -7,7 +7,7 @@ from tests.sandbox_designs.fixtures import sample_document
 def test_document_validation_reports_unknown_module_reference() -> None:
     document = {
         "kind": "openslate-sandbox",
-        "schemaVersion": 2,
+        "schemaVersion": 4,
         "design": {
             "departments": [{"id": "department-1", "name": "Operations", "closed": False}],
             "modules": [],
@@ -23,7 +23,7 @@ def test_document_validation_reports_unknown_module_reference() -> None:
             ],
             "layout": {"department-1": {"x": 0, "y": 0, "width": 200, "height": 200}},
         },
-        "automations": [],
+        "triggers": [],
         "scenarios": [],
     }
 
@@ -35,7 +35,7 @@ def test_document_validation_reports_unknown_module_reference() -> None:
     }
 
 
-def test_release_validation_rejects_invalid_runnable_mapping_automation_and_scenario() -> None:
+def test_release_validation_rejects_invalid_runnable_mapping_trigger_and_scenario() -> None:
     payload = sample_document().model_dump(by_alias=True)
     payload["design"]["relationships"][0]["fieldMappings"] = [
         {
@@ -48,9 +48,9 @@ def test_release_validation_rejects_invalid_runnable_mapping_automation_and_scen
         },
     ]
     payload["design"]["modules"][1]["fields"][1]["closed"] = True
-    payload["automations"].append(
+    payload["triggers"].append(
         {
-            "id": "automation-invalid",
+            "id": "trigger-invalid",
             "name": "Invalid reference",
             "enabled": True,
             "priority": 0,
@@ -77,16 +77,16 @@ def test_release_validation_rejects_invalid_runnable_mapping_automation_and_scen
     assert {
         "relationship.mapping_field_closed",
         "relationship.mapping_duplicate",
-        "automation.field_missing",
+        "trigger.field_missing",
         "scenario.module_missing",
     } <= codes
 
 
 def test_validation_rejects_unsafe_reference_type_and_disconnected_relationship() -> None:
     payload = sample_document().model_dump(by_alias=True)
-    payload["automations"].append(
+    payload["triggers"].append(
         {
-            "id": "automation-reference-invalid",
+            "id": "trigger-reference-invalid",
             "name": "Unsafe reference",
             "enabled": True,
             "priority": 0,
@@ -116,8 +116,8 @@ def test_validation_rejects_unsafe_reference_type_and_disconnected_relationship(
 
     codes = {issue.code for issue in validate_document(payload)}
 
-    assert "automation.relationship_module_mismatch" in codes
-    assert "automation.value_type_invalid" in codes
+    assert "trigger.relationship_module_mismatch" in codes
+    assert "trigger.value_type_invalid" in codes
 
 
 def test_validation_reports_structural_duplicates_missing_layout_and_self_links() -> None:
@@ -148,7 +148,7 @@ def test_validation_reports_structural_duplicates_missing_layout_and_self_links(
         "width": 100,
         "height": 100,
     }
-    payload["automations"].append(deepcopy(payload["automations"][0]))
+    payload["triggers"].append(deepcopy(payload["triggers"][0]))
     scenario = {
         "id": "duplicate-scenario",
         "name": "Duplicate scenario",
@@ -167,7 +167,7 @@ def test_validation_reports_structural_duplicates_missing_layout_and_self_links(
         "department.id_duplicate",
         "module.id_duplicate",
         "relationship.id_duplicate",
-        "automation.id_duplicate",
+        "trigger.id_duplicate",
         "scenario.id_duplicate",
         "field.id_duplicate",
         "relationship.self_link",
@@ -239,9 +239,9 @@ def test_validation_preserves_duplicate_lookup_precedence_and_issue_order() -> N
         }
     )
     design["relationships"].append(second_relationship)
-    payload["automations"] = [
+    payload["triggers"] = [
         {
-            "id": "automation-lookup",
+            "id": "trigger-lookup",
             "name": "Duplicate lookup",
             "enabled": True,
             "priority": 0,
@@ -303,14 +303,14 @@ def test_validation_preserves_duplicate_lookup_precedence_and_issue_order() -> N
         ("field.id_duplicate", "Duplicate field ID", "sample-aa"),
         ("field.id_duplicate", "Duplicate field ID", "sample-aa"),
         (
-            "automation.field_missing",
-            "Automation references a missing field",
-            "automation-lookup",
+            "trigger.field_missing",
+            "Trigger references a missing field",
+            "trigger-lookup",
         ),
         (
-            "automation.field_missing",
-            "Automation action references a missing or closed field",
-            "automation-lookup",
+            "trigger.field_missing",
+            "Trigger action references a missing or closed field",
+            "trigger-lookup",
         ),
         (
             "scenario.module_missing",
@@ -340,12 +340,12 @@ def test_validation_preserves_duplicate_lookup_precedence_and_issue_order() -> N
     ]
 
 
-def test_validation_exercises_automation_and_scenario_reference_failures() -> None:
+def test_validation_exercises_trigger_and_scenario_reference_failures() -> None:
     payload = sample_document().model_dump(by_alias=True, mode="json")
     modules = payload["design"]["modules"]
     modules[2]["closed"] = True
     modules[0]["fields"][1]["closed"] = True
-    payload["automations"] = [
+    payload["triggers"] = [
         {
             "id": "missing-trigger-module",
             "name": "Missing trigger module",
@@ -464,11 +464,11 @@ def test_validation_exercises_automation_and_scenario_reference_failures() -> No
     codes = {issue.code for issue in validate_document(payload)}
 
     assert {
-        "automation.module_missing",
-        "automation.reference_closed",
-        "automation.relationship_missing",
-        "automation.value_type_invalid",
-        "automation.field_missing",
+        "trigger.module_missing",
+        "trigger.reference_closed",
+        "trigger.relationship_missing",
+        "trigger.value_type_invalid",
+        "trigger.field_missing",
         "scenario.record_id_duplicate",
         "scenario.module_missing",
         "scenario.field_missing",

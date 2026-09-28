@@ -66,6 +66,7 @@ const record = {
   id: recordId,
   module_id: moduleId,
   data: { [fieldId]: "Pump 04" },
+  display_values: {},
   created_at: "2026-09-23T00:00:00Z",
   updated_at: "2026-09-23T00:00:00Z",
   deleted_at: null,

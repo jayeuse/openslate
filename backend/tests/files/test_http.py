@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User
+from app.systems.access.users.models import User
 from app.systems.platform.files.router import router
 
 
@@ -20,7 +20,7 @@ def client():
         id=uuid4(),
         status="active",
         is_deleted=False,
-        role=Role(role="operator", permissions={"records.read": True}, is_deleted=False),
+        role="guest",
     )
     app.dependency_overrides[get_current_user] = lambda: actor
     # Forbidden metadata/list operations must not query this unusable connection.
@@ -36,15 +36,7 @@ def test_non_admin_cannot_list_library_or_logos(client):
         assert response.json()["detail"]["code"] == "forbidden"
 
 
-def test_read_only_cannot_reserve_attachment(client, monkeypatch):
-    from app.systems.platform.files import access
-
-    def denied(_db, **_kwargs):
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    monkeypatch.setattr(access, "authorize_workspace_capabilities", denied)
+def test_guest_cannot_reserve_attachment(client):
     response = client.post(
         "/api/files",
         json={

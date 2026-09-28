@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from secrets import token_urlsafe
 from typing import Any
@@ -10,7 +11,6 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.sandbox.fields.models import FieldType
-from app.systems.sandbox.fields.schemas import FieldCreate
 from app.systems.sandbox.fields.validation import (
     field_config,
     validate_field_value,
@@ -18,13 +18,14 @@ from app.systems.sandbox.fields.validation import (
 )
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
-from app.systems.sandbox.records.router import (
+from app.systems.sandbox.records.mutation_validation import (
     RecordValidationError,
-    update_record,
     validate_record_mutation,
 )
+from app.systems.sandbox.records.router import update_record
 from app.systems.sandbox.records.schemas import RecordUpdate
 from tests.catalog.field_record_support import make_field, make_module
+from tests.rbac.support import make_user
 
 REJECTED_VALUE_CANARY = token_urlsafe(32)
 
@@ -50,7 +51,7 @@ RECORD_FIELD_VALIDATION_CASES = _load_record_field_validation_cases()
         (FieldType.BOOLEAN, {}),
         (FieldType.DATE, {}),
         (FieldType.DATETIME, {}),
-        (FieldType.SELECT, {"options": ["open"]}),
+        (FieldType.SELECT, {"options": [{"id": str(uuid7()), "label": "open"}]}),
     ],
 )
 def test_optional_primitive_record_values_accept_null(
@@ -112,13 +113,7 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         field_config(FieldType.DECIMAL, {"maximum": "1" * 39})
     with pytest.raises(ValueError):
         field_config(FieldType.DECIMAL, {"maximum": "1." + "1" * 19})
-    assert FieldCreate(
-        module_id=uuid7(),
-        name="Amount",
-        type=FieldType.DECIMAL,
-        position=0,
-        config={"minimum": "0.00"},
-    ).config == {"minimum": "0"}
+    assert field_config(FieldType.DECIMAL, {"minimum": "0.00"}) == {"minimum": "0"}
     with pytest.raises(ValueError):
         field_config(FieldType.DECIMAL, {"minimum": 1.0})
     numeric_bound = 10**500
@@ -372,6 +367,9 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
     closed = make_field(module.id, FieldType.INTEGER, deleted=True)
     record = Record(module_id=module.id, data={str(closed.id): 1})
     record.id = uuid7()
+    record.created_at = datetime.now(UTC)
+    record.updated_at = record.created_at
+    record.is_deleted = False
     db = Mock(spec=Session)
     db.get.side_effect = lambda model, *_args, **_kwargs: module if model is Module else record
     db.scalar.return_value = module
@@ -380,7 +378,7 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
     update_record(
         record.id,
         RecordUpdate(data={str(closed.id): 1}),
-        Mock(),
+        make_user("record_writer"),
         db,
     )
     assert record.data == {str(closed.id): 1}
@@ -389,7 +387,7 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
         update_record(
             record.id,
             RecordUpdate(data={str(closed.id): True}),
-            Mock(),
+            make_user("record_writer"),
             db,
         )
 

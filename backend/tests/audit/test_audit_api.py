@@ -14,6 +14,7 @@ from app.systems.manage.audit.router import (
     get_audit_log,
     get_audit_logs,
 )
+from tests.rbac.support import make_user
 
 
 def test_audit_listing_filters_pagination_detail_and_bounded_export() -> None:
@@ -43,7 +44,7 @@ def test_audit_listing_filters_pagination_detail_and_bounded_export() -> None:
     )
 
     result = get_audit_logs(
-        Mock(),
+        make_user("audit-admin"),
         database,
         params,
         action=AuditAction.UPDATE,

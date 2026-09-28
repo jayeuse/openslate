@@ -21,7 +21,7 @@ from app.systems.access.auth.aggregate_router import router as access_router
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users import invitations_router
 from app.systems.access.users.coordination import InvitationConflict, InvitationNotFound
-from app.systems.access.users.models import IdentityKind, Role, User, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.models import SecurityEvent
 from tests.auth.test_provider_email_integration import _email_action
 
@@ -41,15 +41,13 @@ def test_invitation_revocation_route_exists_and_requires_authentication() -> Non
 def test_invitation_revocation_rejects_setup_only_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    role = Role(id=uuid7(), role="admin", description="", permissions={})
+    role = "admin"
     admin = User(
         id=uuid7(),
         email="admin@example.test",
         username="admin",
         status=UserStatus.ACTIVE.value,
-        identity_kind=IdentityKind.INTERNAL.value,
         role=role,
-        role_id=role.id,
     )
     app = FastAPI()
     app.include_router(access_router, prefix="/api")
@@ -69,15 +67,13 @@ def test_invitation_revocation_rejects_setup_only_identity(
 def test_authorized_invitation_revocation_returns_empty_204(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    role = Role(id=uuid7(), role="admin", description="", permissions={})
+    role = "admin"
     admin = User(
         id=uuid7(),
         email="admin@example.test",
         username="admin",
         status=UserStatus.ACTIVE.value,
-        identity_kind=IdentityKind.INTERNAL.value,
         role=role,
-        role_id=role.id,
     )
     identity = CurrentIdentity(admin, uuid7(), True, False)
     db = Mock(spec=Session)
@@ -109,15 +105,13 @@ def test_invitation_revocation_maps_missing_and_closed_states(
     expected_status: int,
     expected_detail: str,
 ) -> None:
-    role = Role(id=uuid7(), role="admin", description="", permissions={})
+    role = "admin"
     admin = User(
         id=uuid7(),
         email="admin@example.test",
         username="admin",
         status=UserStatus.ACTIVE.value,
-        identity_kind=IdentityKind.INTERNAL.value,
         role=role,
-        role_id=role.id,
     )
     app = FastAPI()
     app.include_router(access_router, prefix="/api")
@@ -157,7 +151,7 @@ def test_revoked_provider_invitation_is_denied_and_resend_can_be_accepted(
     with Session(owner) as db:
         user = db.get(User, local_id)
         user.supabase_user_id = provider_id
-        user.role_id = db.scalar(select(Role.id).where(Role.role == "admin"))
+        user.role = "admin"
         db.commit()
     source = uuid4().bytes
     client_address = (f"198.18.{source[0]}.{source[1]}", 50000)

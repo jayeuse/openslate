@@ -2,7 +2,7 @@ import type {
   SandboxComparisonOperator,
   SandboxDocumentField,
   SandboxRelationship,
-  SandboxAutomationAction,
+  SandboxTriggerAction,
 } from "./document-types";
 
 type FieldKind = SandboxDocumentField["type"];
@@ -26,12 +26,11 @@ export type RelationshipDefinition = readonly [
   targetModuleId: string,
   cardinality?: SandboxRelationship["cardinality"],
 ];
-export type AutomationActionWithoutId =
-  SandboxAutomationAction extends infer Action
-    ? Action extends { id: string }
-      ? Omit<Action, "id">
-      : never
-    : never;
+export type TriggerActionWithoutId = SandboxTriggerAction extends infer Action
+  ? Action extends { id: string }
+    ? Omit<Action, "id">
+    : never
+  : never;
 export type TemplateDefinition = {
   id: string;
   name: string;
@@ -66,7 +65,7 @@ export const SANDBOX_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
     highlights: [
       "Supplier-to-receipt traceability",
       "Per-warehouse stock control",
-      "Reorder and approval automations",
+      "Reorder and approval triggers",
     ],
     departments: [
       ["inv-procurement", "Procurement"],

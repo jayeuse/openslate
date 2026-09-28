@@ -5,15 +5,12 @@ import {
   createOpenViewSavedView,
   getOpenViewConflict,
   getOpenViewSavedView,
-  listOpenViewAudienceOptions,
+  listOpenViewAssignableUsers,
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
-  listOpenViewPersonalDefaults,
   listOpenViewSavedViews,
   queryOpenViewRecords,
   restoreOpenViewSavedView,
-  setOpenViewPersonalDefault,
-  unsetOpenViewPersonalDefault,
   updateOpenViewSavedView,
   type OpenViewQueryDefinition,
   type OpenViewSavedView,
@@ -21,8 +18,8 @@ import {
 
 const moduleId = "00000000-0000-4000-8000-000000000001";
 const fieldId = "00000000-0000-4000-8000-000000000002";
-const roleId = "00000000-0000-4000-8000-000000000003";
-const userId = "00000000-0000-4000-8000-000000000004";
+const userFieldId = "00000000-0000-4000-8000-000000000003";
+const eligibleUserId = "00000000-0000-4000-8000-000000000004";
 const viewId = "00000000-0000-4000-8000-000000000005";
 const departmentId = "00000000-0000-4000-8000-000000000007";
 const timelineStartFieldId = "00000000-0000-4000-8000-000000000008";
@@ -104,10 +101,8 @@ const timelinePresentation = {
 const viewResponse = {
   id: viewId,
   module_id: moduleId,
-  owner_id: userId,
   name: "Urgent queue",
-  audience: { kind: "user", role_id: null, user_id: userId },
-  visibility: "workspace",
+  is_default: true,
   definition: {
     version: 1,
     logic: "or",
@@ -177,10 +172,17 @@ const pagination = {
   has_more: false,
 };
 
-test("maps validated catalog, audience, saved-view, default, and record pages", async () => {
+test("maps validated catalog, saved-view, and record pages", async () => {
   const responses: unknown[] = [
     {
-      items: [{ id: moduleId, name: "Equipment", department_id: departmentId }],
+      items: [
+        {
+          id: moduleId,
+          name: "Equipment",
+          department_id: departmentId,
+          title_field_id: fieldId,
+        },
+      ],
       pagination,
     },
     {
@@ -212,29 +214,27 @@ test("maps validated catalog, audience, saved-view, default, and record pages", 
           position: 2,
           config: {},
         },
+        {
+          id: userFieldId,
+          module_id: moduleId,
+          name: "Assignee",
+          type: "user",
+          required: false,
+          position: 3,
+          config: {},
+        },
       ],
-      pagination,
-    },
-    {
-      items: [{ kind: "role", id: roleId, label: "Operations" }],
-      pagination,
-    },
-    {
-      items: [{ kind: "user", id: userId, label: "Nina Santos" }],
       pagination,
     },
     { items: [viewResponse], pagination },
     viewResponse,
     {
-      items: [{ module_id: moduleId, view_id: viewId, revision: 3 }],
-      pagination,
-    },
-    {
       items: [
         {
           id: "00000000-0000-4000-8000-000000000006",
           module_id: moduleId,
-          data: { [fieldId]: "Pump 04" },
+          data: { [fieldId]: "Pump 04", [userFieldId]: eligibleUserId },
+          display_values: { [userFieldId]: "Alex Reader" },
           created_at: "2026-09-23T00:00:00Z",
           updated_at: "2026-09-23T00:00:00Z",
           deleted_at: null,
@@ -248,7 +248,14 @@ test("maps validated catalog, audience, saved-view, default, and record pages", 
   const mock = installFetch(() => Response.json(responses.shift()));
   try {
     await expect(listOpenViewDataSources()).resolves.toEqual({
-      items: [{ id: moduleId, name: "Equipment", departmentId }],
+      items: [
+        {
+          id: moduleId,
+          name: "Equipment",
+          departmentId,
+          titleFieldId: fieldId,
+        },
+      ],
       pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
     });
     await expect(listOpenViewDataSourceFields(moduleId)).resolves.toEqual({
@@ -280,15 +287,16 @@ test("maps validated catalog, audience, saved-view, default, and record pages", 
           position: 2,
           config: {},
         },
+        {
+          id: userFieldId,
+          moduleId,
+          name: "Assignee",
+          type: "user",
+          required: false,
+          position: 3,
+          config: {},
+        },
       ],
-      pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
-    });
-    await expect(listOpenViewAudienceOptions("role")).resolves.toEqual({
-      items: [{ kind: "role", id: roleId, label: "Operations" }],
-      pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
-    });
-    await expect(listOpenViewAudienceOptions("user")).resolves.toEqual({
-      items: [{ kind: "identity", id: userId, label: "Nina Santos" }],
       pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
     });
     await expect(listOpenViewSavedViews({ moduleId })).resolves.toEqual({
@@ -296,9 +304,7 @@ test("maps validated catalog, audience, saved-view, default, and record pages", 
         expect.objectContaining({
           id: viewId,
           moduleId,
-          ownerId: userId,
-          audience: { kind: "identity", id: userId },
-          visibility: "workspace",
+          isDefault: true,
           canEdit: true,
           revision: 7,
           definition,
@@ -308,14 +314,9 @@ test("maps validated catalog, audience, saved-view, default, and record pages", 
       pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
     });
     await expect(getOpenViewSavedView(viewId)).resolves.toMatchObject({
-      audience: { kind: "identity", id: userId },
-      visibility: "workspace",
+      isDefault: true,
       definition,
       presentation,
-    });
-    await expect(listOpenViewPersonalDefaults()).resolves.toEqual({
-      items: [{ moduleId, viewId, revision: 3 }],
-      pagination: { limit: 20, offset: 0, count: 1, total: 1, hasMore: false },
     });
     await expect(
       queryOpenViewRecords({ moduleId, definition, limit: 25, offset: 0 }),
@@ -323,7 +324,8 @@ test("maps validated catalog, audience, saved-view, default, and record pages", 
       items: [
         {
           moduleId,
-          data: { [fieldId]: "Pump 04" },
+          data: { [fieldId]: "Pump 04", [userFieldId]: eligibleUserId },
+          displayValues: { [userFieldId]: "Alex Reader" },
           isDeleted: false,
         },
       ],
@@ -332,14 +334,11 @@ test("maps validated catalog, audience, saved-view, default, and record pages", 
     expect(mock.requests.map(({ input }) => String(input))).toEqual([
       "/api/views/data-sources?limit=20&offset=0",
       `/api/views/data-sources/${moduleId}/fields?limit=20&offset=0`,
-      "/api/views/audience-options?kind=role&limit=20&offset=0",
-      "/api/views/audience-options?kind=user&limit=20&offset=0",
       `/api/views?module_id=${moduleId}&limit=20&offset=0`,
       `/api/views/${viewId}`,
-      "/api/views/defaults?limit=20&offset=0",
       "/api/records/query",
     ]);
-    expect(mock.requests[7]?.init?.body).toBe(
+    expect(mock.requests[4]?.init?.body).toBe(
       JSON.stringify({
         module_id: moduleId,
         definition: {
@@ -370,7 +369,45 @@ test("maps validated catalog, audience, saved-view, default, and record pages", 
   }
 });
 
-test("maps legacy visibility-only saved-view responses and omitted timeline fields", async () => {
+test("lists only module-scoped assignable user labels without caching", async () => {
+  const mock = installFetch(() =>
+    Response.json({
+      items: [
+        {
+          id: eligibleUserId,
+          display_name: "Alex Reader",
+          username: "alex.reader",
+        },
+      ],
+      pagination: { ...pagination, limit: 100 },
+    }),
+  );
+  try {
+    await expect(
+      listOpenViewAssignableUsers(moduleId, {
+        limit: 100,
+        search: "  Alex Reader  ",
+      }),
+    ).resolves.toEqual({
+      items: [
+        {
+          id: eligibleUserId,
+          displayName: "Alex Reader",
+          username: "alex.reader",
+        },
+      ],
+      pagination: { limit: 100, offset: 0, count: 1, total: 1, hasMore: false },
+    });
+    expect(String(mock.requests[0]?.input)).toBe(
+      `/api/modules/${moduleId}/assignable-users?limit=100&offset=0&search=Alex+Reader`,
+    );
+    expect(mock.requests[0]?.init?.cache).toBe("no-store");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("maps saved-view responses with omitted timeline fields", async () => {
   const legacyPresentation = Object.fromEntries(
     Object.entries(viewResponse.presentation).filter(
       ([key]) => !key.startsWith("timeline_"),
@@ -381,16 +418,14 @@ test("maps legacy visibility-only saved-view responses and omitted timeline fiel
   );
   const legacyView = {
     ...viewResponse,
-    audience: undefined,
     presentation: legacyPresentation,
   };
   const mock = installFetch(() => Response.json(legacyView));
   try {
     const savedView = await getOpenViewSavedView(viewId);
-    expect(savedView).toMatchObject({
-      audience: { kind: "everyone" },
-      visibility: "workspace",
-    });
+    expect(savedView).toMatchObject({ isDefault: true });
+    expect(savedView).not.toHaveProperty("audience");
+    expect(savedView).not.toHaveProperty("ownerId");
     expect(savedView.presentation).toEqual(legacyPresentationDomain);
     expect(savedView.presentation).not.toHaveProperty("timelineStartFieldId");
     expect(savedView.presentation).not.toHaveProperty("timelineEndFieldId");
@@ -426,7 +461,6 @@ test("defaults omitted Timeline presentation fields to null on the wire", async 
     await createOpenViewSavedView({
       moduleId,
       name: "Legacy layout",
-      audience: { kind: "private" },
       definition,
       presentation: legacyPresentation,
     });
@@ -465,14 +499,12 @@ test("requests archived saved views when the restore list includes deleted views
   }
 });
 
-test("sends a backend-valid Timeline view and personal-default commands with explicit revisions", async () => {
+test("sends a backend-valid Timeline view and the module default with explicit revisions", async () => {
   const saved: OpenViewSavedView = {
     id: viewId,
     moduleId,
-    ownerId: userId,
     name: "Urgent queue",
-    audience: { kind: "role", id: roleId },
-    visibility: "workspace",
+    isDefault: true,
     definition: timelineDefinition,
     presentation: timelinePresentation,
     canEdit: true,
@@ -483,20 +515,13 @@ test("sends a backend-valid Timeline view and personal-default commands with exp
   };
   const mock = installFetch((_input, init) => {
     if (init?.method === "DELETE") return new Response(null, { status: 204 });
-    if (init?.method === "PUT") {
-      return Response.json({
-        module_id: moduleId,
-        view_id: viewId,
-        revision: 7,
-      });
-    }
     return Response.json(timelineViewResponse);
   });
   try {
     const createdView = await createOpenViewSavedView({
       moduleId,
       name: saved.name,
-      audience: saved.audience,
+      isDefault: true,
       definition: timelineDefinition,
       presentation: timelinePresentation,
     });
@@ -506,14 +531,12 @@ test("sends a backend-valid Timeline view and personal-default commands with exp
       id: viewId,
       revision: 7,
       name: "Updated queue",
-      audience: { kind: "everyone" },
+      isDefault: false,
       definition: timelineDefinition,
       presentation: timelinePresentation,
     });
     await archiveOpenViewSavedView({ id: viewId, revision: 7 });
     await restoreOpenViewSavedView({ id: viewId, revision: 8 });
-    await setOpenViewPersonalDefault({ moduleId, viewId });
-    await unsetOpenViewPersonalDefault(moduleId);
 
     expect(
       mock.requests.map(({ input, init }) => [String(input), init?.method]),
@@ -522,14 +545,12 @@ test("sends a backend-valid Timeline view and personal-default commands with exp
       [`/api/views/${viewId}`, "PATCH"],
       [`/api/views/${viewId}?revision=7`, "DELETE"],
       [`/api/views/${viewId}/restore`, "POST"],
-      [`/api/views/defaults/${moduleId}`, "PUT"],
-      [`/api/views/defaults/${moduleId}`, "DELETE"],
     ]);
     expect(mock.requests[0]?.init?.body).toBe(
       JSON.stringify({
         module_id: moduleId,
         name: "Urgent queue",
-        audience: { kind: "role", role_id: roleId },
+        is_default: true,
         definition: {
           version: 1,
           logic: "or",
@@ -578,16 +599,13 @@ test("sends a backend-valid Timeline view and personal-default commands with exp
       JSON.stringify({
         revision: 7,
         name: "Updated queue",
-        audience: { kind: "everyone" },
+        is_default: false,
         definition: JSON.parse(String(mock.requests[0]?.init?.body)).definition,
         presentation: JSON.parse(String(mock.requests[0]?.init?.body))
           .presentation,
       }),
     );
     expect(mock.requests[3]?.init?.body).toBe(JSON.stringify({ revision: 8 }));
-    expect(mock.requests[4]?.init?.body).toBe(
-      JSON.stringify({ view_id: viewId }),
-    );
   } finally {
     mock.restore();
   }
@@ -697,7 +715,6 @@ test("keeps durable API commands independent of sample-provider values", async (
     await createOpenViewSavedView({
       moduleId,
       name: "API-only view",
-      audience: { kind: "private" },
       definition,
       presentation,
     });

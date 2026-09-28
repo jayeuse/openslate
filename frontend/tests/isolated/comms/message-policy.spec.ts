@@ -9,7 +9,7 @@ import {
   CHANNELS,
   CATEGORIES,
 } from "../../../src/components/systems/comms/domain/model";
-import { initialPeople } from "../../../src/components/systems/access/domain/model";
+import { initialPeople } from "../../../src/components/systems/shared/data/sample-people";
 const input = (): CommsMessageInput => ({
   config: createCommsConfiguration(),
   person: initialPeople[1],

@@ -63,8 +63,10 @@ async function publishDraft(page: Page, password: string) {
 type SeededSupplier = Readonly<{
   recordId: string;
   moduleId: string;
+  departmentId: string;
   legalNameFieldId: string;
   paymentTermsFieldId: string;
+  paymentTermsOptionId: string;
   legalName: string;
 }>;
 
@@ -75,7 +77,15 @@ async function seedPublishedSupplier(
   const seeded = await page.evaluate(async (currentRunId) => {
     type CatalogPage = Readonly<{
       items: ReadonlyArray<
-        Readonly<{ id: string; name: string; type?: string }>
+        Readonly<{
+          id: string;
+          name: string;
+          type?: string;
+          department_id?: string;
+          config?: Readonly<{
+            options?: ReadonlyArray<Readonly<{ id: string; label: string }>>;
+          }>;
+        }>
       >;
       pagination: Readonly<{ has_more: boolean }>;
     }>;
@@ -99,13 +109,16 @@ async function seedPublishedSupplier(
         "Published Suppliers data source is unavailable or ambiguous",
       );
     const moduleId = suppliers[0].id;
+    const departmentId = suppliers[0].department_id;
+    if (!departmentId)
+      throw new Error("Published Suppliers department is unavailable");
 
     const fields = await readCatalog(
       `/api/views/data-sources/${encodeURIComponent(moduleId)}/fields?limit=100&offset=0`,
     );
     if (fields.pagination.has_more)
       throw new Error("Published Suppliers field catalog is incomplete");
-    function fieldId(name: string, type: string): string {
+    function field(name: string, type: string): CatalogPage["items"][number] {
       const matches = fields.items.filter(
         (item) => item.name === name && item.type === type,
       );
@@ -113,12 +126,23 @@ async function seedPublishedSupplier(
         throw new Error(
           `Published Suppliers field ${name} is unavailable or ambiguous`,
         );
+      return matches[0];
+    }
+    function optionId(name: string, label: string): string {
+      const options = field(name, "select").config?.options;
+      const matches = options?.filter((option) => option.label === label);
+      if (matches?.length !== 1)
+        throw new Error(
+          `Published Suppliers ${name} option ${label} is unavailable or ambiguous`,
+        );
       return matches[0].id;
     }
-    const legalNameFieldId = fieldId("Legal name", "text");
-    const paymentTermsFieldId = fieldId("Payment terms", "select");
-    const supplierIdFieldId = fieldId("Supplier ID", "text");
-    const statusFieldId = fieldId("Status", "select");
+    const legalNameFieldId = field("Legal name", "text").id;
+    const paymentTermsFieldId = field("Payment terms", "select").id;
+    const supplierIdFieldId = field("Supplier ID", "text").id;
+    const statusFieldId = field("Status", "select").id;
+    const statusOptionId = optionId("Status", "Active");
+    const paymentTermsOptionId = optionId("Payment terms", "Net 30");
     const legalName = `Full-stack Supplier ${currentRunId}`;
 
     // Keep the cookie value inside the browser context; only synthetic record
@@ -142,9 +166,9 @@ async function seedPublishedSupplier(
         module_id: moduleId,
         data: {
           [supplierIdFieldId]: `SUP-${currentRunId}`,
-          [statusFieldId]: "Active",
+          [statusFieldId]: statusOptionId,
           [legalNameFieldId]: legalName,
-          [paymentTermsFieldId]: "Net 30",
+          [paymentTermsFieldId]: paymentTermsOptionId,
         },
       }),
     });
@@ -153,8 +177,10 @@ async function seedPublishedSupplier(
       status: response.status,
       recordId: (created as { id?: string } | null)?.id ?? "",
       moduleId,
+      departmentId,
       legalNameFieldId,
       paymentTermsFieldId,
+      paymentTermsOptionId,
       legalName,
     };
   }, runId);
@@ -163,8 +189,10 @@ async function seedPublishedSupplier(
   for (const id of [
     seeded.recordId,
     seeded.moduleId,
+    seeded.departmentId,
     seeded.legalNameFieldId,
     seeded.paymentTermsFieldId,
+    seeded.paymentTermsOptionId,
   ]) {
     expect(id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
@@ -238,14 +266,14 @@ async function exerciseOpenView(
     recordResults.getByText(supplier.legalName, { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "View actions" }).click();
-  await page.getByRole("menuitem", { name: "Set as my default" }).click();
+  await page.getByRole("menuitem", { name: "Make default view" }).click();
   await expect(
-    page.getByRole("status").filter({ hasText: "personal default view" }),
+    page.getByRole("status").filter({ hasText: "default view of this module" }),
   ).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "View actions" }).click();
   await expect(
-    page.getByRole("menuitem", { name: "Clear my default" }),
+    page.getByRole("menuitem", { name: "Clear default view" }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
 
@@ -440,7 +468,6 @@ async function exerciseConnectedReports(
       id: string;
       module_id: string;
       revision: number;
-      audience: { kind: string };
       recipe: { fields: { field_id: string }[] };
     };
     reportId = createdReport.id;
@@ -449,7 +476,6 @@ async function exerciseConnectedReports(
     );
     expect(createdReport.module_id).toBe(supplier.moduleId);
     expect(createdReport.revision).toBe(1);
-    expect(createdReport.audience.kind).toBe("private");
     expect(createdReport.recipe.fields.map((field) => field.field_id)).toEqual([
       supplier.legalNameFieldId,
       supplier.paymentTermsFieldId,
@@ -459,7 +485,8 @@ async function exerciseConnectedReports(
     ).toHaveText("Report created.");
 
     await page.reload();
-    await page.getByRole("button", { name: reportName, exact: true }).click();
+    // The card also names the department of the Report module.
+    await page.getByRole("button", { name: reportName }).click();
     await page
       .getByRole("button", { name: "Edit report", exact: true })
       .click();
@@ -572,13 +599,17 @@ async function exerciseConnectedBoard(
 ) {
   const boardName = `Full-stack Board ${runId.slice(0, 8)}`;
   const eventTitle = `Supplier review ${runId.slice(0, 8)}`;
-  const announcementTitle = `Supplier update ${runId.slice(0, 8)}`;
+  const postTitle = `Supplier update ${runId.slice(0, 8)}`;
+  const recordLinkTitle = `Record ${supplier.recordId.slice(0, 8)}`;
+  const recordLinkTarget = `/openview?module=${supplier.moduleId}&record=${supplier.recordId}`;
   const imagePath = join(process.cwd(), "../references/image.png");
   const imageBytes = readFileSync(imagePath);
 
   await page.goto("/boards");
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
-  await page.getByRole("menuitem", { name: "New Board", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "New project Board", exact: true })
+    .click();
   await page.getByLabel("Board name").fill(boardName);
   const [createdBoard] = await Promise.all([
     page.waitForResponse(
@@ -596,6 +627,7 @@ async function exerciseConnectedBoard(
   await page.getByRole("link", { name: "Calendar", exact: true }).click();
   await page.getByRole("button", { name: "New event" }).click();
   await page.getByLabel("Event title").fill(eventTitle);
+  await page.getByRole("checkbox", { name: "1 day before" }).click();
   const [createdEvent] = await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -614,6 +646,9 @@ async function exerciseConnectedBoard(
     .getByRole("button", { name: `Edit ${eventTitle}` })
     .click();
   const eventEditor = page.getByRole("form", { name: "Edit Board event" });
+  await expect(
+    eventEditor.getByRole("checkbox", { name: "1 day before" }),
+  ).toBeChecked();
   await eventEditor.getByLabel("Add an attachment").setInputFiles(imagePath);
   await expect(eventEditor.getByText("image.png attached.")).toBeVisible({
     timeout: 70_000,
@@ -629,7 +664,6 @@ async function exerciseConnectedBoard(
   await eventEditor
     .getByLabel("Record to link")
     .selectOption(supplier.recordId);
-  await eventEditor.getByLabel("Link label").fill("Supplier record");
   const [eventLink] = await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -640,87 +674,57 @@ async function exerciseConnectedBoard(
     eventEditor.getByRole("button", { name: "Link Record" }).click(),
   ]);
   expect(eventLink.status()).toBe(201);
-  await expect(
-    eventEditor.getByRole("link", { name: "Supplier record" }),
-  ).toBeVisible();
+  const eventRecordLink = eventEditor.getByRole("link", {
+    name: recordLinkTitle,
+    exact: true,
+  });
+  await expect(eventRecordLink).toBeVisible();
+  await expect(eventRecordLink).toHaveAttribute("href", recordLinkTarget);
   await eventEditor
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
 
-  const monthView = page.getByRole("button", { name: "Month", exact: true });
-  await monthView.click();
-  await expect(monthView).toHaveAttribute("aria-pressed", "true");
-  await page.getByText("Add reminder", { exact: true }).click();
-  const reminderOccurrence = page.getByLabel("Event occurrence for reminder");
-  const createdOccurrence = reminderOccurrence
-    .locator("option")
-    .filter({ hasText: eventTitle });
-  await expect(createdOccurrence).toHaveCount(1);
-  const occurrenceId = await createdOccurrence.getAttribute("value");
-  if (!occurrenceId) throw new Error("Created event occurrence is unavailable");
-  await reminderOccurrence.selectOption(occurrenceId);
-  await page.getByLabel("Reminder timing").selectOption("now");
-  const [createdReminder] = await Promise.all([
-    page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname ===
-          `/api/boards/${boardId}/events/${eventId}/reminders` &&
-        response.request().method() === "POST",
-    ),
-    page.getByRole("button", { name: "Save reminder" }).click(),
-  ]);
-  expect(createdReminder.status()).toBe(201);
-  await expect(
-    page.getByText("Reminder saved for this occurrence."),
-  ).toBeVisible();
-
-  const targetedTitle = `Member review ${runId.slice(0, 8)}`;
+  const secondTitle = `Supplier follow-up ${runId.slice(0, 8)}`;
   await page.getByRole("button", { name: "New event" }).click();
-  const targetedEditor = page.getByRole("form", {
+  const secondEditor = page.getByRole("form", {
     name: "Create Board event",
   });
-  await targetedEditor.getByLabel("Event title").fill(targetedTitle);
-  await targetedEditor.getByLabel("Audience").selectOption("role");
-  await targetedEditor
-    .getByLabel("Role", { exact: true })
-    .selectOption({ label: "member" });
-  const [targetedCreated] = await Promise.all([
+  await secondEditor.getByLabel("Event title").fill(secondTitle);
+  const [secondCreated] = await Promise.all([
     page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === `/api/boards/${boardId}/events` &&
         response.request().method() === "POST",
     ),
-    targetedEditor.getByRole("button", { name: "Create event" }).click(),
+    secondEditor.getByRole("button", { name: "Create event" }).click(),
   ]);
-  expect(targetedCreated.status()).toBe(201);
+  expect(secondCreated.status()).toBe(201);
   await page.getByRole("button", { name: "Event lists" }).click();
   await page.getByRole("menuitem", { name: "My events", exact: true }).click();
   const myEvents = page.getByRole("region", { name: "My events" });
-  await myEvents.getByRole("button", { name: `Edit ${targetedTitle}` }).click();
-  const updatedTargetedTitle = `${targetedTitle} updated`;
-  const targetedUpdateEditor = page.getByRole("form", {
+  await myEvents.getByRole("button", { name: `Edit ${secondTitle}` }).click();
+  const updatedSecondTitle = `${secondTitle} updated`;
+  const secondUpdateEditor = page.getByRole("form", {
     name: "Edit Board event",
   });
-  await targetedUpdateEditor
-    .getByLabel("Event title")
-    .fill(updatedTargetedTitle);
-  const [targetedUpdated] = await Promise.all([
+  await secondUpdateEditor.getByLabel("Event title").fill(updatedSecondTitle);
+  const [secondUpdated] = await Promise.all([
     page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname.startsWith(
           `/api/boards/${boardId}/events/`,
         ) && response.request().method() === "PATCH",
     ),
-    targetedUpdateEditor.getByRole("button", { name: "Save event" }).click(),
+    secondUpdateEditor.getByRole("button", { name: "Save event" }).click(),
   ]);
-  expect(targetedUpdated.status()).toBe(200);
+  expect(secondUpdated.status()).toBe(200);
   await expect(
-    myEvents.getByRole("button", { name: `Edit ${updatedTargetedTitle}` }),
+    myEvents.getByRole("button", { name: `Edit ${updatedSecondTitle}` }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Event lists" }).click();
   await page.getByRole("menuitem", { name: "My events", exact: true }).click();
   await expect(
-    myEvents.getByRole("button", { name: `Edit ${updatedTargetedTitle}` }),
+    myEvents.getByRole("button", { name: `Edit ${updatedSecondTitle}` }),
   ).toBeVisible();
   await page.reload();
   await page.getByRole("link", { name: "Calendar", exact: true }).click();
@@ -729,156 +733,139 @@ async function exerciseConnectedBoard(
   await expect(
     page
       .getByRole("region", { name: "My events" })
-      .getByRole("button", { name: `Edit ${updatedTargetedTitle}` }),
+      .getByRole("button", { name: `Edit ${updatedSecondTitle}` }),
   ).toBeVisible();
 
-  await page.getByRole("link", { name: "Announcements", exact: true }).click();
-  await page.getByRole("button", { name: "New announcement" }).click();
-  await page.getByLabel("Title", { exact: true }).fill(announcementTitle);
+  await page.getByRole("link", { name: "Posts", exact: true }).click();
+  await page.getByRole("button", { name: "New post" }).click();
+  await page.getByLabel("Title", { exact: true }).fill(postTitle);
   await page.getByLabel("Message").fill("Supplier review is complete.");
-  const [createdAnnouncement] = await Promise.all([
+  const [createdPost] = await Promise.all([
     page.waitForResponse(
       (response) =>
-        new URL(response.url()).pathname ===
-          `/api/boards/${boardId}/announcements` &&
+        new URL(response.url()).pathname === `/api/boards/${boardId}/posts` &&
         response.request().method() === "POST",
     ),
     page.getByRole("button", { name: "Save draft" }).click(),
   ]);
-  expect(createdAnnouncement.status()).toBe(201);
-  const announcementId = ((await createdAnnouncement.json()) as { id: string })
-    .id;
+  expect(createdPost.status()).toBe(201);
+  const postId = ((await createdPost.json()) as { id: string }).id;
   await expect(page.getByText("Draft saved.")).toBeVisible();
   await page.getByLabel("Add an attachment").setInputFiles({
-    name: "announcement.png",
+    name: "post.png",
     mimeType: "image/png",
     buffer: imageBytes,
   });
-  await expect(page.getByText("announcement.png attached.")).toBeVisible({
+  await expect(page.getByText("post.png attached.")).toBeVisible({
     timeout: 70_000,
   });
   await page
     .getByLabel("Record data source")
     .selectOption({ label: "Suppliers" });
   await page.getByLabel("Record to link").selectOption(supplier.recordId);
-  await page.getByLabel("Link label").fill("Supplier source");
-  const [announcementLink] = await Promise.all([
+  const [postLink] = await Promise.all([
     page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname ===
-          `/api/boards/${boardId}/announcements/${announcementId}/record-links` &&
+          `/api/boards/${boardId}/posts/${postId}/record-links` &&
         response.request().method() === "POST",
     ),
     page.getByRole("button", { name: "Link Record" }).click(),
   ]);
-  expect(announcementLink.status()).toBe(201);
+  expect(postLink.status()).toBe(201);
   const [published] = await Promise.all([
     page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname ===
-          `/api/boards/${boardId}/announcements/${announcementId}/publish` &&
+          `/api/boards/${boardId}/posts/${postId}/publish` &&
         response.request().method() === "POST",
     ),
     page.getByRole("button", { name: "Publish now" }).click(),
   ]);
   expect(published.status()).toBe(200);
   await expect(page.getByText("Published successfully.")).toBeVisible();
-  await page.getByRole("button", { name: "Close announcement editor" }).click();
-  await expect(
-    page.getByRole("dialog", { name: "Announcement editor" }),
-  ).toBeHidden();
-  const publishedAnnouncement = page
-    .getByRole("region", { name: "Published announcements" })
+  await page.getByRole("button", { name: "Close post editor" }).click();
+  await expect(page.getByRole("dialog", { name: "Post editor" })).toBeHidden();
+  const publishedPost = page
+    .getByRole("region", { name: "Published posts" })
     .getByRole("article")
     .filter({
       has: page.getByRole("heading", {
-        name: announcementTitle,
+        name: postTitle,
         exact: true,
       }),
     });
-  await publishedAnnouncement
-    .getByRole("button", { name: "Open announcement" })
-    .click();
-  const announcementReader = page.getByRole("dialog", {
-    name: announcementTitle,
+  await publishedPost.getByRole("button", { name: "Open post" }).click();
+  const postReader = page.getByRole("dialog", {
+    name: postTitle,
   });
-  await expect(announcementReader).toBeVisible();
-  await expect(
-    announcementReader.getByRole("link", { name: "Supplier source" }),
-  ).toBeVisible();
-  await announcementReader
-    .getByRole("button", { name: "Close announcement" })
-    .click();
+  await expect(postReader).toBeVisible();
+  const postRecordLink = postReader.getByRole("link", {
+    name: recordLinkTitle,
+    exact: true,
+  });
+  await expect(postRecordLink).toBeVisible();
+  await expect(postRecordLink).toHaveAttribute("href", recordLinkTarget);
+  await postReader.getByRole("button", { name: "Close post" }).click();
 
-  const targetedAnnouncementTitle = `Member notice ${runId.slice(0, 8)}`;
-  const announcementManager = page.getByRole("region", {
-    name: "Manage announcements",
+  const secondPostTitle = `Supplier notice ${runId.slice(0, 8)}`;
+  const postManager = page.getByRole("region", {
+    name: "Manage posts",
   });
-  await page
-    .getByRole("button", { name: "New announcement", exact: true })
-    .click();
-  await announcementManager
-    .getByLabel("Title", { exact: true })
-    .fill(targetedAnnouncementTitle);
-  await announcementManager.getByLabel("Message").fill("Members only.");
-  await announcementManager.getByLabel("Audience").selectOption("role");
-  await announcementManager
-    .getByLabel("Role", { exact: true })
-    .selectOption({ label: "member" });
-  const [targetedAnnouncementCreated] = await Promise.all([
+  await page.getByRole("button", { name: "New post", exact: true }).click();
+  await postManager.getByLabel("Title", { exact: true }).fill(secondPostTitle);
+  await postManager.getByLabel("Message").fill("Supplier terms changed.");
+  const [secondPostCreated] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === `/api/boards/${boardId}/posts` &&
+        response.request().method() === "POST",
+    ),
+    postManager.getByRole("button", { name: "Save draft" }).click(),
+  ]);
+  expect(secondPostCreated.status()).toBe(201);
+  const secondPostId = ((await secondPostCreated.json()) as { id: string }).id;
+  const [secondPostPublished] = await Promise.all([
     page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname ===
-          `/api/boards/${boardId}/announcements` &&
+          `/api/boards/${boardId}/posts/${secondPostId}/publish` &&
         response.request().method() === "POST",
     ),
-    announcementManager.getByRole("button", { name: "Save draft" }).click(),
+    postManager.getByRole("button", { name: "Publish now" }).click(),
   ]);
-  expect(targetedAnnouncementCreated.status()).toBe(201);
-  const targetedAnnouncementId = (
-    (await targetedAnnouncementCreated.json()) as { id: string }
-  ).id;
-  const [targetedAnnouncementPublished] = await Promise.all([
-    page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname ===
-          `/api/boards/${boardId}/announcements/${targetedAnnouncementId}/publish` &&
-        response.request().method() === "POST",
-    ),
-    announcementManager.getByRole("button", { name: "Publish now" }).click(),
-  ]);
-  expect(targetedAnnouncementPublished.status()).toBe(200);
+  expect(secondPostPublished.status()).toBe(200);
   await page.reload();
-  await page.getByRole("link", { name: "Announcements", exact: true }).click();
-  await page.getByRole("button", { name: "More announcement actions" }).click();
+  await page.getByRole("link", { name: "Posts", exact: true }).click();
+  await page.getByRole("button", { name: "More post actions" }).click();
   await page
     .getByRole("menuitem", { name: "Edit drafts", exact: true })
     .click();
-  const reloadedManager = page.getByRole("region", {
-    name: "Manage announcements",
+  const reloadedPostManager = page.getByRole("region", {
+    name: "Manage posts",
   });
-  await reloadedManager
-    .getByRole("button", { name: `${targetedAnnouncementTitle} · Published` })
+  await reloadedPostManager
+    .getByRole("button", { name: `${secondPostTitle} · Published` })
     .click();
   await expect(
-    reloadedManager.getByRole("heading", { name: "Edit announcement" }),
+    reloadedPostManager.getByRole("heading", { name: "Edit post" }),
   ).toBeVisible();
-  await reloadedManager
+  await reloadedPostManager
     .getByLabel("Title", { exact: true })
-    .fill(`${targetedAnnouncementTitle} revised`);
-  const [targetedAnnouncementUpdated] = await Promise.all([
+    .fill(`${secondPostTitle} revised`);
+  const [secondPostUpdated] = await Promise.all([
     page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname ===
-          `/api/boards/${boardId}/announcements/${targetedAnnouncementId}` &&
+          `/api/boards/${boardId}/posts/${secondPostId}` &&
         response.request().method() === "PATCH",
     ),
-    reloadedManager.getByRole("button", { name: "Save draft" }).click(),
+    reloadedPostManager.getByRole("button", { name: "Save draft" }).click(),
   ]);
-  expect(targetedAnnouncementUpdated.status()).toBe(200);
+  expect(secondPostUpdated.status()).toBe(200);
   await expect(
-    reloadedManager.getByLabel("Title", { exact: true }),
-  ).toHaveValue(`${targetedAnnouncementTitle} revised`);
+    reloadedPostManager.getByLabel("Title", { exact: true }),
+  ).toHaveValue(`${secondPostTitle} revised`);
 
   await page.goto("/platform#notifications");
   await expect(
@@ -887,9 +874,7 @@ async function exerciseConnectedBoard(
   const notices = page.getByRole("list", {
     name: "Connected delivery notices",
   });
-  await expect(
-    notices.getByText("Board announcement", { exact: true }),
-  ).toBeVisible();
+  await expect(notices.getByText("Board post", { exact: true })).toBeVisible();
 }
 
 type DashboardSnapshotBody = Readonly<{
@@ -946,6 +931,7 @@ async function expectPopulatedDashboardSnapshot(
   response: Response,
   moduleId: string,
   dimensionId: string,
+  optionId: string,
 ) {
   expect(response.status()).toBe(200);
   const body = response.request().postDataJSON() as DashboardSnapshotBody;
@@ -971,7 +957,7 @@ async function expectPopulatedDashboardSnapshot(
     }>;
   };
   expect(result.items).toEqual([
-    { key: "Net 30", label: "Net 30", value: 1, record_count: 1 },
+    { key: optionId, label: "Net 30", value: 1, record_count: 1 },
   ]);
   expect(result.pagination).toMatchObject({
     count: 1,
@@ -989,16 +975,21 @@ async function exercisePrivateDashboard(
   const dashboardName = `Full-stack Dashboard ${runId.slice(0, 8)}`;
   await page.goto("/openview?section=dashboards");
   await expect(
-    page.getByRole("heading", { name: "Private dashboards" }),
+    page.getByRole("heading", { level: 1, name: "Dashboards" }),
   ).toBeVisible();
   await expect(
-    page.getByText(/Each Dashboard is private to you\./),
+    page.getByText(/Each Dashboard belongs to a department/),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "New Dashboard" }).click();
   const newDashboard = page.getByRole("dialog", { name: "New Dashboard" });
+  const dashboardDepartment = newDashboard.getByLabel("Department", {
+    exact: true,
+  });
+  await dashboardDepartment.selectOption(supplier.departmentId);
+  await expect(dashboardDepartment).toHaveValue(supplier.departmentId);
   await newDashboard.getByLabel("Dashboard name").fill(dashboardName);
-  await newDashboard.getByRole("button", { name: "Done" }).click();
+  await newDashboard.getByRole("button", { name: "Continue" }).click();
   await expect(newDashboard).toBeHidden();
   await page.getByRole("button", { name: "Add widget", exact: true }).click();
   const addWidget = page.getByRole("dialog", { name: "Add widget" });
@@ -1030,6 +1021,7 @@ async function exercisePrivateDashboard(
     await snapshotPromise,
     moduleId,
     dimensionId,
+    supplier.paymentTermsOptionId,
   );
 
   await expect(page).toHaveURL(
@@ -1082,6 +1074,7 @@ async function exercisePrivateDashboard(
     await reloadSnapshotPromise,
     moduleId,
     dimensionId,
+    supplier.paymentTermsOptionId,
   );
   await expect(net30Row.getByRole("cell")).toHaveText(["Net 30", "1", "1"]);
 
@@ -1383,7 +1376,7 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
   ).toBeVisible();
 }
 
-test("Sandbox exposes the simplified Build, Automations, Test, and History journey", async ({
+test("Sandbox exposes the simplified Build, Triggers, Test, and History journey", async ({
   page,
 }) => {
   test.setTimeout(360_000);
@@ -1407,7 +1400,7 @@ test("Sandbox exposes the simplified Build, Automations, Test, and History journ
     page.getByRole("link", { name: "Build", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Automations", exact: true }),
+    page.getByRole("link", { name: "Triggers", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Test", exact: true }),
@@ -1431,7 +1424,7 @@ test("Sandbox exposes the simplified Build, Automations, Test, and History journ
   await retireSeededSupplier(page, supplier.recordId);
   await page.goto("/sandbox?section=designer");
 
-  await page.getByRole("link", { name: "Automations", exact: true }).click();
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Recent activity" }),
   ).toBeVisible();
@@ -1441,7 +1434,7 @@ test("Sandbox exposes the simplified Build, Automations, Test, and History journ
   await expect(
     page
       .getByRole("region", { name: "Recent activity details" })
-      .getByText("No published automation activity yet."),
+      .getByText("No published trigger activity yet."),
   ).toBeVisible();
 
   await page.getByRole("link", { name: "Test", exact: true }).click();

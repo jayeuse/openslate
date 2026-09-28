@@ -13,13 +13,14 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
 from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, set_audit_actor
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.openview.reports import schedule_router
@@ -33,23 +34,17 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import guarded_create_engine
+from tests.rbac.support import add_user, make_group_access
 
 pytestmark = pytest.mark.integration
 
 
 def _actor(db: Session, permissions: dict[str, bool]) -> User:
-    role = Role(role=f"schedule-{uuid7().hex}", permissions=permissions)
-    user_id = uuid7()
-    user = User(
-        id=user_id,
-        email=f"schedule-{user_id.hex}@example.test",
-        username=f"schedule_{user_id.hex[:16]}",
-        status=UserStatus.ACTIVE.value,
-        role=role,
+    """A member for the old write capability, else a guest who can only read."""
+
+    return add_user(
+        db, "schedule", role="member" if permissions.get("records.write") else "guest"
     )
-    db.add(user)
-    db.flush()
-    return user
 
 
 def _report(db: Session, owner: User) -> tuple[Report, Module]:
@@ -59,10 +54,10 @@ def _report(db: Session, owner: User) -> tuple[Report, Module]:
     module = Module(
         department_id=department.id,
         module_name=f"Schedule {uuid7().hex}",
-        is_schema_accepted=True,
     )
     db.add(module)
     db.flush()
+    make_group_access(db, [owner], department, module, level=AccessLevel.MANAGE)
     field = Field(
         module_id=module.id,
         name="Status",
@@ -74,7 +69,6 @@ def _report(db: Session, owner: User) -> tuple[Report, Module]:
     db.add(field)
     db.flush()
     report = Report(
-        owner_id=owner.id,
         module_id=module.id,
         name="Scheduled status",
         recipe={
@@ -152,16 +146,12 @@ def test_create_read_revision_and_strict_contract(
     assert [entry.action for entry in audit] == [AuditAction.CREATE]
 
 
-def test_owner_excluded_can_enable_schedule_for_eligible_readers(
+def test_disabled_schedule_can_be_enabled_retimed_and_disabled_again(
     integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = integration_owner_db
     owner = _actor(db, {"records.read": True, "records.write": True})
-    other = _actor(db, {"records.read": True, "records.write": True})
     report, _module = _report(db, owner)
-    report.audience_kind = "user"
-    report.audience_user_id = other.id
-    db.flush()
     set_audit_actor(db, owner.id)
     monkeypatch.setattr(
         "app.systems.openview.reports.schedule_router.utc_now",
@@ -181,9 +171,6 @@ def test_owner_excluded_can_enable_schedule_for_eligible_readers(
     policy = db.scalar(select(ReportSchedule).where(ReportSchedule.report_id == report.id))
     assert policy is not None and policy.enabled and policy.revision == 3
     assert policy.next_due_at == datetime(2026, 1, 1, 15, 15, tzinfo=UTC)
-    report.audience_kind = "private"
-    report.audience_user_id = None
-    db.flush()
     monkeypatch.setattr(
         "app.systems.openview.reports.schedule_router.utc_now",
         lambda: datetime(2026, 1, 3, 16, tzinfo=UTC),
@@ -272,7 +259,7 @@ def test_edit_cancels_pending_and_running_work_and_rejects_stale_revision(
     assert [entry.action for entry in audit] == [AuditAction.CREATE, AuditAction.UPDATE]
 
 
-def test_schedule_owner_capability_source_and_archive_boundaries(
+def test_schedule_manager_level_source_and_archive_boundaries(
     integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = integration_owner_db
@@ -280,6 +267,9 @@ def test_schedule_owner_capability_source_and_archive_boundaries(
     outsider = _actor(db, {"records.read": True, "records.write": True})
     read_only = _actor(db, {"records.read": True})
     report, module = _report(db, owner)
+    department = db.get(Department, module.department_id)
+    assert department is not None
+    make_group_access(db, [read_only], department, module, level=AccessLevel.MANAGE)
     set_audit_actor(db, owner.id)
     monkeypatch.setattr(
         "app.systems.openview.reports.schedule_router.utc_now",
@@ -289,9 +279,12 @@ def test_schedule_owner_capability_source_and_archive_boundaries(
     with _client(db, outsider) as client:
         assert client.get(path).status_code == 404
         assert client.post(path, json=_daily()).status_code == 404
+    # A guest reads the schedule even through a manage group, and never changes it.
     with _client(db, read_only) as client:
+        assert client.get(path).status_code == 404
         assert client.post(path, json=_daily()).status_code == 403
-    module.is_schema_accepted = False
+    module.is_deleted = True
+    module.deleted_at = datetime(2026, 1, 1, tzinfo=UTC)
     db.flush()
     with _client(db, owner) as client:
         assert client.post(path, json=_daily()).json()["detail"]["code"] == "schedule_ineligible"
@@ -319,7 +312,10 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
             report, module = _report(setup, owner)
             field = setup.scalar(select(Field).where(Field.module_id == module.id))
             assert field is not None
-            department_id, role_id = module.department_id, owner.role_id
+            department_id = module.department_id
+            group_id = setup.scalar(
+                select(GroupMember.group_id).where(GroupMember.user_id == owner.id)
+            )
             schedule = ReportSchedule(
                 report_id=report.id,
                 enabled=True,
@@ -351,7 +347,7 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
             setup.add(run)
             setup.commit()
             ids = {
-                "owner": owner.id, "role": role_id, "report": report.id,
+                "owner": owner.id, "group": group_id, "report": report.id,
                 "module": module.id, "department": department_id,
                 "field": field.id, "work": work.id, "run": run.id,
                 "lease": work.lease_token,
@@ -364,9 +360,7 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
                 yield db
 
         def request_user(db: Annotated[Session, Depends(get_db)]) -> User:
-            user = db.scalar(
-                select(User).options(joinedload(User.role)).where(User.id == ids["owner"])
-            )
+            user = db.scalar(select(User).where(User.id == ids["owner"]))
             assert user is not None
             return user
 
@@ -415,9 +409,19 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
                 assert report is not None
                 delete_report_tree(cleanup, report)
                 cleanup.flush()
+                for access_model in (GroupAccess, GroupMember):
+                    for row in cleanup.scalars(
+                        select(access_model).where(access_model.group_id == ids["group"])
+                    ).all():
+                        cleanup.delete(row)
+                cleanup.flush()
+                group = cleanup.get(Group, ids["group"])
+                if group is not None:
+                    cleanup.delete(group)
+                    cleanup.flush()
                 for model, key in (
                     (Field, "field"), (Module, "module"), (Department, "department"),
-                    (User, "owner"), (Role, "role"),
+                    (User, "owner"),
                 ):
                     row = cleanup.get(model, ids[key])
                     if row is not None:

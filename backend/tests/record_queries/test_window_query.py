@@ -8,7 +8,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from record_queries.test_database import route_actor, setup_rows
+from record_queries.test_database import READER, route_actor, setup_rows
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -103,12 +103,13 @@ def test_window_query_schema_requires_a_matching_mode_and_scope() -> None:
 
 
 @pytest.mark.integration
-def test_window_query_requires_records_read(window_db: Session) -> None:
+def test_window_query_hides_a_module_from_a_member_in_no_group(window_db: Session) -> None:
     actor = route_actor(window_db, records_read=False)
+    module, field, _ = setup_rows(window_db, "date", ["2026-09-08"])
     app.dependency_overrides[get_current_user] = lambda: actor
     app.dependency_overrides[get_db] = lambda: window_db
-    module_id = uuid7()
-    field_id = uuid7()
+    module_id = module.id
+    field_id = field.id
     payload = {
         "module_id": str(module_id),
         "definition": {"columns": []},
@@ -125,7 +126,7 @@ def test_window_query_requires_records_read(window_db: Session) -> None:
         app.dependency_overrides.pop(get_current_user, None)
         app.dependency_overrides.pop(get_db, None)
 
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 @pytest.mark.integration
@@ -194,7 +195,7 @@ def test_calendar_window_wraps_saved_or_and_preserves_projection(window_db: Sess
         to_date=date(2026, 9, 8),
     )
 
-    result = query_window_records(window_db, payload)
+    result = query_window_records(window_db, payload, reader=READER)
 
     assert [item.id for item in result.items] == [rows[2].id]
     assert result.items[0].data == {str(status_field.id): "normal"}
@@ -228,7 +229,7 @@ def test_calendar_datetime_uses_workspace_day_across_dst_and_utc_naive_values(
         to_date=date(2026, 3, 8),
     )
 
-    result = query_window_records(window_db, payload)
+    result = query_window_records(window_db, payload, reader=READER)
 
     assert {item.id for item in result.items} == {rows[1].id, rows[2].id, rows[4].id}
     assert result.timezone == "America/New_York"
@@ -246,8 +247,10 @@ def test_calendar_undated_scope_has_independent_offset_pages(window_db: Session)
         limit=1,
     )
 
-    first = query_window_records(window_db, payload)
-    second = query_window_records(window_db, payload.model_copy(update={"offset": 1}))
+    first = query_window_records(window_db, payload, reader=READER)
+    second = query_window_records(
+        window_db, payload.model_copy(update={"offset": 1}), reader=READER
+    )
 
     assert {item.id for item in first.items + second.items} == {rows[0].id, rows[1].id}
     assert first.pagination.total == second.pagination.total == 2
@@ -305,14 +308,17 @@ def test_timeline_mixed_fields_find_overlaps_and_missing_or_inverted_intervals(
             from_date=date(2026, 3, 8),
             to_date=date(2026, 3, 8),
         ),
+        reader=READER,
     )
     unscheduled = query_window_records(
         window_db,
         WindowRecordQuery(**base, scope="unscheduled", limit=2),
+        reader=READER,
     )
     remaining_unscheduled = query_window_records(
         window_db,
         WindowRecordQuery(**base, scope="unscheduled", limit=2, offset=2),
+        reader=READER,
     )
 
     assert {item.id for item in overlapping.items} == {rows[0].id, rows[6].id}
@@ -425,8 +431,10 @@ def test_calendar_window_paginates_a_stable_global_order_and_handles_date_max(
         "to_date": date(2026, 9, 8),
     }
 
-    first = query_window_records(window_db, WindowRecordQuery(**base, limit=25))
-    second = query_window_records(window_db, WindowRecordQuery(**base, limit=25, offset=25))
+    first = query_window_records(window_db, WindowRecordQuery(**base, limit=25), reader=READER)
+    second = query_window_records(
+        window_db, WindowRecordQuery(**base, limit=25, offset=25), reader=READER
+    )
 
     expected_ids = sorted(row.id for row in rows)
     assert [item.id for item in first.items] == expected_ids[:25]
@@ -444,9 +452,9 @@ def test_calendar_window_paginates_a_stable_global_order_and_handles_date_max(
         from_date=date.max,
         to_date=date.max,
     )
-    assert [item.id for item in query_window_records(window_db, max_window).items] == [
-        max_rows[0].id
-    ]
+    assert [
+        item.id for item in query_window_records(window_db, max_window, reader=READER).items
+    ] == [max_rows[0].id]
 
 
 @pytest.mark.integration
@@ -465,12 +473,12 @@ def test_calendar_rejects_inactive_or_type_changed_field(window_db: Session) -> 
     window_db.flush()
 
     with pytest.raises(HTTPException) as inactive_error:
-        query_window_records(window_db, payload)
+        query_window_records(window_db, payload, reader=READER)
     assert inactive_error.value.status_code == 409
 
     field.is_deleted = False
     field.type = "text"
     window_db.flush()
     with pytest.raises(HTTPException) as changed_error:
-        query_window_records(window_db, payload)
+        query_window_records(window_db, payload, reader=READER)
     assert changed_error.value.status_code == 409

@@ -1,4 +1,4 @@
-"""Read-only Board-level effective access preview."""
+"""The effective level of a user on a Board, for the reader and for its managers."""
 
 from enum import StrEnum
 from typing import Annotated, Any, cast
@@ -7,10 +7,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy import Select, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -19,21 +19,35 @@ from app.common.listing import (
 )
 from app.core.database import get_db
 from app.systems.access.identity.eligibility import identity_eligible_clause
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.scope import includes
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.access.users.permissions import Capability
-from app.systems.boards.access import can_access_board, can_read_board_grants
-from app.systems.boards.models import Board, BoardGrant, BoardPermission
+from app.systems.access.users.models import User, UserStatus
+from app.systems.boards.access import board_level
+from app.systems.boards.models import Board
+from app.systems.boards.router import _board_with_access
 
 router = APIRouter(prefix="/boards", tags=["boards"])
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
+Reader = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 
 class BoardAccessPreview(BaseModel):
-    view: bool
-    edit: bool
+    """``level`` is None when the user cannot read the Board."""
+
+    level: AccessLevel | None
+    read: bool
+    write: bool
     manage: bool
+
+
+def _preview(level: AccessLevel | None) -> BoardAccessPreview:
+    return BoardAccessPreview(
+        level=level,
+        read=includes(level, AccessLevel.READ),
+        write=includes(level, AccessLevel.WRITE),
+        manage=includes(level, AccessLevel.MANAGE),
+    )
 
 
 class PreviewUser(BaseModel):
@@ -62,42 +76,19 @@ PREVIEW_USER_LIST_SPEC = ListQuerySpec(
 )
 
 
-def _manager_board(db: Session, manager: User, board_id: UUID) -> tuple[Board, list[BoardGrant]]:
-    board = db.scalar(
-        select(Board).where(
-            Board.id == board_id,
-            Board.is_deleted.is_(False),
-            Board.deleted_at.is_(None),
-        )
-    )
-    if board is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Board not found")
-    grants = list(
-        db.scalars(
-            select(BoardGrant).where(
-                BoardGrant.board_id == board_id,
-                BoardGrant.is_deleted.is_(False),
-                BoardGrant.deleted_at.is_(None),
-            )
-        ).all()
-    )
-    if not can_read_board_grants(board, manager, grants):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Board not found")
-    return board, grants
+def _manager_board(db: Session, manager: User, board_id: UUID) -> Board:
+    return _board_with_access(db, manager, board_id, AccessLevel.MANAGE)
 
 
 def _eligible_users() -> Select[tuple[User]]:
     return (
         select(User)
-        .join(Role, User.role_id == Role.id)
         .where(
             User.status == UserStatus.ACTIVE.value,
             User.is_deleted.is_(False),
             User.deleted_at.is_(None),
             identity_eligible_clause(),
             established_user_clause(),
-            Role.is_deleted.is_(False),
-            Role.deleted_at.is_(None),
         )
     )
 
@@ -109,7 +100,7 @@ def my_board_access(
     db: Database,
     response: Response,
 ) -> BoardAccessPreview:
-    """Return only the authenticated actor's effective Board permissions."""
+    """Return only the authenticated actor's level on the Board."""
 
     board = db.scalar(
         select(Board).where(
@@ -118,25 +109,11 @@ def my_board_access(
             Board.deleted_at.is_(None),
         )
     )
-    if board is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Board not found")
-    grants = list(
-        db.scalars(
-            select(BoardGrant).where(
-                BoardGrant.board_id == board_id,
-                BoardGrant.is_deleted.is_(False),
-                BoardGrant.deleted_at.is_(None),
-            )
-        ).all()
-    )
-    if not can_access_board(board, actor, BoardPermission.VIEW, grants):
+    level = board_level(db, actor, board) if board is not None else None
+    if level is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Board not found")
     response.headers["Cache-Control"] = "private, no-store"
-    return BoardAccessPreview(
-        view=True,
-        edit=can_access_board(board, actor, BoardPermission.EDIT, grants),
-        manage=can_access_board(board, actor, BoardPermission.MANAGE, grants),
-    )
+    return _preview(level)
 
 
 @router.get("/{board_id}/access-preview", response_model=BoardAccessPreview)
@@ -147,18 +124,14 @@ def preview_board_access(
     db: Database,
     response: Response,
 ) -> BoardAccessPreview:
-    """Preview effective Board ACL and global gates, never content audiences."""
+    """Preview another user's level from the Board scope, Access groups and Board groups."""
 
-    board, grants = _manager_board(db, manager, board_id)
-    target = db.scalar(_eligible_users().options(joinedload(User.role)).where(User.id == user_id))
+    board = _manager_board(db, manager, board_id)
+    target = db.scalar(_eligible_users().where(User.id == user_id))
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preview user not found")
     response.headers["Cache-Control"] = "no-store"
-    return BoardAccessPreview(
-        view=can_access_board(board, target, BoardPermission.VIEW, grants),
-        edit=can_access_board(board, target, BoardPermission.EDIT, grants),
-        manage=can_access_board(board, target, BoardPermission.MANAGE, grants),
-    )
+    return _preview(board_level(db, target, board))
 
 
 @router.get("/{board_id}/preview-users", response_model=PreviewUserList)

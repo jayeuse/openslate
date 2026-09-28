@@ -7,7 +7,7 @@ import {
   testTraceSteps,
 } from "../../../src/components/systems/sandbox/domain/test-run-summary";
 import type {
-  SandboxAutomation,
+  SandboxTrigger,
   SandboxDocumentDesign,
 } from "../../../src/components/systems/sandbox/domain/document";
 import type { SandboxTestRun } from "../../../src/components/systems/sandbox/state/api";
@@ -27,9 +27,9 @@ const design = {
   ],
 } as unknown as SandboxDocumentDesign;
 
-const automations = [
+const triggers = [
   { id: "alert", name: "Urgent request alert" },
-] as unknown as SandboxAutomation[];
+] as unknown as SandboxTrigger[];
 
 function run(
   overrides: Partial<SandboxTestRun> & {
@@ -43,46 +43,46 @@ function run(
     documentRevision: 4,
     input: { moduleId: "orders", values: {} },
     event: { kind: "record-created" },
-    automationIds: null,
-    result: { values: {}, routes: [], automationTraces: [], issues },
+    triggerIds: null,
+    result: { values: {}, routes: [], triggerTraces: [], issues },
     ...rest,
   } as SandboxTestRun;
 }
 
 test("a run from the current draft is not stale", () => {
-  expect(summarizeTestRun(run(), design, automations, 4).stale).toBeNull();
+  expect(summarizeTestRun(run(), design, triggers, 4).stale).toBeNull();
 });
 
 test("a run from an older draft says so", () => {
-  expect(summarizeTestRun(run(), design, automations, 5).stale).toBe(
+  expect(summarizeTestRun(run(), design, triggers, 5).stale).toBe(
     "older-draft",
   );
 });
 
 test("a run whose module was removed or closed says so, whatever the revision", () => {
   const removed = { ...design, modules: [] };
-  expect(summarizeTestRun(run(), removed, automations, 4).stale).toBe(
+  expect(summarizeTestRun(run(), removed, triggers, 4).stale).toBe(
     "module-gone",
   );
   const closed = {
     ...design,
     modules: [{ ...design.modules[0]!, closed: true }],
   };
-  expect(summarizeTestRun(run(), closed, automations, 5).stale).toBe(
+  expect(summarizeTestRun(run(), closed, triggers, 5).stale).toBe(
     "module-gone",
   );
 });
 
 test("repeated issues collapse into one line with a count", () => {
   const same = {
-    code: "automation_invalid",
+    code: "trigger_invalid",
     message: "A set field action has an invalid value.",
     targetId: "alert",
   };
   const summary = summarizeTestRun(
     run({ issues: [same, same, same] }),
     design,
-    automations,
+    triggers,
     4,
   );
   expect(summary.issues).toHaveLength(1);
@@ -94,7 +94,7 @@ test("each issue names what it is about when the target still exists", () => {
     run({
       issues: [
         {
-          code: "automation_invalid",
+          code: "trigger_invalid",
           message: "Needs attention.",
           targetId: "alert",
         },
@@ -113,11 +113,11 @@ test("each issue names what it is about when the target still exists", () => {
       ],
     }),
     design,
-    automations,
+    triggers,
     4,
   );
   expect(summary.issues.map((issue) => issue.subject)).toEqual([
-    { kind: "automation", id: "alert", name: "Urgent request alert" },
+    { kind: "trigger", id: "alert", name: "Urgent request alert" },
     { kind: "field", id: "total", name: "Order total" },
     { kind: "module", id: "orders", name: "Orders" },
     null,
@@ -135,7 +135,7 @@ test("issues about targets that no longer exist collapse by message", () => {
       })),
     }),
     design,
-    automations,
+    triggers,
     4,
   );
   expect(summary.issues).toHaveLength(1);
@@ -159,7 +159,7 @@ test("an empty required field reports one issue, not two", () => {
       ],
     }),
     design,
-    automations,
+    triggers,
     4,
   );
   expect(summary.issues).toHaveLength(1);
@@ -192,7 +192,7 @@ test("a trigger reads as the event that runs it", () => {
   ).toBe("Runs on a daily schedule at 09:00.");
 });
 
-test("the default test trigger is the first enabled automation's for the module", () => {
+test("the default test trigger is the first enabled trigger's for the module", () => {
   const list = [
     {
       id: "off",
@@ -206,7 +206,7 @@ test("the default test trigger is the first enabled automation's for the module"
       enabled: true,
       trigger: { kind: "field-changed", moduleId: "orders", fieldId: "total" },
     },
-  ] as unknown as SandboxAutomation[];
+  ] as unknown as SandboxTrigger[];
   expect(defaultTestTrigger(list, "orders")).toEqual({
     kind: "field-changed",
     moduleId: "orders",
@@ -223,9 +223,9 @@ test("a run becomes three canvas steps that keep earlier marks", () => {
       result: {
         values: { total: 1, paid: true },
         routes: [],
-        automationTraces: [
+        triggerTraces: [
           {
-            automationId: "alert",
+            triggerId: "alert",
             label: "Urgent request alert",
             outcome: "Applied",
           },
@@ -237,7 +237,7 @@ test("a run becomes three canvas steps that keep earlier marks", () => {
   );
   expect(steps.map((step) => step.title)).toEqual([
     "What happened",
-    "Automations",
+    "Triggers",
     "Result",
   ]);
   expect(steps[0]?.marks).toEqual({ total: "trigger" });
@@ -279,7 +279,7 @@ test("the canvas steps repeat the result's caveats and keep both marks", () => {
     result: {
       values: { total: 2 },
       routes: [],
-      automationTraces: [],
+      triggerTraces: [],
       issues: [
         {
           code: "value_required",
@@ -292,7 +292,7 @@ test("the canvas steps repeat the result's caveats and keep both marks", () => {
   const steps = testTraceSteps(
     stale,
     design,
-    summarizeTestRun(stale, design, automations, 5),
+    summarizeTestRun(stale, design, triggers, 5),
   );
   expect(steps[0]?.lines.slice(0, 2)).toEqual([
     "From an older draft.",

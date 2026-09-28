@@ -1,4 +1,4 @@
-"""Expose owner schedule controls and the completed Report history API."""
+"""Expose manager schedule controls and the completed Report history API."""
 
 from app.main import app
 

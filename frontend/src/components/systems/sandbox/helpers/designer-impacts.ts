@@ -139,7 +139,7 @@ export function deletionImpact(
     );
     return {
       title: `Delete field ${name}?`,
-      detail: `Deleting field “${name}” removes it from its module, removes ${plural(mappings, "relationship field mapping")}, and invalidates ${plural(ruleReferences, "automation reference")}. Automations that use it stay, but may stop working. Undo restores the complete change.`,
+      detail: `Deleting field “${name}” removes it from its module, removes ${plural(mappings, "relationship field mapping")}, and invalidates ${plural(ruleReferences, "trigger reference")}. Triggers that use it stay, but may stop working. Undo restores the complete change.`,
     };
   }
   const moduleIds = new Set(
@@ -178,11 +178,11 @@ export function deletionImpact(
     ...(target.kind === "department" ? [plural(modules.length, "module")] : []),
     plural(fieldCount, "field"),
     plural(relationships, "relationship"),
-    plural(ruleReferences, "automation reference"),
+    plural(ruleReferences, "trigger reference"),
   ];
   return {
     title: `Delete ${target.kind} ${name}?`,
-    detail: `Deleting ${target.kind} “${name}” removes ${joinedImpact(parts)}. Automations that use it stay, but may stop working. Undo restores the complete change.`,
+    detail: `Deleting ${target.kind} “${name}” removes ${joinedImpact(parts)}. Triggers that use it stay, but may stop working. Undo restores the complete change.`,
   };
 }
 

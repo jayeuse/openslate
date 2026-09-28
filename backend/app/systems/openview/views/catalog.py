@@ -1,14 +1,15 @@
+"""Readable data sources and their fields for building views."""
+
 from enum import StrEnum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_legacy_capability
+from app.common.dependencies import get_current_user
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -16,23 +17,15 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User, UserStatus
-from app.systems.access.users.permissions import Capability
-from app.systems.openview.views.access import visible_to
-from app.systems.openview.views.models import SavedView, SavedViewDefault
-from app.systems.openview.views.schemas import (
-    ViewAudienceOptionResponse,
-    ViewDataSourceResponse,
-    ViewDefaultResponse,
-    ViewDefaultSet,
-    ViewFieldResponse,
-)
+from app.systems.access.policy.checks import module_filter
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User
+from app.systems.openview.views.schemas import ViewDataSourceResponse, ViewFieldResponse
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 
 router = APIRouter()
-Reader = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_READ))]
-Writer = Annotated[User, Depends(require_legacy_capability(Capability.RECORDS_WRITE))]
+Reader = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -43,14 +36,6 @@ class DataSourceSort(StrEnum):
 class FieldSort(StrEnum):
     NAME = "name"
     POSITION = "position"
-
-
-class AudienceSort(StrEnum):
-    LABEL = "label"
-
-
-class DefaultSort(StrEnum):
-    MODULE_ID = "module_id"
 
 
 DATA_SOURCE_SPEC = ListQuerySpec(
@@ -70,45 +55,11 @@ FIELD_SPEC = ListQuerySpec(
     deleted_field=cast(ColumnElement[bool], Field.is_deleted),
     search_fields=(cast(ColumnElement[str], Field.name),),
 )
-ROLE_AUDIENCE_SPEC = ListQuerySpec(
-    sort_fields={AudienceSort.LABEL: cast(ColumnElement[Any], Role.role)},
-    default_sort=AudienceSort.LABEL,
-    tie_breaker=cast(ColumnElement[Any], Role.id),
-    deleted_field=cast(ColumnElement[bool], Role.is_deleted),
-    search_fields=(cast(ColumnElement[str], Role.role),),
-)
-USER_AUDIENCE_SPEC = ListQuerySpec(
-    sort_fields={AudienceSort.LABEL: cast(ColumnElement[Any], User.username)},
-    default_sort=AudienceSort.LABEL,
-    tie_breaker=cast(ColumnElement[Any], User.id),
-    deleted_field=cast(ColumnElement[bool], User.is_deleted),
-    search_fields=(cast(ColumnElement[str], User.username),),
-)
-DEFAULT_SPEC = ListQuerySpec(
-    sort_fields={DefaultSort.MODULE_ID: cast(ColumnElement[Any], SavedViewDefault.module_id)},
-    default_sort=DefaultSort.MODULE_ID,
-    tie_breaker=cast(ColumnElement[Any], SavedViewDefault.id),
-)
-
-
-def _conflict(code: str, message: str) -> HTTPException:
-    return HTTPException(
-        status.HTTP_409_CONFLICT,
-        detail={"code": code, "message": message},
-    )
-
-
-def _commit(db: Session, code: str, message: str) -> None:
-    try:
-        db.commit()
-    except IntegrityError as error:
-        db.rollback()
-        raise _conflict(code, message) from error
 
 
 @router.get("/data-sources", response_model=StandardListResponse[ViewDataSourceResponse])
 def list_data_sources(
-    _: Reader,
+    user: Reader,
     db: Database,
     params: Annotated[StandardListRequest[DataSourceSort], Query()],
 ) -> StandardListResponse[ViewDataSourceResponse]:
@@ -116,7 +67,7 @@ def list_data_sources(
         db,
         select(Module).where(
             Module.is_deleted.is_(False),
-            Module.is_schema_accepted.is_(True),
+            module_filter(db, user, AccessLevel.READ, Module.id),
         ),
         params,
         DATA_SOURCE_SPEC,
@@ -126,6 +77,7 @@ def list_data_sources(
             id=item.id,
             name=item.module_name,
             department_id=item.department_id,
+            title_field_id=item.title_field_id,
         )
         for item in result.items
     ]
@@ -138,7 +90,7 @@ def list_data_sources(
 )
 def list_data_source_fields(
     module_id: UUID,
-    _: Reader,
+    user: Reader,
     db: Database,
     params: Annotated[StandardListRequest[FieldSort], Query()],
 ) -> StandardListResponse[ViewFieldResponse]:
@@ -146,7 +98,7 @@ def list_data_source_fields(
         select(Module.id).where(
             Module.id == module_id,
             Module.is_deleted.is_(False),
-            Module.is_schema_accepted.is_(True),
+            module_filter(db, user, AccessLevel.READ, Module.id),
         )
     )
     if active_module_id is None:
@@ -163,146 +115,3 @@ def list_data_source_fields(
     )
     items = [ViewFieldResponse.model_validate(item) for item in result.items]
     return StandardListResponse(items=items, pagination=result.pagination)
-
-
-@router.get(
-    "/audience-options",
-    response_model=StandardListResponse[ViewAudienceOptionResponse],
-)
-def list_audience_options(
-    kind: Literal["role", "user"],
-    _: Reader,
-    db: Database,
-    params: Annotated[StandardListRequest[AudienceSort], Query()],
-) -> StandardListResponse[ViewAudienceOptionResponse]:
-    if kind == "role":
-        role_result = execute_standard_list(
-            db,
-            select(Role).where(Role.is_deleted.is_(False)),
-            params,
-            ROLE_AUDIENCE_SPEC,
-        )
-        items = [
-            ViewAudienceOptionResponse(kind="role", id=item.id, label=item.role)
-            for item in role_result.items
-        ]
-        pagination = role_result.pagination
-    else:
-        user_result = execute_standard_list(
-            db,
-            select(User).where(
-                User.status == UserStatus.ACTIVE,
-                User.is_deleted.is_(False),
-            ),
-            params,
-            USER_AUDIENCE_SPEC,
-        )
-        items = [
-            ViewAudienceOptionResponse(kind="user", id=item.id, label=item.username)
-            for item in user_result.items
-        ]
-        pagination = user_result.pagination
-    return StandardListResponse(items=items, pagination=pagination)
-
-
-@router.get("/defaults", response_model=StandardListResponse[ViewDefaultResponse])
-def list_personal_defaults(
-    user: Reader,
-    db: Database,
-    params: Annotated[StandardListRequest[DefaultSort], Query()],
-) -> StandardListResponse[ViewDefaultResponse]:
-    visible_view_ids = (
-        select(SavedView.id)
-        .join(Module, Module.id == SavedView.module_id)
-        .where(
-            visible_to(user),
-            SavedView.is_deleted.is_(False),
-            Module.is_deleted.is_(False),
-            Module.is_schema_accepted.is_(True),
-        )
-    )
-    result = execute_standard_list(
-        db,
-        select(SavedViewDefault).where(
-            SavedViewDefault.user_id == user.id,
-            SavedViewDefault.view_id.in_(visible_view_ids),
-        ),
-        params,
-        DEFAULT_SPEC,
-    )
-    view_ids = [item.view_id for item in result.items]
-    views = {
-        item.id: item
-        for item in db.scalars(select(SavedView).where(SavedView.id.in_(view_ids))).all()
-    }
-    items = [
-        ViewDefaultResponse(
-            module_id=item.module_id,
-            view_id=item.view_id,
-            revision=views[item.view_id].revision,
-        )
-        for item in result.items
-        if item.view_id in views
-    ]
-    return StandardListResponse(items=items, pagination=result.pagination)
-
-
-@router.put("/defaults/{module_id}", response_model=ViewDefaultResponse)
-def set_personal_default(
-    module_id: UUID,
-    payload: ViewDefaultSet,
-    user: Writer,
-    db: Database,
-) -> ViewDefaultResponse:
-    module = db.scalar(
-        select(Module)
-        .where(
-            Module.id == module_id,
-            Module.is_deleted.is_(False),
-            Module.is_schema_accepted.is_(True),
-        )
-        .with_for_update()
-    )
-    if module is None:
-        raise _conflict("default_view_invalid", "The default view is unavailable")
-    view = db.scalar(
-        select(SavedView)
-        .where(
-            SavedView.id == payload.view_id,
-            SavedView.module_id == module_id,
-            SavedView.is_deleted.is_(False),
-            visible_to(user),
-        )
-        .with_for_update()
-    )
-    if view is None:
-        raise _conflict("default_view_invalid", "The default view is unavailable")
-    existing = db.scalar(
-        select(SavedViewDefault).where(
-            SavedViewDefault.user_id == user.id,
-            SavedViewDefault.module_id == module_id,
-        )
-    )
-    if existing is not None and existing.view_id == view.id:
-        return ViewDefaultResponse(module_id=module_id, view_id=view.id, revision=view.revision)
-    if existing is None:
-        existing = SavedViewDefault(user_id=user.id, module_id=module_id, view_id=view.id)
-        db.add(existing)
-    else:
-        existing.view_id = view.id
-    _commit(db, "default_view_invalid", "Unable to save the default view")
-    return ViewDefaultResponse(module_id=module_id, view_id=view.id, revision=view.revision)
-
-
-@router.delete("/defaults/{module_id}", status_code=status.HTTP_204_NO_CONTENT)
-def unset_personal_default(module_id: UUID, user: Writer, db: Database) -> Response:
-    existing = db.scalar(
-        select(SavedViewDefault).where(
-            SavedViewDefault.user_id == user.id,
-            SavedViewDefault.module_id == module_id,
-        )
-    )
-    if existing is not None:
-        db.delete(existing)
-        _commit(db, "default_view_invalid", "Unable to remove the default view")
-    return Response(status_code=status.HTTP_204_NO_CONTENT)

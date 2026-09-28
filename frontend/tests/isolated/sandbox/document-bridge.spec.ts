@@ -3,12 +3,15 @@ import {
   mergeProjectedDesign,
   projectSandboxDocument,
 } from "../../../src/components/systems/sandbox/domain/document-bridge";
-import type { SandboxDocumentV2 } from "../../../src/components/systems/sandbox/domain/document";
+import type { SandboxDocumentV4 } from "../../../src/components/systems/sandbox/domain/document";
 
-function fixture(): SandboxDocumentV2 {
+const openOptionId = "00000000-0000-4000-8000-000000000041";
+const closedOptionId = "00000000-0000-4000-8000-000000000042";
+
+function fixture(): SandboxDocumentV4 {
   return {
     kind: "openslate-sandbox",
-    schemaVersion: 2,
+    schemaVersion: 4,
     design: {
       departments: [{ id: "operations", name: "Operations", closed: false }],
       modules: [
@@ -17,6 +20,7 @@ function fixture(): SandboxDocumentV2 {
           departmentId: "operations",
           name: "Requests",
           closed: false,
+          titleFieldId: "title",
           fields: [
             {
               id: "title",
@@ -34,8 +38,11 @@ function fixture(): SandboxDocumentV2 {
               closed: false,
               config: {
                 kind: "select",
-                defaultValue: "Open",
-                options: ["Open", "Closed"],
+                defaultValue: openOptionId,
+                options: [
+                  { id: openOptionId, label: "Open" },
+                  { id: closedOptionId, label: "Closed" },
+                ],
               },
             },
           ],
@@ -45,6 +52,7 @@ function fixture(): SandboxDocumentV2 {
           departmentId: "operations",
           name: "Equipment",
           closed: false,
+          titleFieldId: null,
           fields: [
             {
               id: "asset-tag",
@@ -75,9 +83,9 @@ function fixture(): SandboxDocumentV2 {
         equipment: { x: 376, y: 56, width: 280, height: 132 },
       },
     },
-    automations: [
+    triggers: [
       {
-        id: "rich-automation",
+        id: "rich-trigger",
         name: "Escalate an open request",
         enabled: true,
         priority: 4,
@@ -89,7 +97,7 @@ function fixture(): SandboxDocumentV2 {
               id: "status-is-open",
               field: { moduleId: "requests", fieldId: "status" },
               operator: "=",
-              value: { kind: "literal", value: "Open" },
+              value: { kind: "literal", value: openOptionId },
             },
             {
               id: "title-is-present",
@@ -122,7 +130,7 @@ function fixture(): SandboxDocumentV2 {
           {
             id: "request-1",
             moduleId: "requests",
-            values: { title: "Printer unavailable", status: "Open" },
+            values: { title: "Printer unavailable", status: openOptionId },
           },
         ],
         links: [],
@@ -142,7 +150,7 @@ function fixture(): SandboxDocumentV2 {
             relationships: [],
             layout: {},
           },
-          automations: [],
+          triggers: [],
           scenarios: [],
         },
       },
@@ -150,11 +158,11 @@ function fixture(): SandboxDocumentV2 {
   };
 }
 
-function documentWithSecondAutomation(): SandboxDocumentV2 {
+function documentWithSecondTrigger(): SandboxDocumentV4 {
   const document = fixture();
-  document.automations = [
+  document.triggers = [
     {
-      id: "reference-automation",
+      id: "reference-trigger",
       name: "Copy equipment tag",
       enabled: true,
       priority: 0,
@@ -166,7 +174,7 @@ function documentWithSecondAutomation(): SandboxDocumentV2 {
             id: "status-is-open",
             field: { moduleId: "requests", fieldId: "status" },
             operator: "=",
-            value: { kind: "literal", value: "Open" },
+            value: { kind: "literal", value: openOptionId },
           },
         ],
       },
@@ -185,18 +193,18 @@ function documentWithSecondAutomation(): SandboxDocumentV2 {
         { id: "notify", kind: "notification", message: "Copied tag" },
       ],
     },
-    { ...document.automations[0], priority: 1 },
+    { ...document.triggers[0], priority: 1 },
   ];
   return document;
 }
 
-test("v2 documents round-trip through the legacy Designer projection", () => {
+test("v4 documents round-trip through the legacy Designer projection", () => {
   const document = fixture();
   const projected = projectSandboxDocument(document);
 
   expect(projected.modules[0].fields[1]).toMatchObject({
     type: "Select",
-    value: "Open",
+    value: openOptionId,
     options: "Open, Closed",
   });
   expect(projected.relationships[0].fieldMappings).toEqual([
@@ -208,7 +216,7 @@ test("v2 documents round-trip through the legacy Designer projection", () => {
     moduleId: "requests",
     fieldId: "status",
     operator: "=",
-    value: "Open",
+    value: openOptionId,
   });
 
   expect(mergeProjectedDesign(document, projected, projected)).toEqual(
@@ -216,7 +224,7 @@ test("v2 documents round-trip through the legacy Designer projection", () => {
   );
 });
 
-test("a graph-only edit keeps rich automation steps and scenarios unchanged", () => {
+test("a graph-only edit keeps rich trigger steps and scenarios unchanged", () => {
   const document = fixture();
   const projected = projectSandboxDocument(document);
   const next = structuredClone(projected);
@@ -225,7 +233,7 @@ test("a graph-only edit keeps rich automation steps and scenarios unchanged", ()
   const merged = mergeProjectedDesign(document, projected, next);
 
   expect(merged.design.modules[0].name).toBe("Service requests");
-  expect(merged.automations).toEqual(document.automations);
+  expect(merged.triggers).toEqual(document.triggers);
   expect(merged.scenarios).toEqual(document.scenarios);
   expect(merged.versions).toEqual(document.versions);
 });
@@ -241,24 +249,24 @@ test("editing a projected action retains the full unchanged condition group", ()
 
   const merged = mergeProjectedDesign(document, projected, next);
 
-  expect(merged.automations).toEqual([
+  expect(merged.triggers).toEqual([
     expect.objectContaining({
-      id: "rich-automation",
+      id: "rich-trigger",
       actions: [
         {
-          id: "rich-automation:action",
+          id: "rich-trigger:action",
           kind: "notification",
           message: "Escalate to Operations",
         },
       ],
-      conditionGroup: document.automations[0].conditionGroup,
+      conditionGroup: document.triggers[0].conditionGroup,
     }),
   ]);
   expect(merged.scenarios).toEqual(document.scenarios);
 });
 
 test("rule metadata edits preserve direct relationship references and extra steps", () => {
-  const document = documentWithSecondAutomation();
+  const document = documentWithSecondTrigger();
   const projected = projectSandboxDocument(document);
   const next = structuredClone(projected);
   if (
@@ -272,8 +280,8 @@ test("rule metadata edits preserve direct relationship references and extra step
   next.rules[0].name = "Copy the related equipment tag";
 
   const merged = mergeProjectedDesign(document, projected, next);
-  const original = document.automations[0];
-  const updated = merged.automations[0];
+  const original = document.triggers[0];
+  const updated = merged.triggers[0];
 
   expect(updated.name).toBe("Copy the related equipment tag");
   expect(updated.trigger).toEqual(original.trigger);
@@ -282,7 +290,7 @@ test("rule metadata edits preserve direct relationship references and extra step
 });
 
 test("a condition edit retains the full action list including relationship references", () => {
-  const document = documentWithSecondAutomation();
+  const document = documentWithSecondTrigger();
   const projected = projectSandboxDocument(document);
   const next = structuredClone(projected);
   const config = next.rules[0].config;
@@ -291,14 +299,14 @@ test("a condition edit retains the full action list including relationship refer
   config.condition.value = "Closed";
 
   const merged = mergeProjectedDesign(document, projected, next);
-  const updated = merged.automations[0];
+  const updated = merged.triggers[0];
 
-  expect(updated.actions).toEqual(document.automations[0].actions);
+  expect(updated.actions).toEqual(document.triggers[0].actions);
   expect(updated.conditionGroup).toEqual({
     operator: "all",
     conditions: [
       {
-        id: "reference-automation:condition",
+        id: "reference-trigger:condition",
         field: { moduleId: "requests", fieldId: "status" },
         operator: "=",
         value: { kind: "literal", value: "Closed" },
@@ -351,7 +359,7 @@ test("added token-looking and empty literals remain literal values", () => {
   );
 
   const merged = mergeProjectedDesign(document, projected, next);
-  const byId = new Map(merged.automations.map((item) => [item.id, item]));
+  const byId = new Map(merged.triggers.map((item) => [item.id, item]));
   const token = byId.get("token-literal");
   const empty = byId.get("empty-literal");
   if (!token || !empty) throw new Error("added rules must be present");
@@ -367,38 +375,32 @@ test("added token-looking and empty literals remain literal values", () => {
   expect(empty.actions[0].value).toEqual({ kind: "literal", value: null });
 });
 
-test("legacy rule reordering updates priority without flattening automation steps", () => {
-  const document = documentWithSecondAutomation();
+test("legacy rule reordering updates priority without flattening trigger steps", () => {
+  const document = documentWithSecondTrigger();
   const projected = projectSandboxDocument(document);
   expect(projected.rules.map((rule) => rule.id)).toEqual([
-    "reference-automation",
-    "rich-automation",
+    "reference-trigger",
+    "rich-trigger",
   ]);
   const next = { ...projected, rules: [...projected.rules].reverse() };
 
   const merged = mergeProjectedDesign(document, projected, next);
 
-  expect(merged.automations.map((automation) => automation.id)).toEqual([
-    "rich-automation",
-    "reference-automation",
+  expect(merged.triggers.map((recordTrigger) => recordTrigger.id)).toEqual([
+    "rich-trigger",
+    "reference-trigger",
   ]);
-  expect(merged.automations.map((automation) => automation.priority)).toEqual([
-    0, 1,
-  ]);
-  expect(merged.automations[0].actions).toEqual(
-    document.automations[1].actions,
-  );
-  expect(merged.automations[1].actions).toEqual(
-    document.automations[0].actions,
-  );
+  expect(
+    merged.triggers.map((recordTrigger) => recordTrigger.priority),
+  ).toEqual([0, 1]);
+  expect(merged.triggers[0].actions).toEqual(document.triggers[1].actions);
+  expect(merged.triggers[1].actions).toEqual(document.triggers[0].actions);
 });
 
-test("removing a projected rule removes its canonical automation", () => {
+test("removing a projected rule removes its canonical trigger", () => {
   const document = fixture();
   const projected = projectSandboxDocument(document);
   const next = { ...projected, rules: [] };
 
-  expect(mergeProjectedDesign(document, projected, next).automations).toEqual(
-    [],
-  );
+  expect(mergeProjectedDesign(document, projected, next).triggers).toEqual([]);
 });

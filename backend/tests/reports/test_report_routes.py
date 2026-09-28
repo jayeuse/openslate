@@ -13,7 +13,8 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import Role, User, UserStatus
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.openview.reports.models import (
@@ -30,28 +31,20 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.report_dependencies import load_report_purge_dependencies
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.rbac.support import add_user, make_group_access
 
 pytestmark = pytest.mark.integration
 
 
-def _actor(
-    db: Session, *, permissions: dict[str, bool] | None = None, role: Role | None = None
-) -> User:
-    if role is None:
-        role = Role(role=f"report-{uuid7().hex}", permissions=permissions or {})
-        db.add(role)
-        db.flush()
-    user_id = uuid7()
-    user = User(
-        id=user_id,
-        email=f"report-{user_id.hex}@example.test",
-        username=f"report_{user_id.hex[:20]}",
-        status=UserStatus.ACTIVE.value,
-        role_id=role.id,
-        role=role,
-    )
-    db.add(user)
-    db.flush()
+_ACTORS_KEY = "report_test_actors"
+
+
+def _actor(db: Session, *, level: str | None = AccessLevel.MANAGE, role: str = "member") -> User:
+    """A user who gets ``level`` on every module that :func:`_module` creates later."""
+
+    user = add_user(db, "report", role=role)
+    if level is not None:
+        db.info.setdefault(_ACTORS_KEY, []).append((user, level))
     return user
 
 
@@ -63,14 +56,15 @@ def _client(db: Session, user: User) -> TestClient:
     return TestClient(app)
 
 
-def _module(db: Session, *, accepted: bool = True) -> tuple[Module, Field]:
+def _module(db: Session, *, active: bool = True) -> tuple[Module, Field]:
     department = Department(department_name=f"Report source {uuid7()}")
     db.add(department)
     db.flush()
     module = Module(
         department_id=department.id,
         module_name=f"Report source {uuid7()}",
-        is_schema_accepted=accepted,
+        is_deleted=not active,
+        deleted_at=None if active else datetime.now(UTC),
     )
     db.add(module)
     db.flush()
@@ -84,6 +78,8 @@ def _module(db: Session, *, accepted: bool = True) -> tuple[Module, Field]:
     )
     db.add(field)
     db.flush()
+    for actor, level in db.info.get(_ACTORS_KEY, []):
+        make_group_access(db, [actor], department, module, level=level)
     return module, field
 
 
@@ -100,11 +96,11 @@ def _recipe(field: Field) -> dict[str, object]:
     }
 
 
-def test_private_report_recipe_create_list_read_update_and_stale_revision(
+def test_manager_creates_lists_reads_and_updates_a_report_with_stale_revision(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, permissions={"records.read": True, "records.write": True})
+    owner = _actor(db)
     module, field = _module(db)
     set_audit_actor(db, owner.id)
 
@@ -122,7 +118,7 @@ def test_private_report_recipe_create_list_read_update_and_stale_revision(
         report_id = UUID(created.json()["id"])
         assert created.headers["location"] == f"/api/reports/{report_id}"
         assert created.headers["cache-control"] == "private, no-store"
-        assert created.json()["owner_id"] == str(owner.id)
+        assert not {"owner_id", "audience"} & set(created.json())
         assert created.json()["name"] == "Weekly operations"
         assert created.json()["recipe"]["fields"][0]["field_id"] == str(field.id)
         assert created.json()["revision"] == 1
@@ -156,16 +152,14 @@ def test_private_report_recipe_create_list_read_update_and_stale_revision(
     assert all(row.performed_by == owner.id for row in audit)
 
 
-def test_private_report_owner_and_active_source_are_enforced(integration_owner_db: Session) -> None:
+def test_report_module_access_and_active_source_are_enforced(integration_owner_db: Session) -> None:
     db = integration_owner_db
-    owner = _actor(db, permissions={"records.read": True, "records.write": True})
-    outsider = _actor(db, permissions={"records.read": True, "records.write": True})
-    read_only_owner = _actor(db, permissions={"records.read": True})
-    admin_role = db.scalar(select(Role).where(Role.role == "admin", Role.is_deleted.is_(False)))
-    assert admin_role is not None
-    admin = _actor(db, role=admin_role)
+    owner = _actor(db)
+    outsider = _actor(db, level=None)
+    reader = _actor(db, level=AccessLevel.READ)
+    admin = _actor(db, level=None, role="admin")
     module, field = _module(db)
-    inactive_module, inactive_field = _module(db, accepted=False)
+    inactive_module, inactive_field = _module(db, active=False)
     set_audit_actor(db, owner.id)
 
     with _client(db, owner) as client:
@@ -201,14 +195,27 @@ def test_private_report_owner_and_active_source_are_enforced(integration_owner_d
             == 409
         )
 
-    for user in (outsider, read_only_owner, admin):
-        with _client(db, user) as client:
-            assert client.get("/api/reports").json()["pagination"]["total"] == 0
-            assert client.get(f"/api/reports/{report_id}").status_code == 404
-            assert client.patch(
+    with _client(db, outsider) as client:
+        assert client.get("/api/reports").json()["pagination"]["total"] == 0
+        assert client.get(f"/api/reports/{report_id}").status_code == 404
+        assert (
+            client.patch(
                 f"/api/reports/{report_id}", json={"revision": 1, "name": "Takeover"}
-            ).status_code in {403, 404}
-    with _client(db, read_only_owner) as client:
+            ).status_code
+            == 404
+        )
+    for user, change_status in ((reader, 403), (admin, 200)):
+        with _client(db, user) as client:
+            listed = client.get("/api/reports", params={"module_id": str(module.id)})
+            assert [item["id"] for item in listed.json()["items"]] == [report_id]
+            assert client.get(f"/api/reports/{report_id}").status_code == 200
+            assert (
+                client.patch(
+                    f"/api/reports/{report_id}", json={"revision": 1, "name": "Changed"}
+                ).status_code
+                == change_status
+            )
+    with _client(db, reader) as client:
         assert (
             client.post(
                 "/api/reports",
@@ -222,9 +229,9 @@ def test_report_archive_restore_and_permanent_delete_preserve_then_release_runs(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, permissions={"records.read": True, "records.write": True})
-    outsider = _actor(db, permissions={"records.read": True, "records.write": True})
-    read_only = _actor(db, permissions={"records.read": True})
+    owner = _actor(db)
+    outsider = _actor(db, level=None)
+    read_only = _actor(db, level=AccessLevel.WRITE)
     module, field = _module(db)
     set_audit_actor(db, owner.id)
     with _client(db, owner) as client:
@@ -356,10 +363,9 @@ def test_report_permanent_delete_rolls_back_flushed_child_deletions_on_conflict(
     integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, permissions={"records.read": True, "records.write": True})
+    owner = _actor(db)
     module, field = _module(db)
     report = Report(
-        owner_id=owner.id,
         module_id=module.id,
         name="Rollback snapshot",
         recipe=_recipe(field),
@@ -427,10 +433,9 @@ def test_report_run_eligible_users_reject_duplicate_and_orphan_links(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db)
     recipient = _actor(db)
     module, field = _module(db)
-    report = Report(owner_id=owner.id, module_id=module.id, name="Roster", recipe=_recipe(field))
+    report = Report(module_id=module.id, name="Roster", recipe=_recipe(field))
     db.add(report)
     db.flush()
     run = ReportRun(

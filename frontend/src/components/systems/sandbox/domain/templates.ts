@@ -1,17 +1,18 @@
 import type {
-  SandboxAutomation,
-  SandboxAutomationAction,
+  SandboxTrigger,
+  SandboxTriggerAction,
   SandboxComparisonOperator,
   SandboxDocumentDepartment,
   SandboxDocumentField,
   SandboxDocumentModule,
   SandboxFieldValue,
   SandboxRelationship,
-  SandboxDocumentV2,
+  SandboxDocumentV4,
 } from "./document-types";
+import { SANDBOX_DOCUMENT_SCHEMA_VERSION } from "./document-types";
 import {
   SANDBOX_TEMPLATE_DEFINITIONS,
-  type AutomationActionWithoutId,
+  type TriggerActionWithoutId,
   type CustomField,
   type ModuleDefinition,
   type RelationshipDefinition,
@@ -25,8 +26,8 @@ export type SandboxOrganizationTemplate = {
   description: string;
   recommendedFor: string[];
   highlights: string[];
-  document: SandboxDocumentV2;
-  createDocument: () => SandboxDocumentV2;
+  document: SandboxDocumentV4;
+  createDocument: () => SandboxDocumentV4;
 };
 
 const fieldId = (moduleId: string, key: string) => `${moduleId}-${key}`;
@@ -84,9 +85,14 @@ function field(
         config: {
           kind: "select",
           defaultValue: null,
-          options: [...selectOptions],
+          options: selectOptions.map((label) => ({
+            id: crypto.randomUUID(),
+            label,
+          })),
         },
       };
+    case "User":
+      return { ...base, config: { kind: "user" } };
     case "Email":
       return {
         ...base,
@@ -100,6 +106,28 @@ function field(
   }
 }
 
+function selectChoiceId(
+  sandboxModule: SandboxDocumentModule,
+  fieldKey: string,
+  label: string,
+): string {
+  const selectField = sandboxModule.fields.find(
+    (item) => item.id === fieldId(sandboxModule.id, fieldKey),
+  );
+  if (!selectField || selectField.config.kind !== "select")
+    throw new Error(
+      `Template field ${sandboxModule.id}.${fieldKey} must be Select`,
+    );
+  const choice = selectField.config.options.find(
+    (option) => option.label === label,
+  );
+  if (!choice)
+    throw new Error(
+      `Template option ${label} is missing from ${selectField.name}`,
+    );
+  return choice.id;
+}
+
 function buildModule(definition: ModuleDefinition): SandboxDocumentModule {
   const [id, departmentId, name, customFields] = definition;
   return {
@@ -107,6 +135,7 @@ function buildModule(definition: ModuleDefinition): SandboxDocumentModule {
     departmentId,
     name,
     closed: false,
+    titleFieldId: null,
     fields: [
       field(id, ["id", `${singularModuleName(name)} ID`, "Text", true]),
       field(id, [
@@ -143,13 +172,14 @@ function literal(value: SandboxFieldValue) {
   return { kind: "literal" as const, value };
 }
 
-function fieldChangeAutomation(
+function fieldChangeTrigger(
   id: string,
   name: string,
   moduleId: string,
-  action: AutomationActionWithoutId,
+  statusOptionId: string,
+  action: TriggerActionWithoutId,
   priority: number,
-): SandboxAutomation {
+): SandboxTrigger {
   return {
     id,
     name,
@@ -167,15 +197,15 @@ function fieldChangeAutomation(
           id: `${id}-condition`,
           field: { moduleId, fieldId: fieldId(moduleId, "status") },
           operator: "=",
-          value: literal("On hold"),
+          value: literal(statusOptionId),
         },
       ],
     },
-    actions: [{ ...action, id: `${id}-action` } as SandboxAutomationAction],
+    actions: [{ ...action, id: `${id}-action` } as SandboxTriggerAction],
   };
 }
 
-function thresholdAutomation(
+function thresholdTrigger(
   id: string,
   name: string,
   moduleId: string,
@@ -183,7 +213,7 @@ function thresholdAutomation(
   operator: SandboxComparisonOperator,
   value: number,
   priority: number,
-): SandboxAutomation {
+): SandboxTrigger {
   return {
     id,
     name,
@@ -208,10 +238,10 @@ function thresholdAutomation(
   };
 }
 
-function buildAutomations(
+function buildTriggers(
   definition: TemplateDefinition,
   modules: SandboxDocumentModule[],
-): SandboxAutomation[] {
+): SandboxTrigger[] {
   const prefix = definition.id;
   const thresholdModule = modules.find(
     (item) => item.id === definition.threshold.moduleId,
@@ -221,7 +251,7 @@ function buildAutomations(
       item.id ===
       fieldId(definition.threshold.moduleId, definition.threshold.fieldKey),
   );
-  const automations: SandboxAutomation[] = [
+  const triggers: SandboxTrigger[] = [
     {
       id: `${prefix}-auto-intake`,
       name: `${modules[0]!.name} intake notice`,
@@ -242,7 +272,7 @@ function buildAutomations(
               fieldId: fieldId(modules[0]!.id, "status"),
             },
             operator: "=",
-            value: literal("On hold"),
+            value: literal(selectChoiceId(modules[0]!, "status", "On hold")),
           },
         ],
       },
@@ -258,10 +288,11 @@ function buildAutomations(
         },
       ],
     },
-    fieldChangeAutomation(
+    fieldChangeTrigger(
       `${prefix}-auto-hold`,
       `${modules[1]!.name} hold escalation`,
       modules[1]!.id,
+      selectChoiceId(modules[1]!, "status", "On hold"),
       {
         kind: "set-field",
         target: {
@@ -272,10 +303,11 @@ function buildAutomations(
       },
       1,
     ),
-    fieldChangeAutomation(
+    fieldChangeTrigger(
       `${prefix}-auto-exception`,
       `${modules[2]!.name} exception alert`,
       modules[2]!.id,
+      selectChoiceId(modules[2]!, "status", "On hold"),
       {
         kind: "set-field",
         target: {
@@ -313,10 +345,10 @@ function buildAutomations(
     },
   ];
   if (thresholdModule && thresholdField)
-    automations.splice(
+    triggers.splice(
       3,
       0,
-      thresholdAutomation(
+      thresholdTrigger(
         `${prefix}-auto-threshold`,
         definition.threshold.name,
         thresholdModule.id,
@@ -326,13 +358,13 @@ function buildAutomations(
         3,
       ),
     );
-  return automations;
+  return triggers;
 }
 
 function layoutFor(
   departments: SandboxDocumentDepartment[],
   modules: SandboxDocumentModule[],
-): SandboxDocumentV2["design"]["layout"] {
+): SandboxDocumentV4["design"]["layout"] {
   return Object.fromEntries(
     departments.flatMap((item, departmentIndex) => {
       const children = modules.filter(
@@ -376,16 +408,16 @@ function buildTemplate(
   }));
   const modules = definition.modules.map(buildModule);
   const relationships = definition.relationships.map(relationship);
-  const document: SandboxDocumentV2 = {
+  const document: SandboxDocumentV4 = {
     kind: "openslate-sandbox",
-    schemaVersion: 2,
+    schemaVersion: SANDBOX_DOCUMENT_SCHEMA_VERSION,
     design: {
       departments,
       modules,
       relationships,
       layout: layoutFor(departments, modules),
     },
-    automations: buildAutomations(definition, modules),
+    triggers: buildTriggers(definition, modules),
     scenarios: [],
   };
   return {
@@ -412,6 +444,6 @@ export function sandboxTemplateStats(template: SandboxOrganizationTemplate) {
       0,
     ),
     relationships: template.document.design.relationships.length,
-    automations: template.document.automations.length,
+    triggers: template.document.triggers.length,
   };
 }

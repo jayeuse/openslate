@@ -9,7 +9,6 @@ from fastapi import FastAPI
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.users.permissions import Capability
 from app.systems.sandbox.test_runs.router import router
 from app.systems.sandbox.test_runs.schemas import (
     SandboxTestResultResponse,
@@ -17,14 +16,15 @@ from app.systems.sandbox.test_runs.schemas import (
     SandboxTestRunResponse,
 )
 from tests.rbac.support import _client, make_user
+from tests.sandbox_test_runs.fixtures import option_id
 
 
-def test_tests_require_every_structure_capability_for_reads_and_writes(monkeypatch) -> None:
+def test_tests_are_administrator_only_for_reads_and_writes(monkeypatch) -> None:
     import app.systems.sandbox.test_runs.router as test_router
 
     database = Mock(spec=Session)
     application = _application()
-    partial = make_user("partial", permissions={Capability.DEPARTMENTS_READ.value: True})
+    partial = make_user("partial", role="member")
     client = _client(application, partial, database)
 
     assert client.get("/api/sandbox/tests").status_code == 403
@@ -79,7 +79,7 @@ def test_create_detail_delete_and_validation_follow_the_frontend_contract(monkey
     assert created.status_code == 201
     assert created.headers["location"] == f"/api/sandbox/tests/{response_model.id}"
     assert created.json() == _response_json(response_model)
-    assert detail.status_code == 403
+    assert detail.status_code == 200
     assert readable_detail.status_code == 200
     assert readable_detail.json() == _response_json(response_model)
     assert cleared_response.status_code == 204
@@ -104,15 +104,15 @@ def test_create_detail_delete_and_validation_follow_the_frontend_contract(monkey
 
 def test_test_result_response_allows_the_bounded_cascade_trace_count() -> None:
     traces = [
-        {"automationId": f"automation-{index}", "label": "Automation", "outcome": "Applied"}
+        {"triggerId": f"trigger-{index}", "label": "Trigger", "outcome": "Applied"}
         for index in range(501)
     ]
 
     response = SandboxTestResultResponse.model_validate(
-        {"values": {}, "routes": [], "automationTraces": traces, "issues": []}
+        {"values": {}, "routes": [], "triggerTraces": traces, "issues": []}
     )
 
-    assert len(response.automation_traces) == 501
+    assert len(response.trigger_traces) == 501
 
 
 def _application() -> FastAPI:
@@ -122,31 +122,15 @@ def _application() -> FastAPI:
 
 
 def _user(*, read: bool = False, write: bool = False):
-    capabilities = (
-        (
-            Capability.DEPARTMENTS_READ,
-            Capability.MODULES_READ,
-            Capability.FIELDS_READ,
-            Capability.RELATIONSHIPS_READ,
-        )
-        if read
-        else (
-            Capability.DEPARTMENTS_WRITE,
-            Capability.MODULES_WRITE,
-            Capability.FIELDS_WRITE,
-            Capability.RELATIONSHIPS_WRITE,
-        )
-    )
-    return make_user(
-        "test-user", permissions={capability.value: True for capability in capabilities}
-    )
+    """An administrator; the Sandbox has no narrower read or write access."""
+    return make_user("test-user")
 
 
 def _request_body() -> dict[str, object]:
     return {
         "expectedRevision": 1,
         "moduleId": "requests",
-        "values": {"priority": "High", "status": "", "score": 0},
+        "values": {"priority": option_id("priority", "High"), "status": "", "score": 0},
         "event": {"kind": "record-created"},
     }
 
@@ -156,13 +140,16 @@ def _response() -> SandboxTestRunResponse:
         id=uuid7(),
         createdAt=datetime.now(UTC),
         documentRevision=1,
-        input={"moduleId": "requests", "values": {"priority": "High", "status": ""}},
+        input={
+            "moduleId": "requests",
+            "values": {"priority": option_id("priority", "High"), "status": ""},
+        },
         event={"kind": "record-created"},
-        automationIds=None,
+        triggerIds=None,
         result={
-            "values": {"priority": "High", "status": "Triaged"},
+            "values": {"priority": option_id("priority", "High"), "status": "Triaged"},
             "routes": [],
-            "automationTraces": [],
+            "triggerTraces": [],
             "issues": [],
         },
     )

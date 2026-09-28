@@ -36,8 +36,14 @@ discarding browser state. See [authentication and authorization](08-authenticati
 for session admission and account eligibility.
 
 Some workspace surfaces remain browser-local sample state. Sandbox is an
-exception: its Build, Automations, Test, History, and Review & Publish workflow
+exception: its Build, Triggers, Test, History, and Review & Publish workflow
 uses authenticated FastAPI contracts and PostgreSQL. Its temporary Test inputs
 never create operational records. Authorized API adapters preserve loading,
 retry, revision-conflict, and unsaved-draft protection. SSE consumers treat
 events as cache invalidations and never as row data.
+
+OpenView's live Record inspector is read-only: it displays data returned through
+authorized query and Record-read APIs and exposes no Record mutation flow
+([`live-record-inspector.tsx`](../../frontend/src/components/systems/openview/components/live-record-inspector.tsx)).
+Sandbox Test evaluates temporary values against the draft; it does not create or
+change live Records.

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/test";
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/auth/session", (route) =>

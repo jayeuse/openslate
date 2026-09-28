@@ -12,7 +12,7 @@ import {
 import { Alert } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { Empty, EmptyHeader, EmptyDescription } from "@/components/ui/empty";
-import type { Person } from "../../access/domain/model";
+import type { Person } from "../../shared/data/sample-people";
 import { Choice } from "../../shared/components/ui";
 import type { Category, Channel } from "../domain/model";
 import {

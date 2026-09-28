@@ -3,53 +3,32 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
 
 from app.systems.sandbox.designs.field_validation import (
     DocumentValueError,
     validate_value,
 )
-from app.systems.sandbox.designs.mapping_validation import field_metadata, fields_compatible
+from app.systems.sandbox.designs.mapping_validation import (
+    field_metadata,
+    fields_compatible,
+    title_field_issue,
+)
 from app.systems.sandbox.designs.schemas import (
-    AutomationValue,
     DesignField,
     FieldMapping,
     FieldReference,
-    ModuleDocument,
     RelationshipDocument,
     SandboxDocument,
     ScenarioLink,
+    TriggerValue,
     ValidationIssue,
 )
-
-
-@dataclass(slots=True)
-class _ValidationIndexes:
-    modules: dict[str, ModuleDocument]
-    fields: dict[str, set[str]]
-    relationships: dict[str, RelationshipDocument]
-    first_modules: dict[str, ModuleDocument]
-    first_fields: dict[tuple[str, str], DesignField]
-    first_relationships: dict[str, RelationshipDocument]
-
-
-def _build_indexes(document: SandboxDocument) -> _ValidationIndexes:
-    modules = {item.id: item for item in document.design.modules}
-    fields = {item.id: {field.id for field in item.fields} for item in document.design.modules}
-    relationships = {item.id: item for item in document.design.relationships}
-    first_modules: dict[str, ModuleDocument] = {}
-    first_fields: dict[tuple[str, str], DesignField] = {}
-    for module in document.design.modules:
-        if module.id not in first_modules:
-            first_modules[module.id] = module
-            for field in module.fields:
-                first_fields.setdefault((module.id, field.id), field)
-    first_relationships: dict[str, RelationshipDocument] = {}
-    for relationship in document.design.relationships:
-        first_relationships.setdefault(relationship.id, relationship)
-    return _ValidationIndexes(
-        modules, fields, relationships, first_modules, first_fields, first_relationships
-    )
+from app.systems.sandbox.designs.validation_indexes import (
+    ValidationIndexes as _ValidationIndexes,
+)
+from app.systems.sandbox.designs.validation_indexes import (
+    build_indexes as _build_indexes,
+)
 
 
 def validate_document(document: SandboxDocument | dict[str, object]) -> list[ValidationIssue]:
@@ -66,6 +45,8 @@ def validate_document(document: SandboxDocument | dict[str, object]) -> list[Val
             issues.append(
                 _issue("module.department_missing", "Module department does not exist", module.id)
             )
+        if title_issue := title_field_issue(module):
+            issues.append(title_issue)
     for relationship in parsed.design.relationships:
         source_fields = indexes.fields.get(relationship.source_module_id, set())
         target_fields = indexes.fields.get(relationship.target_module_id, set())
@@ -124,7 +105,7 @@ def validate_document(document: SandboxDocument | dict[str, object]) -> list[Val
             )
     _validate_duplicate_ids(parsed, issues)
     _validate_relationship_pairs(parsed, issues)
-    _validate_automations(parsed, indexes, issues)
+    _validate_triggers(parsed, indexes, issues)
     _validate_scenarios(parsed, indexes, issues)
     return issues
 
@@ -138,7 +119,7 @@ def _validate_duplicate_ids(document: SandboxDocument, issues: list[ValidationIs
         ("department", [item.id for item in document.design.departments]),
         ("module", [item.id for item in document.design.modules]),
         ("relationship", [item.id for item in document.design.relationships]),
-        ("automation", [item.id for item in document.automations]),
+        ("trigger", [item.id for item in document.triggers]),
         ("scenario", [item.id for item in document.scenarios]),
     )
     for kind, values in groups:
@@ -222,18 +203,18 @@ def _validate_reference(
     module = indexes.first_modules.get(reference.module_id)
     if module is None:
         issues.append(
-            _issue("automation.module_missing", "Automation references a missing module", target_id)
+            _issue("trigger.module_missing", "Trigger references a missing module", target_id)
         )
         return
     field = _field(indexes, reference.module_id, reference.field_id)
     if field is None:
         issues.append(
-            _issue("automation.field_missing", "Automation references a missing field", target_id)
+            _issue("trigger.field_missing", "Trigger references a missing field", target_id)
         )
     elif module.closed or field.closed:
         issues.append(
             _issue(
-                "automation.reference_closed", "Automation references a closed entity", target_id
+                "trigger.reference_closed", "Trigger references a closed entity", target_id
             )
         )
     if reference.relationship_id is not None:
@@ -241,8 +222,8 @@ def _validate_reference(
         if relationship is None:
             issues.append(
                 _issue(
-                    "automation.relationship_missing",
-                    "Automation references a missing relationship",
+                    "trigger.relationship_missing",
+                    "Trigger references a missing relationship",
                     target_id,
                 )
             )
@@ -252,8 +233,8 @@ def _validate_reference(
         }:
             issues.append(
                 _issue(
-                    "automation.relationship_module_mismatch",
-                    "Automation relationship does not connect its referenced module",
+                    "trigger.relationship_module_mismatch",
+                    "Trigger relationship does not connect its referenced module",
                     target_id,
                 )
             )
@@ -261,7 +242,7 @@ def _validate_reference(
 
 def _validate_value_reference(
     indexes: _ValidationIndexes,
-    value: AutomationValue,
+    value: TriggerValue,
     target_id: str,
     issues: list[ValidationIssue],
 ) -> None:
@@ -271,7 +252,7 @@ def _validate_value_reference(
 
 def _validate_value_for_field(
     indexes: _ValidationIndexes,
-    value: AutomationValue,
+    value: TriggerValue,
     target: DesignField | None,
     target_id: str,
     issues: list[ValidationIssue],
@@ -282,8 +263,8 @@ def _validate_value_for_field(
         if not _value_matches_field(target, value.value):
             issues.append(
                 _issue(
-                    "automation.value_type_invalid",
-                    "Automation value does not match its target field type",
+                    "trigger.value_type_invalid",
+                    "Trigger value does not match its target field type",
                     target_id,
                 )
             )
@@ -293,34 +274,34 @@ def _validate_value_for_field(
     if source is not None and not fields_compatible(source, target):
         issues.append(
             _issue(
-                "automation.value_type_invalid",
-                "Automation field reference is incompatible with its target field",
+                "trigger.value_type_invalid",
+                "Trigger field reference is incompatible with its target field",
                 target_id,
             )
         )
 
 
-def _validate_automations(
+def _validate_triggers(
     document: SandboxDocument,
     indexes: _ValidationIndexes,
     issues: list[ValidationIssue],
 ) -> None:
-    for automation in document.automations:
-        trigger = automation.trigger
+    for record_trigger in document.triggers:
+        trigger = record_trigger.trigger
         if trigger.kind == "record-created" or trigger.kind == "schedule":
             if trigger.module_id not in indexes.modules:
                 issues.append(
                     _issue(
-                        "automation.module_missing",
-                        "Automation references a missing module",
-                        automation.id,
+                        "trigger.module_missing",
+                        "Trigger references a missing module",
+                        record_trigger.id,
                     )
                 )
         else:
             _validate_reference(
                 indexes,
                 FieldReference(module_id=trigger.module_id, field_id=trigger.field_id),
-                automation.id,
+                record_trigger.id,
                 issues,
             )
         if trigger.kind == "threshold-crossed":
@@ -328,26 +309,26 @@ def _validate_automations(
                 indexes,
                 trigger.value,
                 _field(indexes, trigger.module_id, trigger.field_id),
-                automation.id,
+                record_trigger.id,
                 issues,
             )
-        for condition in automation.condition_group.conditions:
-            _validate_reference(indexes, condition.field, automation.id, issues)
+        for condition in record_trigger.condition_group.conditions:
+            _validate_reference(indexes, condition.field, record_trigger.id, issues)
             _validate_value_for_field(
                 indexes,
                 condition.value,
                 _field(indexes, condition.field.module_id, condition.field.field_id),
-                automation.id,
+                record_trigger.id,
                 issues,
             )
-        for action in automation.actions:
+        for action in record_trigger.actions:
             if action.kind == "set-field":
-                _validate_reference(indexes, action.target, automation.id, issues)
+                _validate_reference(indexes, action.target, record_trigger.id, issues)
                 _validate_value_for_field(
                     indexes,
                     action.value,
                     _field(indexes, action.target.module_id, action.target.field_id),
-                    automation.id,
+                    record_trigger.id,
                     issues,
                 )
             elif action.kind == "create-record":
@@ -355,9 +336,9 @@ def _validate_automations(
                 if module is None or module.closed:
                     issues.append(
                         _issue(
-                            "automation.module_missing",
-                            "Automation action references a missing or closed module",
-                            automation.id,
+                            "trigger.module_missing",
+                            "Trigger action references a missing or closed module",
+                            record_trigger.id,
                         )
                     )
                 for value in action.values:
@@ -365,16 +346,16 @@ def _validate_automations(
                     if field is None or field.closed:
                         issues.append(
                             _issue(
-                                "automation.field_missing",
-                                "Automation action references a missing or closed field",
-                                automation.id,
+                                "trigger.field_missing",
+                                "Trigger action references a missing or closed field",
+                                record_trigger.id,
                             )
                         )
                     _validate_value_for_field(
                         indexes,
                         value.value,
                         field,
-                        automation.id,
+                        record_trigger.id,
                         issues,
                     )
 

@@ -15,7 +15,7 @@ from app.systems.access.identity.contracts import ActionTokenInvalid, InvalidCre
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_login import login_with_provider
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.models import Role, User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserRole, UserStatus
 
 
 def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
@@ -23,13 +23,12 @@ def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
     monkeypatch.setattr(provider_sessions, "utc_now", lambda: now)
     monkeypatch.setattr("app.systems.access.identity.eligibility.utc_now", lambda: now)
     provider_id, provider_session_id = uuid4(), uuid4()
-    role = Role(id=uuid4(), role=UserRole.MEMBER, permissions={})
+    role = UserRole.MEMBER
     user = User(
         id=uuid4(),
         email="expiry@example.test",
         username="expiry",
         status=status,
-        role_id=role.id,
         role=role,
         supabase_user_id=provider_id,
         expires_at=now if expired else None,

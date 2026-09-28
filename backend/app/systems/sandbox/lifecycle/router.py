@@ -6,11 +6,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_capability, require_roles
+from app.common.dependencies import require_admin
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.systems.access.users.models import User, UserRole
-from app.systems.access.users.permissions import Capability
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import get_audit_context
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
@@ -47,10 +46,8 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 
 router = APIRouter(tags=["lifecycle"])
-AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
-DepartmentWriteUser = Annotated[User, Depends(require_capability(Capability.DEPARTMENTS_WRITE))]
-ModuleWriteUser = Annotated[User, Depends(require_capability(Capability.MODULES_WRITE))]
-FieldWriteUser = Annotated[User, Depends(require_capability(Capability.FIELDS_WRITE))]
+# Close, reopen and purge change the schema, so only an administrator runs them.
+AdminUser = Annotated[User, Depends(require_admin)]
 
 _TARGET_MODELS: dict[LifecycleTargetType, type[Any]] = {
     LifecycleTargetType.DEPARTMENT: Department,
@@ -289,7 +286,7 @@ def _reopen(
 )
 def preview_department_close(
     department_id: UUID,
-    user: DepartmentWriteUser,
+    user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     response: Response,
 ) -> LifecycleClosePreviewResponse:
@@ -303,7 +300,7 @@ def preview_department_close(
 def close_department(
     department_id: UUID,
     payload: LifecycleCloseRequest,
-    user: DepartmentWriteUser,
+    user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     response: Response,
 ) -> LifecycleMutationResponse:
@@ -317,7 +314,7 @@ def close_department(
 def reopen_department(
     department_id: UUID,
     payload: LifecycleReopenRequest,
-    user: DepartmentWriteUser,
+    user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> LifecycleMutationResponse:
     return _reopen(LifecycleTargetType.DEPARTMENT, department_id, payload, user, db)
@@ -326,7 +323,7 @@ def reopen_department(
 @router.post("/modules/{module_id}/close/preview", response_model=LifecycleClosePreviewResponse)
 def preview_module_close(
     module_id: UUID,
-    user: ModuleWriteUser,
+    user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     response: Response,
 ) -> LifecycleClosePreviewResponse:
@@ -337,7 +334,7 @@ def preview_module_close(
 def close_module(
     module_id: UUID,
     payload: LifecycleCloseRequest,
-    user: ModuleWriteUser,
+    user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     response: Response,
 ) -> LifecycleMutationResponse:
@@ -348,7 +345,7 @@ def close_module(
 def reopen_module(
     module_id: UUID,
     payload: LifecycleReopenRequest,
-    user: ModuleWriteUser,
+    user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> LifecycleMutationResponse:
     return _reopen(LifecycleTargetType.MODULE, module_id, payload, user, db)
@@ -357,7 +354,7 @@ def reopen_module(
 @router.post("/fields/{field_id}/close/preview", response_model=LifecycleClosePreviewResponse)
 def preview_field_close(
     field_id: UUID,
-    user: FieldWriteUser,
+    user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     response: Response,
 ) -> LifecycleClosePreviewResponse:
@@ -368,7 +365,7 @@ def preview_field_close(
 def close_field(
     field_id: UUID,
     payload: LifecycleCloseRequest,
-    user: FieldWriteUser,
+    user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     response: Response,
 ) -> LifecycleMutationResponse:
@@ -379,7 +376,7 @@ def close_field(
 def reopen_field(
     field_id: UUID,
     payload: LifecycleReopenRequest,
-    user: FieldWriteUser,
+    user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> LifecycleMutationResponse:
     return _reopen(LifecycleTargetType.FIELD, field_id, payload, user, db)

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { type SampleRecord } from "@/components/systems/shared/data/sample-data";
 import { sampleOperationMessage } from "../../shared/runtime/sample-async";
-import type { Person } from "../../access/domain/model";
+import type { Person } from "../../shared/data/sample-people";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {

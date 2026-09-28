@@ -7,7 +7,8 @@ from record_queries.test_database import setup_rows
 from sqlalchemy import func, select
 from uuid6 import uuid7
 
-from app.systems.access.users.models import Role, User
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.openview.views.models import SavedView
 from app.systems.openview.views.router import (
@@ -18,85 +19,90 @@ from app.systems.openview.views.router import (
     list_views,
     update_view,
 )
-from app.systems.openview.views.schemas import ViewAudience, ViewCreate, ViewUpdate
+from app.systems.openview.views.schemas import ViewCreate, ViewUpdate
+from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.records.query_schemas import QueryDefinition
+from tests.rbac.support import add_user, make_group_access
 
 pytestmark = pytest.mark.integration
 
 
-def actor(db, role: Role | None = None):
-    actor_id = uuid7()
-    if role is None:
-        role = db.scalar(select(Role).where(Role.role == "member"))
-        assert role is not None
-    user = User(
-        id=actor_id,
-        email=f"p7-{actor_id}@example.com",
-        username=f"p7_{actor_id.hex[:12]}",
-        status="active",
-        role_id=role.id,
-    )
-    db.add(user)
-    db.flush()
-    return user
+def actor(db, role: str = "member"):
+    return add_user(db, "p7", role=role)
 
 
-def accepted_rows(db, kind: str, values: list[object]):
-    module, field, rows = setup_rows(db, kind, values)
-    module.is_schema_accepted = True
-    db.flush()
-    return module, field, rows
+def grant(db, module, *users, level: str = AccessLevel.MANAGE) -> None:
+    """Give the users ``level`` on the module through one new group."""
+
+    make_group_access(db, users, db.get(Department, module.department_id), module, level=level)
 
 
-def test_private_view_is_owner_only_even_for_admin(query_db):
-    owner = actor(query_db)
-    module, _, _ = accepted_rows(query_db, "text", [])
+def test_view_is_shared_with_every_module_reader_and_hidden_from_others(query_db):
+    manager = actor(query_db)
+    viewer = actor(query_db)
+    writer = actor(query_db)
+    no_group = actor(query_db)
+    module, _, _ = setup_rows(query_db, "text", [])
+    grant(query_db, module, manager)
+    grant(query_db, module, viewer, level=AccessLevel.READ)
+    grant(query_db, module, writer, level=AccessLevel.WRITE)
     view = create_view(
-        ViewCreate(module_id=module.id, name="Private", definition=QueryDefinition()),
-        owner,
+        ViewCreate(module_id=module.id, name="Shared", definition=QueryDefinition()),
+        manager,
         query_db,
         Response(),
     )
-    other = User(id=uuid7(), status="active", role=Role(role="admin"))
-    with pytest.raises(HTTPException) as error:
-        get_view(query_db, other, view.id)
-    assert error.value.status_code == 404
-    result = list_views(other, query_db, ViewList(module_id=module.id))
-    assert result.items == []
-    assert get_view(query_db, owner, view.id).owner_id == owner.id
-
-
-def test_role_audience_is_visible_but_not_mutable_to_another_member(query_db):
-    role = Role(
-        role="viewers",
-        permissions={"records.read": True, "records.write": True},
-    )
-    query_db.add(role)
-    query_db.flush()
-    owner = actor(query_db, role)
-    viewer = actor(query_db, role)
-    module, _, _ = accepted_rows(query_db, "text", [])
-    view = create_view(
-        ViewCreate(
-            module_id=module.id,
-            name="Shared with viewers",
-            audience=ViewAudience(kind="role", role_id=role.id),
-            definition=QueryDefinition(),
-        ),
-        owner,
-        query_db,
-        Response(),
-    )
+    admin = User(id=uuid7(), status="active", role="admin")
 
     assert get_view(query_db, viewer, view.id).id == view.id
-    with pytest.raises(HTTPException) as error:
-        update_view(view.id, ViewUpdate(revision=1, name="Changed"), viewer, query_db)
-    assert error.value.status_code == 403
+    assert [
+        item.id for item in list_views(admin, query_db, ViewList(module_id=module.id)).items
+    ] == [view.id]
+    for reader in (viewer, writer):
+        with pytest.raises(HTTPException) as error:
+            update_view(view.id, ViewUpdate(revision=1, name="Changed"), reader, query_db)
+        assert error.value.status_code == 403
+    # A user in no group cannot read the module, so the shared view is hidden.
+    with pytest.raises(HTTPException) as hidden:
+        get_view(query_db, no_group, view.id)
+    assert hidden.value.status_code == 404
+    assert list_views(no_group, query_db, ViewList(module_id=module.id)).items == []
 
 
-def test_private_updates_revision_and_archives_without_exposing_predicates(query_db):
+def test_guest_with_module_read_cannot_create_a_view(query_db):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.common.dependencies import get_current_user
+    from app.core.database import get_db
+    from app.systems.openview.views.router import router
+
+    guest = actor(query_db, role="guest")
+    module, _, _ = setup_rows(query_db, "text", [])
+    grant(query_db, module, guest, level=AccessLevel.WRITE)
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    app.dependency_overrides[get_db] = lambda: query_db
+    app.dependency_overrides[get_current_user] = lambda: guest
+
+    response = TestClient(app).post(
+        "/api/views",
+        json={"module_id": str(module.id), "name": "Guest view", "definition": {}},
+    )
+
+    assert response.status_code == 403
+    assert (
+        query_db.scalar(
+            select(func.count()).select_from(SavedView).where(SavedView.module_id == module.id)
+        )
+        == 0
+    )
+
+
+def test_manager_updates_revision_and_archives_without_exposing_predicates(query_db):
     owner = actor(query_db)
-    module, field, _ = accepted_rows(query_db, "text", [])
+    module, field, _ = setup_rows(query_db, "text", [])
+    grant(query_db, module, owner)
     definition = QueryDefinition(
         filters=[
             {"field_id": field.id, "expected_type": "text", "operator": "eq", "value": "sensitive"}
@@ -120,7 +126,8 @@ def test_private_updates_revision_and_archives_without_exposing_predicates(query
 
 def test_same_normalized_view_patch_does_not_commit_or_bump_revision(query_db):
     owner = actor(query_db)
-    module, _, _ = accepted_rows(query_db, "text", [])
+    module, _, _ = setup_rows(query_db, "text", [])
+    grant(query_db, module, owner)
     view = create_view(
         ViewCreate(module_id=module.id, name="Original", definition=QueryDefinition()),
         owner,
@@ -150,11 +157,14 @@ def test_same_normalized_view_patch_does_not_commit_or_bump_revision(query_db):
     assert after_events == before_events
 
 
-def test_view_mutation_rejects_client_owner_visibility_and_empty_patch():
-    with pytest.raises(ValidationError):
-        ViewCreate(
-            module_id=uuid7(), name="Private", definition=QueryDefinition(), owner_id=uuid7()
-        )
-    assert ViewUpdate(revision=1, visibility="workspace").visibility == "workspace"
+def test_view_mutation_rejects_owner_audience_and_empty_patch():
+    for extra in ({"owner_id": uuid7()}, {"visibility": "workspace"}, {"audience": {}}):
+        with pytest.raises(ValidationError):
+            ViewCreate.model_validate(
+                {"module_id": uuid7(), "name": "Shared", "definition": {}, **extra}
+            )
+    assert ViewUpdate(revision=1, is_default=True).is_default is True
     with pytest.raises(ValidationError):
         ViewUpdate(revision=1)
+    with pytest.raises(ValidationError):
+        ViewUpdate.model_validate({"revision": 1, "visibility": "workspace"})

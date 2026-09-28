@@ -78,7 +78,6 @@ def test_reopen_department_sweeps_independently_closed_descendants(
     module = _item(lifecycle_graph, "module_x")
     field = _item(lifecycle_graph, "field_same")
     record = _item(lifecycle_graph, "source")
-    module.is_schema_accepted = False  # valid schema does not require prior acceptance
     for row in (department, module, field, record):
         row.is_deleted = True  # type: ignore[attr-defined]
     integration_db.flush()
@@ -142,7 +141,6 @@ def test_reopen_rejects_closed_nearest_ancestor_and_names_active_conflict(
     active_conflict = Module(
         department_id=department.id,  # type: ignore[attr-defined]
         module_name=module.module_name,  # type: ignore[attr-defined]
-        is_schema_accepted=True,
     )
     integration_db.add(active_conflict)
     integration_db.commit()

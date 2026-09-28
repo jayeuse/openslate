@@ -115,7 +115,7 @@ def test_provider_password_grant_returns_only_the_explicitly_bound_local_identit
         expires_at=None,
         status="active",
         invitation_sent_at=None,
-        role=SimpleNamespace(is_deleted=False),
+        role="admin",
     )
     db.scalar.return_value = local
     client = Mock()

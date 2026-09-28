@@ -1,11 +1,12 @@
-from enum import StrEnum
+"""Audited persistence for the shared saved views of each module."""
+
 from typing import Any, ClassVar
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     ForeignKey,
-    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -18,80 +19,30 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.base_model import BaseModel
 
 
-class AudienceKind(StrEnum):
-    PRIVATE = "private"
-    EVERYONE = "everyone"
-    ROLE = "role"
-    USER = "user"
-
-
-def _legacy_audience_default(context: Any) -> AudienceKind:
-    """Keep older ORM callers compatible with the visibility projection."""
-
-    visibility = context.get_current_parameters().get("visibility")
-    return AudienceKind.EVERYONE if visibility == "workspace" else AudienceKind.PRIVATE
-
-
 class SavedView(BaseModel):
+    """A shared view of one module. Module readers see it; managers change it.
+
+    At most one active view of a module is its default.
+    """
+
     __tablename__ = "saved_views"
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"definition", "presentation"})
     __table_args__ = (
-        CheckConstraint("visibility IN ('private', 'workspace')", name="ck_saved_views_visibility"),
-        CheckConstraint(
-            "audience_kind IN ('private', 'everyone', 'role', 'user')",
-            name="ck_saved_views_audience_kind",
-        ),
         CheckConstraint("revision > 0", name="ck_saved_views_revision"),
-        CheckConstraint(
-            "(audience_kind = 'private' AND visibility = 'private' "
-            "AND audience_role_id IS NULL AND audience_user_id IS NULL) OR "
-            "(audience_kind = 'everyone' AND visibility = 'workspace' "
-            "AND audience_role_id IS NULL AND audience_user_id IS NULL) OR "
-            "(audience_kind = 'role' AND visibility = 'workspace' "
-            "AND audience_role_id IS NOT NULL AND audience_user_id IS NULL) OR "
-            "(audience_kind = 'user' AND visibility = 'workspace' "
-            "AND audience_role_id IS NULL AND audience_user_id IS NOT NULL)",
-            name="ck_saved_views_audience_reference",
-        ),
         UniqueConstraint("id", "module_id", name="uq_saved_views_id_module"),
-        Index("ix_saved_views_owner_module", "owner_id", "module_id"),
         Index(
-            "ix_saved_views_everyone_module_active",
+            "uq_saved_views_module_default",
             "module_id",
-            postgresql_where=text("audience_kind = 'everyone' AND is_deleted = false"),
-        ),
-        Index(
-            "ix_saved_views_role_module_active",
-            "audience_role_id",
-            "module_id",
-            postgresql_where=text("audience_kind = 'role' AND is_deleted = false"),
-        ),
-        Index(
-            "ix_saved_views_user_module_active",
-            "audience_user_id",
-            "module_id",
-            postgresql_where=text("audience_kind = 'user' AND is_deleted = false"),
+            unique=True,
+            postgresql_where=text("is_default AND NOT is_deleted"),
         ),
     )
     module_id: Mapped[UUID] = mapped_column(
         ForeignKey("modules.id", ondelete="RESTRICT"), nullable=False, index=True
     )
-    owner_id: Mapped[UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
-    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    visibility: Mapped[str] = mapped_column(String(20), nullable=False)
-    audience_kind: Mapped[AudienceKind] = mapped_column(
-        String(20),
-        default=_legacy_audience_default,
-        server_default=text("'private'"),
-        nullable=False,
-    )
-    audience_role_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("roles.id", ondelete="RESTRICT"), nullable=True
-    )
-    audience_user_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
     )
     revision: Mapped[int] = mapped_column(
         Integer, default=1, server_default=text("1"), nullable=False
@@ -103,25 +54,3 @@ class SavedView(BaseModel):
         server_default=text("'{\"version\": 1}'::jsonb"),
         nullable=False,
     )
-
-
-class SavedViewDefault(BaseModel):
-    __tablename__ = "saved_view_defaults"
-    __table_args__ = (
-        UniqueConstraint("user_id", "module_id", name="uq_saved_view_defaults_user_module"),
-        ForeignKeyConstraint(
-            ["view_id", "module_id"],
-            ["saved_views.id", "saved_views.module_id"],
-            ondelete="CASCADE",
-            name="fk_saved_view_defaults_view_module",
-        ),
-        Index("ix_saved_view_defaults_view_module", "view_id", "module_id"),
-    )
-
-    user_id: Mapped[UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    module_id: Mapped[UUID] = mapped_column(
-        ForeignKey("modules.id", ondelete="RESTRICT"), nullable=False
-    )
-    view_id: Mapped[UUID] = mapped_column(nullable=False)

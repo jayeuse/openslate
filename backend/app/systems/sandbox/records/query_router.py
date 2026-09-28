@@ -7,16 +7,17 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies import (
-    require_capability,
-    require_fresh_capabilities,
+    CurrentIdentity,
+    get_current_identity,
+    get_current_user,
+    require_admin,
     require_fresh_exact_admin,
-    require_roles,
 )
-from app.common.dependencies.auth import CurrentIdentity, get_current_identity
 from app.common.listing.schemas import StandardListResponse
 from app.core.database import get_db
-from app.systems.access.users.models import User, UserRole
-from app.systems.access.users.permissions import Capability
+from app.systems.access.policy.checks import require_fresh_module_access
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
@@ -40,35 +41,35 @@ from app.systems.sandbox.records.windowing import query_window_records
 
 router = APIRouter(prefix="/records", tags=["records"])
 Database = Annotated[Session, Depends(get_db)]
-Reader = Annotated[User, Depends(require_capability(Capability.RECORDS_READ))]
+# Each query checks the module in the payload through validate_definition.
+Reader = Annotated[User, Depends(get_current_user)]
 Identity = Annotated[CurrentIdentity, Depends(get_current_identity)]
-Admin = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+# CSV export is administrator-only.
+Admin = Annotated[User, Depends(require_admin)]
 
 
 @router.post("/query", response_model=StandardListResponse[RecordResponse])
-def query(payload: RecordQuery, _: Reader, db: Database) -> StandardListResponse[RecordResponse]:
-    return query_records(db, payload)
+def query(
+    payload: RecordQuery, reader: Reader, db: Database
+) -> StandardListResponse[RecordResponse]:
+    return query_records(db, payload, reader=reader)
 
 
 @router.post("/grouped-query", response_model=GroupedRecordResponse)
 def grouped_query(
-    payload: GroupedRecordQuery, _: Reader, db: Database
+    payload: GroupedRecordQuery, reader: Reader, db: Database
 ) -> GroupedRecordResponse:
-    return query_grouped_records(db, payload)
+    return query_grouped_records(db, payload, reader=reader)
 
 
 @router.post("/window-query", response_model=WindowRecordResponse)
-def window_query(
-    payload: WindowRecordQuery, _: Reader, db: Database
-) -> WindowRecordResponse:
-    return query_window_records(db, payload)
+def window_query(payload: WindowRecordQuery, reader: Reader, db: Database) -> WindowRecordResponse:
+    return query_window_records(db, payload, reader=reader)
 
 
 @router.post("/aggregate-query", response_model=AggregateResponse)
-def aggregate_query(
-    payload: AggregateQuery, _: Reader, db: Database
-) -> AggregateResponse:
-    return aggregate_records(db, payload)
+def aggregate_query(payload: AggregateQuery, reader: Reader, db: Database) -> AggregateResponse:
+    return aggregate_records(db, payload, reader=reader)
 
 
 @router.post("/aggregate-snapshot", response_model=AggregateSnapshotResponse)
@@ -81,21 +82,21 @@ def aggregate_snapshot_route(
     actor_id = actor.id
     bind = db.get_bind()
     engine = bind if isinstance(bind, Engine) else bind.engine
-    # The aggregate uses an independent REPEATABLE READ transaction. Recheck
-    # the exact authenticated session and its current records.read grant after it.
+    # The aggregate uses an independent REPEATABLE READ transaction that checks the
+    # module read level inside it. Recheck the exact session and the level after it.
     db.rollback()
     try:
-        content, bucket_count = aggregate_snapshot(engine, payload)
+        content, bucket_count = aggregate_snapshot(engine, payload, reader_id=actor_id)
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(503, detail="Unable to create aggregate snapshot") from error
 
-    require_fresh_capabilities(
+    require_fresh_module_access(
         db,
         actor_id=actor_id,
         session_id=identity.session_id,
-        expected_role_id=actor.role_id,
-        capabilities=(Capability.RECORDS_READ,),
+        module_id=payload.module_id,
+        level=AccessLevel.READ,
     )
     try:
         append_security_event(
@@ -131,7 +132,7 @@ def export(payload: RecordQuery, actor: Admin, db: Database) -> Response:
     bind = db.get_bind()
     engine = bind if isinstance(bind, Engine) else bind.engine
     db.rollback()
-    content, count = export_snapshot(engine, payload)
+    content, count = export_snapshot(engine, payload, reader_id=actor_id)
     # Recheck current exact-admin membership after generation and fence its event commit.
     require_fresh_exact_admin(db, actor_id)
     commit_export_event(db, actor_id, payload.module_id, count)

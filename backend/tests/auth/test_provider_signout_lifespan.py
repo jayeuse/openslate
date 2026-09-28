@@ -15,7 +15,7 @@ def test_lifespan_retains_database_pool_for_inflight_provider_signout(monkeypatc
 
     app.state.events_listener = idle()
     app.state.smtp_outbox_worker = idle()
-    app.state.automation_worker = idle()
+    app.state.trigger_worker = idle()
     app.state.report_scheduling_worker = idle()
     app.state.provider_signout_worker = SimpleNamespace(start=lambda: None, stop=lambda: False)
     disposed: list[bool] = []

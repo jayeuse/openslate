@@ -12,7 +12,7 @@ from app.systems.sandbox.designs.schemas import ID, StrictModel
 
 TestValue = str | int | Annotated[float, Field(allow_inf_nan=False)] | bool | None
 NonNullTestValue = str | int | Annotated[float, Field(allow_inf_nan=False)] | bool
-MAX_AUTOMATION_TRACES = 5_500
+MAX_TRIGGER_TRACES = 5_500
 
 
 class AddedEvent(StrictModel):
@@ -55,14 +55,14 @@ class SandboxTestRunCreateRequest(StrictModel):
     module_id: ID = Field(alias="moduleId")
     values: dict[ID, TestValue] = Field(default_factory=dict, max_length=5_000)
     event: TestEvent
-    automation_ids: list[ID] | None = Field(default=None, max_length=500, alias="automationIds")
+    trigger_ids: list[ID] | None = Field(default=None, max_length=500, alias="triggerIds")
 
     @model_validator(mode="after")
-    def automation_ids_are_unique(self) -> SandboxTestRunCreateRequest:
-        if self.automation_ids is not None and len(set(self.automation_ids)) != len(
-            self.automation_ids
+    def trigger_ids_are_unique(self) -> SandboxTestRunCreateRequest:
+        if self.trigger_ids is not None and len(set(self.trigger_ids)) != len(
+            self.trigger_ids
         ):
-            raise ValueError("automationIds must be unique")
+            raise ValueError("triggerIds must be unique")
         return self
 
 
@@ -82,8 +82,8 @@ class SandboxTestRouteResponse(StrictModel):
     detail: Annotated[str, Field(min_length=1, max_length=1_000)] | None = None
 
 
-class SandboxTestAutomationTraceResponse(StrictModel):
-    automation_id: ID = Field(alias="automationId")
+class SandboxTestTriggerTraceResponse(StrictModel):
+    trigger_id: ID = Field(alias="triggerId")
     label: Annotated[str, Field(min_length=1, max_length=1_000)]
     outcome: Annotated[str, Field(min_length=1, max_length=1_000)]
 
@@ -91,8 +91,8 @@ class SandboxTestAutomationTraceResponse(StrictModel):
 class SandboxTestResultResponse(StrictModel):
     values: dict[ID, TestValue] = Field(max_length=5_000)
     routes: list[SandboxTestRouteResponse] = Field(max_length=1_000)
-    automation_traces: list[SandboxTestAutomationTraceResponse] = Field(
-        max_length=MAX_AUTOMATION_TRACES, alias="automationTraces"
+    trigger_traces: list[SandboxTestTriggerTraceResponse] = Field(
+        max_length=MAX_TRIGGER_TRACES, alias="triggerTraces"
     )
     issues: list[SandboxTestIssueResponse] = Field(max_length=5_000)
 
@@ -103,7 +103,7 @@ class SandboxTestRunResponse(StrictModel):
     document_revision: Annotated[int, Field(gt=0)] = Field(alias="documentRevision")
     input: SandboxTestInputResponse
     event: TestEvent
-    automation_ids: list[ID] | None = Field(alias="automationIds")
+    trigger_ids: list[ID] | None = Field(alias="triggerIds")
     result: SandboxTestResultResponse
 
 
