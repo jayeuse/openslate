@@ -607,7 +607,9 @@ async function exerciseConnectedBoard(
 
   await page.goto("/boards");
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
-  await page.getByRole("menuitem", { name: "New Board", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "New project Board", exact: true })
+    .click();
   await page.getByLabel("Board name").fill(boardName);
   const [createdBoard] = await Promise.all([
     page.waitForResponse(
