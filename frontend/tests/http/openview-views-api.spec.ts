@@ -578,10 +578,13 @@ async function installViewsApi(
               .toString(16)
               .padStart(12, "0");
             if (absoluteIndex === total - 1) return withDefault(saved);
+            // The older views are separate, active records: archiving or
+            // restoring the deep-linked view must not change them.
             return {
               ...withDefault(saved),
               id: `10000000-0000-4000-8000-${sequence}`,
               name: `Older view ${offset + index + 1}`,
+              is_deleted: false,
             };
           },
         );
