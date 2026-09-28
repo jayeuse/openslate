@@ -14,7 +14,14 @@ async function signIn(page: Page) {
 
 // Themes change look only. Compare the persistent shell and page, excluding
 // Next's changing script payloads and the session curtain outside the shell.
+// The Access entry appears only after `/api/auth/me` answers with the default
+// administrator, so wait for it before each snapshot to compare settled shells.
 async function snapshot(page: Page) {
+  await expect(
+    page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("button", { name: /^Access/ }),
+  ).toBeVisible();
   return page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
     if (!shell) throw new Error("Workspace shell is unavailable");
