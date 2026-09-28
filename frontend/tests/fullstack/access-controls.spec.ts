@@ -98,7 +98,11 @@ async function signIn(
   await page.getByLabel("Email", { exact: true }).fill(credentials.email);
   await page.getByLabel("Password", { exact: true }).fill(credentials.password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/(openview|sandbox)$/u);
+  await expect(page).toHaveURL(
+    (url) =>
+      url.origin === new URL(origin).origin &&
+      /^\/(openview|sandbox)$/u.test(url.pathname),
+  );
 }
 
 async function getJson<T>(page: Page, path: string): Promise<T> {
@@ -443,7 +447,7 @@ async function createGroup(
     .getByRole("button", { name: "Create group", exact: true })
     .click();
 
-  const groupPanel = page.getByRole("dialog", { name });
+  const groupPanel = page.getByRole("dialog", { name, exact: true });
   await expect(groupPanel).toBeVisible();
   const groupId = new URL(page.url()).searchParams.get("group");
   expect(groupId).toMatch(
@@ -475,7 +479,7 @@ async function createGroup(
 }
 
 async function closeGroupPanel(page: Page, name: string): Promise<void> {
-  const groupPanel = page.getByRole("dialog", { name });
+  const groupPanel = page.getByRole("dialog", { name, exact: true });
   await groupPanel.getByRole("button", { name: "Close", exact: true }).click();
   await expect(groupPanel).toBeHidden();
 }
@@ -704,7 +708,9 @@ test("admin and a department manager manage group membership across the live Acc
     await closeGroupPanel(page, unrelatedGroupName);
 
     await page.goto("/access?view=people");
-    await expect(page.getByRole("heading", { name: "People" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "People", exact: true }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Invite person" }).click();
     const inviteDialog = page.getByRole("dialog", { name: "Invite a person" });
     await inviteDialog.getByLabel("Email", { exact: true }).fill(pendingEmail);
@@ -776,7 +782,7 @@ test("admin and a department manager manage group membership across the live Acc
       managerPage.getByRole("heading", { name: "Groups" }),
     ).toBeVisible();
     await expect(
-      managerPage.getByText(managerGroupName, { exact: true }),
+      managerPage.getByRole("button", { name: managerGroupName, exact: true }),
     ).toBeVisible();
     await expect(
       managerPage.getByText(unrelatedGroupName, { exact: true }),
@@ -789,6 +795,7 @@ test("admin and a department manager manage group membership across the live Acc
     );
     const managerPanel = managerPage.getByRole("dialog", {
       name: managerGroupName,
+      exact: true,
     });
     await expect(managerPanel).toBeVisible();
     await managerPanel
