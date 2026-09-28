@@ -256,6 +256,19 @@ def test_two_api_processes_deliver_opaque_invalidation_and_recheck_revoked_sessi
             api_process.stop()
         if department_id is not None:
             with provider_identity.owner_engine.begin() as connection:
+                # Reopening the department creates its Board, which references it.
+                connection.execute(
+                    text(
+                        "DELETE FROM public.audit_logs WHERE entity_type = 'boards' "
+                        "AND entity_id IN (SELECT id FROM public.boards "
+                        "WHERE department_id = :department_id)"
+                    ),
+                    {"department_id": department_id},
+                )
+                connection.execute(
+                    text("DELETE FROM public.boards WHERE department_id = :department_id"),
+                    {"department_id": department_id},
+                )
                 connection.execute(
                     text(
                         "DELETE FROM public.audit_logs "
