@@ -95,7 +95,7 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
     db = integration_owner_db
     author = _actor(db, admin=True)
     set_audit_actor(db, author.id)
-    board, child_ids, source_record, department = _board_graph(db, author)
+    board, child_ids, source_record, department = _board_graph(db, author, scope="department")
     department.is_deleted = True
     department.deleted_at = datetime.now(UTC)
     post = db.get(BoardPost, child_ids["board_posts"])

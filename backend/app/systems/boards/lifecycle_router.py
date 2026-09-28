@@ -20,7 +20,7 @@ from app.systems.boards.attachment_models import (
     BoardPostRevisionAttachment,
 )
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardGroup, BoardStatus, BoardWidget
+from app.systems.boards.models import Board, BoardGroup, BoardScope, BoardStatus, BoardWidget
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.post_work import delete_post_work
 from app.systems.boards.record_link_models import (
@@ -79,9 +79,28 @@ def _error(exc: LifecycleError) -> HTTPException:
     )
 
 
+class BoardScopeFixed(LifecycleError):
+    code = "board_scope_fixed"
+
+
 def _require_purge_enabled() -> None:
     if not get_settings().lifecycle_purge_enabled:
         raise LifecyclePurgeDisabled("Permanent Board deletion is disabled")
+
+
+def _require_project_board(db: Session, board_id: UUID) -> None:
+    """Only a project Board is purged on its own.
+
+    The company Board is never deleted, and a department Board is deleted only by
+    its department's purge, so a closed department always has its Board to reopen.
+    """
+
+    scope = db.scalar(select(Board.scope).where(Board.id == board_id))
+    if scope is not None and scope != BoardScope.PROJECT.value:
+        raise BoardScopeFixed(
+            "Only project Boards can be permanently deleted; "
+            "a department Board is deleted with its department"
+        )
 
 
 def _row_state(row: BaseModel | ScheduledWork) -> LifecycleRowState:
@@ -272,6 +291,7 @@ def preview_board_purge(
     try:
         _require_purge_enabled()
         require_fresh_exact_admin(db, user.id)
+        _require_project_board(db, board_id)
         impact, _, _ = _impact(db, user.id, board_id)
         issued = issue_challenge(db, user.id, "purge", "board", board_id, impact.impact_digest)
         return LifecyclePurgePreviewResponse(
@@ -295,6 +315,7 @@ def purge_board(
     response.headers["Cache-Control"] = "no-store"
     try:
         _require_purge_enabled()
+        _require_project_board(db, board_id)
         if payload.confirmation_name != str(board_id):
             raise LifecycleConfirmationNameMismatch("Confirmation must match the Board ID")
         digest = challenge_impact_digest(db, payload.token, user.id, "purge", "board", board_id)

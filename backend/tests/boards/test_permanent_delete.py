@@ -28,7 +28,6 @@ from app.systems.sandbox.lifecycle.exceptions import LifecycleInvalidTarget
 from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.lifecycle.router import router as sandbox_lifecycle_router
 from app.systems.sandbox.lifecycle.schemas import (
-    LifecycleBlockerCode,
     LifecycleOperation,
     LifecycleTargetType,
 )
@@ -72,7 +71,11 @@ def _client(db: Session, actor: User) -> TestClient:
     return TestClient(app)
 
 
-def _board_graph(db: Session, actor: User) -> tuple[Board, dict[str, UUID], Record, Department]:
+def _board_graph(
+    db: Session, actor: User, *, scope: str = "project"
+) -> tuple[Board, dict[str, UUID], Record, Department]:
+    """An archived Board with one of each child; only project Boards are purged on their own."""
+
     board_department = Department(department_name=f"Board purge {uuid7().hex}")
     source_department = Department(department_name=f"Board source {uuid7().hex}")
     db.add_all([board_department, source_department])
@@ -82,8 +85,8 @@ def _board_graph(db: Session, actor: User) -> tuple[Board, dict[str, UUID], Reco
     db.flush()
     record = Record(module_id=module.id, data={"name": "keep"})
     board = Board(
-        scope="department",
-        department_id=board_department.id,
+        scope=scope,
+        department_id=board_department.id if scope == "department" else None,
         name="Archive me",
         status="archived",
     )
@@ -234,16 +237,6 @@ def test_confirmed_board_purge_deletes_its_children_but_preserves_sources_and_au
     admin = _actor(db, admin=True, password=password)
     set_audit_actor(db, admin.id)
     board, children, record, department = _board_graph(db, admin)
-    department.is_deleted = True
-    department.deleted_at = datetime.now(UTC)
-    db.commit()
-    before = plan_lifecycle(
-        db, LifecycleTargetType.DEPARTMENT, department.id, LifecycleOperation.PURGE, admin.id
-    )
-    assert not before.blockers
-    planned = {(row.entity_type, row.entity_id) for row in before.rows}
-    assert ("boards", board.id) in planned
-    assert {(table, row_id) for table, row_id in children.items()} <= planned
     untouched = Board(scope="project", name="Keep this Board")
     db.add(untouched)
     db.commit()
@@ -271,12 +264,6 @@ def test_confirmed_board_purge_deletes_its_children_but_preserves_sources_and_au
     assert db.get(Record, record.id) is not None
     assert db.get(Department, department.id) is not None
     assert db.get(Board, untouched.id) is not None
-    after = plan_lifecycle(
-        db, LifecycleTargetType.DEPARTMENT, department.id, LifecycleOperation.PURGE, admin.id
-    )
-    assert not any(
-        blocker.code is LifecycleBlockerCode.PURGE_BOARD_DEPENDENCY for blocker in after.blockers
-    )
     deleted = db.scalars(
         select(AuditLog).where(
             AuditLog.action == "delete",

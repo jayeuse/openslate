@@ -267,8 +267,9 @@ def _execute(db: Session, plan: LifecyclePlan) -> LifecycleImpactResponse:
                 instance.updated_at = timestamp
             for instance in instances:
                 if isinstance(instance, Department):
-                    # A closed Department archives its Board; a reopen restores it.
-                    sync_department_board(db, instance, create=False)
+                    # A closed Department archives its Board; a reopen restores it,
+                    # or recreates it so that an open Department always has one.
+                    sync_department_board(db, instance, create=not instance.is_deleted)
         db.commit()
     except IntegrityError as error:
         db.rollback()
