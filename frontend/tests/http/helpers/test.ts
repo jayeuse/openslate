@@ -15,11 +15,11 @@ export const defaultSignedInIdentity = {
 } as const;
 
 export const test = base.extend({
-  context: async ({ context }, use) => {
+  context: async ({ context }, provide) => {
     await context.route("**/api/auth/me", (route) =>
       route.fulfill({ json: defaultSignedInIdentity }),
     );
-    await use(context);
+    await provide(context);
   },
 });
 
