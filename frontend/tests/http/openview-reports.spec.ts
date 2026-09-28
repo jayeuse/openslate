@@ -4,7 +4,7 @@ import {
   type Locator,
   type Page,
   type Route,
-} from "@playwright/test";
+} from "./helpers/test";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";

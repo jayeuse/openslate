@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/test";
 
 test("Platform preserves search-to-file navigation and record changes across sections and reload", async ({
   page,

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -828,14 +828,25 @@ test("a slow Reports list shows its skeleton only after the reserve delay", asyn
   await expect(
     page.getByRole("heading", { name: "Reports", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "New Report" })).toBeVisible();
+  // New Report waits only for the signed-in identity, which the query cache
+  // hands over on a zero-delay timer; the held list stays loading.
+  const newReport = page.getByRole("button", { name: "New Report" });
+  await expect
+    .poll(
+      async () => {
+        await page.clock.runFor(1);
+        return newReport.count();
+      },
+      { intervals: [50] },
+    )
+    .toBe(1);
   await expect(
     page.locator('[data-slot="loading-region"][aria-busy="true"]'),
   ).toHaveCount(1);
   const label = page.getByRole("status").filter({
     hasText: "Loading Reports…",
   });
-  await page.clock.runFor(250);
+  await page.clock.runFor(240);
   await expect(label).toHaveCount(0);
   await page.clock.runFor(100);
   await expect(label).toBeVisible();

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/test";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const departmentId = "00000000-0000-4000-8000-0000000000d1";

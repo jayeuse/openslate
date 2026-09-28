@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/test";
 
 import { accessDraftStorageKey } from "../../src/components/systems/access/state/draft-journal-storage";
 
