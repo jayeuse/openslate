@@ -73,6 +73,7 @@ import {
   authMeOptions,
   CATALOG_PAGE_SIZE,
   catalogFirstPageOptions,
+  departmentsOptions,
   fieldsFirstPageOptions,
   isAuthorizationDenied,
   moduleFieldKeys,
@@ -291,6 +292,16 @@ export default function ServerBackedReports() {
     ...(sourcesBase?.items ?? []),
     ...(sourcesMore?.items ?? []),
   ];
+  // A Report belongs to the department of its module.
+  const departmentsQuery = useQuery(departmentsOptions());
+  const departmentNames = new Map(
+    (departmentsQuery.data ?? []).map((item) => [item.id, item.name]),
+  );
+  const reportDepartmentNames = new Map<string, string>();
+  for (const source of sources) {
+    const name = departmentNames.get(source.departmentId);
+    if (name) reportDepartmentNames.set(source.id, name);
+  }
   const canManageReportModule = (moduleId: string) =>
     canManageOpenView(
       currentIdentity ?? undefined,
@@ -950,6 +961,7 @@ export default function ServerBackedReports() {
         <div className="min-w-0">
           <SavedReportsPanel
             reports={reports}
+            departmentNames={reportDepartmentNames}
             showArchived={showArchived}
             selectedReportId={baselineReport?.id}
             templateReportId={templateReportId}

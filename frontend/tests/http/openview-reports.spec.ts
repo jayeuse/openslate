@@ -692,6 +692,40 @@ test("a module reader runs a Report but cannot change, copy or schedule it", asy
   expect(api.counts().manualRuns).toBe(0);
 });
 
+test("saved Report cards name the department of their module", async ({
+  page,
+}) => {
+  await installReportsApi(page, false, report, { level: "read" });
+  await page.route("**/api/departments**", (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: ownerId,
+            department_name: "Field operations",
+            created_at: "2026-09-23T00:00:00Z",
+            updated_at: "2026-09-23T00:00:00Z",
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    }),
+  );
+  await page.goto("/openview?section=reports");
+  const card = page.getByRole("button", { name: /^Operations review/ });
+  await expect(card).toContainText("Field operations");
+  await expect(card).toHaveAccessibleName("Operations review Field operations");
+});
+
 test("duplicating a saved Report creates a separate draft on its first Save", async ({
   page,
 }) => {

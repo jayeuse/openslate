@@ -26,6 +26,8 @@ import { SavedReportsListSkeleton } from "./openview-skeletons";
 
 type SavedReportsPanelProps = {
   reports: OpenViewReport[];
+  /** Department names by module id; a Report belongs to its module's department. */
+  departmentNames: ReadonlyMap<string, string>;
   showArchived: boolean;
   selectedReportId: string | undefined;
   templateReportId: string;
@@ -48,6 +50,7 @@ type SavedReportsPanelProps = {
 
 export function SavedReportsPanel({
   reports,
+  departmentNames,
   showArchived,
   selectedReportId,
   templateReportId,
@@ -127,37 +130,47 @@ export function SavedReportsPanel({
               </Empty>
             ) : null}
             <ul className="flex min-w-0 flex-col gap-2">
-              {reports.map((report) => (
-                <li key={report.id} className="flex min-w-0 gap-2">
-                  <Button
-                    type="button"
-                    variant={
-                      selectedReportId === report.id ? "secondary" : "outline"
-                    }
-                    className="min-h-11 min-w-0 flex-1 justify-start text-left"
-                    disabled={Boolean(actionPending)}
-                    onClick={() => onOpenReport(report)}
-                  >
-                    <span className="min-w-0 truncate">{report.name}</span>
-                    {report.isDeleted ? (
-                      <Badge variant="outline" className="ml-auto">
-                        Archived
-                      </Badge>
-                    ) : null}
-                  </Button>
-                  {canCreate ? (
+              {reports.map((report) => {
+                const department = departmentNames.get(report.moduleId);
+                return (
+                  <li key={report.id} className="flex min-w-0 gap-2">
                     <Button
                       type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={Boolean(actionPending) || report.isDeleted}
-                      onClick={() => onDuplicateReport(report.id)}
+                      variant={
+                        selectedReportId === report.id ? "secondary" : "outline"
+                      }
+                      className="h-auto min-h-11 min-w-0 flex-1 justify-start py-1.5 text-left"
+                      disabled={Boolean(actionPending)}
+                      onClick={() => onOpenReport(report)}
                     >
-                      Duplicate
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate">{report.name}</span>
+                        {department ? (
+                          <span className="text-muted-foreground truncate text-xs font-normal">
+                            {department}
+                          </span>
+                        ) : null}
+                      </span>
+                      {report.isDeleted ? (
+                        <Badge variant="outline" className="ml-auto">
+                          Archived
+                        </Badge>
+                      ) : null}
                     </Button>
-                  ) : null}
-                </li>
-              ))}
+                    {canCreate ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="min-h-11"
+                        disabled={Boolean(actionPending) || report.isDeleted}
+                        onClick={() => onDuplicateReport(report.id)}
+                      >
+                        Duplicate
+                      </Button>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
             {canCreate && !showArchived && reports.length > 0 ? (
               <div className="flex flex-wrap items-end gap-2">

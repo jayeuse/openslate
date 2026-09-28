@@ -320,6 +320,8 @@ export default function ServerBackedDashboards() {
   const refreshActiveSnapshotRef = useRef<() => void>(() => {});
   const restorePendingRef = useRef("");
   const skipRouteLoadForId = useRef("");
+  // Arriving with no Dashboard chosen opens the first one by position, once.
+  const firstDashboardSettled = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -510,6 +512,38 @@ export default function ServerBackedDashboards() {
       refreshCadence !== "manual" ||
       draftWidgets.length > 0;
   draftDirtyRef.current = draftDirty;
+  const firstDashboardId = dashboards[0]?.id;
+  useEffect(() => {
+    if (firstDashboardSettled.current || dashboardListLoading || showArchived)
+      return;
+    firstDashboardSettled.current = true;
+    if (
+      !firstDashboardId ||
+      accessDenied ||
+      routeDashboardId ||
+      selectedDashboard ||
+      dashboardDialogKind ||
+      draftDirty
+    )
+      return;
+    router.replace(
+      serializeOpenViewUrl({
+        section: "dashboards",
+        dashboard: firstDashboardId,
+      }) as Route,
+      { scroll: false },
+    );
+  }, [
+    accessDenied,
+    dashboardDialogKind,
+    dashboardListLoading,
+    draftDirty,
+    firstDashboardId,
+    routeDashboardId,
+    router,
+    selectedDashboard,
+    showArchived,
+  ]);
   // Dashboards belong to departments. Readers of a department see its
   // Dashboards; only its managers create, change, archive or restore them.
   const identity = useQuery(authMeOptions());
@@ -789,6 +823,7 @@ export default function ServerBackedDashboards() {
   }
 
   function beginNewDashboard() {
+    firstDashboardSettled.current = true;
     if (selectedDashboard && draftDirty) {
       setNotice("Save this Dashboard before switching to a new one.");
       return;
@@ -811,6 +846,7 @@ export default function ServerBackedDashboards() {
 
   function chooseDashboard(dashboardId: string) {
     if (!dashboardId || dashboardId === selectedDashboard?.id) return;
+    firstDashboardSettled.current = true;
     if (draftDirty) {
       setNotice("Save this Dashboard before switching to another one.");
       return;
@@ -837,6 +873,7 @@ export default function ServerBackedDashboards() {
       setNotice("Save this Dashboard before changing the list view.");
       return;
     }
+    firstDashboardSettled.current = true;
     dashboardListRequestSequence.current += 1;
     setDashboards([]);
     setDashboardListHasMore(false);
@@ -867,8 +904,8 @@ export default function ServerBackedDashboards() {
       const page = await listOpenViewDashboards({
         limit: DASHBOARD_PAGE_SIZE,
         offset,
-        sortBy: "updated_at",
-        sortOrder: "desc",
+        sortBy: "position",
+        sortOrder: "asc",
         deleted: showArchived ? "only" : "exclude",
       });
       if (dashboardListRequestSequence.current !== sequence) return;

@@ -2768,6 +2768,30 @@ test("a department reader sees its Dashboards without change controls", async ({
     await expect(page.getByRole("menuitem", { name })).toBeHidden();
 });
 
+test("Dashboards opens the first Dashboard by position when none is chosen", async ({
+  page,
+}) => {
+  await installDashboardApi(page, dashboard(), {
+    role: "member",
+    access: [{ department_id: departmentId, module_id: null, level: "read" }],
+  });
+  const listed = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return (
+      url.pathname === "/api/dashboards" &&
+      url.searchParams.get("sort_by") === "position" &&
+      url.searchParams.get("sort_order") === "asc"
+    );
+  });
+  await page.goto("/openview?section=dashboards");
+  await listed;
+
+  await expect(page).toHaveURL(
+    `/openview?section=dashboards&dashboard=${dashboardId}`,
+  );
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
+});
+
 test("a new Dashboard is created in a managed department", async ({ page }) => {
   const api = await installDashboardApi(page, null, {
     role: "member",
