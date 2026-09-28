@@ -1,5 +1,7 @@
 """Live source validation for saved Dashboard widget configurations."""
 
+from uuid import UUID
+
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,8 +33,10 @@ def _invalid_dashboard() -> HTTPException:
     )
 
 
-def validate_dashboard_widgets(db: Session, user: User, widgets: list[DashboardWidgetSpec]) -> None:
-    """Reject inactive modules or stale field references before saving any widget."""
+def validate_dashboard_widgets(
+    db: Session, user: User, department_id: UUID, widgets: list[DashboardWidgetSpec]
+) -> None:
+    """Reject stale field references and modules that are inactive or in another department."""
     module_ids = {widget.config.query.module_id for widget in widgets}
     if not module_ids:
         return
@@ -41,6 +45,7 @@ def validate_dashboard_widgets(db: Session, user: User, widgets: list[DashboardW
             select(Module.id)
             .where(
                 Module.id.in_(module_ids),
+                Module.department_id == department_id,
                 Module.is_deleted.is_(False),
             )
             .order_by(Module.id)

@@ -74,15 +74,16 @@ services add their object, audience and lifecycle checks. See
 | --- | --- | --- |
 | Access | Identity, invitations/recovery, users/roles/groups, workspace policy and service-identity metadata | `app/systems/access/` |
 | Sandbox | Operational schema, Records, relationships, lifecycle, design documents, publication, record triggers and test-run evidence | `app/systems/sandbox/` |
-| OpenView | Saved Views, Chart preferences, Dashboards, report definitions, frozen runs and schedules | `app/systems/openview/` |
+| OpenView | Department Dashboards, shared saved Views, report definitions, frozen runs and schedules | `app/systems/openview/` |
 | Boards | Grants, content, announcements, events/reminders, widgets, attachments, record links and configuration portability | `app/systems/boards/` |
 | Manage | Workspace profile, transactional audit and security-event inspection | `app/systems/manage/` |
 | Platform | Private Storage files, authenticated invalidations, and in-app scheduled-work references | `app/systems/platform/` |
 
 Comms remains reserved. Report and Dashboard configurations do not grant access
 to their source Records. Report capture uses a repeatable-read snapshot, then
-rechecks authorization and recipe state before storing the run and its eligible
-audience. Stored report rows retain ordinary audit behavior.
+rechecks authorization and recipe state before storing the run and the users who
+can read its module. A scheduled run acts as the workspace. Stored report rows
+retain ordinary audit behavior.
 
 Sandbox document validation builds identifier and scenario-link indexes within
 each validation call. Those indexes avoid repeated scans of large documents and

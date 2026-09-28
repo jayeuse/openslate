@@ -124,8 +124,8 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
                 request_method="POST",
                 request_path="/api/reports/run-fixture",
             )
-            # The owner and the outsider are members who read the module through one
-            # group; the third actor is a guest in that group, so it can never run.
+            # The owner and the outsider are members who manage the module through one
+            # group; the third actor is a guest in that group, so it only reads.
             guest_expiry = datetime.now(UTC) + timedelta(days=30)
             users = [
                 User(
@@ -167,7 +167,7 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
                     group_id=group_id,
                     department_id=department_id,
                     module_id=module_id,
-                    level=AccessLevel.WRITE.value,
+                    level=AccessLevel.MANAGE.value,
                 )
             )
             setup.flush()
@@ -210,7 +210,6 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
             setup.add(
                 Report(
                     id=report_id,
-                    owner_id=owner_id,
                     module_id=module_id,
                     name="Operations snapshot",
                     recipe=recipe.model_dump(mode="json"),

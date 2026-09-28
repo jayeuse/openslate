@@ -36,7 +36,6 @@ _ENTITY_ONLY_ENTITIES = frozenset(
         "group_access",
         "group_members",
         "groups",
-        "saved_view_defaults",
         "saved_views",
         "workspace_profiles",
     }
@@ -44,7 +43,7 @@ _ENTITY_ONLY_ENTITIES = frozenset(
 # Events about data inside one module carry that module and reach only an
 # administrator or a subscriber who can read the module.
 MODULE_SCOPED_ENTITIES = frozenset(
-    {"fields", "modules", "records", "relationship_edges", "saved_view_defaults", "saved_views"}
+    {"fields", "modules", "records", "relationship_edges", "saved_views"}
 )
 
 

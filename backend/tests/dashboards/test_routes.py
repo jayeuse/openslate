@@ -1,4 +1,4 @@
-"""Private Dashboard route behavior on the runner-owned PostgreSQL database."""
+"""Department Dashboard route behavior on the runner-owned PostgreSQL database."""
 
 from datetime import UTC, datetime
 from uuid import UUID
@@ -12,6 +12,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditAction, AuditLog
@@ -23,18 +24,20 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.planner import plan_lifecycle
 from app.systems.sandbox.lifecycle.schemas import LifecycleBlockerCode, LifecycleTargetType
 from app.systems.sandbox.modules.models import Module
-from tests.rbac.support import capability_actor, grant_capability_actors
+from tests.rbac.support import add_user, make_group_access
 
 pytestmark = pytest.mark.integration
 
 
-def _actor(
-    db: Session,
-    *,
-    capabilities: dict[str, bool] | None = None,
-    role: str | None = None,
-) -> User:
-    return capability_actor(db, "dash", capabilities, role=role)
+_ACTORS_KEY = "dashboard_test_actors"
+
+
+def _actor(db: Session, *, level: str = AccessLevel.MANAGE) -> User:
+    """A member who gets ``level`` on every department that :func:`_module` creates later."""
+
+    user = add_user(db, "dash")
+    db.info.setdefault(_ACTORS_KEY, []).append((user, level))
+    return user
 
 
 def _client(db: Session, actor: User) -> TestClient:
@@ -45,17 +48,25 @@ def _client(db: Session, actor: User) -> TestClient:
     return TestClient(app)
 
 
-def _module(db: Session, *, name: str = "Dashboard records") -> tuple[Module, Field]:
+def _department(db: Session, name: str = "Dashboards") -> Department:
     department = Department(department_name=f"{name} {uuid7().hex}")
     db.add(department)
     db.flush()
+    for actor, level in db.info.get(_ACTORS_KEY, []):
+        make_group_access(db, [actor], department, level=level)
+    return department
+
+
+def _module(
+    db: Session, *, name: str = "Dashboard records", department: Department | None = None
+) -> tuple[Module, Field]:
+    department = department or _department(db, name)
     module = Module(
         department_id=department.id,
         module_name=name,
     )
     db.add(module)
     db.flush()
-    grant_capability_actors(db, department, module)
     dimension = Field(
         module_id=module.id,
         name="Status",
@@ -139,14 +150,18 @@ def test_owner_can_create_page_revision_update_archive_and_restore_dashboard_dra
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, capabilities={"records.read": True, "records.write": True})
+    owner = _actor(db)
     module, dimension = _module(db)
     set_audit_actor(db, owner.id)
 
     with _client(db, owner) as client:
         created = client.post(
             "/api/dashboards",
-            json={"name": "  Operations  ", "widgets": [_chart(module, dimension)]},
+            json={
+                "department_id": str(module.department_id),
+                "name": "  Operations  ",
+                "widgets": [_chart(module, dimension)],
+            },
         )
         assert created.status_code == 201
         assert created.headers["cache-control"] == "private, no-store"
@@ -154,7 +169,8 @@ def test_owner_can_create_page_revision_update_archive_and_restore_dashboard_dra
         assert created.headers["location"] == f"/api/dashboards/{dashboard_id}"
         assert created.json()["name"] == "Operations"
         assert created.json()["refresh_cadence"] == "manual"
-        assert created.json()["owner_id"] == str(owner.id)
+        assert created.json()["department_id"] == str(module.department_id)
+        assert created.json()["position"] == 0
         assert created.json()["revision"] == 1
         assert created.json()["widgets"][0]["position"] == 0
         assert created.json()["widgets"][0]["config"]["query"]["module_id"] == str(module.id)
@@ -241,7 +257,7 @@ def test_dashboard_persists_summary_workload_record_and_chart_widgets(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, capabilities={"records.read": True, "records.write": True})
+    owner = _actor(db)
     module, dimension = _module(db, name="Live Dashboard widgets")
     set_audit_actor(db, owner.id)
     widgets = [
@@ -255,6 +271,7 @@ def test_dashboard_persists_summary_workload_record_and_chart_widgets(
         created = client.post(
             "/api/dashboards",
             json={
+                "department_id": str(module.department_id),
                 "name": "Operations",
                 "refresh_cadence": "one-minute",
                 "widgets": widgets,
@@ -310,7 +327,7 @@ def test_dashboard_widget_type_change_is_persisted_when_config_is_unchanged(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, capabilities={"records.read": True, "records.write": True})
+    owner = _actor(db)
     module, dimension = _module(db, name="Dashboard widget type change")
     set_audit_actor(db, owner.id)
     summary = _aggregate_widget("summary", module, dimension)
@@ -319,7 +336,11 @@ def test_dashboard_widget_type_change_is_persisted_when_config_is_unchanged(
     with _client(db, owner) as client:
         created = client.post(
             "/api/dashboards",
-            json={"name": "Operations", "widgets": [summary]},
+            json={
+                "department_id": str(module.department_id),
+                "name": "Operations",
+                "widgets": [summary],
+            },
         )
         assert created.status_code == 201, created.text
         dashboard_id = UUID(created.json()["id"])
@@ -339,7 +360,7 @@ def test_dashboard_rejects_stale_record_widget_fields_without_saving(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, capabilities={"records.read": True, "records.write": True})
+    owner = _actor(db)
     module, _ = _module(db, name="Dashboard records query")
     deleted_field = Field(
         module_id=module.id,
@@ -358,50 +379,58 @@ def test_dashboard_rejects_stale_record_widget_fields_without_saving(
         response = client.post(
             "/api/dashboards",
             json={
+                "department_id": str(module.department_id),
                 "name": "Invalid list",
                 "widgets": [_records_widget(module, deleted_field)],
             },
         )
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "dashboard_invalid"
-    assert db.scalar(select(Dashboard).where(Dashboard.owner_id == owner.id)) is None
+    assert (
+        db.scalar(select(Dashboard).where(Dashboard.department_id == module.department_id))
+        is None
+    )
 
 
 def test_dashboard_rejects_unknown_widget_type_and_refresh_cadence(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, capabilities={"records.read": True, "records.write": True})
+    owner = _actor(db)
+    department = _department(db)
     set_audit_actor(db, owner.id)
     with _client(db, owner) as client:
         invalid_widget = client.post(
             "/api/dashboards",
             json={
+                "department_id": str(department.id),
                 "name": "Unknown widget",
                 "widgets": [{"widget_type": "table", "config": {}}],
             },
         )
         invalid_cadence = client.post(
             "/api/dashboards",
-            json={"name": "Unknown cadence", "refresh_cadence": "hourly"},
+            json={
+                "department_id": str(department.id),
+                "name": "Unknown cadence",
+                "refresh_cadence": "hourly",
+            },
         )
         assert invalid_widget.status_code == 422
         assert invalid_cadence.status_code == 422
-    assert db.scalar(select(Dashboard).where(Dashboard.owner_id == owner.id)) is None
+    assert db.scalar(select(Dashboard).where(Dashboard.department_id == department.id)) is None
 
 
-def test_dashboard_owner_scope_hides_foreign_artifacts_from_users_and_admins(
+def test_dashboards_are_hidden_outside_departments_the_user_can_read(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    permissions = {"records.read": True, "records.write": True}
-    owner = _actor(db, capabilities=permissions)
-    dashboard = Dashboard(owner_id=owner.id, name="Private dashboard")
+    department = _department(db, "Hidden dashboards")
+    dashboard = Dashboard(department_id=department.id, name="Department dashboard")
     db.add(dashboard)
     db.flush()
-
-    outsider = _actor(db, capabilities=permissions)
-    admin = _actor(db, role="admin")
+    outsider = add_user(db, "dash-outsider")
+    admin = add_user(db, "dash-admin", role="admin")
 
     set_audit_actor(db, outsider.id)
     with _client(db, outsider) as client:
@@ -415,47 +444,62 @@ def test_dashboard_owner_scope_hides_foreign_artifacts_from_users_and_admins(
 
     set_audit_actor(db, admin.id)
     with _client(db, admin) as client:
-        assert client.get(f"/api/dashboards/{dashboard.id}").status_code == 404
-        assert client.get("/api/dashboards").json()["pagination"]["total"] == 0
+        assert client.get(f"/api/dashboards/{dashboard.id}").status_code == 200
+        listed = client.get("/api/dashboards", params={"department_id": str(department.id)})
+        assert [item["id"] for item in listed.json()["items"]] == [str(dashboard.id)]
 
     persisted = db.get(Dashboard, dashboard.id)
-    assert persisted is not None and persisted.name == "Private dashboard"
+    assert persisted is not None and persisted.name == "Department dashboard"
 
 
-def test_dashboard_routes_let_a_guest_read_but_not_write(
+def test_dashboard_routes_let_a_department_reader_read_but_not_write(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    reader = _actor(db, capabilities={"records.read": True})
-    writer = _actor(db, capabilities={"records.write": True})
+    reader = _actor(db, level=AccessLevel.READ)
+    department = _department(db)
+    manager = add_user(db, "dash-manager")
+    make_group_access(db, [manager], department, level=AccessLevel.MANAGE)
     set_audit_actor(db, reader.id)
+    payload = {"department_id": str(department.id), "name": "Denied"}
 
-    with _client(db, reader) as read_client, _client(db, writer) as write_client:
+    with _client(db, reader) as read_client, _client(db, manager) as write_client:
         assert read_client.get("/api/dashboards").status_code == 200
-        assert read_client.post("/api/dashboards", json={"name": "Denied"}).status_code == 403
-        assert write_client.get("/api/dashboards").status_code == 200
+        assert read_client.post("/api/dashboards", json=payload).status_code == 403
 
-        set_audit_actor(db, writer.id)
-        created = write_client.post("/api/dashboards", json={"name": "Writer dashboard"})
+        set_audit_actor(db, manager.id)
+        created = write_client.post(
+            "/api/dashboards", json={**payload, "name": "Manager dashboard"}
+        )
         assert created.status_code == 201
-        assert created.json()["owner_id"] == str(writer.id)
+        assert created.json()["department_id"] == str(department.id)
+        listed = read_client.get("/api/dashboards").json()["items"]
+        assert [item["id"] for item in listed] == [created.json()["id"]]
 
 
 def test_dashboard_list_uses_bounded_offset_pagination(integration_owner_db: Session) -> None:
     db = integration_owner_db
-    owner = _actor(db, capabilities={"records.read": True})
+    owner = _actor(db, level=AccessLevel.READ)
+    department = _department(db)
     set_audit_actor(db, owner.id)
     db.add_all(
         [
-            Dashboard(owner_id=owner.id, name=name)
-            for name in ("Charlie", "Alpha", "Bravo")
+            Dashboard(department_id=department.id, name=name, position=position)
+            for name, position in (("Charlie", 0), ("Alpha", 2), ("Bravo", 1))
         ]
     )
     db.flush()
 
     with _client(db, owner) as client:
-        first_page = client.get("/api/dashboards?limit=2&offset=0")
-        second_page = client.get("/api/dashboards?limit=2&offset=2")
+        first_page = client.get("/api/dashboards?limit=2&offset=0&sort_by=name")
+        second_page = client.get("/api/dashboards?limit=2&offset=2&sort_by=name")
+        by_position = client.get("/api/dashboards")
+
+    assert [item["name"] for item in by_position.json()["items"]] == [
+        "Charlie",
+        "Bravo",
+        "Alpha",
+    ]
 
     assert [item["name"] for item in first_page.json()["items"]] == ["Alpha", "Bravo"]
     assert first_page.json()["pagination"]["has_more"] is True
@@ -473,7 +517,7 @@ def test_invalid_field_reference_rejects_full_widget_replacement_without_partial
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, capabilities={"records.read": True, "records.write": True})
+    owner = _actor(db)
     module, active_dimension = _module(db, name="Atomic dashboard")
     deleted_dimension = Field(
         module_id=module.id,
@@ -487,7 +531,7 @@ def test_invalid_field_reference_rejects_full_widget_replacement_without_partial
     db.flush()
     deleted_dimension.is_deleted = True
     deleted_dimension.deleted_at = datetime.now(UTC)
-    dashboard = Dashboard(owner_id=owner.id, name="Saved dashboard")
+    dashboard = Dashboard(department_id=module.department_id, name="Saved dashboard")
     db.add(dashboard)
     db.flush()
     existing = DashboardWidget(
@@ -541,11 +585,12 @@ def test_replacing_dashboard_widget_removes_module_purge_blocker_and_preserves_o
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, capabilities={"records.read": True, "records.write": True})
+    owner = _actor(db)
     module_a, dimension_a = _module(db, name="Widget source A")
-    module_b, dimension_b = _module(db, name="Widget source B")
+    department = db.get(Department, module_a.department_id)
+    module_b, dimension_b = _module(db, name="Widget source B", department=department)
     set_audit_actor(db, owner.id)
-    dashboard = Dashboard(owner_id=owner.id, name="Module-owned charts")
+    dashboard = Dashboard(department_id=module_a.department_id, name="Module-owned charts")
     db.add(dashboard)
     db.flush()
     untouched = DashboardWidget(

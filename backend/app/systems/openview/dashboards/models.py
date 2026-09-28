@@ -1,4 +1,4 @@
-"""Audited persistence for owner-private Dashboards, defaults, and widgets."""
+"""Audited persistence for department Dashboards and their widgets."""
 
 from __future__ import annotations
 
@@ -8,11 +8,9 @@ from uuid import UUID
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
-    ForeignKeyConstraint,
     Index,
     Integer,
     String,
-    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -22,7 +20,7 @@ from app.core.base_model import BaseModel
 
 
 class Dashboard(BaseModel):
-    """A revisioned Dashboard owned privately by one user."""
+    """A revisioned Dashboard that belongs to one department."""
 
     __tablename__ = "dashboards"
     __table_args__ = (
@@ -32,12 +30,15 @@ class Dashboard(BaseModel):
             "refresh_cadence IN ('manual', 'one-minute', 'five-minutes')",
             name="ck_dashboards_refresh_cadence",
         ),
-        UniqueConstraint("id", "owner_id", name="uq_dashboards_id_owner"),
-        Index("ix_dashboards_owner_id", "owner_id"),
+        CheckConstraint("position >= 0", name="ck_dashboards_position_nonnegative"),
+        Index("ix_dashboards_department_position", "department_id", "position"),
     )
 
-    owner_id: Mapped[UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    department_id: Mapped[UUID] = mapped_column(
+        ForeignKey("departments.id", ondelete="RESTRICT"), nullable=False
+    )
+    position: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     refresh_cadence: Mapped[str] = mapped_column(
@@ -85,24 +86,3 @@ class DashboardWidget(BaseModel):
     )
     config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     dashboard: Mapped[Dashboard] = relationship(back_populates="widgets")
-
-
-class DashboardDefault(BaseModel):
-    """One user's default Dashboard, constrained to a Dashboard they own."""
-
-    __tablename__ = "dashboard_defaults"
-    __table_args__ = (
-        UniqueConstraint("user_id", name="uq_dashboard_defaults_user_id"),
-        ForeignKeyConstraint(
-            ["dashboard_id", "user_id"],
-            ["dashboards.id", "dashboards.owner_id"],
-            ondelete="CASCADE",
-            name="fk_dashboard_defaults_dashboard_owner",
-        ),
-        Index("ix_dashboard_defaults_dashboard_id", "dashboard_id"),
-    )
-
-    user_id: Mapped[UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
-    dashboard_id: Mapped[UUID] = mapped_column(nullable=False)

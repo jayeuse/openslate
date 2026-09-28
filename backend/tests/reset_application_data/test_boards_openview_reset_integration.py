@@ -132,8 +132,8 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             )
             dashboard_id, widget_id = uuid4(), uuid4()
             cursor.execute(
-                "INSERT INTO public.dashboards (id, owner_id, name) VALUES (%s, %s, %s)",
-                (dashboard_id, member_id, f"reset-dashboard-{dashboard_id.hex[:12]}"),
+                "INSERT INTO public.dashboards (id, department_id, name) VALUES (%s, %s, %s)",
+                (dashboard_id, department_id, f"reset-dashboard-{dashboard_id.hex[:12]}"),
             )
             cursor.execute(
                 "INSERT INTO public.dashboard_widgets "
@@ -209,16 +209,11 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "VALUES (%s, %s, %s)",
                 (uuid4(), board_id, record_id),
             )
-            cursor.execute(
-                "INSERT INTO public.dashboard_defaults (id, user_id, dashboard_id) "
-                "VALUES (%s, %s, %s)",
-                (uuid4(), member_id, dashboard_id),
-            )
             report_id, run_id = uuid4(), uuid4()
             cursor.execute(
-                "INSERT INTO public.reports (id, owner_id, module_id, name, recipe) "
-                "VALUES (%s, %s, %s, %s, '{}'::jsonb)",
-                (report_id, member_id, module_id, "Reset report"),
+                "INSERT INTO public.reports (id, module_id, name, recipe) "
+                "VALUES (%s, %s, %s, '{}'::jsonb)",
+                (report_id, module_id, "Reset report"),
             )
             cursor.execute(
                 "INSERT INTO public.report_schedules "
@@ -275,7 +270,7 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             "board_announcement_personal_states board_announcement_revisions "
             "board_announcements board_events "
             "board_favorites board_homes boards board_record_placements board_templates "
-            "dashboard_defaults dashboard_widgets dashboards reports report_schedules "
+            "dashboard_widgets dashboards reports report_schedules "
             "report_runs report_run_rows report_run_eligible_users "
             "scheduled_work in_app_notifications"
         ).split():
@@ -308,7 +303,7 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "board_announcement_personal_states board_announcement_revisions "
                 "board_announcements board_events "
                 "board_record_placements boards board_templates dashboard_widgets "
-                "dashboard_defaults dashboards reports report_schedules report_runs "
+                "dashboards reports report_schedules report_runs "
                 "report_run_rows report_run_eligible_users scheduled_work in_app_notifications"
             ).split():
                 cursor.execute(f"SELECT count(*) FROM public.{table}")

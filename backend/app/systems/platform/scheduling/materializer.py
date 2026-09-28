@@ -118,7 +118,7 @@ def materialize_due_schedules(
             )
             work = queue_report_occurrence(db, report.id, scheduled_for=schedule.next_due_at)
         except ValueError:
-            # An archived Report, ineligible owner/source, or corrupt policy
+            # An archived Report, an inactive source module, or a corrupt policy
             # must not hot-loop at the head of the due queue.
             schedule.enabled = False
             schedule.revision += 1

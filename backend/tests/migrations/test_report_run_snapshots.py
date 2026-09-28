@@ -76,10 +76,10 @@ def _seed_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
         connection.execute(
             text(
                 "INSERT INTO public.reports "
-                "(id, owner_id, module_id, name, recipe, is_deleted) "
-                "VALUES (:id, :owner_id, :module_id, 'Archived report', '{}'::jsonb, true)"
+                "(id, module_id, name, recipe, is_deleted) "
+                "VALUES (:id, :module_id, 'Archived report', '{}'::jsonb, true)"
             ),
-            {"id": ids["report"], "owner_id": ids["owner"], "module_id": ids["module"]},
+            {"id": ids["report"], "module_id": ids["module"]},
         )
 
 

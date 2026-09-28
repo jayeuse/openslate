@@ -1,4 +1,4 @@
-"""Roster-restricted Report output reads and metadata-only discovery."""
+"""Report output reads for users who were module readers at run time and still are."""
 
 from datetime import datetime
 from typing import Annotated, Any, Literal, cast
@@ -16,7 +16,6 @@ from app.core.database import get_db
 from app.systems.access.policy.checks import module_filter
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
-from app.systems.openview.reports.audience import run_audience_clause
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunEligibleUser
 from app.systems.openview.reports.run_service import REPORT_RUN_METADATA_COLUMNS
 from app.systems.openview.reports.schemas import (
@@ -69,7 +68,6 @@ def _report_for_output(db: Session, user: User, report_id: UUID) -> Report:
         .options(load_only(Report.id, Report.is_deleted, raiseload=True))
         .where(
             Report.id == report_id,
-            run_audience_clause(user),
             module_filter(db, user, AccessLevel.READ, Report.module_id),
         )
     )
@@ -123,7 +121,6 @@ def discover_shared_report_runs(
             ReportRun.is_deleted.is_(False),
             Report.is_deleted.is_(False),
             Report.deleted_at.is_(None),
-            run_audience_clause(user),
             module_filter(db, user, AccessLevel.READ, Report.module_id),
         )
     )

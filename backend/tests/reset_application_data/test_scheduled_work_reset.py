@@ -12,11 +12,13 @@ from operations import reset_models, reset_planning
 
 
 def test_reset_includes_views_boards_dashboards_and_reports_in_safe_delete_order() -> None:
-    assert "saved_view_defaults" in reset_models.APPLICATION_TABLES
-    assert "saved_view_defaults" in reset_models.NON_PRESERVED_TABLES
-    assert "public.saved_view_defaults" in reset_models._LOCK_APPLICATION_STATEMENT
-    assert reset_models.DELETE_ORDER.index("saved_view_defaults") < reset_models.DELETE_ORDER.index(
-        "saved_views"
+    for removed in ("saved_view_defaults", "dashboard_defaults", "openview_chart_preferences"):
+        assert removed not in reset_models.APPLICATION_TABLES
+        assert removed not in reset_models.DELETE_ORDER
+        assert f"public.{removed}" not in reset_models._LOCK_APPLICATION_STATEMENT
+    assert "saved_views" in reset_models.NON_PRESERVED_TABLES
+    assert reset_models.DELETE_ORDER.index("dashboards") < reset_models.DELETE_ORDER.index(
+        "departments"
     )
     for table in ("board_grants", "board_record_placements", "board_widgets", "boards"):
         assert table in reset_models.APPLICATION_TABLES
@@ -39,7 +41,6 @@ def test_reset_includes_views_boards_dashboards_and_reports_in_safe_delete_order
         "board_record_placements"
     ) < reset_models.DELETE_ORDER.index("records")
     for table in (
-        "dashboard_defaults",
         "dashboard_widgets",
         "dashboards",
         "report_run_eligible_users",
@@ -51,9 +52,6 @@ def test_reset_includes_views_boards_dashboards_and_reports_in_safe_delete_order
         assert table in reset_models.NON_PRESERVED_TABLES
         assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
         assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
-    assert reset_models.DELETE_ORDER.index("dashboard_defaults") < reset_models.DELETE_ORDER.index(
-        "dashboards"
-    )
     assert reset_models.DELETE_ORDER.index("dashboard_widgets") < reset_models.DELETE_ORDER.index(
         "dashboards"
     )

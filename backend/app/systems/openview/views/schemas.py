@@ -2,31 +2,10 @@ from datetime import datetime
 from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.records.query_schemas import QueryDefinition
-
-
-class ViewAudience(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["private", "everyone", "user"]
-    user_id: UUID | None = None
-
-    @model_validator(mode="after")
-    def target_matches_kind(self) -> Self:
-        if self.kind in {"private", "everyone"}:
-            valid = self.user_id is None
-        else:
-            valid = self.user_id is not None
-        if not valid:
-            raise ValueError("Audience target must match its kind")
-        return self
-
-    @property
-    def visibility(self) -> Literal["private", "workspace"]:
-        return "private" if self.kind == "private" else "workspace"
 
 
 class ViewPresentation(BaseModel):
@@ -68,21 +47,9 @@ class ViewCreate(BaseModel):
 
     module_id: UUID
     name: str = Field(min_length=1, max_length=200)
-    audience: ViewAudience | None = None
-    visibility: Literal["private", "workspace"] | None = None
     definition: QueryDefinition
     presentation: ViewPresentation = Field(default_factory=ViewPresentation)
-
-    @model_validator(mode="after")
-    def resolve_legacy_visibility(self) -> Self:
-        audience = self.audience
-        if audience is None:
-            default_kind = "everyone" if self.visibility == "workspace" else "private"
-            audience = ViewAudience(kind=default_kind)
-            self.audience = audience
-        if self.visibility is not None and self.visibility != audience.visibility:
-            raise ValueError("Visibility must agree with audience")
-        return self
+    is_default: StrictBool = False
 
 
 class ViewUpdate(BaseModel):
@@ -92,17 +59,13 @@ class ViewUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     definition: QueryDefinition | None = None
     presentation: ViewPresentation | None = None
-    audience: ViewAudience | None = None
-    visibility: Literal["private", "workspace"] | None = None
+    is_default: StrictBool | None = None
 
     @model_validator(mode="after")
     def nonempty_update(self) -> Self:
         changed = self.model_fields_set - {"revision"}
         if not changed or any(getattr(self, key) is None for key in changed):
             raise ValueError("At least one non-null change is required")
-        if self.audience is not None and self.visibility is not None:
-            if self.audience.visibility != self.visibility:
-                raise ValueError("Visibility must agree with audience")
         return self
 
 
@@ -112,21 +75,13 @@ class ViewRestore(BaseModel):
     revision: int = Field(ge=1)
 
 
-class ViewDefaultSet(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    view_id: UUID
-
-
 class ViewResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
     module_id: UUID
-    owner_id: UUID
     name: str
-    visibility: Literal["private", "workspace"]
-    audience: ViewAudience
+    is_default: bool
     definition: QueryDefinition
     presentation: ViewPresentation
     revision: int
@@ -134,14 +89,6 @@ class ViewResponse(BaseModel):
     can_edit: bool
     created_at: datetime
     updated_at: datetime
-
-
-class ViewDefaultResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    module_id: UUID
-    view_id: UUID
-    revision: int
 
 
 class ViewDataSourceResponse(BaseModel):
@@ -162,9 +109,3 @@ class ViewFieldResponse(BaseModel):
     required: bool
     position: int
     config: dict[str, object]
-
-
-class ViewAudienceOptionResponse(BaseModel):
-    kind: Literal["user"]
-    id: UUID
-    label: str

@@ -93,16 +93,16 @@ def test_manual_report_run_freezes_grouped_csv_and_replays_key(
         )
 
 
-def test_manual_report_run_denies_a_foreign_owner_and_a_guest(
+def test_every_non_guest_module_reader_runs_a_report_and_a_guest_cannot(
     report_run_fixture: _RunFixture,
 ) -> None:
     fixture = report_run_fixture
     path = f"/api/reports/{fixture.report_id}/runs"
     assert fixture.client.post(path, headers=fixture.headers(key=uuid7())).status_code == 201
-    foreign = fixture.client.post(
+    other_reader = fixture.client.post(
         path, headers=fixture.headers(fixture.outsider_token, key=uuid7())
     )
-    assert foreign.status_code == 404
+    assert other_reader.status_code == 201
     guest = fixture.client.post(
         path, headers=fixture.headers(fixture.guest_token, key=uuid7())
     )
@@ -241,8 +241,8 @@ def test_source_purged_after_snapshot_rolls_back_run_and_rows(
     router_module = importlib.import_module("app.systems.openview.reports.router")
     original = router_module.capture_report_snapshot
 
-    def purge_after_snapshot(engine: Engine, report_id: UUID, owner_id: UUID):
-        snapshot = original(engine, report_id, owner_id)
+    def purge_after_snapshot(engine: Engine, report_id: UUID, actor_id: UUID | None):
+        snapshot = original(engine, report_id, actor_id)
         with AuditSession(fixture.owner_engine) as writer:
             writer.info[AUDIT_CONTEXT_KEY] = AuditContext(
                 performed_by=fixture.owner_id,

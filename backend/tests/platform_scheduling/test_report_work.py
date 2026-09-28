@@ -14,7 +14,7 @@ from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, Gr
 from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
-from app.systems.openview.reports.audience import capture_run_eligible_users
+from app.systems.openview.reports.eligibility import capture_run_eligible_users
 from app.systems.openview.reports.models import Report, ReportRun
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
 from app.systems.platform.scheduling.service import (
@@ -51,7 +51,7 @@ def _subject(db: AuditSession) -> tuple[User, Report, GroupAccess, Module, Depar
     db.flush()
     # The owner reads the report module through one group.
     grant = make_group_access(db, [owner], department, module, level=AccessLevel.READ)
-    report = Report(owner_id=owner.id, module_id=module.id, name="Scheduled", recipe={})
+    report = Report(module_id=module.id, name="Scheduled", recipe={})
     db.add(report)
     db.flush()
     return owner, report, grant, module, department
@@ -135,17 +135,18 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
     )
 
 
-def test_completion_rechecks_owner_module_access_and_current_user_read_is_private(
+def test_completion_needs_no_reader_and_a_lost_read_hides_the_notification(
     integration_owner_db,
 ):
+    """The workspace completes the run; the current module read decides who sees it."""
+
     db = integration_owner_db
     owner, report, grant, _module, _department = _subject(db)
-    other_role = "member"
     other = User(
         email=f"report-other-{uuid7().hex}@example.test",
         username=f"report_other_{uuid7().hex[:16]}",
         status=UserStatus.ACTIVE.value,
-        role=other_role,
+        role="member",
     )
     db.add(other)
     db.flush()
@@ -153,76 +154,48 @@ def test_completion_rechecks_owner_module_access_and_current_user_read_is_privat
     work = queue_report_occurrence(db, report.id, scheduled_for=now)
     claim = claim_due_work(db, now=now)[0]
     run = _run(db, report, work)
-    assert list_current_user_notifications(db, other.id) == []
 
     grant.is_deleted = True
     grant.deleted_at = now
     db.flush()
-    assert not complete_report_work(db, claim, run.id, now=now)
-    assert work.state == WorkState.CANCELED
-    assert list_current_user_notifications(db, owner.id) == []
-
-
-def test_owner_excluded_by_current_report_audience_can_queue_work_for_readers(
-    integration_owner_db,
-):
-    db = integration_owner_db
-    owner, report, _grant, _module, _department = _subject(db)
-    other_role = "member"
-    other = User(
-        email=f"report-audience-{uuid7().hex}@example.test",
-        username=f"report_audience_{uuid7().hex[:16]}",
-        status=UserStatus.ACTIVE.value,
-        role=other_role,
-    )
-    db.add(other)
-    db.flush()
-    report.audience_kind = "user"
-    report.audience_user_id = other.id
-
-    work = queue_report_occurrence(db, report.id, scheduled_for=datetime(2026, 1, 1, tzinfo=UTC))
-    assert db.scalar(select(ScheduledWork).where(ScheduledWork.report_id == report.id)) == work
-    assert list_current_user_notifications(db, owner.id) == []
-
-
-def test_notification_visibility_follows_current_report_audience_and_module_access(
-    integration_owner_db,
-):
-    db = integration_owner_db
-    owner, report, grant, _module, _department = _subject(db)
-    other_role = "member"
-    other = User(
-        email=f"report-audience-{uuid7().hex}@example.test",
-        username=f"report_audience_{uuid7().hex[:16]}",
-        status=UserStatus.ACTIVE.value,
-        role=other_role,
-    )
-    db.add(other)
-    db.flush()
-    now = datetime(2026, 1, 1, tzinfo=UTC)
-    work = queue_report_occurrence(db, report.id, scheduled_for=now)
-    claim = claim_due_work(db, now=now)[0]
-    run = _run(db, report, work)
     assert complete_report_work(db, claim, run.id, now=now)
-    assert len(list_current_user_notifications(db, owner.id)) == 1
-
-    report.audience_kind = "everyone"
-    assert len(list_current_user_notifications(db, owner.id)) == 1
-    grant.is_deleted = True
-    grant.deleted_at = now
-    db.flush()
+    assert work.state == WorkState.SUCCEEDED
     assert list_current_user_notifications(db, owner.id) == []
+    assert list_current_user_notifications(db, other.id) == []
     grant.is_deleted = False
     grant.deleted_at = None
     db.flush()
     assert len(list_current_user_notifications(db, owner.id)) == 1
 
-    report.audience_kind = "user"
-    report.audience_user_id = other.id
-    assert list_current_user_notifications(db, owner.id) == []
-    assert list_current_user_notifications(db, other.id) == []
-    report.audience_user_id = owner.id
-    assert len(list_current_user_notifications(db, owner.id)) == 1
+
+def test_report_occurrence_queues_while_nobody_can_read_the_module(integration_owner_db):
+    db = integration_owner_db
+    _owner, report, grant, _module, _department = _subject(db)
+    grant.is_deleted = True
+    grant.deleted_at = datetime(2026, 1, 1, tzinfo=UTC)
+    db.flush()
+
+    work = queue_report_occurrence(db, report.id, scheduled_for=datetime(2026, 1, 1, tzinfo=UTC))
+
+    assert db.scalar(select(ScheduledWork).where(ScheduledWork.report_id == report.id)) == work
+
+
+def test_report_occurrence_refuses_an_archived_report_or_a_closed_module(integration_owner_db):
+    db = integration_owner_db
+    _owner, report, _grant, module, _department = _subject(db)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    module.is_deleted = True
+    module.deleted_at = now
+    db.flush()
+    with pytest.raises(ValueError):
+        queue_report_occurrence(db, report.id, scheduled_for=now)
+    module.is_deleted = False
+    module.deleted_at = None
+    report.is_deleted = True
+    report.deleted_at = now
+    db.flush()
+    with pytest.raises(ValueError):
+        queue_report_occurrence(db, report.id, scheduled_for=now)
 
 
 def test_failed_work_retries_with_backoff_then_stops_after_five_attempts(integration_owner_db):

@@ -110,7 +110,7 @@ def _subject(
     )
     db.add(module)
     db.flush()
-    report = Report(owner_id=owner.id, module_id=module.id, name="Scheduled", recipe={})
+    report = Report(module_id=module.id, name="Scheduled", recipe={})
     db.add(report)
     db.flush()
     schedule = ReportSchedule(
@@ -274,18 +274,19 @@ def test_schedule_edits_replace_due_cursor_and_one_policy_is_enforced(integratio
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("unavailable", ["archived", "disabled_owner"])
-def test_unavailable_report_or_owner_disables_policy_without_enqueuing(
+@pytest.mark.parametrize("unavailable", ["archived", "closed_module"])
+def test_unavailable_report_or_source_disables_policy_without_enqueuing(
     integration_owner_db, unavailable
 ):
     db = integration_owner_db
     due = datetime(2026, 1, 1, 9, tzinfo=UTC)
-    owner, report, schedule, _role, _module, _department = _subject(db, due)
+    _owner, report, schedule, _role, module, _department = _subject(db, due)
     if unavailable == "archived":
         report.is_deleted = True
         report.deleted_at = due
     else:
-        owner.status = UserStatus.DISABLED.value
+        module.is_deleted = True
+        module.deleted_at = due
     db.flush()
     assert materialize_due_schedules(db, now=due) == []
     assert schedule.enabled is False
@@ -312,3 +313,18 @@ def test_report_schedule_table_grants_runtime_access_and_blocks_provider_roles(
                 )
                 is False
             )
+
+
+@pytest.mark.integration
+def test_disabled_schedule_editor_does_not_stop_materialization(integration_owner_db):
+    """A scheduled Report runs as the workspace, so no user account can stop it."""
+
+    db = integration_owner_db
+    due = datetime(2026, 1, 1, 9, tzinfo=UTC)
+    owner, report, schedule, _role, _module, _department = _subject(db, due)
+    owner.status = UserStatus.DISABLED.value
+    db.flush()
+
+    assert len(materialize_due_schedules(db, now=due)) == 1
+    assert schedule.enabled is True
+    assert db.scalar(select(ScheduledWork).where(ScheduledWork.report_id == report.id))

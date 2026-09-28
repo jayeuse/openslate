@@ -15,7 +15,7 @@ from app.systems.boards.models import Board, BoardRecordPlacement, BoardWidget
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
-from app.systems.openview.views.models import SavedView, SavedViewDefault
+from app.systems.openview.views.models import SavedView
 from app.systems.platform.files.models import File
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
@@ -64,7 +64,6 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("relationship_edges", RelationshipEdge),
     ("files", File),
     ("saved_views", SavedView),
-    ("saved_view_defaults", SavedViewDefault),
     ("record_triggers", RecordTrigger),
     ("record_trigger_conditions", RecordTriggerCondition),
     ("record_trigger_actions", RecordTriggerAction),
@@ -139,8 +138,9 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
         "records": Record,
         "files": File,
         "saved_views": SavedView,
-        "saved_view_defaults": SavedViewDefault,
         "group_access": GroupAccess,
+        "dashboard_widgets": DashboardWidget,
+        "dashboards": Dashboard,
     }
 
     for edge_id in plan.scope_ids.get("relationship_edges", ()):
@@ -161,8 +161,9 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
     for entity_type in (
         "group_access",
         "files",
-        "saved_view_defaults",
         "saved_views",
+        "dashboard_widgets",
+        "dashboards",
         "records",
         "fields",
         "modules",

@@ -1,4 +1,4 @@
-"""Strict contracts for revisioned, private dashboards and chart widgets."""
+"""Strict contracts for revisioned department Dashboards and their widgets."""
 
 from datetime import datetime
 from enum import StrEnum
@@ -16,6 +16,7 @@ from app.systems.sandbox.records.query_schemas import (
 
 DashboardRefreshCadence = Literal["manual", "one-minute", "five-minutes"]
 DashboardWidgetType = Literal["summary", "workload", "records", "chart"]
+DASHBOARD_POSITION_MAX = 10_000
 
 
 class DashboardChartConfig(BaseModel):
@@ -90,11 +91,13 @@ class DashboardWidgetSpec(BaseModel):
 
 
 class DashboardCreate(BaseModel):
-    """Create an owner-private Dashboard with up to twelve live widgets."""
+    """Create a department Dashboard with up to twelve live widgets."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    department_id: UUID
     name: str = Field(min_length=1, max_length=200)
+    position: int = Field(default=0, ge=0, le=DASHBOARD_POSITION_MAX)
     refresh_cadence: DashboardRefreshCadence = "manual"
     widgets: list[DashboardWidgetSpec] = Field(default_factory=list, max_length=12)
 
@@ -106,6 +109,7 @@ class DashboardUpdate(BaseModel):
 
     revision: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    position: int | None = Field(default=None, ge=0, le=DASHBOARD_POSITION_MAX)
     refresh_cadence: DashboardRefreshCadence | None = None
     widgets: list[DashboardWidgetSpec] | None = Field(default=None, max_length=12)
 
@@ -126,13 +130,16 @@ class DashboardRestore(BaseModel):
 
 
 class DashboardSort(StrEnum):
+    POSITION = "position"
     NAME = "name"
     CREATED_AT = "created_at"
     UPDATED_AT = "updated_at"
 
 
 class DashboardListRequest(StandardListRequest[DashboardSort]):
-    """Bounded offset pagination and allowlisted Dashboard ordering."""
+    """Bounded offset pagination, allowlisted ordering and an optional department."""
+
+    department_id: UUID | None = None
 
 
 class DashboardWidgetResponse(BaseModel):
@@ -155,12 +162,13 @@ class DashboardWidgetResponse(BaseModel):
 
 
 class DashboardResponse(BaseModel):
-    """Owner-private Dashboard metadata and its active ordered widgets."""
+    """Department Dashboard metadata and its active ordered widgets."""
 
     model_config = ConfigDict(extra="forbid")
 
     id: UUID
-    owner_id: UUID
+    department_id: UUID
+    position: int = Field(ge=0)
     name: str
     refresh_cadence: DashboardRefreshCadence
     revision: int = Field(ge=1)
@@ -168,19 +176,3 @@ class DashboardResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     widgets: list[DashboardWidgetResponse] = Field(max_length=12)
-
-
-class DashboardDefaultSet(BaseModel):
-    """Set a user's default Dashboard, or clear it with an explicit null."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    dashboard_id: UUID | None
-
-
-class DashboardDefaultResponse(BaseModel):
-    """Current user's Dashboard default; null means no Dashboard is selected."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    dashboard_id: UUID | None

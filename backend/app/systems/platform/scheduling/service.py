@@ -10,11 +10,10 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
-from app.systems.access.identity.eligibility import is_identity_eligible
-from app.systems.access.policy.checks import module_filter, module_level
+from app.systems.access.policy.checks import module_filter
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.announcement_models import (
     BoardAnnouncement,
     BoardAnnouncementRevision,
@@ -26,7 +25,6 @@ from app.systems.boards.models import Board, BoardStatus
 from app.systems.boards.reminder_models import BoardEventReminder
 from app.systems.boards.router import _board_view_clause
 from app.systems.manage.audit.context import get_audit_context
-from app.systems.openview.reports.audience import run_audience_clause
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunEligibleUser
 from app.systems.platform.scheduling.models import (
     InAppNotification,
@@ -39,6 +37,8 @@ from app.systems.sandbox.modules.models import Module
 MAX_CLAIM_BATCH = 20
 MAX_ATTEMPTS = 5
 LEASE_DURATION = timedelta(minutes=2)
+# The length of ``audit_logs.actor_label``.
+ACTOR_LABEL_LENGTH = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,36 +53,28 @@ def _utc_instant(value: datetime) -> datetime:
     return value
 
 
-def _eligible_owner(db: Session, report: Report, *, lock: bool) -> User | None:
-    if report.is_deleted or report.deleted_at is not None:
+def report_source(db: Session, report: Report | None, *, lock: bool) -> Module | None:
+    """Return the live module of an active Report, or None when it cannot run.
+
+    A scheduled Report runs as the workspace, so no user decides whether it runs:
+    it runs while the Report and its module are active.
+    """
+
+    if report is None or report.is_deleted or report.deleted_at is not None:
         return None
     module_query = select(Module).where(Module.id == report.module_id)
     if lock:
         module_query = module_query.with_for_update()
     module = db.scalar(module_query)
-    if (
-        module is None
-        or module.is_deleted
-        or module.deleted_at is not None
-    ):
+    if module is None or module.is_deleted or module.deleted_at is not None:
         return None
-    user_query = select(User).where(User.id == report.owner_id)
-    if lock:
-        user_query = user_query.with_for_update()
-    user = db.scalar(user_query)
-    if (
-        user is None
-        or user.is_deleted
-        or user.deleted_at is not None
-        or not is_identity_eligible(user)
-        or user.status != UserStatus.ACTIVE.value
-        or not is_established_user(user)
-    ):
-        return None
-    # A scheduled report runs for an owner who is not a guest and can read its module.
-    if user.role == UserRole.GUEST.value or module_level(db, user, module.id) is None:
-        return None
-    return user
+    return module
+
+
+def scheduled_actor_label(report: Report) -> str:
+    """The audit actor of a scheduled run: the workspace, named after the Report."""
+
+    return f"Scheduled report: {report.name}"[:ACTOR_LABEL_LENGTH]
 
 
 def queue_report_occurrence(
@@ -92,7 +84,7 @@ def queue_report_occurrence(
 
     instant = _utc_instant(scheduled_for)
     report = db.scalar(select(Report).where(Report.id == report_id).with_for_update())
-    if report is None or _eligible_owner(db, report, lock=True) is None:
+    if report_source(db, report, lock=True) is None:
         raise ValueError("Report is unavailable for scheduling")
     existing = db.scalar(
         select(ScheduledWork).where(
@@ -191,7 +183,7 @@ def _locked_claim(db: Session, claim: WorkClaim, now: datetime) -> ScheduledWork
 def complete_report_work(
     db: Session, claim: WorkClaim, run_id: UUID, *, now: datetime | None = None
 ) -> bool:
-    """Finalize the current lease without requiring the owner in the audience."""
+    """Finalize the current lease and notify every module reader recorded on the run."""
 
     current = _utc_instant(now or utc_now())
     report_id = db.scalar(
@@ -203,11 +195,11 @@ def complete_report_work(
         return False
     # Match Report lifecycle order: source and its policy rows precede the work row.
     report = db.scalar(select(Report).where(Report.id == report_id).with_for_update())
-    owner = _eligible_owner(db, report, lock=True) if report is not None else None
+    source = report_source(db, report, lock=True)
     work = _locked_claim(db, claim, current)
     if work is None or work.report_id != report_id:
         return False
-    if report is None or owner is None:
+    if report is None or source is None:
         work.state = WorkState.CANCELED
         work.failure_code = "source_unavailable"
         work.lease_token = None
@@ -231,6 +223,8 @@ def complete_report_work(
         context.request_id = uuid7()
         context.request_method = "SCHEDULE"
         context.request_path = "/internal/reports/scheduler"
+    context.performed_by = None
+    context.actor_label = scheduled_actor_label(report)
     for recipient_id in db.scalars(
         select(ReportRunEligibleUser.user_id).where(ReportRunEligibleUser.run_id == run.id)
     ):
@@ -289,7 +283,6 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
             ScheduledWork.kind == WorkKind.REPORT_RUN,
             ReportRun.report_id == Report.id,
             ReportRun.is_deleted.is_(False),
-            run_audience_clause(user),
             module_filter(db, user, AccessLevel.READ, Report.module_id),
             Report.is_deleted.is_(False),
             Report.deleted_at.is_(None),
@@ -368,7 +361,7 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
 def list_current_user_notifications(
     db: Session, user_id: UUID, *, limit: int = 50, offset: int = 0
 ) -> list[InAppNotification]:
-    """Return references only for a currently eligible Report owner."""
+    """Return references only while the recipient can still read the source."""
 
     if not 1 <= limit <= 100 or offset < 0:
         raise ValueError("Notification page is out of range")

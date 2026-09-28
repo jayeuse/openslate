@@ -15,6 +15,7 @@ from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.reports.models import Report, ReportRun
 from app.systems.openview.reports.schemas import ReportRecipe
+from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.export import (
     MAX_BYTES,
@@ -30,8 +31,9 @@ from app.systems.sandbox.records.query import (
     projected_record,
     projected_record_query,
     validate_definition,
+    validate_fields,
 )
-from app.systems.sandbox.records.query_schemas import QueryDefinition
+from app.systems.sandbox.records.query_schemas import FieldReference, QueryDefinition
 
 
 @dataclass(frozen=True)
@@ -64,8 +66,8 @@ def _invalid_report() -> HTTPException:
     )
 
 
-def _active_report(db: Session, report_id: UUID, owner_id: UUID) -> Report:
-    report = db.scalar(select(Report).where(Report.id == report_id, Report.owner_id == owner_id))
+def _active_report(db: Session, report_id: UUID) -> Report:
+    report = db.scalar(select(Report).where(Report.id == report_id))
     if report is None:
         raise HTTPException(404, detail="Report not found")
     if report.is_deleted:
@@ -88,10 +90,27 @@ def _definition(recipe: ReportRecipe) -> QueryDefinition:
     )
 
 
+def _validated_fields(
+    db: Session,
+    module_id: UUID,
+    definition: QueryDefinition,
+    extra_references: tuple[FieldReference, ...],
+    reader: User | None,
+) -> dict[UUID, Field]:
+    """Check the reader's module read, or none when the workspace runs the Report."""
+
+    if reader is None:
+        return validate_fields(db, module_id, definition, extra_references)
+    return validate_definition(db, module_id, definition, extra_references, reader=reader)
+
+
 def validate_report_recipe(
-    db: Session, module_id: UUID, recipe: ReportRecipe, *, reader: User
+    db: Session, module_id: UUID, recipe: ReportRecipe, *, reader: User | None
 ) -> None:
-    """Reject unavailable source fields before persisting a recipe or run."""
+    """Reject unavailable source fields before persisting a recipe or run.
+
+    ``reader`` None means the workspace: a scheduled run has no user.
+    """
     module = db.scalar(
         select(Module)
         .where(
@@ -104,12 +123,12 @@ def validate_report_recipe(
         raise _invalid_report()
     definition = _definition(recipe)
     try:
-        fields = validate_definition(
+        fields = _validated_fields(
             db,
             module_id,
             definition,
-            extra_references=(recipe.group_by,) if recipe.group_by is not None else (),
-            reader=reader,
+            (recipe.group_by,) if recipe.group_by is not None else (),
+            reader,
         )
     except HTTPException as error:
         if error.status_code == 409:
@@ -122,26 +141,30 @@ def validate_report_recipe(
         raise _invalid_report()
 
 
-def capture_report_snapshot(engine: Engine, report_id: UUID, owner_id: UUID) -> ReportSnapshot:
+def capture_report_snapshot(
+    engine: Engine, report_id: UUID, actor_id: UUID | None
+) -> ReportSnapshot:
     """Freeze source values, formatting, ordering and CSV before any write.
 
-    The owner's module read level is checked inside the same snapshot.
+    An on-demand run passes the requesting user, whose module read level is
+    checked inside the same snapshot. A scheduled run passes None: it runs as the
+    workspace, so it keeps running after every editor of the Report is disabled.
     """
 
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
         with Session(bind=connection) as db:
-            owner = db.get(User, owner_id)
-            if owner is None:
+            actor = db.get(User, actor_id) if actor_id is not None else None
+            if actor_id is not None and actor is None:
                 raise forbidden()
-            report = _active_report(db, report_id, owner_id)
+            report = _active_report(db, report_id)
             recipe = ReportRecipe.model_validate(report.recipe)
             definition = _definition(recipe)
-            fields_by_id = validate_definition(
+            fields_by_id = _validated_fields(
                 db,
                 report.module_id,
                 definition,
-                extra_references=(recipe.group_by,) if recipe.group_by else (),
-                reader=owner,
+                (recipe.group_by,) if recipe.group_by else (),
+                actor,
             )
             references = [*recipe.fields, *recipe.filters, *recipe.sorts]
             if recipe.group_by is not None:

@@ -40,7 +40,6 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
     db.flush()
     record = Record(module_id=module.id, data={}, is_deleted=True, deleted_at=now)
     report = Report(
-        owner_id=owner.id,
         module_id=module.id,
         name="Archived report",
         recipe={"version": 1},
@@ -151,7 +150,6 @@ def test_archived_report_recipe_blocks_empty_module_purge(integration_db) -> Non
     db.add(module)
     db.flush()
     report = Report(
-        owner_id=owner.id,
         module_id=module.id,
         name="Archived empty report",
         recipe={"version": 1},

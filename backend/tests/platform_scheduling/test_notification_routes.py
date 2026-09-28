@@ -12,6 +12,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
+from app.systems.access.policy.models import GroupAccess
 from app.systems.access.users.models import User
 from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.event_models import BoardEvent
@@ -51,13 +52,15 @@ def _report(db: Session, owner: User) -> tuple[Report, Module]:
     db.add(module)
     db.flush()
     grant_capability_actors(db, department, module)
-    report = Report(owner_id=owner.id, module_id=module.id, name="Secret Report", recipe={})
+    report = Report(module_id=module.id, name="Secret Report", recipe={})
     db.add(report)
     db.flush()
     return report, module
 
 
-def _notification(db: Session, report: Report, *, minute: int) -> InAppNotification:
+def _notification(
+    db: Session, report: Report, recipient: User, *, minute: int
+) -> InAppNotification:
     when = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=minute)
     work = ScheduledWork(
         report_id=report.id,
@@ -79,12 +82,12 @@ def _notification(db: Session, report: Report, *, minute: int) -> InAppNotificat
     )
     db.add(run)
     db.flush()
-    db.add(ReportRunEligibleUser(run_id=run.id, user_id=report.owner_id))
+    db.add(ReportRunEligibleUser(run_id=run.id, user_id=recipient.id))
     work.run_id = run.id
     work.state = WorkState.SUCCEEDED
     notification = InAppNotification(
         work_id=work.id,
-        recipient_id=report.owner_id,
+        recipient_id=recipient.id,
         created_at=when,
     )
     db.add(notification)
@@ -109,12 +112,14 @@ def test_notification_list_is_actor_scoped_bounded_and_reference_only(
     outsider = _actor(db)
     no_read = _actor(db, read=False)
     report, _module = _report(db, owner)
-    first = _notification(db, report, minute=1)
-    second = _notification(db, report, minute=2)
-    hidden_report, _ = _report(db, owner)
-    hidden = _notification(db, hidden_report, minute=3)
-    hidden_report.audience_kind = "user"
-    hidden_report.audience_user_id = outsider.id
+    first = _notification(db, report, owner, minute=1)
+    second = _notification(db, report, owner, minute=2)
+    hidden_report, hidden_module = _report(db, owner)
+    hidden = _notification(db, hidden_report, owner, minute=3)
+    # The owner no longer reads the hidden report's module, so its notice is hidden.
+    for grant in db.scalars(select(GroupAccess).where(GroupAccess.module_id == hidden_module.id)):
+        grant.is_deleted = True
+        grant.deleted_at = datetime.now(UTC)
     db.flush()
 
     response = _client(db, owner).get("/api/notifications?limit=1&offset=0")
@@ -344,7 +349,7 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
     assert page_counts[0] == page_counts[1]
 
 
-def test_mark_read_is_audited_idempotent_and_rechecks_current_audience(
+def test_mark_read_is_audited_idempotent_and_rechecks_current_module_read(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
@@ -352,20 +357,23 @@ def test_mark_read_is_audited_idempotent_and_rechecks_current_audience(
     outsider = _actor(db)
     no_read = _actor(db, read=False)
     report, module = _report(db, owner)
-    notice = _notification(db, report, minute=1)
+    notice = _notification(db, report, owner, minute=1)
     path = f"/api/notifications/{notice.id}/read"
 
     assert _client(db, outsider).post(path).status_code == 404
     assert _client(db, no_read).post(path).status_code == 404
     assert _client(db, None).post(path).status_code == 401
     assert notice.read_at is None
-    report.audience_kind = "user"
-    report.audience_user_id = outsider.id
+    grants = list(db.scalars(select(GroupAccess).where(GroupAccess.module_id == module.id)))
+    for grant in grants:
+        grant.is_deleted = True
+        grant.deleted_at = datetime.now(UTC)
     db.flush()
     assert _client(db, owner).post(path).status_code == 404
     assert notice.read_at is None
-    report.audience_kind = "private"
-    report.audience_user_id = None
+    for grant in grants:
+        grant.is_deleted = False
+        grant.deleted_at = None
     db.flush()
 
     set_audit_actor(db, owner.id)

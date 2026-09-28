@@ -33,12 +33,7 @@ from app.systems.boards.reminder_models import BoardEventReminder  # noqa: F401
 from app.systems.boards.template_models import BoardTemplate  # noqa: F401
 from app.systems.manage.audit.models import AuditLog, SecurityEvent  # noqa: F401
 from app.systems.manage.workspace.models import WorkspaceProfile  # noqa: F401
-from app.systems.openview.charts.models import UserChartPreference  # noqa: F401
-from app.systems.openview.dashboards.models import (  # noqa: F401
-    Dashboard,
-    DashboardDefault,
-    DashboardWidget,
-)
+from app.systems.openview.dashboards.models import Dashboard, DashboardWidget  # noqa: F401
 from app.systems.openview.reports.models import (  # noqa: F401
     Report,
     ReportRun,
@@ -46,7 +41,7 @@ from app.systems.openview.reports.models import (  # noqa: F401
     ReportRunRow,
 )
 from app.systems.openview.reports.schedule_models import ReportSchedule  # noqa: F401
-from app.systems.openview.views.models import SavedView, SavedViewDefault  # noqa: F401
+from app.systems.openview.views.models import SavedView  # noqa: F401
 from app.systems.platform.files.models import File  # noqa: F401
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork  # noqa: F401
 from app.systems.sandbox.departments.models import Department  # noqa: F401

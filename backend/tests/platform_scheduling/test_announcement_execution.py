@@ -90,7 +90,7 @@ def test_due_announcement_claim_publishes_one_immutable_result(integration_owner
     )
     db.add(module)
     db.flush()
-    report = Report(owner_id=actor.id, module_id=module.id, name="Parallel Report", recipe={})
+    report = Report(module_id=module.id, name="Parallel Report", recipe={})
     db.add(report)
     db.flush()
     report_work = ScheduledWork(

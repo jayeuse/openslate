@@ -12,18 +12,13 @@ from app.systems.openview.views.catalog import (
     list_data_source_fields,
     list_data_sources,
 )
-from app.systems.openview.views.schemas import (
-    ViewAudienceOptionResponse,
-    ViewDataSourceResponse,
-    ViewFieldResponse,
-)
+from app.systems.openview.views.schemas import ViewDataSourceResponse, ViewFieldResponse
 from app.systems.sandbox.fields.models import Field, FieldType
 
 
 def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
     module_id = uuid7()
     department_id = uuid7()
-    user_id = uuid7()
     field_id = uuid7()
     data_source = ViewDataSourceResponse.model_validate(
         {"id": module_id, "name": "Equipment", "department_id": department_id}
@@ -39,9 +34,6 @@ def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
             "config": {"options": ["open", "closed"]},
         }
     )
-    audience = ViewAudienceOptionResponse.model_validate(
-        {"kind": "user", "id": user_id, "label": "operations"}
-    )
 
     assert data_source.model_dump(mode="json") == {
         "id": str(module_id),
@@ -56,11 +48,6 @@ def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
         "required": True,
         "position": 2,
         "config": {"options": ["open", "closed"]},
-    }
-    assert audience.model_dump(mode="json") == {
-        "kind": "user",
-        "id": str(user_id),
-        "label": "operations",
     }
 
 

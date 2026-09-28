@@ -371,5 +371,6 @@ def test_due_report_worker_poll_commits_one_run_work_and_notification(
                 .select_from(InAppNotification)
                 .where(InAppNotification.work_id == work.id)
             )
-            == 1
+            # Every module reader at run time gets one notification.
+            == 3
         )

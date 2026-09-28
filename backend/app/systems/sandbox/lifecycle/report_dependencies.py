@@ -66,12 +66,9 @@ def load_report_purge_dependencies(
             {
                 key: getattr(report, key)
                 for key in (
-                    "owner_id",
                     "module_id",
                     "name",
                     "subtitle",
-                    "audience_kind",
-                    "audience_user_id",
                     "revision",
                     "recipe",
                 )

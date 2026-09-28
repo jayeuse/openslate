@@ -22,7 +22,7 @@ def test_report_recipe_schema_constraints_and_runtime_access_on_active_baseline(
     environment = guarded_migration_environment()
     owner_engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
     runtime_engine = guarded_create_engine(environment["TEST_DATABASE_URL"])
-    ids = {name: uuid7() for name in ("owner", "audit_actor", "department", "module", "report")}
+    ids = {name: uuid7() for name in ("audit_actor", "department", "module", "report")}
 
     try:
         _seed_source_rows(owner_engine, ids)
@@ -30,7 +30,7 @@ def test_report_recipe_schema_constraints_and_runtime_access_on_active_baseline(
             _assert_report_schema(connection)
             _assert_runtime_privileges(connection)
 
-        _assert_runtime_insert_and_owner_read(runtime_engine, owner_engine, ids)
+        _assert_runtime_insert_and_read(runtime_engine, owner_engine, ids)
         _assert_report_constraints(owner_engine, ids)
     finally:
         _delete_source_rows(owner_engine, ids)
@@ -40,7 +40,7 @@ def test_report_recipe_schema_constraints_and_runtime_access_on_active_baseline(
 
 def _seed_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
     with engine.begin() as connection:
-        for key in ("owner", "audit_actor"):
+        for key in ("audit_actor",):
             connection.execute(
                 text(
                     "INSERT INTO public.users (id, email, username, status, role) "
@@ -87,22 +87,17 @@ def _assert_report_schema(connection: Connection) -> None:
         "is_deleted",
         "updated_at",
         "performed_by",
-        "owner_id",
         "module_id",
         "name",
         "subtitle",
-        "audience_kind",
-        "audience_user_id",
         "revision",
         "recipe",
     }
     assert columns["recipe"]["udt_name"] == "jsonb"
     assert columns["recipe"]["is_nullable"] == "NO"
     assert columns["revision"]["column_default"] == "1"
-    assert columns["owner_id"]["is_nullable"] == "NO"
     assert columns["module_id"]["is_nullable"] == "NO"
     assert columns["subtitle"]["is_nullable"] == "YES"
-    assert columns["audience_user_id"]["is_nullable"] == "YES"
 
     constraints = {
         row["conname"]: row
@@ -115,21 +110,13 @@ def _assert_report_schema(connection: Connection) -> None:
     }
     expected = {
         "reports_pkey": "p",
-        "ck_reports_audience": "c",
         "ck_reports_name_nonempty": "c",
         "ck_reports_revision_positive": "c",
-        "fk_reports_audience_user_id_users": "f",
         "fk_reports_module_id_modules": "f",
-        "fk_reports_owner_id_users": "f",
         "fk_reports_performed_by_users": "f",
     }
-    assert {name: constraints[name]["contype"] for name in expected} == expected
-    for name in (
-        "fk_reports_audience_user_id_users",
-        "fk_reports_module_id_modules",
-        "fk_reports_owner_id_users",
-    ):
-        assert constraints[name]["confdeltype"] == "r"
+    assert {name: constraints[name]["contype"] for name in constraints} == expected
+    assert constraints["fk_reports_module_id_modules"]["confdeltype"] == "r"
     assert constraints["fk_reports_performed_by_users"]["confdeltype"] == "n"
 
     indexes = {
@@ -141,14 +128,8 @@ def _assert_report_schema(connection: Connection) -> None:
             )
         ).mappings()
     }
-    assert set(indexes) == {
-        "reports_pkey",
-        "ix_reports_audience_user_id",
-        "ix_reports_module",
-        "ix_reports_owner_module",
-    }
+    assert set(indexes) == {"reports_pkey", "ix_reports_module"}
     assert "(module_id)" in indexes["ix_reports_module"]
-    assert "(owner_id, module_id)" in indexes["ix_reports_owner_module"]
 
 
 def _assert_runtime_privileges(connection: Connection) -> None:
@@ -157,20 +138,19 @@ def _assert_runtime_privileges(connection: Connection) -> None:
         assert connection.scalar(statement, {"action": action}) is True
 
 
-def _assert_runtime_insert_and_owner_read(
+def _assert_runtime_insert_and_read(
     runtime_engine: Engine, owner_engine: Engine, ids: dict[str, UUID]
 ) -> None:
     with runtime_engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO public.reports (id, owner_id, module_id, name, recipe, performed_by) "
-                "VALUES (:id, :owner_id, :module_id, :name, CAST(:recipe AS jsonb), :actor_id)"
+                "INSERT INTO public.reports (id, module_id, name, recipe, performed_by) "
+                "VALUES (:id, :module_id, :name, CAST(:recipe AS jsonb), :actor_id)"
             ),
             {
                 "id": ids["report"],
-                "owner_id": ids["owner"],
                 "module_id": ids["module"],
-                "name": "Private monthly report",
+                "name": "Monthly report",
                 "recipe": json.dumps({"version": 1, "fields": []}),
                 "actor_id": ids["audit_actor"],
             },
@@ -179,8 +159,7 @@ def _assert_runtime_insert_and_owner_read(
         row = (
             connection.execute(
                 text(
-                    "SELECT owner_id, module_id, revision, recipe, audience_kind "
-                    "FROM public.reports WHERE id = :id"
+                    "SELECT module_id, revision, recipe FROM public.reports WHERE id = :id"
                 ),
                 {"id": ids["report"]},
             )
@@ -188,11 +167,9 @@ def _assert_runtime_insert_and_owner_read(
             .one()
         )
     assert dict(row) == {
-        "owner_id": ids["owner"],
         "module_id": ids["module"],
         "revision": 1,
         "recipe": {"version": 1, "fields": []},
-        "audience_kind": "private",
     }
 
 
@@ -204,12 +181,11 @@ def _assert_report_constraints(engine: Engine, ids: dict[str, UUID]) -> None:
                     connection.execute(
                         text(
                             "INSERT INTO public.reports "
-                            "(id, owner_id, module_id, name, revision, recipe) "
-                            "VALUES (:id, :owner_id, :module_id, :name, :revision, '{}'::jsonb)"
+                            "(id, module_id, name, revision, recipe) "
+                            "VALUES (:id, :module_id, :name, :revision, '{}'::jsonb)"
                         ),
                         {
                             "id": uuid7(),
-                            "owner_id": ids["owner"],
                             "module_id": ids["module"],
                             "name": name,
                             "revision": revision,
@@ -217,12 +193,6 @@ def _assert_report_constraints(engine: Engine, ids: dict[str, UUID]) -> None:
                     )
 
     with engine.begin() as connection:
-        for key in ("owner",):
-            with pytest.raises(IntegrityError):
-                with connection.begin_nested():
-                    connection.execute(
-                        text("DELETE FROM public.users WHERE id = :id"), {"id": ids[key]}
-                    )
         with pytest.raises(IntegrityError):
             with connection.begin_nested():
                 connection.execute(
@@ -249,5 +219,5 @@ def _delete_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
         )
         connection.execute(
             text("DELETE FROM public.users WHERE id = ANY(:ids)"),
-            {"ids": [ids["owner"], ids["audit_actor"]]},
+            {"ids": [ids["audit_actor"]]},
         )

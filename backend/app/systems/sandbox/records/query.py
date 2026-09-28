@@ -82,6 +82,21 @@ def validate_definition(
 
     if module_level(db, reader, module_id) is None:
         raise module_hidden()
+    return validate_fields(db, module_id, definition, extra_references)
+
+
+def validate_fields(
+    db: Session,
+    module_id: UUID,
+    definition: QueryDefinition,
+    extra_references: Sequence[FieldReference] = (),
+) -> dict[UUID, Field]:
+    """Validate the field references of a record query, without an access check.
+
+    Only a caller that acts as the workspace, such as a scheduled Report run, uses
+    this directly. Every user read goes through :func:`validate_definition`.
+    """
+
     if db.get(Module, module_id) is None:
         raise invalid_view("The module no longer exists")
     fields = {

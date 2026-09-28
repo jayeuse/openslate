@@ -60,7 +60,7 @@ def _sources(db):
         audience_kind="author",
         revision=2,
     )
-    report = Report(owner_id=actor.id, module_id=module.id, name="Report", recipe={})
+    report = Report(module_id=module.id, name="Report", recipe={})
     db.add_all((announcement, report))
     db.flush()
     return actor, announcement, report

@@ -196,7 +196,7 @@ def test_audit_stages_recipient_from_notification_row_and_suppresses_report_subj
     recipient_id = uuid7()
     notification = InAppNotification(work_id=uuid7(), recipient_id=recipient_id)
     notification.id = uuid7()
-    report = Report(owner_id=uuid7(), module_id=uuid7(), name="Private", recipe={})
+    report = Report(module_id=uuid7(), name="Private", recipe={})
     report.id = uuid7()
     session = FakeSession()
     session.new = [notification, report]

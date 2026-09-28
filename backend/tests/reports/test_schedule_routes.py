@@ -57,7 +57,7 @@ def _report(db: Session, owner: User) -> tuple[Report, Module]:
     )
     db.add(module)
     db.flush()
-    make_group_access(db, [owner], department, module, level=AccessLevel.WRITE)
+    make_group_access(db, [owner], department, module, level=AccessLevel.MANAGE)
     field = Field(
         module_id=module.id,
         name="Status",
@@ -69,7 +69,6 @@ def _report(db: Session, owner: User) -> tuple[Report, Module]:
     db.add(field)
     db.flush()
     report = Report(
-        owner_id=owner.id,
         module_id=module.id,
         name="Scheduled status",
         recipe={
@@ -147,16 +146,12 @@ def test_create_read_revision_and_strict_contract(
     assert [entry.action for entry in audit] == [AuditAction.CREATE]
 
 
-def test_owner_excluded_can_enable_schedule_for_eligible_readers(
+def test_disabled_schedule_can_be_enabled_retimed_and_disabled_again(
     integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = integration_owner_db
     owner = _actor(db, {"records.read": True, "records.write": True})
-    other = _actor(db, {"records.read": True, "records.write": True})
     report, _module = _report(db, owner)
-    report.audience_kind = "user"
-    report.audience_user_id = other.id
-    db.flush()
     set_audit_actor(db, owner.id)
     monkeypatch.setattr(
         "app.systems.openview.reports.schedule_router.utc_now",
@@ -176,9 +171,6 @@ def test_owner_excluded_can_enable_schedule_for_eligible_readers(
     policy = db.scalar(select(ReportSchedule).where(ReportSchedule.report_id == report.id))
     assert policy is not None and policy.enabled and policy.revision == 3
     assert policy.next_due_at == datetime(2026, 1, 1, 15, 15, tzinfo=UTC)
-    report.audience_kind = "private"
-    report.audience_user_id = None
-    db.flush()
     monkeypatch.setattr(
         "app.systems.openview.reports.schedule_router.utc_now",
         lambda: datetime(2026, 1, 3, 16, tzinfo=UTC),
@@ -267,7 +259,7 @@ def test_edit_cancels_pending_and_running_work_and_rejects_stale_revision(
     assert [entry.action for entry in audit] == [AuditAction.CREATE, AuditAction.UPDATE]
 
 
-def test_schedule_owner_capability_source_and_archive_boundaries(
+def test_schedule_manager_level_source_and_archive_boundaries(
     integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = integration_owner_db
@@ -275,6 +267,9 @@ def test_schedule_owner_capability_source_and_archive_boundaries(
     outsider = _actor(db, {"records.read": True, "records.write": True})
     read_only = _actor(db, {"records.read": True})
     report, module = _report(db, owner)
+    department = db.get(Department, module.department_id)
+    assert department is not None
+    make_group_access(db, [read_only], department, module, level=AccessLevel.MANAGE)
     set_audit_actor(db, owner.id)
     monkeypatch.setattr(
         "app.systems.openview.reports.schedule_router.utc_now",
@@ -284,7 +279,9 @@ def test_schedule_owner_capability_source_and_archive_boundaries(
     with _client(db, outsider) as client:
         assert client.get(path).status_code == 404
         assert client.post(path, json=_daily()).status_code == 404
+    # A guest reads the schedule even through a manage group, and never changes it.
     with _client(db, read_only) as client:
+        assert client.get(path).status_code == 404
         assert client.post(path, json=_daily()).status_code == 403
     module.is_deleted = True
     module.deleted_at = datetime(2026, 1, 1, tzinfo=UTC)

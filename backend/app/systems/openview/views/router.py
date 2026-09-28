@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import get_current_user, require_non_guest
+from app.common.dependencies import get_current_user
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -17,12 +17,14 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.policy.checks import require_module_access
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.scope import EffectiveAccess, effective_levels, includes
+from app.systems.access.users.models import User
 from app.systems.openview.views.access import visible_to
 from app.systems.openview.views.catalog import router as catalog_router
-from app.systems.openview.views.models import AudienceKind, SavedView
+from app.systems.openview.views.models import SavedView
 from app.systems.openview.views.schemas import (
-    ViewAudience,
     ViewCreate,
     ViewPresentation,
     ViewResponse,
@@ -37,7 +39,8 @@ from app.systems.sandbox.records.query_schemas import QueryDefinition
 router = APIRouter(prefix="/views", tags=["views"])
 router.include_router(catalog_router)
 Reader = Annotated[User, Depends(get_current_user)]
-Writer = Annotated[User, Depends(require_non_guest)]
+# Changing a view needs ``manage`` on its module; each route checks the module.
+Writer = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -97,29 +100,50 @@ def _active_module(db: Session, module_id: UUID) -> Module:
     return module
 
 
-def _view_audience(view: SavedView) -> ViewAudience:
-    return ViewAudience(
-        kind=AudienceKind(view.audience_kind).value,
-        user_id=view.audience_user_id,
-    )
+def _can_edit(access: EffectiveAccess, view: SavedView) -> bool:
+    return includes(access.module_level(view.module_id), AccessLevel.MANAGE)
 
 
-def _view_response(view: SavedView, user: User) -> ViewResponse:
+def _view_response(view: SavedView, can_edit: bool) -> ViewResponse:
     return ViewResponse(
         id=view.id,
         module_id=view.module_id,
-        owner_id=view.owner_id,
         name=view.name,
-        visibility=view.visibility,
-        audience=_view_audience(view),
+        is_default=view.is_default,
         definition=QueryDefinition.model_validate(view.definition),
         presentation=ViewPresentation.model_validate(view.presentation),
         revision=view.revision,
         is_deleted=view.is_deleted,
-        can_edit=view.owner_id == user.id and user.role != UserRole.GUEST.value,
+        can_edit=can_edit,
         created_at=view.created_at,
         updated_at=view.updated_at,
     )
+
+
+def _managed_response(view: SavedView) -> ViewResponse:
+    """Response after a change: only a manager of the module can change a view."""
+
+    return _view_response(view, can_edit=True)
+
+
+def _clear_default(db: Session, module_id: UUID, *, keep: UUID | None) -> None:
+    """Clear the module's current default view. The caller holds the module lock."""
+
+    current = db.scalars(
+        select(SavedView)
+        .where(
+            SavedView.module_id == module_id,
+            SavedView.is_default.is_(True),
+            SavedView.is_deleted.is_(False),
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    for view in current:
+        if view.id != keep:
+            view.is_default = False
+            view.revision += 1
+    db.flush()
 
 
 def _validate_definition(
@@ -202,25 +226,6 @@ def _validate_presentation(
         raise invalid_view("Timeline progress must use a numeric field")
 
 
-def _validate_audience(db: Session, audience: ViewAudience) -> None:
-    if audience.kind == "user":
-        valid = db.scalar(
-            select(User.id).where(
-                User.id == audience.user_id,
-                User.status == "active",
-                User.is_deleted.is_(False),
-            ).with_for_update()
-        )
-    else:
-        return
-    if valid is None:
-        raise _conflict("audience_invalid", "The selected audience is unavailable")
-
-
-def _audience_columns(audience: ViewAudience) -> tuple[AudienceKind, UUID | None]:
-    return AudienceKind(audience.kind), audience.user_id
-
-
 def get_view(db: Session, user: User, view_id: UUID, *, write: bool = False) -> SavedView:
     statement = select(SavedView).where(SavedView.id == view_id, visible_to(db, user))
     if write:
@@ -228,8 +233,8 @@ def get_view(db: Session, user: User, view_id: UUID, *, write: bool = False) -> 
     view = db.scalar(statement)
     if view is None:
         raise _not_found()
-    if write and view.owner_id != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if write:
+        require_module_access(db, user, view.module_id, AccessLevel.MANAGE)
     return view
 
 
@@ -256,8 +261,9 @@ def list_views(
     if params.module_id is not None:
         statement = statement.where(SavedView.module_id == params.module_id)
     result = execute_standard_list(db, statement, params, VIEW_SPEC)
+    access = effective_levels(db, user)
     return StandardListResponse(
-        items=[_view_response(item, user) for item in result.items],
+        items=[_view_response(item, _can_edit(access, item)) for item in result.items],
         pagination=result.pagination,
     )
 
@@ -269,19 +275,16 @@ def create_view(
     db: Database,
     response: Response,
 ) -> ViewResponse:
+    require_module_access(db, user, payload.module_id, AccessLevel.MANAGE)
     _active_module(db, payload.module_id)
-    audience = payload.audience or ViewAudience(kind="private")
-    _validate_audience(db, audience)
     _validate_definition(db, user, payload.module_id, payload.definition)
     _validate_presentation(db, payload.module_id, payload.presentation, payload.definition)
-    audience_kind, audience_user_id = _audience_columns(audience)
+    if payload.is_default:
+        _clear_default(db, payload.module_id, keep=None)
     view = SavedView(
         module_id=payload.module_id,
-        owner_id=user.id,
         name=payload.name,
-        visibility=audience.visibility,
-        audience_kind=audience_kind,
-        audience_user_id=audience_user_id,
+        is_default=payload.is_default,
         definition=payload.definition.model_dump(mode="json"),
         presentation=payload.presentation.model_dump(mode="json"),
     )
@@ -289,12 +292,13 @@ def create_view(
     commit(db)
     db.refresh(view)
     response.headers["Location"] = f"/api/views/{view.id}"
-    return _view_response(view, user)
+    return _managed_response(view)
 
 
 @router.get("/{view_id}", response_model=ViewResponse)
 def read_view(view_id: UUID, user: Reader, db: Database) -> ViewResponse:
-    return _view_response(get_view(db, user, view_id), user)
+    view = get_view(db, user, view_id)
+    return _view_response(view, _can_edit(effective_levels(db, user), view))
 
 
 @router.patch("/{view_id}", response_model=ViewResponse)
@@ -305,6 +309,7 @@ def update_view(
     db: Database,
 ) -> ViewResponse:
     current = get_view(db, user, view_id)
+    require_module_access(db, user, current.module_id, AccessLevel.MANAGE)
     _active_module(db, current.module_id)
     view = get_view(db, user, view_id, write=True)
     if view.revision != payload.revision:
@@ -325,44 +330,32 @@ def update_view(
     _validate_definition(db, user, view.module_id, definition)
     _validate_presentation(db, view.module_id, presentation, definition)
 
-    audience = _view_audience(view)
-    if payload.audience is not None:
-        audience = payload.audience
-        _validate_audience(db, audience)
-    elif payload.visibility == "private":
-        audience = ViewAudience(kind="private")
-    elif payload.visibility == "workspace" and view.visibility == "private":
-        audience = ViewAudience(kind="everyone")
-
     name = payload.name if payload.name is not None else view.name
     normalized_definition = definition.model_dump(mode="json")
     normalized_presentation = presentation.model_dump(mode="json")
     current_presentation = ViewPresentation.model_validate(view.presentation).model_dump(
         mode="json"
     )
-    audience_kind, audience_user_id = _audience_columns(audience)
-    visibility = audience.visibility
+    is_default = payload.is_default if payload.is_default is not None else view.is_default
     if (
         view.name == name
         and view.definition == normalized_definition
         and current_presentation == normalized_presentation
-        and view.audience_kind == audience_kind
-        and view.audience_user_id == audience_user_id
-        and view.visibility == visibility
+        and view.is_default == is_default
     ):
-        return _view_response(view, user)
+        return _managed_response(view)
 
+    if is_default and not view.is_default:
+        _clear_default(db, view.module_id, keep=view.id)
     view.name = name
     view.definition = normalized_definition
     if current_presentation != normalized_presentation:
         view.presentation = normalized_presentation
-    view.audience_kind = audience_kind
-    view.audience_user_id = audience_user_id
-    view.visibility = visibility
+    view.is_default = is_default
     view.revision += 1
     commit(db)
     db.refresh(view)
-    return _view_response(view, user)
+    return _managed_response(view)
 
 
 @router.delete("/{view_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -373,12 +366,15 @@ def archive_view(
     db: Database,
 ) -> Response:
     current = get_view(db, user, view_id)
+    require_module_access(db, user, current.module_id, AccessLevel.MANAGE)
     _active_module(db, current.module_id)
     view = get_view(db, user, view_id, write=True)
     if view.revision != revision:
         raise _stale_revision(view.revision)
     if view.is_deleted:
         raise _conflict("view_archived", "The view is already archived")
+    # An archived view is no longer the module's default.
+    view.is_default = False
     view.is_deleted = True
     view.deleted_at = datetime.now(UTC)
     view.revision += 1
@@ -394,6 +390,7 @@ def restore_view(
     db: Database,
 ) -> ViewResponse:
     current = get_view(db, user, view_id)
+    require_module_access(db, user, current.module_id, AccessLevel.MANAGE)
     _active_module(db, current.module_id)
     view = get_view(db, user, view_id, write=True)
     if view.revision != payload.revision:
@@ -405,4 +402,4 @@ def restore_view(
     view.revision += 1
     commit(db)
     db.refresh(view)
-    return _view_response(view, user)
+    return _managed_response(view)
