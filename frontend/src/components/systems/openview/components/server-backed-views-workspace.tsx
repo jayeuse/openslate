@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import type { Route } from "next";
@@ -91,6 +98,11 @@ import {
   upsertSavedView,
 } from "../domain/server-view-draft";
 import type { SavedDraft } from "../domain/server-view-draft";
+import {
+  decodeTemporaryView,
+  encodeTemporaryView,
+  TEMPORARY_VIEW_PARAM,
+} from "../domain/temporary-view";
 import { useServerViewsResource } from "../hooks/use-server-views-resource";
 import { LiveGroupedResults } from "./live-grouped-results";
 import {
@@ -235,16 +247,33 @@ function isAuthorizationDenied(error: unknown): boolean {
   return error instanceof ApiError && [401, 403].includes(error.status);
 }
 
+/** Replace the temporary View changes without a navigation or history entry. */
+function replaceTemporaryChanges(value: string | null) {
+  const url = new URL(window.location.href);
+  if (value) url.searchParams.set(TEMPORARY_VIEW_PARAM, value);
+  else url.searchParams.delete(TEMPORARY_VIEW_PARAM);
+  // Next syncs useSearchParams only for calls without its own history state.
+  window.history.replaceState(
+    null,
+    "",
+    `${url.pathname}${url.search}${url.hash}`,
+  );
+}
+
 export default function ServerBackedViewsWorkspace({
   invalidUrl,
 }: {
   invalidUrl: boolean;
 }) {
   const router = useRouter();
+  // Every navigation this workspace starts runs in this transition, so the
+  // temporary-changes mirror below never rewrites the address under it.
+  const [navigationPending, startNavigation] = useTransition();
   const searchParams = useSearchParams();
   const requestedModule = searchParams.get("module");
   const requestedView = searchParams.get("view");
   const requestedRecord = searchParams.get("record");
+  const requestedChanges = searchParams.get(TEMPORARY_VIEW_PARAM);
   const resource = useServerViewsResource(requestedModule);
   const {
     catalog,
@@ -328,9 +357,11 @@ export default function ServerBackedViewsWorkspace({
 
   useEffect(() => {
     if (!catalog || !moduleId || requestedModule) return;
-    router.replace(
-      serializeOpenViewUrl({ section: "views", module: moduleId }) as Route,
-      { scroll: false },
+    startNavigation(() =>
+      router.replace(
+        serializeOpenViewUrl({ section: "views", module: moduleId }) as Route,
+        { scroll: false },
+      ),
     );
   }, [catalog, moduleId, requestedModule, router]);
 
@@ -444,6 +475,47 @@ export default function ServerBackedViewsWorkspace({
   useEffect(() => {
     dirtyRef.current = dirty;
   }, [dirty]);
+  // Temporary changes live in the page address so they can be bookmarked and
+  // shared; only a manager's save stores them. `draftState` stays the one
+  // owner of the draft: an address that arrives with a View (a link, reload,
+  // or back/forward) restores it once, and the address then mirrors it. A
+  // value the page wrote itself is never restored onto another View.
+  const temporaryChanges = dirty ? encodeTemporaryView(baseDraft, draft) : null;
+  const draftBaseReady = Boolean(
+    moduleId && currentWorkspace && (!routedView || activeSaved),
+  );
+  const restoredDraftKey = useRef<string | null>(null);
+  const mirroredChanges = useRef<string | null>(null);
+  useEffect(() => {
+    if (!draftBaseReady || navigationPending) return;
+    if (restoredDraftKey.current !== draftKey) {
+      restoredDraftKey.current = draftKey;
+      const arrived =
+        requestedChanges !== null &&
+        requestedChanges !== mirroredChanges.current &&
+        draftState?.key !== draftKey;
+      const restored = arrived
+        ? decodeTemporaryView(requestedChanges, baseDraft, fields)
+        : null;
+      if (restored && JSON.stringify(restored) !== JSON.stringify(baseDraft)) {
+        mirroredChanges.current = requestedChanges;
+        setDraftState({ key: draftKey, value: restored });
+        return;
+      }
+    }
+    mirroredChanges.current = temporaryChanges;
+    if (temporaryChanges !== requestedChanges)
+      replaceTemporaryChanges(temporaryChanges);
+  }, [
+    baseDraft,
+    draftBaseReady,
+    draftKey,
+    draftState,
+    fields,
+    navigationPending,
+    requestedChanges,
+    temporaryChanges,
+  ]);
   const activeFields = useMemo(
     () => new Map(fields.map((field) => [field.id, field])),
     [fields],
@@ -986,16 +1058,23 @@ export default function ServerBackedViewsWorkspace({
       },
       replace = false,
     ) => {
+      const targetModule = patch.module === undefined ? moduleId : patch.module;
+      const view = Object.hasOwn(patch, "view")
+        ? patch.view
+        : selectedViewId || undefined;
       const target = serializeOpenViewUrl({
         section: "views",
-        module: patch.module === undefined ? moduleId : patch.module,
-        view: Object.hasOwn(patch, "view")
-          ? patch.view
-          : selectedViewId || undefined,
+        module: targetModule,
+        view,
         record: Object.hasOwn(patch, "record")
           ? patch.record
           : isUuid(requestedRecord)
             ? requestedRecord
+            : undefined,
+        // Opening or closing a record keeps the temporary changes.
+        changes:
+          targetModule === moduleId && view === (selectedViewId || undefined)
+            ? (temporaryChanges ?? undefined)
             : undefined,
       });
       if (
@@ -1004,10 +1083,12 @@ export default function ServerBackedViewsWorkspace({
         target === `${window.location.pathname}${window.location.search}`
       )
         return;
-      if (replace) router.replace(target as Route, { scroll: false });
-      else router.push(target as Route, { scroll: false });
+      startNavigation(() => {
+        if (replace) router.replace(target as Route, { scroll: false });
+        else router.push(target as Route, { scroll: false });
+      });
     },
-    [moduleId, requestedRecord, router, selectedViewId],
+    [moduleId, requestedRecord, router, selectedViewId, temporaryChanges],
   );
 
   const openRecordFromResults = (
@@ -1187,7 +1268,7 @@ export default function ServerBackedViewsWorkspace({
         else updated.delete(moduleId);
         return updated;
       });
-      router.push(href, { scroll: false });
+      startNavigation(() => router.push(href, { scroll: false }));
     };
     if (dirty) setPendingNavigation({ href, resume, discardDraft: true });
     else resume();
@@ -2027,7 +2108,10 @@ export default function ServerBackedViewsWorkspace({
                         resume: () => router.push(href),
                         discardDraft: true,
                       });
-                    else router.push(href, { scroll: false });
+                    else
+                      startNavigation(() =>
+                        router.push(href, { scroll: false }),
+                      );
                   }}
                 >
                   {(catalog ?? []).map((item) => (
@@ -3258,7 +3342,7 @@ export default function ServerBackedViewsWorkspace({
                     if (!transition) return;
                     if (transition.discardDraft) setDraftState(null);
                     setPendingNavigation(null);
-                    transition.resume();
+                    startNavigation(transition.resume);
                   }}
                 >
                   Discard and continue

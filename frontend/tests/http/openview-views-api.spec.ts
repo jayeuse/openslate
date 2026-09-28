@@ -4,7 +4,7 @@ import {
   type Locator,
   type Page,
   type Route,
-} from "@playwright/test";
+} from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -1501,7 +1501,10 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
     .getByRole("searchbox", { name: "Search Equipment" })
     .fill("draft before restore");
   await expect(page.getByText("Unsaved changes")).toBeVisible();
-  await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
+  // The unsaved draft is a temporary change of the same address.
+  await expect(page).toHaveURL(
+    new RegExp(`/openview\\?section=views&module=${moduleId}&changes=`),
+  );
   await page.getByRole("button", { name: "Archived views" }).click();
   const archivedDialog = page.getByRole("dialog", { name: "Archived views" });
   await expect(
@@ -1731,6 +1734,80 @@ test("resetting changes restores the saved base or clears an unsaved draft", asy
     definition: { search: "pump" },
     presentation: { layout: "table" },
   });
+});
+
+test("temporary View changes live in the address, survive reload, and are never saved", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page);
+  const viewWrites: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith("/api/views") && request.method() !== "GET")
+      viewWrites.push(`${request.method()} ${path}`);
+  });
+  const viewUrl = `/openview?section=views&module=${moduleId}&view=${viewId}`;
+  await page.goto(viewUrl);
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
+  await expect(search).toHaveValue("pump");
+
+  await search.fill("valve");
+  await setLayoutFromSettings(page, "grid");
+  await expect(page).toHaveURL(/[?&]changes=[A-Za-z0-9_-]+/);
+  const temporaryUrl = page.url();
+  expect(new URL(temporaryUrl).searchParams.get("view")).toBe(viewId);
+
+  await page.reload();
+  await expect(search).toHaveValue("valve");
+  await expectLayoutFromSettings(page, "grid");
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
+
+  await page.getByRole("button", { name: "Reset changes" }).click();
+  await expect(search).toHaveValue("pump");
+  await expect(page).toHaveURL(viewUrl);
+  expect(viewWrites).toEqual([]);
+  expect(api.saved()).toMatchObject({
+    definition: { search: "pump" },
+    presentation: { layout: "table" },
+  });
+});
+
+test("a reader keeps temporary View filters in the address without save controls", async ({
+  page,
+}) => {
+  await installViewsApi(page);
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        id: userId,
+        role: "member",
+        access: [
+          { department_id: departmentId, module_id: null, level: "read" },
+        ],
+      },
+    }),
+  );
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const search = page.getByRole("searchbox", { name: "Search Equipment" });
+  await expect(search).toHaveValue("pump");
+  await search.fill("valve");
+  await expect(page).toHaveURL(/[?&]changes=/);
+  await expect(page.getByRole("button", { name: /^Save view/ })).toHaveCount(0);
+  await page.reload();
+  await expect(search).toHaveValue("valve");
+});
+
+test("a malformed temporary View address is ignored and removed", async ({
+  page,
+}) => {
+  await installViewsApi(page);
+  const viewUrl = `/openview?section=views&module=${moduleId}&view=${viewId}`;
+  await page.goto(`${viewUrl}&changes=not-a-view`);
+  await expect(
+    page.getByRole("searchbox", { name: "Search Equipment" }),
+  ).toHaveValue("pump");
+  await expect(page).toHaveURL(viewUrl);
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
 });
 
 test("saved Views send, save, and reload up to three ordered sort rules", async ({
