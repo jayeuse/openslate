@@ -16,6 +16,10 @@ const reportId = "00000000-0000-4000-8000-000000000105";
 const runId = "00000000-0000-4000-8000-000000000106";
 const scheduleId = "00000000-0000-4000-8000-000000000107";
 const timestamp = "2026-09-24T00:00:00Z";
+// A second department whose only module the member can read, not manage.
+const readOnlyDepartmentId = "00000000-0000-4000-8000-000000000110";
+const readOnlyModuleId = "00000000-0000-4000-8000-000000000111";
+const readOnlyReportId = "00000000-0000-4000-8000-000000000112";
 
 function pageOf<T>(items: T[], limit = 25, offset = 0, total = items.length) {
   return {
@@ -61,6 +65,12 @@ const run = {
   created_at: timestamp,
 };
 const newRunId = "00000000-0000-4000-8000-000000000900";
+const readOnlyReport = {
+  ...report,
+  id: readOnlyReportId,
+  module_id: readOnlyModuleId,
+  name: "Invoice review",
+};
 
 async function installReportsApi(
   page: Page,
@@ -76,6 +86,10 @@ async function installReportsApi(
     /** The user's level on the Report department; the default manages it. */
     level?: "read" | "manage";
     savedSchedule?: boolean;
+    /** The account role; the default is a member. */
+    role?: "admin" | "member";
+    /** Add a module (and a Report on it) that the member can only read. */
+    readOnlySource?: boolean;
   } = {},
 ) {
   let currentReport = initialReport;
@@ -125,13 +139,22 @@ async function installReportsApi(
       contentType: "application/json",
       body: JSON.stringify({
         id: userId,
-        role: "member",
+        role: options.role ?? "member",
         access: [
           {
             department_id: ownerId,
             module_id: null,
             level: options.level ?? "manage",
           },
+          ...(options.readOnlySource
+            ? [
+                {
+                  department_id: readOnlyDepartmentId,
+                  module_id: readOnlyModuleId,
+                  level: "read",
+                },
+              ]
+            : []),
         ],
       }),
     }),
@@ -149,6 +172,19 @@ async function installReportsApi(
             is_deleted: false,
             performed_by: null,
           },
+          ...(options.readOnlySource
+            ? [
+                {
+                  id: readOnlyDepartmentId,
+                  department_name: "Finance",
+                  created_at: timestamp,
+                  updated_at: timestamp,
+                  deleted_at: null,
+                  is_deleted: false,
+                  performed_by: null,
+                },
+              ]
+            : []),
         ],
         100,
       ),
@@ -168,6 +204,16 @@ async function installReportsApi(
                 department_id: ownerId,
                 title_field_id: null,
               },
+              ...(options.readOnlySource
+                ? [
+                    {
+                      id: readOnlyModuleId,
+                      name: "Invoices",
+                      department_id: readOnlyDepartmentId,
+                      title_field_id: null,
+                    },
+                  ]
+                : []),
             ],
             100,
           ),
@@ -180,7 +226,8 @@ async function installReportsApi(
           [
             {
               id: fieldId,
-              module_id: moduleId,
+              // Answer for the requested module: /api/views/data-sources/<id>/fields.
+              module_id: path.split("/")[4],
               name: "Asset",
               type: "text",
               required: true,
@@ -224,6 +271,8 @@ async function installReportsApi(
         contentType: "application/json",
         body: JSON.stringify(currentReport),
       });
+    if (path === `/api/reports/${readOnlyReportId}` && method === "GET")
+      return route.fulfill({ json: readOnlyReport });
     if (
       path === `/api/reports/${duplicateReportId}` &&
       method === "GET" &&
@@ -277,9 +326,11 @@ async function installReportsApi(
           pageOf(
             sharedOnly
               ? []
-              : copiedReport
-                ? [currentReport, copiedReport]
-                : [currentReport],
+              : [
+                  currentReport,
+                  ...(copiedReport ? [copiedReport] : []),
+                  ...(options.readOnlySource ? [readOnlyReport] : []),
+                ],
           ),
         ),
       });
@@ -744,6 +795,50 @@ test("a module reader runs a Report but cannot change, copy or schedule it", asy
   ).toBeVisible();
   await captureOpenViewReview(page, "report-reader-schedule");
   expect(api.counts().manualRuns).toBe(0);
+});
+
+test("a new Report offers only data sources the member manages", async ({
+  page,
+}) => {
+  const api = await installReportsApi(page, false, report, {
+    readOnlySource: true,
+  });
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "New Report" }).click();
+
+  const source = page.getByRole("combobox", { name: "Data source" });
+  await expect(source.getByRole("option", { name: "Assets" })).toBeAttached();
+  await expect(source.getByRole("option", { name: "Invoices" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Close editor" }).click();
+
+  // A template on a module the member only reads cannot become a new Report.
+  await page
+    .getByLabel("Start from saved Report")
+    .selectOption(readOnlyReportId);
+  await page.getByRole("button", { name: "Start from saved Report" }).click();
+  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
+    "Copy of Invoice review",
+  );
+  await page.getByRole("button", { name: "Create Report" }).click();
+  await expect(
+    page.getByText("Choose a data source you manage for this Report"),
+  ).toBeVisible();
+  expect(api.reportCreates()).toBe(0);
+});
+
+test("an administrator's new Report offers every data source", async ({
+  page,
+}) => {
+  await installReportsApi(page, false, report, {
+    role: "admin",
+    readOnlySource: true,
+  });
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "New Report" }).click();
+
+  const source = page.getByRole("combobox", { name: "Data source" });
+  await expect(source.getByRole("option", { name: "Assets" })).toBeAttached();
+  await expect(source.getByRole("option", { name: "Invoices" })).toBeAttached();
 });
 
 test("saved Report cards name the department of their module", async ({

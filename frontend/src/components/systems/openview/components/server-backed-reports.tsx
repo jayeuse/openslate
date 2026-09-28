@@ -319,6 +319,11 @@ export default function ServerBackedReports() {
     !actionPending &&
     (baselineReport ? canManageReportModule(baselineReport.moduleId) : true) &&
     canCreateReports;
+  // A new Report needs `manage` on its own module, so its source picker lists
+  // only managed modules; an existing Report keeps every readable source.
+  const editorSources = baselineReport
+    ? sources
+    : sources.filter((source) => canManageReportModule(source.id));
   const sourcesHasMore = sourcesMore
     ? sourcesMore.hasMore
     : (sourcesBase?.pagination.hasMore ?? false);
@@ -651,6 +656,11 @@ export default function ServerBackedReports() {
     try {
       if (!draft.moduleId)
         throw new ReportDraftError("Choose a data source for this Report");
+      // A template can carry a module the user only reads.
+      if (!baselineReport && !canManageReportModule(draft.moduleId))
+        throw new ReportDraftError(
+          "Choose a data source you manage for this Report",
+        );
       if (!draft.name.trim()) throw new ReportDraftError("Enter a Report name");
       const recipe = reportRecipeFromDraft(draft);
       const input = {
@@ -1243,7 +1253,7 @@ export default function ServerBackedReports() {
         error={error}
         notice={notice}
         stale={stale}
-        sources={sources}
+        sources={editorSources}
         sourcesHasMore={sourcesHasMore}
         sourcesLoading={sourcesLoading}
         sourcesError={sourcesError}
