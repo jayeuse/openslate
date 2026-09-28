@@ -21,7 +21,7 @@ test("health cards count what needs attention and open the filtered list", async
   await page.goto("/access?view=overview");
 
   await expect(card(page, "Administrators")).toContainText("2");
-  await expect(card(page, "Administrators")).not.toContainText("Check");
+  await expect(card(page, "Administrators")).not.toContainText("Review");
   await expect(card(page, "People without a group")).toContainText("1");
   await expect(card(page, "Groups without access")).toContainText("1");
   await expect(card(page, "Groups without members")).toContainText("1");
@@ -66,7 +66,7 @@ test("a single active administrator is flagged", async ({ page }) => {
   await page.goto("/access?view=overview");
   const admins = card(page, "Administrators");
   await expect(admins).toContainText("1");
-  await expect(admins).toContainText("Check");
+  await expect(admins).toContainText("Review");
   await expect(admins).toContainText("Make a second person an administrator");
 });
 

@@ -135,7 +135,7 @@ function LevelSelect({
       aria-label={label}
       value={value ?? ""}
       disabled={disabled}
-      className="w-full shrink-0 sm:w-48 [&_select]:min-h-11"
+      className="w-full shrink-0 sm:w-60 [&_select]:min-h-11"
       onChange={(event) => {
         const next = event.target.value;
         onChange(isAccessLevel(next) ? next : null);

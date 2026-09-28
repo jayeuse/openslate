@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import { afterAccessGroupChange } from "../adapters/access-queries";
@@ -617,10 +618,17 @@ export function GroupEditor({
 
   function footer(section: GroupSection, label: string) {
     const changed = Boolean(edits[section]);
+    // Members and Access can outgrow the sheet, so their save stays in reach.
+    const sticky = section !== "details";
     return (
       <>
         <ActionError message={errors[section] ?? ""} />
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <div
+          className={cn(
+            "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+            sticky && "bg-card sticky bottom-0 -mx-5 -mb-5 border-t px-5 py-3",
+          )}
+        >
           {changed ? (
             <Button
               type="button"
@@ -682,7 +690,7 @@ export function GroupEditor({
                   <>
                     <span
                       aria-hidden="true"
-                      className="bg-primary ml-1 size-1.5 shrink-0 rounded-full"
+                      className="bg-warn ml-1 size-1.5 shrink-0 rounded-full"
                     />
                     <span className="sr-only">, unsaved changes</span>
                   </>
@@ -743,18 +751,29 @@ export function GroupEditor({
                     ? "Remove every member first. A group with members cannot be deleted."
                     : "The group and its access settings are removed."}
                 </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11 w-full sm:w-auto"
-                  disabled={pending !== null}
-                  onClick={() => {
-                    setDeleteError("");
-                    setDeleting(true);
-                  }}
-                >
-                  Delete group
-                </Button>
+                {shown.member_ids.length ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 w-full sm:w-auto"
+                    onClick={() => onTabChange("members")}
+                  >
+                    Go to Members
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 w-full sm:w-auto"
+                    disabled={pending !== null}
+                    onClick={() => {
+                      setDeleteError("");
+                      setDeleting(true);
+                    }}
+                  >
+                    Delete group
+                  </Button>
+                )}
               </section>
             </div>
           ) : (
@@ -874,67 +893,32 @@ export function GroupEditor({
         onOpenChange={(open) => !open && pending === null && setDeleting(false)}
       >
         <AlertDialogContent>
-          {shown.member_ids.length ? (
-            <>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Remove the members first</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {shown.name} still has {shown.member_ids.length}{" "}
-                  {shown.member_ids.length === 1 ? "member" : "members"}. When
-                  you remove them, they lose the access this group gives. Then
-                  you can delete the group.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <ActionError message={deleteError} />
-              <AlertDialogFooter>
-                <Button
-                  variant="outline"
-                  className="min-h-11"
-                  onClick={() => setDeleting(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  className="min-h-11"
-                  onClick={() => {
-                    setDeleting(false);
-                    onTabChange("members");
-                  }}
-                >
-                  Go to Members
-                </Button>
-              </AlertDialogFooter>
-            </>
-          ) : (
-            <>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete {shown.name}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  The group and its access settings are removed. This cannot be
-                  undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <ActionError message={deleteError} />
-              <AlertDialogFooter>
-                <Button
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={pending !== null}
-                  onClick={() => setDeleting(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="destructive"
-                  className="min-h-11"
-                  disabled={pending !== null}
-                  onClick={() => void confirmDelete()}
-                >
-                  {pending === "delete" ? "Deleting…" : "Delete"}
-                </Button>
-              </AlertDialogFooter>
-            </>
-          )}
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {shown.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The group and its access settings are removed. This cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ActionError message={deleteError} />
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              disabled={pending !== null}
+              onClick={() => setDeleting(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="min-h-11"
+              disabled={pending !== null}
+              onClick={() => void confirmDelete()}
+            >
+              {pending === "delete" ? "Deleting…" : "Delete"}
+            </Button>
+          </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </>

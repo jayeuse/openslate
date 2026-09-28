@@ -336,7 +336,7 @@ export function InvitePersonDialog({
                     Groups give access to departments and modules.
                     {form.role === "guest" ? " Guests can only read." : ""}
                   </p>
-                  <ul className="grid max-h-56 gap-1 overflow-y-auto rounded-lg border p-2 sm:grid-cols-2">
+                  <ul className="grid gap-1 rounded-lg border p-2 sm:max-h-56 sm:grid-cols-2 sm:overflow-y-auto">
                     {groups.map((group) => {
                       const checked = form.group_ids.includes(group.id);
                       return (
@@ -374,7 +374,7 @@ export function InvitePersonDialog({
             ) : null}
             <ActionError message={submitError} />
 
-            <DialogFooter className="mt-0">
+            <DialogFooter className="bg-card sticky bottom-0 z-10 -mx-5 mt-0 -mb-5 border-t px-5 py-3">
               <Button
                 type="button"
                 variant="outline"

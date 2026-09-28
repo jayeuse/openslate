@@ -84,6 +84,26 @@ test("the whole row opens a person, and the name reads as body text, not a link"
   await expect(panel(page, "Ben Cruz")).toBeVisible();
 });
 
+test("a group chip opens that group's members", async ({ page }) => {
+  await mockPeopleApi(page);
+  await page.goto(`/access?view=people&user=${ids.ben}`);
+  await panel(page, "Ben Cruz")
+    .getByRole("list", { name: "Groups" })
+    .getByRole("link", { name: "Finance readers" })
+    .click();
+
+  await expect(page).toHaveURL(
+    new RegExp(`/access\\?view=groups&group=${ids.readers}&tab=members$`),
+  );
+  const sheet = page.getByRole("dialog", { name: "Finance readers" });
+  await expect(sheet.getByRole("tab", { name: "Members" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await sheet.getByRole("button", { name: "Close" }).click();
+  await expect(page).toHaveURL(/\/access\?view=groups$/);
+});
+
 test("inviting a member sends the chosen groups", async ({ page }) => {
   const api = await mockPeopleApi(page);
   await page.goto("/access?view=people");
@@ -338,7 +358,12 @@ test("unsaved details warn before a reload, survive it, and ask before they are 
 }) => {
   await mockPeopleApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
+  const details = panel(page, "Ben Cruz").getByRole("tab", {
+    name: "Details",
+  });
+  await expect(details).toHaveAccessibleName("Details");
   await panel(page, "Ben Cruz").getByLabel("Job title").fill("Team lead");
+  await expect(details).toHaveAccessibleName(/^Details\s*, unsaved changes$/);
 
   // A reload or tab close gets the browser's warning while the draft is open.
   const warns = () =>

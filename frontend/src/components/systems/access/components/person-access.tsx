@@ -85,15 +85,10 @@ export function PersonAccess({ person }: { person: AccessUser }) {
       : null;
 
   return (
-    <section aria-labelledby="person-access-title" className="space-y-3">
-      <div>
-        <h3 id="person-access-title" className="font-semibold">
-          Access
-        </h3>
-        <p className="text-muted-foreground text-sm">
-          What this person can open, and the groups that give it.
-        </p>
-      </div>
+    <section aria-label="Access" className="space-y-3">
+      <p className="text-muted-foreground text-sm">
+        What this person can open, and the groups that give it.
+      </p>
       {person.is_deleted ? (
         <p className="text-muted-foreground rounded-lg border p-4 text-sm">
           Deleted people have no access. Restore this person to see it again.

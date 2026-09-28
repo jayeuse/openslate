@@ -117,6 +117,15 @@ export function PersonPanel({
                   >
                     <TabsTrigger className="min-h-9" value="details">
                       Details
+                      {hasUnsavedDraft ? (
+                        <>
+                          <span
+                            aria-hidden="true"
+                            className="bg-warn ml-1 size-1.5 shrink-0 rounded-full"
+                          />
+                          <span className="sr-only">, unsaved changes</span>
+                        </>
+                      ) : null}
                     </TabsTrigger>
                     <TabsTrigger className="min-h-9" value="access">
                       Access

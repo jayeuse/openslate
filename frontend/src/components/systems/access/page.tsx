@@ -146,7 +146,7 @@ function AccessControlCenter() {
     <AccessFrame
       title={copy?.title ?? "Access"}
       description={description}
-      showSecurityLink={access === "all"}
+      showSecurityLink={access === "all" && view === "overview"}
     >
       <LoadingRegion
         loading={identity.isPending}

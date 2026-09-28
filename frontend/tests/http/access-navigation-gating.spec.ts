@@ -68,6 +68,11 @@ test("a member without manage access has no Access entry or screen", async ({
   ).toBeVisible();
   await expect(
     page
+      .getByRole("navigation", { name: "Breadcrumb" })
+      .locator('[aria-current="page"]'),
+  ).toHaveText("Access");
+  await expect(
+    page
       .getByRole("navigation", { name: "Main navigation" })
       .getByRole("button", { name: "Access" }),
   ).toHaveCount(0);

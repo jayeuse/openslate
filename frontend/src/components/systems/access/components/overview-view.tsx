@@ -227,7 +227,7 @@ export function OverviewView() {
                           {card.title}
                         </h3>
                         {card.attention ? (
-                          <Badge variant="warning">Check</Badge>
+                          <Badge variant="warning">Review</Badge>
                         ) : null}
                       </div>
                       <p className="text-3xl font-semibold tabular-nums">

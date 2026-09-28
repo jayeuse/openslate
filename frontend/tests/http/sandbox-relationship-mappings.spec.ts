@@ -355,6 +355,29 @@ test("an empty Sandbox renders no placeholder entities and can create its first 
   ).toBeVisible();
 });
 
+test("an empty trigger list explains how to start and offers no save", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, initialDesign);
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+
+  const settings = page.getByRole("region", { name: "Trigger settings" });
+  await expect(settings).toContainText(
+    "Select or create a trigger to edit its settings.",
+  );
+  await expect(
+    settings.getByRole("button", { name: "Save triggers" }),
+  ).toHaveCount(0);
+  await expect(
+    settings.getByRole("button", { name: "Discard changes" }),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "New trigger" }).click();
+  await expect(
+    settings.getByRole("button", { name: "Save triggers" }),
+  ).toBeEnabled();
+});
+
 test("the Build canvas owns most of a wide screen and one workbench switches Structure and Properties", async ({
   page,
 }) => {

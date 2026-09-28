@@ -306,6 +306,7 @@ export function PeopleView() {
         sortOptions={sortOptions}
         onSortChange={(sort) => changeFilters({ sort })}
         activeFilterCount={filterCount}
+        sortInFiltersBelowMd
       >
         <SelectField
           id="people-role-filter"

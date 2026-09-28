@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Search, UserRoundMinus, UserRoundPlus } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +50,12 @@ export function GroupMemberPicker({
 }) {
   const id = useId();
   const [query, setQuery] = useState("");
+  const [announcement, setAnnouncement] = useState("");
+  const searchRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  // The member whose Remove button takes focus after a change; null is the
+  // search, undefined is no request.
+  const focusRequest = useRef<string | null | undefined>(undefined);
   const byId = new Map(options.map((option) => [option.id, option]));
   const members = selected
     .map(
@@ -77,8 +83,39 @@ export function GroupMemberPicker({
   const full = selected.length >= GROUP_MEMBER_LIMIT;
   const blockedMembers = members.filter((member) => member.blocked).length;
 
+  // The pressed button leaves the page, so focus moves to where the person
+  // is working: the search after an add, a neighbouring member after a remove.
+  useEffect(() => {
+    const memberId = focusRequest.current;
+    if (memberId === undefined) return;
+    focusRequest.current = undefined;
+    const target = memberId
+      ? listRef.current?.querySelector<HTMLButtonElement>(
+          `[data-member-id="${CSS.escape(memberId)}"]`,
+        )
+      : null;
+    (target ?? searchRef.current?.querySelector("input"))?.focus();
+  });
+
+  function add(option: MemberOption) {
+    onChange([...selected, option.id]);
+    setAnnouncement(`${option.name} added. Save members to apply.`);
+    focusRequest.current = null;
+  }
+
+  function remove(member: MemberOption) {
+    const index = members.findIndex((item) => item.id === member.id);
+    const neighbour = members[index + 1] ?? members[index - 1] ?? null;
+    onChange(selected.filter((item) => item !== member.id));
+    setAnnouncement(`${member.name} removed. Save members to apply.`);
+    focusRequest.current = neighbour?.id ?? null;
+  }
+
   return (
     <div className="flex flex-col gap-5">
+      <p role="status" className="sr-only">
+        {announcement}
+      </p>
       <section aria-labelledby={`${id}-members`} className="space-y-2">
         <h3 id={`${id}-members`} className="text-sm font-semibold">
           In this group ({selected.length})
@@ -90,7 +127,11 @@ export function GroupMemberPicker({
           </p>
         ) : null}
         {members.length ? (
-          <ul aria-label="Members" className="divide-y rounded-lg border">
+          <ul
+            ref={listRef}
+            aria-label="Members"
+            className="divide-y rounded-lg border"
+          >
             {members.map((member) => (
               <li
                 key={member.id}
@@ -103,10 +144,9 @@ export function GroupMemberPicker({
                   size="icon"
                   className="size-11 shrink-0"
                   aria-label={`Remove ${member.name}`}
+                  data-member-id={member.id}
                   disabled={disabled}
-                  onClick={() =>
-                    onChange(selected.filter((item) => item !== member.id))
-                  }
+                  onClick={() => remove(member)}
                 >
                   <UserRoundMinus aria-hidden="true" />
                 </Button>
@@ -124,7 +164,7 @@ export function GroupMemberPicker({
         <h3 id={`${id}-add`} className="text-sm font-semibold">
           Add people
         </h3>
-        <div className="relative">
+        <div ref={searchRef} className="relative">
           <Search
             aria-hidden="true"
             className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
@@ -158,7 +198,7 @@ export function GroupMemberPicker({
                   className="size-11 shrink-0"
                   aria-label={`Add ${option.name}`}
                   disabled={disabled || full || option.blocked !== null}
-                  onClick={() => onChange([...selected, option.id])}
+                  onClick={() => add(option)}
                 >
                   <UserRoundPlus aria-hidden="true" />
                 </Button>

@@ -71,10 +71,20 @@ const gapOptions: readonly { value: GroupGapFilter; label: string }[] = [
 /** A reach list shows this many departments, then "+N more". */
 const REACH_SHOWN = 2;
 
-/** Replace the `group` parameter without a navigation or a history entry. */
+const editorTabs: readonly GroupEditorTab[] = ["details", "members", "access"];
+
+function editorTabFrom(value: string | null): GroupEditorTab | null {
+  return editorTabs.find((tab) => tab === value) ?? null;
+}
+
+/**
+ * Replace the `group` and `tab` parameters without a navigation or a history
+ * entry. A link may name the tab a group opens on (`tab=members`).
+ */
 function replaceGroupParam(groupId: string | null) {
   const url = new URL(window.location.href);
   url.searchParams.set("view", "groups");
+  url.searchParams.delete("tab");
   if (groupId) url.searchParams.set("group", groupId);
   else url.searchParams.delete("group");
   // Next syncs useSearchParams only for calls without its own history state.
@@ -166,6 +176,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
   );
   const members = admin ? users : candidates;
   const selectedId = searchParams.get("group");
+  const linkedTab = editorTabFrom(searchParams.get("tab"));
   const selected = rows?.find((row) => row.group.id === selectedId) ?? null;
 
   // A link to a group that is not in the list opens the list instead.
@@ -218,7 +229,10 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
             {row.original.group.description}
           </span>
         ) : (
-          <span className="text-muted-foreground">None</span>
+          <span className="text-muted-foreground">
+            <span aria-hidden="true">—</span>
+            <span className="sr-only">No description</span>
+          </span>
         ),
     },
     {
@@ -322,6 +336,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
         sortOptions={sortOptions}
         onSortChange={(sort) => changeFilters({ sort })}
         activeFilterCount={filters.filter === "all" ? 0 : 1}
+        sortInFiltersBelowMd
       >
         <SelectField
           id="groups-gap-filter"
@@ -449,7 +464,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
         modules={modules.data ?? []}
         memberOptions={memberOptions}
         listFresh={!groups.isFetching && !groups.isError}
-        initialTab={openTab}
+        initialTab={openTab ?? linkedTab}
         onClose={() => {
           setOpenTab(null);
           replaceGroupParam(null);

@@ -1061,7 +1061,7 @@ export function TriggerStudio({
                     {error}
                   </Alert>
                 )}
-                {selected && (
+                {selected ? (
                   <TriggerEditor
                     design={design}
                     trigger={selected}
@@ -1069,33 +1069,39 @@ export function TriggerStudio({
                     onChange={update}
                     selectedStep={selectedStep}
                   />
+                ) : (
+                  <p className="text-muted-foreground text-sm">
+                    Select or create a trigger to edit its settings.
+                  </p>
                 )}
               </div>
-              <div className="border-border flex flex-wrap items-center justify-end gap-3 border-t p-4">
-                <p className="text-muted-foreground mr-auto text-xs">
-                  Saves all trigger drafts. Publishing is a separate step.
-                </p>
-                <Button
-                  variant="ghost"
-                  className="min-h-11"
-                  onClick={() => {
-                    setDraft(triggers);
-                    setSelectedId(triggers[0]?.id ?? "");
-                    setSelectedStep("trigger");
-                    setError("");
-                  }}
-                  disabled={pending || !dirty}
-                >
-                  Discard changes
-                </Button>
-                <Button
-                  className="min-h-11"
-                  onClick={() => void save()}
-                  disabled={pending || !dirty}
-                >
-                  {pending ? "Saving…" : "Save triggers"}
-                </Button>
-              </div>
+              {draft.length > 0 || dirty ? (
+                <div className="border-border flex flex-wrap items-center justify-end gap-3 border-t p-4">
+                  <p className="text-muted-foreground mr-auto text-xs">
+                    Saves all trigger drafts. Publishing is a separate step.
+                  </p>
+                  <Button
+                    variant="ghost"
+                    className="min-h-11"
+                    onClick={() => {
+                      setDraft(triggers);
+                      setSelectedId(triggers[0]?.id ?? "");
+                      setSelectedStep("trigger");
+                      setError("");
+                    }}
+                    disabled={pending || !dirty}
+                  >
+                    Discard changes
+                  </Button>
+                  <Button
+                    className="min-h-11"
+                    onClick={() => void save()}
+                    disabled={pending || !dirty}
+                  >
+                    {pending ? "Saving…" : "Save triggers"}
+                  </Button>
+                </div>
+              ) : null}
             </section>
           </ResizablePanel>
         </ResizablePanelGroup>

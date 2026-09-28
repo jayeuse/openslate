@@ -175,8 +175,27 @@ test("an administrator replaces members from the directory, merged onto newer me
   const members = sheet.getByRole("list", { name: "Members" });
   await expect(members).toContainText("Ben Cruz");
 
+  const announcement = sheet.getByRole("status");
   await sheet.getByRole("button", { name: "Add Ana Santos" }).click();
+  // Focus stays in the picker, and the change is announced.
+  await expect(
+    sheet.getByRole("searchbox", { name: "Search people to add" }),
+  ).toBeFocused();
+  await expect(announcement).toHaveText(
+    "Ana Santos added. Save members to apply.",
+  );
   await sheet.getByRole("button", { name: "Remove Ben Cruz" }).click();
+  await expect(
+    sheet.getByRole("button", { name: "Remove Ana Santos" }),
+  ).toBeFocused();
+  await expect(announcement).toHaveText(
+    "Ben Cruz removed. Save members to apply.",
+  );
+  await sheet.getByRole("button", { name: "Remove Ana Santos" }).click();
+  await expect(
+    sheet.getByRole("searchbox", { name: "Search people to add" }),
+  ).toBeFocused();
+  await sheet.getByRole("button", { name: "Add Ana Santos" }).click();
   // Someone else added Cy meanwhile; the save keeps that change.
   const readers = api.groups.get(ids.readers);
   if (readers)
@@ -297,13 +316,12 @@ test("a group with members cannot be deleted; an empty one can", async ({
   api.groups.set(empty, group(empty, "New hires", [], []));
   await page.goto(`/access?view=groups&group=${ids.clerks}`);
   let sheet = panel(page, "Inventory clerks");
-  await sheet.getByRole("button", { name: "Delete group" }).click();
-  const blocked = page.getByRole("alertdialog", {
-    name: "Remove the members first",
-  });
-  await expect(blocked).toContainText("still has 2 members");
-  await expect(blocked).toContainText("they lose the access this group gives");
-  await blocked.getByRole("button", { name: "Go to Members" }).click();
+  // A group with members offers the way to empty it, not a delete.
+  await expect(sheet.getByRole("button", { name: "Delete group" })).toHaveCount(
+    0,
+  );
+  await sheet.getByRole("button", { name: "Go to Members" }).click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await expect(sheet.getByRole("tab", { name: "Members" })).toHaveAttribute(
     "aria-selected",
     "true",

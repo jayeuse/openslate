@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -11,9 +12,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 
 import { afterAccessUserChange } from "../adapters/access-queries";
 import {
@@ -187,12 +188,19 @@ export function PersonAccount({
             <ul aria-label="Groups" className="flex flex-wrap gap-2">
               {groups.map((group) => (
                 <li key={group.id}>
-                  <Badge variant="secondary">{group.name}</Badge>
+                  <GuardedWorkspaceLink
+                    href={
+                      `/access?view=groups&group=${encodeURIComponent(group.id)}&tab=members` as Route
+                    }
+                    className="bg-secondary text-secondary-foreground focus-visible:outline-ring inline-flex min-h-9 items-center rounded-md px-3 text-sm font-medium underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  >
+                    {group.name}
+                  </GuardedWorkspaceLink>
                 </li>
               ))}
             </ul>
             <p className="text-muted-foreground text-sm">
-              Change who is in a group on the Groups tab.
+              Open a group to change who is in it.
             </p>
           </>
         ) : (

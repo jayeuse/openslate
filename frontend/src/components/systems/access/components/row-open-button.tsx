@@ -18,7 +18,7 @@ export function RowOpenButton({
   return (
     <button
       type="button"
-      className="focus-visible:outline-ring -mx-1 flex min-h-11 max-w-72 min-w-0 flex-col items-start rounded-md px-1 text-left after:absolute after:inset-0 after:content-[''] focus-visible:outline-2"
+      className="focus-visible:outline-ring -mx-1 flex min-h-11 max-w-72 min-w-0 flex-col items-start justify-center rounded-md px-1 text-left after:absolute after:inset-0 after:content-[''] focus-visible:outline-2"
       onClick={onOpen}
     >
       <span className="block font-medium break-words">{title}</span>
