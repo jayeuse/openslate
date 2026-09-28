@@ -24,11 +24,6 @@ export function OpenViewQuerySync({ active }: { active: boolean }) {
   const client = useQueryClient();
   useEffect(() => {
     if (!active) return;
-    // Saved chart settings stay as loaded: reloading them can re-apply
-    // settings over a Chart draft being edited, which the stream never did
-    // before.
-    const notChartPreferences = (query: Query) =>
-      query.queryKey[1] !== openViewKeys.chartPreferences()[1];
     // Reads again every cached read under `queryKey` that `matches`. A read
     // in flight with data is restarted by invalidation, but one with no data
     // is not (TanStack reuses its request), and it may have read before the
@@ -49,7 +44,7 @@ export function OpenViewQuerySync({ active }: { active: boolean }) {
     const unsubscribe = subscribeOpenViewInvalidations(
       (event) => {
         if (event.type === "resync") {
-          refresh(openViewKeys.all, notChartPreferences);
+          refresh(openViewKeys.all, everyRead);
           return;
         }
         for (const queryKey of openViewKeysForEntity(event.entity))
@@ -59,7 +54,7 @@ export function OpenViewQuerySync({ active }: { active: boolean }) {
       // hover prefetch, an earlier visit, or a read that overlapped the
       // handshake), so it may have missed a change: read it again. Reads
       // that start after this moment are covered by the stream.
-      () => refresh(openViewKeys.all, notChartPreferences),
+      () => refresh(openViewKeys.all, everyRead),
     );
     return () => {
       unsubscribe();

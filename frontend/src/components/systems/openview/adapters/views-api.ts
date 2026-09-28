@@ -3,11 +3,6 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { openViewReadFetch } from "./openview-access";
 import {
   archiveSchema,
-  audienceOptionKindSchema,
-  audienceOptionListSchema,
-  defaultListSchema,
-  defaultSchema,
-  defaultSetSchema,
   dataSourceListSchema,
   fieldSchema,
   listSchema,
@@ -24,28 +19,23 @@ import {
 } from "./views-schemas";
 import {
   serializeOpenViewQueryDefinition,
-  serializeOpenViewAudience,
   serializeOpenViewPresentation,
 } from "./views-serialization";
 import type {
-  OpenViewAudienceOption,
   OpenViewConflict,
   OpenViewDataSource,
   OpenViewDataSourceField,
   OpenViewPage,
-  OpenViewPersonalDefault,
   OpenViewQueryDefinition,
   OpenViewRecord,
   OpenViewSavedView,
 } from "./views-schemas";
 
 export type {
-  OpenViewAudienceOption,
   OpenViewConflict,
   OpenViewDataSource,
   OpenViewDataSourceField,
   OpenViewPage,
-  OpenViewPersonalDefault,
   OpenViewPresentation,
   OpenViewQueryDefinition,
   OpenViewQueryFieldReference,
@@ -98,18 +88,6 @@ export async function listOpenViewDataSourceFields(
   return result;
 }
 
-export async function listOpenViewAudienceOptions(
-  kind: "user",
-  options: { limit?: number; offset?: number } = {},
-): Promise<OpenViewPage<OpenViewAudienceOption>> {
-  const validKind = audienceOptionKindSchema.parse(kind);
-  const page = pageQuery(options);
-  return openViewReadFetch(
-    `/views/audience-options?${queryString({ kind: validKind, ...page })}`,
-    audienceOptionListSchema,
-  );
-}
-
 export async function listOpenViewSavedViews(options: {
   moduleId: string;
   limit?: number;
@@ -147,7 +125,7 @@ export async function createOpenViewSavedView(
   const body = {
     module_id: input.moduleId,
     name: input.name,
-    audience: serializeOpenViewAudience(input.audience),
+    is_default: input.isDefault,
     definition: serializeOpenViewQueryDefinition(input.definition),
     presentation: serializeOpenViewPresentation(input.presentation),
   };
@@ -163,8 +141,7 @@ export async function updateOpenViewSavedView(
   const input = savedViewUpdateSchema.parse(raw);
   const body: Record<string, unknown> = { revision: input.revision };
   if (input.name !== undefined) body.name = input.name;
-  if (input.audience !== undefined)
-    body.audience = serializeOpenViewAudience(input.audience);
+  if (input.isDefault !== undefined) body.is_default = input.isDefault;
   if (input.definition !== undefined) {
     body.definition = serializeOpenViewQueryDefinition(input.definition);
   }
@@ -198,42 +175,6 @@ export async function restoreOpenViewSavedView(raw: {
     `/views/${encodeURIComponent(input.id)}/restore`,
     savedViewResponseSchema,
     { method: "POST", body: JSON.stringify({ revision: input.revision }) },
-  );
-}
-
-export async function listOpenViewPersonalDefaults(
-  options: { limit?: number; offset?: number } = {},
-): Promise<OpenViewPage<OpenViewPersonalDefault>> {
-  const page = pageQuery(options);
-  return openViewReadFetch(
-    `/views/defaults?${queryString(page)}`,
-    defaultListSchema,
-  );
-}
-
-export async function setOpenViewPersonalDefault(raw: {
-  moduleId: string;
-  viewId: string;
-}): Promise<OpenViewPersonalDefault> {
-  const input = defaultSetSchema.parse(raw);
-  return apiFetch(
-    `/views/defaults/${encodeURIComponent(input.moduleId)}`,
-    defaultSchema,
-    {
-      method: "PUT",
-      body: JSON.stringify({ view_id: input.viewId }),
-    },
-  );
-}
-
-export async function unsetOpenViewPersonalDefault(
-  moduleId: string,
-): Promise<void> {
-  const validModuleId = uuidSchema.parse(moduleId);
-  await apiFetch(
-    `/views/defaults/${encodeURIComponent(validModuleId)}`,
-    z.null(),
-    { method: "DELETE" },
   );
 }
 

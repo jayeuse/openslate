@@ -54,13 +54,8 @@ type QueryDefinition = {
 type SavedView = {
   id: string;
   module_id: string;
-  owner_id: string;
   name: string;
-  visibility: "private" | "workspace";
-  audience: {
-    kind: "private" | "everyone" | "user";
-    user_id: string | null;
-  };
+  is_default: boolean;
   definition: QueryDefinition;
   presentation: {
     version: 1;
@@ -94,10 +89,8 @@ function baseView(): SavedView {
   return {
     id: viewId,
     module_id: moduleId,
-    owner_id: userId,
     name: "Equipment register",
-    visibility: "private",
-    audience: { kind: "private", user_id: null },
+    is_default: false,
     definition: {
       version: 1,
       logic: "and",
@@ -191,11 +184,9 @@ async function installViewsApi(
     additionalViews?: SavedView[];
     deepViewBeyondBound?: boolean;
     calendarDateTimeValue?: string;
-    audienceOptionsFailure?: boolean;
   } = {},
 ) {
   await installOpenViewEventSource(page);
-  let audienceOptionsFailure = options.audienceOptionsFailure ?? false;
   let saved = baseView();
   if (options.initialName) saved = { ...saved, name: options.initialName };
   if (options.disableInitialSearch)
@@ -285,12 +276,24 @@ async function installViewsApi(
       },
     };
   }
-  let personalDefault: string | null = options.initialDefault ? viewId : null;
+  // The module's shared default view; every view response carries it.
+  let defaultViewId: string | null = options.initialDefault ? viewId : null;
+  const withDefault = (view: SavedView): SavedView => ({
+    ...view,
+    is_default: view.id === defaultViewId,
+  });
   const createdViews: SavedView[] = [];
   let nextPatchIsStale = false;
   let failNextGroupedQuery = false;
   let nextMutationFailure: "archive" | "restore" | "default-clear" | null =
     null;
+  // Only a manager of the module sees save and change controls.
+  await page.route("**/api/auth/me", async (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ id: userId, role: "admin", access: [] }),
+    }),
+  );
   let nextPatchBarrier: {
     wait: Promise<void>;
     signalStarted: () => void;
@@ -489,51 +492,21 @@ async function installViewsApi(
         ),
       });
     }
-    if (url.pathname === "/api/views/audience-options") {
-      if (audienceOptionsFailure)
-        return route.fulfill({
-          status: 422,
-          contentType: "application/json",
-          body: JSON.stringify({ detail: "Audience options are unavailable." }),
-        });
-      const option = {
-        kind: "user",
-        id: "00000000-0000-4000-8000-000000000018",
-        label: "Nina Santos",
-      };
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(pageResponse([option])),
-      });
-    }
-    if (url.pathname === "/api/views/defaults") {
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(
-          pageResponse(
-            personalDefault
-              ? [{ module_id: moduleId, view_id: personalDefault, revision: 1 }]
-              : [],
-          ),
-        ),
-      });
-    }
     if (url.pathname === "/api/views" && request.method() === "POST") {
       const body = request.postDataJSON() as {
         module_id: string;
         name: string;
-        audience: SavedView["audience"];
+        is_default: boolean;
         definition: QueryDefinition;
         presentation: SavedView["presentation"];
       };
+      if (body.is_default) defaultViewId = duplicateViewId;
       const created: SavedView = {
         ...saved,
         id: duplicateViewId,
         module_id: body.module_id,
-        owner_id: userId,
         name: body.name,
-        visibility: body.audience.kind === "private" ? "private" : "workspace",
-        audience: body.audience,
+        is_default: body.is_default,
         definition: body.definition,
         presentation: body.presentation,
         revision: 1,
@@ -560,9 +533,9 @@ async function installViewsApi(
             const sequence = (offset + index + 1)
               .toString(16)
               .padStart(12, "0");
-            if (absoluteIndex === total - 1) return saved;
+            if (absoluteIndex === total - 1) return withDefault(saved);
             return {
-              ...saved,
+              ...withDefault(saved),
               id: `10000000-0000-4000-8000-${sequence}`,
               name: `Older view ${offset + index + 1}`,
             };
@@ -587,11 +560,13 @@ async function installViewsApi(
         ...(options.additionalViews ?? []),
         ...createdViews,
       ];
-      const views = allViews.filter(
-        (view) =>
-          view.module_id === url.searchParams.get("module_id") &&
-          (includeDeleted || !view.is_deleted),
-      );
+      const views = allViews
+        .filter(
+          (view) =>
+            view.module_id === url.searchParams.get("module_id") &&
+            (includeDeleted || !view.is_deleted),
+        )
+        .map(withDefault);
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(pageResponse(views, limit, offset, views.length)),
@@ -600,7 +575,7 @@ async function installViewsApi(
     if (url.pathname === `/api/views/${viewId}` && request.method() === "GET") {
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(saved),
+        body: JSON.stringify(withDefault(saved)),
       });
     }
     if (
@@ -635,10 +610,21 @@ async function installViewsApi(
       const body = request.postDataJSON() as {
         revision: number;
         name?: string;
-        audience?: SavedView["audience"];
+        is_default?: boolean;
         definition?: QueryDefinition;
         presentation?: SavedView["presentation"];
       };
+      if (
+        body.is_default === false &&
+        nextMutationFailure === "default-clear"
+      ) {
+        nextMutationFailure = null;
+        return route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Default could not be cleared." }),
+        });
+      }
       if (body.revision !== saved.revision) {
         return route.fulfill({
           status: 409,
@@ -650,18 +636,16 @@ async function installViewsApi(
         ...saved,
         revision: saved.revision + 1,
         name: body.name ?? saved.name,
-        audience: body.audience ?? saved.audience,
-        visibility:
-          body.audience && body.audience.kind !== "private"
-            ? "workspace"
-            : saved.visibility,
         definition: body.definition ?? saved.definition,
         presentation: body.presentation ?? saved.presentation,
         updated_at: new Date().toISOString(),
       };
+      if (body.is_default === true) defaultViewId = viewId;
+      if (body.is_default === false && defaultViewId === viewId)
+        defaultViewId = null;
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(saved),
+        body: JSON.stringify(withDefault(saved)),
       });
     }
     if (
@@ -677,6 +661,7 @@ async function installViewsApi(
         });
       }
       saved = { ...saved, revision: saved.revision + 1, is_deleted: true };
+      if (defaultViewId === viewId) defaultViewId = null;
       return route.fulfill({ status: 204, body: "" });
     }
     if (
@@ -694,38 +679,8 @@ async function installViewsApi(
       saved = { ...saved, revision: saved.revision + 1, is_deleted: false };
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(saved),
+        body: JSON.stringify(withDefault(saved)),
       });
-    }
-    if (
-      url.pathname === `/api/views/defaults/${moduleId}` &&
-      request.method() === "PUT"
-    ) {
-      const body = request.postDataJSON() as { view_id: string };
-      personalDefault = body.view_id;
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          module_id: moduleId,
-          view_id: personalDefault,
-          revision: 1,
-        }),
-      });
-    }
-    if (
-      url.pathname === `/api/views/defaults/${moduleId}` &&
-      request.method() === "DELETE"
-    ) {
-      if (nextMutationFailure === "default-clear") {
-        nextMutationFailure = null;
-        return route.fulfill({
-          status: 500,
-          contentType: "application/json",
-          body: JSON.stringify({ detail: "Default could not be cleared." }),
-        });
-      }
-      personalDefault = null;
-      return route.fulfill({ status: 204, body: "" });
     }
     return route.fulfill({
       status: 404,
@@ -972,9 +927,9 @@ async function installViewsApi(
       };
     },
     createdViews: () => createdViews,
-    personalDefault: () => personalDefault,
-    changePersonalDefaultElsewhere: (viewId: string) => {
-      personalDefault = viewId;
+    defaultView: () => defaultViewId,
+    changeDefaultElsewhere: (viewId: string) => {
+      defaultViewId = viewId;
     },
     recordQueryRequests,
     denyRecordQueries() {
@@ -1005,9 +960,6 @@ async function installViewsApi(
     windowQueryRequests,
     failNextWindowQuery: () => {
       failNextWindowQuery = true;
-    },
-    restoreAudienceOptions: () => {
-      audienceOptionsFailure = false;
     },
   };
 }
@@ -1414,7 +1366,7 @@ test("unsafe integer View filters fail locally without sending a rounded value",
   ).toBeDisabled();
 });
 
-test("server-backed Views preserve edits through save, conflict, archive, restore, and default changes", async ({
+test("server-backed Views preserve edits through save, conflict, archive, restore, and module default changes", async ({
   page,
 }) => {
   const api = await installViewsApi(page);
@@ -1595,56 +1547,14 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   ).toBeVisible();
   await archivedDialog.getByRole("button", { name: "Close" }).click();
 
-  await openViewAction(page, "Set as my default");
+  await openViewAction(page, "Make default view");
   await expect(
     page.getByRole("status").filter({ hasText: "default" }),
   ).toBeVisible();
-  expect(api.personalDefault()).toBe(viewId);
+  expect(api.defaultView()).toBe(viewId);
   expect(
     api.requests.some((request) => request.includes("deleted=include")),
   ).toBe(true);
-});
-
-test("a failed audience list keeps the catalog open and limits sharing to Only me and Everyone", async ({
-  page,
-}) => {
-  const api = await installViewsApi(page, { audienceOptionsFailure: true });
-
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Retry catalog" })).toHaveCount(
-    0,
-  );
-
-  await page.getByRole("button", { name: "Save view" }).click();
-  const dialog = page.getByRole("dialog");
-  const audience = dialog.getByRole("combobox", { name: "Audience" });
-  await expect(audience.getByRole("option")).toHaveText([
-    "Only me",
-    "Everyone",
-  ]);
-  await expect(
-    dialog.getByText(
-      "People could not be loaded. You can still share with Only me or Everyone.",
-    ),
-  ).toBeVisible();
-
-  const retry = dialog.getByRole("button", { name: "Retry people" });
-  await retry.click();
-  await expect(retry).toBeFocused();
-  await expect(retry).not.toHaveAttribute("aria-disabled", "true");
-
-  api.restoreAudienceOptions();
-  await retry.click();
-  await expect(audience.getByRole("option")).toHaveText([
-    "Only me",
-    "Everyone",
-    "User: Nina Santos",
-  ]);
-  await expect(
-    dialog.getByRole("button", { name: "Retry people" }),
-  ).toHaveCount(0);
-  await expect(audience).toBeFocused();
 });
 
 test("clearing an implicit default asks before discarding its local draft", async ({
@@ -1658,18 +1568,18 @@ test("clearing an implicit default asks before discarding its local draft", asyn
   );
   const search = page.getByRole("searchbox", { name: "Search Equipment" });
   await search.fill("unpublished default draft");
-  await openViewAction(page, "Clear my default");
+  await openViewAction(page, "Clear default view");
 
   const discardDialog = page.getByRole("alertdialog", {
     name: "Discard unsaved view changes?",
   });
   await expect(discardDialog).toBeVisible();
-  expect(api.personalDefault()).toBe(viewId);
+  expect(api.defaultView()).toBe(viewId);
   await discardDialog.getByRole("button", { name: "Keep editing" }).click();
   await expect(search).toHaveValue("unpublished default draft");
-  expect(api.personalDefault()).toBe(viewId);
+  expect(api.defaultView()).toBe(viewId);
 
-  await openViewAction(page, "Clear my default");
+  await openViewAction(page, "Clear default view");
   api.rejectNextMutation("default-clear");
   await discardDialog
     .getByRole("button", { name: "Discard and continue" })
@@ -1677,22 +1587,22 @@ test("clearing an implicit default asks before discarding its local draft", asyn
   await expect(
     page.getByRole("alert").filter({ hasText: "Default" }),
   ).toBeVisible();
-  expect(api.personalDefault()).toBe(viewId);
+  expect(api.defaultView()).toBe(viewId);
   await expect(search).toHaveValue("unpublished default draft");
 
-  await openViewAction(page, "Clear my default");
+  await openViewAction(page, "Clear default view");
   await discardDialog
     .getByRole("button", { name: "Discard and continue" })
     .click();
   await expect(
-    page.getByRole("status").filter({ hasText: "default was cleared" }),
+    page.getByRole("status").filter({ hasText: "default view was cleared" }),
   ).toBeVisible();
-  expect(api.personalDefault()).toBe(null);
+  expect(api.defaultView()).toBe(null);
   await expect(search).toHaveValue("");
   await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
 });
 
-test("selecting Unsaved view overrides a personal default after discard confirmation", async ({
+test("selecting Unsaved view overrides the module default after discard confirmation", async ({
   page,
 }) => {
   await installViewsApi(page, { initialDefault: true });
@@ -1724,7 +1634,7 @@ test("selecting Unsaved view overrides a personal default after discard confirma
   await expect(savedView).toHaveValue(viewId);
 });
 
-test("duplicating a saved view saves the current draft as a private selected copy", async ({
+test("duplicating a saved view saves the current draft as a selected copy", async ({
   page,
 }) => {
   const existingCopy = {
@@ -1759,10 +1669,9 @@ test("duplicating a saved view saves the current draft as a private selected cop
   expect(api.createdViews()).toHaveLength(1);
   expect(api.createdViews()[0]).toMatchObject({
     name: "Equipment register (copy 2)",
-    audience: { kind: "private" },
+    is_default: false,
     definition: { search: "draft query" },
     presentation: { layout: "grid" },
-    owner_id: userId,
     can_edit: true,
   });
   expect(api.saved()).toMatchObject({
@@ -3073,16 +2982,16 @@ test("default invalidation keeps an implicit selected view and its dirty draft a
   await search.fill("compressor");
   await expect(search).toHaveValue("compressor");
 
-  api.changePersonalDefaultElsewhere(secondViewId);
+  api.changeDefaultElsewhere(secondViewId);
   const defaultsReadCount = api.requests.filter((request) =>
-    request.startsWith("GET /api/views/defaults"),
+    request.startsWith("GET /api/views?module_id"),
   ).length;
-  await api.triggerInvalidation("saved_view_defaults");
+  await api.triggerInvalidation("saved_views");
   await expect
     .poll(
       () =>
         api.requests.filter((request) =>
-          request.startsWith("GET /api/views/defaults"),
+          request.startsWith("GET /api/views?module_id"),
         ).length,
     )
     .toBeGreaterThan(defaultsReadCount);
@@ -3118,8 +3027,8 @@ test("default invalidation follows the new default after an implicit draft is re
   await search.fill("pump");
   await expect(search).toHaveValue("pump");
 
-  api.changePersonalDefaultElsewhere(secondViewId);
-  await api.triggerInvalidation("saved_view_defaults");
+  api.changeDefaultElsewhere(secondViewId);
+  await api.triggerInvalidation("saved_views");
   await expect(
     selected.locator(`option[value="${secondViewId}"]`),
   ).toContainText("default");
@@ -3535,14 +3444,40 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
       body: "{}",
     });
   });
+  await page.route("**/api/auth/me", async (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ id: userId, role: "admin", access: [] }),
+    }),
+  );
+  // A new Dashboard needs a department to belong to.
+  await page.route("**/api/departments**", async (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [
+          {
+            id: departmentId,
+            department_name: "Field service",
+            created_at: "2026-09-23T00:00:00Z",
+            updated_at: "2026-09-23T00:00:00Z",
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      }),
+    }),
+  );
   await page.route("**/api/dashboards**", async (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path === "/api/dashboards/default") {
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({ dashboard_id: null }),
-      });
-    }
     if (path === "/api/dashboards") {
       dashboardListRequests += 1;
       return route.fulfill({
@@ -3563,7 +3498,7 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
   });
   await page.goto("/openview?section=dashboards");
   await expect(
-    page.getByRole("heading", { name: "Private dashboards" }),
+    page.getByRole("heading", { level: 1, name: "Dashboards" }),
   ).toBeVisible();
   await expect(
     page.getByText("No Dashboards yet.", { exact: false }),

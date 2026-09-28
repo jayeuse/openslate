@@ -1,7 +1,6 @@
 import Papa from "papaparse";
 import type {
   OpenViewReport,
-  OpenViewReportAudienceInput,
   OpenViewReportRecipe,
 } from "../adapters/reports-api";
 
@@ -21,7 +20,6 @@ export type ReportDraft = {
   moduleId: string;
   name: string;
   subtitle: string;
-  audience: OpenViewReportAudienceInput;
   fields: OpenViewReportRecipe["fields"];
   filters: ReportFilterDraft[];
   logic: OpenViewReportRecipe["logic"];
@@ -35,7 +33,6 @@ export function emptyReportDraft(moduleId = ""): ReportDraft {
     moduleId,
     name: "",
     subtitle: "",
-    audience: { kind: "private" },
     fields: [],
     filters: [],
     logic: "and",
@@ -54,20 +51,10 @@ const VALUELESS_OPERATORS = new Set([
 
 export function reportDraftFrom(report: OpenViewReport): ReportDraft {
   const { recipe } = report;
-  const { audience } = report;
-  let draftAudience: OpenViewReportAudienceInput;
-  if (audience.kind === "user" && audience.userId !== null) {
-    draftAudience = { kind: "user", userId: audience.userId };
-  } else if (audience.kind === "everyone" || audience.kind === "private") {
-    draftAudience = { kind: audience.kind };
-  } else {
-    throw new ReportDraftError("Report audience is invalid");
-  }
   return {
     moduleId: report.moduleId,
     name: report.name,
     subtitle: report.subtitle ?? "",
-    audience: draftAudience,
     fields: recipe.fields.map((field) => ({ ...field })),
     filters: recipe.filters.map((filter, index) => {
       const value = Array.isArray(filter.value)
@@ -97,7 +84,6 @@ export function reportDraftSignature(draft: ReportDraft): string {
     moduleId: draft.moduleId,
     name: draft.name,
     subtitle: draft.subtitle,
-    audience: draft.audience,
     fields: draft.fields,
     filters: draft.filters.map((filter) => ({
       fieldId: filter.fieldId,

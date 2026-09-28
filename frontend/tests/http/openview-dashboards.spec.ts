@@ -7,6 +7,8 @@ import {
 } from "@playwright/test";
 
 const userId = "00000000-0000-4000-8000-000000000101";
+// The data sources and Dashboards of these tests belong to one department.
+const departmentId = userId;
 const moduleId = "00000000-0000-4000-8000-000000000102";
 const categoryFieldId = "00000000-0000-4000-8000-000000000103";
 const regionFieldId = "00000000-0000-4000-8000-000000000104";
@@ -23,7 +25,6 @@ const delayedFieldId = "00000000-0000-4000-8000-000000000113";
 const secondModuleFieldId = "00000000-0000-4000-8000-000000000114";
 const secondModuleNextFieldId = "00000000-0000-4000-8000-000000000115";
 const delayedDashboardId = "00000000-0000-4000-8000-000000000116";
-const alternateDashboardId = "00000000-0000-4000-8000-000000000117";
 const timestamp = "2026-09-23T00:00:00Z";
 
 type FieldReference = { field_id: string; expected_type: string };
@@ -82,7 +83,8 @@ type WidgetWire = WidgetInput & {
 };
 type DashboardWire = {
   id: string;
-  owner_id: string;
+  department_id: string;
+  position: number;
   name: string;
   refresh_cadence: "manual" | "one-minute" | "five-minutes";
   revision: number;
@@ -93,11 +95,12 @@ type DashboardWire = {
 };
 type DashboardMutation = {
   revision?: number;
+  department_id?: string;
+  position?: number;
   name?: string;
   refresh_cadence?: "manual" | "one-minute" | "five-minutes";
   widgets?: WidgetInput[];
 };
-type DashboardDefaultMutation = { dashboard_id: string | null };
 type FieldWire = {
   id: string;
   module_id: string;
@@ -222,7 +225,8 @@ function dashboard(overrides: Partial<DashboardWire> = {}): DashboardWire {
   const widgets = [savedWidget(dashboardWidgetId, 0, categoryFieldId)];
   return {
     id: dashboardId,
-    owner_id: userId,
+    department_id: departmentId,
+    position: 0,
     name: "Operations",
     refresh_cadence: "manual",
     revision: 1,
@@ -317,6 +321,10 @@ function dateSnapshot(from: string, to: string) {
 async function installDashboardApi(
   page: Page,
   initial: DashboardWire | null = null,
+  identity: {
+    role: "admin" | "member" | "guest";
+    access: { department_id: string; module_id: null; level: string }[];
+  } = { role: "admin", access: [] },
 ) {
   await page.route("**/api/**", (route) =>
     route.fulfill({
@@ -327,14 +335,11 @@ async function installDashboardApi(
   );
   let current = initial;
   let alternate: DashboardWire | null = null;
-  let dashboardDefaultId: string | null = null;
-  let failDashboardDefaultReads = false;
   let forceConflict = false;
   let snapshotGate: RequestGate | null = null;
   let snapshotGateStatus: 403 | null = null;
   let snapshotLength = 30;
   let dashboardGetGate: RequestGate | null = null;
-  let dashboardDefaultGetGate: RequestGate | null = null;
   let restoreGate: RequestGate | null = null;
   let dashboardListHasMore = false;
   let dashboardListPageGate: {
@@ -349,8 +354,6 @@ async function installDashboardApi(
     gate: RequestGate;
   } | null = null;
   const dashboardReads: string[] = [];
-  const dashboardDefaultReads: number[] = [];
-  const dashboardDefaultWrites: DashboardDefaultMutation[] = [];
   const fieldReads: Array<{ moduleId: string; offset: number }> = [];
   const writes: Array<{
     method: string;
@@ -376,17 +379,48 @@ async function installDashboardApi(
       }),
     }),
   );
+  await page.route("**/api/auth/me", async (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ id: userId, ...identity }),
+    }),
+  );
+  await page.route("**/api/departments**", async (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [
+          {
+            id: departmentId,
+            department_name: "Field service",
+            created_at: timestamp,
+            updated_at: timestamp,
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      }),
+    }),
+  );
   await page.route("**/api/views/data-sources**", async (route: Route) => {
     const url = new URL(route.request().url());
     if (url.pathname === "/api/views/data-sources") {
       const items = [
-        { id: moduleId, name: "Equipment", department_id: userId },
+        { id: moduleId, name: "Equipment", department_id: departmentId },
         ...(fieldPages[secondModuleId]
           ? [
               {
                 id: secondModuleId,
                 name: "Quality checks",
-                department_id: userId,
+                department_id: departmentId,
               },
             ]
           : []),
@@ -537,39 +571,6 @@ async function installDashboardApi(
   await page.route("**/api/dashboards**", async (route: Route) => {
     const url = new URL(route.request().url());
     const method = route.request().method();
-    if (url.pathname === "/api/dashboards/default" && method === "GET") {
-      dashboardDefaultReads.push(dashboardDefaultReads.length + 1);
-      if (failDashboardDefaultReads) {
-        return route.fulfill({
-          status: 503,
-          contentType: "application/json",
-          body: JSON.stringify({ detail: "Default temporarily unavailable" }),
-        });
-      }
-      if (dashboardDefaultGetGate) {
-        const gate = dashboardDefaultGetGate;
-        gate.signalStarted();
-        await gate.wait;
-      }
-      const selected =
-        [current, alternate].find((item) => item?.id === dashboardDefaultId) ??
-        createdDashboards.find((item) => item.id === dashboardDefaultId);
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          dashboard_id: selected?.is_deleted ? null : dashboardDefaultId,
-        }),
-      });
-    }
-    if (url.pathname === "/api/dashboards/default" && method === "PUT") {
-      const body = route.request().postDataJSON() as DashboardDefaultMutation;
-      dashboardDefaultWrites.push(body);
-      dashboardDefaultId = body.dashboard_id;
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({ dashboard_id: dashboardDefaultId }),
-      });
-    }
     if (url.pathname === "/api/dashboards" && method === "GET") {
       const offset = Number(url.searchParams.get("offset") ?? "0");
       if (offset > 0 && dashboardListPageGate) {
@@ -846,8 +847,6 @@ async function installDashboardApi(
     snapshots,
     recordQueries,
     dashboardReads,
-    dashboardDefaultReads,
-    dashboardDefaultWrites,
     fieldReads,
     setConflict() {
       forceConflict = true;
@@ -885,18 +884,6 @@ async function installDashboardApi(
     setAlternateDashboard(value: DashboardWire) {
       alternate = value;
     },
-    setDashboardDefault(id: string | null) {
-      dashboardDefaultId = id;
-    },
-    get dashboardDefaultId() {
-      return dashboardDefaultId;
-    },
-    failDashboardDefaultReads() {
-      failDashboardDefaultReads = true;
-    },
-    recoverDashboardDefaultReads() {
-      failDashboardDefaultReads = false;
-    },
     holdNextDashboardListPage(item: DashboardWire) {
       const gate = requestGate();
       dashboardListPageGate = { gate, item };
@@ -918,17 +905,6 @@ async function installDashboardApi(
         release() {
           gate.release();
           if (dashboardGetGate === gate) dashboardGetGate = null;
-        },
-      };
-    },
-    holdNextDashboardDefaultGet() {
-      const gate = requestGate();
-      dashboardDefaultGetGate = gate;
-      return {
-        started: gate.started,
-        release() {
-          gate.release();
-          if (dashboardDefaultGetGate === gate) dashboardDefaultGetGate = null;
         },
       };
     },
@@ -1031,7 +1007,7 @@ async function selectDashboard(page: Page, id: string) {
   await page.getByLabel("Dashboard", { exact: true }).selectOption(id);
 }
 
-test("private Dashboard supports mobile keyboard-only controls and survives reload", async ({
+test("department Dashboard supports mobile keyboard-only controls and survives reload", async ({
   page,
 }) => {
   const api = await installDashboardApi(page, dashboard({ widgets: [] }));
@@ -1039,7 +1015,7 @@ test("private Dashboard supports mobile keyboard-only controls and survives relo
   await page.goto("/openview?section=dashboards");
 
   await expect(
-    page.getByRole("heading", { name: "Private dashboards" }),
+    page.getByRole("heading", { name: "Dashboards", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("dialog", { name: "Session verification" }),
@@ -1265,17 +1241,17 @@ test("Dashboard settings remain a visible draft until explicitly saved", async (
   });
 });
 
-test("private Dashboard saves ordered charts and reloads only the selected complete snapshot", async ({
+test("department Dashboard saves ordered charts and reloads only the selected complete snapshot", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
   await page.goto("/openview?section=dashboards");
 
   await expect(
-    page.getByRole("heading", { name: "Private dashboards" }),
+    page.getByRole("heading", { name: "Dashboards", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("Each Dashboard is private to you."),
+    page.getByText("Each Dashboard belongs to a department", { exact: false }),
   ).toBeVisible();
   const newDialog = await openNewDashboardDialog(page);
   await newDialog.getByLabel("Dashboard name").fill("Equipment overview");
@@ -1422,7 +1398,7 @@ test("returning to a cached Dashboard chart clears a different chart's pending r
   await expect(page.getByRole("button", { name: "Refresh now" })).toBeEnabled();
 });
 
-test("private Dashboard builder saves Count over time and reloads the complete daily series", async ({
+test("department Dashboard builder saves Count over time and reloads the complete daily series", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -1550,6 +1526,8 @@ test("Dashboard bar builder requires and saves a typed numeric measure for Sum",
     }),
   ).toBeVisible();
   expect(api.writes[0]?.body).toEqual({
+    department_id: departmentId,
+    position: 0,
     name: "Equipment totals",
     refresh_cadence: "manual",
     widgets: [
@@ -1583,7 +1561,7 @@ test("Dashboard bar builder requires and saves a typed numeric measure for Sum",
   });
 });
 
-test("private Dashboard Pie builder saves Sum and reloads its preview and complete table", async ({
+test("department Dashboard Pie builder saves Sum and reloads its preview and complete table", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -1620,6 +1598,8 @@ test("private Dashboard Pie builder saves Sum and reloads its preview and comple
   await expect(page.getByText("Showing 1–25 of 30")).toBeVisible();
   await expect(table.locator("tbody tr")).toHaveCount(25);
   expect(api.writes[0]?.body).toEqual({
+    department_id: departmentId,
+    position: 0,
     name: "Equipment distribution",
     refresh_cadence: "manual",
     widgets: [
@@ -1702,6 +1682,8 @@ test("Dashboard line builder requires and saves a typed numeric measure for Aver
   await expect(table).toBeVisible();
   await expect(table.locator("tbody tr")).toHaveCount(2);
   expect(api.writes[0]?.body).toEqual({
+    department_id: departmentId,
+    position: 0,
     name: "Daily scores",
     refresh_cadence: "manual",
     widgets: [
@@ -1831,236 +1813,6 @@ test("archiving and restoring a Dashboard uses the saved revision", async ({
     dashboardId,
     body: { revision: 2 },
   });
-});
-
-test("a saved Dashboard can be made default, restored on a clean URL, and unset", async ({
-  page,
-}) => {
-  const api = await installDashboardApi(page, dashboard({ widgets: [] }));
-  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
-
-  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
-  await page.getByRole("button", { name: "Dashboard options" }).click();
-  await page.getByRole("menuitem", { name: "Set as default" }).click();
-  await page.getByRole("button", { name: "Dashboard options" }).click();
-  await expect(
-    page.getByRole("menuitem", { name: "Clear default" }),
-  ).toBeVisible();
-  expect(api.dashboardDefaultWrites).toEqual([{ dashboard_id: dashboardId }]);
-
-  await page.goto("/openview?section=dashboards");
-  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}(?:$|&)`));
-  await page.getByRole("button", { name: "Dashboard options" }).click();
-  await expect(
-    page.getByRole("menuitem", { name: "Clear default" }),
-  ).toBeVisible();
-
-  await page.getByRole("menuitem", { name: "Clear default" }).click();
-  await page.getByRole("button", { name: "Dashboard options" }).click();
-  await expect(
-    page.getByRole("menuitem", { name: "Set as default" }),
-  ).toBeVisible();
-  expect(api.dashboardDefaultWrites).toEqual([
-    { dashboard_id: dashboardId },
-    { dashboard_id: null },
-  ]);
-});
-
-test("retrying an initial default error opens the saved Dashboard without losing the URL", async ({
-  page,
-}) => {
-  const api = await installDashboardApi(page, dashboard({ widgets: [] }));
-  api.setDashboardDefault(dashboardId);
-  api.failDashboardDefaultReads();
-  await page.goto("/openview?section=dashboards");
-
-  await expect(
-    page.getByRole("button", { name: "Retry default Dashboard" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "No dashboard selected" }),
-  ).toBeVisible();
-  const readsBeforeRetry = api.dashboardDefaultReads.length;
-  api.recoverDashboardDefaultReads();
-  await page.getByRole("button", { name: "Retry default Dashboard" }).click();
-  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}(?:$|&)`));
-  expect(api.dashboardDefaultReads.length).toBeGreaterThan(readsBeforeRetry);
-});
-
-test("an explicit Dashboard URL outranks a different personal default", async ({
-  page,
-}) => {
-  const api = await installDashboardApi(page, dashboard({ widgets: [] }));
-  api.setAlternateDashboard(
-    dashboard({
-      id: alternateDashboardId,
-      name: "Quality checks",
-      widgets: [],
-    }),
-  );
-  api.setDashboardDefault(alternateDashboardId);
-  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
-
-  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}(?:$|&)`));
-  await expect(
-    page
-      .getByLabel("Dashboard", { exact: true })
-      .getByRole("option", { name: "Quality checks · Default" }),
-  ).toBeAttached();
-  expect(api.dashboardReads).toContain(`/api/dashboards/${dashboardId}`);
-  expect(api.dashboardReads).not.toContain(
-    `/api/dashboards/${alternateDashboardId}`,
-  );
-});
-
-test("a delayed default cannot override a Dashboard explicitly chosen from the list", async ({
-  page,
-}) => {
-  const api = await installDashboardApi(page, dashboard({ widgets: [] }));
-  api.setAlternateDashboard(
-    dashboard({
-      id: alternateDashboardId,
-      name: "Quality checks",
-      widgets: [],
-    }),
-  );
-  api.setDashboardDefault(alternateDashboardId);
-  const gate = api.holdNextDashboardDefaultGet();
-  const defaultResponse = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return (
-      url.pathname === "/api/dashboards/default" &&
-      response.request().method() === "GET"
-    );
-  });
-  await page.goto("/openview?section=dashboards");
-
-  try {
-    await gate.started;
-    await selectDashboard(page, dashboardId);
-    gate.release();
-    await defaultResponse;
-    await page.waitForLoadState("networkidle");
-    await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}(?:$|&)`));
-    await expect(
-      page.getByRole("heading", { name: "Operations" }),
-    ).toBeVisible();
-    expect(api.dashboardReads).toContain(`/api/dashboards/${dashboardId}`);
-    expect(api.dashboardReads).not.toContain(
-      `/api/dashboards/${alternateDashboardId}`,
-    );
-  } finally {
-    gate.release();
-  }
-});
-
-test("changing to the archived list prevents a late active default selection", async ({
-  page,
-}) => {
-  const api = await installDashboardApi(page, dashboard({ widgets: [] }));
-  api.setDashboardDefault(dashboardId);
-  const gate = api.holdNextDashboardDefaultGet();
-  const defaultResponse = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return (
-      url.pathname === "/api/dashboards/default" &&
-      response.request().method() === "GET"
-    );
-  });
-  await page.goto("/openview?section=dashboards");
-
-  try {
-    await gate.started;
-    await page.getByRole("button", { name: "Show archived" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Archived dashboards" }),
-    ).toBeVisible();
-    await expect(page.getByText("No archived Dashboards.")).toBeVisible();
-
-    gate.release();
-    await defaultResponse;
-    await page.waitForLoadState("networkidle");
-    await expect(page).toHaveURL("/openview?section=dashboards");
-    await expect(
-      page.getByRole("heading", { name: "No dashboard selected" }),
-    ).toBeVisible();
-    expect(api.dashboardReads).not.toContain(`/api/dashboards/${dashboardId}`);
-  } finally {
-    gate.release();
-  }
-});
-
-test("a late personal default response cannot replace a Dashboard draft", async ({
-  page,
-}) => {
-  const api = await installDashboardApi(page, dashboard({ widgets: [] }));
-  api.setDashboardDefault(dashboardId);
-  const gate = api.holdNextDashboardDefaultGet();
-  const defaultResponse = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return (
-      url.pathname === "/api/dashboards/default" &&
-      response.request().method() === "GET"
-    );
-  });
-  await page.goto("/openview?section=dashboards");
-
-  try {
-    await gate.started;
-    const newDialog = await openNewDashboardDialog(page);
-    const dashboardName = newDialog.getByLabel("Dashboard name");
-    await dashboardName.fill("Draft entered before the default arrived");
-    await finishDashboardDialog(newDialog);
-    gate.release();
-    await defaultResponse;
-    await page.waitForLoadState("networkidle");
-
-    await expect(
-      page.getByRole("heading", {
-        name: "Draft entered before the default arrived",
-      }),
-    ).toBeVisible();
-    await expect(page).toHaveURL("/openview?section=dashboards");
-    expect(api.dashboardReads).not.toContain(`/api/dashboards/${dashboardId}`);
-  } finally {
-    gate.release();
-  }
-});
-
-test("an archived default stays hidden and is available again after restore", async ({
-  page,
-}) => {
-  const api = await installDashboardApi(
-    page,
-    dashboard({ is_deleted: true, widgets: [] }),
-  );
-  api.setDashboardDefault(dashboardId);
-  await page.goto("/openview?section=dashboards");
-
-  await expect(
-    page.getByText("No Dashboards yet. Create one to get started."),
-  ).toBeVisible();
-  await expect.poll(() => api.dashboardDefaultReads.length).toBeGreaterThan(0);
-  const readsBeforeRestore = api.dashboardDefaultReads.length;
-  await page.getByRole("button", { name: "Show archived" }).click();
-  await expect(page.getByText("Default", { exact: true })).toHaveCount(0);
-  await selectDashboard(page, dashboardId);
-  await page.getByRole("button", { name: "Dashboard options" }).click();
-  await page.getByRole("menuitem", { name: "Restore Dashboard" }).click();
-
-  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
-  await page.getByRole("button", { name: "Dashboard options" }).click();
-  await expect(
-    page.getByRole("menuitem", { name: "Clear default" }),
-  ).toBeVisible();
-  await expect(page.getByText("Default", { exact: true })).toBeVisible();
-  await expect
-    .poll(() => api.dashboardDefaultReads.length)
-    .toBeGreaterThan(readsBeforeRestore);
-  expect(api.dashboardDefaultWrites).toHaveLength(0);
 });
 
 test("restoring at the current URL does not suppress a later Dashboard re-selection", async ({
@@ -2459,7 +2211,7 @@ test("a delayed field page cannot corrupt pagination after switching modules", a
   }
 });
 
-test("private Dashboard saves and reloads all four live widget types", async ({
+test("department Dashboard saves and reloads all four live widget types", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -2948,12 +2700,11 @@ test("a refused Dashboard read hides the retained Dashboard and offers Retry", a
   await expect(table.locator("tbody tr")).toHaveCount(25);
 });
 
-test("duplicating a Dashboard creates an independent copy and keeps the source default", async ({
+test("duplicating a Dashboard creates an independent copy in the same department", async ({
   page,
 }) => {
-  const source = dashboard({ refresh_cadence: "five-minutes" });
+  const source = dashboard({ refresh_cadence: "five-minutes", position: 3 });
   const api = await installDashboardApi(page, source);
-  api.setDashboardDefault(dashboardId);
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
 
@@ -2973,17 +2724,13 @@ test("duplicating a Dashboard creates an independent copy and keeps the source d
     method: "POST",
     dashboardId: null,
     body: {
+      department_id: departmentId,
+      position: 3,
       name: "Copy of Operations",
       refresh_cadence: "five-minutes",
       widgets: [{ widget_type: "chart" }],
     },
   });
-  expect(api.dashboardDefaultId).toBe(dashboardId);
-  await expect(
-    page
-      .getByLabel("Dashboard", { exact: true })
-      .getByRole("option", { name: "Operations · Default" }),
-  ).toBeAttached();
 
   await page.reload();
   await expect(
@@ -2991,5 +2738,52 @@ test("duplicating a Dashboard creates an independent copy and keeps the source d
   ).toBeVisible();
   await selectDashboard(page, dashboardId);
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
-  expect(api.dashboardDefaultId).toBe(dashboardId);
+});
+
+test("a department reader sees its Dashboards without change controls", async ({
+  page,
+}) => {
+  await installDashboardApi(page, dashboard(), {
+    role: "member",
+    access: [{ department_id: departmentId, module_id: null, level: "read" }],
+  });
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+
+  await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
+  await expect(page.getByText("Field service", { exact: true })).toBeVisible();
+  await expect(page.getByText(/private|only you/i)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New Dashboard" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("button", { name: "Add widget" })).toBeHidden();
+  await page.getByRole("button", { name: "Dashboard options" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Reload saved Dashboard" }),
+  ).toBeVisible();
+  for (const name of [
+    "Dashboard settings",
+    "Duplicate Dashboard",
+    "Archive Dashboard",
+  ])
+    await expect(page.getByRole("menuitem", { name })).toBeHidden();
+});
+
+test("a new Dashboard is created in a managed department", async ({ page }) => {
+  const api = await installDashboardApi(page, null, {
+    role: "member",
+    access: [{ department_id: departmentId, module_id: null, level: "manage" }],
+  });
+  await page.goto("/openview?section=dashboards");
+  await page.getByRole("button", { name: "New Dashboard" }).click();
+  const dialog = page.getByRole("dialog", { name: "New Dashboard" });
+  await expect(dialog.getByLabel("Department")).toHaveValue(departmentId);
+  await dialog.getByLabel("Dashboard name").fill("Weekly review");
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Save Dashboard" }).click();
+
+  await expect.poll(() => api.writes.length).toBe(1);
+  expect(api.writes[0]?.body).toMatchObject({
+    department_id: departmentId,
+    name: "Weekly review",
+  });
 });

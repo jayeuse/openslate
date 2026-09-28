@@ -101,6 +101,7 @@ import {
 } from "./report-draft";
 import { ReportRecipeEditor } from "./report-recipe-editor";
 import { ReportScheduleControls } from "./report-schedule-controls";
+import { canManageOpenView } from "../domain/manage-access";
 import {
   AvailableReportRunsPanel,
   SavedReportRunsPanel,
@@ -149,31 +150,6 @@ function printFrozenCsv(printWindow: Window, csv: string, title: string): void {
   printWindow.print();
 }
 
-function ownerIncludedByAudience(
-  report: OpenViewReport,
-  identity: AuthMe,
-): boolean {
-  if (identity.id !== report.ownerId) return false;
-  switch (report.audience.kind) {
-    case "private":
-    case "everyone":
-      return true;
-    case "user":
-      return report.audience.userId === identity.id;
-  }
-}
-
-function reportAudienceLabel(audience: ReportDraft["audience"]): string {
-  switch (audience.kind) {
-    case "private":
-      return "Private to me";
-    case "everyone":
-      return "Everyone who can read this data";
-    case "user":
-      return "One person";
-  }
-}
-
 export default function ServerBackedReports() {
   const queryClient = useQueryClient();
   // A refusal of any cached OpenView read hides them all (openview-access.ts).
@@ -182,7 +158,7 @@ export default function ServerBackedReports() {
   const currentIdentity: AuthMe | null = identityQuery.data ?? null;
   const currentIdentityLoading = identityQuery.isPending;
   const currentIdentityError = identityQuery.isError
-    ? "Your Report audience could not be confirmed. Reload to try again."
+    ? "Your access could not be confirmed. Reload to try again."
     : "";
   const [showArchived, setShowArchived] = useState(false);
   const [templateReportId, setTemplateReportId] = useState("");
@@ -234,12 +210,6 @@ export default function ServerBackedReports() {
 
   const dirty =
     reportDraftSignature(draft) !== reportDraftSignature(baselineDraft);
-  const canEdit = !baselineReport?.isDeleted && !actionPending;
-  const ownerExcludedFromAudience = Boolean(
-    baselineReport &&
-    currentIdentity &&
-    !ownerIncludedByAudience(baselineReport, currentIdentity),
-  );
   const navigationGuard = useCallback(
     (href: string, resume: () => void) => {
       if (actionRef.current) return false;
@@ -321,6 +291,23 @@ export default function ServerBackedReports() {
     ...(sourcesBase?.items ?? []),
     ...(sourcesMore?.items ?? []),
   ];
+  const canManageReportModule = (moduleId: string) =>
+    canManageOpenView(
+      currentIdentity ?? undefined,
+      sources.find((source) => source.id === moduleId)?.departmentId,
+      moduleId,
+    );
+  // Only a manager of the Report module creates, changes or schedules it.
+  // Every reader of the module reads the Report and a non-guest runs it.
+  const canCreateReports =
+    currentIdentity?.role === "admin" ||
+    (currentIdentity?.role === "member" &&
+      currentIdentity.access.some((entry) => entry.level === "manage"));
+  const canEdit =
+    !baselineReport?.isDeleted &&
+    !actionPending &&
+    (baselineReport ? canManageReportModule(baselineReport.moduleId) : true) &&
+    canCreateReports;
   const sourcesHasMore = sourcesMore
     ? sourcesMore.hasMore
     : (sourcesBase?.pagination.hasMore ?? false);
@@ -557,7 +544,7 @@ export default function ServerBackedReports() {
       setStale(false);
       setError("");
       setNotice(
-        `Started from “${source.name}”. Save to create a separate Report with the same audience.`,
+        `Started from “${source.name}”. Save to create a separate Report.`,
       );
       runRetryRef.current = null;
     } catch (reason) {
@@ -654,14 +641,11 @@ export default function ServerBackedReports() {
       if (!draft.moduleId)
         throw new ReportDraftError("Choose a data source for this Report");
       if (!draft.name.trim()) throw new ReportDraftError("Enter a Report name");
-      if (draft.audience.kind === "user" && !draft.audience.userId)
-        throw new ReportDraftError("Choose a Report audience target");
       const recipe = reportRecipeFromDraft(draft);
       const input = {
         moduleId: draft.moduleId,
         name: draft.name.trim(),
         subtitle: draft.subtitle.trim() || null,
-        audience: draft.audience,
         recipe,
       };
       const saved = baselineReport
@@ -929,8 +913,11 @@ export default function ServerBackedReports() {
     !actionPending &&
     !currentIdentityLoading &&
     currentIdentity &&
-    !currentIdentityError &&
-    !ownerExcludedFromAudience,
+    currentIdentity.role !== "guest" &&
+    !currentIdentityError,
+  );
+  const canManageSelected = Boolean(
+    baselineReport && canManageReportModule(baselineReport.moduleId),
   );
 
   return (
@@ -947,14 +934,16 @@ export default function ServerBackedReports() {
             Save a recipe, run it when needed, and open the retained output.
           </p>
         </div>
-        <Button
-          type="button"
-          onClick={newReport}
-          disabled={Boolean(actionPending)}
-          className="min-h-11"
-        >
-          <Plus data-icon="inline-start" /> New Report
-        </Button>
+        {canCreateReports ? (
+          <Button
+            type="button"
+            onClick={newReport}
+            disabled={Boolean(actionPending)}
+            className="min-h-11"
+          >
+            <Plus data-icon="inline-start" /> New Report
+          </Button>
+        ) : null}
       </header>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)]">
@@ -992,6 +981,7 @@ export default function ServerBackedReports() {
             }}
             onLoadMore={() => void loadMoreReports()}
             onOpenAvailableOutputs={() => setAvailableOutputsOpen(true)}
+            canCreate={canCreateReports}
           />
         </div>
 
@@ -1027,14 +1017,11 @@ export default function ServerBackedReports() {
                         {draft.includeRowCount ? " · row count included" : ""}
                       </dd>
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      <dt className="text-muted-foreground">Audience</dt>
-                      <dd>{reportAudienceLabel(draft.audience)}</dd>
-                    </div>
                   </dl>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  {!baselineReport?.isDeleted ? (
+                  {!baselineReport?.isDeleted &&
+                  (baselineReport ? canManageSelected : canCreateReports) ? (
                     <Button
                       type="button"
                       variant="outline"
@@ -1055,7 +1042,7 @@ export default function ServerBackedReports() {
                       {actionPending === "run" ? "Running…" : "Run now"}
                     </Button>
                   ) : null}
-                  {baselineReport ? (
+                  {baselineReport && canManageSelected ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger
                         render={
@@ -1100,23 +1087,12 @@ export default function ServerBackedReports() {
                   ) : null}
                 </div>
               </CardHeader>
-              {dirty ||
-              error ||
-              notice ||
-              currentIdentityError ||
-              ownerExcludedFromAudience ? (
+              {dirty || error || notice || currentIdentityError ? (
                 <CardContent className="flex flex-col gap-3 pt-0">
                   {dirty ? (
                     <p role="status" className="text-muted-foreground text-sm">
                       Unsaved changes. Save or reset before running or
                       archiving.
-                    </p>
-                  ) : null}
-                  {ownerExcludedFromAudience ? (
-                    <p role="status" className="text-muted-foreground text-sm">
-                      Your account is not included in this Report audience, so
-                      you cannot run it. Scheduled runs remain available for
-                      eligible recipients.
                     </p>
                   ) : null}
                   {currentIdentityError ? (
@@ -1224,6 +1200,7 @@ export default function ServerBackedReports() {
                 <ReportScheduleControls
                   key={baselineReport.id}
                   reportId={baselineReport.id}
+                  canManage={canManageSelected}
                   disabled={dirty || Boolean(actionPending)}
                   disabledReason={
                     dirty
@@ -1283,8 +1260,8 @@ export default function ServerBackedReports() {
           <SheetHeader className="border-border shrink-0 border-b p-5 pr-14">
             <SheetTitle>Available outputs</SheetTitle>
             <SheetDescription>
-              Saved runs you are eligible to open. Recipe editing stays with the
-              owner.
+              Saved runs of Reports on data you can read. Only a manager of the
+              department changes its Reports.
             </SheetDescription>
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-y-auto p-5">

@@ -35,16 +35,23 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import { ApiError } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
 import { useOpenViewAccessDenied } from "../adapters/openview-access";
+import {
+  authMeOptions,
+  departmentsOptions,
+} from "../adapters/openview-queries";
+import {
+  canManageOpenView,
+  managedDepartmentIds,
+} from "../domain/manage-access";
 import {
   archiveOpenViewDashboard,
   createOpenViewDashboard,
   getOpenViewDashboard,
-  getOpenViewDashboardDefault,
   getOpenViewDashboardConflict,
   listOpenViewDashboards,
   restoreOpenViewDashboard,
-  setOpenViewDashboardDefault,
   updateOpenViewDashboard,
   type OpenViewDashboard,
   type OpenViewDashboardAggregateConfig,
@@ -267,12 +274,8 @@ export default function ServerBackedDashboards() {
   const [duplicatePending, setDuplicatePending] = useState(false);
   const [archivePending, setArchivePending] = useState(false);
   const [restorePendingId, setRestorePendingId] = useState("");
-  const [dashboardDefaultId, setDashboardDefaultId] = useState<string | null>(
-    null,
-  );
-  const [dashboardDefaultLoading, setDashboardDefaultLoading] = useState(true);
-  const [dashboardDefaultPending, setDashboardDefaultPending] = useState(false);
-  const [dashboardDefaultError, setDashboardDefaultError] = useState("");
+  // The department of a new Dashboard; a saved one keeps its own.
+  const [newDepartmentId, setNewDepartmentId] = useState("");
   const [catalogSources, setCatalogSources] = useState<OpenViewDataSource[]>(
     [],
   );
@@ -311,81 +314,12 @@ export default function ServerBackedDashboards() {
   const routeLoadSequence = useRef(0);
   const dashboardListRequestSequence = useRef(0);
   const fieldRequestSequence = useRef(0);
-  const dashboardDefaultRequestSequence = useRef(0);
-  const dashboardDefaultIdRef = useRef<string | null>(null);
-  const initialDashboardSelectionSuppressed = useRef(false);
-  const routeDashboardIdRef = useRef(routeDashboardId);
-  routeDashboardIdRef.current = routeDashboardId;
   const draftDirtyRef = useRef(false);
-  const pendingNavigationRef = useRef<PendingNavigation>(null);
-  pendingNavigationRef.current = pendingNavigation;
-  const applyDashboardRef = useRef<(dashboard: OpenViewDashboard) => void>(
-    () => {},
-  );
   const lastGoodSnapshotRef = useRef<SnapshotState | null>(null);
   const snapshotInFlightRef = useRef<number | null>(null);
   const refreshActiveSnapshotRef = useRef<() => void>(() => {});
   const restorePendingRef = useRef("");
   const skipRouteLoadForId = useRef("");
-
-  const refreshDashboardDefault = useCallback(
-    async (autoSelect = false) => {
-      const sequence = ++dashboardDefaultRequestSequence.current;
-      setDashboardDefaultLoading(true);
-      setDashboardDefaultError("");
-      try {
-        const preference = await getOpenViewDashboardDefault();
-        if (dashboardDefaultRequestSequence.current !== sequence) return;
-        dashboardDefaultIdRef.current = preference.dashboardId;
-        setDashboardDefaultId(preference.dashboardId);
-
-        if (
-          !autoSelect ||
-          !preference.dashboardId ||
-          routeDashboardIdRef.current ||
-          draftDirtyRef.current ||
-          pendingNavigationRef.current ||
-          initialDashboardSelectionSuppressed.current
-        )
-          return;
-
-        const dashboard = await getOpenViewDashboard(preference.dashboardId);
-        if (
-          dashboardDefaultRequestSequence.current !== sequence ||
-          dashboardDefaultIdRef.current !== preference.dashboardId ||
-          routeDashboardIdRef.current ||
-          draftDirtyRef.current ||
-          pendingNavigationRef.current ||
-          initialDashboardSelectionSuppressed.current
-        )
-          return;
-        if (dashboard.isDeleted) {
-          dashboardDefaultIdRef.current = null;
-          setDashboardDefaultId(null);
-          return;
-        }
-
-        applyDashboardRef.current(dashboard);
-        skipRouteLoadForId.current = dashboard.id;
-        router.replace(
-          serializeOpenViewUrl({
-            section: "dashboards",
-            dashboard: dashboard.id,
-          }) as Route,
-          { scroll: false },
-        );
-      } catch (error) {
-        if (dashboardDefaultRequestSequence.current === sequence)
-          setDashboardDefaultError(
-            safeMessage(error, "The default Dashboard could not be loaded."),
-          );
-      } finally {
-        if (dashboardDefaultRequestSequence.current === sequence)
-          setDashboardDefaultLoading(false);
-      }
-    },
-    [router],
-  );
 
   useEffect(() => {
     let active = true;
@@ -396,8 +330,8 @@ export default function ServerBackedDashboards() {
     void listOpenViewDashboards({
       limit: DASHBOARD_PAGE_SIZE,
       offset: 0,
-      sortBy: "updated_at",
-      sortOrder: "desc",
+      sortBy: "position",
+      sortOrder: "asc",
       deleted: showArchived ? "only" : "exclude",
     })
       .then((page) => {
@@ -576,6 +510,32 @@ export default function ServerBackedDashboards() {
       refreshCadence !== "manual" ||
       draftWidgets.length > 0;
   draftDirtyRef.current = draftDirty;
+  // Dashboards belong to departments. Readers of a department see its
+  // Dashboards; only its managers create, change, archive or restore them.
+  const identity = useQuery(authMeOptions());
+  const departmentsQuery = useQuery(departmentsOptions());
+  const departments = departmentsQuery.data ?? [];
+  const departmentNames = new Map(
+    departments.map((department) => [department.id, department.name]),
+  );
+  const managed = managedDepartmentIds(identity.data);
+  const manageableDepartments =
+    managed === "all"
+      ? departments
+      : departments.filter((department) => managed.has(department.id));
+  const draftDepartmentId =
+    selectedDashboard?.departmentId ??
+    (manageableDepartments.some((item) => item.id === newDepartmentId)
+      ? newDepartmentId
+      : (manageableDepartments[0]?.id ?? ""));
+  const canCreateDashboards = manageableDepartments.length > 0;
+  const canManageDashboard = selectedDashboard
+    ? canManageOpenView(identity.data, selectedDashboard.departmentId)
+    : canCreateDashboards;
+  // A widget reads a data source of the Dashboard's own department.
+  const departmentSources = catalogSources.filter(
+    (source) => source.departmentId === draftDepartmentId,
+  );
   const navigationGuard = useCallback(
     (href: string, resume: () => void) => {
       if (savePending || duplicatePending || archivePending || restorePendingId)
@@ -621,12 +581,6 @@ export default function ServerBackedDashboards() {
       requestSequence.current += 1;
     };
   }, []);
-  useEffect(() => {
-    void refreshDashboardDefault(true);
-    return () => {
-      dashboardDefaultRequestSequence.current += 1;
-    };
-  }, [refreshDashboardDefault]);
   const activeTitle = activeWidget
     ? widgetTitle(activeWidget, fieldsByModule)
     : "";
@@ -793,7 +747,6 @@ export default function ServerBackedDashboards() {
   }, [activeWidget, fieldsByModule]);
 
   function updateDashboardUrl(id?: string) {
-    suppressInitialDefaultSelection();
     if (!id) setRouteClearPending(Boolean(routeDashboardId));
     router.push(
       serializeOpenViewUrl({ section: "dashboards", dashboard: id }) as Route,
@@ -805,42 +758,6 @@ export default function ServerBackedDashboards() {
     dashboardListRequestSequence.current += 1;
     setDashboardListLoadingMore(false);
     setDashboardListRefresh((current) => current + 1);
-  }
-
-  async function toggleDashboardDefault() {
-    if (
-      !selectedDashboard ||
-      selectedDashboard.isDeleted ||
-      dashboardDefaultLoading ||
-      dashboardDefaultPending
-    )
-      return;
-
-    const nextDefaultId =
-      dashboardDefaultId === selectedDashboard.id ? null : selectedDashboard.id;
-    const sequence = ++dashboardDefaultRequestSequence.current;
-    setDashboardDefaultLoading(false);
-    setDashboardDefaultPending(true);
-    setDashboardDefaultError("");
-    try {
-      const preference = await setOpenViewDashboardDefault(nextDefaultId);
-      if (dashboardDefaultRequestSequence.current !== sequence) return;
-      dashboardDefaultIdRef.current = preference.dashboardId;
-      setDashboardDefaultId(preference.dashboardId);
-      setNotice(
-        preference.dashboardId
-          ? "Default Dashboard updated."
-          : "Default Dashboard cleared.",
-      );
-    } catch (error) {
-      if (dashboardDefaultRequestSequence.current === sequence)
-        setDashboardDefaultError(
-          safeMessage(error, "The default Dashboard could not be updated."),
-        );
-    } finally {
-      if (dashboardDefaultRequestSequence.current === sequence)
-        setDashboardDefaultPending(false);
-    }
   }
 
   function selectBuilderModule(moduleId: string) {
@@ -871,14 +788,7 @@ export default function ServerBackedDashboards() {
     setSnapshotError("");
   }
 
-  applyDashboardRef.current = applyDashboard;
-
-  function suppressInitialDefaultSelection() {
-    initialDashboardSelectionSuppressed.current = true;
-  }
-
   function beginNewDashboard() {
-    suppressInitialDefaultSelection();
     if (selectedDashboard && draftDirty) {
       setNotice("Save this Dashboard before switching to a new one.");
       return;
@@ -901,7 +811,6 @@ export default function ServerBackedDashboards() {
 
   function chooseDashboard(dashboardId: string) {
     if (!dashboardId || dashboardId === selectedDashboard?.id) return;
-    suppressInitialDefaultSelection();
     if (draftDirty) {
       setNotice("Save this Dashboard before switching to another one.");
       return;
@@ -924,7 +833,6 @@ export default function ServerBackedDashboards() {
   }
 
   function toggleArchivedList() {
-    suppressInitialDefaultSelection();
     if (draftDirty) {
       setNotice("Save this Dashboard before changing the list view.");
       return;
@@ -1073,7 +981,6 @@ export default function ServerBackedDashboards() {
       widgetType: "chart",
       config,
     };
-    suppressInitialDefaultSelection();
     setDraftWidgets((current) => [...current, next]);
     setActiveWidgetKey(next.key);
     setNotice("");
@@ -1132,7 +1039,6 @@ export default function ServerBackedDashboards() {
       widgetType: "chart",
       config,
     };
-    suppressInitialDefaultSelection();
     setDraftWidgets((current) => [...current, next]);
     setActiveWidgetKey(next.key);
     setNotice("");
@@ -1186,7 +1092,6 @@ export default function ServerBackedDashboards() {
       widgetType: builderWidgetType,
       config,
     };
-    suppressInitialDefaultSelection();
     setDraftWidgets((current) => [...current, next]);
     setActiveWidgetKey(next.key);
     setNotice("");
@@ -1219,7 +1124,6 @@ export default function ServerBackedDashboards() {
       widgetType: "records",
       config,
     };
-    suppressInitialDefaultSelection();
     setDraftWidgets((current) => [...current, next]);
     setActiveWidgetKey(next.key);
     setNotice("");
@@ -1227,7 +1131,6 @@ export default function ServerBackedDashboards() {
 
   function removeWidget(key: string) {
     const next = draftWidgets.filter((widget) => widget.key !== key);
-    suppressInitialDefaultSelection();
     setDraftWidgets(next);
     if (activeWidgetKey === key) setActiveWidgetKey(next[0]?.key ?? "");
   }
@@ -1239,7 +1142,6 @@ export default function ServerBackedDashboards() {
     const next = [...draftWidgets];
     const [moved] = next.splice(index, 1);
     if (moved) next.splice(nextIndex, 0, moved);
-    suppressInitialDefaultSelection();
     setDraftWidgets(next);
   }
 
@@ -1265,6 +1167,7 @@ export default function ServerBackedDashboards() {
             widgets,
           })
         : await createOpenViewDashboard({
+            departmentId: draftDepartmentId,
             name: dashboardName,
             refreshCadence,
             widgets,
@@ -1319,6 +1222,8 @@ export default function ServerBackedDashboards() {
     setNotice("");
     try {
       const duplicate = await createOpenViewDashboard({
+        departmentId: selectedDashboard.departmentId,
+        position: selectedDashboard.position,
         name: `Copy of ${selectedDashboard.name}`.slice(0, 200),
         refreshCadence: selectedDashboard.refreshCadence,
         widgets: inputWidgets(draftWidgetsFrom(selectedDashboard)),
@@ -1333,9 +1238,7 @@ export default function ServerBackedDashboards() {
         }) as Route,
         { scroll: false },
       );
-      setNotice(
-        "Dashboard duplicated. The original and default are unchanged.",
-      );
+      setNotice("Dashboard duplicated. The original is unchanged.");
     } catch (error) {
       setDashboardError(
         safeMessage(error, "The Dashboard could not be duplicated."),
@@ -1380,7 +1283,6 @@ export default function ServerBackedDashboards() {
       setLastGoodSnapshot(null);
       refreshDashboardList();
       setNotice("Dashboard archived.");
-      void refreshDashboardDefault();
       updateDashboardUrl();
     } catch (error) {
       const conflict = getOpenViewDashboardConflict(error);
@@ -1394,7 +1296,6 @@ export default function ServerBackedDashboards() {
   }
 
   async function restoreDashboard(dashboard: OpenViewDashboard) {
-    suppressInitialDefaultSelection();
     if (
       restorePendingRef.current ||
       duplicatePending ||
@@ -1417,7 +1318,6 @@ export default function ServerBackedDashboards() {
       setShowArchived(false);
       applyDashboard(restored);
       refreshDashboardList();
-      void refreshDashboardDefault();
       if (routeDashboardId !== restored.id) {
         skipRouteLoadForId.current = restored.id;
         router.replace(
@@ -1558,13 +1458,29 @@ export default function ServerBackedDashboards() {
             id="dashboard-page-title"
             className="text-2xl font-semibold"
           >
-            Private dashboards
+            Dashboards
           </h1>
           <p className="text-muted-foreground mt-1 max-w-3xl text-sm">
-            Keep useful live results together. Each Dashboard is private to you.
+            Keep useful live results together. Each Dashboard belongs to a
+            department, and everyone who can read the department sees it.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {canCreateDashboards ? (
+            <Button
+              variant="outline"
+              className="min-h-11"
+              disabled={
+                savePending ||
+                duplicatePending ||
+                archivePending ||
+                Boolean(restorePendingId)
+              }
+              onClick={beginNewDashboard}
+            >
+              New Dashboard
+            </Button>
+          ) : null}
           <Button
             variant="outline"
             className="min-h-11"
@@ -1572,21 +1488,6 @@ export default function ServerBackedDashboards() {
               savePending ||
               duplicatePending ||
               archivePending ||
-              dashboardDefaultPending ||
-              Boolean(restorePendingId)
-            }
-            onClick={beginNewDashboard}
-          >
-            New Dashboard
-          </Button>
-          <Button
-            variant="outline"
-            className="min-h-11"
-            disabled={
-              savePending ||
-              duplicatePending ||
-              archivePending ||
-              dashboardDefaultPending ||
               Boolean(restorePendingId)
             }
             onClick={toggleArchivedList}
@@ -1600,19 +1501,6 @@ export default function ServerBackedDashboards() {
       {dashboardError ? (
         <Alert role="alert" variant="destructive">
           {dashboardError}
-        </Alert>
-      ) : null}
-      {dashboardDefaultError ? (
-        <Alert role="alert" variant="destructive">
-          {dashboardDefaultError}
-          <Button
-            className="mt-3 min-h-11"
-            variant="outline"
-            disabled={dashboardDefaultLoading || dashboardDefaultPending}
-            onClick={() => void refreshDashboardDefault(true)}
-          >
-            Retry default Dashboard
-          </Button>
         </Alert>
       ) : null}
       {dashboardListError ? (
@@ -1656,7 +1544,9 @@ export default function ServerBackedDashboards() {
             <div className="grid min-w-0 gap-4 sm:grid-cols-[minmax(13rem,0.8fr)_minmax(0,1fr)] sm:items-end">
               <div className="min-w-0">
                 <h2 className="mb-1 text-sm font-medium">
-                  {showArchived ? "Archived dashboards" : "Your dashboards"}
+                  {showArchived
+                    ? "Archived dashboards"
+                    : "Department dashboards"}
                 </h2>
                 <Field className="min-w-0">
                   <FieldLabel htmlFor="dashboard-context">Dashboard</FieldLabel>
@@ -1682,8 +1572,8 @@ export default function ServerBackedDashboards() {
                     {dashboardChoices.map((dashboard) => (
                       <option key={dashboard.id} value={dashboard.id}>
                         {dashboard.name}
-                        {dashboardDefaultId === dashboard.id
-                          ? " · Default"
+                        {departmentNames.get(dashboard.departmentId)
+                          ? ` · ${departmentNames.get(dashboard.departmentId)}`
                           : ""}
                       </option>
                     ))}
@@ -1703,10 +1593,10 @@ export default function ServerBackedDashboards() {
                   </h2>
                   {selectedDashboard ? (
                     <>
-                      <Badge variant="outline">Only you</Badge>
-                      {dashboardDefaultId === selectedDashboard.id ? (
-                        <Badge variant="secondary">Default</Badge>
-                      ) : null}
+                      <Badge variant="outline">
+                        {departmentNames.get(selectedDashboard.departmentId) ??
+                          "Department"}
+                      </Badge>
                       {selectedDashboard.isDeleted ? (
                         <Badge variant="outline">Archived</Badge>
                       ) : null}
@@ -1727,10 +1617,10 @@ export default function ServerBackedDashboards() {
                       selectedDashboard.revision +
                       " · " +
                       cadenceDescription +
-                      ". Only you can view these Dashboards."
+                      ". Shared with everyone who can read this department."
                     : dashboardName || draftWidgets.length
-                      ? "Private draft · " + cadenceDescription
-                      : "Choose a private Dashboard or create one."}
+                      ? "Unsaved draft · " + cadenceDescription
+                      : "Choose a Dashboard."}
                 </p>
               </div>
             </div>
@@ -1747,7 +1637,7 @@ export default function ServerBackedDashboards() {
                   {snapshotLoading ? "Refreshing…" : "Refresh now"}
                 </Button>
               ) : null}
-              {draftDirty ? (
+              {draftDirty && canManageDashboard ? (
                 <Button
                   className="min-h-11"
                   onClick={() => void saveDashboard()}
@@ -1778,24 +1668,28 @@ export default function ServerBackedDashboards() {
                   <ChevronDown data-icon="inline-end" aria-hidden="true" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-56">
-                  <DropdownMenuItem
-                    className="min-h-11"
-                    disabled={
-                      !selectedDashboard ||
-                      selectedDashboard.isDeleted ||
-                      savePending ||
-                      archivePending ||
-                      Boolean(restorePendingId)
-                    }
-                    onClick={() => setDashboardDialogKind("settings")}
-                  >
-                    Dashboard settings
-                  </DropdownMenuItem>
-                  {selectedDashboard ? <DropdownMenuSeparator /> : null}
+                  {canManageDashboard ? (
+                    <DropdownMenuItem
+                      className="min-h-11"
+                      disabled={
+                        !selectedDashboard ||
+                        selectedDashboard.isDeleted ||
+                        savePending ||
+                        archivePending ||
+                        Boolean(restorePendingId)
+                      }
+                      onClick={() => setDashboardDialogKind("settings")}
+                    >
+                      Dashboard settings
+                    </DropdownMenuItem>
+                  ) : null}
+                  {selectedDashboard && canManageDashboard ? (
+                    <DropdownMenuSeparator />
+                  ) : null}
                   {selectedDashboard && !selectedDashboard.isDeleted ? (
                     <>
                       <DropdownMenuItem
-                        className="min-h-11"
+                        className={canManageDashboard ? "min-h-11" : "hidden"}
                         disabled={
                           draftDirty ||
                           duplicatePending ||
@@ -1811,23 +1705,6 @@ export default function ServerBackedDashboards() {
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className="min-h-11"
-                        disabled={
-                          dashboardDefaultLoading ||
-                          dashboardDefaultPending ||
-                          duplicatePending ||
-                          archivePending ||
-                          Boolean(restorePendingId)
-                        }
-                        onClick={() => void toggleDashboardDefault()}
-                      >
-                        {dashboardDefaultPending
-                          ? "Updating default…"
-                          : dashboardDefaultId === selectedDashboard.id
-                            ? "Clear default"
-                            : "Set as default"}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="min-h-11"
                         disabled={dashboardLoading || duplicatePending}
                         onClick={() => void reloadSelectedDashboard(draftDirty)}
                       >
@@ -1836,12 +1713,9 @@ export default function ServerBackedDashboards() {
                           : "Reload saved Dashboard"}
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        className="min-h-11"
+                        className={canManageDashboard ? "min-h-11" : "hidden"}
                         disabled={
-                          archivePending ||
-                          duplicatePending ||
-                          draftDirty ||
-                          dashboardDefaultPending
+                          archivePending || duplicatePending || draftDirty
                         }
                         onClick={() => void archiveDashboard()}
                       >
@@ -1849,7 +1723,7 @@ export default function ServerBackedDashboards() {
                       </DropdownMenuItem>
                     </>
                   ) : null}
-                  {selectedDashboard?.isDeleted ? (
+                  {selectedDashboard?.isDeleted && canManageDashboard ? (
                     <DropdownMenuItem
                       className="min-h-11"
                       disabled={
@@ -1886,7 +1760,6 @@ export default function ServerBackedDashboards() {
                         savePending ||
                         duplicatePending ||
                         archivePending ||
-                        dashboardDefaultPending ||
                         Boolean(restorePendingId)
                       }
                       onClick={() => chooseDashboard(dashboard.id)}
@@ -1958,7 +1831,7 @@ export default function ServerBackedDashboards() {
               </div>
               <Button
                 variant="outline"
-                className="min-h-11 w-full"
+                className={canManageDashboard ? "min-h-11 w-full" : "hidden"}
                 disabled={
                   selectedDashboard?.isDeleted ||
                   draftWidgets.length >= 12 ||
@@ -1998,6 +1871,7 @@ export default function ServerBackedDashboards() {
                       (candidate) => candidate.id === widget.key,
                     );
                     const unavailable =
+                      !canManageDashboard ||
                       savePending ||
                       duplicatePending ||
                       archivePending ||
@@ -2123,7 +1997,7 @@ export default function ServerBackedDashboards() {
                       ? selectedDashboard.isDeleted
                         ? "Restore this Dashboard to add or change widgets."
                         : "Add a widget to load its current result from OpenView."
-                      : "Choose one from your private Dashboards or create a new one."}
+                      : "Choose a Dashboard from a department you can read."}
                   </p>
                 </section>
               )}
@@ -2144,11 +2018,50 @@ export default function ServerBackedDashboards() {
                     : "Dashboard settings"}
                 </DialogTitle>
                 <DialogDescription>
-                  The name and refresh cadence stay in your draft until you save
-                  this private Dashboard.
+                  The department, name and refresh cadence stay in your draft
+                  until you save this Dashboard.
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 sm:grid-cols-2">
+                <Field className="min-w-0 sm:col-span-2">
+                  <FieldLabel htmlFor="dashboard-department">
+                    Department
+                  </FieldLabel>
+                  <Select
+                    id="dashboard-department"
+                    className="min-h-11 w-full"
+                    value={draftDepartmentId}
+                    disabled={
+                      Boolean(selectedDashboard) ||
+                      draftWidgets.length > 0 ||
+                      savePending
+                    }
+                    onValueChange={(value) => {
+                      setNewDepartmentId(value);
+                      selectBuilderModule("");
+                    }}
+                  >
+                    {selectedDashboard ? (
+                      <option value={selectedDashboard.departmentId}>
+                        {departmentNames.get(selectedDashboard.departmentId) ??
+                          "Department"}
+                      </option>
+                    ) : (
+                      manageableDepartments.map((department) => (
+                        <option key={department.id} value={department.id}>
+                          {department.name}
+                        </option>
+                      ))
+                    )}
+                  </Select>
+                  <FieldDescription>
+                    {selectedDashboard
+                      ? "A Dashboard stays in its department."
+                      : draftWidgets.length
+                        ? "Remove the widgets to choose another department."
+                        : "Widgets can read only this department's data."}
+                  </FieldDescription>
+                </Field>
                 <Field className="min-w-0 sm:col-span-2">
                   <FieldLabel htmlFor="dashboard-name">
                     Dashboard name
@@ -2158,7 +2071,6 @@ export default function ServerBackedDashboards() {
                     maxLength={200}
                     value={dashboardName}
                     onChange={(event) => {
-                      suppressInitialDefaultSelection();
                       setDashboardName(event.target.value);
                     }}
                     disabled={
@@ -2168,7 +2080,9 @@ export default function ServerBackedDashboards() {
                       Boolean(restorePendingId)
                     }
                   />
-                  <FieldDescription>Private to your account.</FieldDescription>
+                  <FieldDescription>
+                    Everyone who can read the department sees this name.
+                  </FieldDescription>
                 </Field>
                 <Field className="min-w-0 sm:col-span-2">
                   <FieldLabel htmlFor="dashboard-refresh-cadence">
@@ -2186,7 +2100,6 @@ export default function ServerBackedDashboards() {
                       Boolean(restorePendingId)
                     }
                     onValueChange={(value) => {
-                      suppressInitialDefaultSelection();
                       setRefreshCadence(
                         value as OpenViewDashboardRefreshCadence,
                       );
@@ -2235,23 +2148,22 @@ export default function ServerBackedDashboards() {
                     value={builderModuleId}
                     disabled={duplicatePending}
                     onValueChange={(value) => {
-                      suppressInitialDefaultSelection();
                       selectBuilderModule(value);
                       setBuilderDateFieldId("");
                       setBuilderMeasureId("");
                     }}
                   >
                     <option value="">Choose a data source</option>
-                    {catalogSources.map((source) => (
+                    {departmentSources.map((source) => (
                       <option key={source.id} value={source.id}>
                         {source.name}
                       </option>
                     ))}
                   </Select>
-                  {!catalogSources.length && !catalogError ? (
+                  {!departmentSources.length && !catalogError ? (
                     <FieldDescription>
-                      No data sources are available yet. Retry the catalog if
-                      this persists.
+                      No data sources of this department are available yet.
+                      Retry the catalog if this persists.
                     </FieldDescription>
                   ) : null}
                 </Field>
@@ -2265,7 +2177,6 @@ export default function ServerBackedDashboards() {
                     value={builderWidgetType}
                     disabled={duplicatePending}
                     onValueChange={(value) => {
-                      suppressInitialDefaultSelection();
                       const nextType = value as OpenViewDashboardWidgetType;
                       setBuilderWidgetType(nextType);
                       if (nextType === "summary")
@@ -2290,7 +2201,6 @@ export default function ServerBackedDashboards() {
                       value={builderChartType}
                       disabled={duplicatePending}
                       onValueChange={(value) => {
-                        suppressInitialDefaultSelection();
                         setBuilderChartType(value as BuilderChartType);
                       }}
                     >
@@ -2313,7 +2223,6 @@ export default function ServerBackedDashboards() {
                       value={builderAggregation}
                       disabled={duplicatePending}
                       onValueChange={(value) => {
-                        suppressInitialDefaultSelection();
                         setBuilderAggregation(value as BuilderAggregation);
                       }}
                     >
@@ -2341,7 +2250,6 @@ export default function ServerBackedDashboards() {
                         !builderNumericFields.length
                       }
                       onValueChange={(value) => {
-                        suppressInitialDefaultSelection();
                         setBuilderMeasureId(value);
                       }}
                     >
@@ -2376,7 +2284,6 @@ export default function ServerBackedDashboards() {
                         !builderRecordFields.length
                       }
                       onValueChange={(value) => {
-                        suppressInitialDefaultSelection();
                         setBuilderRecordFieldId(value);
                       }}
                     >
@@ -2406,7 +2313,6 @@ export default function ServerBackedDashboards() {
                         !builderFields.length
                       }
                       onValueChange={(value) => {
-                        suppressInitialDefaultSelection();
                         setBuilderDimensionId(value);
                       }}
                     >
@@ -2448,7 +2354,6 @@ export default function ServerBackedDashboards() {
                           !builderDateFields.length
                         }
                         onValueChange={(value) => {
-                          suppressInitialDefaultSelection();
                           setBuilderDateFieldId(value);
                         }}
                       >
@@ -2482,7 +2387,6 @@ export default function ServerBackedDashboards() {
                         value={builderFromDate}
                         aria-describedby="dashboard-date-range-description"
                         onChange={(event) => {
-                          suppressInitialDefaultSelection();
                           setBuilderFromDate(event.target.value);
                         }}
                       />
@@ -2500,7 +2404,6 @@ export default function ServerBackedDashboards() {
                         value={builderToDate}
                         aria-describedby="dashboard-date-range-description"
                         onChange={(event) => {
-                          suppressInitialDefaultSelection();
                           setBuilderToDate(event.target.value);
                         }}
                       />

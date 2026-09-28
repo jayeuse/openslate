@@ -11,12 +11,10 @@ const moduleId = "00000000-0000-4000-8000-000000000001";
 const textFieldId = "00000000-0000-4000-8000-000000000002";
 const selectFieldId = "00000000-0000-4000-8000-000000000003";
 const amountFieldId = "00000000-0000-4000-8000-000000000004";
-const audienceUserId = "00000000-0000-4000-8000-000000000008";
 
 function report(): OpenViewReport {
   return {
     id: "00000000-0000-4000-8000-000000000005",
-    ownerId: "00000000-0000-4000-8000-000000000006",
     moduleId,
     name: "Active work",
     subtitle: "Latest records",
@@ -45,7 +43,6 @@ function report(): OpenViewReport {
       groupBy: { fieldId: selectFieldId, expectedType: "select" },
       includeRowCount: true,
     },
-    audience: { kind: "private", userId: null },
     isDeleted: false,
     createdAt: "2026-09-23T00:00:00Z",
     updatedAt: "2026-09-23T00:00:00Z",
@@ -99,22 +96,13 @@ test("membership filter edits accept quoted choices containing commas", () => {
   ]);
 });
 
-test("Report drafts default to private and preserve the saved audience in dirty tracking", () => {
-  expect(emptyReportDraft(moduleId).audience).toEqual({ kind: "private" });
+test("Report drafts carry no owner or audience, so dirty tracking follows the recipe only", () => {
+  const empty = emptyReportDraft(moduleId);
+  expect(empty).not.toHaveProperty("audience");
 
-  const sharedReport = report();
-  sharedReport.audience = { kind: "everyone", userId: null };
-  const draft = reportDraftFrom(sharedReport);
-  expect(draft.audience).toEqual({ kind: "everyone" });
+  const draft = reportDraftFrom(report());
+  expect(draft).not.toHaveProperty("audience");
   const baseline = reportDraftSignature(draft);
-  draft.audience = { kind: "user", userId: audienceUserId };
+  draft.subtitle = "Changed";
   expect(reportDraftSignature(draft)).not.toBe(baseline);
-  expect(reportRecipeFromDraft(draft)).toEqual(sharedReport.recipe);
-
-  const userReport = report();
-  userReport.audience = { kind: "user", userId: audienceUserId };
-  expect(reportDraftFrom(userReport).audience).toEqual({
-    kind: "user",
-    userId: audienceUserId,
-  });
 });

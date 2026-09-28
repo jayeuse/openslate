@@ -24,10 +24,10 @@ function pageOf<T>(items: T[], limit = 25) {
   };
 }
 
-function report(id: string, ownerId: string, name: string) {
+// Each person reads a different department's Report; the cache must not mix them.
+function report(id: string, _readerId: string, name: string) {
   return {
     id,
-    owner_id: ownerId,
     module_id: moduleId,
     name,
     subtitle: null,
@@ -41,7 +41,6 @@ function report(id: string, ownerId: string, name: string) {
       group_by: null,
       include_row_count: false,
     },
-    audience: { kind: "private", user_id: null },
     is_deleted: false,
     created_at: timestamp,
     updated_at: timestamp,
@@ -115,27 +114,12 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       contentType: "application/json",
       body: JSON.stringify({
         id: activeUser,
-        role: "member",
+        // An administrator manages every department, so Reports can be created.
+        role: "admin",
         access: [],
       }),
     }),
   );
-  await page.route("**/api/charts/preferences", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ config: null }),
-    }),
-  );
-  // Audience options need records.read like the catalog, so they follow
-  // the catalog's refusal and hold.
-  await page.route("**/api/views/audience-options**", async (route) => {
-    if (catalogHold) await catalogHold;
-    if (catalogDenied) return route.fulfill(forbidden);
-    return route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify(pageOf([], 100)),
-    });
-  });
   await page.route("**/api/views/data-sources**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     // Fields need records.read like the catalog: they follow its refusal.

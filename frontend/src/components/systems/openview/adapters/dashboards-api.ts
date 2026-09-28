@@ -425,9 +425,12 @@ const dashboardWidgetInputSchema = z.discriminatedUnion("widgetType", [
     .strict(),
 ]);
 const refreshCadenceSchema = z.enum(["manual", "one-minute", "five-minutes"]);
+const dashboardPositionSchema = z.number().int().min(0).max(10_000);
 const dashboardCreateSchema = z
   .object({
+    departmentId: uuidSchema,
     name: z.string().trim().min(1).max(200),
+    position: dashboardPositionSchema.default(0),
     refreshCadence: refreshCadenceSchema.default("manual"),
     widgets: z.array(dashboardWidgetInputSchema).max(12).default([]),
   })
@@ -437,13 +440,15 @@ const dashboardUpdateSchema = z
     id: uuidSchema,
     revision: z.number().int().min(1),
     name: z.string().trim().min(1).max(200).optional(),
+    position: dashboardPositionSchema.optional(),
     refreshCadence: refreshCadenceSchema.optional(),
     widgets: z.array(dashboardWidgetInputSchema).max(12).optional(),
   })
   .strict()
-  .superRefine(({ name, refreshCadence, widgets }, context) => {
+  .superRefine(({ name, position, refreshCadence, widgets }, context) => {
     if (
       name === undefined &&
+      position === undefined &&
       refreshCadence === undefined &&
       widgets === undefined
     ) {
@@ -530,7 +535,8 @@ const wireWidgetSchema = z.discriminatedUnion("widget_type", [
 const dashboardSchema = z
   .object({
     id: uuidSchema,
-    owner_id: uuidSchema,
+    department_id: uuidSchema,
+    position: z.number().int().min(0),
     name: z.string().min(1).max(200),
     refresh_cadence: refreshCadenceSchema,
     revision: z.number().int().min(1),
@@ -553,7 +559,7 @@ const dashboardSchema = z
   })
   .transform(
     ({
-      owner_id,
+      department_id,
       is_deleted,
       created_at,
       updated_at,
@@ -561,7 +567,7 @@ const dashboardSchema = z
       ...dashboard
     }) => ({
       ...dashboard,
-      ownerId: owner_id,
+      departmentId: department_id,
       isDeleted: is_deleted,
       createdAt: created_at,
       updatedAt: updated_at,
@@ -574,10 +580,6 @@ const dashboardListResponseSchema = z
     pagination: paginationSchema,
   })
   .strict();
-const dashboardDefaultSchema = z
-  .object({ dashboard_id: uuidSchema.nullable() })
-  .strict()
-  .transform(({ dashboard_id }) => ({ dashboardId: dashboard_id }));
 const dashboardConflictDetailSchema = z
   .object({
     code: z.enum([
@@ -648,7 +650,9 @@ export type OpenViewDashboardWidget =
     });
 export type OpenViewDashboard = {
   id: string;
-  ownerId: string;
+  /** The department that owns the Dashboard; its managers change it. */
+  departmentId: string;
+  position: number;
   name: string;
   refreshCadence: OpenViewDashboardRefreshCadence;
   revision: number;
@@ -667,7 +671,6 @@ export type OpenViewDashboardPage = {
     hasMore: boolean;
   };
 };
-export type OpenViewDashboardDefault = { dashboardId: string | null };
 export type OpenViewDashboardWidgetInput =
   | {
       widgetType: "chart";
@@ -682,7 +685,9 @@ export type OpenViewDashboardWidgetInput =
       config: OpenViewDashboardRecordsConfig;
     };
 export type OpenViewDashboardCreateInput = {
+  departmentId: string;
   name: string;
+  position?: number;
   refreshCadence?: OpenViewDashboardRefreshCadence;
   widgets?: OpenViewDashboardWidgetInput[];
 };
@@ -690,6 +695,7 @@ export type OpenViewDashboardUpdateInput = {
   id: string;
   revision: number;
   name?: string;
+  position?: number;
   refreshCadence?: OpenViewDashboardRefreshCadence;
   /** Replaces the complete ordered widget list. */
   widgets?: OpenViewDashboardWidgetInput[];
@@ -697,10 +703,11 @@ export type OpenViewDashboardUpdateInput = {
 export type OpenViewDashboardListOptions = {
   limit?: number;
   offset?: number;
-  sortBy?: "name" | "created_at" | "updated_at";
+  sortBy?: "position" | "name" | "created_at" | "updated_at";
   sortOrder?: "asc" | "desc";
   search?: string | null;
   deleted?: "exclude" | "include" | "only";
+  departmentId?: string;
 };
 export type OpenViewDashboardConflict =
   | {
@@ -877,10 +884,13 @@ export async function listOpenViewDashboards(
     .object({
       limit: z.number().int().min(1).max(100).default(25),
       offset: z.number().int().min(0).default(0),
-      sortBy: z.enum(["name", "created_at", "updated_at"]).optional(),
+      sortBy: z
+        .enum(["position", "name", "created_at", "updated_at"])
+        .optional(),
       sortOrder: z.enum(["asc", "desc"]).default("asc"),
       search: z.string().trim().max(100).nullish(),
       deleted: z.enum(["exclude", "include", "only"]).default("exclude"),
+      departmentId: uuidSchema.optional(),
     })
     .strict()
     .parse(raw);
@@ -892,6 +902,7 @@ export async function listOpenViewDashboards(
   parameters.sort_order = request.sortOrder;
   if (request.search) parameters.search = request.search;
   parameters.deleted = request.deleted;
+  if (request.departmentId) parameters.department_id = request.departmentId;
   const path = `/dashboards?${queryString(parameters)}`;
   const responseSchema = dashboardListResponseSchema.superRefine(
     ({ items, pagination }, context) => {
@@ -925,23 +936,6 @@ export async function getOpenViewDashboard(
   );
 }
 
-export async function getOpenViewDashboardDefault(): Promise<OpenViewDashboardDefault> {
-  return openViewReadFetch("/dashboards/default", dashboardDefaultSchema, {
-    cache: "no-store",
-  });
-}
-
-export async function setOpenViewDashboardDefault(
-  id: string | null,
-): Promise<OpenViewDashboardDefault> {
-  const dashboardId = uuidSchema.nullable().parse(id);
-  return apiFetch("/dashboards/default", dashboardDefaultSchema, {
-    method: "PUT",
-    cache: "no-store",
-    body: JSON.stringify({ dashboard_id: dashboardId }),
-  });
-}
-
 export async function createOpenViewDashboard(
   raw: OpenViewDashboardCreateInput,
 ): Promise<OpenViewDashboard> {
@@ -950,7 +944,9 @@ export async function createOpenViewDashboard(
     method: "POST",
     cache: "no-store",
     body: JSON.stringify({
+      department_id: input.departmentId,
       name: input.name,
+      position: input.position,
       refresh_cadence: input.refreshCadence,
       widgets: serializeWidgets(input.widgets),
     }),
@@ -963,6 +959,7 @@ export async function updateOpenViewDashboard(
   const input = dashboardUpdateSchema.parse(raw);
   const body: Record<string, unknown> = { revision: input.revision };
   if (input.name !== undefined) body.name = input.name;
+  if (input.position !== undefined) body.position = input.position;
   if (input.refreshCadence !== undefined)
     body.refresh_cadence = input.refreshCadence;
   if (input.widgets !== undefined)

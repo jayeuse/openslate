@@ -42,6 +42,8 @@ type SavedReportsPanelProps = {
   onStartFromTemplate: () => void;
   onLoadMore: () => void;
   onOpenAvailableOutputs: () => void;
+  /** Whether the user may create Reports: copies and templates are new Reports. */
+  canCreate: boolean;
 };
 
 export function SavedReportsPanel({
@@ -62,12 +64,15 @@ export function SavedReportsPanel({
   onStartFromTemplate,
   onLoadMore,
   onOpenAvailableOutputs,
+  canCreate,
 }: SavedReportsPanelProps) {
   return (
     <Card className="min-w-0 self-start">
       <CardHeader>
         <CardTitle>Saved Reports</CardTitle>
-        <CardDescription>Only Reports you own appear here.</CardDescription>
+        <CardDescription>
+          Reports on data you can read. Managers of a department change them.
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -140,19 +145,21 @@ export function SavedReportsPanel({
                       </Badge>
                     ) : null}
                   </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={Boolean(actionPending) || report.isDeleted}
-                    onClick={() => onDuplicateReport(report.id)}
-                  >
-                    Duplicate
-                  </Button>
+                  {canCreate ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      disabled={Boolean(actionPending) || report.isDeleted}
+                      onClick={() => onDuplicateReport(report.id)}
+                    >
+                      Duplicate
+                    </Button>
+                  ) : null}
                 </li>
               ))}
             </ul>
-            {!showArchived && reports.length > 0 ? (
+            {canCreate && !showArchived && reports.length > 0 ? (
               <div className="flex flex-wrap items-end gap-2">
                 <Field className="min-w-48 flex-1">
                   <FieldLabel htmlFor="report-template-source">

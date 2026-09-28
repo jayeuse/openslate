@@ -185,38 +185,14 @@ const wireRecipeSchema = z
     includeRowCount: recipe.include_row_count,
   }));
 
-const wireReportAudienceSchema = z
-  .object({
-    kind: z.enum(["private", "everyone", "user"]),
-    user_id: uuidSchema.nullable(),
-  })
-  .strict()
-  .superRefine((audience, context) => {
-    const valid =
-      (audience.kind === "user" && audience.user_id !== null) ||
-      ((audience.kind === "private" || audience.kind === "everyone") &&
-        audience.user_id === null);
-    if (!valid)
-      context.addIssue({
-        code: "custom",
-        message: "Report audience is invalid",
-      });
-  })
-  .transform((audience) => ({
-    kind: audience.kind,
-    userId: audience.user_id,
-  }));
-
 const wireReportSchema = z
   .object({
     id: uuidSchema,
-    owner_id: uuidSchema,
     module_id: uuidSchema,
     name: z.string().min(1).max(80),
     subtitle: z.string().max(160).nullable(),
     revision: z.number().int().min(1),
     recipe: wireRecipeSchema,
-    audience: wireReportAudienceSchema,
     is_deleted: z.boolean(),
     created_at: timestampSchema,
     updated_at: timestampSchema,
@@ -224,13 +200,11 @@ const wireReportSchema = z
   .strict()
   .transform((report) => ({
     id: report.id,
-    ownerId: report.owner_id,
     moduleId: report.module_id,
     name: report.name,
     subtitle: report.subtitle,
     revision: report.revision,
     recipe: report.recipe,
-    audience: report.audience,
     isDeleted: report.is_deleted,
     createdAt: report.created_at,
     updatedAt: report.updated_at,
@@ -255,21 +229,6 @@ const wireReportListSchema = z
     pagination: paginationSchema,
   })
   .strict();
-
-const reportUserChoiceSchema = z
-  .object({ id: uuidSchema, username: z.string().min(1).max(100) })
-  .strict();
-const userChoicesPageSchema = z
-  .object({
-    items: z.array(reportUserChoiceSchema).max(100),
-    pagination: paginationSchema,
-  })
-  .strict()
-  .refine(
-    (page) =>
-      page.items.length === page.pagination.count &&
-      page.items.length <= page.pagination.limit,
-  );
 
 const wireReportRunSchema = z
   .object({
@@ -335,26 +294,12 @@ const listOptionsSchema = z
     deleted: z.enum(["exclude", "include", "only"]).optional(),
   })
   .strict();
-const audienceChoiceOptionsSchema = z
-  .object({
-    limit: z.number().int().min(1).max(100).default(25),
-    offset: z.number().int().min(0).default(0),
-    search: z.string().trim().max(100).optional(),
-    id: uuidSchema.optional(),
-  })
-  .strict();
-const reportAudienceInputSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("private") }).strict(),
-  z.object({ kind: z.literal("everyone") }).strict(),
-  z.object({ kind: z.literal("user"), userId: uuidSchema }).strict(),
-]);
 const createInputSchema = z
   .object({
     moduleId: uuidSchema,
     name: z.string().trim().min(1).max(80),
     subtitle: z.string().max(160).nullable().optional(),
     recipe: recipeInputSchema,
-    audience: reportAudienceInputSchema.optional(),
   })
   .strict();
 const updateInputSchema = z
@@ -365,7 +310,6 @@ const updateInputSchema = z
     name: z.string().trim().min(1).max(80).optional(),
     subtitle: z.string().max(160).nullable().optional(),
     recipe: recipeInputSchema.optional(),
-    audience: reportAudienceInputSchema.optional(),
   })
   .strict()
   .superRefine((input, context) => {
@@ -373,8 +317,7 @@ const updateInputSchema = z
       input.moduleId === undefined &&
       input.name === undefined &&
       input.subtitle === undefined &&
-      input.recipe === undefined &&
-      input.audience === undefined
+      input.recipe === undefined
     ) {
       context.addIssue({
         code: "custom",
@@ -428,13 +371,6 @@ const reportNotFoundMessages = new Set([
 
 export type OpenViewReportRecipe = z.output<typeof recipeInputSchema>;
 export type OpenViewReport = z.output<typeof wireReportSchema>;
-export type OpenViewReportAudienceInput = z.output<
-  typeof reportAudienceInputSchema
->;
-export type OpenViewReportUserChoice = z.output<typeof reportUserChoiceSchema>;
-export type OpenViewReportAudienceChoiceOptions = z.input<
-  typeof audienceChoiceOptionsSchema
->;
 export type OpenViewReportRun = z.output<typeof wireReportRunSchema>;
 export type OpenViewSharedReportRun = z.output<
   typeof wireSharedReportRunSchema
@@ -463,15 +399,6 @@ function serializeFieldReference(reference: OpenViewQueryFieldReference) {
   return {
     field_id: reference.fieldId,
     expected_type: reference.expectedType,
-  };
-}
-
-function serializeReportAudience(
-  audience: z.output<typeof reportAudienceInputSchema>,
-) {
-  return {
-    kind: audience.kind,
-    user_id: audience.kind === "user" ? audience.userId : null,
   };
 }
 
@@ -598,29 +525,6 @@ export async function listOpenViewReports(
   );
 }
 
-export async function listOpenViewReportAudienceUsers(
-  raw: OpenViewReportAudienceChoiceOptions = {},
-): Promise<OpenViewPage<OpenViewReportUserChoice>> {
-  const options = audienceChoiceOptionsSchema.parse(raw);
-  const values: Record<string, string | number> = {
-    limit: options.limit,
-    offset: options.offset,
-    ...(options.search ? { search: options.search } : {}),
-    ...(options.id === undefined ? {} : { id: options.id }),
-  };
-  const page = await safeReportJson(
-    `/reports/audience-users?${queryString(values)}`,
-    userChoicesPageSchema,
-    { cache: "no-store" },
-  );
-  if (
-    page.pagination.limit !== options.limit ||
-    page.pagination.offset !== options.offset
-  )
-    throw new ApiContractError();
-  return page;
-}
-
 export async function getOpenViewReport(
   rawReportId: string,
 ): Promise<OpenViewReport> {
@@ -643,9 +547,6 @@ export async function createOpenViewReport(
     name: input.name,
     ...(input.subtitle === undefined ? {} : { subtitle: input.subtitle }),
     recipe: serializeReportRecipe(input.recipe),
-    ...(input.audience === undefined
-      ? {}
-      : { audience: serializeReportAudience(input.audience) }),
   };
   return safeReportJson("/reports", wireReportSchema, {
     method: "POST",
@@ -664,8 +565,6 @@ export async function updateOpenViewReport(
   if (input.recipe !== undefined) {
     body.recipe = serializeReportRecipe(input.recipe);
   }
-  if (input.audience !== undefined)
-    body.audience = serializeReportAudience(input.audience);
 
   const report = await safeReportJson(
     `/reports/${encodeURIComponent(input.id)}`,

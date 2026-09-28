@@ -238,14 +238,14 @@ async function exerciseOpenView(
     recordResults.getByText(supplier.legalName, { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "View actions" }).click();
-  await page.getByRole("menuitem", { name: "Set as my default" }).click();
+  await page.getByRole("menuitem", { name: "Make default view" }).click();
   await expect(
-    page.getByRole("status").filter({ hasText: "personal default view" }),
+    page.getByRole("status").filter({ hasText: "default view of this module" }),
   ).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "View actions" }).click();
   await expect(
-    page.getByRole("menuitem", { name: "Clear my default" }),
+    page.getByRole("menuitem", { name: "Clear default view" }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
 
@@ -989,10 +989,10 @@ async function exercisePrivateDashboard(
   const dashboardName = `Full-stack Dashboard ${runId.slice(0, 8)}`;
   await page.goto("/openview?section=dashboards");
   await expect(
-    page.getByRole("heading", { name: "Private dashboards" }),
+    page.getByRole("heading", { level: 1, name: "Dashboards" }),
   ).toBeVisible();
   await expect(
-    page.getByText(/Each Dashboard is private to you\./),
+    page.getByText(/Each Dashboard belongs to a department/),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "New Dashboard" }).click();

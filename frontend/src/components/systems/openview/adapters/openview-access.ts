@@ -5,9 +5,9 @@ import { useSyncExternalStore } from "react";
 import type { z } from "zod";
 import { ApiError, apiFetch, type ApiRequestInit } from "@/lib/api";
 
-// Every OpenView read (data sources, fields, audience options, saved views,
+// Every OpenView read (data sources, fields, saved views,
 // records, aggregates, Dashboards, Reports and their history and schedules,
-// shared outputs, chart settings) requires records.read. So a refusal
+// shared outputs) requires records.read. So a refusal
 // (401/403) of any one of them is a refusal of all of them: this latch hides
 // every OpenView read's data at once, in every section, until a read that
 // started after the refusal succeeds.

@@ -5,10 +5,8 @@ import {
   createOpenViewDashboard,
   getOpenViewDashboard,
   getOpenViewDashboardConflict,
-  getOpenViewDashboardDefault,
   listOpenViewDashboards,
   restoreOpenViewDashboard,
-  setOpenViewDashboardDefault,
   updateOpenViewDashboard,
   type OpenViewDashboardCreateInput,
   type OpenViewDashboard,
@@ -16,7 +14,7 @@ import {
 
 const moduleId = "00000000-0000-4000-8000-000000000001";
 const dimensionId = "00000000-0000-4000-8000-000000000002";
-const userId = "00000000-0000-4000-8000-000000000003";
+const departmentId = "00000000-0000-4000-8000-0000000000d1";
 const dashboardId = "00000000-0000-4000-8000-000000000004";
 const widgetId = "00000000-0000-4000-8000-000000000005";
 const dateFieldId = "00000000-0000-4000-8000-000000000006";
@@ -138,7 +136,8 @@ const wireLiveWidgets = [
 function dashboardResponse(overrides: Record<string, unknown> = {}) {
   return {
     id: dashboardId,
-    owner_id: userId,
+    department_id: departmentId,
+    position: 0,
     name: "Operations",
     refresh_cadence: "manual",
     revision: 2,
@@ -161,7 +160,8 @@ const pageResponse = {
 function expectedDashboard(): OpenViewDashboard {
   return {
     id: dashboardId,
-    ownerId: userId,
+    departmentId,
+    position: 0,
     name: "Operations",
     refreshCadence: "manual",
     revision: 2,
@@ -188,59 +188,7 @@ function expectedDashboard(): OpenViewDashboard {
   };
 }
 
-test("reads and updates the personal Dashboard default with a strict nullable ID", async () => {
-  const responses = [
-    { dashboard_id: null },
-    { dashboard_id: dashboardId },
-    { dashboard_id: null },
-  ];
-  const fetch = installFetch(() => jsonResponse(responses.shift()));
-  try {
-    expect(await getOpenViewDashboardDefault()).toEqual({ dashboardId: null });
-    expect(await setOpenViewDashboardDefault(dashboardId)).toEqual({
-      dashboardId,
-    });
-    expect(await setOpenViewDashboardDefault(null)).toEqual({
-      dashboardId: null,
-    });
-    expect(fetch.requests.map(({ input }) => String(input))).toEqual([
-      "/api/dashboards/default",
-      "/api/dashboards/default",
-      "/api/dashboards/default",
-    ]);
-    expect(fetch.requests.map(({ init }) => init?.cache)).toEqual([
-      "no-store",
-      "no-store",
-      "no-store",
-    ]);
-    expect(fetch.requests[1]?.init?.method).toBe("PUT");
-    expect(JSON.parse(String(fetch.requests[1]?.init?.body))).toEqual({
-      dashboard_id: dashboardId,
-    });
-    expect(JSON.parse(String(fetch.requests[2]?.init?.body))).toEqual({
-      dashboard_id: null,
-    });
-    await expect(
-      setOpenViewDashboardDefault("sample-dashboard"),
-    ).rejects.toThrow();
-    expect(fetch.requests).toHaveLength(3);
-  } finally {
-    fetch.restore();
-  }
-
-  const malformed = installFetch(() =>
-    jsonResponse({ dashboard_id: "sample-dashboard" }),
-  );
-  try {
-    await expect(getOpenViewDashboardDefault()).rejects.toBeInstanceOf(
-      ApiContractError,
-    );
-  } finally {
-    malformed.restore();
-  }
-});
-
-test("lists and reads owner-private Dashboards with strict ordered chart mapping", async () => {
+test("lists and reads department Dashboards with strict ordered chart mapping", async () => {
   const fetch = installFetch((input) => {
     const path = String(input);
     return path.includes("?")
@@ -253,6 +201,7 @@ test("lists and reads owner-private Dashboards with strict ordered chart mapping
       sortBy: "updated_at",
       sortOrder: "desc",
       deleted: "include",
+      departmentId,
     });
     expect(listed.items).toEqual([expectedDashboard()]);
     expect(listed.pagination).toEqual({
@@ -263,7 +212,7 @@ test("lists and reads owner-private Dashboards with strict ordered chart mapping
       hasMore: false,
     });
     expect(String(fetch.requests[0]?.input)).toContain(
-      "/dashboards?limit=25&offset=0&sort_by=updated_at&sort_order=desc&search=operations&deleted=include",
+      `/dashboards?limit=25&offset=0&sort_by=updated_at&sort_order=desc&search=operations&deleted=include&department_id=${departmentId}`,
     );
     expect(fetch.requests[0]?.init?.cache).toBe("no-store");
 
@@ -290,6 +239,7 @@ test("creates and replaces the complete ordered chart list using the strict wire
   });
   try {
     const created = await createOpenViewDashboard({
+      departmentId,
       name: "Operations",
       widgets: [
         {
@@ -302,6 +252,8 @@ test("creates and replaces the complete ordered chart list using the strict wire
     const createRequest = fetch.requests[0];
     expect(createRequest?.init?.method).toBe("POST");
     expect(JSON.parse(String(createRequest?.init?.body))).toEqual({
+      department_id: departmentId,
+      position: 0,
       name: "Operations",
       refresh_cadence: "manual",
       widgets: [
@@ -367,6 +319,7 @@ test("maps all live widget types and persists the visible refresh cadence", asyn
   ];
   try {
     const created = await createOpenViewDashboard({
+      departmentId,
       name: "Operations",
       refreshCadence: "one-minute",
       widgets,
@@ -379,6 +332,8 @@ test("maps all live widget types and persists the visible refresh cadence", asyn
       "records",
     ]);
     expect(JSON.parse(String(fetch.requests[0]?.init?.body))).toEqual({
+      department_id: departmentId,
+      position: 0,
       name: "Operations",
       refresh_cadence: "one-minute",
       widgets: [
@@ -443,6 +398,7 @@ test("serializes bounded date-series charts with numeric measures", async () => 
   );
   try {
     const result = await createOpenViewDashboard({
+      departmentId,
       name: "Daily totals",
       widgets: [
         {
@@ -522,6 +478,7 @@ test("rejects malformed IDs, chart/query mismatches, and audience or snapshot da
   try {
     await expect(getOpenViewDashboard("sample-dashboard")).rejects.toThrow();
     const sharedInput = {
+      departmentId,
       name: "Shared",
       audience: { kind: "everyone" },
       refresh: "five-minutes",
@@ -530,6 +487,7 @@ test("rejects malformed IDs, chart/query mismatches, and audience or snapshot da
     await expect(createOpenViewDashboard(sharedInput)).rejects.toThrow();
     await expect(
       createOpenViewDashboard({
+        departmentId,
         name: "Invalid chart",
         widgets: [
           {
@@ -548,6 +506,7 @@ test("rejects malformed IDs, chart/query mismatches, and audience or snapshot da
       resultSnapshot: [{ key: "private" }],
     };
     const snapshotInput: OpenViewDashboardCreateInput = {
+      departmentId,
       name: "Materialized data is not saved",
       widgets: [
         {

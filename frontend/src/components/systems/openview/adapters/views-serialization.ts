@@ -1,28 +1,10 @@
 import { z } from "zod";
 import {
-  audienceInputSchema,
   presentationSchema,
   queryDefinitionSchema,
   wireQueryDefinitionSchema,
 } from "./views-schemas";
 import type { OpenViewPresentation } from "./views-schemas";
-
-export function serializeOpenViewAudience(
-  audience: z.input<typeof audienceInputSchema>,
-) {
-  const validAudience = audienceInputSchema.parse(audience);
-  switch (validAudience.kind) {
-    case "private":
-      return { kind: "private" as const };
-    case "everyone":
-      return { kind: "everyone" as const };
-    case "role":
-      // Access groups replaced role audiences; the server accepts none.
-      throw new Error("Role audiences are no longer available");
-    case "identity":
-      return { kind: "user" as const, user_id: validAudience.id };
-  }
-}
 
 export function serializeOpenViewQueryDefinition(
   raw: unknown,

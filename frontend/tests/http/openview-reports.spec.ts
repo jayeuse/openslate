@@ -31,7 +31,6 @@ function pageOf<T>(items: T[], limit = 25, offset = 0, total = items.length) {
 
 const report = {
   id: reportId,
-  owner_id: userId,
   module_id: moduleId,
   name: "Operations review",
   subtitle: null,
@@ -45,14 +44,12 @@ const report = {
     group_by: null,
     include_row_count: false,
   },
-  audience: { kind: "private", user_id: null },
   is_deleted: false,
   created_at: timestamp,
   updated_at: timestamp,
 };
-type ReportFixture = Omit<typeof report, "audience" | "subtitle"> & {
+type ReportFixture = Omit<typeof report, "subtitle"> & {
   subtitle: string | null;
-  audience: { kind: string; user_id: string | null };
 };
 const run = {
   id: runId,
@@ -75,6 +72,8 @@ async function installReportsApi(
     failSharedSecondPage?: boolean;
     distinctNewRun?: boolean;
     failFirstHistoryAfterRun?: boolean;
+    /** The user's level on the Report department; the default manages it. */
+    level?: "read" | "manage";
   } = {},
 ) {
   let currentReport = initialReport;
@@ -125,7 +124,13 @@ async function installReportsApi(
       body: JSON.stringify({
         id: userId,
         role: "member",
-        access: [],
+        access: [
+          {
+            department_id: ownerId,
+            module_id: null,
+            level: options.level ?? "manage",
+          },
+        ],
       }),
     }),
   );
@@ -171,15 +176,10 @@ async function installReportsApi(
       const created = {
         ...initialReport,
         id: duplicateReportId,
-        owner_id: userId,
         module_id: body.module_id,
         name: body.name,
         subtitle: body.subtitle,
         recipe: body.recipe,
-        audience: body.audience ?? {
-          kind: "private",
-          user_id: null,
-        },
         revision: 1,
         is_deleted: false,
       };
@@ -215,7 +215,6 @@ async function installReportsApi(
         name: body.name as string,
         subtitle: body.subtitle as string | null,
         recipe: body.recipe as typeof currentReport.recipe,
-        audience: body.audience as ReportFixture["audience"],
         revision: currentReport.revision + 1,
       };
       return route.fulfill({
@@ -666,27 +665,30 @@ test("saved and available output actions fit a narrow viewport", async ({
   );
 });
 
-test("excluded Report owner cannot run it while eligible scheduling stays available", async ({
+test("a module reader runs a Report but cannot change, copy or schedule it", async ({
   page,
 }) => {
-  const excluded = {
-    ...report,
-    audience: { kind: "user", user_id: ownerId },
-  };
-  const api = await installReportsApi(page, false, excluded);
+  const api = await installReportsApi(page, false, report, { level: "read" });
   await page.goto("/openview?section=reports");
   await page.getByRole("button", { name: "Operations review" }).click();
 
-  await expect(page.getByRole("button", { name: "Run now" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Run now" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "New Report" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Edit report" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("button", { name: "Duplicate" })).toHaveCount(0);
   await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "not included in this Report audience" }),
-  ).toBeVisible();
+    page.getByRole("button", { name: "Report options" }),
+  ).toHaveCount(0);
+  await expect(page.getByText(/audience|owner/i)).toHaveCount(0);
   await page.getByRole("tab", { name: "Schedule" }).click();
   await expect(
     page.getByRole("checkbox", { name: "Enable scheduled runs" }),
-  ).toBeEnabled();
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Only a manager of this department changes the schedule."),
+  ).toBeVisible();
   expect(api.counts().manualRuns).toBe(0);
 });
 
@@ -702,7 +704,7 @@ test("duplicating a saved Report creates a separate draft on its first Save", as
     "Copy of Operations review",
   );
   await expect(
-    page.getByText("Save to create a separate Report with the same audience."),
+    page.getByText("Save to create a separate Report."),
   ).toBeVisible();
   expect(api.reportCreates()).toBe(0);
 
@@ -714,9 +716,7 @@ test("duplicating a saved Report creates a separate draft on its first Save", as
   expect(api.reportUpdates()).toBe(0);
   expect(api.createdReports()[0]?.response).toMatchObject({
     id: duplicateReportId,
-    owner_id: userId,
     name: "Copy of Operations review",
-    audience: report.audience,
     recipe: report.recipe,
   });
   await page.reload();
@@ -758,7 +758,6 @@ test("a saved Report can start an independent new Report through the template ch
   expect(api.reportUpdates()).toBe(0);
   expect(api.createdReports()[0]?.request).toMatchObject({
     name: "Copy of Operations review",
-    audience: report.audience,
     recipe: report.recipe,
   });
   await page.reload();
@@ -832,7 +831,7 @@ test("Report recipes open on demand and preserve cross-tab drafts when closed", 
   await page.getByRole("button", { name: "New Report" }).click();
   const editor = page.getByRole("dialog", { name: "New report" });
   await expect(editor).toBeVisible();
-  for (const tab of ["Basics", "Columns", "Advanced", "Audience"]) {
+  for (const tab of ["Basics", "Columns", "Advanced"]) {
     await expect(editor.getByRole("tab", { name: tab })).toBeVisible();
   }
   await expect(
@@ -847,10 +846,7 @@ test("Report recipes open on demand and preserve cross-tab drafts when closed", 
   await expect(
     editor.getByRole("button", { name: "Add filter" }),
   ).toBeVisible();
-  await editor.getByRole("tab", { name: "Audience" }).click();
-  await expect(editor.getByLabel("Who can open saved runs?")).toHaveValue(
-    "private",
-  );
+  await expect(editor.getByRole("tab", { name: "Audience" })).toHaveCount(0);
   await editor.getByRole("tab", { name: "Basics" }).click();
   await editor.getByRole("button", { name: "Close editor" }).click();
 

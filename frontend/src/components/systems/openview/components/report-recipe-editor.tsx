@@ -37,7 +37,6 @@ import type {
   OpenViewDataSourceField,
 } from "../adapters/views-api";
 import type { ReportDraft, ReportFilterDraft } from "./report-draft";
-import { ReportAudienceSelector } from "./report-audience-selector";
 
 type FilterOperator = ReportFilterDraft["operator"];
 const VALUELESS = new Set<FilterOperator>([
@@ -212,9 +211,6 @@ export function ReportRecipeEditor({
               </TabsTrigger>
               <TabsTrigger value="advanced" className="min-h-11">
                 Advanced
-              </TabsTrigger>
-              <TabsTrigger value="audience" className="min-h-11">
-                Audience
               </TabsTrigger>
             </TabsList>
             <TabsContent value="basics" keepMounted className="mt-4">
@@ -828,15 +824,6 @@ export function ReportRecipeEditor({
                   </FieldLabel>
                 </Field>
               </div>
-            </TabsContent>
-            <TabsContent value="audience" keepMounted className="mt-4">
-              <ReportAudienceSelector
-                audience={draft.audience}
-                onChange={(audience) =>
-                  setDraft((current) => ({ ...current, audience }))
-                }
-                disabled={!canEdit}
-              />
             </TabsContent>
           </Tabs>
           <div className="border-border bg-card sticky bottom-0 z-10 flex flex-wrap items-center gap-2 border-t py-3">

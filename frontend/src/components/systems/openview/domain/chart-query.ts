@@ -1,12 +1,11 @@
-import type { OpenViewChartPreferenceConfig } from "../adapters/chart-preferences-api";
 import type {
   OpenViewDataSourceField,
   OpenViewQueryDefinition,
 } from "../adapters/views-api";
 
 export type ChartType = "bar" | "line" | "pie";
-export type Aggregation = OpenViewChartPreferenceConfig["aggregation"];
-export type FilterLogic = OpenViewChartPreferenceConfig["filterLogic"];
+export type Aggregation = "count" | "sum" | "average";
+export type FilterLogic = OpenViewQueryDefinition["logic"];
 export type FilterOperator =
   OpenViewQueryDefinition["filters"][number]["operator"];
 export type FilterDraft = {
