@@ -15,7 +15,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.scope import allowed_module_ids, effective_levels, includes
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.models import User
@@ -96,6 +96,67 @@ def require_live_session(db: Session, *, actor_id: UUID, session_id: UUID) -> No
         raise forbidden()
 
 
+def _lock_authority(db: Session, actor_id: UUID) -> User | None:
+    """Lock every row that gives a member or guest their levels, then reload the user.
+
+    Lock order, chosen to match every writer of these rows (each locks group
+    rows first, in ID order, then member or access rows, then user rows, then
+    sessions):
+
+    1. The actor's live groups, FOR SHARE, in ID order. ``replace_group_access``,
+       ``replace_group_members``, group deletion, invitations and promotion to
+       administrator all start by locking these rows FOR UPDATE, so each of them
+       waits for this transaction. Unlike ``delegation.py``, this path holds no
+       earlier group or member lock, so taking the group rows first keeps it in
+       the writers' order; a members-first order would invert against promotion,
+       which locks the user row before the memberships it removes.
+    2. The actor's live memberships joined to those groups' live access rows,
+       FOR SHARE (step 3 of ``delegation.py``).
+    3. The user row, FOR SHARE, reloaded, so a change of role, status or expiry
+       waits too.
+
+    A group joined after step 1 can only add access, so it cannot make the
+    decision wrong.
+    """
+
+    group_ids = db.scalars(
+        select(GroupMember.group_id)
+        .join(Group, Group.id == GroupMember.group_id)
+        .where(
+            GroupMember.user_id == actor_id,
+            GroupMember.is_deleted.is_(False),
+            Group.is_deleted.is_(False),
+        )
+    ).all()
+    if group_ids:
+        db.execute(
+            select(Group.id)
+            .where(Group.id.in_(sorted(set(group_ids))))
+            .order_by(Group.id)
+            .with_for_update(read=True)
+        ).all()
+        db.execute(
+            select(GroupMember.id, GroupAccess.id)
+            .join(Group, Group.id == GroupMember.group_id)
+            .join(GroupAccess, GroupAccess.group_id == Group.id)
+            .where(
+                GroupMember.user_id == actor_id,
+                GroupMember.is_deleted.is_(False),
+                Group.is_deleted.is_(False),
+                GroupAccess.is_deleted.is_(False),
+            )
+            .order_by(GroupMember.id, GroupAccess.id)
+            .with_for_update(of=(GroupMember, GroupAccess), read=True)
+        ).all()
+    actor = db.scalar(
+        select(User)
+        .where(User.id == actor_id)
+        .execution_options(populate_existing=True)
+        .with_for_update(of=User, read=True)
+    )
+    return actor if isinstance(actor, User) else None
+
+
 def require_fresh_module_access(
     db: Session,
     *,
@@ -104,22 +165,19 @@ def require_fresh_module_access(
     module_id: UUID,
     level: AccessLevel,
 ) -> User:
-    """Recheck the exact session, the account and the module level after long work.
+    """Recheck the account, the module level and the exact session after long work.
 
-    The account is reloaded so that a change of role, status or group made during
-    the work applies.
+    The account and the rows that give its level are locked until the caller
+    commits (see :func:`_lock_authority`), so a concurrent revocation either
+    waits for the protected output to commit or commits first and this check
+    fails. The session is locked last because writers that revoke sessions,
+    such as disabling a user, lock the user row first.
     """
 
-    require_live_session(db, actor_id=actor_id, session_id=session_id)
     timestamp = utc_now()
     try:
-        actor = db.scalar(
-            select(User)
-            .where(User.id == actor_id)
-            .execution_options(populate_existing=True)
-            .with_for_update(of=User, read=True)
-        )
-        if not isinstance(actor, User) or not is_active_account(actor, now=timestamp):
+        actor = _lock_authority(db, actor_id)
+        if actor is None or not is_active_account(actor, now=timestamp):
             db.rollback()
             raise forbidden()
         granted = effective_levels(db, actor, now=timestamp).module_level(module_id)
@@ -128,6 +186,7 @@ def require_fresh_module_access(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Authorization unavailable"
         ) from error
+    require_live_session(db, actor_id=actor_id, session_id=session_id)
     if not includes(granted, level):
         db.rollback()
         raise forbidden()
