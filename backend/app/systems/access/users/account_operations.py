@@ -5,12 +5,15 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies import require_admin, require_fresh_exact_admin
 from app.core.database import get_db
 from app.systems.access.identity.session_revocation import revoke_user_sessions
+from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.users.coordination import (
     ProfileValidationError,
     advance_token_cutoff,
@@ -79,6 +82,68 @@ def _record_outcome(
     )
 
 
+def _lock_groups(db: Session, group_ids: set[UUID]) -> dict[UUID, Group]:
+    if not group_ids:
+        return {}
+    rows = db.scalars(
+        select(Group)
+        .where(Group.id.in_(group_ids))
+        .order_by(Group.id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    ).all()
+    return {row.id: row for row in rows}
+
+
+def _lock_membership_groups(db: Session, user_id: UUID) -> dict[UUID, Group]:
+    """Lock the groups a user belongs to before the user row.
+
+    Every membership writer locks a group row before member and user rows
+    (see ``policy/delegation.py``), so a promotion takes the same order.
+    """
+
+    try:
+        group_ids = set(
+            db.scalars(select(GroupMember.group_id).where(GroupMember.user_id == user_id)).all()
+        )
+        return _lock_groups(db, group_ids)
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise unavailable("Unable to lock group memberships") from error
+
+
+def _leave_groups(db: Session, user: User, groups: dict[UUID, Group], actor_id: UUID) -> None:
+    """Remove every membership of a new administrator; administrators are not group members.
+
+    A membership saved before the user row was locked may name a group that
+    is not locked yet; it is locked now. No membership can be added while
+    the user row is locked, because adding one locks that row too.
+    """
+
+    try:
+        memberships = list(
+            db.scalars(
+                select(GroupMember)
+                .where(GroupMember.user_id == user.id)
+                .order_by(GroupMember.group_id)
+                .with_for_update()
+            ).all()
+        )
+        groups = {
+            **groups,
+            **_lock_groups(db, {item.group_id for item in memberships} - set(groups)),
+        }
+        for item in memberships:
+            db.delete(item)
+            group = groups[item.group_id]
+            group.revision += 1
+            group.performed_by = actor_id
+        db.flush()
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise unavailable("Unable to remove group memberships") from error
+
+
 def _require_user_patch(payload: UserUpdate) -> None:
     if not payload.model_fields_set:
         raise HTTPException(
@@ -138,6 +203,9 @@ def update_user(
     _require_user_patch(payload)
     admin = require_fresh_exact_admin(db, admin.id, serialize_admin_changes=True)
     actor_id = admin.id
+    membership_groups = (
+        _lock_membership_groups(db, user_id) if payload.role == UserRole.ADMIN else {}
+    )
     user = lock_user(db, user_id)
     target_id = user.id
     if user.is_deleted:
@@ -172,6 +240,8 @@ def update_user(
     except ProfileValidationError as error:
         db.rollback()
         raise conflict(str(error)) from error
+    if role_change_requested and destination_role == UserRole.ADMIN.value:
+        _leave_groups(db, user, membership_groups, actor_id)
     if payload.status == UserStatus.ACTIVE:
         return _activate_user(
             db,
