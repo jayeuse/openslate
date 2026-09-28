@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useRef } from "react";
+import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -505,7 +505,12 @@ export function Designer({
     setEditor("relationship");
     onCreateRequestHandled(createRequest.id);
   }, [createRequest, design, onCreateRequestHandled, selected]);
-  const projected = projectDesign(design, selected);
+  // The canvas re-syncs its whole graph whenever this object changes, so keep
+  // it stable across renders that do not change the design or selection.
+  const projected = useMemo(
+    () => projectDesign(design, selected),
+    [design, selected],
+  );
   const keyboardTarget: SandboxInspectorTarget | null = selectedField
     ? { kind: "field", id: selected }
     : selectedRelationship
