@@ -3,27 +3,21 @@ import { ApiContractError, ApiError } from "../../../src/lib/api";
 import {
   archiveBoard,
   createBoard,
-  deleteBoardTemplate,
   downloadBoardConfiguration,
   duplicateBoardStructure,
-  getBoardPersonalState,
-  getBoardTemplate,
   importBoardConfiguration,
-  instantiateBoardTemplate,
   listBoards,
-  listBoardTemplates,
   readBoard,
+  readBoardGroups,
+  replaceBoardGroups,
   restoreBoard,
-  saveBoardTemplate,
-  setBoardFavorite,
-  setBoardHome,
   updateBoard,
 } from "../../../src/components/systems/boards/adapters/board-management-api";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const newBoardId = "00000000-0000-4000-8000-000000000002";
-const ownerId = "00000000-0000-4000-8000-000000000003";
-const templateId = "00000000-0000-4000-8000-000000000004";
+const departmentId = "00000000-0000-4000-8000-000000000003";
+const groupId = "00000000-0000-4000-8000-000000000004";
 const timestamp = "2026-09-23T00:00:00Z";
 
 type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
@@ -49,12 +43,10 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const bundle = {
   kind: "openslate-board",
-  version: 2,
+  version: 3,
   configuration: {
     name: "Dispatch",
     description: "Daily handoffs",
-    department_name: "Operations",
-    default_section: "overview",
     widgets: [
       {
         name: "Requests",
@@ -85,23 +77,13 @@ const bundle = {
 function boardResponse(id = newBoardId) {
   return {
     id,
-    owner_id: ownerId,
+    scope: "project",
     department_id: null,
     name: "Dispatch",
     description: "Daily handoffs",
     status: "active",
-    default_section: "overview",
     revision: 1,
-    created_at: timestamp,
-    updated_at: timestamp,
-  };
-}
-
-function templateResponse() {
-  return {
-    id: templateId,
-    name: "Dispatch template",
-    widget_count: 1,
+    level: "manage",
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -110,7 +92,15 @@ function templateResponse() {
 test("Board collection sends bounded filters and returns a validated page", async () => {
   const mock = installFetch(() =>
     jsonResponse({
-      items: [{ ...boardResponse(boardId), status: "archived" }],
+      items: [
+        {
+          ...boardResponse(boardId),
+          scope: "department",
+          department_id: departmentId,
+          status: "archived",
+          level: "read",
+        },
+      ],
       pagination: {
         limit: 10,
         offset: 20,
@@ -128,10 +118,15 @@ test("Board collection sends bounded filters and returns a validated page", asyn
       sortOrder: "desc",
       search: "  Dispatch  ",
       status: "archived",
-      departmentId: ownerId,
-      favoritesOnly: true,
+      scope: "department",
+      departmentId,
     });
-    expect(page.items[0]).toMatchObject({ id: boardId, ownerId });
+    expect(page.items[0]).toMatchObject({
+      id: boardId,
+      scope: "department",
+      departmentId,
+      level: "read",
+    });
     expect(page.pagination).toEqual({
       limit: 10,
       offset: 20,
@@ -150,9 +145,9 @@ test("Board collection sends bounded filters and returns a validated page", asyn
       sort_by: "updated_at",
       sort_order: "desc",
       status: "archived",
-      favorites_only: "true",
+      scope: "department",
       search: "Dispatch",
-      department_id: ownerId,
+      department_id: departmentId,
     });
     expect(mock.requests[0]?.init?.cache).toBe("no-store");
   } finally {
@@ -174,10 +169,8 @@ test("Board create, read, revisioned update, archive and restore use server IDs 
       createBoard({
         name: "  Dispatch  ",
         description: "  Handoffs  ",
-        departmentId: ownerId,
-        defaultSection: "calendar",
       }),
-    ).resolves.toMatchObject({ id: newBoardId, ownerId });
+    ).resolves.toMatchObject({ id: newBoardId, scope: "project" });
     await expect(readBoard(newBoardId)).resolves.toMatchObject({
       id: newBoardId,
       revision: 1,
@@ -205,8 +198,6 @@ test("Board create, read, revisioned update, archive and restore use server IDs 
     expect(JSON.parse(String(mock.requests[0]?.init?.body))).toEqual({
       name: "Dispatch",
       description: "Handoffs",
-      department_id: ownerId,
-      default_section: "calendar",
     });
     expect(JSON.parse(String(mock.requests[2]?.init?.body))).toEqual({
       revision: 1,
@@ -233,9 +224,14 @@ test("Board lifecycle rejects invalid filters and mass-assignment inputs before 
     await expect(listBoards({ deleted: "include" } as never)).rejects.toThrow();
     await expect(listBoards({ limit: 101 })).rejects.toThrow();
     await expect(createBoard({ name: " " })).rejects.toThrow();
-    await expect(
-      createBoard({ name: "Dispatch", ownerId } as never),
-    ).rejects.toThrow();
+    for (const extra of [
+      { departmentId },
+      { defaultSection: "posts" },
+      { scope: "company" },
+    ])
+      await expect(
+        createBoard({ name: "Dispatch", ...extra } as never),
+      ).rejects.toThrow();
     await expect(updateBoard(boardId, { revision: 1 })).rejects.toThrow();
     await expect(
       updateBoard(boardId, { revision: 1, name: null } as never),
@@ -251,7 +247,7 @@ test("Board lifecycle rejects invalid filters and mass-assignment inputs before 
 test("Board lifecycle rejects private DTO fields and redacts conflict details", async () => {
   const privateList = installFetch(() =>
     jsonResponse({
-      items: [{ ...boardResponse(), grants: [{ user_id: ownerId }] }],
+      items: [{ ...boardResponse(), owner_id: departmentId }],
       pagination: { limit: 25, offset: 0, count: 1, total: 1, has_more: false },
     }),
   );
@@ -261,7 +257,7 @@ test("Board lifecycle rejects private DTO fields and redacts conflict details", 
     privateList.restore();
   }
   const privateDto = installFetch(() =>
-    jsonResponse({ ...boardResponse(), grants: [{ user_id: ownerId }] }),
+    jsonResponse({ ...boardResponse(), owner_id: departmentId }),
   );
   try {
     await expect(readBoard(newBoardId)).rejects.toBeInstanceOf(
@@ -333,7 +329,7 @@ test("Board lifecycle rejects private DTO fields and redacts conflict details", 
   }
 });
 
-test("downloads exact validated v2 bytes and the fixed safe filename", async () => {
+test("downloads exact validated v3 bytes and the fixed safe filename", async () => {
   const exactBytes = new TextEncoder().encode(JSON.stringify(bundle, null, 2));
   const mock = installFetch(
     () =>
@@ -372,7 +368,7 @@ test("import sends validated bounded original JSON bytes as octet-stream", async
       new Blob([bytes], { type: "application/json" }),
     );
     expect(created.id).toBe(newBoardId);
-    expect(created.ownerId).toBe(ownerId);
+    expect(created.scope).toBe("project");
     expect(String(mock.requests[0]?.input)).toBe("/api/boards/import");
     expect(mock.requests[0]?.init?.method).toBe("POST");
     expect(mock.requests[0]?.init?.cache).toBe("no-store");
@@ -388,7 +384,7 @@ test("import sends validated bounded original JSON bytes as octet-stream", async
     ).rejects.toThrow();
     await expect(
       importBoardConfiguration(
-        new Blob([JSON.stringify({ ...bundle, version: 1 })]),
+        new Blob([JSON.stringify({ ...bundle, version: 2 })]),
       ),
     ).rejects.toThrow();
     await expect(
@@ -396,7 +392,10 @@ test("import sends validated bounded original JSON bytes as octet-stream", async
         new Blob([
           JSON.stringify({
             ...bundle,
-            configuration: { ...bundle.configuration, grants: [ownerId] },
+            configuration: {
+              ...bundle.configuration,
+              default_section: "overview",
+            },
           }),
         ]),
       ),
@@ -405,8 +404,8 @@ test("import sends validated bounded original JSON bytes as octet-stream", async
       importBoardConfiguration(
         new Blob([
           JSON.stringify(bundle).replace(
-            '"version":2',
-            '"version":2,"version":2',
+            '"version":3',
+            '"version":3,"version":3',
           ),
         ]),
       ),
@@ -417,12 +416,12 @@ test("import sends validated bounded original JSON bytes as octet-stream", async
   }
 });
 
-for (const token of ["2.0", "2e0"])
+for (const token of ["3.0", "3e0"])
   test(`import rejects version token ${token} before upload`, async () => {
     const mock = installFetch(() => jsonResponse(boardResponse(), 201));
     try {
       const raw = JSON.stringify(bundle).replace(
-        '"version":2',
+        '"version":3',
         `"version":${token}`,
       );
       await expect(importBoardConfiguration(new Blob([raw]))).rejects.toThrow();
@@ -432,7 +431,7 @@ for (const token of ["2.0", "2e0"])
     }
   });
 
-test("duplicate accepts a fresh private Board DTO and rejects identity reuse", async () => {
+test("duplicate accepts a fresh project Board DTO and rejects identity reuse", async () => {
   const mock = installFetch(() => jsonResponse(boardResponse(), 201));
   try {
     const copied = await duplicateBoardStructure(boardId);
@@ -456,132 +455,68 @@ test("duplicate accepts a fresh private Board DTO and rejects identity reuse", a
   }
 });
 
-test("template list, save, detail, delete and instantiate use only metadata DTOs", async () => {
+test("project Board groups are read and replaced with the Board revision", async () => {
+  const groups = {
+    board_id: boardId,
+    revision: 5,
+    groups: [{ group_id: groupId, name: "Field crew", level: "write" }],
+  };
   const responses = [
-    jsonResponse({
-      items: [templateResponse()],
-      pagination: {
-        limit: 25,
-        offset: 0,
-        count: 1,
-        total: 1,
-        has_more: false,
-      },
-    }),
-    jsonResponse(templateResponse(), 201),
-    jsonResponse(templateResponse()),
-    new Response(null, { status: 204 }),
-    jsonResponse(boardResponse(), 201),
+    jsonResponse(groups),
+    jsonResponse({ ...groups, revision: 6, groups: [] }),
   ];
   const mock = installFetch(() => responses.shift()!);
   try {
-    const listed = await listBoardTemplates({ search: " Dispatch " });
-    expect(listed.items).toEqual([
-      {
-        id: templateId,
-        name: "Dispatch template",
-        widgetCount: 1,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      },
-    ]);
-    expect(listed.pagination.hasMore).toBe(false);
-    expect(String(mock.requests[0]?.input)).toContain("/api/board-templates?");
-    expect(String(mock.requests[0]?.input)).toContain("search=Dispatch");
-    expect(mock.requests[0]?.init?.cache).toBe("no-store");
-
+    await expect(readBoardGroups(boardId)).resolves.toEqual({
+      boardId,
+      revision: 5,
+      groups: [{ groupId, name: "Field crew", level: "write" }],
+    });
     await expect(
-      saveBoardTemplate({ boardId, name: "Dispatch template" }),
-    ).resolves.toMatchObject({ id: templateId, widgetCount: 1 });
+      replaceBoardGroups(boardId, { revision: 5, groups: [] }),
+    ).resolves.toMatchObject({ revision: 6, groups: [] });
+    expect(
+      mock.requests.map(({ input, init }) => [String(input), init?.method]),
+    ).toEqual([
+      [`/api/boards/${boardId}/groups`, undefined],
+      [`/api/boards/${boardId}/groups`, "PUT"],
+    ]);
     expect(JSON.parse(String(mock.requests[1]?.init?.body))).toEqual({
-      board_id: boardId,
-      name: "Dispatch template",
+      revision: 5,
+      groups: [],
     });
-    await expect(getBoardTemplate(templateId)).resolves.toMatchObject({
-      id: templateId,
-    });
-    expect(String(mock.requests[2]?.input)).toBe(
-      `/api/board-templates/${templateId}`,
-    );
-    await expect(deleteBoardTemplate(templateId)).resolves.toBeUndefined();
-    expect(mock.requests[3]?.init?.method).toBe("DELETE");
-    await expect(instantiateBoardTemplate(templateId)).resolves.toMatchObject({
-      id: newBoardId,
-    });
-    expect(String(mock.requests[4]?.input)).toBe(
-      `/api/board-templates/${templateId}/boards`,
-    );
+    await expect(
+      replaceBoardGroups(boardId, {
+        revision: 5,
+        groups: [
+          { groupId, level: "read" },
+          { groupId, level: "write" },
+        ],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      replaceBoardGroups(boardId, {
+        revision: 5,
+        groups: [{ groupId, level: "admin" as never }],
+      }),
+    ).rejects.toThrow();
+    expect(mock.requests).toHaveLength(2);
   } finally {
     mock.restore();
   }
-});
-
-test("personal GET and PUT methods send only current-user choices and parse filtered state", async () => {
-  const responses = [
-    jsonResponse({ favorite_board_ids: [boardId], home_board_id: boardId }),
-    jsonResponse({ favorite_board_ids: [], home_board_id: boardId }),
-    jsonResponse({ favorite_board_ids: [], home_board_id: null }),
-  ];
-  const mock = installFetch(() => responses.shift()!);
-  try {
-    await expect(getBoardPersonalState()).resolves.toEqual({
-      favoriteBoardIds: [boardId],
-      homeBoardId: boardId,
-    });
-    await expect(setBoardFavorite(boardId, false)).resolves.toEqual({
-      favoriteBoardIds: [],
-      homeBoardId: boardId,
-    });
-    expect(String(mock.requests[1]?.input)).toBe(
-      `/api/boards/personal/favorites/${boardId}`,
-    );
-    expect(mock.requests[1]?.init?.method).toBe("PUT");
-    expect(JSON.parse(String(mock.requests[1]?.init?.body))).toEqual({
-      favorite: false,
-    });
-    await expect(setBoardHome(null)).resolves.toEqual({
-      favoriteBoardIds: [],
-      homeBoardId: null,
-    });
-    expect(String(mock.requests[2]?.input)).toBe("/api/boards/personal/home");
-    expect(JSON.parse(String(mock.requests[2]?.init?.body))).toEqual({
-      board_id: null,
-    });
-    expect(mock.requests.every(({ init }) => init?.cache === "no-store")).toBe(
-      true,
-    );
-    await expect(setBoardFavorite("../other", true)).rejects.toThrow();
-    expect(mock.requests).toHaveLength(3);
-  } finally {
-    mock.restore();
-  }
-});
-
-test("strict metadata and personal responses reject private or malformed fields", async () => {
-  const template = installFetch(() =>
-    jsonResponse({ ...templateResponse(), bundle }),
+  const foreign = installFetch(() =>
+    jsonResponse({ board_id: newBoardId, revision: 1, groups: [] }),
   );
   try {
-    await expect(getBoardTemplate(templateId)).rejects.toBeInstanceOf(
+    await expect(readBoardGroups(boardId)).rejects.toBeInstanceOf(
       ApiContractError,
     );
   } finally {
-    template.restore();
+    foreign.restore();
   }
-  const personal = installFetch(() =>
-    jsonResponse({
-      favorite_board_ids: [boardId],
-      home_board_id: boardId,
-      user_id: ownerId,
-    }),
-  );
-  try {
-    await expect(getBoardPersonalState()).rejects.toBeInstanceOf(
-      ApiContractError,
-    );
-  } finally {
-    personal.restore();
-  }
+});
+
+test("configuration downloads reject audience fields and duplicate keys", async () => {
   const exportMock = installFetch(
     () =>
       new Response(
@@ -618,8 +553,8 @@ test("strict metadata and personal responses reject private or malformed fields"
     () =>
       new Response(
         JSON.stringify(bundle).replace(
-          '"version":2',
-          '"version":2,"version":2',
+          '"version":3',
+          '"version":3,"version":3',
         ),
         {
           headers: {
@@ -644,21 +579,22 @@ test("all Board management errors discard untrusted server detail", async () => 
   const jsonMock = installFetch(() =>
     jsonResponse(
       {
-        detail: { code: "template_conflict", message: secret, debug: secret },
+        detail: { code: "board_name_fixed", message: secret, debug: secret },
       },
       409,
     ),
   );
   try {
-    await expect(
-      saveBoardTemplate({ boardId, name: "Dispatch template" }),
-    ).rejects.toMatchObject({ status: 409, code: "template_conflict" });
-    try {
-      await getBoardTemplate(templateId);
-    } catch (error) {
-      expect(error).toBeInstanceOf(ApiError);
-      expect(JSON.stringify(error)).not.toContain(secret);
-    }
+    const error = await updateBoard(boardId, {
+      revision: 1,
+      name: "Renamed",
+    }).then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 409, code: "board_name_fixed" });
+    expect(JSON.stringify(error)).not.toContain(secret);
   } finally {
     jsonMock.restore();
   }

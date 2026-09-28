@@ -43,14 +43,15 @@ const activity = {
   actor_label: "Avery",
 };
 
-test("my Board access reads only the actor's effective flags without inferring edit from manage", async () => {
+test("my Board access reads the actor's level and its flags", async () => {
   const fetch = installFetch(() =>
-    jsonResponse({ view: true, edit: false, manage: true }),
+    jsonResponse({ level: "manage", read: true, write: true, manage: true }),
   );
   try {
     await expect(getMyBoardAccess(boardId)).resolves.toEqual({
+      level: "manage",
       view: true,
-      edit: false,
+      edit: true,
       manage: true,
     });
     expect(fetch.paths).toEqual([`/api/boards/${boardId}/my-access`]);
@@ -64,9 +65,18 @@ test("my Board access reads only the actor's effective flags without inferring e
 
 test("my Board access rejects malformed or expanded permission payloads", async () => {
   for (const payload of [
-    { view: false, edit: false, manage: false },
-    { view: true, edit: "yes", manage: false },
-    { view: true, edit: false, manage: false, principal_id: userId },
+    { level: null, read: false, write: false, manage: false },
+    { level: "read", read: true, write: "yes", manage: false },
+    {
+      level: "read",
+      read: true,
+      write: false,
+      manage: false,
+      principal_id: userId,
+    },
+    { level: "manage", read: true, write: false, manage: true },
+    { level: "write", read: true, write: true, manage: true },
+    { view: true, edit: false, manage: false },
   ]) {
     const fetch = installFetch(() => jsonResponse(payload));
     try {
@@ -106,12 +116,13 @@ test("my Board access preserves hidden-board denial and masks untrusted server d
   }
 });
 
-test("Board access preview sends only validated IDs and receives three effective ACL flags", async () => {
+test("Board access preview sends only validated IDs and receives the person's level", async () => {
   const fetch = installFetch(() =>
-    jsonResponse({ view: true, edit: false, manage: false }),
+    jsonResponse({ level: "read", read: true, write: false, manage: false }),
   );
   try {
     await expect(getBoardAccessPreview(boardId, userId)).resolves.toEqual({
+      level: "read",
       view: true,
       edit: false,
       manage: false,
@@ -279,6 +290,22 @@ test("Board tools preserve the safe API denial without exposing private response
     await expect(listBoardPreviewUsers(boardId)).rejects.toBeInstanceOf(
       ApiError,
     );
+  } finally {
+    fetch.restore();
+  }
+});
+
+test("Board access preview shows a person with no level on the Board", async () => {
+  const fetch = installFetch(() =>
+    jsonResponse({ level: null, read: false, write: false, manage: false }),
+  );
+  try {
+    await expect(getBoardAccessPreview(boardId, userId)).resolves.toEqual({
+      level: null,
+      view: false,
+      edit: false,
+      manage: false,
+    });
   } finally {
     fetch.restore();
   }

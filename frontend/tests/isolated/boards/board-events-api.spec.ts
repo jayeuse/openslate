@@ -15,7 +15,6 @@ import {
 const boardId = "00000000-0000-4000-8000-000000000001";
 const eventId = "00000000-0000-4000-8000-000000000002";
 const authorId = "00000000-0000-4000-8000-000000000003";
-const departmentId = "00000000-0000-4000-8000-000000000004";
 const timestamp = "2026-09-23T00:00:00Z";
 
 type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
@@ -56,11 +55,7 @@ const allDayEvent = {
   timezone_name: "Asia/Manila",
   recurrence: "weekly",
   repeat_until: "2026-10-12",
-  audience: {
-    kind: "department",
-    user_id: null,
-    department_id: departmentId,
-  },
+  reminders: ["1d", "start"],
   archived: false,
   revision: 1,
   board_revision: 3,
@@ -69,7 +64,7 @@ const allDayEvent = {
 };
 const mutation = { id: eventId, event_revision: 2, board_revision: 4 };
 
-test("Board event series list uses bounded query and parses only the audience-visible DTO", async () => {
+test("Board event series list uses bounded query and parses the event with its reminders", async () => {
   const mock = installFetch(() =>
     jsonResponse({ items: [allDayEvent], pagination: page, board_revision: 3 }),
   );
@@ -85,7 +80,7 @@ test("Board event series list uses bounded query and parses only the audience-vi
       allDay: true,
       startDate: "2026-09-14",
       startAt: null,
-      audience: { kind: "department", departmentId },
+      reminders: ["1d", "start"],
     });
     expect(result.pagination).toEqual({
       limit: 25,
@@ -144,7 +139,7 @@ test("My events uses its own bounded paged endpoint", async () => {
   }
 });
 
-test("Board event create and patch send exclusive audiences and UTC timed instants with revisions", async () => {
+test("Board event create and patch send reminder timings and UTC timed instants with revisions", async () => {
   const responses = [jsonResponse(mutation, 201), jsonResponse(mutation)];
   const mock = installFetch(() => responses.shift()!);
   try {
@@ -156,7 +151,7 @@ test("Board event create and patch send exclusive audiences and UTC timed instan
         startAt: "2026-09-14T08:00:00Z",
         endAt: "2026-09-14T09:00:00Z",
         timezoneName: "Asia/Manila",
-        audience: { kind: "department", departmentId },
+        reminders: ["15m"],
         links: [{ label: "  Guide  ", url: "  https://example.org/guide  " }],
       }),
     ).resolves.toEqual({ id: eventId, eventRevision: 2, boardRevision: 4 });
@@ -164,7 +159,7 @@ test("Board event create and patch send exclusive audiences and UTC timed instan
       updateBoardEvent(boardId, eventId, {
         boardRevision: 4,
         eventRevision: 2,
-        audience: { kind: "author" },
+        reminders: [],
         title: "Updated",
         links: [],
       }),
@@ -183,14 +178,14 @@ test("Board event create and patch send exclusive audiences and UTC timed instan
       end_at: "2026-09-14T09:00:00Z",
       timezone_name: "Asia/Manila",
       recurrence: "none",
-      audience: { kind: "department", department_id: departmentId },
+      reminders: ["15m"],
       links: [{ label: "Guide", url: "https://example.org/guide" }],
     });
     expect(JSON.parse(String(mock.requests[1]?.init?.body))).toEqual({
       board_revision: 4,
       event_revision: 2,
       title: "Updated",
-      audience: { kind: "author" },
+      reminders: [],
       links: [],
     });
     expect(mock.requests.every(({ init }) => init?.cache === "no-store")).toBe(
@@ -355,7 +350,7 @@ test("Board event adapter rejects malformed input and unsupported fields before 
         startDate: "2026-09-14",
         endDate: "2026-09-14",
         timezoneName: "UTC",
-        audience: { kind: "role" } as never,
+        reminders: ["now"] as never,
       }),
     ).rejects.toThrow();
     await expect(

@@ -98,7 +98,6 @@ function widgetSignature(widget: BoardWidget): string {
     widget.moduleId,
     widget.widgetType,
     widget.config,
-    widget.audience,
   ]);
 }
 

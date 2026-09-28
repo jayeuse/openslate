@@ -43,7 +43,6 @@ const widget: BoardWidget = {
     refresh: "manual",
     pinned: false,
   },
-  audience: { kind: "everyone", userId: null },
   createdAt: timestamp,
   updatedAt: timestamp,
 };
@@ -65,7 +64,6 @@ const wireWidget = {
     refresh: "manual",
     pinned: false,
   },
-  audience: { kind: "everyone", user_id: null },
   created_at: timestamp,
   updated_at: timestamp,
 };
@@ -538,7 +536,7 @@ test("live Board Overview renders exact summary count and escaped returned recor
   expect(html).not.toContain("sample-board");
 });
 
-test("record summary cards pair the exact count with returned source and audience metadata", () => {
+test("record summary cards show the exact count of each summary", () => {
   const summary = {
     ...widget,
     name: "Operations summary",
@@ -549,13 +547,11 @@ test("record summary cards pair the exact count with returned source and audienc
     ...summary,
     id: otherBoardId,
     name: "Targeted summary",
-    audience: { kind: "user" as const, userId: otherBoardId },
   };
   const privateSummary = {
     ...summary,
     id: "00000000-0000-4000-8000-000000000007",
     name: "Private summary",
-    audience: { kind: "private" as const, userId: null },
   };
   const data = (total: number): LiveWidgetData => ({
     kind: "records",
@@ -586,9 +582,7 @@ test("record summary cards pair the exact count with returned source and audienc
   expect(text).toContain("18 Matching records");
   expect(text).toContain("42 Matching records");
   expect(html).not.toContain(moduleId);
-  expect(html).toContain("Everyone with Board access");
-  expect(html).toContain("Targeted audience");
-  expect(html).toContain("Private to its creator");
+  expect(html).not.toContain("audience");
   expect(html).toContain("Pinned");
 });
 
@@ -743,7 +737,7 @@ test("live Board Overview renders supported group and date charts with exact val
 
 test("live Board Overview makes empty, unavailable, loading, error, and retained refresh states clear", () => {
   const empty = renderWidgets(displayState([]));
-  expect(empty).toContain("No widgets visible");
+  expect(empty).toContain("No widgets yet");
   const loading = renderWidgets({ ...displayState([]), status: "loading" });
   expect(loading).toContain("Loading Board widgets");
   const denied = renderWidgets({

@@ -39,19 +39,19 @@ export type BoardRecordLink = z.output<typeof linkSchema>;
 export type BoardRecordLinkTarget =
   | { kind: "event"; boardId: string; contentId: string }
   | {
-      kind: "announcement";
+      kind: "post";
       boardId: string;
       contentId: string;
       view: "draft" | "published";
     };
 export type BoardEditableRecordLinkTarget =
   | { kind: "event"; boardId: string; contentId: string }
-  | { kind: "announcement"; boardId: string; contentId: string; view: "draft" };
+  | { kind: "post"; boardId: string; contentId: string; view: "draft" };
 
 function path(target: BoardRecordLinkTarget): string {
   const boardId = uuid.parse(target.boardId);
   const contentId = uuid.parse(target.contentId);
-  return `/boards/${boardId}/${target.kind === "event" ? "events" : "announcements"}/${contentId}/record-links`;
+  return `/boards/${boardId}/${target.kind === "event" ? "events" : "posts"}/${contentId}/record-links`;
 }
 
 export async function listBoardRecordLinks(
@@ -59,7 +59,7 @@ export async function listBoardRecordLinks(
   offset = 0,
 ): Promise<{ items: BoardRecordLink[]; hasMore: boolean }> {
   const requestedOffset = z.number().int().min(0).parse(offset);
-  const view = target.kind === "announcement" ? `&view=${target.view}` : "";
+  const view = target.kind === "post" ? `&view=${target.view}` : "";
   const page = await apiFetch(
     `${path(target)}?limit=20&offset=${requestedOffset}${view}`,
     pageSchema,

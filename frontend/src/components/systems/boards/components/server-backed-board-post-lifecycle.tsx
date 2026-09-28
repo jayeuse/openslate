@@ -2,52 +2,49 @@
 
 import { Fragment, createElement } from "react";
 import {
-  type BoardAnnouncement,
-  type BoardAnnouncementPage,
-  type BoardAnnouncementView,
-} from "../adapters/board-announcements-api";
-import { useServerBoardAnnouncementLifecycle } from "../hooks/use-server-board-announcement-lifecycle";
+  type BoardPost,
+  type BoardPostPage,
+  type BoardPostView,
+} from "../adapters/board-posts-api";
+import { useServerBoardPostLifecycle } from "../hooks/use-server-board-post-lifecycle";
 import { ConfirmAction } from "./ui";
 
-export { prepareBoardAnnouncementLifecycleAction } from "../hooks/use-server-board-announcement-lifecycle";
+export { prepareBoardPostLifecycleAction } from "../hooks/use-server-board-post-lifecycle";
 
-export type AnnouncementLifecycleAction = {
+export type PostLifecycleAction = {
   kind: "archive" | "restore" | "delete";
   boardId: string;
-  announcementId: string;
+  postId: string;
   title: string;
   boardRevision: number;
-  announcementRevision: number;
+  postRevision: number;
 };
 
-export type AnnouncementLifecycleView = {
+export type PostLifecycleView = {
   status: "loading" | "ready" | "error" | "denied";
   active: boolean;
   canManage: boolean;
-  view: BoardAnnouncementView;
-  page: BoardAnnouncementPage | null;
+  view: BoardPostView;
+  page: BoardPostPage | null;
   pending: boolean;
   conflict: boolean;
   error: string | null;
   notice: string | null;
-  confirmation: AnnouncementLifecycleAction | null;
+  confirmation: PostLifecycleAction | null;
 };
 
-export function ServerBoardAnnouncementLifecycleDisplay({
+export function ServerBoardPostLifecycleDisplay({
   view,
   onSelectView,
   onRetry,
   onPage,
   onBeginAction,
 }: {
-  view: AnnouncementLifecycleView;
-  onSelectView: (view: BoardAnnouncementView) => void;
+  view: PostLifecycleView;
+  onSelectView: (view: BoardPostView) => void;
   onRetry: () => void;
   onPage: (offset: number) => void;
-  onBeginAction: (
-    item: BoardAnnouncement,
-    kind: AnnouncementLifecycleAction["kind"],
-  ) => void;
+  onBeginAction: (item: BoardPost, kind: PostLifecycleAction["kind"]) => void;
 }) {
   const e = createElement;
   const primaryClass =
@@ -59,26 +56,26 @@ export function ServerBoardAnnouncementLifecycleDisplay({
   const heading = e(
     "h2",
     { className: "text-lg font-semibold" },
-    "Announcement lifecycle",
+    "Post lifecycle",
   );
   if (!view.active || view.status === "denied") {
     return e(
       "section",
-      { "aria-label": "Announcement lifecycle", className: "min-w-0" },
+      { "aria-label": "Post lifecycle", className: "min-w-0" },
       heading,
       e(
         "p",
         { className: "text-muted-foreground mt-2 text-sm" },
         !view.active
           ? "This Board is archived and read-only."
-          : "Announcement management is unavailable for your current access.",
+          : "Post management is unavailable for your current access.",
       ),
     );
   }
   if (view.status === "loading" || view.status === "error") {
     return e(
       "section",
-      { "aria-label": "Announcement lifecycle", className: "min-w-0" },
+      { "aria-label": "Post lifecycle", className: "min-w-0" },
       heading,
       e(
         "p",
@@ -87,8 +84,8 @@ export function ServerBoardAnnouncementLifecycleDisplay({
           className: "mt-2 text-sm",
         },
         view.status === "loading"
-          ? "Loading announcements…"
-          : (view.error ?? "Announcements are unavailable."),
+          ? "Loading posts…"
+          : (view.error ?? "Posts are unavailable."),
       ),
       view.status === "error"
         ? e(
@@ -106,19 +103,19 @@ export function ServerBoardAnnouncementLifecycleDisplay({
   if (!view.canManage) {
     return e(
       "section",
-      { "aria-label": "Announcement lifecycle", className: "min-w-0" },
+      { "aria-label": "Post lifecycle", className: "min-w-0" },
       heading,
       e(
         "p",
         { className: "text-muted-foreground mt-2 text-sm" },
-        "Announcement management is unavailable for your current access.",
+        "Post management is unavailable for your current access.",
       ),
     );
   }
   const page = view.page;
   if (page === null) return null;
   const { offset, count, total, hasMore } = page.pagination;
-  const options: { value: BoardAnnouncementView; label: string }[] = [
+  const options: { value: BoardPostView; label: string }[] = [
     { value: "published", label: "Published" },
     { value: "draft", label: "Drafts & scheduled" },
     { value: "archive", label: "Archived" },
@@ -126,7 +123,7 @@ export function ServerBoardAnnouncementLifecycleDisplay({
   return e(
     "section",
     {
-      "aria-label": "Announcement lifecycle",
+      "aria-label": "Post lifecycle",
       className: "flex min-w-0 flex-col gap-4",
     },
     e(
@@ -139,7 +136,7 @@ export function ServerBoardAnnouncementLifecycleDisplay({
         e(
           "p",
           { className: "text-muted-foreground mt-1 text-sm" },
-          "Only announcements allowed by your content audience are shown. Management is checked again before each change.",
+          "Archived posts keep their edit history and can be restored. Only posts that were never published can be deleted.",
         ),
       ),
       e(
@@ -150,7 +147,7 @@ export function ServerBoardAnnouncementLifecycleDisplay({
           disabled: view.pending,
           onClick: onRetry,
         },
-        "Refresh announcements",
+        "Refresh posts",
       ),
     ),
     view.error
@@ -164,7 +161,7 @@ export function ServerBoardAnnouncementLifecycleDisplay({
       ? e(
           "p",
           { role: "alert", className: "text-muted-foreground text-sm" },
-          "This announcement changed elsewhere. Refresh the list before trying again.",
+          "This post changed elsewhere. Refresh the list before trying again.",
         )
       : null,
     view.notice
@@ -178,7 +175,7 @@ export function ServerBoardAnnouncementLifecycleDisplay({
       "div",
       {
         role: "group",
-        "aria-label": "Announcement views",
+        "aria-label": "Post views",
         className: "flex flex-wrap gap-2",
       },
       ...options.map(({ value, label }) =>
@@ -200,9 +197,9 @@ export function ServerBoardAnnouncementLifecycleDisplay({
       "p",
       { role: "status", className: "text-muted-foreground text-sm" },
       total === 0
-        ? "No announcements in this view."
+        ? "No posts in this view."
         : count === 0
-          ? `No announcements on this page · ${total} total`
+          ? `No posts on this page · ${total} total`
           : `Showing ${offset + 1}–${offset + count} of ${total}`,
     ),
     count === 0
@@ -212,7 +209,7 @@ export function ServerBoardAnnouncementLifecycleDisplay({
             className:
               "border-border rounded-xl border border-dashed p-6 text-sm",
           },
-          "There are no announcements on this page.",
+          "There are no posts on this page.",
         )
       : e(
           "ul",
@@ -247,9 +244,9 @@ export function ServerBoardAnnouncementLifecycleDisplay({
                             className: secondaryClass,
                             disabled: view.pending,
                             onClick: () => onBeginAction(item, "archive"),
-                            "aria-label": `Archive announcement ${item.title}`,
+                            "aria-label": `Archive post ${item.title}`,
                           },
-                          "Archive announcement",
+                          "Archive post",
                         )
                       : e(
                           "button",
@@ -258,11 +255,11 @@ export function ServerBoardAnnouncementLifecycleDisplay({
                             className: secondaryClass,
                             disabled: view.pending,
                             onClick: () => onBeginAction(item, "restore"),
-                            "aria-label": `Restore announcement ${item.title}`,
+                            "aria-label": `Restore post ${item.title}`,
                           },
-                          "Restore announcement",
+                          "Restore post",
                         ),
-                    item.status === "archived"
+                    item.status !== "published"
                       ? e(
                           "button",
                           {
@@ -270,9 +267,9 @@ export function ServerBoardAnnouncementLifecycleDisplay({
                             className: destructiveClass,
                             disabled: view.pending,
                             onClick: () => onBeginAction(item, "delete"),
-                            "aria-label": `Delete permanently ${item.title}`,
+                            "aria-label": `Delete ${item.title}`,
                           },
-                          "Delete permanently",
+                          "Delete",
                         )
                       : null,
                   )
@@ -307,7 +304,7 @@ export function ServerBoardAnnouncementLifecycleDisplay({
   );
 }
 
-export function ServerBackedBoardAnnouncementLifecycle({
+export function ServerBackedBoardPostLifecycle({
   boardId,
   boardStatus,
   refreshKey,
@@ -320,7 +317,7 @@ export function ServerBackedBoardAnnouncementLifecycle({
   onChanged?: (boardId: string) => void;
   onAccessDenied?: (boardId: string) => void;
 }) {
-  const panel = useServerBoardAnnouncementLifecycle({
+  const panel = useServerBoardPostLifecycle({
     boardId,
     boardStatus,
     refreshKey,
@@ -331,7 +328,7 @@ export function ServerBackedBoardAnnouncementLifecycle({
   return createElement(
     Fragment,
     null,
-    createElement(ServerBoardAnnouncementLifecycleDisplay, {
+    createElement(ServerBoardPostLifecycleDisplay, {
       view: panel.view,
       onSelectView: panel.selectView,
       onRetry: panel.retry,
@@ -345,17 +342,12 @@ export function ServerBackedBoardAnnouncementLifecycle({
         !panel.view.conflict &&
         confirmation !== null,
       title:
-        confirmation?.kind === "delete"
-          ? "Permanently delete announcement?"
-          : "Archive announcement?",
+        confirmation?.kind === "delete" ? "Delete draft?" : "Archive post?",
       description:
         confirmation?.kind === "delete"
-          ? `Delete “${confirmation.title}” and all its published revisions? This cannot be undone.`
-          : `Archive “${confirmation?.title ?? "this announcement"}”? It will no longer appear in published or draft lists.`,
-      action:
-        confirmation?.kind === "delete"
-          ? "Delete permanently"
-          : "Archive announcement",
+          ? `Delete “${confirmation.title}”? It was never published, so it is removed with its files and record links. This cannot be undone.`
+          : `Archive “${confirmation?.title ?? "this post"}”? Readers no longer see it. Its edit history stays, and you can restore it.`,
+      action: confirmation?.kind === "delete" ? "Delete draft" : "Archive post",
       phrase: confirmation?.kind === "delete" ? confirmation.title : undefined,
       disabled: panel.view.pending,
       onConfirm: panel.confirm,

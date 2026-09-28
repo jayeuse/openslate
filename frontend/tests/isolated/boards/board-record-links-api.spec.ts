@@ -67,7 +67,7 @@ test("Board Record links stay content-scoped and carry dual revisions", async ()
   }
 });
 
-test("published Announcement links are read-only and reject unsafe server URLs", async () => {
+test("published Post links are read-only and reject unsafe server URLs", async () => {
   const original = globalThis.fetch;
   const requests: string[] = [];
   globalThis.fetch = ((input: RequestInfo | URL) => {
@@ -78,13 +78,13 @@ test("published Announcement links are read-only and reject unsafe server URLs",
   }) as typeof fetch;
   try {
     await listBoardRecordLinks({
-      kind: "announcement",
+      kind: "post",
       boardId,
       contentId,
       view: "published",
     });
     expect(requests).toEqual([
-      `/api/boards/${boardId}/announcements/${contentId}/record-links?limit=20&offset=0&view=published`,
+      `/api/boards/${boardId}/posts/${contentId}/record-links?limit=20&offset=0&view=published`,
     ]);
   } finally {
     globalThis.fetch = original;

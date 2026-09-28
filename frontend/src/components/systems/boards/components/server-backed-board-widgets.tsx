@@ -437,34 +437,6 @@ function widgetContent(item: LiveWidgetItem): ReactNode {
     : lineContent(item);
 }
 
-function widgetAudienceLabel(item: LiveWidgetItem): string {
-  switch (item.widget.audience.kind) {
-    case "private":
-      return "Private to its creator";
-    case "everyone":
-      return "Everyone with Board access";
-    case "user":
-      return "Targeted audience";
-  }
-}
-
-function summaryMetadata(item: LiveWidgetItem): ReactNode {
-  return createElement(
-    "div",
-    {
-      className: "border-border mt-4 border-t pt-3",
-    },
-    createElement(
-      "span",
-      {
-        className:
-          "bg-secondary text-secondary-foreground inline-flex rounded-md px-2 py-1 text-xs",
-      },
-      widgetAudienceLabel(item),
-    ),
-  );
-}
-
 function widgetCard(
   item: LiveWidgetItem,
   onRetry: () => void,
@@ -546,7 +518,6 @@ function widgetCard(
         )
       : null,
     widgetContent(item),
-    item.widget.widgetType === "summary" ? summaryMetadata(item) : null,
   );
 }
 
@@ -613,15 +584,11 @@ export function ServerBoardWidgetsDisplay({
       ? createElement(
           "div",
           { className: "border-border rounded-xl border border-dashed p-6" },
-          createElement(
-            "h3",
-            { className: "font-medium" },
-            "No widgets visible",
-          ),
+          createElement("h3", { className: "font-medium" }, "No widgets yet"),
           createElement(
             "p",
             { className: "text-muted-foreground mt-2 text-sm" },
-            "Ask a Board manager to add or share widgets for this overview.",
+            "A Board manager can add widgets to this overview.",
           ),
         )
       : null,

@@ -4,23 +4,22 @@ import { useEffect, useRef, useState } from "react";
 import { ApiContractError, ApiError } from "@/lib/api";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import {
-  createBoardAnnouncement,
-  listBoardAnnouncements,
-  publishBoardAnnouncement,
-  readBoardAnnouncement,
-  scheduleBoardAnnouncement,
-  updateBoardAnnouncement,
-  type BoardAnnouncement,
-} from "../adapters/board-announcements-api";
+  createBoardPost,
+  listBoardPosts,
+  publishBoardPost,
+  readBoardPost,
+  scheduleBoardPost,
+  updateBoardPost,
+  type BoardPost,
+} from "../adapters/board-posts-api";
 import type { BoardAttachmentVersions } from "../adapters/board-files-api";
 import { getMyBoardAccess } from "../adapters/board-tools-api";
-import type { AnnouncementEditorView } from "../components/server-backed-board-announcement-editor";
+import type { PostEditorView } from "../components/server-backed-board-post-editor";
 import {
-  audienceInput,
-  announcementCancellationPatch,
-  announcementLocalScheduleValue,
-  announcementPatchForForm,
-  announcementScheduleTimeToUtc,
+  postCancellationPatch,
+  postLocalScheduleValue,
+  postPatchForForm,
+  postScheduleTimeToUtc,
   dirty,
   editorFailure,
   editorStateForKey,
@@ -28,32 +27,29 @@ import {
   formFor,
   isDenial,
   resolveEditorRefresh,
-  sameAnnouncementContent,
+  samePostContent,
   scheduleTimeError,
   valid,
-} from "./announcement-editor-state";
-import type {
-  AnnouncementEditorForm,
-  AnnouncementEditorState,
-} from "./announcement-editor-state";
+} from "./post-editor-state";
+import type { PostEditorForm, PostEditorState } from "./post-editor-state";
 
 export {
-  announcementCancellationPatch,
-  announcementLocalScheduleValue,
-  announcementPatchForForm,
-  announcementScheduleTimeToUtc,
+  postCancellationPatch,
+  postLocalScheduleValue,
+  postPatchForForm,
+  postScheduleTimeToUtc,
   editorFailure,
   editorStateForKey,
   resolveEditorRefresh,
-  validAnnouncementLinks,
-} from "./announcement-editor-state";
+  validPostLinks,
+} from "./post-editor-state";
 export type {
-  AnnouncementEditorForm,
-  AnnouncementEditorState,
-  AnnouncementScheduleTimeResult,
-} from "./announcement-editor-state";
+  PostEditorForm,
+  PostEditorState,
+  PostScheduleTimeResult,
+} from "./post-editor-state";
 
-export function useServerBoardAnnouncementEditor({
+export function useServerBoardPostEditor({
   boardId,
   boardRevision,
   boardStatus,
@@ -68,7 +64,7 @@ export function useServerBoardAnnouncementEditor({
 }) {
   const actorId = useVerifiedWorkspaceUserId();
   const key = `${boardId}:${actorId}:${boardStatus}`;
-  const [state, setState] = useState<AnnouncementEditorState>(() =>
+  const [state, setState] = useState<PostEditorState>(() =>
     emptyState(key, boardRevision),
   );
   const [offset, setOffset] = useState(0);
@@ -82,7 +78,7 @@ export function useServerBoardAnnouncementEditor({
   const attachmentPendingRef = useRef(false);
   const recordLinkPendingRef = useRef(false);
   const mountedRef = useRef(false);
-  const selectedRef = useRef<BoardAnnouncement | null>(null);
+  const selectedRef = useRef<BoardPost | null>(null);
   const activeKeyRef = useRef(key);
   const publishKeyRef = useRef<{
     id: string;
@@ -143,7 +139,7 @@ export function useServerBoardAnnouncementEditor({
           });
           return;
         }
-        const page = await listBoardAnnouncements(boardId, {
+        const page = await listBoardPosts(boardId, {
           view: "editable",
           limit: 25,
           offset,
@@ -152,7 +148,7 @@ export function useServerBoardAnnouncementEditor({
         });
         const selected = selectedRef.current;
         const verified = selected
-          ? await readBoardAnnouncement(boardId, selected.id, "editable")
+          ? await readBoardPost(boardId, selected.id, "editable")
           : null;
         if (request !== loadSequence.current) return;
         if (verified && verified.authorId !== actorId && !access.manage) {
@@ -210,13 +206,13 @@ export function useServerBoardAnnouncementEditor({
     access?.edit === true;
   const canManage = access?.manage === true;
   const scheduleDirty =
-    current.scheduleLocal !== announcementLocalScheduleValue(current.selected);
+    current.scheduleLocal !== postLocalScheduleValue(current.selected);
   const drafts = canEdit
     ? (current.page?.items.filter(
         (item) => canManage || item.authorId === actorId,
       ) ?? [])
     : [];
-  const view: AnnouncementEditorView = {
+  const view: PostEditorView = {
     status: current.status,
     active: boardStatus === "active",
     canEdit,
@@ -255,7 +251,7 @@ export function useServerBoardAnnouncementEditor({
     setState((previous) => ({
       ...previous,
       selected: null,
-      form: { title: "", body: "", links: [], audience: { kind: "author" } },
+      form: { title: "", body: "", links: [] },
       scheduleLocal: "",
       scheduleError: null,
       displayed: null,
@@ -265,7 +261,7 @@ export function useServerBoardAnnouncementEditor({
     }));
   }
 
-  function selectDraft(item: BoardAnnouncement) {
+  function selectDraft(item: BoardPost) {
     if (
       !canEdit ||
       current.pending ||
@@ -283,7 +279,7 @@ export function useServerBoardAnnouncementEditor({
       ...previous,
       selected: item,
       form: formFor(item),
-      scheduleLocal: announcementLocalScheduleValue(item),
+      scheduleLocal: postLocalScheduleValue(item),
       scheduleError: null,
       displayed: null,
       conflict: false,
@@ -292,7 +288,7 @@ export function useServerBoardAnnouncementEditor({
     }));
   }
 
-  function changeForm(form: AnnouncementEditorForm) {
+  function changeForm(form: PostEditorForm) {
     if (
       !canEdit ||
       current.pending ||
@@ -330,19 +326,18 @@ export function useServerBoardAnnouncementEditor({
     );
     try {
       const result = selected
-        ? await updateBoardAnnouncement(
+        ? await updateBoardPost(
             boardId,
             selected.id,
-            announcementPatchForForm(selected, form, current.boardRevision),
+            postPatchForForm(selected, form, current.boardRevision),
           )
-        : await createBoardAnnouncement(boardId, {
+        : await createBoardPost(boardId, {
             boardRevision: current.boardRevision,
             title: form.title,
             body: form.body,
             links: form.links,
-            audience: audienceInput(form.audience),
           });
-      const saved = await readBoardAnnouncement(boardId, result.id, "draft");
+      const saved = await readBoardPost(boardId, result.id, "draft");
       if (operation !== mutationSequence.current) return;
       selectedRef.current = saved;
       publishKeyRef.current = null;
@@ -352,7 +347,7 @@ export function useServerBoardAnnouncementEditor({
               ...previous,
               selected: saved,
               form: formFor(saved),
-              scheduleLocal: announcementLocalScheduleValue(saved),
+              scheduleLocal: postLocalScheduleValue(saved),
               scheduleError: null,
               boardRevision: result.boardRevision,
               pending: false,
@@ -388,13 +383,13 @@ export function useServerBoardAnnouncementEditor({
       current.conflict ||
       operationPendingRef.current ||
       !selected ||
-      selected.announcementRevision === null ||
+      selected.postRevision === null ||
       !form ||
       dirty(form, selected) ||
       (selected.authorId !== actorId && !canManage)
     )
       return;
-    const converted = announcementScheduleTimeToUtc(
+    const converted = postScheduleTimeToUtc(
       current.scheduleLocal,
       Date.now(),
       selected.expiresAt,
@@ -426,12 +421,12 @@ export function useServerBoardAnnouncementEditor({
         : previous,
     );
     try {
-      const result = await scheduleBoardAnnouncement(boardId, selected.id, {
+      const result = await scheduleBoardPost(boardId, selected.id, {
         boardRevision: current.boardRevision,
-        announcementRevision: selected.announcementRevision,
+        postRevision: selected.postRevision,
         publishAt: converted.publishAt,
       });
-      const saved = await readBoardAnnouncement(boardId, result.id, "draft");
+      const saved = await readBoardPost(boardId, result.id, "draft");
       if (
         saved.status !== "scheduled" ||
         saved.publishAt === null ||
@@ -447,7 +442,7 @@ export function useServerBoardAnnouncementEditor({
               ...previous,
               selected: saved,
               form: formFor(saved),
-              scheduleLocal: announcementLocalScheduleValue(saved),
+              scheduleLocal: postLocalScheduleValue(saved),
               scheduleError: null,
               boardRevision: result.boardRevision,
               pending: false,
@@ -471,7 +466,7 @@ export function useServerBoardAnnouncementEditor({
           scheduleError:
             error instanceof ApiError &&
             error.status === 422 &&
-            error.code === "announcement_schedule_invalid"
+            error.code === "post_schedule_invalid"
               ? error.message
               : previous.scheduleError,
         };
@@ -494,7 +489,7 @@ export function useServerBoardAnnouncementEditor({
       operationPendingRef.current ||
       !selected ||
       selected.status !== "scheduled" ||
-      selected.announcementRevision === null ||
+      selected.postRevision === null ||
       !form ||
       dirty(form, selected) ||
       scheduleDirty ||
@@ -509,12 +504,12 @@ export function useServerBoardAnnouncementEditor({
         : previous,
     );
     try {
-      const result = await updateBoardAnnouncement(
+      const result = await updateBoardPost(
         boardId,
         selected.id,
-        announcementCancellationPatch(selected, current.boardRevision),
+        postCancellationPatch(selected, current.boardRevision),
       );
-      const saved = await readBoardAnnouncement(boardId, result.id, "draft");
+      const saved = await readBoardPost(boardId, result.id, "draft");
       if (saved.status !== "draft" || saved.publishAt !== null)
         throw new ApiContractError();
       if (operation !== mutationSequence.current) return;
@@ -563,7 +558,7 @@ export function useServerBoardAnnouncementEditor({
       operationPendingRef.current ||
       scheduleDirty ||
       !selected ||
-      selected.announcementRevision === null ||
+      selected.postRevision === null ||
       dirty(current.form, selected) ||
       (selected.authorId !== actorId && !canManage)
     )
@@ -572,13 +567,12 @@ export function useServerBoardAnnouncementEditor({
     operationPendingRef.current = true;
     const sameKey = publishKeyRef.current;
     const publicationKey =
-      sameKey?.id === selected.id &&
-      sameKey.revision === selected.announcementRevision
+      sameKey?.id === selected.id && sameKey.revision === selected.postRevision
         ? sameKey.key
         : crypto.randomUUID();
     publishKeyRef.current = {
       id: selected.id,
-      revision: selected.announcementRevision,
+      revision: selected.postRevision,
       key: publicationKey,
     };
     setState((previous) =>
@@ -587,18 +581,18 @@ export function useServerBoardAnnouncementEditor({
         : previous,
     );
     try {
-      const publication = await publishBoardAnnouncement(boardId, selected.id, {
+      const publication = await publishBoardPost(boardId, selected.id, {
         boardRevision: current.boardRevision,
-        announcementRevision: selected.announcementRevision,
+        postRevision: selected.postRevision,
         publicationKey,
       });
       if (operation !== mutationSequence.current) return;
       selectedRef.current = null;
       publishKeyRef.current = null;
-      let displayed: BoardAnnouncement | null = null;
+      let displayed: BoardPost | null = null;
       let notice = "Published successfully.";
       try {
-        const currentDisplay = await readBoardAnnouncement(
+        const currentDisplay = await readBoardPost(
           boardId,
           selected.id,
           "published",
@@ -695,20 +689,13 @@ export function useServerBoardAnnouncementEditor({
     if (
       !canEdit ||
       !selected ||
-      selected.announcementRevision === null ||
+      selected.postRevision === null ||
       selected.boardId !== boardId
     )
       throw new ApiContractError();
     try {
-      const latest = await readBoardAnnouncement(
-        boardId,
-        selected.id,
-        "editable",
-      );
-      if (
-        latest.announcementRevision === null ||
-        !sameAnnouncementContent(selected, latest)
-      ) {
+      const latest = await readBoardPost(boardId, selected.id, "editable");
+      if (latest.postRevision === null || !samePostContent(selected, latest)) {
         setState((previous) =>
           previous.key === key
             ? {
@@ -721,7 +708,7 @@ export function useServerBoardAnnouncementEditor({
         );
         throw new ApiError(
           409,
-          "Announcement content changed; review the latest version.",
+          "Post content changed; review the latest version.",
         );
       }
       selectedRef.current = latest;
@@ -738,7 +725,7 @@ export function useServerBoardAnnouncementEditor({
       );
       return {
         boardRevision: latest.boardRevision,
-        contentRevision: latest.announcementRevision,
+        contentRevision: latest.postRevision,
       };
     } catch (error) {
       if (isDenial(error)) {
@@ -748,8 +735,7 @@ export function useServerBoardAnnouncementEditor({
             ? {
                 ...emptyState(key, previous.boardRevision),
                 status: "denied",
-                error:
-                  "Announcement editing is unavailable. Check your Board access.",
+                error: "Post editing is unavailable. Check your Board access.",
               }
             : previous,
         );

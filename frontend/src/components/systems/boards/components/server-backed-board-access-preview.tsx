@@ -33,7 +33,9 @@ export function BoardAccessPreviewResult({
     createElement(
       "p",
       { className: "text-muted-foreground mt-1 text-sm" },
-      "Event and announcement audiences may further limit what this person can see.",
+      access.level === null
+        ? "This person cannot open this Board."
+        : `Level on this Board: ${access.level}.`,
     ),
     createElement(
       "dl",
@@ -41,19 +43,19 @@ export function BoardAccessPreviewResult({
         className:
           "border-border mt-4 grid gap-x-4 gap-y-2 border-t pt-4 text-sm sm:grid-cols-[1fr_auto]",
       },
-      createElement("dt", null, "Can view Board"),
+      createElement("dt", null, "Can read posts, events and widgets"),
       createElement(
         "dd",
         { className: "font-medium sm:text-right" },
         access.view ? "Yes" : "No",
       ),
-      createElement("dt", null, "Can edit Board"),
+      createElement("dt", null, "Can add posts and events"),
       createElement(
         "dd",
         { className: "font-medium sm:text-right" },
         access.edit ? "Yes" : "No",
       ),
-      createElement("dt", null, "Can manage Board"),
+      createElement("dt", null, "Can manage posts, events and widgets"),
       createElement(
         "dd",
         { className: "font-medium sm:text-right" },

@@ -14,9 +14,30 @@ const paginationSchema = z
   .refine(({ count, limit }) => count <= limit)
   .transform(({ has_more, ...page }) => ({ ...page, hasMore: has_more }));
 
+const levelRank = { read: 1, write: 2, manage: 3 } as const;
+/**
+ * A user's level on a Board. ``view``, ``edit`` and ``manage`` are derived from
+ * the level so each flag matches the server's own ``read``, ``write`` and
+ * ``manage``.
+ */
 const accessPreviewSchema = z
-  .object({ view: z.boolean(), edit: z.boolean(), manage: z.boolean() })
-  .strict();
+  .object({
+    level: z.enum(["read", "write", "manage"]).nullable(),
+    read: z.boolean(),
+    write: z.boolean(),
+    manage: z.boolean(),
+  })
+  .strict()
+  .refine(({ level, read, write, manage }) => {
+    const rank = level === null ? 0 : levelRank[level];
+    return read === rank >= 1 && write === rank >= 2 && manage === rank >= 3;
+  })
+  .transform(({ level, read, write, manage }) => ({
+    level,
+    view: read,
+    edit: write,
+    manage,
+  }));
 const myAccessSchema = accessPreviewSchema.refine(({ view }) => view);
 const previewUserSchema = z
   .object({ id: uuidSchema, username: z.string().min(1).max(100) })
@@ -25,7 +46,7 @@ const activitySchema = z
   .object({
     id: uuidSchema,
     created_at: z.iso.datetime({ offset: true }),
-    kind: z.enum(["board", "grant", "widget", "placement"]),
+    kind: z.enum(["board", "group", "widget"]),
     action: z.enum(["create", "update", "delete"]),
     summary: z.string().min(1).max(100),
     actor_label: z.string().min(1).max(100).nullable(),

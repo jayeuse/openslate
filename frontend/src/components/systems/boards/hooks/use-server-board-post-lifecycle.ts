@@ -4,29 +4,29 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import {
-  archiveBoardAnnouncement,
-  deleteBoardAnnouncement,
-  listBoardAnnouncements,
-  restoreBoardAnnouncement,
-  type BoardAnnouncement,
-  type BoardAnnouncementView,
-} from "../adapters/board-announcements-api";
+  archiveBoardPost,
+  deleteBoardPost,
+  listBoardPosts,
+  restoreBoardPost,
+  type BoardPost,
+  type BoardPostView,
+} from "../adapters/board-posts-api";
 import {
-  getBoardAnnouncementManageState,
-  type BoardAnnouncementManageState,
-} from "../adapters/board-announcement-manage-state-api";
+  getBoardPostManageState,
+  type BoardPostManageState,
+} from "../adapters/board-post-manage-state-api";
 import { getMyBoardAccess } from "../adapters/board-tools-api";
 import type {
-  AnnouncementLifecycleAction,
-  AnnouncementLifecycleView,
-} from "../components/server-backed-board-announcement-lifecycle";
+  PostLifecycleAction,
+  PostLifecycleView,
+} from "../components/server-backed-board-post-lifecycle";
 
-type InternalState = AnnouncementLifecycleView & { key: string };
+type InternalState = PostLifecycleView & { key: string };
 
 function emptyState(
   key: string,
   active: boolean,
-  view: BoardAnnouncementView,
+  view: BoardPostView,
 ): InternalState {
   return {
     key,
@@ -47,10 +47,10 @@ function isDenial(error: unknown): error is ApiError {
   return error instanceof ApiError && [401, 403, 404].includes(error.status);
 }
 
-export function announcementLifecycleFailure(
-  view: AnnouncementLifecycleView,
+export function postLifecycleFailure(
+  view: PostLifecycleView,
   error: unknown,
-): AnnouncementLifecycleView {
+): PostLifecycleView {
   const safe = {
     ...view,
     canManage: false,
@@ -66,14 +66,13 @@ export function announcementLifecycleFailure(
       ...safe,
       status: "error",
       conflict: true,
-      error:
-        "This announcement changed elsewhere. Refresh announcements before trying again.",
+      error: "This post changed elsewhere. Refresh posts before trying again.",
     };
   return {
     ...safe,
     status: "error",
     conflict: false,
-    error: "Announcement request failed. Try again.",
+    error: "Post request failed. Try again.",
   };
 }
 
@@ -91,16 +90,27 @@ export async function notifyIfBoardViewLost(
   }
 }
 
-export function prepareBoardAnnouncementLifecycleAction(
-  item: BoardAnnouncement,
-  state: BoardAnnouncementManageState,
-  kind: AnnouncementLifecycleAction["kind"],
-): AnnouncementLifecycleAction | null {
+/**
+ * Delete removes only a post that was never published. For a published post
+ * it becomes archive, and an archived published post has nothing to do.
+ */
+export function resolveDeleteKind(
+  kind: PostLifecycleAction["kind"],
+  state: BoardPostManageState,
+): PostLifecycleAction["kind"] | null {
+  if (kind !== "delete" || !state.publishedBefore) return kind;
+  return state.status === "archived" ? null : "archive";
+}
+
+export function prepareBoardPostLifecycleAction(
+  item: BoardPost,
+  state: BoardPostManageState,
+  kind: PostLifecycleAction["kind"],
+): PostLifecycleAction | null {
   if (
     item.id !== state.id ||
     item.boardRevision !== state.boardRevision ||
-    (item.announcementRevision !== null &&
-      item.announcementRevision !== state.announcementRevision)
+    (item.postRevision !== null && item.postRevision !== state.postRevision)
   )
     return null;
   if (kind === "archive") {
@@ -110,20 +120,22 @@ export function prepareBoardAnnouncementLifecycleAction(
       (item.status !== "published" && item.status !== state.status)
     )
       return null;
-  } else if (item.status !== "archived" || state.status !== "archived") {
+  } else if (kind === "restore") {
+    if (item.status !== "archived" || state.status !== "archived") return null;
+  } else if (state.publishedBefore || item.status !== state.status) {
     return null;
   }
   return {
     kind,
     boardId: item.boardId,
-    announcementId: item.id,
+    postId: item.id,
     title: item.title,
     boardRevision: state.boardRevision,
-    announcementRevision: state.announcementRevision,
+    postRevision: state.postRevision,
   };
 }
 
-export function useServerBoardAnnouncementLifecycle({
+export function useServerBoardPostLifecycle({
   boardId,
   boardStatus,
   refreshKey,
@@ -137,8 +149,7 @@ export function useServerBoardAnnouncementLifecycle({
   onAccessDenied?: (boardId: string) => void;
 }) {
   const actorId = useVerifiedWorkspaceUserId();
-  const [selectedView, setSelectedView] =
-    useState<BoardAnnouncementView>("published");
+  const [selectedView, setSelectedView] = useState<BoardPostView>("published");
   const [offset, setOffset] = useState(0);
   const [retryKey, setRetryKey] = useState(0);
   const scope = `${boardId}:${actorId}:${boardStatus}:${selectedView}:${offset}`;
@@ -183,7 +194,7 @@ export function useServerBoardAnnouncementLifecycle({
           });
           return;
         }
-        const page = await listBoardAnnouncements(boardId, {
+        const page = await listBoardPosts(boardId, {
           view: selectedView,
           offset,
           limit: 25,
@@ -204,7 +215,7 @@ export function useServerBoardAnnouncementLifecycle({
           setState({
             ...emptyState(key, true, selectedView),
             status: "error",
-            error: "Announcements are unavailable. Try again.",
+            error: "Posts are unavailable. Try again.",
           });
           return;
         }
@@ -231,7 +242,7 @@ export function useServerBoardAnnouncementLifecycle({
     if (operation !== mutationSequence.current) return;
     setState((previous) =>
       previous.key === scopeKey
-        ? { ...previous, ...announcementLifecycleFailure(previous, error) }
+        ? { ...previous, ...postLifecycleFailure(previous, error) }
         : previous,
     );
     await notifyIfBoardViewLost(boardId, (id) => {
@@ -253,36 +264,39 @@ export function useServerBoardAnnouncementLifecycle({
     setState((previous) =>
       previous.key !== scopeKey
         ? previous
-        : { ...previous, ...announcementLifecycleFailure(previous, error) },
+        : { ...previous, ...postLifecycleFailure(previous, error) },
     );
   }
 
   async function execute(
-    action: AnnouncementLifecycleAction,
+    action: PostLifecycleAction,
     operation: number,
   ): Promise<void> {
     try {
       if (action.kind === "archive")
-        await archiveBoardAnnouncement(
+        await archiveBoardPost(
           action.boardId,
-          action.announcementId,
+          action.postId,
           action.boardRevision,
-          action.announcementRevision,
+          action.postRevision,
         );
       else if (action.kind === "restore")
-        await restoreBoardAnnouncement(
+        await restoreBoardPost(
           action.boardId,
-          action.announcementId,
+          action.postId,
           action.boardRevision,
-          action.announcementRevision,
+          action.postRevision,
         );
-      else
-        await deleteBoardAnnouncement(
+      else {
+        const deletion = await deleteBoardPost(
           action.boardId,
-          action.announcementId,
+          action.postId,
           action.boardRevision,
-          action.announcementRevision,
+          action.postRevision,
         );
+        if (deletion.outcome !== "deleted")
+          throw new ApiError(409, "Post changed");
+      }
       if (operation !== mutationSequence.current) return;
       setState((previous) =>
         previous.key === key
@@ -290,10 +304,10 @@ export function useServerBoardAnnouncementLifecycle({
               ...emptyState(key, active, selectedView),
               notice:
                 action.kind === "archive"
-                  ? "Announcement archived."
+                  ? "Post archived."
                   : action.kind === "restore"
-                    ? "Announcement restored."
-                    : "Announcement and its published revisions permanently deleted.",
+                    ? "Post restored."
+                    : "Draft deleted.",
             }
           : previous,
       );
@@ -308,8 +322,8 @@ export function useServerBoardAnnouncementLifecycle({
   }
 
   function beginAction(
-    item: BoardAnnouncement,
-    kind: AnnouncementLifecycleAction["kind"],
+    item: BoardPost,
+    kind: PostLifecycleAction["kind"],
   ): void {
     if (
       !active ||
@@ -330,21 +344,32 @@ export function useServerBoardAnnouncementLifecycle({
     );
     void (async () => {
       try {
-        const managerState = await getBoardAnnouncementManageState(
-          boardId,
-          item.id,
-        );
+        const managerState = await getBoardPostManageState(boardId, item.id);
         if (operation !== mutationSequence.current) return;
-        const action = prepareBoardAnnouncementLifecycleAction(
-          item,
-          managerState,
-          kind,
-        );
-        if (action === null) {
-          failAction(key, operation, new ApiError(409, "Announcement changed"));
+        const resolved = resolveDeleteKind(kind, managerState);
+        if (resolved === null) {
+          setState((previous) =>
+            previous.key === key
+              ? {
+                  ...previous,
+                  pending: false,
+                  notice:
+                    "This post was published, so it keeps its edit history. It stays archived and cannot be deleted.",
+                }
+              : previous,
+          );
           return;
         }
-        if (kind === "restore") {
+        const action = prepareBoardPostLifecycleAction(
+          item,
+          managerState,
+          resolved,
+        );
+        if (action === null) {
+          failAction(key, operation, new ApiError(409, "Post changed"));
+          return;
+        }
+        if (resolved === "restore") {
           await execute(action, operation);
         } else {
           setState((previous) =>
@@ -394,7 +419,7 @@ export function useServerBoardAnnouncementLifecycle({
     setRetryKey((value) => value + 1);
   }
 
-  function selectView(view: BoardAnnouncementView): void {
+  function selectView(view: BoardPostView): void {
     if (current.pending || operationPendingRef.current || view === selectedView)
       return;
     setSelectedView(view);

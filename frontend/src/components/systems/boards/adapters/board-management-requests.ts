@@ -27,24 +27,23 @@ const safeCodes: Record<string, { status: number; message: string }> = {
     status: 409,
     message: "Board changed; reload before saving",
   },
-  department_unavailable: {
-    status: 409,
-    message: "The selected department is unavailable",
-  },
   board_invalid: { status: 409, message: "Unable to save Board" },
-  template_limit_reached: {
+  board_scope_fixed: {
     status: 409,
-    message: "The workspace has 50 active templates",
+    message:
+      "Company and department Boards follow the workspace and their department",
   },
-  template_conflict: { status: 409, message: "Unable to save Board template" },
-  template_invalid: { status: 409, message: "Saved Board template is invalid" },
-  home_board_archived: {
+  board_name_fixed: {
     status: 409,
-    message: "Restore the Board before setting it as home",
+    message: "A department Board has the name of its department",
   },
-  personal_state_conflict: {
+  group_unavailable: {
     status: 409,
-    message: "Board preferences changed; retry",
+    message: "A selected group is unavailable",
+  },
+  board_groups_conflict: {
+    status: 409,
+    message: "Board groups changed; reload",
   },
   board_purge_conflict: {
     status: 409,
@@ -82,8 +81,8 @@ const safeCodes: Record<string, { status: number; message: string }> = {
 
 export function throwSafeBoardError(status: number, detail: unknown): never {
   if (
-    status === 404 &&
-    (detail === "Board not found" || detail === "Board template not found")
+    (status === 404 || status === 403) &&
+    (detail === "Board not found" || detail === "Forbidden")
   ) {
     throw new ApiError(status, detail);
   }

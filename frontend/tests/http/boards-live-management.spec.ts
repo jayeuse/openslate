@@ -5,7 +5,6 @@ import type {
   BoardManagementBoard,
   BoardPurgePreview,
 } from "../../src/components/systems/boards/adapters/board-management-api";
-import { listBoardDepartments } from "../../src/components/systems/boards/adapters/board-departments-api";
 import {
   ServerBoardManagementDisplay,
   boardCreateForDraft,
@@ -17,33 +16,35 @@ import {
 } from "../../src/components/systems/boards/components/server-backed-board-management";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
-const ownerId = "00000000-0000-4000-8000-000000000002";
+const actorId = "00000000-0000-4000-8000-000000000002";
 const departmentId = "00000000-0000-4000-8000-000000000003";
 const board: BoardManagementBoard = {
   id: boardId,
-  ownerId,
-  departmentId,
+  scope: "project",
+  departmentId: null,
   name: "Dispatch",
   description: "Daily handoffs",
   status: "active",
-  defaultSection: "overview",
   revision: 4,
+  level: "manage",
   createdAt: "2026-09-23T00:00:00Z",
   updatedAt: "2026-09-23T00:00:00Z",
+};
+const departmentBoard: BoardManagementBoard = {
+  ...board,
+  scope: "department",
+  departmentId,
+  name: "Operations",
 };
 const draft: BoardManagementDraft = {
   name: "Dispatch updated",
   description: "Keep my draft",
-  defaultSection: "calendar",
-  departmentId,
 };
 const baseView: BoardManagementView = {
   mode: "manage",
-  board,
+  board: departmentBoard,
   access: "ready",
   canManage: true,
-  departmentsStatus: "ready",
-  departments: [{ id: departmentId, name: "Operations" }],
   draft,
   pending: false,
   conflict: false,
@@ -62,7 +63,7 @@ const purgePreview: BoardPurgePreview = {
     target_type: "board",
     target_id: boardId,
     operation: "purge",
-    actor_id: ownerId,
+    actor_id: actorId,
     rows: [],
     external_impacts: [],
     key_strips: [],
@@ -74,40 +75,74 @@ const purgePreview: BoardPurgePreview = {
   confirmation_name: boardId,
 };
 
-test("Department denial leaves Board creation available without leaking IDs or claiming an assignment", () => {
-  const view: BoardManagementView = {
-    ...baseView,
-    mode: "create",
-    board: null,
-    departmentsStatus: "unavailable",
-    departments: [],
-  };
-  const html = markup(view);
+test("a new Board is a project Board with only a name and description", () => {
+  const html = markup({ ...baseView, mode: "create", board: null });
   expect(html).toContain("Create Board");
-  expect(html).toContain("Department choices are unavailable");
-  expect(html).toContain("No department will be assigned");
-  expect(html).not.toContain(departmentId);
-  expect(boardCreateForDraft(draft, false)).toEqual({
+  expect(html).not.toContain("Department");
+  expect(html).not.toContain("Default section");
+  expect(boardCreateForDraft(draft)).toEqual({
     name: "Dispatch updated",
     description: "Keep my draft",
-    defaultSection: "calendar",
   });
 });
 
-test("Department denial preserves an existing assignment when editing metadata", () => {
+test("a department Board keeps its department name and cannot be archived", () => {
+  const html = markup({ ...baseView, draft: { ...draft, name: "Operations" } });
+  expect(html).toContain("always has its department");
+  expect(html).toContain("readOnly");
+  expect(html).not.toContain("Archive Board");
+  expect(html).toContain("archived when its department closes");
+  expect(boardUpdateForDraft(departmentBoard, draft)).toEqual({
+    revision: 4,
+    description: "Keep my draft",
+  });
+  expect(
+    boardUpdateForDraft(departmentBoard, {
+      name: "Renamed",
+      description: "Daily handoffs",
+    }),
+  ).toBeNull();
+});
+
+test("the company Board can be renamed but not archived", () => {
+  const company = { ...board, scope: "company" as const, name: "Company" };
   const html = markup({
     ...baseView,
-    departmentsStatus: "unavailable",
-    departments: [],
+    board: company,
+    draft: { name: "Company", description: "Daily handoffs" },
   });
-  expect(html).toContain("Current department will stay unchanged");
-  expect(html).toContain("Save changes");
-  expect(html).not.toContain(departmentId);
-  expect(boardUpdateForDraft(board, draft, false)).toEqual({
+  expect(html).not.toContain("Archive Board");
+  expect(html).toContain("The company Board is always open.");
+  expect(boardUpdateForDraft(company, { ...draft, name: "Everyone" })).toEqual({
+    revision: 4,
+    name: "Everyone",
+    description: "Keep my draft",
+  });
+});
+
+test("a project Board shows its group editor slot and can be archived", () => {
+  const html = renderToStaticMarkup(
+    createElement(ServerBoardManagementDisplay, {
+      view: { ...baseView, board, draft },
+      groups: createElement("p", null, "Group editor slot"),
+    }),
+  );
+  expect(html).toContain("Group editor slot");
+  expect(html.indexOf("Group editor slot")).toBeLessThan(
+    html.indexOf("Archive Board"),
+  );
+  expect(
+    renderToStaticMarkup(
+      createElement(ServerBoardManagementDisplay, {
+        view: baseView,
+        groups: createElement("p", null, "Group editor slot"),
+      }),
+    ),
+  ).not.toContain("Group editor slot");
+  expect(boardUpdateForDraft(board, draft)).toEqual({
     revision: 4,
     name: "Dispatch updated",
     description: "Keep my draft",
-    defaultSection: "calendar",
   });
 });
 
@@ -137,33 +172,20 @@ test("conflict retry reapplies only locally changed fields onto the latest Board
     ...board,
     revision: 5,
     description: "Changed remotely",
-    defaultSection: "announcements" as const,
-    departmentId: null,
   };
-  const originalDraft = {
-    ...draft,
-    description: "Daily handoffs",
-    defaultSection: "overview" as const,
-  };
-  expect(rebaseBoardDraft(board, latest, originalDraft, false)).toEqual({
+  const originalDraft = { ...draft, description: "Daily handoffs" };
+  expect(rebaseBoardDraft(board, latest, originalDraft)).toEqual({
     name: "Dispatch updated",
     description: "Changed remotely",
-    defaultSection: "announcements",
-    departmentId: null,
   });
 });
 
 test("Board access revocation clears private management state and invalidates pending responses", () => {
-  const abort = new AbortController();
   const accessRequest = { current: 2 };
-  const departmentsRequest = { current: 3 };
   const actionRequest = { current: 4 };
-  const departmentsAbort = { current: abort as AbortController | null };
   let currentBoard: BoardManagementBoard | null = board;
   let currentDraft = draft;
   let currentDraftBase: BoardManagementBoard | null = board;
-  let currentDepartments = [{ id: departmentId, name: "Operations" }];
-  let departmentsStatus = "ready";
   let access = "ready";
   let conflict = true;
   let latestReady = true;
@@ -174,9 +196,7 @@ test("Board access revocation clears private management state and invalidates pe
   let notifications = 0;
   revokeBoardManagementState({
     accessRequest,
-    departmentsRequest,
     actionRequest,
-    departmentsAbort,
     setBoard: (value) => {
       currentBoard = value;
     },
@@ -185,12 +205,6 @@ test("Board access revocation clears private management state and invalidates pe
     },
     setDraftBase: (value) => {
       currentDraftBase = value;
-    },
-    setDepartments: (value) => {
-      currentDepartments = value;
-    },
-    setDepartmentsStatus: (value) => {
-      departmentsStatus = value;
     },
     setAccess: (value) => {
       access = value;
@@ -217,19 +231,9 @@ test("Board access revocation clears private management state and invalidates pe
       notifications += 1;
     },
   });
-  expect([currentBoard, currentDraftBase, currentDepartments]).toEqual([
-    null,
-    null,
-    [],
-  ]);
-  expect(currentDraft).toEqual({
-    name: "",
-    description: "",
-    defaultSection: "overview",
-    departmentId: null,
-  });
+  expect([currentBoard, currentDraftBase]).toEqual([null, null]);
+  expect(currentDraft).toEqual({ name: "", description: "" });
   expect([
-    departmentsStatus,
     access,
     conflict,
     latestReady,
@@ -237,14 +241,8 @@ test("Board access revocation clears private management state and invalidates pe
     notice,
     confirmation,
     discardOpen,
-  ]).toEqual(["unavailable", "denied", false, false, null, null, null, false]);
-  expect([
-    accessRequest.current,
-    departmentsRequest.current,
-    actionRequest.current,
-  ]).toEqual([3, 4, 5]);
-  expect(abort.signal.aborted).toBe(true);
-  expect(departmentsAbort.current).toBeNull();
+  ]).toEqual(["denied", false, false, null, null, null, false]);
+  expect([accessRequest.current, actionRequest.current]).toEqual([3, 5]);
   expect(notifications).toBe(1);
 });
 
@@ -254,14 +252,10 @@ test("manage-only denial clears its editor without revoking the authorized Board
   revokeBoardManagementState(
     {
       accessRequest: { current: 0 },
-      departmentsRequest: { current: 0 },
       actionRequest: { current: 0 },
-      departmentsAbort: { current: null },
       setBoard: noOp,
       setDraft: noOp,
       setDraftBase: noOp,
-      setDepartments: noOp,
-      setDepartmentsStatus: noOp,
       setAccess: noOp,
       setConflict: noOp,
       setLatestReady: noOp,
@@ -278,14 +272,13 @@ test("manage-only denial clears its editor without revoking the authorized Board
   expect(boardRevocations).toBe(0);
 });
 
-test("archived Board offers restore without editable Department or metadata", () => {
+test("archived project Board offers restore without editable metadata", () => {
   const html = markup({
     ...baseView,
     board: { ...board, status: "archived" },
   });
   expect(html).toContain("Restore Board");
   expect(html).not.toContain("Save changes");
-  expect(html).not.toContain("Remove department");
 });
 
 test("archived Board exposes the guarded permanent-delete review using its exact UUID", () => {
@@ -298,42 +291,4 @@ test("archived Board exposes the guarded permanent-delete review using its exact
   expect(html).toContain("Permanently delete Board");
   expect(html).toContain(boardId);
   expect(html).toContain("password");
-});
-
-test("Department chooser labels come only from the permission-gated Department API", async () => {
-  const original = globalThis.fetch;
-  const paths: string[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    paths.push(String(input));
-    return Response.json({
-      items: [
-        {
-          id: departmentId,
-          department_name: "Operations",
-          created_at: "2026-09-23T00:00:00Z",
-          updated_at: "2026-09-23T00:00:00Z",
-          deleted_at: null,
-          is_deleted: false,
-          performed_by: ownerId,
-        },
-      ],
-      pagination: {
-        limit: 100,
-        offset: 0,
-        count: 1,
-        total: 1,
-        has_more: false,
-      },
-    });
-  }) as typeof fetch;
-  try {
-    await expect(listBoardDepartments()).resolves.toEqual([
-      { id: departmentId, name: "Operations" },
-    ]);
-    expect(paths).toEqual([
-      "/api/departments?limit=100&offset=0&sort_by=department_name&sort_order=asc&deleted=exclude",
-    ]);
-  } finally {
-    globalThis.fetch = original;
-  }
 });

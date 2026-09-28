@@ -60,7 +60,7 @@ export function ServerBoardRecordLinks(props: Props) {
   const kind = props.target.kind;
   const boardId = props.target.boardId;
   const contentId = props.target.contentId;
-  const view = props.target.kind === "announcement" ? props.target.view : null;
+  const view = props.target.kind === "post" ? props.target.view : null;
   const target = useMemo<BoardRecordLinkTarget>(
     () =>
       kind === "event"

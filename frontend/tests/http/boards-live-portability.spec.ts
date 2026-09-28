@@ -11,17 +11,17 @@ import {
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const newBoardId = "00000000-0000-4000-8000-000000000002";
-const ownerId = "00000000-0000-4000-8000-000000000003";
+const departmentId = "00000000-0000-4000-8000-000000000003";
 const timestamp = "2026-09-23T00:00:00Z";
 const board: BoardManagementBoard = {
   id: boardId,
-  ownerId,
-  departmentId: null,
+  scope: "department",
+  departmentId,
   name: "Dispatch",
   description: "Daily handoffs",
   status: "active",
-  defaultSection: "overview",
   revision: 4,
+  level: "manage",
   createdAt: timestamp,
   updatedAt: timestamp,
 };
@@ -29,13 +29,13 @@ const board: BoardManagementBoard = {
 function boardResponse(id = boardId, revision = 4) {
   return {
     id,
-    owner_id: ownerId,
-    department_id: null,
+    scope: id === boardId ? "department" : "project",
+    department_id: id === boardId ? departmentId : null,
     name: "Dispatch",
     description: "Daily handoffs",
     status: "active",
-    default_section: "overview",
     revision,
+    level: "manage",
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -55,17 +55,17 @@ test("portability panel explains structure-only scope and hides stale Board acti
       notice: null,
     }),
   );
-  expect(html).toContain("structure only");
-  expect(html).toContain("record data");
+  expect(html).toContain("name, description and widgets");
+  expect(html).toContain("does not include posts, events, files");
   expect(html).toContain("Import configuration");
   expect(html).toContain("Refresh the Board");
   expect(html).not.toContain("Export configuration");
   expect(html).not.toContain("Duplicate Board");
   expect(html).not.toContain(boardId);
-  expect(html).not.toContain(ownerId);
+  expect(html).not.toContain(departmentId);
 });
 
-test("import remains available without a selected Board and names the new private Board outcome", () => {
+test("import remains available without a selected Board and names the new project Board outcome", () => {
   const html = renderToStaticMarkup(
     createElement(ServerBoardPortabilityDisplay, {
       board: null,
@@ -73,7 +73,7 @@ test("import remains available without a selected Board and names the new privat
     }),
   );
   expect(html).toContain("Import configuration");
-  expect(html).toContain("new private Board");
+  expect(html).toContain("new project Board");
   expect(html).not.toContain("Current Board structure");
   expect(html).not.toContain("Export configuration");
   expect(html).not.toContain("Duplicate Board");
@@ -132,12 +132,10 @@ test("export returns adapter-validated structure without requesting Record bytes
   const paths: string[] = [];
   const bundle = {
     kind: "openslate-board",
-    version: 2,
+    version: 3,
     configuration: {
       name: "Dispatch",
       description: "Daily handoffs",
-      department_name: null,
-      default_section: "overview",
       widgets: [],
     },
   };
@@ -182,7 +180,12 @@ test("duplicate requires current server-confirmed manage access and returns a di
       return Promise.resolve(Response.json(boardResponse()));
     if (path.endsWith("/my-access"))
       return Promise.resolve(
-        Response.json({ view: true, edit: manage, manage }),
+        Response.json({
+          level: manage ? "manage" : "read",
+          read: true,
+          write: manage,
+          manage,
+        }),
       );
     if (path === `/api/boards/${boardId}/duplicate`)
       return Promise.resolve(
@@ -198,7 +201,7 @@ test("duplicate requires current server-confirmed manage access and returns a di
     manage = true;
     await expect(duplicateCurrentBoardStructure(board)).resolves.toMatchObject({
       id: newBoardId,
-      ownerId,
+      scope: "project",
     });
     expect(paths).toContain(`/api/boards/${boardId}/duplicate`);
   } finally {
@@ -292,7 +295,12 @@ test("downstream duplicate denial distinguishes lost Board view from lost manage
         }
         if (path.endsWith("/my-access"))
           return Promise.resolve(
-            Response.json({ view: true, edit: true, manage: true }),
+            Response.json({
+              level: "manage",
+              read: true,
+              write: true,
+              manage: true,
+            }),
           );
         if (path === `/api/boards/${boardId}/duplicate`)
           return Promise.resolve(

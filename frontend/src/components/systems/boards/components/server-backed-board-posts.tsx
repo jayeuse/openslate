@@ -16,20 +16,20 @@ import { PaginationControls } from "@/components/ui/pagination-controls";
 import { SearchSelect } from "@/components/ui/search-select";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import {
-  announcementFeedQueryForSort,
-  normalizePublishedAnnouncementSearch,
-  useServerBoardAnnouncementAuthors,
-  useServerBoardAnnouncements,
-  visibleAnnouncementAuthorId,
-  type PublishedAnnouncementSort,
-} from "../hooks/use-server-board-announcements";
+  postFeedQueryForSort,
+  normalizePublishedPostSearch,
+  useServerBoardPostAuthors,
+  useServerBoardPosts,
+  visiblePostAuthorId,
+  type PublishedPostSort,
+} from "../hooks/use-server-board-posts";
 import { BoardEmpty } from "./ui";
-import { ServerBoardAnnouncementFeedDisplay } from "./server-board-announcement-feed-display";
-export { ServerBoardAnnouncementFeedDisplay } from "./server-board-announcement-feed-display";
+import { ServerBoardPostFeedDisplay } from "./server-board-post-feed-display";
+export { ServerBoardPostFeedDisplay } from "./server-board-post-feed-display";
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25] as const;
 const SORT_OPTIONS: readonly {
-  value: PublishedAnnouncementSort;
+  value: PublishedPostSort;
   label: string;
 }[] = [
   { value: "newest", label: "Newest first" },
@@ -37,7 +37,7 @@ const SORT_OPTIONS: readonly {
   { value: "title", label: "Title A–Z" },
 ];
 
-export function ServerBackedBoardAnnouncements({
+export function ServerBackedBoardPosts({
   boardId,
   refreshKey,
 }: {
@@ -46,7 +46,7 @@ export function ServerBackedBoardAnnouncements({
 }) {
   const actorId = useVerifiedWorkspaceUserId();
   return (
-    <ScopedServerBackedBoardAnnouncements
+    <ScopedServerBackedBoardPosts
       key={`${actorId}:${boardId}`}
       boardId={boardId}
       refreshKey={refreshKey}
@@ -54,7 +54,7 @@ export function ServerBackedBoardAnnouncements({
   );
 }
 
-function ScopedServerBackedBoardAnnouncements({
+function ScopedServerBackedBoardPosts({
   boardId,
   refreshKey,
 }: {
@@ -64,34 +64,30 @@ function ScopedServerBackedBoardAnnouncements({
   const id = useId();
   const [offset, setOffset] = useState(0);
   const [pageSize, setPageSize] = useState<number>(25);
-  const [sort, setSort] = useState<PublishedAnnouncementSort>("newest");
+  const [sort, setSort] = useState<PublishedPostSort>("newest");
   const [searchDraft, setSearchDraft] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   const [selectedAuthorId, setSelectedAuthorId] = useState<string | null>(null);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
-  const authors = useServerBoardAnnouncementAuthors(boardId, refreshKey);
+  const authors = useServerBoardPostAuthors(boardId, refreshKey);
   const choices = authors.state.data;
-  const visibleAuthorId = visibleAnnouncementAuthorId(
-    selectedAuthorId,
-    choices,
-  );
+  const visibleAuthorId = visiblePostAuthorId(selectedAuthorId, choices);
   const authorSelectionGone =
     selectedAuthorId !== null && visibleAuthorId === null;
   const effectiveOffset = authorSelectionGone ? 0 : offset;
   const queryOptions = {
     limit: pageSize,
-    ...announcementFeedQueryForSort(sort),
+    ...postFeedQueryForSort(sort),
   };
-  const { state, retry, toggleRead, toggleBookmark } =
-    useServerBoardAnnouncements(
-      boardId,
-      effectiveOffset,
-      refreshKey,
-      appliedSearch,
-      visibleAuthorId,
-      choices !== null && authors.state.status !== "denied",
-      queryOptions,
-    );
+  const { state, retry } = useServerBoardPosts(
+    boardId,
+    effectiveOffset,
+    refreshKey,
+    appliedSearch,
+    visibleAuthorId,
+    choices !== null && authors.state.status !== "denied",
+    queryOptions,
+  );
   const page = state.data;
   const authorLabels = Object.fromEntries(
     (choices ?? []).map((choice) => [choice.id, choice.label]),
@@ -121,7 +117,7 @@ function ScopedServerBackedBoardAnnouncements({
       aria-busy={state.status === "loading"}
     >
       <Card
-        aria-label="Announcement search and filters"
+        aria-label="Post search and filters"
         className="min-w-0 self-auto overflow-hidden rounded-lg"
       >
         <form
@@ -129,7 +125,7 @@ function ScopedServerBackedBoardAnnouncements({
           className="grid min-w-0 gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(10rem,14rem)_auto] sm:items-end"
           onSubmit={(event) => {
             event.preventDefault();
-            setAppliedSearch(normalizePublishedAnnouncementSearch(searchDraft));
+            setAppliedSearch(normalizePublishedPostSearch(searchDraft));
             setOffset(0);
           }}
         >
@@ -142,10 +138,10 @@ function ScopedServerBackedBoardAnnouncements({
               />
               <Input
                 id={`${id}-search`}
-                aria-label="Search announcements"
+                aria-label="Search posts"
                 type="search"
                 maxLength={100}
-                placeholder="Search announcements"
+                placeholder="Search posts"
                 className="min-h-11 pl-9"
                 value={searchDraft}
                 onChange={(event) =>
@@ -158,7 +154,7 @@ function ScopedServerBackedBoardAnnouncements({
             <FieldLabel htmlFor={`${id}-sort`}>Sort</FieldLabel>
             <NativeSelect
               id={`${id}-sort`}
-              aria-label="Sort announcements"
+              aria-label="Sort posts"
               className="w-full [&_select]:min-h-11"
               value={sort}
               onChange={(event) => {
@@ -224,13 +220,13 @@ function ScopedServerBackedBoardAnnouncements({
         <div
           id={filtersId}
           role="region"
-          aria-label="Announcement filters"
+          aria-label="Post filters"
           hidden={!filtersExpanded}
           className="border-t p-3"
         >
           <div className="max-w-sm">
             <SearchSelect
-              label="Announcement author"
+              label="Post author"
               value={visibleAuthorId ?? ""}
               options={[
                 { value: "", label: "All authors" },
@@ -272,7 +268,7 @@ function ScopedServerBackedBoardAnnouncements({
         <Alert variant={page ? "warning" : "destructive"}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span>
-              {page ? "Showing the last loaded announcements. " : ""}
+              {page ? "Showing the last loaded posts. " : ""}
               {state.error}
             </span>
             <Button
@@ -286,30 +282,22 @@ function ScopedServerBackedBoardAnnouncements({
           </div>
         </Alert>
       )}
-      {state.actionError && (
-        <Alert variant="warning">{state.actionError}</Alert>
-      )}
       {page && (
-        <ServerBoardAnnouncementFeedDisplay
+        <ServerBoardPostFeedDisplay
           page={page}
           appliedSearch={appliedSearch}
           authorLabels={authorLabels}
-          personal={state.personal}
-          pendingId={state.pendingId}
-          actionsDisabled={state.status !== "ready"}
-          onToggleRead={toggleRead}
-          onToggleBookmark={toggleBookmark}
         />
       )}
       {!page && state.status === "loading" && (
         <p role="status" className="text-muted-foreground py-8 text-sm">
-          Loading published announcements…
+          Loading published posts…
         </p>
       )}
       {!page && state.status === "error" && (
         <BoardEmpty
-          title="Announcements unavailable"
-          description="No announcement content is shown. Retry or ask a Board manager to check your access."
+          title="Posts unavailable"
+          description="No post content is shown. Retry or ask a Board manager to check your access."
         />
       )}
       {page && page.pagination.total > 0 && (
@@ -320,7 +308,7 @@ function ScopedServerBackedBoardAnnouncements({
           <p className="text-muted-foreground text-sm" role="status">
             {page.pagination.count > 0
               ? `Showing ${page.pagination.offset + 1}–${page.pagination.offset + page.pagination.count} of ${page.pagination.total}`
-              : `No announcements on this page · ${page.pagination.total} total`}
+              : `No posts on this page · ${page.pagination.total} total`}
           </p>
           <div className="flex flex-wrap items-center gap-3 sm:justify-end">
             <div className="flex items-center gap-2">
@@ -353,7 +341,7 @@ function ScopedServerBackedBoardAnnouncements({
               </NativeSelect>
             </div>
             <PaginationControls
-              ariaLabel="Announcement pages"
+              ariaLabel="Post pages"
               className="w-auto"
               pageCount={Math.max(
                 1,

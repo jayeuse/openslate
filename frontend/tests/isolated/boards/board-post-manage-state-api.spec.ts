@@ -1,35 +1,35 @@
 import { expect, test } from "@playwright/test";
 import { ApiContractError } from "../../../src/lib/api";
-import { getBoardAnnouncementManageState } from "../../../src/components/systems/boards/adapters/board-announcement-manage-state-api";
+import { getBoardPostManageState } from "../../../src/components/systems/boards/adapters/board-post-manage-state-api";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
-const announcementId = "00000000-0000-4000-8000-000000000002";
+const postId = "00000000-0000-4000-8000-000000000002";
 
-test("manager-state reads content-free exact revisions through the private Board route", async () => {
+test("manager-state reads exact revisions and whether the post was ever published", async () => {
   const original = globalThis.fetch;
   const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     requests.push({ input, init });
     return Promise.resolve(
       Response.json({
-        id: announcementId,
+        id: postId,
         status: "published",
         board_revision: 7,
-        announcement_revision: 3,
+        post_revision: 3,
+        published_before: true,
       }),
     );
   }) as typeof fetch;
   try {
-    await expect(
-      getBoardAnnouncementManageState(boardId, announcementId),
-    ).resolves.toEqual({
-      id: announcementId,
+    await expect(getBoardPostManageState(boardId, postId)).resolves.toEqual({
+      id: postId,
       status: "published",
       boardRevision: 7,
-      announcementRevision: 3,
+      postRevision: 3,
+      publishedBefore: true,
     });
     expect(String(requests[0]?.input)).toBe(
-      `/api/boards/${boardId}/announcements/${announcementId}/manage-state`,
+      `/api/boards/${boardId}/posts/${postId}/manage-state`,
     );
     expect(requests[0]?.init?.cache).toBe("no-store");
   } finally {
@@ -44,13 +44,13 @@ test("manager-state rejects another item and unexpected content without returnin
       id: boardId,
       status: "published",
       board_revision: 7,
-      announcement_revision: 3,
+      post_revision: 3,
     },
     {
-      id: announcementId,
+      id: postId,
       status: "published",
       board_revision: 7,
-      announcement_revision: 3,
+      post_revision: 3,
       title: "Private content that must not be in metadata",
     },
   ];
@@ -58,11 +58,9 @@ test("manager-state rejects another item and unexpected content without returnin
     Promise.resolve(Response.json(responses.shift()))) as typeof fetch;
   try {
     await expect(
-      getBoardAnnouncementManageState(boardId, announcementId),
+      getBoardPostManageState(boardId, postId),
     ).rejects.toBeInstanceOf(ApiContractError);
-    await expect(
-      getBoardAnnouncementManageState(boardId, announcementId),
-    ).rejects.toThrow();
+    await expect(getBoardPostManageState(boardId, postId)).rejects.toThrow();
   } finally {
     globalThis.fetch = original;
   }

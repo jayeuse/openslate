@@ -6,19 +6,17 @@ const authorSchema = z
   .object({ id: uuid, label: z.string().min(1).max(100) })
   .strict();
 const choicesSchema = z.array(authorSchema).max(500);
-export type BoardAnnouncementAuthorChoice = z.infer<typeof authorSchema>;
+export type BoardPostAuthorChoice = z.infer<typeof authorSchema>;
 
-export async function listBoardAnnouncementAuthors(
+export async function listBoardPostAuthors(
   rawBoardId: string,
-): Promise<BoardAnnouncementAuthorChoice[]> {
+): Promise<BoardPostAuthorChoice[]> {
   const boardId = uuid.parse(rawBoardId);
-  let choices: BoardAnnouncementAuthorChoice[];
+  let choices: BoardPostAuthorChoice[];
   try {
-    choices = await apiFetch(
-      `/boards/${boardId}/announcement-authors`,
-      choicesSchema,
-      { cache: "no-store" },
-    );
+    choices = await apiFetch(`/boards/${boardId}/post-authors`, choicesSchema, {
+      cache: "no-store",
+    });
   } catch (error) {
     if (error instanceof ApiError)
       throw new ApiError(error.status, "Author choices are unavailable");

@@ -40,33 +40,11 @@ export const links = z
       .strict(),
   )
   .max(20);
-export const audienceInput = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("everyone") }).strict(),
-  z.object({ kind: z.literal("author") }).strict(),
-  z.object({ kind: z.literal("user"), userId: uuid }).strict(),
-  z.object({ kind: z.literal("department"), departmentId: uuid }).strict(),
-]);
-const audienceWire = z
-  .object({
-    kind: z.enum(["everyone", "author", "user", "department"]),
-    user_id: uuid.nullable(),
-    department_id: uuid.nullable(),
-  })
-  .strict()
-  .refine(({ kind, user_id, department_id }) => {
-    const targets = [user_id, department_id];
-    const expected = kind === "user" ? 0 : kind === "department" ? 1 : -1;
-    return targets.every((target, index) =>
-      expected === -1
-        ? target === null
-        : (index === expected) === (target !== null),
-    );
-  })
-  .transform(({ kind, user_id, department_id }) => ({
-    kind,
-    userId: user_id,
-    departmentId: department_id,
-  }));
+export const reminderTiming = z.enum(["start", "15m", "1d"]);
+export const reminderTimings = z
+  .array(reminderTiming)
+  .max(3)
+  .refine((timings) => new Set(timings).size === timings.length);
 
 const eventFields = {
   id: uuid,
@@ -79,7 +57,7 @@ const eventFields = {
   timezone_name: z.string().min(1).max(80),
   recurrence,
   repeat_until: date.nullable(),
-  audience: audienceWire,
+  reminders: reminderTimings,
   archived: z.boolean(),
   revision,
   board_revision: revision,
@@ -135,7 +113,7 @@ export const eventWire = z
     timezoneName: event.timezone_name,
     recurrence: event.recurrence,
     repeatUntil: event.repeat_until,
-    audience: event.audience,
+    reminders: event.reminders,
     archived: event.archived,
     revision: event.revision,
     boardRevision: event.board_revision,
@@ -258,7 +236,7 @@ const definitionFields = {
   timezoneName: z.string().trim().min(1).max(80),
   recurrence: recurrence.default("none"),
   repeatUntil: date.nullable().optional(),
-  audience: audienceInput.optional(),
+  reminders: reminderTimings.optional(),
 };
 export const createInput = z
   .discriminatedUnion("allDay", [
@@ -307,7 +285,7 @@ export const patchInput = z
     timezoneName: z.string().trim().min(1).max(80).optional(),
     recurrence: recurrence.optional(),
     repeatUntil: date.nullable().optional(),
-    audience: audienceInput.optional(),
+    reminders: reminderTimings.optional(),
   })
   .strict()
   .refine((value) =>
@@ -317,6 +295,7 @@ export const patchInput = z
   );
 
 export type BoardEvent = z.output<typeof eventWire>;
+export type BoardEventReminderTiming = z.output<typeof reminderTiming>;
 export type BoardEventMutation = z.output<typeof mutationWire>;
 export type BoardEventPage = z.output<typeof eventListWire>;
 export type BoardEventOccurrencePage = z.output<typeof occurrenceListWire>;

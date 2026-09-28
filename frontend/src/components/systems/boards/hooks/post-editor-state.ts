@@ -1,50 +1,26 @@
-import { ApiContractError, ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import type {
-  BoardAnnouncement,
-  BoardAnnouncementPage,
-  BoardAnnouncementPatchInput,
-} from "../adapters/board-announcements-api";
+  BoardPost,
+  BoardPostPage,
+  BoardPostPatchInput,
+} from "../adapters/board-posts-api";
 import type { BoardMyAccess } from "../adapters/board-tools-api";
-import type { BoardContentAudienceSelection } from "../components/board-content-audience-picker";
 
-export type AnnouncementEditorForm = {
+export type PostEditorForm = {
   title: string;
   body: string;
-  links: BoardAnnouncement["links"];
-  audience: BoardContentAudienceSelection;
+  links: BoardPost["links"];
 };
 
-function audienceSelection(
-  audience: BoardAnnouncement["audience"],
-): AnnouncementEditorForm["audience"] {
-  if (audience.kind === "user")
-    return { kind: "user", targetId: audience.userId };
-  if (audience.kind === "department")
-    return { kind: "department", targetId: audience.departmentId };
-  return { kind: audience.kind };
-}
-
-export function audienceInput(
-  audience: AnnouncementEditorForm["audience"],
-): NonNullable<BoardAnnouncementPatchInput["audience"]> {
-  if (audience.kind === "everyone" || audience.kind === "author")
-    return { kind: audience.kind };
-  if (!("targetId" in audience) || !audience.targetId)
-    throw new ApiContractError();
-  if (audience.kind === "user")
-    return { kind: "user", userId: audience.targetId };
-  return { kind: "department", departmentId: audience.targetId };
-}
-
-export type AnnouncementEditorState = {
+export type PostEditorState = {
   key: string;
   status: "loading" | "ready" | "error" | "denied";
   access: BoardMyAccess | null;
-  page: BoardAnnouncementPage | null;
+  page: BoardPostPage | null;
   boardRevision: number;
-  selected: BoardAnnouncement | null;
-  form: AnnouncementEditorForm | null;
-  displayed: BoardAnnouncement | null;
+  selected: BoardPost | null;
+  form: PostEditorForm | null;
+  displayed: BoardPost | null;
   pending: boolean;
   attachmentPending: boolean;
   recordLinkPending: boolean;
@@ -55,7 +31,7 @@ export type AnnouncementEditorState = {
   scheduleError: string | null;
 };
 
-export type AnnouncementScheduleTimeResult =
+export type PostScheduleTimeResult =
   | { ok: true; publishAt: string }
   | {
       ok: false;
@@ -65,7 +41,7 @@ export type AnnouncementScheduleTimeResult =
 export function emptyState(
   key: string,
   boardRevision: number,
-): AnnouncementEditorState {
+): PostEditorState {
   return {
     key,
     status: "loading",
@@ -86,9 +62,7 @@ export function emptyState(
   };
 }
 
-export function announcementLocalScheduleValue(
-  item: BoardAnnouncement | null,
-): string {
+export function postLocalScheduleValue(item: BoardPost | null): string {
   if (item?.status !== "scheduled" || item.publishAt === null) return "";
   const date = new Date(item.publishAt);
   if (!Number.isFinite(date.getTime())) return "";
@@ -97,11 +71,11 @@ export function announcementLocalScheduleValue(
   return `${String(date.getFullYear()).padStart(4, "0")}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}${seconds}`;
 }
 
-export function announcementScheduleTimeToUtc(
+export function postScheduleTimeToUtc(
   value: string,
   now: number = Date.now(),
   expiresAt: string | null = null,
-): AnnouncementScheduleTimeResult {
+): PostScheduleTimeResult {
   if (!value) return { ok: false, reason: "required" };
   const parts =
     /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(
@@ -129,22 +103,22 @@ export function announcementScheduleTimeToUtc(
   return { ok: true, publishAt: date.toISOString() };
 }
 
-export function announcementCancellationPatch(
-  selected: BoardAnnouncement,
+export function postCancellationPatch(
+  selected: BoardPost,
   boardRevision: number,
-): BoardAnnouncementPatchInput {
-  if (selected.status !== "scheduled" || selected.announcementRevision === null)
+): BoardPostPatchInput {
+  if (selected.status !== "scheduled" || selected.postRevision === null)
     throw new Error("Not a scheduled draft");
   return {
     boardRevision,
-    announcementRevision: selected.announcementRevision,
+    postRevision: selected.postRevision,
     title: selected.title,
     body: selected.body,
   };
 }
 
 export function scheduleTimeError(
-  reason: Exclude<AnnouncementScheduleTimeResult, { ok: true }>["reason"],
+  reason: Exclude<PostScheduleTimeResult, { ok: true }>["reason"],
 ): string {
   switch (reason) {
     case "required":
@@ -154,15 +128,15 @@ export function scheduleTimeError(
     case "past":
       return "Choose a publication time in the future.";
     case "after_expiration":
-      return "Choose a publication time before this announcement expires.";
+      return "Choose a publication time before this post expires.";
   }
 }
 
 export function editorStateForKey(
-  state: AnnouncementEditorState,
+  state: PostEditorState,
   key: string,
   boardRevision: number,
-): AnnouncementEditorState {
+): PostEditorState {
   return state.key === key ? state : emptyState(key, boardRevision);
 }
 
@@ -171,14 +145,14 @@ export function isDenial(error: unknown): boolean {
 }
 
 export function editorFailure(
-  state: AnnouncementEditorState,
+  state: PostEditorState,
   error: unknown,
-): AnnouncementEditorState {
+): PostEditorState {
   if (isDenial(error))
     return {
       ...emptyState(state.key, state.boardRevision),
       status: "denied",
-      error: "Announcement editing is unavailable. Check your Board access.",
+      error: "Post editing is unavailable. Check your Board access.",
     };
   if (error instanceof ApiError && error.status === 409)
     return {
@@ -190,22 +164,19 @@ export function editorFailure(
   return {
     ...state,
     pending: false,
-    error: "Announcement request failed. Try again.",
+    error: "Post request failed. Try again.",
   };
 }
 
-export function formFor(item: BoardAnnouncement): AnnouncementEditorForm {
+export function formFor(item: BoardPost): PostEditorForm {
   return {
     title: item.title,
     body: item.body,
     links: item.links.map((link) => ({ ...link })),
-    audience: audienceSelection(item.audience),
   };
 }
 
-export function validAnnouncementLinks(
-  links: AnnouncementEditorForm["links"],
-): boolean {
+export function validPostLinks(links: PostEditorForm["links"]): boolean {
   if (links.length > 20) return false;
   return links.every(({ label, url }) => {
     const authority = /^https?:\/\/([^/?#]*)/i.exec(url.trim())?.[1];
@@ -234,8 +205,8 @@ export function validAnnouncementLinks(
 }
 
 function linksEqual(
-  a: AnnouncementEditorForm["links"],
-  b: BoardAnnouncement["links"],
+  a: PostEditorForm["links"],
+  b: BoardPost["links"],
 ): boolean {
   return (
     a.length === b.length &&
@@ -246,10 +217,7 @@ function linksEqual(
   );
 }
 
-export function sameAnnouncementContent(
-  left: BoardAnnouncement,
-  right: BoardAnnouncement,
-): boolean {
+export function samePostContent(left: BoardPost, right: BoardPost): boolean {
   return (
     left.id === right.id &&
     left.boardId === right.boardId &&
@@ -257,7 +225,6 @@ export function sameAnnouncementContent(
     left.title === right.title &&
     left.body === right.body &&
     linksEqual(left.links, right.links) &&
-    JSON.stringify(left.audience) === JSON.stringify(right.audience) &&
     left.status === right.status &&
     left.publishAt === right.publishAt &&
     left.expiresAt === right.expiresAt &&
@@ -266,8 +233,8 @@ export function sameAnnouncementContent(
 }
 
 export function dirty(
-  form: AnnouncementEditorForm | null,
-  item: BoardAnnouncement | null,
+  form: PostEditorForm | null,
+  item: BoardPost | null,
 ): boolean {
   if (!form) return false;
   if (!item) return true;
@@ -275,65 +242,53 @@ export function dirty(
   return (
     form.title !== original.title ||
     form.body !== original.body ||
-    !linksEqual(form.links, original.links) ||
-    JSON.stringify(form.audience) !== JSON.stringify(original.audience)
+    !linksEqual(form.links, original.links)
   );
 }
 
-export function valid(
-  form: AnnouncementEditorForm | null,
-): form is AnnouncementEditorForm {
+export function valid(form: PostEditorForm | null): form is PostEditorForm {
   return (
     form !== null &&
     form.title.trim().length >= 1 &&
     form.title.trim().length <= 100 &&
     form.body.trim().length >= 1 &&
     form.body.trim().length <= 2000 &&
-    (form.audience.kind === "everyone" ||
-      form.audience.kind === "author" ||
-      ("targetId" in form.audience && form.audience.targetId !== null)) &&
-    validAnnouncementLinks(form.links)
+    validPostLinks(form.links)
   );
 }
 
-export function announcementPatchForForm(
-  selected: BoardAnnouncement,
-  form: AnnouncementEditorForm,
+export function postPatchForForm(
+  selected: BoardPost,
+  form: PostEditorForm,
   boardRevision: number,
-): BoardAnnouncementPatchInput {
-  if (selected.announcementRevision === null)
-    throw new Error("Not an editable draft");
+): BoardPostPatchInput {
+  if (selected.postRevision === null) throw new Error("Not an editable draft");
   return {
     boardRevision,
-    announcementRevision: selected.announcementRevision,
+    postRevision: selected.postRevision,
     title: form.title,
     body: form.body,
     ...(!linksEqual(form.links, selected.links) ? { links: form.links } : {}),
-    ...(JSON.stringify(form.audience) !==
-    JSON.stringify(audienceSelection(selected.audience))
-      ? { audience: audienceInput(form.audience) }
-      : {}),
   };
 }
 
 export function resolveEditorRefresh(
-  state: AnnouncementEditorState,
+  state: PostEditorState,
   access: BoardMyAccess,
-  page: BoardAnnouncementPage,
-  verified: BoardAnnouncement | null,
+  page: BoardPostPage,
+  verified: BoardPost | null,
   hadSelection: boolean,
-): AnnouncementEditorState {
+): PostEditorState {
   const currentDraft = verified?.id === state.selected?.id ? verified : null;
   const revisionChanged =
     currentDraft !== null &&
-    currentDraft.announcementRevision !== state.selected?.announcementRevision;
+    currentDraft.postRevision !== state.selected?.postRevision;
   const conflict =
     currentDraft !== null &&
     (state.conflict ||
       (revisionChanged &&
         (dirty(state.form, state.selected) ||
-          state.scheduleLocal !==
-            announcementLocalScheduleValue(state.selected))));
+          state.scheduleLocal !== postLocalScheduleValue(state.selected))));
   return {
     ...state,
     status: "ready",
@@ -350,7 +305,7 @@ export function resolveEditorRefresh(
         : state.form,
     scheduleLocal: currentDraft
       ? revisionChanged && !conflict
-        ? announcementLocalScheduleValue(currentDraft)
+        ? postLocalScheduleValue(currentDraft)
         : state.scheduleLocal
       : hadSelection
         ? ""

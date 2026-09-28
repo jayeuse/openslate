@@ -39,35 +39,7 @@ export const links = z
       .strict(),
   )
   .max(20);
-export const audienceInput = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("everyone") }).strict(),
-  z.object({ kind: z.literal("author") }).strict(),
-  z.object({ kind: z.literal("user"), userId: uuid }).strict(),
-  z.object({ kind: z.literal("department"), departmentId: uuid }).strict(),
-]);
-const audienceWire = z
-  .object({
-    kind: z.enum(["everyone", "author", "user", "department"]),
-    user_id: uuid.nullable(),
-    department_id: uuid.nullable(),
-  })
-  .strict()
-  .refine(({ kind, user_id, department_id }) => {
-    const targets = [user_id, department_id];
-    const expected = kind === "user" ? 0 : kind === "department" ? 1 : -1;
-    return targets.every((target, index) =>
-      expected === -1
-        ? target === null
-        : (index === expected) === (target !== null),
-    );
-  })
-  .transform(({ kind, user_id, department_id }) => ({
-    kind,
-    userId: user_id,
-    departmentId: department_id,
-  }));
-
-export const announcementWire = z
+export const postWire = z
   .object({
     id: uuid,
     board_id: uuid,
@@ -75,21 +47,21 @@ export const announcementWire = z
     title: z.string().min(1).max(100),
     body: z.string().min(1).max(2000),
     links,
-    audience: audienceWire,
     status: z.enum(["draft", "scheduled", "published", "archived"]),
     publish_at: utc.nullable(),
     expires_at: utc.nullable(),
     pinned: z.boolean(),
-    announcement_revision: revision.nullable(),
+    post_revision: revision.nullable(),
     board_revision: revision,
     publication_number: revision.nullable(),
     published_at: utc.nullable(),
+    edited: z.boolean(),
     created_at: utc,
     updated_at: utc,
   })
   .strict()
   .refine((item) =>
-    item.announcement_revision === null
+    item.post_revision === null
       ? item.status === "published" &&
         item.publication_number !== null &&
         item.published_at !== null &&
@@ -102,7 +74,7 @@ export const announcementWire = z
       author_id,
       publish_at,
       expires_at,
-      announcement_revision,
+      post_revision,
       board_revision,
       publication_number,
       published_at,
@@ -115,7 +87,7 @@ export const announcementWire = z
       authorId: author_id,
       publishAt: publish_at,
       expiresAt: expires_at,
-      announcementRevision: announcement_revision,
+      postRevision: post_revision,
       boardRevision: board_revision,
       publicationNumber: publication_number,
       publishedAt: published_at,
@@ -139,9 +111,9 @@ const pagination = z
       has_more === offset + count < total,
   )
   .transform(({ has_more, ...page }) => ({ ...page, hasMore: has_more }));
-export const announcementListWire = z
+export const postListWire = z
   .object({
-    items: z.array(announcementWire),
+    items: z.array(postWire),
     pagination,
     board_revision: revision,
   })
@@ -159,34 +131,28 @@ export const announcementListWire = z
 export const mutationWire = z
   .object({
     id: uuid,
-    announcement_revision: revision,
+    post_revision: revision,
     board_revision: revision,
   })
   .strict()
-  .transform(({ id, announcement_revision, board_revision }) => ({
+  .transform(({ id, post_revision, board_revision }) => ({
     id,
-    announcementRevision: announcement_revision,
+    postRevision: post_revision,
     boardRevision: board_revision,
   }));
 export const publicationWire = z
   .object({
     id: uuid,
-    announcement_id: uuid,
+    post_id: uuid,
     publication_number: revision,
     publication_key: uuid,
     published_at: utc,
   })
   .strict()
   .transform(
-    ({
+    ({ id, post_id, publication_number, publication_key, published_at }) => ({
       id,
-      announcement_id,
-      publication_number,
-      publication_key,
-      published_at,
-    }) => ({
-      id,
-      announcementId: announcement_id,
+      postId: post_id,
       publicationNumber: publication_number,
       publicationKey: publication_key,
       publishedAt: published_at,
@@ -208,7 +174,6 @@ const contentFields = {
   title: z.string().trim().min(1).max(100),
   body: z.string().trim().min(1).max(2000),
   links,
-  audience: audienceInput,
   expiresAt: utc.nullable(),
   pinned: z.boolean(),
 };
@@ -218,7 +183,6 @@ export const createInput = z
     title: contentFields.title,
     body: contentFields.body,
     links: contentFields.links.optional(),
-    audience: contentFields.audience.optional(),
     expiresAt: contentFields.expiresAt.optional(),
     pinned: contentFields.pinned.optional(),
   })
@@ -226,42 +190,119 @@ export const createInput = z
 export const patchInput = z
   .object({
     boardRevision: revision,
-    announcementRevision: revision,
+    postRevision: revision,
     title: contentFields.title.optional(),
     body: contentFields.body.optional(),
     links: contentFields.links.optional(),
-    audience: contentFields.audience.optional(),
     expiresAt: contentFields.expiresAt.optional(),
     pinned: contentFields.pinned.optional(),
   })
   .strict()
   .refine((input) =>
     Object.keys(input).some(
-      (key) => key !== "boardRevision" && key !== "announcementRevision",
+      (key) => key !== "boardRevision" && key !== "postRevision",
     ),
   );
 export const scheduleInput = z
   .object({
     boardRevision: revision,
-    announcementRevision: revision,
+    postRevision: revision,
     publishAt: utc,
   })
   .strict();
 export const publishInput = z
   .object({
     boardRevision: revision,
-    announcementRevision: revision,
+    postRevision: revision,
     publicationKey: uuid,
   })
   .strict();
 
-export type BoardAnnouncement = z.output<typeof announcementWire>;
-export type BoardAnnouncementPage = z.output<typeof announcementListWire>;
-export type BoardAnnouncementMutation = z.output<typeof mutationWire>;
-export type BoardAnnouncementPublication = z.output<typeof publicationWire>;
-export type BoardAnnouncementView = z.output<typeof view>;
-export type BoardAnnouncementListOptions = z.input<typeof listOptions>;
-export type BoardAnnouncementCreateInput = z.input<typeof createInput>;
-export type BoardAnnouncementPatchInput = z.input<typeof patchInput>;
-export type BoardAnnouncementScheduleInput = z.input<typeof scheduleInput>;
-export type BoardAnnouncementPublishInput = z.input<typeof publishInput>;
+export const deleteWire = z
+  .object({
+    id: uuid,
+    outcome: z.enum(["deleted", "archived"]),
+    post_revision: revision.nullable(),
+    board_revision: revision,
+  })
+  .strict()
+  .refine(
+    ({ outcome, post_revision }) =>
+      (outcome === "deleted") === (post_revision === null),
+  )
+  .transform(({ id, outcome, post_revision, board_revision }) => ({
+    id,
+    outcome,
+    postRevision: post_revision,
+    boardRevision: board_revision,
+  }));
+const revisionSummaryFields = {
+  id: uuid,
+  post_id: uuid,
+  publication_number: revision,
+  author_id: uuid,
+  title: z.string().min(1).max(100),
+  published_at: utc,
+};
+function summary<
+  T extends {
+    id: string;
+    post_id: string;
+    publication_number: number;
+    author_id: string;
+    title: string;
+    published_at: string;
+  },
+>(value: T) {
+  return {
+    id: value.id,
+    postId: value.post_id,
+    publicationNumber: value.publication_number,
+    authorId: value.author_id,
+    title: value.title,
+    publishedAt: value.published_at,
+  };
+}
+export const revisionListWire = z
+  .object({
+    post_id: uuid,
+    items: z
+      .array(z.object(revisionSummaryFields).strict().transform(summary))
+      .max(1000),
+  })
+  .strict()
+  .refine(({ post_id, items }) =>
+    items.every((item) => item.postId === post_id),
+  )
+  .transform(({ post_id, items }) => ({ postId: post_id, items }));
+export const revisionWire = z
+  .object({
+    ...revisionSummaryFields,
+    body: z.string().min(1).max(2000),
+    links,
+    expires_at: utc.nullable(),
+  })
+  .strict()
+  .transform((value) => ({
+    ...summary(value),
+    body: value.body,
+    links: value.links,
+    expiresAt: value.expires_at,
+  }));
+
+export type BoardPost = z.output<typeof postWire>;
+export type BoardPostDeletion = z.output<typeof deleteWire>;
+export type BoardPostRevisionSummary = z.output<
+  typeof revisionListWire
+>["items"][number];
+export type BoardPostRevisionList = z.output<typeof revisionListWire>;
+export type BoardPostRevision = z.output<typeof revisionWire>;
+export type BoardPostPage = z.output<typeof postListWire>;
+export type BoardPostMutation = z.output<typeof mutationWire>;
+export type BoardPostPublication = z.output<typeof publicationWire>;
+export type BoardPostView = z.output<typeof view>;
+export type BoardPostListOptions = z.input<typeof listOptions>;
+export type BoardPostCreateInput = z.input<typeof createInput>;
+export type BoardPostPatchInput = z.input<typeof patchInput>;
+export type BoardPostScheduleInput = z.input<typeof scheduleInput>;
+export type BoardPostPublishInput = z.input<typeof publishInput>;

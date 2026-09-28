@@ -48,7 +48,7 @@ const workspaceNavigationDefinitions = [
     defaultItem: "overview",
     items: [
       { id: "overview", label: "Overview" },
-      { id: "announcements", label: "Announcements" },
+      { id: "posts", label: "Posts" },
       { id: "calendar", label: "Calendar" },
     ],
   },

@@ -1,22 +1,23 @@
 import { expect, test } from "@playwright/test";
 import { ApiContractError, ApiError } from "../../../src/lib/api";
 import {
-  archiveBoardAnnouncement,
-  createBoardAnnouncement,
-  deleteBoardAnnouncement,
-  listBoardAnnouncements,
-  publishBoardAnnouncement,
-  readBoardAnnouncement,
-  restoreBoardAnnouncement,
-  scheduleBoardAnnouncement,
-  unpublishBoardAnnouncement,
-  updateBoardAnnouncement,
-} from "../../../src/components/systems/boards/adapters/board-announcements-api";
+  archiveBoardPost,
+  createBoardPost,
+  deleteBoardPost,
+  listBoardPostRevisions,
+  listBoardPosts,
+  publishBoardPost,
+  readBoardPost,
+  readBoardPostRevision,
+  restoreBoardPost,
+  scheduleBoardPost,
+  unpublishBoardPost,
+  updateBoardPost,
+} from "../../../src/components/systems/boards/adapters/board-posts-api";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
-const announcementId = "00000000-0000-4000-8000-000000000002";
+const postId = "00000000-0000-4000-8000-000000000002";
 const authorId = "00000000-0000-4000-8000-000000000003";
-const departmentId = "00000000-0000-4000-8000-000000000004";
 const publicationKey = "00000000-0000-4000-8000-000000000005";
 const revisionId = "00000000-0000-4000-8000-000000000006";
 const timestamp = "2026-09-23T00:00:00Z";
@@ -40,27 +41,22 @@ function installFetch(responder: () => Response) {
 
 const jsonResponse = (body: unknown, status = 200) =>
   Response.json(body, { status });
-const audience = {
-  kind: "department",
-  user_id: null,
-  department_id: departmentId,
-};
 const published = {
-  id: announcementId,
+  id: postId,
   board_id: boardId,
   author_id: authorId,
   title: "Earlier published",
   body: "Public text",
   links: [{ label: "Release", url: "https://example.org/release" }],
-  audience,
   status: "published",
   publish_at: timestamp,
   expires_at: null,
   pinned: false,
-  announcement_revision: null,
+  post_revision: null,
   board_revision: 4,
   publication_number: 1,
   published_at: timestamp,
+  edited: false,
   created_at: timestamp,
   updated_at: timestamp,
 };
@@ -71,23 +67,23 @@ const draft = {
   links: [{ label: "Draft", url: "https://example.org/draft" }],
   status: "draft",
   publish_at: null,
-  announcement_revision: 2,
+  post_revision: 2,
   publication_number: null,
   published_at: null,
 };
 const mutation = {
-  id: announcementId,
-  announcement_revision: 2,
+  id: postId,
+  post_revision: 2,
   board_revision: 4,
 };
 const page = { limit: 25, offset: 0, count: 1, total: 1, has_more: false };
 
-test("announcement published list uses bounded query and immutable published fields", async () => {
+test("post published list uses bounded query and immutable published fields", async () => {
   const mock = installFetch(() =>
     jsonResponse({ items: [published], pagination: page, board_revision: 4 }),
   );
   try {
-    const result = await listBoardAnnouncements(boardId, {
+    const result = await listBoardPosts(boardId, {
       view: "published",
       sortBy: "created_at",
       sortOrder: "asc",
@@ -95,14 +91,14 @@ test("announcement published list uses bounded query and immutable published fie
       authorId: authorId,
     });
     expect(result.items[0]).toMatchObject({
-      id: announcementId,
+      id: postId,
       title: "Earlier published",
       status: "published",
-      announcementRevision: null,
+      postRevision: null,
       publicationNumber: 1,
       publishedAt: timestamp,
       links: [{ label: "Release", url: "https://example.org/release" }],
-      audience: { kind: "department", departmentId },
+      edited: false,
     });
     expect(result.pagination).toEqual({
       limit: 25,
@@ -113,7 +109,7 @@ test("announcement published list uses bounded query and immutable published fie
     });
     expect(result.boardRevision).toBe(4);
     expect(String(mock.requests[0]?.input)).toBe(
-      `/api/boards/${boardId}/announcements?view=published&limit=25&offset=0&sort_by=created_at&sort_order=asc&search=Earlier&author_id=${authorId}`,
+      `/api/boards/${boardId}/posts?view=published&limit=25&offset=0&sort_by=created_at&sort_order=asc&search=Earlier&author_id=${authorId}`,
     );
     expect(mock.requests[0]?.init?.cache).toBe("no-store");
   } finally {
@@ -121,7 +117,7 @@ test("announcement published list uses bounded query and immutable published fie
   }
 });
 
-test("announcement editor loads mutable published content without using the recipient feed", async () => {
+test("post editor loads mutable published content without using the recipient feed", async () => {
   const editable = {
     ...draft,
     status: "published",
@@ -131,12 +127,12 @@ test("announcement editor loads mutable published content without using the reci
     jsonResponse({ items: [editable], pagination: page, board_revision: 4 }),
   );
   try {
-    const result = await listBoardAnnouncements(boardId, { view: "editable" });
+    const result = await listBoardPosts(boardId, { view: "editable" });
     expect(result.items[0]).toMatchObject({
-      id: announcementId,
+      id: postId,
       title: "Unpublished replacement",
       status: "published",
-      announcementRevision: 2,
+      postRevision: 2,
       publicationNumber: null,
     });
     expect(String(mock.requests[0]?.input)).toContain("view=editable");
@@ -145,7 +141,7 @@ test("announcement editor loads mutable published content without using the reci
   }
 });
 
-test("announcement draft read and writes preserve exclusive audience and UTC fields", async () => {
+test("post draft read and writes send UTC fields and no audience", async () => {
   const responses = [
     jsonResponse(draft),
     jsonResponse(mutation, 201),
@@ -155,79 +151,69 @@ test("announcement draft read and writes preserve exclusive audience and UTC fie
   const mock = installFetch(() => responses.shift()!);
   try {
     await expect(
-      readBoardAnnouncement(boardId, announcementId, "draft"),
+      readBoardPost(boardId, postId, "draft"),
     ).resolves.toMatchObject({
       status: "draft",
-      announcementRevision: 2,
+      postRevision: 2,
       publicationNumber: null,
       links: [{ label: "Draft", url: "https://example.org/draft" }],
     });
     await expect(
-      createBoardAnnouncement(boardId, {
+      createBoardPost(boardId, {
         boardRevision: 3,
         title: "  Opening  ",
         body: "  News  ",
-        audience: { kind: "department", departmentId },
         expiresAt: "2026-09-30T00:00:00Z",
         pinned: false,
         links: [{ label: "  Source  ", url: "  https://example.org/source  " }],
       }),
     ).resolves.toEqual({
-      id: announcementId,
-      announcementRevision: 2,
+      id: postId,
+      postRevision: 2,
       boardRevision: 4,
     });
     await expect(
-      updateBoardAnnouncement(boardId, announcementId, {
+      updateBoardPost(boardId, postId, {
         boardRevision: 4,
-        announcementRevision: 2,
+        postRevision: 2,
         title: "  Revised  ",
-        audience: { kind: "author" },
         expiresAt: null,
         links: [],
       }),
-    ).resolves.toMatchObject({ id: announcementId });
+    ).resolves.toMatchObject({ id: postId });
     await expect(
-      scheduleBoardAnnouncement(boardId, announcementId, {
+      scheduleBoardPost(boardId, postId, {
         boardRevision: 4,
-        announcementRevision: 2,
+        postRevision: 2,
         publishAt: "2026-09-30T00:00:00Z",
       }),
-    ).resolves.toMatchObject({ id: announcementId });
+    ).resolves.toMatchObject({ id: postId });
     expect(
       mock.requests.map(({ input, init }) => [String(input), init?.method]),
     ).toEqual([
-      [
-        `/api/boards/${boardId}/announcements/${announcementId}?view=draft`,
-        undefined,
-      ],
-      [`/api/boards/${boardId}/announcements`, "POST"],
-      [`/api/boards/${boardId}/announcements/${announcementId}`, "PATCH"],
-      [
-        `/api/boards/${boardId}/announcements/${announcementId}/schedule`,
-        "POST",
-      ],
+      [`/api/boards/${boardId}/posts/${postId}?view=draft`, undefined],
+      [`/api/boards/${boardId}/posts`, "POST"],
+      [`/api/boards/${boardId}/posts/${postId}`, "PATCH"],
+      [`/api/boards/${boardId}/posts/${postId}/schedule`, "POST"],
     ]);
     expect(JSON.parse(String(mock.requests[1]?.init?.body))).toEqual({
       board_revision: 3,
       title: "Opening",
       body: "News",
-      audience: { kind: "department", department_id: departmentId },
       expires_at: "2026-09-30T00:00:00Z",
       pinned: false,
       links: [{ label: "Source", url: "https://example.org/source" }],
     });
     expect(JSON.parse(String(mock.requests[2]?.init?.body))).toEqual({
       board_revision: 4,
-      announcement_revision: 2,
+      post_revision: 2,
       title: "Revised",
-      audience: { kind: "author" },
       expires_at: null,
       links: [],
     });
     expect(JSON.parse(String(mock.requests[3]?.init?.body))).toEqual({
       board_revision: 4,
-      announcement_revision: 2,
+      post_revision: 2,
       publish_at: "2026-09-30T00:00:00Z",
     });
     expect(mock.requests.every(({ init }) => init?.cache === "no-store")).toBe(
@@ -238,11 +224,11 @@ test("announcement draft read and writes preserve exclusive audience and UTC fie
   }
 });
 
-test("announcement publication keeps caller retry key and lifecycle sends revisions", async () => {
+test("post publication keeps caller retry key and lifecycle sends revisions", async () => {
   const responses = [
     jsonResponse({
       id: revisionId,
-      announcement_id: announcementId,
+      post_id: postId,
       publication_number: 1,
       publication_key: publicationKey,
       published_at: timestamp,
@@ -250,57 +236,53 @@ test("announcement publication keeps caller retry key and lifecycle sends revisi
     jsonResponse(mutation),
     jsonResponse(mutation),
     jsonResponse(mutation),
-    new Response(null, { status: 204 }),
+    jsonResponse({
+      id: postId,
+      outcome: "archived",
+      post_revision: 6,
+      board_revision: 8,
+    }),
   ];
   const mock = installFetch(() => responses.shift()!);
   try {
     await expect(
-      publishBoardAnnouncement(boardId, announcementId, {
+      publishBoardPost(boardId, postId, {
         boardRevision: 4,
-        announcementRevision: 2,
+        postRevision: 2,
         publicationKey,
       }),
     ).resolves.toMatchObject({
       id: revisionId,
-      announcementId,
+      postId,
       publicationNumber: 1,
       publicationKey,
     });
-    await unpublishBoardAnnouncement(boardId, announcementId, 4, 2);
-    await archiveBoardAnnouncement(boardId, announcementId, 5, 3);
-    await restoreBoardAnnouncement(boardId, announcementId, 6, 4);
-    await expect(
-      deleteBoardAnnouncement(boardId, announcementId, 7, 5),
-    ).resolves.toBeUndefined();
+    await unpublishBoardPost(boardId, postId, 4, 2);
+    await archiveBoardPost(boardId, postId, 5, 3);
+    await restoreBoardPost(boardId, postId, 6, 4);
+    await expect(deleteBoardPost(boardId, postId, 7, 5)).resolves.toEqual({
+      id: postId,
+      outcome: "archived",
+      postRevision: 6,
+      boardRevision: 8,
+    });
     expect(
       mock.requests.map(({ input, init }) => [String(input), init?.method]),
     ).toEqual([
-      [
-        `/api/boards/${boardId}/announcements/${announcementId}/publish`,
-        "POST",
-      ],
-      [
-        `/api/boards/${boardId}/announcements/${announcementId}/unpublish`,
-        "POST",
-      ],
-      [
-        `/api/boards/${boardId}/announcements/${announcementId}/archive`,
-        "POST",
-      ],
-      [
-        `/api/boards/${boardId}/announcements/${announcementId}/restore`,
-        "POST",
-      ],
-      [`/api/boards/${boardId}/announcements/${announcementId}`, "DELETE"],
+      [`/api/boards/${boardId}/posts/${postId}/publish`, "POST"],
+      [`/api/boards/${boardId}/posts/${postId}/unpublish`, "POST"],
+      [`/api/boards/${boardId}/posts/${postId}/archive`, "POST"],
+      [`/api/boards/${boardId}/posts/${postId}/restore`, "POST"],
+      [`/api/boards/${boardId}/posts/${postId}`, "DELETE"],
     ]);
     expect(JSON.parse(String(mock.requests[0]?.init?.body))).toEqual({
       board_revision: 4,
-      announcement_revision: 2,
+      post_revision: 2,
       publication_key: publicationKey,
     });
     expect(JSON.parse(String(mock.requests[4]?.init?.body))).toEqual({
       board_revision: 7,
-      announcement_revision: 5,
+      post_revision: 5,
     });
     expect(mock.requests.every(({ init }) => init?.cache === "no-store")).toBe(
       true,
@@ -310,36 +292,28 @@ test("announcement publication keeps caller retry key and lifecycle sends revisi
   }
 });
 
-test("announcement adapter rejects invalid IDs, audience combinations, UTC offsets, and empty patches before fetch", async () => {
+test("post adapter rejects invalid IDs, audience fields, UTC offsets, and empty patches before fetch", async () => {
   const mock = installFetch(() => jsonResponse(mutation));
   try {
-    await expect(listBoardAnnouncements("../outside")).rejects.toThrow();
+    await expect(listBoardPosts("../outside")).rejects.toThrow();
+    await expect(listBoardPosts(boardId, { limit: 101 })).rejects.toThrow();
     await expect(
-      listBoardAnnouncements(boardId, { limit: 101 }),
+      listBoardPosts(boardId, { authorId: "not-a-uuid" }),
     ).rejects.toThrow();
     await expect(
-      listBoardAnnouncements(boardId, { authorId: "not-a-uuid" }),
+      listBoardPosts(boardId, { deleted: "include" } as never),
     ).rejects.toThrow();
+    await expect(readBoardPost(boardId, "../outside")).rejects.toThrow();
     await expect(
-      listBoardAnnouncements(boardId, { deleted: "include" } as never),
-    ).rejects.toThrow();
-    await expect(
-      readBoardAnnouncement(boardId, "../outside"),
-    ).rejects.toThrow();
-    await expect(
-      createBoardAnnouncement(boardId, {
+      createBoardPost(boardId, {
         boardRevision: 1,
         title: "Notice",
         body: "Body",
-        audience: {
-          kind: "department",
-          departmentId,
-          userId: authorId,
-        } as never,
-      }),
+        audience: { kind: "everyone" },
+      } as never),
     ).rejects.toThrow();
     await expect(
-      createBoardAnnouncement(boardId, {
+      createBoardPost(boardId, {
         boardRevision: 1,
         title: "Notice",
         body: "Body",
@@ -347,22 +321,22 @@ test("announcement adapter rejects invalid IDs, audience combinations, UTC offse
       }),
     ).rejects.toThrow();
     await expect(
-      updateBoardAnnouncement(boardId, announcementId, {
+      updateBoardPost(boardId, postId, {
         boardRevision: 1,
-        announcementRevision: 1,
+        postRevision: 1,
       }),
     ).rejects.toThrow();
     await expect(
-      scheduleBoardAnnouncement(boardId, announcementId, {
+      scheduleBoardPost(boardId, postId, {
         boardRevision: 1,
-        announcementRevision: 1,
+        postRevision: 1,
         publishAt: "2026-09-30T08:00:00+08:00",
       }),
     ).rejects.toThrow();
     await expect(
-      publishBoardAnnouncement(boardId, announcementId, {
+      publishBoardPost(boardId, postId, {
         boardRevision: 1,
-        announcementRevision: 1,
+        postRevision: 1,
         publicationKey: "same-key",
       }),
     ).rejects.toThrow();
@@ -372,12 +346,13 @@ test("announcement adapter rejects invalid IDs, audience combinations, UTC offse
   }
 });
 
-test("announcement adapter fails closed on leaked or cross-Board DTOs and inconsistent publication fields", async () => {
+test("post adapter fails closed on leaked or cross-Board DTOs and inconsistent publication fields", async () => {
   for (const payload of [
     { ...published, private_token: "secret" },
     { ...published, board_id: authorId },
-    { ...published, announcement_revision: 2 },
-    { ...published, audience: { ...audience, user_id: authorId } },
+    { ...published, post_revision: 2 },
+    { ...published, audience: { kind: "everyone" } },
+    { ...published, edited: undefined },
     { ...published, links: undefined },
     { ...published, links: [{ label: "Unsafe", url: "javascript:alert(1)" }] },
     {
@@ -399,9 +374,9 @@ test("announcement adapter fails closed on leaked or cross-Board DTOs and incons
   ]) {
     const mock = installFetch(() => jsonResponse(payload));
     try {
-      await expect(
-        readBoardAnnouncement(boardId, announcementId),
-      ).rejects.toBeInstanceOf(ApiContractError);
+      await expect(readBoardPost(boardId, postId)).rejects.toBeInstanceOf(
+        ApiContractError,
+      );
     } finally {
       mock.restore();
     }
@@ -414,7 +389,7 @@ test("announcement adapter fails closed on leaked or cross-Board DTOs and incons
     }),
   );
   try {
-    await expect(listBoardAnnouncements(boardId)).rejects.toBeInstanceOf(
+    await expect(listBoardPosts(boardId)).rejects.toBeInstanceOf(
       ApiContractError,
     );
   } finally {
@@ -423,7 +398,7 @@ test("announcement adapter fails closed on leaked or cross-Board DTOs and incons
   const mismatchedPublication = installFetch(() =>
     jsonResponse({
       id: revisionId,
-      announcement_id: authorId,
+      post_id: authorId,
       publication_number: 1,
       publication_key: publicationKey,
       published_at: timestamp,
@@ -431,9 +406,9 @@ test("announcement adapter fails closed on leaked or cross-Board DTOs and incons
   );
   try {
     await expect(
-      publishBoardAnnouncement(boardId, announcementId, {
+      publishBoardPost(boardId, postId, {
         boardRevision: 4,
-        announcementRevision: 2,
+        postRevision: 2,
         publicationKey,
       }),
     ).rejects.toBeInstanceOf(ApiContractError);
@@ -442,7 +417,7 @@ test("announcement adapter fails closed on leaked or cross-Board DTOs and incons
   }
 });
 
-test("announcement link input rejects unsafe and oversized values before fetch", async () => {
+test("post link input rejects unsafe and oversized values before fetch", async () => {
   const mock = installFetch(() => jsonResponse(mutation));
   try {
     for (const links of [
@@ -456,7 +431,7 @@ test("announcement link input rejects unsafe and oversized values before fetch",
       })),
     ]) {
       await expect(
-        createBoardAnnouncement(boardId, {
+        createBoardPost(boardId, {
           boardRevision: 3,
           title: "Notice",
           body: "Body",
@@ -470,13 +445,13 @@ test("announcement link input rejects unsafe and oversized values before fetch",
   }
 });
 
-test("announcement adapter redacts hidden server detail but retains known safe conflicts", async () => {
-  const secret = "hidden announcement body and internal row";
+test("post adapter redacts hidden server detail but retains known safe conflicts", async () => {
+  const secret = "hidden post body and internal row";
   const conflict = installFetch(() =>
     jsonResponse(
       {
         detail: {
-          code: "stale_announcement_revision",
+          code: "stale_post_revision",
           message: secret,
           current_revision: 17,
         },
@@ -485,9 +460,9 @@ test("announcement adapter redacts hidden server detail but retains known safe c
     ),
   );
   try {
-    const error = await updateBoardAnnouncement(boardId, announcementId, {
+    const error = await updateBoardPost(boardId, postId, {
       boardRevision: 3,
-      announcementRevision: 1,
+      postRevision: 1,
       title: "New title",
     }).then(
       () => null,
@@ -496,8 +471,8 @@ test("announcement adapter redacts hidden server detail but retains known safe c
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({
       status: 409,
-      code: "stale_announcement_revision",
-      message: "Announcement changed; reload before saving",
+      code: "stale_post_revision",
+      message: "Post changed; reload before saving",
     });
     expect(JSON.stringify(error)).not.toContain(secret);
     expect(JSON.stringify(error)).not.toContain("current_revision");
@@ -506,9 +481,7 @@ test("announcement adapter redacts hidden server detail but retains known safe c
   }
   const denied = installFetch(() => jsonResponse({ detail: secret }, 404));
   try {
-    await expect(
-      readBoardAnnouncement(boardId, announcementId),
-    ).rejects.toMatchObject({
+    await expect(readBoardPost(boardId, postId)).rejects.toMatchObject({
       status: 404,
       message: "Request could not be completed",
     });
@@ -517,27 +490,136 @@ test("announcement adapter redacts hidden server detail but retains known safe c
   }
   const deleteConflict = installFetch(() =>
     jsonResponse(
-      { detail: { code: "announcement_not_archived", message: secret } },
+      { detail: { code: "post_not_archived", message: secret } },
       409,
     ),
   );
   try {
-    const error = await deleteBoardAnnouncement(
-      boardId,
-      announcementId,
-      4,
-      2,
-    ).then(
+    const error = await deleteBoardPost(boardId, postId, 4, 2).then(
       () => null,
       (reason: unknown) => reason,
     );
     expect(error).toMatchObject({
       status: 409,
-      code: "announcement_not_archived",
-      message: "Archive the announcement first",
+      code: "post_not_archived",
+      message: "Archive the post first",
     });
     expect(JSON.stringify(error)).not.toContain(secret);
   } finally {
     deleteConflict.restore();
+  }
+});
+
+test("post delete reports whether the post was deleted or archived", async () => {
+  for (const [body, valid] of [
+    [
+      {
+        id: postId,
+        outcome: "deleted",
+        post_revision: null,
+        board_revision: 5,
+      },
+      true,
+    ],
+    [
+      { id: postId, outcome: "deleted", post_revision: 3, board_revision: 5 },
+      false,
+    ],
+    [
+      {
+        id: postId,
+        outcome: "archived",
+        post_revision: null,
+        board_revision: 5,
+      },
+      false,
+    ],
+    [
+      {
+        id: authorId,
+        outcome: "deleted",
+        post_revision: null,
+        board_revision: 5,
+      },
+      false,
+    ],
+  ] as const) {
+    const mock = installFetch(() => jsonResponse(body));
+    try {
+      const result = deleteBoardPost(boardId, postId, 4, 2);
+      if (valid)
+        await expect(result).resolves.toEqual({
+          id: postId,
+          outcome: "deleted",
+          postRevision: null,
+          boardRevision: 5,
+        });
+      else await expect(result).rejects.toBeInstanceOf(ApiContractError);
+    } finally {
+      mock.restore();
+    }
+  }
+});
+
+test("post revision history lists published versions and reads one", async () => {
+  const summary = {
+    id: revisionId,
+    post_id: postId,
+    publication_number: 2,
+    author_id: authorId,
+    title: "Second version",
+    published_at: timestamp,
+  };
+  const responses = [
+    jsonResponse({ post_id: postId, items: [summary] }),
+    jsonResponse({
+      ...summary,
+      body: "Second body",
+      links: [],
+      expires_at: null,
+    }),
+  ];
+  const mock = installFetch(() => responses.shift()!);
+  try {
+    await expect(listBoardPostRevisions(boardId, postId)).resolves.toEqual({
+      postId,
+      items: [
+        {
+          id: revisionId,
+          postId,
+          publicationNumber: 2,
+          authorId,
+          title: "Second version",
+          publishedAt: timestamp,
+        },
+      ],
+    });
+    await expect(
+      readBoardPostRevision(boardId, postId, revisionId),
+    ).resolves.toMatchObject({
+      id: revisionId,
+      publicationNumber: 2,
+      body: "Second body",
+      expiresAt: null,
+    });
+    expect(mock.requests.map(({ input }) => String(input))).toEqual([
+      `/api/boards/${boardId}/posts/${postId}/revisions`,
+      `/api/boards/${boardId}/posts/${postId}/revisions/${revisionId}`,
+    ]);
+  } finally {
+    mock.restore();
+  }
+  const foreign = installFetch(() =>
+    jsonResponse({
+      post_id: postId,
+      items: [{ ...summary, post_id: authorId }],
+    }),
+  );
+  try {
+    await expect(
+      listBoardPostRevisions(boardId, postId),
+    ).rejects.toBeInstanceOf(ApiContractError);
+  } finally {
+    foreign.restore();
   }
 });

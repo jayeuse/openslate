@@ -28,7 +28,7 @@ const otherId = "00000000-0000-4000-8000-000000000004";
 const userId = "00000000-0000-4000-8000-000000000005";
 const timestamp = "2026-09-23T00:00:00Z";
 
-function widget(audience: BoardWidget["audience"]): BoardWidget {
+function widget(): BoardWidget {
   return {
     id: widgetId,
     boardId,
@@ -47,70 +47,54 @@ function widget(audience: BoardWidget["audience"]): BoardWidget {
       refresh: "manual",
       pinned: false,
     },
-    audience,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
 }
 
-test("new summary widget stays private unless Everyone is explicitly selected", () => {
-  const privateInput = createSummaryWidgetInput(
-    "Open requests",
-    moduleId,
-    false,
-  );
-  expect(privateInput.audience).toEqual({ kind: "private" });
-  expect(privateInput.widgetType).toBe("summary");
-  expect(privateInput.config.pinned).toBe(false);
-  expect(
-    createSummaryWidgetInput("Open requests", moduleId, true).audience,
-  ).toEqual({
-    kind: "everyone",
-  });
+test("new summary widget has no audience and starts unpinned", () => {
+  const input = createSummaryWidgetInput("  Open requests  ", moduleId);
+  expect(input).not.toHaveProperty("audience");
+  expect(input.name).toBe("Open requests");
+  expect(input.widgetType).toBe("summary");
+  expect(input.config.pinned).toBe(false);
 });
 
-test("settings edits preserve targeted audience and unrelated config exactly", () => {
-  for (const audience of [
-    { kind: "user" as const, userId },
-    { kind: "private" as const, userId: null },
-  ]) {
-    const source = widget(audience);
-    const draft = {
-      ...draftFromBoardWidget(source),
-      name: "Updated safety requests",
-      size: "full" as const,
-      pinned: true,
-    };
-    const input = updateInputForWidgetDraft(source, draft);
-    expect(input.audience).toEqual(
-      audience.kind === "user" ? { kind: "user", userId } : { kind: "private" },
-    );
-    expect(input.config).toEqual({
-      ...source.config,
-      size: "full",
-      pinned: true,
-    });
-    expect(input.moduleId).toBe(moduleId);
-    expect(input.widgetType).toBe("records");
-  }
+test("settings edits keep unrelated config exactly", () => {
+  const source = widget();
+  const draft = {
+    ...draftFromBoardWidget(source),
+    name: "Updated safety requests",
+    size: "full" as const,
+    pinned: true,
+  };
+  const input = updateInputForWidgetDraft(source, draft);
+  expect(input).not.toHaveProperty("audience");
+  expect(input.config).toEqual({
+    ...source.config,
+    size: "full",
+    pinned: true,
+  });
+  expect(input.moduleId).toBe(moduleId);
+  expect(input.widgetType).toBe("records");
 });
 
 test("conflict retains a draft only while its source widget is still visible", () => {
-  const source = widget({ kind: "private", userId: null });
+  const source = widget();
   const draft = { ...draftFromBoardWidget(source), name: "Unsaved local name" };
   expect(retainWidgetDraftAfterConflict(draft, [source])).toEqual(draft);
   expect(retainWidgetDraftAfterConflict(draft, [])).toBeNull();
   const changed = {
     ...source,
-    audience: { kind: "everyone" as const, userId: null },
+    config: { ...source.config, refresh: "one-minute" as const },
   };
   const retained = retainWidgetDraftAfterConflict(draft, [changed]);
   expect(retained).toEqual(draft);
   expect(() => updateInputForWidgetDraft(changed, draft)).toThrow();
 });
 
-test("Board switch and denial clear private widget metadata and drafts", () => {
-  const source = widget({ kind: "private", userId: null });
+test("Board switch and denial clear widget metadata and drafts", () => {
+  const source = widget();
   const draft = {
     ...draftFromBoardWidget(source),
     name: "Unsaved private name",
@@ -123,9 +107,17 @@ test("Board switch and denial clear private widget metadata and drafts", () => {
   const ready = {
     key: boardId,
     status: "ready" as const,
-    snapshot: { page, access: { view: true, edit: true, manage: false } },
+    snapshot: {
+      page,
+      access: {
+        level: "manage" as const,
+        view: true,
+        edit: true,
+        manage: true,
+      },
+    },
     draft,
-    summary: { name: "Private summary", moduleId, everyone: false },
+    summary: { name: "Draft summary", moduleId },
     pending: false,
     conflict: false,
     archiveLocked: false,
@@ -136,7 +128,7 @@ test("Board switch and denial clear private widget metadata and drafts", () => {
   const switched = beginWidgetManagerState(ready, userId);
   expect(switched.snapshot).toBeNull();
   expect(switched.draft).toBeNull();
-  expect(switched.summary).toEqual({ name: "", moduleId: "", everyone: false });
+  expect(switched.summary).toEqual({ name: "", moduleId: "" });
   const denied = deniedWidgetManagerState(boardId);
   expect(denied.snapshot).toBeNull();
   expect(denied.draft).toBeNull();
@@ -153,13 +145,13 @@ test("widget denial revokes parent Board only after independent VIEW loss confir
       return Promise.resolve(
         Response.json({
           id: boardId,
-          owner_id: userId,
+          scope: "project",
           department_id: null,
           name: "Still visible",
           description: null,
           status: "active",
-          default_section: "overview",
           revision: 4,
+          level: "read",
           created_at: timestamp,
           updated_at: timestamp,
         }),
@@ -234,13 +226,16 @@ test("unconfirmed or stale Board VIEW probes never revoke parent detail", async 
 });
 
 test("remote Board archive locks every widget mutation until Board status is restored", () => {
-  const source = widget({ kind: "private", userId: null });
+  const source = widget();
   const page: BoardWidgetPage = {
     items: [source],
     pagination: { limit: 12, offset: 0, count: 1, total: 1, hasMore: false },
     boardRevision: 5,
   };
-  const snapshot = { page, access: { view: true, edit: true, manage: false } };
+  const snapshot = {
+    page,
+    access: { level: "manage" as const, view: true, edit: true, manage: true },
+  };
   const ready = {
     ...beginWidgetManagerState(deniedWidgetManagerState(boardId), boardId),
     status: "ready" as const,
@@ -271,7 +266,7 @@ test("remote Board archive locks every widget mutation until Board status is res
 });
 
 test("stale settings conflict retains draft and pauses all mutation controls until cancel", () => {
-  const source = widget({ kind: "user", userId });
+  const source = widget();
   const originalPage: BoardWidgetPage = {
     items: [source],
     pagination: { limit: 12, offset: 0, count: 1, total: 1, hasMore: false },
@@ -282,7 +277,12 @@ test("stale settings conflict retains draft and pauses all mutation controls unt
     status: "ready" as const,
     snapshot: {
       page: originalPage,
-      access: { view: true, edit: true, manage: false },
+      access: {
+        level: "manage" as const,
+        view: true,
+        edit: true,
+        manage: true,
+      },
     },
     draft: { ...draftFromBoardWidget(source), name: "Unsaved edit" },
   };
@@ -313,7 +313,7 @@ test("stale settings conflict retains draft and pauses all mutation controls unt
   expect(canMutateBoardWidgets(cancelled, true)).toBe(true);
 });
 
-test("management metadata uses Board access and only a complete visible widget page", async () => {
+test("management metadata uses Board access and a complete widget page", async () => {
   const original = globalThis.fetch;
   const paths: string[] = [];
   globalThis.fetch = ((input: RequestInfo | URL) => {
@@ -321,7 +321,12 @@ test("management metadata uses Board access and only a complete visible widget p
     paths.push(path);
     if (path.endsWith("/my-access"))
       return Promise.resolve(
-        Response.json({ view: true, edit: true, manage: false }),
+        Response.json({
+          level: "manage",
+          read: true,
+          write: true,
+          manage: true,
+        }),
       );
     return Promise.resolve(
       Response.json({
@@ -344,7 +349,6 @@ test("management metadata uses Board access and only a complete visible widget p
               refresh: "manual",
               pinned: false,
             },
-            audience: { kind: "private", user_id: null },
             created_at: timestamp,
             updated_at: timestamp,
           },
@@ -363,7 +367,12 @@ test("management metadata uses Board access and only a complete visible widget p
   try {
     const snapshot = await loadWidgetManagementSnapshot(boardId);
     expect(snapshot.page.boardRevision).toBe(7);
-    expect(snapshot.access.edit).toBe(true);
+    expect(snapshot.access).toEqual({
+      level: "manage",
+      view: true,
+      edit: true,
+      manage: true,
+    });
     expect(paths).toEqual([
       `/api/boards/${boardId}/my-access`,
       `/api/boards/${boardId}/widgets?limit=12&offset=0&sort_by=position&sort_order=asc`,
@@ -373,8 +382,8 @@ test("management metadata uses Board access and only a complete visible widget p
   }
 });
 
-test("reorder acts on only visible widget IDs in the server page", () => {
-  const first = widget({ kind: "everyone", userId: null });
+test("reorder acts on the widget IDs in the server page", () => {
+  const first = widget();
   const second = { ...first, id: userId, position: 2 };
   const third = { ...first, id: otherId, position: 4 };
   const page: BoardWidgetPage = {
@@ -395,8 +404,8 @@ test("reorder acts on only visible widget IDs in the server page", () => {
   expect(reorderVisibleWidgetIds(page, first.id, -1)).toBeNull();
 });
 
-test("save uses the listed Board revision and keeps the exact user audience", async () => {
-  const source = widget({ kind: "user", userId });
+test("save uses the listed Board revision and sends no audience", async () => {
+  const source = widget();
   const page: BoardWidgetPage = {
     items: [source],
     pagination: { limit: 12, offset: 0, count: 1, total: 1, hasMore: false },
@@ -430,7 +439,6 @@ test("save uses the listed Board revision and keeps the exact user audience", as
             refresh: "manual",
             pinned: false,
           },
-          audience: { kind: "user", user_id: userId },
           created_at: timestamp,
           updated_at: timestamp,
         },
@@ -449,10 +457,7 @@ test("save uses the listed Board revision and keeps the exact user audience", as
         method: "PATCH",
         body: expect.objectContaining({
           revision: 11,
-          widget: expect.objectContaining({
-            name: "New title",
-            audience: { kind: "user", user_id: userId },
-          }),
+          widget: expect.objectContaining({ name: "New title" }),
         }),
       },
     ]);
@@ -488,4 +493,28 @@ test("source chooser reads active OpenView catalog page rather than accepting a 
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test("only Board managers may change widgets", () => {
+  const page: BoardWidgetPage = {
+    items: [widget()],
+    pagination: { limit: 12, offset: 0, count: 1, total: 1, hasMore: false },
+    boardRevision: 3,
+  };
+  const ready = (level: "read" | "write" | "manage") => ({
+    ...beginWidgetManagerState(deniedWidgetManagerState(boardId), boardId),
+    status: "ready" as const,
+    snapshot: {
+      page,
+      access: {
+        level,
+        view: true,
+        edit: level !== "read",
+        manage: level === "manage",
+      },
+    },
+  });
+  expect(canMutateBoardWidgets(ready("read"), true)).toBe(false);
+  expect(canMutateBoardWidgets(ready("write"), true)).toBe(false);
+  expect(canMutateBoardWidgets(ready("manage"), true)).toBe(true);
 });

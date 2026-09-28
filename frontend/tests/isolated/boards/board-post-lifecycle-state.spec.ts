@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { ApiError } from "../../../src/lib/api";
 import {
-  announcementLifecycleFailure,
+  postLifecycleFailure,
   notifyIfBoardViewLost,
-} from "../../../src/components/systems/boards/hooks/use-server-board-announcement-lifecycle";
-import type { AnnouncementLifecycleView } from "../../../src/components/systems/boards/components/server-backed-board-announcement-lifecycle";
+} from "../../../src/components/systems/boards/hooks/use-server-board-post-lifecycle";
+import type { PostLifecycleView } from "../../../src/components/systems/boards/components/server-backed-board-post-lifecycle";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const itemId = "00000000-0000-4000-8000-000000000002";
@@ -13,7 +13,7 @@ const page = {
   boardRevision: 7,
   pagination: { limit: 25, offset: 0, count: 0, total: 0, hasMore: false },
 };
-const ready: AnnouncementLifecycleView = {
+const ready: PostLifecycleView = {
   status: "ready",
   active: true,
   canManage: true,
@@ -26,15 +26,15 @@ const ready: AnnouncementLifecycleView = {
   confirmation: {
     kind: "archive",
     boardId,
-    announcementId: itemId,
+    postId: itemId,
     title: "Private title",
     boardRevision: 7,
-    announcementRevision: 2,
+    postRevision: 2,
   },
 };
 
 test("a conflict discards stale private list and confirmation before retry", () => {
-  const failed = announcementLifecycleFailure(
+  const failed = postLifecycleFailure(
     ready,
     new ApiError(409, "stale revision"),
   );
@@ -51,10 +51,7 @@ test("a conflict discards stale private list and confirmation before retry", () 
 
 test("a content denial clears content without assuming Board VIEW was lost", () => {
   for (const status of [401, 403, 404]) {
-    const failed = announcementLifecycleFailure(
-      ready,
-      new ApiError(status, "hidden"),
-    );
+    const failed = postLifecycleFailure(ready, new ApiError(status, "hidden"));
     expect(failed).toMatchObject({
       status: "denied",
       canManage: false,

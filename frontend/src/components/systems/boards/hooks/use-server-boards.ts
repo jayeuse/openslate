@@ -5,18 +5,15 @@ import type { Route } from "next";
 import { z } from "zod";
 import { ApiError } from "@/lib/api";
 import {
-  getBoardPersonalState,
   listBoards,
   readBoard,
-  setBoardFavorite,
-  setBoardHome,
   type BoardManagementBoard,
   type BoardManagementPage,
-  type BoardPersonalState,
+  type BoardScope,
 } from "../adapters/board-management-api";
 
 const uuidSchema = z.string().uuid();
-const SECTIONS = ["overview", "calendar", "announcements"] as const;
+const SECTIONS = ["overview", "calendar", "posts"] as const;
 export type BoardSection = (typeof SECTIONS)[number];
 export type BoardListStatus = "active" | "archived" | "all";
 export type BoardRoute =
@@ -25,7 +22,7 @@ export type BoardRoute =
   | { kind: "invalid-board"; section: BoardSection | null };
 export type BoardCandidate = {
   id: string;
-  source: "explicit" | "home" | "list";
+  source: "explicit" | "list";
 };
 
 export function parseBoardRoute(search: string): BoardRoute {
@@ -42,25 +39,28 @@ export function parseBoardRoute(search: string): BoardRoute {
   return { kind: "board", boardId: boards[0], section };
 }
 
+/**
+ * Opens the Board in the address, else the company Board, else the first
+ * active Board in the list.
+ */
 export function chooseBoardCandidate(
   route: BoardRoute,
-  boards: readonly { id: string; status: "active" | "archived" }[],
-  homeBoardId: string | null,
-  rejectedHomeId: string | null,
+  boards: readonly {
+    id: string;
+    scope: BoardScope;
+    status: "active" | "archived";
+  }[],
 ): BoardCandidate | null {
   if (route.kind === "invalid-board") return null;
   if (route.kind === "board") return { id: route.boardId, source: "explicit" };
-  if (homeBoardId && homeBoardId !== rejectedHomeId)
-    return { id: homeBoardId, source: "home" };
-  const firstActive = boards.find((board) => board.status === "active");
-  return firstActive ? { id: firstActive.id, source: "list" } : null;
+  const active = boards.filter((board) => board.status === "active");
+  const first =
+    active.find((board) => board.scope === "company") ?? active[0] ?? null;
+  return first ? { id: first.id, source: "list" } : null;
 }
 
-export function resolveBoardSection(
-  route: BoardRoute,
-  board: { defaultSection: BoardSection } | null,
-): BoardSection {
-  return route.section ?? board?.defaultSection ?? "overview";
+export function resolveBoardSection(route: BoardRoute): BoardSection {
+  return route.section ?? "overview";
 }
 
 export function boardUrl(boardId: string, section: BoardSection): Route {
@@ -148,16 +148,14 @@ type ResourceSetter<T> = (
   update: (current: ResourceState<T>) => ResourceState<T>,
 ) => void;
 
-function invalidateBoardResourceAccess<L, P, D>(
-  sequences: { list: SequenceRef; personal: SequenceRef; detail: SequenceRef },
+function invalidateBoardResourceAccess<L, D>(
+  sequences: { list: SequenceRef; detail: SequenceRef },
   setters: {
     list: ResourceSetter<L>;
-    personal: ResourceSetter<P>;
     detail: ResourceSetter<D>;
   },
 ): void {
   const listSequence = ++sequences.list.current;
-  const personalSequence = ++sequences.personal.current;
   const detailSequence = ++sequences.detail.current;
   setters.list((current) => ({
     ...current,
@@ -165,13 +163,6 @@ function invalidateBoardResourceAccess<L, P, D>(
     data: null,
     status: "error",
     error: "Board access changed. Refresh the Board list.",
-  }));
-  setters.personal((current) => ({
-    ...current,
-    sequence: personalSequence,
-    data: null,
-    status: "error",
-    error: "Board preferences are unavailable. Retry to refresh them.",
   }));
   setters.detail((current) => ({
     ...current,
@@ -182,12 +173,11 @@ function invalidateBoardResourceAccess<L, P, D>(
   }));
 }
 
-export function invalidateBoardResourcesIfAuthorizationDenied<L, P, D>(
+export function invalidateBoardResourcesIfAuthorizationDenied<L, D>(
   error: unknown,
-  sequences: { list: SequenceRef; personal: SequenceRef; detail: SequenceRef },
+  sequences: { list: SequenceRef; detail: SequenceRef },
   setters: {
     list: ResourceSetter<L>;
-    personal: ResourceSetter<P>;
     detail: ResourceSetter<D>;
   },
 ): boolean {
@@ -200,16 +190,9 @@ export function boardListKey(
   status: BoardListStatus,
   offset: number,
   search: string | null,
-  departmentId: string | null = null,
-  favoritesOnly = false,
+  scope: BoardScope | null = null,
 ): string {
-  return JSON.stringify([
-    status,
-    offset,
-    search ?? "",
-    departmentId ?? "",
-    favoritesOnly,
-  ]);
+  return JSON.stringify([status, offset, search ?? "", scope ?? ""]);
 }
 
 export function useServerBoardsResource(
@@ -217,47 +200,29 @@ export function useServerBoardsResource(
   status: BoardListStatus,
   offset: number,
   search: string | null,
-  departmentId: string | null,
-  favoritesOnly: boolean,
+  scope: BoardScope | null,
 ) {
   const [list, setList] =
     useState<ResourceState<BoardManagementPage>>(emptyResource);
-  const [personal, setPersonal] =
-    useState<ResourceState<BoardPersonalState>>(emptyResource);
   const [detail, setDetail] =
     useState<ResourceState<BoardManagementBoard>>(emptyResource);
-  const [rejectedHomeId, setRejectedHomeId] = useState<string | null>(null);
   const [listRetry, setListRetry] = useState(0);
-  const [personalRetry, setPersonalRetry] = useState(0);
   const [detailRetry, setDetailRetry] = useState(0);
-  const [preferencePending, setPreferencePending] = useState(false);
-  const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const listSequence = useRef(0);
-  const personalSequence = useRef(0);
   const detailSequence = useRef(0);
-  const pendingPreference = useRef(false);
-  const mounted = useRef(false);
 
   const invalidateAccess = useCallback((error: unknown) => {
     return invalidateBoardResourcesIfAuthorizationDenied(
       error,
-      {
-        list: listSequence,
-        personal: personalSequence,
-        detail: detailSequence,
-      },
-      { list: setList, personal: setPersonal, detail: setDetail },
+      { list: listSequence, detail: detailSequence },
+      { list: setList, detail: setDetail },
     );
   }, []);
 
   const revokeAccess = useCallback(() => {
     invalidateBoardResourceAccess(
-      {
-        list: listSequence,
-        personal: personalSequence,
-        detail: detailSequence,
-      },
-      { list: setList, personal: setPersonal, detail: setDetail },
+      { list: listSequence, detail: detailSequence },
+      { list: setList, detail: setDetail },
     );
   }, []);
 
@@ -268,20 +233,7 @@ export function useServerBoardsResource(
     );
   }, []);
 
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  const listKey = boardListKey(
-    status,
-    offset,
-    search,
-    departmentId,
-    favoritesOnly,
-  );
+  const listKey = boardListKey(status, offset, search, scope);
   useEffect(() => {
     const sequence = ++listSequence.current;
     setList((current) =>
@@ -292,8 +244,7 @@ export function useServerBoardsResource(
       limit: 25,
       offset,
       ...(search ? { search } : {}),
-      ...(departmentId ? { departmentId } : {}),
-      favoritesOnly,
+      ...(scope ? { scope } : {}),
     })
       .then((data) => {
         if (sequence !== listSequence.current) return;
@@ -337,85 +288,10 @@ export function useServerBoardsResource(
     return () => {
       listSequence.current += 1;
     };
-  }, [
-    listKey,
-    status,
-    offset,
-    search,
-    departmentId,
-    favoritesOnly,
-    listRetry,
-    invalidateAccess,
-  ]);
+  }, [listKey, status, offset, search, scope, listRetry, invalidateAccess]);
 
-  useEffect(() => {
-    const sequence = ++personalSequence.current;
-    setPersonal((current) =>
-      transitionResource(current, {
-        type: "begin",
-        key: "personal",
-        sequence,
-      }),
-    );
-    void getBoardPersonalState()
-      .then((data) => {
-        if (sequence !== personalSequence.current) return;
-        setPersonal((current) =>
-          transitionResource(current, {
-            type: "resolve",
-            key: "personal",
-            sequence,
-            data,
-          }),
-        );
-      })
-      .catch((error: unknown) => {
-        if (sequence !== personalSequence.current) return;
-        if (invalidateAccess(error)) return;
-        const denied = accessDenied(error);
-        setPersonal((current) =>
-          transitionResource(current, {
-            type: "reject",
-            key: "personal",
-            sequence,
-            error:
-              "Board preferences could not be loaded. Retry to refresh them.",
-            denied,
-          }),
-        );
-        if (denied) {
-          const detailRequest = ++detailSequence.current;
-          setDetail((current) =>
-            current.key
-              ? {
-                  ...current,
-                  sequence: detailRequest,
-                  data: null,
-                  status: "error",
-                  error: "Board unavailable. Choose another Board or retry.",
-                }
-              : current,
-          );
-        }
-      });
-    return () => {
-      personalSequence.current += 1;
-    };
-  }, [personalRetry, invalidateAccess]);
-
-  const personalResolved =
-    personal.data !== null ||
-    (personal.status !== "idle" && personal.status !== "loading");
   const listItems = list.key === listKey ? (list.data?.items ?? []) : [];
-  const candidate =
-    route.kind === "none" && !personalResolved
-      ? null
-      : chooseBoardCandidate(
-          route,
-          listItems,
-          personal.data?.homeBoardId ?? null,
-          rejectedHomeId,
-        );
+  const candidate = chooseBoardCandidate(route, listItems);
   const candidateId = candidate?.id ?? null;
   const candidateSource = candidate?.source ?? null;
 
@@ -436,10 +312,6 @@ export function useServerBoardsResource(
     void readBoard(candidateId)
       .then((data) => {
         if (sequence !== detailSequence.current) return;
-        if (candidateSource === "home" && data.status !== "active") {
-          setRejectedHomeId(candidateId);
-          return;
-        }
         setDetail((current) =>
           transitionResource(current, {
             type: "resolve",
@@ -452,14 +324,6 @@ export function useServerBoardsResource(
       .catch((error: unknown) => {
         if (sequence !== detailSequence.current) return;
         if (invalidateAccess(error)) return;
-        if (
-          candidateSource === "home" &&
-          error instanceof ApiError &&
-          error.status === 404
-        ) {
-          setRejectedHomeId(candidateId);
-          return;
-        }
         if (accessDenied(error)) {
           setList((current) =>
             current.data?.items.some((board) => board.id === candidateId)
@@ -490,114 +354,19 @@ export function useServerBoardsResource(
   }, [candidateId, candidateSource, detailRetry, invalidateAccess]);
 
   const refresh = useCallback(() => {
-    setRejectedHomeId(null);
     setListRetry((value) => value + 1);
-    setPersonalRetry((value) => value + 1);
     setDetailRetry((value) => value + 1);
   }, []);
 
-  const updatePersonal = useCallback(
-    async (
-      targetBoardId: string | null,
-      operation: () => Promise<BoardPersonalState>,
-    ): Promise<boolean> => {
-      if (pendingPreference.current) return false;
-      pendingPreference.current = true;
-      setPreferencePending(true);
-      setPreferenceError(null);
-      const sequence = ++personalSequence.current;
-      setPersonal((current) =>
-        transitionResource(current, {
-          type: "begin",
-          key: "personal",
-          sequence,
-        }),
-      );
-      try {
-        const data = await operation();
-        if (mounted.current && sequence === personalSequence.current) {
-          setPersonal((current) =>
-            transitionResource(current, {
-              type: "resolve",
-              key: "personal",
-              sequence,
-              data,
-            }),
-          );
-        }
-        return true;
-      } catch (error) {
-        if (mounted.current && sequence === personalSequence.current) {
-          const denied = accessDenied(error);
-          const globallyDenied = invalidateAccess(error);
-          if (!globallyDenied) {
-            setPersonal((current) =>
-              transitionResource(current, {
-                type: "reject",
-                key: "personal",
-                sequence,
-                error: "Board preferences could not be saved. Try again.",
-                denied,
-              }),
-            );
-          }
-          setPreferenceError(
-            "Board preferences could not be saved. Try again.",
-          );
-          if (denied && !globallyDenied && targetBoardId) {
-            const detailRequest = ++detailSequence.current;
-            setDetail((current) =>
-              current.key === targetBoardId
-                ? {
-                    ...current,
-                    sequence: detailRequest,
-                    data: null,
-                    status: "error",
-                    error: "Board unavailable. Choose another Board or retry.",
-                  }
-                : current,
-            );
-          }
-        }
-        return false;
-      } finally {
-        pendingPreference.current = false;
-        if (mounted.current) setPreferencePending(false);
-      }
-    },
-    [invalidateAccess],
-  );
-
-  const saveFavorite = useCallback(
-    async (boardId: string, favorite: boolean) => {
-      const saved = await updatePersonal(boardId, () =>
-        setBoardFavorite(boardId, favorite),
-      );
-      if (saved && mounted.current) setListRetry((value) => value + 1);
-      return saved;
-    },
-    [updatePersonal],
-  );
-  const saveHome = useCallback(
-    (boardId: string | null) =>
-      updatePersonal(boardId, () => setBoardHome(boardId)),
-    [updatePersonal],
-  );
-
   return {
     list,
-    personal,
     detail,
     candidate,
     selectedBoard:
       candidateId && detail.key === candidateId ? detail.data : null,
     listItems,
-    preferencePending,
-    preferenceError,
     applyBoardMutation,
     refresh,
     revokeAccess,
-    saveFavorite,
-    saveHome,
   };
 }

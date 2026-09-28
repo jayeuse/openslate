@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { ApiContractError, ApiError } from "../../../src/lib/api";
-import { listBoardAnnouncementAuthors } from "../../../src/components/systems/boards/adapters/board-announcement-author-api";
+import { listBoardPostAuthors } from "../../../src/components/systems/boards/adapters/board-post-author-api";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const firstId = "00000000-0000-4000-8000-000000000002";
@@ -32,12 +32,12 @@ test("author choices use one private bounded Board read and only returned labels
     ]),
   );
   try {
-    const choices = await listBoardAnnouncementAuthors(boardId);
+    const choices = await listBoardPostAuthors(boardId);
     expect(choices).toEqual([
       { id: firstId, label: "Avery" },
       { id: secondId, label: "Jordan" },
     ]);
-    expect(mock.paths).toEqual([`/api/boards/${boardId}/announcement-authors`]);
+    expect(mock.paths).toEqual([`/api/boards/${boardId}/post-authors`]);
     expect(mock.initValues[0]?.cache).toBe("no-store");
   } finally {
     mock.restore();
@@ -52,7 +52,7 @@ test("author choices reject fabricated, duplicate, and oversized data without le
     ]),
   );
   try {
-    await expect(listBoardAnnouncementAuthors(boardId)).rejects.toBeInstanceOf(
+    await expect(listBoardPostAuthors(boardId)).rejects.toBeInstanceOf(
       ApiContractError,
     );
   } finally {
@@ -68,7 +68,7 @@ test("author choices reject fabricated, duplicate, and oversized data without le
     ),
   );
   try {
-    await expect(listBoardAnnouncementAuthors(boardId)).rejects.toBeInstanceOf(
+    await expect(listBoardPostAuthors(boardId)).rejects.toBeInstanceOf(
       ApiContractError,
     );
   } finally {
@@ -79,10 +79,10 @@ test("author choices reject fabricated, duplicate, and oversized data without le
     Response.json({ detail: "Hidden author name" }, { status: 403 }),
   );
   try {
-    await expect(listBoardAnnouncementAuthors(boardId)).rejects.toMatchObject({
+    await expect(listBoardPostAuthors(boardId)).rejects.toMatchObject({
       status: 403,
     });
-    await expect(listBoardAnnouncementAuthors(boardId)).rejects.toBeInstanceOf(
+    await expect(listBoardPostAuthors(boardId)).rejects.toBeInstanceOf(
       ApiError,
     );
   } finally {

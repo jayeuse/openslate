@@ -23,33 +23,29 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import type { BoardAnnouncement } from "../adapters/board-announcements-api";
+import type { BoardPost } from "../adapters/board-posts-api";
 import type { BoardAttachmentVersions } from "../adapters/board-files-api";
-import {
-  BoardContentAudiencePicker,
-  type BoardContentAudienceSelection,
-} from "./board-content-audience-picker";
 import { HydratedBoardAttachments } from "./server-backed-board-attachments";
 import { HydratedBoardRecordLinks } from "./hydrated-board-record-links";
 import {
-  useServerBoardAnnouncementEditor,
-  validAnnouncementLinks,
-} from "../hooks/use-server-board-announcement-editor";
-import type { AnnouncementEditorForm } from "../hooks/announcement-editor-state";
+  useServerBoardPostEditor,
+  validPostLinks,
+} from "../hooks/use-server-board-post-editor";
+import type { PostEditorForm } from "../hooks/post-editor-state";
 import { ConfirmAction } from "./ui";
-export type { AnnouncementEditorForm };
+export type { PostEditorForm };
 
-export type AnnouncementEditorView = {
+export type PostEditorView = {
   status: "loading" | "ready" | "error" | "denied";
   active: boolean;
   canEdit: boolean;
   canManage: boolean;
-  drafts: BoardAnnouncement[];
+  drafts: BoardPost[];
   offset: number;
   total: number;
   hasMore: boolean;
-  selected: BoardAnnouncement | null;
-  form: AnnouncementEditorForm | null;
+  selected: BoardPost | null;
+  form: PostEditorForm | null;
   dirty: boolean;
   scheduleDirty: boolean;
   scheduleLocal: string;
@@ -59,27 +55,10 @@ export type AnnouncementEditorView = {
   pending: boolean;
   error: string | null;
   notice: string | null;
-  displayed: BoardAnnouncement | null;
+  displayed: BoardPost | null;
 };
 
-function HydratedAudiencePicker(props: {
-  boardId: string;
-  selection: BoardContentAudienceSelection;
-  disabled: boolean;
-  onChange: (audience: BoardContentAudienceSelection) => void;
-}) {
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => setHydrated(true), []);
-  return hydrated
-    ? createElement(BoardContentAudiencePicker, props)
-    : createElement(
-        "p",
-        { className: "text-muted-foreground text-sm" },
-        "Loading audience choices…",
-      );
-}
-
-export function ServerBoardAnnouncementEditorDisplay({
+export function ServerBoardPostEditorDisplay({
   boardId,
   view,
   onNew,
@@ -99,10 +78,10 @@ export function ServerBoardAnnouncementEditorDisplay({
   showNewButton = true,
 }: {
   boardId: string;
-  view: AnnouncementEditorView;
+  view: PostEditorView;
   onNew: () => void;
-  onSelect: (draft: BoardAnnouncement) => void;
-  onChange: (form: AnnouncementEditorForm) => void;
+  onSelect: (draft: BoardPost) => void;
+  onChange: (form: PostEditorForm) => void;
   onSave: () => void;
   onPublish: () => void;
   onSchedule: () => void;
@@ -119,26 +98,26 @@ export function ServerBoardAnnouncementEditorDisplay({
   const heading = createElement(
     "h2",
     { className: "text-lg font-semibold" },
-    "Editable announcements",
+    "Editable posts",
   );
   if (!view.active || view.status === "denied") {
     return createElement(
       "section",
-      { "aria-label": "Manage announcements", className: "min-w-0" },
+      { "aria-label": "Manage posts", className: "min-w-0" },
       heading,
       createElement(
         "p",
         { className: "text-muted-foreground mt-2 text-sm" },
         !view.active
           ? "This Board is archived and read-only."
-          : "Announcement editing is unavailable. Check your Board access.",
+          : "Post editing is unavailable. Check your Board access.",
       ),
     );
   }
   if (view.status === "loading" || view.status === "error") {
     return createElement(
       "section",
-      { "aria-label": "Manage announcements", className: "min-w-0" },
+      { "aria-label": "Manage posts", className: "min-w-0" },
       heading,
       createElement(
         "p",
@@ -147,8 +126,8 @@ export function ServerBoardAnnouncementEditorDisplay({
           className: "mt-2 text-sm",
         },
         view.status === "loading"
-          ? "Loading editable announcements…"
-          : (view.error ?? "Editable announcements are unavailable."),
+          ? "Loading editable posts…"
+          : (view.error ?? "Editable posts are unavailable."),
       ),
       view.status === "error"
         ? createElement(
@@ -167,12 +146,12 @@ export function ServerBoardAnnouncementEditorDisplay({
   if (!view.canEdit) {
     return createElement(
       "section",
-      { "aria-label": "Manage announcements", className: "min-w-0" },
+      { "aria-label": "Manage posts", className: "min-w-0" },
       heading,
       createElement(
         "p",
         { className: "text-muted-foreground mt-2 text-sm" },
-        "You need Board edit access to manage announcements.",
+        "You need Board edit access to manage posts.",
       ),
     );
   }
@@ -184,17 +163,14 @@ export function ServerBoardAnnouncementEditorDisplay({
     form.title.trim().length <= 100 &&
     form.body.trim().length > 0 &&
     form.body.trim().length <= 2000 &&
-    (form.audience.kind === "author" ||
-      form.audience.kind === "everyone" ||
-      ("targetId" in form.audience && form.audience.targetId !== null)) &&
-    validAnnouncementLinks(form.links);
+    validPostLinks(form.links);
   const actionClass =
     "bg-primary text-primary-foreground focus-visible:outline-ring min-h-11 rounded-md px-4 text-sm font-medium hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50";
   const secondaryClass =
     "border-border bg-card text-foreground focus-visible:outline-ring min-h-11 rounded-md border px-4 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50";
   return createElement(
     "section",
-    { "aria-label": "Manage announcements", className: "min-w-0 space-y-4" },
+    { "aria-label": "Manage posts", className: "min-w-0 space-y-4" },
     createElement(
       "div",
       { className: "flex flex-wrap items-center justify-between gap-3" },
@@ -210,7 +186,7 @@ export function ServerBoardAnnouncementEditorDisplay({
             disabled: view.pending,
             className: secondaryClass,
           },
-          "Refresh announcements",
+          "Refresh posts",
         ),
         showNewButton
           ? createElement(
@@ -221,7 +197,7 @@ export function ServerBoardAnnouncementEditorDisplay({
                 disabled: view.pending || view.dirty || view.scheduleDirty,
                 className: secondaryClass,
               },
-              "New announcement",
+              "New post",
             )
           : null,
       ),
@@ -291,7 +267,7 @@ export function ServerBoardAnnouncementEditorDisplay({
             key: `published-attachments:${view.displayed.id}`,
             access: "read",
             target: {
-              kind: "announcement",
+              kind: "post",
               boardId: view.displayed.boardId,
               contentId: view.displayed.id,
               view: "published",
@@ -301,7 +277,7 @@ export function ServerBoardAnnouncementEditorDisplay({
             key: `published-record-links:${view.displayed.id}`,
             access: "read",
             target: {
-              kind: "announcement",
+              kind: "post",
               boardId: view.displayed.boardId,
               contentId: view.displayed.id,
               view: "published",
@@ -321,13 +297,13 @@ export function ServerBoardAnnouncementEditorDisplay({
         createElement(
           "h3",
           { className: "text-sm font-medium" },
-          `Announcements (${view.total})`,
+          `Posts (${view.total})`,
         ),
         view.drafts.length === 0
           ? createElement(
               "p",
               { className: "text-muted-foreground mt-2 text-sm" },
-              "No editable announcements on this page. Create one to begin.",
+              "No editable posts on this page. Create one to begin.",
             )
           : createElement(
               "ul",
@@ -362,7 +338,7 @@ export function ServerBoardAnnouncementEditorDisplay({
           ? createElement(
               "nav",
               {
-                "aria-label": "Editable announcement pages",
+                "aria-label": "Editable post pages",
                 className: "mt-3 flex flex-wrap items-center gap-2",
               },
               createElement(
@@ -407,7 +383,7 @@ export function ServerBoardAnnouncementEditorDisplay({
             createElement(
               "h3",
               { className: "font-semibold" },
-              selected ? "Edit announcement" : "New draft",
+              selected ? "Edit post" : "New draft",
             ),
             selected?.status === "scheduled"
               ? createElement(
@@ -422,13 +398,13 @@ export function ServerBoardAnnouncementEditorDisplay({
               createElement(
                 "label",
                 {
-                  htmlFor: "board-announcement-title",
+                  htmlFor: "board-post-title",
                   className: "text-sm font-medium",
                 },
                 "Title",
               ),
               createElement("input", {
-                id: "board-announcement-title",
+                id: "board-post-title",
                 type: "text",
                 required: true,
                 maxLength: 100,
@@ -446,13 +422,13 @@ export function ServerBoardAnnouncementEditorDisplay({
               createElement(
                 "label",
                 {
-                  htmlFor: "board-announcement-body",
+                  htmlFor: "board-post-body",
                   className: "text-sm font-medium",
                 },
                 "Message",
               ),
               createElement("textarea", {
-                id: "board-announcement-body",
+                id: "board-post-body",
                 required: true,
                 maxLength: 2000,
                 value: form.body,
@@ -464,13 +440,6 @@ export function ServerBoardAnnouncementEditorDisplay({
                   "border-input bg-background text-foreground focus-visible:outline-ring min-h-32 w-full rounded-md border px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-2",
               }),
             ),
-            createElement(HydratedAudiencePicker, {
-              boardId,
-              selection: form.audience,
-              disabled: view.pending || view.conflict,
-              onChange: (audience: BoardContentAudienceSelection) =>
-                onChange({ ...form, audience }),
-            }),
             createElement(
               "div",
               { className: "space-y-3" },
@@ -584,19 +553,19 @@ export function ServerBoardAnnouncementEditorDisplay({
                   { className: "text-muted-foreground text-sm" },
                   "Save your changes as a draft before managing attachments and Record links.",
                 )
-              : selected && selected.announcementRevision !== null
+              : selected && selected.postRevision !== null
                 ? createElement(HydratedBoardAttachments, {
                     key: `draft-attachments:${selected.id}`,
                     access: "edit",
                     target: {
-                      kind: "announcement",
+                      kind: "post",
                       boardId,
                       contentId: selected.id,
                       view: "draft",
                     },
                     versions: {
                       boardRevision: selected.boardRevision,
-                      contentRevision: selected.announcementRevision,
+                      contentRevision: selected.postRevision,
                     },
                     refreshVersions: refreshAttachmentVersions,
                     onBusyChange: onAttachmentBusyChange,
@@ -609,19 +578,19 @@ export function ServerBoardAnnouncementEditorDisplay({
                   ),
             selected?.status === "published"
               ? null
-              : selected && selected.announcementRevision !== null
+              : selected && selected.postRevision !== null
                 ? createElement(HydratedBoardRecordLinks, {
                     key: `draft-record-links:${selected.id}`,
                     access: "edit",
                     target: {
-                      kind: "announcement",
+                      kind: "post",
                       boardId,
                       contentId: selected.id,
                       view: "draft",
                     },
                     versions: {
                       boardRevision: selected.boardRevision,
-                      contentRevision: selected.announcementRevision,
+                      contentRevision: selected.postRevision,
                     },
                     refreshVersions: refreshAttachmentVersions,
                     onBusyChange: onRecordLinkBusyChange,
@@ -647,7 +616,7 @@ export function ServerBoardAnnouncementEditorDisplay({
                     createElement(
                       "p",
                       {
-                        id: "board-announcement-schedule-help",
+                        id: "board-post-schedule-help",
                         className: "text-muted-foreground text-sm",
                       },
                       `Times use ${view.deviceTimeZone} and are sent to the server in UTC. Local times skipped by a clock change cannot be scheduled.`,
@@ -655,20 +624,20 @@ export function ServerBoardAnnouncementEditorDisplay({
                     createElement(
                       "label",
                       {
-                        htmlFor: "board-announcement-scheduled-for",
+                        htmlFor: "board-post-scheduled-for",
                         className: "text-sm font-medium",
                       },
                       "Publication date and time",
                     ),
                     createElement("input", {
-                      id: "board-announcement-scheduled-for",
+                      id: "board-post-scheduled-for",
                       type: "datetime-local",
                       step: "1",
                       value: view.scheduleLocal,
                       disabled: view.pending || view.conflict,
                       "aria-describedby": view.scheduleError
-                        ? "board-announcement-schedule-help board-announcement-schedule-error"
-                        : "board-announcement-schedule-help",
+                        ? "board-post-schedule-help board-post-schedule-error"
+                        : "board-post-schedule-help",
                       "aria-invalid": view.scheduleError ? "true" : undefined,
                       onChange: (event: ChangeEvent<HTMLInputElement>) =>
                         onScheduleTimeChange(event.currentTarget.value),
@@ -679,7 +648,7 @@ export function ServerBoardAnnouncementEditorDisplay({
                       ? createElement(
                           "p",
                           {
-                            id: "board-announcement-schedule-error",
+                            id: "board-post-schedule-error",
                             role: "alert",
                             className: "text-destructive text-sm",
                           },
@@ -733,7 +702,7 @@ export function ServerBoardAnnouncementEditorDisplay({
                     "Publish now",
                   )
                 : null,
-              selected && selected.announcementRevision !== null
+              selected && selected.postRevision !== null
                 ? createElement(
                     "button",
                     {
@@ -802,13 +771,13 @@ export function ServerBoardAnnouncementEditorDisplay({
               className:
                 "border-border text-muted-foreground rounded-xl border border-dashed p-5 text-sm",
             },
-            "Choose a draft or create a new announcement.",
+            "Choose a draft or create a new post.",
           ),
     ),
   );
 }
 
-export function ServerBackedBoardAnnouncementEditor({
+export function ServerBackedBoardPostEditor({
   boardId,
   boardRevision,
   boardStatus,
@@ -829,7 +798,7 @@ export function ServerBackedBoardAnnouncementEditor({
 }) {
   const [open, setOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
-  const editor = useServerBoardAnnouncementEditor({
+  const editor = useServerBoardPostEditor({
     boardId,
     boardRevision,
     boardStatus,
@@ -889,7 +858,7 @@ export function ServerBackedBoardAnnouncementEditor({
             }}
           >
             <Plus data-icon="inline-start" aria-hidden="true" />
-            New announcement
+            New post
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -899,14 +868,14 @@ export function ServerBackedBoardAnnouncementEditor({
                   variant="default"
                   size="icon"
                   className="border-primary-foreground/20 min-h-11 min-w-11 rounded-l-none border-l"
-                  aria-label="More announcement actions"
+                  aria-label="More post actions"
                   disabled={view.pending}
                 />
               }
             >
               <ChevronDown aria-hidden="true" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" aria-label="Announcement actions">
+            <DropdownMenuContent align="end" aria-label="Post actions">
               <DropdownMenuItem
                 disabled={view.pending}
                 onClick={() => setOpen(true)}
@@ -923,14 +892,12 @@ export function ServerBackedBoardAnnouncementEditor({
         </p>
       ) : !open && view.status === "loading" ? (
         <p role="status" className="text-muted-foreground text-sm">
-          Checking announcement editing access…
+          Checking post editing access…
         </p>
       ) : !open && view.status === "error" ? (
         <Alert variant="destructive">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>
-              {view.error ?? "Editable announcements are unavailable."}
-            </span>
+            <span>{view.error ?? "Editable posts are unavailable."}</span>
             <Button
               type="button"
               variant="outline"
@@ -943,7 +910,7 @@ export function ServerBackedBoardAnnouncementEditor({
         </Alert>
       ) : !open && (view.status === "denied" || !view.canEdit) ? (
         <p className="text-muted-foreground text-sm">
-          Announcement editing is unavailable. Check your Board access.
+          Post editing is unavailable. Check your Board access.
         </p>
       ) : null}
       <Sheet
@@ -959,23 +926,23 @@ export function ServerBackedBoardAnnouncementEditor({
           className="w-full max-w-none gap-6 overflow-y-auto sm:max-w-5xl"
         >
           <SheetHeader className="pr-12">
-            <SheetTitle>Announcement editor</SheetTitle>
+            <SheetTitle>Post editor</SheetTitle>
             <SheetDescription>
-              Create an announcement or choose an existing one you can edit.
+              Create a post or choose an existing one you can edit.
             </SheetDescription>
           </SheetHeader>
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            aria-label="Close announcement editor"
+            aria-label="Close post editor"
             className="absolute top-3 right-3 size-11"
             disabled={view.pending}
             onClick={requestClose}
           >
             <X aria-hidden="true" />
           </Button>
-          <ServerBoardAnnouncementEditorDisplay
+          <ServerBoardPostEditorDisplay
             boardId={boardId}
             view={view}
             onNew={editor.newDraft}
@@ -1005,8 +972,8 @@ export function ServerBackedBoardAnnouncementEditor({
       </Sheet>
       <ConfirmAction
         open={discardOpen}
-        title="Discard unsaved announcement changes?"
-        description="Your unsaved title, message, audience, schedule, and links will be discarded. Saved announcement content will stay unchanged."
+        title="Discard unsaved post changes?"
+        description="Your unsaved title, message, schedule, and links will be discarded. Saved post content will stay unchanged."
         action="Discard changes"
         onCancel={() => setDiscardOpen(false)}
         onConfirm={discardChanges}

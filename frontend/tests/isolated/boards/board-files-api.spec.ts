@@ -14,7 +14,7 @@ import {
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const eventId = "00000000-0000-4000-8000-000000000002";
-const announcementId = "00000000-0000-4000-8000-000000000003";
+const postId = "00000000-0000-4000-8000-000000000003";
 const fileId = "00000000-0000-4000-8000-000000000004";
 const actorId = "00000000-0000-4000-8000-000000000005";
 const timestamp = "2026-09-24T00:00:00Z";
@@ -120,19 +120,19 @@ test("Board attachment upload stays on authenticated Board-scoped binary routes"
   }
 });
 
-test("attachment listing and content download retain Event and Announcement scope", async () => {
+test("attachment listing and content download retain Event and Post scope", async () => {
   const targets: BoardAttachmentTarget[] = [
     { kind: "event", boardId, contentId: eventId },
     {
-      kind: "announcement",
+      kind: "post",
       boardId,
-      contentId: announcementId,
+      contentId: postId,
       view: "published",
     },
     {
-      kind: "announcement",
+      kind: "post",
       boardId,
-      contentId: announcementId,
+      contentId: postId,
       view: "draft",
     },
   ];
@@ -162,9 +162,9 @@ test("attachment listing and content download retain Event and Announcement scop
     expect(await downloaded.text()).toBe("hello");
     expect(mock.requests.map(path)).toEqual([
       `/api/boards/${boardId}/events/${eventId}/attachments?limit=25&offset=0`,
-      `/api/boards/${boardId}/announcements/${announcementId}/attachments?view=published&limit=25&offset=0`,
-      `/api/boards/${boardId}/announcements/${announcementId}/attachments?view=draft&limit=25&offset=0`,
-      `/api/boards/${boardId}/announcements/${announcementId}/attachments/${fileId}/content?view=published`,
+      `/api/boards/${boardId}/posts/${postId}/attachments?view=published&limit=25&offset=0`,
+      `/api/boards/${boardId}/posts/${postId}/attachments?view=draft&limit=25&offset=0`,
+      `/api/boards/${boardId}/posts/${postId}/attachments/${fileId}/content?view=published`,
     ]);
     expect(
       mock.requests.every(
