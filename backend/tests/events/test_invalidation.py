@@ -286,15 +286,16 @@ def test_audience_scoped_entities_are_not_generic_invalidation_subjects() -> Non
 def test_board_scoped_entities_are_not_generic_invalidation_subjects() -> None:
     for entity in (
         "boards",
-        "board_grants",
-        "board_record_placements",
+        "board_groups",
         "board_widgets",
-        "board_favorites",
-        "board_homes",
-        "board_templates",
-        "board_announcements",
-        "board_announcement_revisions",
-        "board_announcement_personal_states",
+        "board_events",
+        "board_event_reminders",
+        "board_posts",
+        "board_post_revisions",
+        "board_post_revision_attachments",
+        "board_post_revision_record_links",
+        "board_attachments",
+        "board_record_links",
     ):
         assert event_for_entity(entity, uuid7()) is None
         with pytest.raises(ValueError, match="invalid invalidation payload"):

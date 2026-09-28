@@ -1,4 +1,4 @@
-"""Contextual Event and Announcement file access; never expose Board bytes by bare ID."""
+"""Contextual Event and Post file access; never expose Board bytes by bare ID."""
 
 from hashlib import sha256
 from typing import Annotated, Literal
@@ -216,11 +216,11 @@ def download_event_file(
 
 
 @router.get(
-    "/{board_id}/announcements/{announcement_id}/attachments", response_model=AttachmentList
+    "/{board_id}/posts/{post_id}/attachments", response_model=AttachmentList
 )
-def list_announcement_attachments(
+def list_post_attachments(
     board_id: UUID,
-    announcement_id: UUID,
+    post_id: UUID,
     actor: Reader,
     db: Database,
     view: Literal["published", "draft"] = "published",
@@ -228,14 +228,14 @@ def list_announcement_attachments(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> AttachmentList:
     return _list(
-        db, actor, board_id, "announcement", announcement_id, view=view, limit=limit, offset=offset
+        db, actor, board_id, "post", post_id, view=view, limit=limit, offset=offset
     )
 
 
-@router.post("/{board_id}/announcements/{announcement_id}/attachments", response_model=FileResponse)
-def attach_announcement_file(
+@router.post("/{board_id}/posts/{post_id}/attachments", response_model=FileResponse)
+def attach_post_file(
     board_id: UUID,
-    announcement_id: UUID,
+    post_id: UUID,
     payload: AttachmentLink,
     actor: Writer,
     db: Database,
@@ -245,8 +245,8 @@ def attach_announcement_file(
             db,
             fresh_user(db, actor.id),
             board_id,
-            "announcement",
-            announcement_id,
+            "post",
+            post_id,
             payload.file_id,
             board_revision=payload.board_revision,
             content_revision=payload.content_revision,
@@ -254,10 +254,10 @@ def attach_announcement_file(
     )
 
 
-@router.delete("/{board_id}/announcements/{announcement_id}/attachments/{file_id}", status_code=204)
-def detach_announcement_file(
+@router.delete("/{board_id}/posts/{post_id}/attachments/{file_id}", status_code=204)
+def detach_post_file(
     board_id: UUID,
-    announcement_id: UUID,
+    post_id: UUID,
     file_id: UUID,
     payload: AttachmentRevision,
     actor: Writer,
@@ -267,19 +267,19 @@ def detach_announcement_file(
         db,
         fresh_user(db, actor.id),
         board_id,
-        "announcement",
-        announcement_id,
+        "post",
+        post_id,
         file_id,
         board_revision=payload.board_revision,
         content_revision=payload.content_revision,
     )
 
 
-@router.get("/{board_id}/announcements/{announcement_id}/attachments/{file_id}/content")
-def download_announcement_file(
+@router.get("/{board_id}/posts/{post_id}/attachments/{file_id}/content")
+def download_post_file(
     request: Request,
     board_id: UUID,
-    announcement_id: UUID,
+    post_id: UUID,
     file_id: UUID,
     actor: Reader,
     db: Database,
@@ -287,5 +287,5 @@ def download_announcement_file(
     view: Literal["published", "draft"] = "published",
 ) -> Response:
     return _download(
-        request, db, actor, board_id, "announcement", announcement_id, file_id, view, storage
+        request, db, actor, board_id, "post", post_id, file_id, view, storage
     )

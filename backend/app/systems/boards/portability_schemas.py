@@ -1,11 +1,14 @@
-"""Versioned, structure-only Board configuration for trusted server-side resolution."""
+"""Versioned, structure-only Board configuration for trusted server-side resolution.
+
+Version 3 carries the Board name, description and tiles. Scope and access are not
+portable: an import always creates a project Board without groups.
+"""
 
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
-from app.systems.boards.models import BoardSection
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.records.query_schemas import QueryFilter, Scalar
 
@@ -112,16 +115,12 @@ class PortableBoardConfiguration(BaseModel):
 
     name: str = Field(min_length=1, max_length=200)
     description: str | None = Field(max_length=240)
-    department_name: str | None
-    default_section: BoardSection
     widgets: list[PortableWidget] = Field(max_length=12)
 
     @model_validator(mode="after")
-    def named_board_and_department(self) -> Self:
-        if not self.name.strip() or (
-            self.department_name is not None and not self.department_name.strip()
-        ):
-            raise ValueError("A named Board and department are required")
+    def named_board(self) -> Self:
+        if not self.name.strip():
+            raise ValueError("A named Board is required")
         return self
 
 
@@ -129,7 +128,7 @@ class PortableBoardBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["openslate-board"]
-    version: Literal[2]
+    version: Literal[3]
     configuration: PortableBoardConfiguration
 
     @field_validator("version", mode="before")

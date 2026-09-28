@@ -15,25 +15,17 @@ from app.core.base_model import BaseModel
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.systems.access.users.models import User
-from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
-from app.systems.boards.announcement_personal_models import BoardAnnouncementPersonalState
-from app.systems.boards.announcement_work import delete_announcement_work
 from app.systems.boards.attachment_models import (
-    BoardAnnouncementRevisionAttachment,
-    BoardContentAttachment,
+    BoardAttachment,
+    BoardPostRevisionAttachment,
 )
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import (
-    Board,
-    BoardGrant,
-    BoardRecordPlacement,
-    BoardStatus,
-    BoardWidget,
-)
-from app.systems.boards.personal_models import BoardFavorite, BoardHome
+from app.systems.boards.models import Board, BoardGroup, BoardStatus, BoardWidget
+from app.systems.boards.post_models import BoardPost, BoardPostRevision
+from app.systems.boards.post_work import delete_post_work
 from app.systems.boards.record_link_models import (
-    BoardAnnouncementRevisionRecordLink,
-    BoardContentRecordLink,
+    BoardPostRevisionRecordLink,
+    BoardRecordLink,
 )
 from app.systems.boards.reminder_models import BoardEventReminder
 from app.systems.boards.reminder_service import delete_event_reminders
@@ -69,16 +61,13 @@ Admin = Annotated[User, Depends(require_admin)]
 Database = Annotated[Session, Depends(get_db)]
 
 _CHILD_MODELS = (
-    BoardGrant,
-    BoardRecordPlacement,
+    BoardGroup,
     BoardWidget,
-    BoardFavorite,
-    BoardHome,
     BoardEvent,
     BoardEventReminder,
-    BoardAnnouncement,
-    BoardContentAttachment,
-    BoardContentRecordLink,
+    BoardPost,
+    BoardAttachment,
+    BoardRecordLink,
     File,
 )
 
@@ -97,7 +86,7 @@ def _require_purge_enabled() -> None:
 
 def _row_state(row: BaseModel | ScheduledWork) -> LifecycleRowState:
     # The impact carries no Board content, but its digest reacts to every retained
-    # column, including personal preferences and event audience references.
+    # column of the Board's rows.
     state = {column.name: getattr(row, column.name) for column in row.__table__.columns}
     fingerprint = hashlib.sha256(
         json.dumps(state, sort_keys=True, separators=(",", ":"), default=str).encode()
@@ -144,29 +133,13 @@ def _impact(
             "Purge every Board file before permanently deleting the Board"
         )
 
-    announcement_ids = [item.id for item in children if isinstance(item, BoardAnnouncement)]
-    if announcement_ids:
-        personal_statement = (
-            select(BoardAnnouncementPersonalState)
-            .where(BoardAnnouncementPersonalState.announcement_id.in_(announcement_ids))
-            .order_by(
-                BoardAnnouncementPersonalState.announcement_id,
-                BoardAnnouncementPersonalState.id,
-            )
-        )
-        if lock:
-            personal_statement = personal_statement.with_for_update().execution_options(
-                populate_existing=True
-            )
-        personal_states = db.scalars(personal_statement).all()
-        rows.extend(_row_state(item) for item in personal_states)
-        children.extend(personal_states)
-
+    post_ids = [item.id for item in children if isinstance(item, BoardPost)]
+    if post_ids:
         work_statement = (
             select(ScheduledWork)
             .where(
-                ScheduledWork.kind == WorkKind.ANNOUNCEMENT_PUBLISH,
-                ScheduledWork.announcement_id.in_(announcement_ids),
+                ScheduledWork.kind == WorkKind.POST_PUBLISH,
+                ScheduledWork.post_id.in_(post_ids),
             )
             .order_by(ScheduledWork.id)
         )
@@ -219,13 +192,13 @@ def _impact(
             rows.extend(_row_state(item) for item in db.scalars(reminder_notice_statement))
 
     revision_statement = (
-        select(BoardAnnouncementRevision)
+        select(BoardPostRevision)
         .where(
-            BoardAnnouncementRevision.announcement_id.in_(
-                select(BoardAnnouncement.id).where(BoardAnnouncement.board_id == board_id)
+            BoardPostRevision.post_id.in_(
+                select(BoardPost.id).where(BoardPost.board_id == board_id)
             )
         )
-        .order_by(BoardAnnouncementRevision.announcement_id, BoardAnnouncementRevision.id)
+        .order_by(BoardPostRevision.post_id, BoardPostRevision.id)
     )
     if lock:
         revision_statement = revision_statement.with_for_update().execution_options(
@@ -236,13 +209,13 @@ def _impact(
     children.extend(revisions)
     if revisions:
         snapshot_statement = (
-            select(BoardAnnouncementRevisionAttachment)
+            select(BoardPostRevisionAttachment)
             .where(
-                BoardAnnouncementRevisionAttachment.revision_id.in_(
+                BoardPostRevisionAttachment.revision_id.in_(
                     [revision.id for revision in revisions]
                 )
             )
-            .order_by(BoardAnnouncementRevisionAttachment.id)
+            .order_by(BoardPostRevisionAttachment.id)
         )
         if lock:
             snapshot_statement = snapshot_statement.with_for_update().execution_options(
@@ -252,13 +225,13 @@ def _impact(
         rows.extend(_row_state(snapshot) for snapshot in snapshots)
         children.extend(snapshots)
         record_snapshot_statement = (
-            select(BoardAnnouncementRevisionRecordLink)
+            select(BoardPostRevisionRecordLink)
             .where(
-                BoardAnnouncementRevisionRecordLink.revision_id.in_(
+                BoardPostRevisionRecordLink.revision_id.in_(
                     [revision.id for revision in revisions]
                 )
             )
-            .order_by(BoardAnnouncementRevisionRecordLink.id)
+            .order_by(BoardPostRevisionRecordLink.id)
         )
         if lock:
             record_snapshot_statement = (
@@ -341,39 +314,38 @@ def purge_board(
         if impact.impact_digest != challenge.impact_digest:
             raise LifecyclePlanDriftError("Board changed after preview; obtain a new preview")
         # A list order alone does not constrain SQLAlchemy's unit-of-work flush.
-        # Remove notifications and work, then personal states and revisions,
-        # before deleting their announcement parents.
+        # Remove notifications and work, then revisions, before deleting their
+        # post parents.
         for child in children:
-            if isinstance(child, BoardAnnouncement):
-                delete_announcement_work(db, child)
+            if isinstance(child, BoardPost):
+                delete_post_work(db, child)
             if isinstance(child, BoardEvent):
                 delete_event_reminders(db, child.id)
         for child in children:
             if isinstance(
                 child,
                 (
-                    BoardAnnouncementRevisionAttachment,
-                    BoardAnnouncementRevisionRecordLink,
-                    BoardContentAttachment,
-                    BoardContentRecordLink,
+                    BoardPostRevisionAttachment,
+                    BoardPostRevisionRecordLink,
+                    BoardAttachment,
+                    BoardRecordLink,
                 ),
             ):
                 db.delete(child)
         db.flush()
         for child in children:
-            if isinstance(child, (BoardAnnouncementPersonalState, BoardAnnouncementRevision)):
+            if isinstance(child, BoardPostRevision):
                 db.delete(child)
         db.flush()
         for child in children:
             if not isinstance(
                 child,
                 (
-                    BoardAnnouncementPersonalState,
-                    BoardAnnouncementRevision,
-                    BoardAnnouncementRevisionAttachment,
-                    BoardAnnouncementRevisionRecordLink,
-                    BoardContentAttachment,
-                    BoardContentRecordLink,
+                    BoardPostRevision,
+                    BoardPostRevisionAttachment,
+                    BoardPostRevisionRecordLink,
+                    BoardAttachment,
+                    BoardRecordLink,
                     File,
                     BoardEventReminder,
                 ),

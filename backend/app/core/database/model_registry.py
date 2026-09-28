@@ -6,31 +6,18 @@ from app.systems.access.identity.models import (  # noqa: F401
 )
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember  # noqa: F401
 from app.systems.access.users.models import User  # noqa: F401
-from app.systems.boards.announcement_models import (  # noqa: F401
-    BoardAnnouncement,
-    BoardAnnouncementRevision,
-)
-from app.systems.boards.announcement_personal_models import (  # noqa: F401
-    BoardAnnouncementPersonalState,
-)
 from app.systems.boards.attachment_models import (  # noqa: F401
-    BoardAnnouncementRevisionAttachment,
-    BoardContentAttachment,
+    BoardAttachment,
+    BoardPostRevisionAttachment,
 )
 from app.systems.boards.event_models import BoardEvent  # noqa: F401
-from app.systems.boards.models import (  # noqa: F401
-    Board,
-    BoardGrant,
-    BoardRecordPlacement,
-    BoardWidget,
-)
-from app.systems.boards.personal_models import BoardFavorite, BoardHome  # noqa: F401
+from app.systems.boards.models import Board, BoardGroup, BoardWidget  # noqa: F401
+from app.systems.boards.post_models import BoardPost, BoardPostRevision  # noqa: F401
 from app.systems.boards.record_link_models import (  # noqa: F401
-    BoardAnnouncementRevisionRecordLink,
-    BoardContentRecordLink,
+    BoardPostRevisionRecordLink,
+    BoardRecordLink,
 )
 from app.systems.boards.reminder_models import BoardEventReminder  # noqa: F401
-from app.systems.boards.template_models import BoardTemplate  # noqa: F401
 from app.systems.manage.audit.models import AuditLog, SecurityEvent  # noqa: F401
 from app.systems.manage.workspace.models import WorkspaceProfile  # noqa: F401
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget  # noqa: F401

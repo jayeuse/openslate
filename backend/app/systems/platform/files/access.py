@@ -12,12 +12,12 @@ from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import includes
 from app.systems.access.users.eligibility import is_active_account, is_established_user
 from app.systems.access.users.models import User, UserRole
-from app.systems.boards.access import can_access_board
+from app.systems.boards.access import board_level
 from app.systems.boards.attachment_models import (
-    BoardAnnouncementRevisionAttachment,
-    BoardContentAttachment,
+    BoardAttachment,
+    BoardPostRevisionAttachment,
 )
-from app.systems.boards.models import Board, BoardGrant, BoardPermission, BoardStatus
+from app.systems.boards.models import Board, BoardStatus
 from app.systems.platform.files.models import File
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
@@ -108,19 +108,12 @@ def authorize_board_file(
     db: Session, user: User, board_id: UUID, *, write: bool,
     lock: bool = False,
 ) -> Board:
-    """A Board-scoped grant, never the generic file-purpose capability."""
+    """The Board level decides: read to see a file, write to add or change one."""
     if not is_established_user(user):
         raise error("file_not_found", "File not found", 404)
     board = board_parent(db, board_id, active=write, lock=lock)
-    grants = db.scalars(
-        select(BoardGrant).where(
-            BoardGrant.board_id == board_id,
-            BoardGrant.is_deleted.is_(False),
-            BoardGrant.deleted_at.is_(None),
-        )
-    ).all()
-    action = BoardPermission.EDIT if write else BoardPermission.VIEW
-    if not can_access_board(board, user, action, grants):
+    required = AccessLevel.WRITE if write else AccessLevel.READ
+    if not includes(board_level(db, user, board), required):
         raise error("file_not_found", "File not found", 404)
     return board
 
@@ -140,14 +133,14 @@ def authorize_contextual_file(
 
 def require_unlinked(db: Session, file_id: UUID) -> None:
     active_link = db.scalar(
-        select(BoardContentAttachment.id).where(
-            BoardContentAttachment.file_id == file_id,
-            BoardContentAttachment.is_linked.is_(True),
+        select(BoardAttachment.id).where(
+            BoardAttachment.file_id == file_id,
+            BoardAttachment.is_linked.is_(True),
         ).limit(1)
     )
     published_link = db.scalar(
-        select(BoardAnnouncementRevisionAttachment.id).where(
-            BoardAnnouncementRevisionAttachment.file_id == file_id
+        select(BoardPostRevisionAttachment.id).where(
+            BoardPostRevisionAttachment.file_id == file_id
         ).limit(1)
     )
     if active_link is not None or published_link is not None:

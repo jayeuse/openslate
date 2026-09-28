@@ -16,9 +16,8 @@ class BoardActivitySort(StrEnum):
 
 class BoardActivityKind(StrEnum):
     BOARD = "board"
-    GRANT = "grant"
+    GROUP = "group"
     WIDGET = "widget"
-    PLACEMENT = "placement"
 
 
 class BoardActivityListRequest(StandardListRequest[BoardActivitySort]):

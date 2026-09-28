@@ -6,10 +6,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
+from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import (
-    BoardAnnouncementRevisionRecordLink,
-    BoardContentRecordLink,
+    BoardPostRevisionRecordLink,
+    BoardRecordLink,
 )
 from app.systems.sandbox.lifecycle.planning_scope import row_state
 from app.systems.sandbox.lifecycle.schemas import (
@@ -29,41 +29,41 @@ def load_board_record_link_purge_dependencies(
             [],
             [],
             {
-                "board_content_record_links": (),
-                "board_announcement_revision_record_links": (),
+                "board_record_links": (),
+                "board_post_revision_record_links": (),
             },
             set(),
         )
     current = list(
         db.scalars(
-            select(BoardContentRecordLink)
-            .where(BoardContentRecordLink.record_id.in_(record_ids))
-            .order_by(BoardContentRecordLink.id)
+            select(BoardRecordLink)
+            .where(BoardRecordLink.record_id.in_(record_ids))
+            .order_by(BoardRecordLink.id)
         )
     )
     revisions = list(
         db.execute(
-            select(BoardAnnouncementRevisionRecordLink, BoardAnnouncement.board_id)
+            select(BoardPostRevisionRecordLink, BoardPost.board_id)
             .join(
-                BoardAnnouncementRevision,
-                BoardAnnouncementRevision.id == BoardAnnouncementRevisionRecordLink.revision_id,
+                BoardPostRevision,
+                BoardPostRevision.id == BoardPostRevisionRecordLink.revision_id,
             )
             .join(
-                BoardAnnouncement, BoardAnnouncement.id == BoardAnnouncementRevision.announcement_id
+                BoardPost, BoardPost.id == BoardPostRevision.post_id
             )
-            .where(BoardAnnouncementRevisionRecordLink.record_id.in_(record_ids))
-            .order_by(BoardAnnouncementRevisionRecordLink.id)
+            .where(BoardPostRevisionRecordLink.record_id.in_(record_ids))
+            .order_by(BoardPostRevisionRecordLink.id)
         ).all()
     )
     rows: list[LifecycleRowState] = []
     blockers: list[LifecycleBlocker] = []
     for link in current:
-        state = row_state("board_content_record_links", link)
+        state = row_state("board_record_links", link)
         state.state_fingerprint = fingerprint(
             {
                 "board_id": link.board_id,
                 "event_id": link.event_id,
-                "announcement_id": link.announcement_id,
+                "post_id": link.post_id,
                 "record_id": link.record_id,
                 "module_id": link.module_id,
                 "label": link.label,
@@ -73,7 +73,7 @@ def load_board_record_link_purge_dependencies(
         blockers.append(
             LifecycleBlocker(
                 code=LifecycleBlockerCode.PURGE_BOARD_DEPENDENCY,
-                entity_type="board_content_record_links",
+                entity_type="board_record_links",
                 entity_id=link.id,
                 detail="Remove this retained Board content link before purging its source Record",
                 conflicting_entity_type="boards",
@@ -81,7 +81,7 @@ def load_board_record_link_purge_dependencies(
             )
         )
     for link, board_id in revisions:
-        state = row_state("board_announcement_revision_record_links", link)
+        state = row_state("board_post_revision_record_links", link)
         state.state_fingerprint = fingerprint(
             {
                 "revision_id": link.revision_id,
@@ -94,10 +94,10 @@ def load_board_record_link_purge_dependencies(
         blockers.append(
             LifecycleBlocker(
                 code=LifecycleBlockerCode.PURGE_BOARD_DEPENDENCY,
-                entity_type="board_announcement_revision_record_links",
+                entity_type="board_post_revision_record_links",
                 entity_id=link.id,
                 detail=(
-                    "Permanently delete this published Announcement revision before "
+                    "Permanently delete this published Post revision before "
                     "purging its source Record"
                 ),
                 conflicting_entity_type="boards",
@@ -108,8 +108,8 @@ def load_board_record_link_purge_dependencies(
         rows,
         blockers,
         {
-            "board_content_record_links": tuple(link.id for link in current),
-            "board_announcement_revision_record_links": tuple(link.id for link, _ in revisions),
+            "board_record_links": tuple(link.id for link in current),
+            "board_post_revision_record_links": tuple(link.id for link, _ in revisions),
         },
         {link.board_id for link in current} | {board_id for _, board_id in revisions},
     )

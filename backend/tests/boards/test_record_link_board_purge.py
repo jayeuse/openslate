@@ -8,12 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
+from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import (
-    BoardAnnouncementRevisionRecordLink,
-    BoardContentRecordLink,
+    BoardPostRevisionRecordLink,
+    BoardRecordLink,
 )
 from app.systems.sandbox.records.models import Record
 from tests.boards.test_permanent_delete import _actor, _client, _enabled
@@ -28,7 +28,7 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
     db = integration_owner_db
     password = token_urlsafe(32)
     admin = _actor(db, admin=True, password=password)
-    board = Board(owner_id=admin.id, name="Purge linked Board", status="archived")
+    board = Board(scope="project", name="Purge linked Board", status="archived")
     module, record = _source(db)
     db.add(board)
     db.flush()
@@ -40,44 +40,41 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
         start_date=date(2026, 9, 24),
         end_date=date(2026, 9, 24),
         timezone_name="UTC",
-        audience_kind="everyone",
         archived=True,
     )
-    notice = BoardAnnouncement(
+    notice = BoardPost(
         board_id=board.id,
         author_id=admin.id,
         title="Archived notice",
         body="Retained",
         status="archived",
-        audience_kind="everyone",
     )
     db.add_all((event, notice))
     db.flush()
-    revision = BoardAnnouncementRevision(
-        announcement_id=notice.id,
+    revision = BoardPostRevision(
+        post_id=notice.id,
         publication_number=1,
         publication_key=uuid7(),
         content_fingerprint="a" * 64,
         author_id=admin.id,
         title="Published notice",
         body="Retained",
-        audience_kind="everyone",
         published_at=datetime.now(UTC),
     )
     db.add(revision)
     db.flush()
     db.add_all(
         (
-            BoardContentRecordLink(
+            BoardRecordLink(
                 board_id=board.id,
                 event_id=event.id,
                 record_id=record.id,
                 module_id=module.id,
                 label="Event source",
             ),
-            BoardContentRecordLink(
+            BoardRecordLink(
                 board_id=board.id,
-                announcement_id=notice.id,
+                post_id=notice.id,
                 record_id=record.id,
                 module_id=module.id,
                 label="Notice source",
@@ -86,7 +83,7 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
     )
     db.flush()
     db.add(
-        BoardAnnouncementRevisionRecordLink(
+        BoardPostRevisionRecordLink(
             revision_id=revision.id,
             record_id=record.id,
             module_id=module.id,
@@ -100,7 +97,7 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
         preview = client.post(f"{path}/preview")
         assert preview.status_code == 200, preview.text
         types = {row["entity_type"] for row in preview.json()["impact"]["rows"]}
-        assert {"board_content_record_links", "board_announcement_revision_record_links"} <= types
+        assert {"board_record_links", "board_post_revision_record_links"} <= types
         executed = client.post(
             path,
             json={
@@ -114,14 +111,14 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
     assert db.get(Record, record.id) is not None
     assert (
         db.scalar(
-            select(BoardContentRecordLink.id).where(BoardContentRecordLink.board_id == board.id)
+            select(BoardRecordLink.id).where(BoardRecordLink.board_id == board.id)
         )
         is None
     )
     assert (
         db.scalar(
-            select(BoardAnnouncementRevisionRecordLink.id).where(
-                BoardAnnouncementRevisionRecordLink.record_id == record.id
+            select(BoardPostRevisionRecordLink.id).where(
+                BoardPostRevisionRecordLink.record_id == record.id
             )
         )
         is None

@@ -39,6 +39,7 @@ from app.systems.sandbox.publications.schemas import PublicationResponse, Public
 from app.systems.sandbox.publications.structure_mutations import (
     close_removed_structure,
     stage_bound_names_and_positions,
+    sync_department_boards,
 )
 from app.systems.sandbox.publications.trigger_mutations import apply_record_triggers
 from app.systems.sandbox.record_triggers.models import (
@@ -153,6 +154,7 @@ def apply_publication(
     fields = _apply_fields(db, document, bindings, modules, actor_id)
     _apply_relationships(db, document, bindings, modules, actor_id)
     close_removed_structure(db, document, bindings, actor_id, retired)
+    sync_department_boards(db, actor_id)
     version = _append_version(
         db,
         row=document_row,

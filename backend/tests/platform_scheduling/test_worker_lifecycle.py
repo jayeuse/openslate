@@ -65,7 +65,7 @@ def test_worker_poll_reuses_process_engine_and_backs_off_quietly(monkeypatch) ->
     monkeypatch.setattr(module, "get_engine", lambda: engine)
     monkeypatch.setattr(module, "execute_due_report_runs", executor)
     monkeypatch.setattr(
-        module, "execute_due_announcement_publications", Mock(return_value=[]), raising=False
+        module, "execute_due_post_publications", Mock(return_value=[]), raising=False
     )
     monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
     monkeypatch.setattr(module, "log_event", logger)
@@ -89,7 +89,7 @@ def test_poll_retry_delay_caps_at_sixty_seconds(monkeypatch) -> None:
         module, "execute_due_report_runs", Mock(side_effect=RuntimeError("offline"))
     )
     monkeypatch.setattr(
-        module, "execute_due_announcement_publications", Mock(return_value=[]), raising=False
+        module, "execute_due_post_publications", Mock(return_value=[]), raising=False
     )
     monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
     monkeypatch.setattr(module, "log_event", Mock())
@@ -100,70 +100,70 @@ def test_poll_retry_delay_caps_at_sixty_seconds(monkeypatch) -> None:
     assert worker.retry_seconds == 60
 
 
-def test_announcement_poll_failure_does_not_block_report_poll(monkeypatch) -> None:
+def test_post_poll_failure_does_not_block_report_poll(monkeypatch) -> None:
     from app.systems.platform.scheduling import worker as module
 
     worker = module.ReportSchedulingWorker(SimpleNamespace(environment="development"))
     engine = object()
     report_id = object()
     reports = Mock(return_value=[report_id])
-    announcements = Mock(side_effect=RuntimeError("announcement database fault"))
+    posts = Mock(side_effect=RuntimeError("post database fault"))
     logger = Mock()
     monkeypatch.setattr(module, "get_engine", lambda: engine)
     monkeypatch.setattr(module, "execute_due_report_runs", reports)
     monkeypatch.setattr(
-        module, "execute_due_announcement_publications", announcements, raising=False
+        module, "execute_due_post_publications", posts, raising=False
     )
     monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
     monkeypatch.setattr(module, "log_event", logger)
 
     assert worker.run_once(now=NOW) == [report_id]
     assert worker.retry_seconds == 1
-    assert worker.announcement_retry_seconds == 2
+    assert worker.post_retry_seconds == 2
     assert worker.run_once(now=NOW) == [report_id]
-    assert worker.announcement_retry_seconds == 4
+    assert worker.post_retry_seconds == 4
     assert reports.call_args_list == [call(engine, now=NOW)] * 2
-    assert announcements.call_args_list == [call(engine, now=NOW)] * 2
+    assert posts.call_args_list == [call(engine, now=NOW)] * 2
     assert logger.call_count == 1
-    assert logger.call_args.kwargs["reason_code"] == "announcement_scheduling_poll_failed"
+    assert logger.call_args.kwargs["reason_code"] == "post_scheduling_poll_failed"
 
 
-def test_report_poll_failure_does_not_block_announcement_poll(monkeypatch) -> None:
+def test_report_poll_failure_does_not_block_post_poll(monkeypatch) -> None:
     from app.systems.platform.scheduling import worker as module
 
     worker = module.ReportSchedulingWorker(SimpleNamespace(environment="development"))
     engine = object()
     publication_id = object()
     reports = Mock(side_effect=RuntimeError("report database fault"))
-    announcements = Mock(return_value=[publication_id])
+    posts = Mock(return_value=[publication_id])
     monkeypatch.setattr(module, "get_engine", lambda: engine)
     monkeypatch.setattr(module, "execute_due_report_runs", reports)
     monkeypatch.setattr(
-        module, "execute_due_announcement_publications", announcements, raising=False
+        module, "execute_due_post_publications", posts, raising=False
     )
     monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
     monkeypatch.setattr(module, "log_event", Mock())
 
     assert worker.run_once(now=NOW) == []
     assert worker.retry_seconds == 2
-    assert worker.announcement_retry_seconds == 1
+    assert worker.post_retry_seconds == 1
     reports.assert_called_once_with(engine, now=NOW)
-    announcements.assert_called_once_with(engine, now=NOW)
+    posts.assert_called_once_with(engine, now=NOW)
 
 
-def test_reminder_poll_failure_does_not_block_report_or_announcement(monkeypatch) -> None:
+def test_reminder_poll_failure_does_not_block_report_or_post(monkeypatch) -> None:
     from app.systems.platform.scheduling import worker as module
 
     worker = module.ReportSchedulingWorker(SimpleNamespace(environment="development"))
     engine = object()
     report_id = object()
     reports = Mock(return_value=[report_id])
-    announcements = Mock(return_value=[])
+    posts = Mock(return_value=[])
     reminders = Mock(side_effect=[RuntimeError("reminder unavailable"), []])
     logger = Mock()
     monkeypatch.setattr(module, "get_engine", lambda: engine)
     monkeypatch.setattr(module, "execute_due_report_runs", reports)
-    monkeypatch.setattr(module, "execute_due_announcement_publications", announcements)
+    monkeypatch.setattr(module, "execute_due_post_publications", posts)
     monkeypatch.setattr(module, "execute_due_reminders", reminders)
     monkeypatch.setattr(module, "log_event", logger)
 
@@ -174,17 +174,17 @@ def test_reminder_poll_failure_does_not_block_report_or_announcement(monkeypatch
     assert worker.run_once(now=NOW) == [report_id]
     assert worker.reminder_retry_seconds == 1
     assert reports.call_args_list == [call(engine, now=NOW)] * 2
-    assert announcements.call_args_list == [call(engine, now=NOW)] * 2
+    assert posts.call_args_list == [call(engine, now=NOW)] * 2
     assert reminders.call_args_list == [call(engine, now=NOW)] * 2
 
 
-def test_announcement_backoff_does_not_delay_healthy_report_polls(monkeypatch) -> None:
+def test_post_backoff_does_not_delay_healthy_report_polls(monkeypatch) -> None:
     from app.systems.platform.scheduling import worker as module
 
     worker = module.ReportSchedulingWorker(SimpleNamespace(environment="development"))
     clock = SimpleNamespace(value=0.0)
     report_polls: list[float] = []
-    announcement_polls: list[float] = []
+    post_polls: list[float] = []
 
     class ControlledStop:
         def is_set(self) -> bool:
@@ -206,12 +206,12 @@ def test_announcement_backoff_does_not_delay_healthy_report_polls(monkeypatch) -
         lambda *_args, **_kwargs: report_polls.append(clock.value) or [],
     )
 
-    def fail_announcement(*_args, **_kwargs):
-        announcement_polls.append(clock.value)
-        raise RuntimeError("temporary announcement fault")
+    def fail_post(*_args, **_kwargs):
+        post_polls.append(clock.value)
+        raise RuntimeError("temporary post fault")
 
     monkeypatch.setattr(
-        module, "execute_due_announcement_publications", fail_announcement, raising=False
+        module, "execute_due_post_publications", fail_post, raising=False
     )
     monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
     monkeypatch.setattr(module, "log_event", Mock())
@@ -219,7 +219,7 @@ def test_announcement_backoff_does_not_delay_healthy_report_polls(monkeypatch) -
     worker._run()
 
     assert report_polls == [0, 1, 2]
-    assert announcement_polls == [0, 2]
+    assert post_polls == [0, 2]
     assert not worker.running
 
 

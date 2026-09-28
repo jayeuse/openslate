@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from app.systems.access.users.models import User
-from app.systems.boards.attachment_models import BoardContentAttachment
+from app.systems.boards.attachment_models import BoardAttachment
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
 from app.systems.platform.files import service
@@ -44,7 +44,7 @@ def _file(actor, *, purpose: str, board_id=None, record_id=None) -> File:
 
 def test_board_file_requires_exactly_one_board_parent_and_restricts_board_delete(guarded_db, actor):
     db = guarded_db
-    board = Board(owner_id=actor.id, name="Attached files", status="active")
+    board = Board(scope="project", name="Attached files", status="active")
     db.add(board)
     db.flush()
 
@@ -70,8 +70,8 @@ def test_board_file_requires_exactly_one_board_parent_and_restricts_board_delete
 
 def test_board_file_cannot_move_to_another_board(guarded_db, actor):
     db = guarded_db
-    original = Board(owner_id=actor.id, name="Original", status="active")
-    other = Board(owner_id=actor.id, name="Other", status="active")
+    original = Board(scope="project", name="Original", status="active")
+    other = Board(scope="project", name="Other", status="active")
     db.add_all((original, other))
     db.flush()
     item = _file(actor, purpose="board_attachment", board_id=original.id)
@@ -94,8 +94,8 @@ def test_board_file_requires_context_for_reserve_upload_scan_and_download(
     guarded_db, actor, monkeypatch
 ):
     db = guarded_db
-    board = Board(owner_id=actor.id, name="Private files", status="active")
-    other = Board(owner_id=actor.id, name="Different Board", status="active")
+    board = Board(scope="project", name="Private files", status="active")
+    other = Board(scope="project", name="Different Board", status="active")
     db.add_all((board, other))
     db.commit()
     output = BytesIO()
@@ -137,7 +137,7 @@ def test_board_file_requires_context_for_reserve_upload_scan_and_download(
 
 def test_board_archive_suspends_pending_scan(guarded_db, actor):
     db = guarded_db
-    board = Board(owner_id=actor.id, name="Paused files", status="active")
+    board = Board(scope="project", name="Paused files", status="active")
     db.add(board)
     db.commit()
     output = BytesIO()
@@ -157,8 +157,8 @@ def test_board_archive_suspends_pending_scan(guarded_db, actor):
 
 def test_board_file_uncertain_upload_reconciles_only_in_owning_board(guarded_db, actor):
     db = guarded_db
-    board = Board(owner_id=actor.id, name="Recovery board", status="active")
-    other = Board(owner_id=actor.id, name="Other recovery board", status="active")
+    board = Board(scope="project", name="Recovery board", status="active")
+    other = Board(scope="project", name="Other recovery board", status="active")
     db.add_all((board, other))
     db.commit()
     output = BytesIO()
@@ -185,7 +185,7 @@ def test_board_file_uncertain_upload_reconciles_only_in_owning_board(guarded_db,
 
 def test_global_records_writer_without_board_grant_cannot_reserve_or_upload(guarded_db, actor):
     db = guarded_db
-    board = Board(owner_id=actor.id, name="Owner only", status="active")
+    board = Board(scope="project", name="Owner only", status="active")
     role = "member"
     db.add(board)
     db.flush()
@@ -214,7 +214,7 @@ def test_board_file_purge_waits_for_content_unlink_then_removes_bytes(
     guarded_db, actor, monkeypatch
 ):
     db = guarded_db
-    board = Board(owner_id=actor.id, name="File purge", status="active")
+    board = Board(scope="project", name="File purge", status="active")
     db.add(board)
     db.flush()
     event = BoardEvent(
@@ -225,7 +225,6 @@ def test_board_file_purge_waits_for_content_unlink_then_removes_bytes(
         start_date=date(2026, 9, 24),
         end_date=date(2026, 9, 24),
         timezone_name="Asia/Manila",
-        audience_kind="everyone",
     )
     db.add(event)
     db.flush()
@@ -245,7 +244,7 @@ def test_board_file_purge_waits_for_content_unlink_then_removes_bytes(
     )
     db.add(file)
     db.flush()
-    link = BoardContentAttachment(board_id=board.id, file_id=file.id, event_id=event.id)
+    link = BoardAttachment(board_id=board.id, file_id=file.id, event_id=event.id)
     db.add(link)
     db.commit()
 

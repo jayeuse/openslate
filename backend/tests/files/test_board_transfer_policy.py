@@ -13,7 +13,7 @@ def test_board_file_upload_and_contextual_download_receive_transfer_leases() -> 
         f"/api/boards/{board}/events/{event}/attachments/{file}/content", "GET"
     )
     notice_download = file_transfer_policy(
-        f"/api/boards/{board}/announcements/{notice}/attachments/{file}/content", "GET"
+        f"/api/boards/{board}/posts/{notice}/attachments/{file}/content", "GET"
     )
     reconcile = file_transfer_policy(f"/api/boards/{board}/files/{file}/reconcile", "POST")
     purge = file_transfer_policy(f"/api/boards/{board}/files/{file}/purge", "POST")
@@ -24,8 +24,8 @@ def test_board_file_upload_and_contextual_download_receive_transfer_leases() -> 
     assert file_transfer_policy(f"/api/boards/{board}/files/{file}/content", "GET") is None
 
 
-def test_board_file_and_announcement_routes_are_mounted() -> None:
+def test_board_file_and_post_routes_are_mounted() -> None:
     routes = create_app().openapi()["paths"]
     assert "post" in routes["/api/boards/{board_id}/files"]
-    assert "get" in routes["/api/boards/{board_id}/announcements/{announcement_id}/attachments"]
-    assert "post" in routes["/api/boards/{board_id}/announcements/{announcement_id}/publish"]
+    assert "get" in routes["/api/boards/{board_id}/posts/{post_id}/attachments"]
+    assert "post" in routes["/api/boards/{board_id}/posts/{post_id}/publish"]

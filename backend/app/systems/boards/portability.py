@@ -53,7 +53,7 @@ def _invalid_json_constant(value: str) -> object:
 
 
 def parse_portable_board(raw: bytes) -> PortableBoardBundle:
-    """Accept only a bounded UTF-8 v2 bundle, with no unknown or duplicate keys."""
+    """Accept only a bounded UTF-8 v3 bundle, with no unknown or duplicate keys."""
 
     if len(raw) > MAX_PORTABLE_BOARD_BYTES:
         raise PortabilityError("board_bundle_too_large")
@@ -200,8 +200,6 @@ def resolve_portable_board(db: Session, bundle: PortableBoardBundle) -> Resolved
         for widget in configuration.widgets
     }
     department_names = {name for name, _ in source_keys}
-    if configuration.department_name is not None:
-        department_names.add(configuration.department_name)
     departments = _departments(db, department_names)
     modules = _modules(db, source_keys, departments)
     references: dict[UUID, set[str]] = {}
@@ -245,14 +243,5 @@ def resolve_portable_board(db: Session, bundle: PortableBoardBundle) -> Resolved
         except ValidationError as error:
             raise PortabilityError("board_source_unavailable") from error
 
-    board = BoardCreate(
-        name=configuration.name,
-        description=configuration.description,
-        department_id=(
-            departments[configuration.department_name].id
-            if configuration.department_name is not None
-            else None
-        ),
-        default_section=configuration.default_section,
-    )
+    board = BoardCreate(name=configuration.name, description=configuration.description)
     return ResolvedBoardConfiguration(board=board, widgets=tuple(widgets))

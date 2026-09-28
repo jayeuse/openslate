@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from psycopg import connect
 
-from app.systems.boards.announcement_models import publication_content_fingerprint
+from app.systems.boards.post_models import publication_content_fingerprint
 from operations import reset_application_data as reset
 from operations import reset_execution as execution
 from tests.conftest import _guard_integration_database
@@ -40,7 +40,7 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
         _guard_integration_database(owner_url)
         with connect(database_url) as database:
             with database.cursor() as cursor:
-                for table in ("group_access", "group_members"):
+                for table in ("board_groups", "group_access", "group_members"):
                     cursor.execute(
                         f"DELETE FROM public.{table} WHERE group_id = %s", (group_id,)
                     )
@@ -141,73 +141,56 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "VALUES (%s, %s, 0, 'chart', '{}'::jsonb)",
                 (widget_id, dashboard_id),
             )
-            board_id, record_id = uuid4(), uuid4()
+            board_id, project_board_id, record_id = uuid4(), uuid4(), uuid4()
             cursor.execute(
-                "INSERT INTO public.boards (id, owner_id, department_id, name) "
-                "VALUES (%s, %s, %s, %s)",
-                (board_id, member_id, department_id, "Reset board"),
+                "INSERT INTO public.boards (id, scope, department_id, name) "
+                "VALUES (%s, 'department', %s, %s), (%s, 'project', NULL, %s)",
+                (board_id, department_id, "Reset board", project_board_id, "Reset project"),
             )
+            cursor.execute(
+                "INSERT INTO public.board_groups (id, board_id, group_id, level) "
+                "VALUES (%s, %s, %s, 'write')",
+                (uuid4(), project_board_id, group_id),
+            )
+            event_id = uuid4()
             cursor.execute(
                 "INSERT INTO public.board_events(id,board_id,author_id,title,all_day,"
-                "start_date,end_date,timezone_name,audience_kind) VALUES "
-                "(%s,%s,%s,'R',true,current_date,current_date,'UTC','author')",
-                (uuid4(), board_id, member_id),
-            )
-            announcement_id = uuid4()
-            cursor.execute(
-                "INSERT INTO public.board_announcements "
-                "(id, board_id, author_id, title, body, status, audience_kind) "
-                "VALUES (%s, %s, %s, 'Reset notice', 'Private notice', 'published', 'author')",
-                (announcement_id, board_id, member_id),
+                "start_date,end_date,timezone_name) VALUES "
+                "(%s,%s,%s,'R',true,current_date,current_date,'UTC')",
+                (event_id, board_id, member_id),
             )
             cursor.execute(
-                "INSERT INTO public.board_announcement_revisions "
-                "(id, announcement_id, publication_number, publication_key, "
-                "content_fingerprint, author_id, title, body, "
-                "audience_kind, published_at) VALUES "
-                "(%s, %s, 1, %s, %s, %s, 'Reset notice', 'Private notice', 'author', now())",
+                "INSERT INTO public.board_event_reminders (id, board_id, event_id, timing) "
+                "VALUES (%s, %s, %s, '1d')",
+                (uuid4(), board_id, event_id),
+            )
+            post_id = uuid4()
+            cursor.execute(
+                "INSERT INTO public.board_posts "
+                "(id, board_id, author_id, title, body, status) "
+                "VALUES (%s, %s, %s, 'Reset notice', 'Private notice', 'published')",
+                (post_id, board_id, member_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.board_post_revisions "
+                "(id, post_id, publication_number, publication_key, "
+                "content_fingerprint, author_id, title, body, published_at) VALUES "
+                "(%s, %s, 1, %s, %s, %s, 'Reset notice', 'Private notice', now())",
                 (
                     uuid4(),
-                    announcement_id,
+                    post_id,
                     uuid4(),
                     publication_content_fingerprint(
                         author_id=member_id,
                         title="Reset notice",
                         body="Private notice",
-                        audience_kind="author",
                     ),
                     member_id,
                 ),
             )
             cursor.execute(
-                "INSERT INTO public.board_announcement_personal_states "
-                "(id, user_id, announcement_id, read, bookmarked) "
-                "VALUES (%s, %s, %s, true, true)",
-                (uuid4(), member_id, announcement_id),
-            )
-            for table in ("board_favorites", "board_homes"):
-                cursor.execute(
-                    f"INSERT INTO public.{table} (id, user_id, board_id) VALUES (%s, %s, %s)",
-                    (uuid4(), member_id, board_id),
-                )
-            cursor.execute(
-                "INSERT INTO public.board_templates (id, name, bundle) VALUES (%s, %s, %s::jsonb)",
-                (
-                    uuid4(),
-                    "Reset template",
-                    '{"kind":"openslate-board","version":2,"configuration":'
-                    '{"name":"Reset","description":null,"department_name":null,'
-                    '"default_section":"overview","widgets":[]}}',
-                ),
-            )
-            cursor.execute(
                 "INSERT INTO public.records (id, module_id) VALUES (%s, %s)",
                 (record_id, module_id),
-            )
-            cursor.execute(
-                "INSERT INTO public.board_record_placements (id, board_id, record_id) "
-                "VALUES (%s, %s, %s)",
-                (uuid4(), board_id, record_id),
             )
             report_id, run_id = uuid4(), uuid4()
             cursor.execute(
@@ -266,15 +249,14 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             database, admin_email, storage_object_keys=storage.list_object_keys()
         )
         for table in (
-            "groups group_members group_access "
-            "board_announcement_personal_states board_announcement_revisions "
-            "board_announcements board_events "
-            "board_favorites board_homes boards board_record_placements board_templates "
+            "groups group_members group_access board_groups board_event_reminders "
+            "board_post_revisions board_posts board_events "
             "dashboard_widgets dashboards reports report_schedules "
             "report_runs report_run_rows report_run_eligible_users "
             "scheduled_work in_app_notifications"
         ).split():
             assert plan.counts[table] == 1
+        assert plan.counts["boards"] == 3
         assert plan.impact_digest != plan_before_dashboard.impact_digest
         execution.apply_reset(
             database,
@@ -300,14 +282,15 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 cursor.execute(f"SELECT count(*) FROM public.{table}")
                 assert cursor.fetchone() == (0,)
             for table in (
-                "board_announcement_personal_states board_announcement_revisions "
-                "board_announcements board_events "
-                "board_record_placements boards board_templates dashboard_widgets "
+                "board_groups board_event_reminders board_post_revisions "
+                "board_posts board_events dashboard_widgets "
                 "dashboards reports report_schedules report_runs "
                 "report_run_rows report_run_eligible_users scheduled_work in_app_notifications"
             ).split():
                 cursor.execute(f"SELECT count(*) FROM public.{table}")
                 assert cursor.fetchone() == (0,), table
+            cursor.execute("SELECT scope, status FROM public.boards")
+            assert cursor.fetchall() == [("company", "active")]
             cursor.execute("SELECT logo_file_id FROM public.workspace_profiles")
             assert cursor.fetchone() == (None,)
             cursor.execute(

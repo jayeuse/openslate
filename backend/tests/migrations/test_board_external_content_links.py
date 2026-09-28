@@ -9,15 +9,15 @@ from sqlalchemy.exc import DBAPIError
 from uuid6 import uuid7
 
 from app.systems.access.users.models import User
-from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.models import Board
+from app.systems.boards.post_models import BoardPost, BoardPostRevision
 
 SUPABASE_DATABASE_ROLES = ("anon", "authenticated", "service_role")
 TABLE_ACTIONS = ("SELECT", "INSERT", "UPDATE", "DELETE")
 LINK_TABLES = (
     "board_events",
-    "board_announcements",
-    "board_announcement_revisions",
+    "board_posts",
+    "board_post_revisions",
 )
 
 
@@ -101,41 +101,39 @@ def _assert_published_revision_links_are_immutable(db) -> None:
         status="active",
         role=role,
     )
-    board = Board(owner_id=user.id, name="Link baseline")
+    board = Board(scope="project", name="Link baseline")
     db.add_all([user, board])
     db.flush()
 
-    announcement = BoardAnnouncement(
+    post = BoardPost(
         board_id=board.id,
         author_id=user.id,
         title="Published notice",
         body="Immutable publication content",
         status="published",
-        audience_kind="everyone",
         displayed_publication_number=1,
     )
-    db.add(announcement)
+    db.add(post)
     db.flush()
-    revision = BoardAnnouncementRevision(
-        announcement_id=announcement.id,
+    revision = BoardPostRevision(
+        post_id=post.id,
         publication_number=1,
         publication_key=uuid7(),
         content_fingerprint="a" * 64,
         author_id=user.id,
-        title=announcement.title,
-        body=announcement.body,
+        title=post.title,
+        body=post.body,
         links=[{"label": "Guide", "url": "https://example.test/guide"}],
-        audience_kind="everyone",
         published_at=datetime.now(UTC),
     )
     db.add(revision)
     db.flush()
 
-    with pytest.raises(DBAPIError, match="published announcement revisions are immutable"):
+    with pytest.raises(DBAPIError, match="published post revisions are immutable"):
         with db.begin_nested():
             db.connection().execute(
                 text(
-                    "UPDATE public.board_announcement_revisions SET links = '[]'::jsonb "
+                    "UPDATE public.board_post_revisions SET links = '[]'::jsonb "
                     "WHERE id = :id"
                 ),
                 {"id": revision.id},

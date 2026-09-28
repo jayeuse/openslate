@@ -75,7 +75,7 @@ services add their object, audience and lifecycle checks. See
 | Access | Identity, invitations/recovery, users/roles/groups, workspace policy and service-identity metadata | `app/systems/access/` |
 | Sandbox | Operational schema, Records, relationships, lifecycle, design documents, publication, record triggers and test-run evidence | `app/systems/sandbox/` |
 | OpenView | Department Dashboards, shared saved Views, report definitions, frozen runs and schedules | `app/systems/openview/` |
-| Boards | Grants, content, announcements, events/reminders, widgets, attachments, record links and configuration portability | `app/systems/boards/` |
+| Boards | Scoped Boards and project Board groups, posts and their revisions, events with author-set reminders, tiles, attachments, record links and configuration portability | `app/systems/boards/` |
 | Manage | Workspace profile, transactional audit and security-event inspection | `app/systems/manage/` |
 | Platform | Private Storage files, authenticated invalidations, and in-app scheduled-work references | `app/systems/platform/` |
 
@@ -111,7 +111,7 @@ cache or narrower freshness guarantee is introduced. These boundaries live in
 explains the cursor mechanism.
 
 In-app notification listing applies current eligibility before counting and
-paging. It then batches only the returned page's announcement and reminder
+paging. It then batches only the returned page's post and reminder
 reference columns, with at most one lookup for each kind present. These maps
 last only for that response and contain no content bodies; they do not cache
 authorization or change the separately locked, audited mark-read operation.

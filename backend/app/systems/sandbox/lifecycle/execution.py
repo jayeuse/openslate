@@ -9,9 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
 from app.systems.access.policy.models import GroupAccess
-from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
-from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardRecordPlacement, BoardWidget
+from app.systems.boards.department_boards import sync_department_board
+from app.systems.boards.models import Board, BoardWidget
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
@@ -48,9 +47,6 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("departments", Department),
     ("group_access", GroupAccess),
     ("boards", Board),
-    ("board_announcements", BoardAnnouncement),
-    ("board_announcement_revisions", BoardAnnouncementRevision),
-    ("board_events", BoardEvent),
     ("board_widgets", BoardWidget),
     ("dashboards", Dashboard),
     ("dashboard_widgets", DashboardWidget),
@@ -60,7 +56,6 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("fields", Field),
     ("records", Record),
     ("report_run_rows", ReportRunRow),
-    ("board_record_placements", BoardRecordPlacement),
     ("relationship_edges", RelationshipEdge),
     ("files", File),
     ("saved_views", SavedView),
@@ -141,6 +136,7 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
         "group_access": GroupAccess,
         "dashboard_widgets": DashboardWidget,
         "dashboards": Dashboard,
+        "boards": Board,
     }
 
     for edge_id in plan.scope_ids.get("relationship_edges", ()):
@@ -167,6 +163,7 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
         "records",
         "fields",
         "modules",
+        "boards",
         "departments",
     ):
         for row in plan.rows:
@@ -207,6 +204,10 @@ def _execute(db: Session, plan: LifecyclePlan) -> LifecycleImpactResponse:
                 # Explicit assignment keeps every changed instance on one lifecycle
                 # timestamp instead of relying on SQLAlchemy's per-instance onupdate.
                 instance.updated_at = timestamp
+            for instance in instances:
+                if isinstance(instance, Department):
+                    # A closed Department archives its Board; a reopen restores it.
+                    sync_department_board(db, instance, create=False)
         db.commit()
     except IntegrityError as error:
         db.rollback()

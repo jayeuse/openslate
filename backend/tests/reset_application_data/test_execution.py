@@ -141,6 +141,13 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
     assert not any(
         statement.startswith("INSERT INTO public.sandbox_versions") for statement in statements
     )
+    company_board = next(
+        index
+        for index, statement in enumerate(statements)
+        if statement.startswith("INSERT INTO public.boards")
+    )
+    assert statements.index("DELETE FROM public.boards") < company_board
+    assert "'company'" in statements[company_board]
 
 
 def test_provider_accounts_are_deleted_before_application_profiles(monkeypatch) -> None:

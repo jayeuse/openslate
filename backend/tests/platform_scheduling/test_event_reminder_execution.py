@@ -1,311 +1,219 @@
-"""Due Event reminders deliver once only under current recipient/content policy."""
+"""Author-set event reminders notify every Board reader before each occurrence."""
 
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
-from app.core.database import get_db
-from app.core.database.session import AuditSession
-from app.systems.access.users.models import User
+from app.systems.access.policy.models import AccessLevel
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardGrant
+from app.systems.boards.event_router import router as event_router
 from app.systems.boards.reminder_models import BoardEventReminder
-from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
-from app.systems.platform.scheduling.notification_router import router as notification_router
+from app.systems.platform.scheduling.materializer import materialize_event_reminders
+from app.systems.platform.scheduling.models import (
+    InAppNotification,
+    ScheduledWork,
+    WorkKind,
+    WorkState,
+)
 from app.systems.platform.scheduling.reminder_execution import (
     claim_due_reminder_work,
-    execute_due_reminders,
-    fail_reminder_work,
     finalize_reminder_claim,
 )
+from tests.boards.support import client, grant, member, project_board
 
 pytestmark = pytest.mark.integration
-pytest_plugins = ("tests.reports.test_report_run_routes",)
-NOW = datetime(2026, 9, 24, 12, tzinfo=UTC)
+
+START = datetime(2027, 3, 1, 9, 0, tzinfo=UTC)
 
 
-def _user(db: Session, label: str) -> User:
-    role = "member"
-    actor = User(
-        email=f"reminder-work-{uuid7().hex}@example.test",
-        username=f"reminder_work_{uuid7().hex[:12]}",
-        status="active",
-        role=role,
+def _iso(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _weekly_event(db: Session, board, author, *, reminders: list[str]) -> BoardEvent:
+    response = client(db, author, event_router).post(
+        f"/api/boards/{board.id}/events",
+        json={
+            "board_revision": board.revision,
+            "title": "Stock count",
+            "all_day": False,
+            "start_at": _iso(START),
+            "end_at": _iso(START + timedelta(hours=1)),
+            "timezone_name": "UTC",
+            "recurrence": "weekly",
+            "repeat_until": (START + timedelta(weeks=4)).date().isoformat(),
+            "reminders": reminders,
+        },
     )
-    db.add(actor)
-    db.flush()
-    return actor
+    assert response.status_code == 201, response.text
+    event = db.get(BoardEvent, response.json()["id"])
+    assert event is not None
+    return event
 
 
-def _subject(
-    db: Session,
-) -> tuple[User, User, Board, BoardEvent, BoardEventReminder, ScheduledWork]:
-    owner = _user(db, "owner")
-    recipient = _user(db, "recipient")
-    board = Board(owner_id=owner.id, name=f"Due reminder {uuid7().hex[:10]}", status="active")
-    db.add(board)
-    db.flush()
-    db.add(
-        BoardGrant(
-            board_id=board.id,
-            principal_type="user",
-            principal_user_id=recipient.id,
-            permission="view",
-            effect="allow",
+def _work(db: Session, event: BoardEvent) -> list[ScheduledWork]:
+    return list(
+        db.scalars(
+            select(ScheduledWork)
+            .join(BoardEventReminder, BoardEventReminder.id == ScheduledWork.reminder_id)
+            .where(
+                ScheduledWork.kind == WorkKind.EVENT_REMINDER,
+                BoardEventReminder.event_id == event.id,
+            )
+            .order_by(ScheduledWork.occurrence_start_at)
         )
     )
-    start = datetime(2026, 10, 1, 9, tzinfo=UTC)
-    event = BoardEvent(
-        board_id=board.id,
-        author_id=owner.id,
-        title="Private dispatch",
-        all_day=False,
-        start_at=start,
-        end_at=start + timedelta(hours=1),
-        timezone_name="UTC",
-        audience_kind="everyone",
-    )
-    db.add(event)
-    db.flush()
-    reminder = BoardEventReminder(
-        board_id=board.id,
-        event_id=event.id,
-        recipient_id=recipient.id,
-        occurrence_id=f"{event.id}:2026-10-01T09:00:00Z",
-        occurrence_start_at=start,
-        timing="now",
-        due_at=NOW,
-    )
-    db.add(reminder)
-    db.flush()
-    work = ScheduledWork(
-        kind="event-reminder", reminder_id=reminder.id, scheduled_for=NOW, next_attempt_at=NOW
-    )
-    db.add(work)
-    db.flush()
-    return owner, recipient, board, event, reminder, work
 
 
-def _client(db: Session, actor: User) -> TestClient:
-    app = FastAPI()
-    app.include_router(notification_router, prefix="/api")
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
-    return TestClient(app)
+def _deliver(db: Session, at: datetime) -> list[object]:
+    delivered: list[object] = []
+    for claim in claim_due_reminder_work(db, now=at):
+        delivered.extend(finalize_reminder_claim(db, claim, now=at))
+    return delivered
 
 
-def test_due_reminder_claim_delivers_one_reference_and_replay_cannot_duplicate(
+def test_a_weekly_reminder_notifies_every_reader_before_each_occurrence(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    _, recipient, _, _, _, work = _subject(db)
-    db.commit()
-    claims = claim_due_reminder_work(db, now=NOW)
-    assert [claim.id for claim in claims] == [work.id]
-    db.commit()
+    author, reader, outsider = member(db), member(db), member(db)
+    board = project_board(db)
+    grant(db, board, [author], AccessLevel.WRITE)
+    grant(db, board, [reader], AccessLevel.READ)
+    event = _weekly_event(db, board, author, reminders=["1d"])
 
-    notice_id = finalize_reminder_claim(db, claims[0], now=NOW)
-    db.commit()
-    assert notice_id is not None
-    notice = db.get(InAppNotification, notice_id)
-    assert notice is not None and notice.recipient_id == recipient.id
-    assert notice.work_id == work.id
-    assert db.get(ScheduledWork, work.id).state == WorkState.SUCCEEDED
-    assert finalize_reminder_claim(db, claims[0], now=NOW) is None
-    assert claim_due_reminder_work(db, now=NOW) == []
+    before_first = START - timedelta(days=3)
+    materialize_event_reminders(db, now=before_first)
+    [first] = _work(db, event)
+    assert first.occurrence_start_at == START
+    assert first.scheduled_for == START - timedelta(days=1)
+    assert materialize_event_reminders(db, now=before_first) == []
+
+    assert _deliver(db, START - timedelta(days=2)) == []
+    notices = _deliver(db, START - timedelta(days=1))
+    recipients = set(
+        db.scalars(
+            select(InAppNotification.recipient_id).where(InAppNotification.work_id == first.id)
+        )
+    )
+    assert len(notices) == len(recipients)
+    assert {author.id, reader.id} <= recipients and outsider.id not in recipients
+    db.flush()
+    db.refresh(first)
+    assert first.state == WorkState.SUCCEEDED
+
+    materialize_event_reminders(db, now=START - timedelta(days=1))
+    second = _work(db, event)[1]
+    assert second.occurrence_start_at == START + timedelta(weeks=1)
+    assert second.scheduled_for == START + timedelta(weeks=1) - timedelta(days=1)
+    assert _deliver(db, second.scheduled_for)
     assert (
-        db.scalar(select(InAppNotification).where(InAppNotification.work_id == work.id)) == notice
+        set(
+            db.scalars(
+                select(InAppNotification.recipient_id).where(InAppNotification.work_id == second.id)
+            )
+        )
+        == recipients
     )
 
 
-def test_runtime_role_worker_commits_one_reminder_notice(report_run_fixture) -> None:
-    subject = report_run_fixture
-    start = datetime(2026, 10, 1, 9, tzinfo=UTC)
-    with AuditSession(subject.owner_engine) as db:
-        db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
-        board = Board(owner_id=subject.owner_id, name=f"Runtime reminder {uuid7().hex[:12]}")
-        db.add(board)
-        db.flush()
-        event = BoardEvent(
-            board_id=board.id,
-            author_id=subject.owner_id,
-            title="Runtime delivery",
-            all_day=False,
-            start_at=start,
-            end_at=start + timedelta(hours=1),
-            timezone_name="UTC",
-            audience_kind="everyone",
-        )
-        db.add(event)
-        db.flush()
-        reminder = BoardEventReminder(
-            board_id=board.id,
-            event_id=event.id,
-            recipient_id=subject.owner_id,
-            occurrence_id=f"{event.id}:2026-10-01T09:00:00Z",
-            occurrence_start_at=start,
-            timing="now",
-            due_at=NOW,
-        )
-        db.add(reminder)
-        db.flush()
-        work = ScheduledWork(
-            kind="event-reminder", reminder_id=reminder.id, scheduled_for=NOW, next_attempt_at=NOW
-        )
-        db.add(work)
-        db.commit()
-        board_id, event_id, reminder_id, work_id = board.id, event.id, reminder.id, work.id
-    try:
-        delivered = execute_due_reminders(subject.runtime_engine, now=NOW)
-        assert len(delivered) == 1
-        assert execute_due_reminders(subject.runtime_engine, now=NOW) == []
-        with AuditSession(subject.owner_engine) as db:
-            notice = db.get(InAppNotification, delivered[0])
-            assert notice is not None
-            assert notice.recipient_id == subject.owner_id and notice.work_id == work_id
-            assert db.get(ScheduledWork, work_id).state == WorkState.SUCCEEDED
-    finally:
-        with AuditSession(subject.owner_engine) as db:
-            db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
-            for notice in db.scalars(
-                select(InAppNotification).where(InAppNotification.work_id == work_id)
-            ):
-                db.delete(notice)
-            db.flush()
-            db.delete(db.get(ScheduledWork, work_id))
-            db.flush()
-            db.delete(db.get(BoardEventReminder, reminder_id))
-            db.flush()
-            db.delete(db.get(BoardEvent, event_id))
-            db.flush()
-            db.delete(db.get(Board, board_id))
-            db.commit()
-
-
-def test_audience_revocation_before_delivery_cancels_without_a_notice(
+def test_changing_the_time_requeues_and_archive_clears_pending_occurrences(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    _, _, _, event, _, work = _subject(db)
-    db.commit()
-    claim = claim_due_reminder_work(db, now=NOW)[0]
-    db.commit()
-    event.audience_kind = "author"
-    db.commit()
+    author = member(db)
+    board = project_board(db)
+    grant(db, board, [author], AccessLevel.WRITE)
+    event = _weekly_event(db, board, author, reminders=["start", "15m"])
+    now = START - timedelta(days=2)
+    materialize_event_reminders(db, now=now)
+    assert len(_work(db, event)) == 2
 
-    assert finalize_reminder_claim(db, claim, now=NOW) is None
-    db.commit()
-    assert db.get(ScheduledWork, work.id).state == WorkState.CANCELED
-    assert db.scalar(select(InAppNotification).where(InAppNotification.work_id == work.id)) is None
-
-
-def test_board_view_revocation_before_delivery_cancels_without_a_notice(
-    integration_owner_db: Session,
-) -> None:
-    db = integration_owner_db
-    _, recipient, board, _, _, work = _subject(db)
-    db.commit()
-    claim = claim_due_reminder_work(db, now=NOW)[0]
-    db.commit()
-    grant = db.scalar(
-        select(BoardGrant).where(
-            BoardGrant.board_id == board.id,
-            BoardGrant.principal_user_id == recipient.id,
-        )
+    api = client(db, author, event_router)
+    db.refresh(board)
+    moved = api.patch(
+        f"/api/boards/{board.id}/events/{event.id}",
+        json={
+            "board_revision": board.revision,
+            "event_revision": event.revision,
+            "start_at": _iso(START + timedelta(hours=2)),
+            "end_at": _iso(START + timedelta(hours=3)),
+            "reminders": ["start"],
+        },
     )
-    assert grant is not None
-    grant.effect = "deny"
-    db.commit()
+    assert moved.status_code == 200, moved.text
+    assert _work(db, event) == []
+    materialize_event_reminders(db, now=now)
+    [queued] = _work(db, event)
+    assert queued.occurrence_start_at == START + timedelta(hours=2)
+    assert queued.scheduled_for == START + timedelta(hours=2)
 
-    assert finalize_reminder_claim(db, claim, now=NOW) is None
-    db.commit()
-    assert db.get(ScheduledWork, work.id).state == WorkState.CANCELED
-    assert db.scalar(select(InAppNotification).where(InAppNotification.work_id == work.id)) is None
-
-
-def test_disabled_recipient_before_delivery_cancels_without_a_notice(
-    integration_owner_db: Session,
-) -> None:
-    db = integration_owner_db
-    _, recipient, _, _, _, work = _subject(db)
-    db.commit()
-    claim = claim_due_reminder_work(db, now=NOW)[0]
-    db.commit()
-    recipient.status = "disabled"
-    db.commit()
-
-    assert finalize_reminder_claim(db, claim, now=NOW) is None
-    db.commit()
-    assert db.get(ScheduledWork, work.id).state == WorkState.CANCELED
-    assert db.scalar(select(InAppNotification).where(InAppNotification.work_id == work.id)) is None
-
-
-def test_failed_reminder_claim_retries_with_backoff_and_rejects_stale_lease(
-    integration_owner_db: Session,
-) -> None:
-    db = integration_owner_db
-    _subject(db)
-    db.commit()
-    first = claim_due_reminder_work(db, now=NOW)[0]
-    db.commit()
-    assert fail_reminder_work(db, first, now=NOW)
-    db.commit()
-    assert claim_due_reminder_work(db, now=NOW) == []
-    second = claim_due_reminder_work(db, now=NOW + timedelta(seconds=2))[0]
-    db.commit()
-    assert finalize_reminder_claim(db, first, now=NOW + timedelta(seconds=2)) is None
-    assert finalize_reminder_claim(db, second, now=NOW + timedelta(seconds=2)) is not None
-
-
-def test_reminder_inbox_read_rechecks_current_audience_and_active_recipient(
-    integration_owner_db: Session,
-) -> None:
-    db = integration_owner_db
-    _, recipient, board, event, _, work = _subject(db)
-    db.commit()
-    claim = claim_due_reminder_work(db, now=NOW)[0]
-    db.commit()
-    notice_id = finalize_reminder_claim(db, claim, now=NOW)
-    assert notice_id is not None
-    db.commit()
-
-    client = _client(db, recipient)
-    inbox = client.get("/api/notifications")
-    assert inbox.status_code == 200, inbox.text
-    assert inbox.json()["pagination"]["total"] == 1
-    item = inbox.json()["items"][0]
-    assert item["kind"] == "event-reminder"
-    assert item["event_id"] == str(event.id)
-    assert item["id"] == str(notice_id)
-    assert "title" not in item
-    marked = client.post(f"/api/notifications/{notice_id}/read")
-    assert marked.status_code == 200
-    assert marked.json()["status"] == "read"
-
-    event.audience_kind = "author"
-    db.commit()
-    assert client.get("/api/notifications").json()["pagination"]["total"] == 0
-    assert client.post(f"/api/notifications/{notice_id}/read").status_code == 404
-    event.audience_kind = "everyone"
-    grant = db.scalar(
-        select(BoardGrant).where(
-            BoardGrant.board_id == board.id,
-            BoardGrant.principal_user_id == recipient.id,
-        )
+    db.refresh(board)
+    db.refresh(event)
+    archived = api.post(
+        f"/api/boards/{board.id}/events/{event.id}/archive",
+        json={"board_revision": board.revision, "event_revision": event.revision},
     )
-    assert grant is not None
-    grant.effect = "deny"
-    db.commit()
-    assert client.get("/api/notifications").json()["pagination"]["total"] == 0
-    grant.effect = "allow"
-    recipient.status = "disabled"
-    db.commit()
-    assert client.get("/api/notifications").json()["pagination"]["total"] == 0
-    assert db.get(ScheduledWork, work.id).state == WorkState.SUCCEEDED
+    assert archived.status_code == 200
+    assert _work(db, event) == []
+    assert materialize_event_reminders(db, now=now) == []
+
+
+def test_a_reminder_for_a_removed_occurrence_is_canceled_at_delivery(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    author = member(db)
+    board = project_board(db)
+    grant(db, board, [author], AccessLevel.WRITE)
+    event = _weekly_event(db, board, author, reminders=["start"])
+    materialize_event_reminders(db, now=START - timedelta(days=1))
+    [work] = _work(db, event)
+    event.start_at = START + timedelta(minutes=30)
+    event.end_at = START + timedelta(hours=2)
+    db.flush()
+
+    assert _deliver(db, START) == []
+    db.flush()
+    db.refresh(work)
+    assert work.state == WorkState.CANCELED
+    assert work.failure_code == "source_unavailable"
+
+
+def test_readers_cannot_set_reminders_and_timings_are_distinct(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    author, reader = member(db), member(db)
+    board = project_board(db)
+    grant(db, board, [author], AccessLevel.WRITE)
+    grant(db, board, [reader], AccessLevel.READ)
+    payload = {
+        "board_revision": board.revision,
+        "title": "Review",
+        "all_day": True,
+        "start_date": "2027-03-01",
+        "end_date": "2027-03-01",
+        "timezone_name": "UTC",
+        "reminders": ["1d"],
+    }
+    assert (
+        client(db, reader, event_router)
+        .post(f"/api/boards/{board.id}/events", json=payload)
+        .status_code
+        == 403
+    )
+    assert (
+        client(db, author, event_router)
+        .post(f"/api/boards/{board.id}/events", json={**payload, "reminders": ["1d", "1d"]})
+        .status_code
+        == 422
+    )
+    created = client(db, author, event_router).post(f"/api/boards/{board.id}/events", json=payload)
+    assert created.status_code == 201
+    shown = client(db, reader, event_router).get(
+        f"/api/boards/{board.id}/events/{created.json()['id']}"
+    )
+    assert shown.json()["reminders"] == ["1d"]

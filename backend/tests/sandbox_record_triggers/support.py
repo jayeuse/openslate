@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.users.models import User, UserStatus
+from app.systems.boards.models import Board
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
 from app.systems.sandbox.departments.models import Department
@@ -108,6 +109,14 @@ def cleanup_committed_trigger(
         connection.execute(delete(SandboxVersion).where(SandboxVersion.performed_by == actor_id))
         connection.execute(delete(Field).where(Field.module_id == module_id))
         connection.execute(delete(Module).where(Module.id == module_id))
+        # A publish gives each new department its Board.
+        connection.execute(
+            delete(Board).where(
+                Board.department_id.in_(
+                    select(Department.id).where(Department.performed_by == actor_id)
+                )
+            )
+        )
         connection.execute(delete(Department).where(Department.performed_by == actor_id))
         connection.execute(
             update(SandboxDocumentRow)

@@ -1,4 +1,4 @@
-"""Once-only personal Event reminder delivery with current Board/content checks."""
+"""Event reminder delivery: each due occurrence notifies every current Board reader once."""
 
 import logging
 from datetime import datetime, timedelta
@@ -10,15 +10,13 @@ from uuid6 import uuid7
 
 from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
-from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import User, UserStatus
-from app.systems.boards.access import can_access_board
+from app.systems.boards.access import board_reader_ids
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.event_router import _audience_clause
-from app.systems.boards.models import Board, BoardGrant, BoardPermission, BoardStatus
+from app.systems.boards.models import Board, BoardStatus
 from app.systems.boards.reminder_models import BoardEventReminder
-from app.systems.boards.reminder_service import occurrence_for_id, occurrence_instant
+from app.systems.boards.reminder_service import occurrence_at, reminder_due_at
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.platform.scheduling.materializer import materialize_event_reminders
 from app.systems.platform.scheduling.models import (
     InAppNotification,
     ScheduledWork,
@@ -120,126 +118,86 @@ def _cancel(work: ScheduledWork, reason: str) -> None:
 
 def finalize_reminder_claim(
     db: Session, claim: WorkClaim, *, now: datetime | None = None
-) -> UUID | None:
-    """Stage a recipient reference only if every current policy still admits it."""
+) -> list[UUID]:
+    """Stage one notification for each current reader, only while the occurrence still exists.
+
+    Returns the IDs of the new notifications; the caller owns commit or rollback.
+    """
 
     current = _current(now)
-    reminder_id = db.scalar(
-        select(ScheduledWork.reminder_id).where(
+    source = db.execute(
+        select(ScheduledWork.reminder_id, ScheduledWork.occurrence_start_at).where(
             ScheduledWork.id == claim.id,
             ScheduledWork.kind == WorkKind.EVENT_REMINDER,
         )
-    )
-    if reminder_id is None:
-        return None
-    source = db.execute(
-        select(
-            BoardEventReminder.board_id,
-            BoardEventReminder.event_id,
-            BoardEventReminder.recipient_id,
-        ).where(BoardEventReminder.id == reminder_id)
     ).one_or_none()
-    if source is None:
-        return None
+    if source is None or source.reminder_id is None or source.occurrence_start_at is None:
+        return []
+    parents = db.execute(
+        select(BoardEventReminder.board_id, BoardEventReminder.event_id).where(
+            BoardEventReminder.id == source.reminder_id
+        )
+    ).one_or_none()
+    if parents is None:
+        return []
+    # Board writers lock the Board before the event and the reminder.
     board = db.scalar(
         select(Board)
-        .where(Board.id == source.board_id)
+        .where(Board.id == parents.board_id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    actor = db.scalar(
-        select(User)
-        .where(User.id == source.recipient_id)
+    event = db.scalar(
+        select(BoardEvent)
+        .where(BoardEvent.id == parents.event_id, BoardEvent.board_id == parents.board_id)
+        .with_for_update()
         .execution_options(populate_existing=True)
-    )
-    actor_active = (
-        actor is not None
-        and not actor.is_deleted
-        and actor.deleted_at is None
-        and actor.status == UserStatus.ACTIVE.value
-        and is_established_user(actor)
-    )
-    event = (
-        db.scalar(
-            select(BoardEvent)
-            .where(
-                BoardEvent.id == source.event_id,
-                BoardEvent.board_id == source.board_id,
-                _audience_clause(actor),
-            )
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if actor_active and actor is not None
-        else None
     )
     reminder = db.scalar(
         select(BoardEventReminder)
-        .where(BoardEventReminder.id == reminder_id)
+        .where(BoardEventReminder.id == source.reminder_id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )
     work = _locked_claim(db, claim, current)
-    if work is None or work.reminder_id != reminder_id:
-        return None
-    grants = (
-        list(
-            db.scalars(
-                select(BoardGrant).where(
-                    BoardGrant.board_id == source.board_id,
-                    BoardGrant.is_deleted.is_(False),
-                    BoardGrant.deleted_at.is_(None),
-                )
-            )
-        )
-        if board is not None
-        else []
-    )
-    occurrence = (
-        occurrence_for_id(event, reminder.occurrence_id)
-        if event is not None and reminder is not None
-        else None
-    )
+    if work is None or work.reminder_id != source.reminder_id:
+        return []
+    start = source.occurrence_start_at
     if (
         board is None
         or board.status != BoardStatus.ACTIVE
         or board.is_deleted
         or board.deleted_at is not None
-        or not actor_active
-        or actor is None
-        or not can_access_board(board, actor, BoardPermission.VIEW, grants)
         or event is None
         or event.is_deleted
         or event.deleted_at is not None
         or event.archived
         or reminder is None
         or reminder.is_deleted
-        or reminder.deleted_at is not None
-        or reminder.recipient_id != actor.id
         or reminder.event_id != event.id
-        or occurrence is None
-        or occurrence_instant(event, occurrence)
-        != reminder.occurrence_start_at.astimezone(current.tzinfo)
-        or reminder.due_at != work.scheduled_for
+        or occurrence_at(event, start) is None
+        or reminder_due_at(start, reminder.timing) != work.scheduled_for
         or work.scheduled_for > current
     ):
         _cancel(work, "source_unavailable")
-        return None
-    existing = db.scalar(
-        select(InAppNotification).where(
-            InAppNotification.work_id == work.id,
-            InAppNotification.recipient_id == actor.id,
+        return []
+    delivered = set(
+        db.scalars(
+            select(InAppNotification.recipient_id).where(InAppNotification.work_id == work.id)
         )
     )
-    notice = existing or InAppNotification(work_id=work.id, recipient_id=actor.id)
-    if existing is None:
-        db.add(notice)
-        db.flush()
+    notices = [
+        InAppNotification(work_id=work.id, recipient_id=recipient_id)
+        for recipient_id in sorted(board_reader_ids(db, board))
+        if recipient_id not in delivered
+    ]
+    db.add_all(notices)
+    db.flush()
     work.state = WorkState.SUCCEEDED
     work.failure_code = None
     work.lease_token = None
     work.lease_expires_at = None
-    return notice.id
+    return [notice.id for notice in notices]
 
 
 def fail_reminder_work(db: Session, claim: WorkClaim, *, now: datetime | None = None) -> bool:
@@ -261,18 +219,18 @@ def fail_reminder_work(db: Session, claim: WorkClaim, *, now: datetime | None = 
 
 def execute_reminder_claim(
     engine: Engine, claim: WorkClaim, *, now: datetime | None = None
-) -> UUID | None:
+) -> list[UUID]:
     try:
         with _session(engine) as db:
-            notice_id = finalize_reminder_claim(db, claim, now=now)
+            notice_ids = finalize_reminder_claim(db, claim, now=now)
             db.commit()
-            return notice_id
+            return notice_ids
     except Exception:
         logger.warning("Event reminder delivery failed; applying bounded retry")
         with _session(engine) as db:
             if fail_reminder_work(db, claim, now=now):
                 db.commit()
-        return None
+        return []
 
 
 def execute_due_reminders(
@@ -280,11 +238,12 @@ def execute_due_reminders(
 ) -> list[UUID]:
     current = _current(now)
     with _session(engine) as db:
+        materialize_event_reminders(db, now=current)
+        db.commit()
+    with _session(engine) as db:
         claims = claim_due_reminder_work(db, now=current, limit=limit)
         db.commit()
     delivered: list[UUID] = []
     for claim in claims:
-        notice_id = execute_reminder_claim(engine, claim, now=current)
-        if notice_id is not None:
-            delivered.append(notice_id)
+        delivered.extend(execute_reminder_claim(engine, claim, now=current))
     return delivered

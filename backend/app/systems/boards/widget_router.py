@@ -1,25 +1,23 @@
-"""Board-scoped widget routes; not mounted until Board integration is ready."""
+"""Board tiles: every reader sees them; managers add, change, order and remove them."""
 
 from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import get_current_user, require_non_guest
+from app.common.dependencies import get_current_user
 from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.database import get_db
-from app.systems.access.identity.eligibility import identity_eligible_clause
-from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import User, UserStatus
-from app.systems.boards.models import Board, BoardPermission, BoardStatus, BoardWidget
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import User
+from app.systems.boards.models import Board, BoardStatus, BoardWidget
 from app.systems.boards.router import _board_with_access
 from app.systems.boards.widget_schemas import (
-    BoardWidgetAudience,
     BoardWidgetConfig,
     BoardWidgetListRequest,
     BoardWidgetListResponse,
@@ -43,7 +41,6 @@ def _private_cache(response: Response) -> None:
 
 router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_private_cache)])
 Reader = Annotated[User, Depends(get_current_user)]
-Writer = Annotated[User, Depends(require_non_guest)]
 Database = Annotated[Session, Depends(get_db)]
 
 WIDGET_LIST_SPEC = ListQuerySpec(
@@ -79,38 +76,6 @@ def _editable(board: Board, revision: int) -> None:
         raise _conflict("board_archived", "Restore the Board before changing widgets")
 
 
-def _audience(widget: BoardWidget) -> BoardWidgetAudience:
-    try:
-        return BoardWidgetAudience(
-            kind=widget.audience_kind,
-            user_id=widget.audience_user_id,
-        )
-    except ValidationError:
-        raise _not_found() from None
-
-
-def _visible(widget: BoardWidget, actor: User) -> bool:
-    audience = _audience(widget)
-    if audience.kind == "everyone":
-        return True
-    if audience.kind == "private":
-        return widget.creator_id == actor.id
-    return audience.user_id == actor.id
-
-
-def _visible_clause(actor: User) -> ColumnElement[bool]:
-    """Apply widget audience before count and pagination, including for managers."""
-    return or_(
-        and_(BoardWidget.audience_kind == "everyone", BoardWidget.audience_user_id.is_(None)),
-        and_(
-            BoardWidget.audience_kind == "private",
-            BoardWidget.creator_id == actor.id,
-            BoardWidget.audience_user_id.is_(None),
-        ),
-        and_(BoardWidget.audience_kind == "user", BoardWidget.audience_user_id == actor.id),
-    )
-
-
 def _active_widgets(db: Session, board_id: UUID, *, lock: bool = False) -> list[BoardWidget]:
     statement = (
         select(BoardWidget)
@@ -137,7 +102,6 @@ def _response(widget: BoardWidget) -> BoardWidgetResponse:
                 "module_id": widget.module_id,
                 "position": widget.position,
                 "config": BoardWidgetConfig.model_validate(widget.config),
-                "audience": _audience(widget),
                 "created_at": widget.created_at,
                 "updated_at": widget.updated_at,
             }
@@ -189,33 +153,11 @@ def _validate_source(db: Session, user: User, widget: BoardWidgetSpec) -> None:
         raise _conflict("widget_invalid", "The selected module or fields are unavailable")
 
 
-def _validate_audience(db: Session, audience: BoardWidgetAudience) -> None:
-    if audience.kind == "user":
-        valid = db.scalar(
-            select(User.id)
-            .where(
-                User.id == audience.user_id,
-                User.status == UserStatus.ACTIVE.value,
-                User.is_deleted.is_(False),
-                User.deleted_at.is_(None),
-                identity_eligible_clause(),
-                established_user_clause(),
-            )
-            .with_for_update()
-        )
-    else:
-        return
-    if valid is None:
-        raise _conflict("audience_invalid", "The selected audience is unavailable")
-
-
 def _write(widget: BoardWidget, payload: BoardWidgetSpec) -> None:
     widget.name = payload.name
     widget.widget_type = payload.widget_type
     widget.module_id = payload.module_id
     widget.config = payload.config.model_dump(mode="json")
-    widget.audience_kind = payload.audience.kind
-    widget.audience_user_id = payload.audience.user_id
 
 
 def _commit(db: Session) -> None:
@@ -233,14 +175,13 @@ def list_board_widgets(
     db: Database,
     params: Annotated[BoardWidgetListRequest, Query()],
 ) -> BoardWidgetListResponse:
-    board = _board_with_access(db, user, board_id, BoardPermission.VIEW)
+    board = _board_with_access(db, user, board_id, AccessLevel.READ)
     result = execute_standard_list(
         db,
         select(BoardWidget).where(
             BoardWidget.board_id == board.id,
             BoardWidget.is_deleted.is_(False),
             BoardWidget.deleted_at.is_(None),
-            _visible_clause(user),
         ),
         params,
         WIDGET_LIST_SPEC,
@@ -258,25 +199,21 @@ def list_board_widgets(
     status_code=status.HTTP_201_CREATED,
 )
 def create_board_widget(
-    board_id: UUID, payload: BoardWidgetWrite, user: Writer, db: Database, response: Response
+    board_id: UUID, payload: BoardWidgetWrite, user: Reader, db: Database, response: Response
 ) -> BoardWidgetMutationResponse:
-    board = _board_with_access(db, user, board_id, BoardPermission.EDIT, lock=True)
+    board = _board_with_access(db, user, board_id, AccessLevel.MANAGE, lock=True)
     _editable(board, payload.revision)
     widgets = _active_widgets(db, board.id, lock=True)
     if len(widgets) >= 12:
         raise _conflict("widget_limit", "A Board can contain at most 12 widgets")
     _validate_source(db, user, payload.widget)
-    _validate_audience(db, payload.widget.audience)
     widget = BoardWidget(
         board_id=board.id,
-        creator_id=user.id,
         position=len(widgets),
         name=payload.widget.name,
         widget_type=payload.widget.widget_type,
         module_id=payload.widget.module_id,
         config=payload.widget.config.model_dump(mode="json"),
-        audience_kind=payload.widget.audience.kind,
-        audience_user_id=payload.widget.audience.user_id,
     )
     db.add(widget)
     board.revision += 1
@@ -288,19 +225,16 @@ def create_board_widget(
 
 @router.patch("/{board_id}/widgets/{widget_id}", response_model=BoardWidgetMutationResponse)
 def update_board_widget(
-    board_id: UUID, widget_id: UUID, payload: BoardWidgetWrite, user: Writer, db: Database
+    board_id: UUID, widget_id: UUID, payload: BoardWidgetWrite, user: Reader, db: Database
 ) -> BoardWidgetMutationResponse:
-    board = _board_with_access(db, user, board_id, BoardPermission.EDIT, lock=True)
+    board = _board_with_access(db, user, board_id, AccessLevel.MANAGE, lock=True)
     _editable(board, payload.revision)
     widget = next(
         (item for item in _active_widgets(db, board.id, lock=True) if item.id == widget_id), None
     )
-    if widget is None or not _visible(widget, user):
+    if widget is None:
         raise _not_found()
     _validate_source(db, user, payload.widget)
-    _validate_audience(db, payload.widget.audience)
-    if widget.audience_kind != "private" and payload.widget.audience.kind == "private":
-        widget.creator_id = user.id
     _write(widget, payload.widget)
     board.revision += 1
     _commit(db)
@@ -317,15 +251,15 @@ def duplicate_board_widget(
     board_id: UUID,
     widget_id: UUID,
     payload: BoardWidgetRevision,
-    user: Writer,
+    user: Reader,
     db: Database,
     response: Response,
 ) -> BoardWidgetMutationResponse:
-    board = _board_with_access(db, user, board_id, BoardPermission.EDIT, lock=True)
+    board = _board_with_access(db, user, board_id, AccessLevel.MANAGE, lock=True)
     _editable(board, payload.revision)
     widgets = _active_widgets(db, board.id, lock=True)
     source = next((item for item in widgets if item.id == widget_id), None)
-    if source is None or not _visible(source, user):
+    if source is None:
         raise _not_found()
     if len(widgets) >= 12:
         raise _conflict("widget_limit", "A Board can contain at most 12 widgets")
@@ -335,21 +269,16 @@ def duplicate_board_widget(
             "widget_type": source.widget_type,
             "module_id": source.module_id,
             "config": source.config,
-            "audience": _audience(source),
         }
     )
     _validate_source(db, user, source_spec)
-    _validate_audience(db, source_spec.audience)
     duplicate = BoardWidget(
         board_id=board.id,
-        creator_id=user.id,
         position=len(widgets),
         name=source.name,
         widget_type=source.widget_type,
         module_id=source.module_id,
         config=dict(source.config),
-        audience_kind=source.audience_kind,
-        audience_user_id=source.audience_user_id,
     )
     db.add(duplicate)
     board.revision += 1
@@ -361,13 +290,13 @@ def duplicate_board_widget(
 
 @router.put("/{board_id}/widgets/order", response_model=BoardWidgetOrderResponse)
 def reorder_board_widgets(
-    board_id: UUID, payload: BoardWidgetOrder, user: Writer, db: Database
+    board_id: UUID, payload: BoardWidgetOrder, user: Reader, db: Database
 ) -> BoardWidgetOrderResponse:
-    board = _board_with_access(db, user, board_id, BoardPermission.EDIT, lock=True)
+    board = _board_with_access(db, user, board_id, AccessLevel.MANAGE, lock=True)
     _editable(board, payload.revision)
-    visible = [item for item in _active_widgets(db, board.id, lock=True) if _visible(item, user)]
+    visible = _active_widgets(db, board.id, lock=True)
     if set(payload.widget_ids) != {item.id for item in visible}:
-        raise _conflict("widget_order_invalid", "Order must contain the visible Board widgets")
+        raise _conflict("widget_order_invalid", "Order must contain every Board widget")
     positions = sorted(item.position for item in visible)
     by_id = {item.id: item for item in visible}
     for widget_id, position in zip(payload.widget_ids, positions, strict=True):
@@ -385,14 +314,14 @@ def delete_board_widget(
     board_id: UUID,
     widget_id: UUID,
     revision: Annotated[int, Query(ge=1)],
-    user: Writer,
+    user: Reader,
     db: Database,
 ) -> Response:
-    board = _board_with_access(db, user, board_id, BoardPermission.EDIT, lock=True)
+    board = _board_with_access(db, user, board_id, AccessLevel.MANAGE, lock=True)
     _editable(board, revision)
     widgets = _active_widgets(db, board.id, lock=True)
     widget = next((item for item in widgets if item.id == widget_id), None)
-    if widget is None or not _visible(widget, user):
+    if widget is None:
         raise _not_found()
     db.delete(widget)
     for position, remaining in enumerate(item for item in widgets if item.id != widget_id):

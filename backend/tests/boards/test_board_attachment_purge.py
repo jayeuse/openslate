@@ -12,7 +12,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.systems.boards.attachment_models import BoardContentAttachment
+from app.systems.boards.attachment_models import BoardAttachment
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
 from app.systems.platform.files.board_router import router as board_file_router
@@ -31,7 +31,7 @@ def test_board_purge_blocks_unpurged_file_then_deletes_purged_file_and_detached_
     db = integration_owner_db
     password = token_urlsafe(32)
     admin = _actor(db, admin=True, password=password)
-    board = Board(owner_id=admin.id, name="Board with file", status="archived")
+    board = Board(scope="project", name="Board with file", status="archived")
     db.add(board)
     db.flush()
     event = BoardEvent(
@@ -42,7 +42,6 @@ def test_board_purge_blocks_unpurged_file_then_deletes_purged_file_and_detached_
         start_date=date(2026, 9, 24),
         end_date=date(2026, 9, 24),
         timezone_name="Asia/Manila",
-        audience_kind="everyone",
         archived=True,
     )
     file = File(
@@ -57,7 +56,7 @@ def test_board_purge_blocks_unpurged_file_then_deletes_purged_file_and_detached_
     )
     db.add_all((event, file))
     db.flush()
-    ownership = BoardContentAttachment(
+    ownership = BoardAttachment(
         board_id=board.id, file_id=file.id, event_id=event.id, is_linked=False
     )
     db.add(ownership)
@@ -76,7 +75,7 @@ def test_board_purge_blocks_unpurged_file_then_deletes_purged_file_and_detached_
     preview = client.post(f"{path}/preview")
     assert preview.status_code == 200, preview.text
     types = {row["entity_type"] for row in preview.json()["impact"]["rows"]}
-    assert {"files", "board_content_attachments"} <= types
+    assert {"files", "board_attachments"} <= types
     executed = client.post(
         path,
         json={
@@ -87,7 +86,7 @@ def test_board_purge_blocks_unpurged_file_then_deletes_purged_file_and_detached_
     )
     assert executed.status_code == 200, executed.text
     assert db.get(Board, board.id) is None
-    assert db.get(BoardContentAttachment, ownership.id) is None
+    assert db.get(BoardAttachment, ownership.id) is None
     assert db.get(File, file.id) is None
 
 
@@ -97,7 +96,7 @@ def test_unlinked_board_file_admin_can_preview_and_confirm_purge(
     db = integration_owner_db
     password = token_urlsafe(32)
     admin = _actor(db, admin=True, password=password)
-    board = Board(owner_id=admin.id, name="Purge one file", status="active")
+    board = Board(scope="project", name="Purge one file", status="active")
     db.add(board)
     db.flush()
     file = File(

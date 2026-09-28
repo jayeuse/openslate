@@ -8,20 +8,10 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.systems.boards.models import Board
 from app.systems.openview.views.models import SavedView
 from app.systems.platform.files.models import File
 from app.systems.sandbox.lifecycle.access_dependencies import (
     load_group_access_purge_dependencies,
-)
-from app.systems.sandbox.lifecycle.board_announcement_dependencies import (
-    load_announcement_purge_dependencies,
-)
-from app.systems.sandbox.lifecycle.board_event_dependencies import (
-    load_board_event_purge_dependencies,
-)
-from app.systems.sandbox.lifecycle.board_placement_dependencies import (
-    load_board_placement_purge_dependencies,
 )
 from app.systems.sandbox.lifecycle.board_record_link_dependencies import (
     load_board_record_link_purge_dependencies,
@@ -31,6 +21,9 @@ from app.systems.sandbox.lifecycle.board_widget_dependencies import (
 )
 from app.systems.sandbox.lifecycle.dashboard_dependencies import (
     load_dashboard_purge_dependencies,
+)
+from app.systems.sandbox.lifecycle.department_board_dependencies import (
+    load_department_board_purge_dependencies,
 )
 from app.systems.sandbox.lifecycle.planning_scope import LifecycleScope, row_state
 from app.systems.sandbox.lifecycle.report_dependencies import load_report_purge_dependencies
@@ -80,29 +73,14 @@ def load_purge_dependencies(
     access_rows, group_access_ids = load_group_access_purge_dependencies(
         db, department_ids, module_ids, fingerprint
     )
-    boards = (
-        list(
-            db.scalars(
-                select(Board).where(Board.department_id.in_(department_ids)).order_by(Board.id)
-            )
-        )
-        if department_ids
-        else []
-    )
-    board_event_rows, board_event_blockers, board_event_ids = load_board_event_purge_dependencies(
+    board_rows, board_blockers, board_ids = load_department_board_purge_dependencies(
         db, department_ids, departments_by_id, fingerprint
-    )
-    announcement_rows, announcement_blockers, announcement_ids = (
-        load_announcement_purge_dependencies(db, department_ids, departments_by_id, fingerprint)
     )
     field_ids = [field.id for field in scope.fields]
     files = (
         list(db.scalars(select(File).where(File.record_id.in_(record_ids)).order_by(File.id)))
         if record_ids
         else []
-    )
-    placement_rows, placement_blockers, placement_ids, placement_board_ids = (
-        load_board_placement_purge_dependencies(db, record_ids, fingerprint)
     )
     record_link_rows, record_link_blockers, record_link_ids, record_link_board_ids = (
         load_board_record_link_purge_dependencies(db, record_ids, fingerprint)
@@ -252,10 +230,9 @@ def load_purge_dependencies(
         if binding_filters
         else []
     )
-    rows = access_rows + board_event_rows + announcement_rows + placement_rows
+    rows = access_rows + board_rows
     rows += record_link_rows + report_rows + board_widget_rows
-    blockers = board_event_blockers + announcement_blockers
-    blockers += placement_blockers + record_link_blockers
+    blockers = board_blockers + record_link_blockers
     blockers += report_blockers + board_widget_blockers
     for file in files:
         state = row_state("files", file)
@@ -302,41 +279,6 @@ def load_purge_dependencies(
         rows.append(state)
     rows += dashboard_rows
     blockers += dashboard_blockers
-    for board in boards:
-        state = row_state("boards", board)
-        state.state_fingerprint = fingerprint(
-            {
-                key: getattr(board, key)
-                for key in (
-                    "department_id",
-                    "owner_id",
-                    "name",
-                    "description",
-                    "status",
-                    "default_section",
-                    "revision",
-                )
-            }
-        )
-        rows.append(state)
-        department = (
-            departments_by_id.get(board.department_id) if board.department_id is not None else None
-        )
-        blockers.append(
-            LifecycleBlocker(
-                code=LifecycleBlockerCode.PURGE_BOARD_DEPENDENCY,
-                entity_type="boards",
-                entity_id=board.id,
-                detail=(
-                    "Reassign or clear this Board's Department assignment before purging the "
-                    "Department; this operation will not delete the Board or its grants"
-                ),
-                conflicting_entity_type="departments",
-                conflicting_entity_id=board.department_id,
-                department_id=board.department_id,
-                department_name=(department.department_name if department is not None else None),
-            )
-        )
     trigger_dependencies = (
         ("record_triggers", definitions),
         ("record_trigger_conditions", conditions),
@@ -366,18 +308,9 @@ def load_purge_dependencies(
             "group_access": group_access_ids,
             "boards": tuple(
                 sorted(
-                    {board.id for board in boards}
-                    | placement_board_ids
-                    | record_link_board_ids
-                    | set(board_widget_ids["boards"])
-                    | set(board_event_ids["boards"])
-                    | set(announcement_ids["boards"])
+                    set(board_ids) | record_link_board_ids | set(board_widget_ids["boards"])
                 )
             ),
-            "board_events": board_event_ids["board_events"],
-            "board_announcements": announcement_ids["board_announcements"],
-            "board_announcement_revisions": announcement_ids["board_announcement_revisions"],
-            "board_record_placements": placement_ids,
             **record_link_ids,
             "board_widgets": board_widget_ids["board_widgets"],
             **report_ids,

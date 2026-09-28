@@ -1,350 +1,307 @@
-"""Focused Board ACL contracts without database access."""
+"""Board scope decides who reads and writes: company, department and project Boards."""
 
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
-from sqlalchemy import CheckConstraint, Index, Text
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.users.models import User
-from app.systems.boards.access import can_access_board
-from app.systems.boards.models import Board, BoardGrant
-
-
-def principal(
-    *,
-    role: str = "member",
-    status: str = "active",
-    user_deleted: bool = False,
-    expires_at: datetime | None = None,
-) -> User:
-    user_id = uuid7()
-    guest = role == "guest"
-    return User(
-        id=user_id,
-        email=f"{user_id.hex}@example.com",
-        username=f"board_test_{user_id.hex[:12]}",
-        role=role,
-        sponsor_user_id=uuid7() if guest else None,
-        status=status,
-        expires_at=expires_at or (datetime.now(UTC) + timedelta(days=1) if guest else None),
-        is_deleted=user_deleted,
-        deleted_at=None,
-    )
-
-
-def board(*, owner_id: UUID | None = None, deleted: bool = False) -> SimpleNamespace:
-    return SimpleNamespace(
-        id=uuid7(),
-        owner_id=owner_id or uuid7(),
-        is_deleted=deleted,
-        deleted_at=None,
-    )
-
-
-def grant(
-    board_id: UUID,
-    *,
-    principal_type: str = "everyone",
-    user_id: UUID | None = None,
-    permission: str = "view",
-    effect: str = "allow",
-    deleted: bool = False,
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        board_id=board_id,
-        principal_type=principal_type,
-        principal_user_id=user_id,
-        permission=permission,
-        effect=effect,
-        is_deleted=deleted,
-        deleted_at=None,
-    )
-
-
-def test_board_acl_defaults_to_deny() -> None:
-    actor = principal()
-    target = board()
-
-    assert not can_access_board(target, actor, "view", [])
-    assert not can_access_board(target, actor, "edit", [])
-
-
-def test_board_grants_never_let_a_guest_edit_or_manage() -> None:
-    actor = principal(role="guest")
-    target = board()
-    grants = [grant(target.id, permission="manage")]
-
-    assert can_access_board(target, actor, "view", grants)
-    assert not can_access_board(target, actor, "edit", grants)
-    assert not can_access_board(target, actor, "manage", grants)
-
-
-def test_identity_allow_outranks_everyone_denial() -> None:
-    actor = principal(role="guest")
-    target = board()
-    grants = [
-        grant(target.id, permission="view", effect="deny"),
-        grant(
-            target.id,
-            principal_type="user",
-            user_id=actor.id,
-            permission="view",
-            effect="allow",
-        ),
-    ]
-
-    assert can_access_board(target, actor, "view", grants)
-
-
-def test_identity_manage_allow_outranks_everyone_view_denial() -> None:
-    actor = principal()
-    target = board()
-    grants = [
-        grant(target.id, permission="view", effect="deny"),
-        grant(
-            target.id,
-            principal_type="user",
-            user_id=actor.id,
-            permission="manage",
-            effect="allow",
-        ),
-    ]
-
-    assert can_access_board(target, actor, "manage", grants)
-
-
-def test_deny_wins_when_allow_and_deny_have_the_same_identity_priority() -> None:
-    actor = principal(role="guest")
-    target = board()
-    grants = [
-        grant(
-            target.id,
-            principal_type="user",
-            user_id=actor.id,
-            permission="view",
-            effect="allow",
-        ),
-        grant(
-            target.id,
-            principal_type="user",
-            user_id=actor.id,
-            permission="view",
-            effect="deny",
-        ),
-    ]
-
-    assert not can_access_board(target, actor, "view", grants)
-
-
-@pytest.mark.parametrize(
-    ("grant_permission", "action", "expected"),
-    [
-        ("manage", "manage", True),
-        ("manage", "edit", True),
-        ("manage", "view", True),
-        ("edit", "edit", True),
-        ("edit", "view", True),
-        ("edit", "manage", False),
-        ("view", "edit", False),
-    ],
+from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.models import UserRole
+from app.systems.boards.access import board_level, board_reader_ids
+from app.systems.boards.event_router import router as event_router
+from app.systems.boards.models import Board, BoardWidget
+from app.systems.boards.post_models import BoardPost
+from app.systems.boards.post_router import router as post_router
+from app.systems.boards.router import router as boards_router
+from app.systems.boards.widget_router import router as widget_router
+from tests.boards.support import (
+    admin,
+    board_group,
+    client,
+    company_board,
+    department_board,
+    grant,
+    guest,
+    member,
+    project_board,
 )
-def test_higher_board_grants_inherit_lower_actions(
-    grant_permission: str,
-    action: str,
-    expected: bool,
+from tests.rbac.support import add_department, add_module, add_user, make_group_access
+
+pytestmark = pytest.mark.integration
+
+ROUTERS = (boards_router, post_router, event_router, widget_router)
+
+
+def _post(board: Board) -> dict[str, object]:
+    return {"board_revision": board.revision, "title": "Stock count", "body": "Friday at 9."}
+
+
+def _event(board: Board) -> dict[str, object]:
+    start = datetime.now(UTC).replace(microsecond=0) + timedelta(days=3)
+    return {
+        "board_revision": board.revision,
+        "title": "Stock count",
+        "all_day": False,
+        "start_at": start.isoformat().replace("+00:00", "Z"),
+        "end_at": (start + timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+        "timezone_name": "UTC",
+    }
+
+
+def _widget_payload(board: Board, module_id: UUID) -> dict[str, object]:
+    return {
+        "revision": board.revision,
+        "widget": {
+            "name": "Records",
+            "widget_type": "records",
+            "module_id": str(module_id),
+            "config": {"fields": [], "filters": []},
+        },
+    }
+
+
+def test_every_active_account_reads_the_company_board_and_only_administrators_post(
+    integration_owner_db: Session,
 ) -> None:
-    actor = principal()
-    target = board()
+    db = integration_owner_db
+    board = company_board(db)
+    reader, visitor, administrator = member(db), guest(db), admin(db)
+    disabled = add_user(db, "disabled", status="disabled")
 
-    assert can_access_board(
-        target,
-        actor,
-        action,
-        [grant(target.id, permission=grant_permission)],
-    ) is expected
+    assert board_level(db, reader, board) is AccessLevel.READ
+    assert board_level(db, visitor, board) is AccessLevel.READ
+    assert board_level(db, administrator, board) is AccessLevel.MANAGE
+    assert board_level(db, disabled, board) is None
+    assert client(db, reader, *ROUTERS).get(f"/api/boards/{board.id}").json()["level"] == "read"
 
-
-@pytest.mark.parametrize("action", ["edit", "manage"])
-def test_explicit_view_denial_blocks_higher_actions(action: str) -> None:
-    actor = principal()
-    target = board()
-    grants = [
-        grant(
-            target.id,
-            principal_type="user",
-            user_id=actor.id,
-            permission="view",
-            effect="deny",
-        ),
-        grant(
-            target.id,
-            principal_type="user",
-            user_id=actor.id,
-            permission="manage",
-            effect="allow",
-        ),
-    ]
-
-    assert not can_access_board(target, actor, action, grants)
-
-
-def test_creator_and_active_admin_receive_implicit_management() -> None:
-    creator = principal()
-    target = board(owner_id=creator.id)
-    admin = principal(role="admin")
-
-    for actor in (creator, admin):
-        for action in ("view", "edit", "manage"):
-            assert can_access_board(target, actor, action, [])
-
-
-@pytest.mark.parametrize("action", ["view", "edit", "manage"])
-@pytest.mark.parametrize("principal_kind", ["creator", "admin"])
-def test_creator_and_admin_authority_cannot_be_revoked_by_identity_denials(
-    action: str,
-    principal_kind: str,
-) -> None:
-    actor = principal(role="admin" if principal_kind == "admin" else "member")
-    target = board(owner_id=actor.id if principal_kind == "creator" else None)
-    denials = [
-        grant(
-            target.id,
-            principal_type="user",
-            user_id=actor.id,
-            permission="view",
-            effect="deny",
-        ),
-        grant(
-            target.id,
-            principal_type="user",
-            user_id=actor.id,
-            permission="manage",
-            effect="deny",
-        ),
-    ]
-
-    assert can_access_board(target, actor, action, denials)
-
-
-def test_a_guest_creator_keeps_only_view() -> None:
-    creator = principal(role="guest")
-    target = board(owner_id=creator.id)
-
-    assert can_access_board(target, creator, "view", [])
-    assert not can_access_board(target, creator, "edit", [])
-    assert not can_access_board(target, creator, "manage", [])
-
-
-def test_inactive_admin_cannot_use_non_revocable_board_authority() -> None:
-    admin = principal(role="admin", status="disabled")
-    target = board()
-
-    assert not can_access_board(target, admin, "manage", [])
-
-
-@pytest.mark.parametrize(
-    "actor",
-    [
-        principal(status="disabled"),
-        principal(user_deleted=True),
-        principal(role="owner"),
-        principal(expires_at=datetime.now(UTC) - timedelta(minutes=1)),
-    ],
-    ids=["disabled", "deleted-user", "unknown-role", "expired-user"],
-)
-def test_inactive_or_unresolved_principals_fail_closed(actor: User) -> None:
-    target = board()
-
-    assert not can_access_board(target, actor, "view", [grant(target.id)])
-
-
-def test_unresolved_grantees_deleted_boards_and_unknown_actions_fail_closed() -> None:
-    actor = principal()
-    target = board()
-    malformed_grantees = [
-        grant(target.id, principal_type="user"),
-        grant(target.id, principal_type="role"),
-        grant(target.id, principal_type="mystery"),
-        grant(target.id, deleted=True),
-    ]
-
-    assert not can_access_board(target, actor, "view", malformed_grantees)
-    assert not can_access_board(board(deleted=True), actor, "view", [grant(target.id)])
-    assert not can_access_board(target, actor, "delete", [grant(target.id, permission="manage")])
-
-
-def test_board_schema_declares_domain_checks_foreign_keys_and_active_decision_uniqueness() -> None:
-    board_checks = {
-        constraint.name
-        for constraint in Board.__table__.constraints
-        if isinstance(constraint, CheckConstraint)
-    }
-    grant_checks = {
-        constraint.name
-        for constraint in BoardGrant.__table__.constraints
-        if isinstance(constraint, CheckConstraint)
-    }
-    grant_indexes = {
-        index.name: index
-        for index in BoardGrant.__table__.indexes
-        if isinstance(index, Index)
-    }
-
-    assert board_checks == {
-        "ck_boards_name_nonempty",
-        "ck_boards_revision_positive",
-        "ck_boards_status",
-        "ck_boards_default_section",
-    }
-    assert grant_checks == {
-        "ck_board_grants_principal_type",
-        "ck_board_grants_principal_reference",
-        "ck_board_grants_permission",
-        "ck_board_grants_effect",
-    }
-    assert isinstance(Board.__table__.c.description.type, Text)
-    assert next(iter(Board.__table__.c.owner_id.foreign_keys)).ondelete == "RESTRICT"
-    assert {
-        "uq_board_grants_active_user_decision",
-        "uq_board_grants_active_everyone_decision",
-    } <= grant_indexes.keys()
-    assert all(
-        grant_indexes[name].unique
-        and "is_deleted = false"
-        in str(grant_indexes[name].dialect_options["postgresql"]["where"])
-        for name in (
-            "uq_board_grants_active_user_decision",
-                "uq_board_grants_active_everyone_decision",
-        )
+    refused = client(db, reader, *ROUTERS).post(f"/api/boards/{board.id}/posts", json=_post(board))
+    assert refused.status_code == 403
+    created = client(db, administrator, *ROUTERS).post(
+        f"/api/boards/{board.id}/posts", json=_post(board)
     )
-    expected_foreign_keys = {
-        "board_id": "boards.id",
-        "principal_user_id": "users.id",
-    }
-    for column_name, target in expected_foreign_keys.items():
-        foreign_key = next(iter(BoardGrant.__table__.c[column_name].foreign_keys))
-        assert foreign_key.target_fullname == target
-        assert foreign_key.ondelete == "RESTRICT"
+    assert created.status_code == 201
+    assert {reader.id, visitor.id, administrator.id} <= board_reader_ids(db, board)
+    assert disabled.id not in board_reader_ids(db, board)
 
 
-def test_board_schema_persists_department_status_and_default_section_metadata() -> None:
-    department_id = Board.__table__.c.department_id
-    status = Board.__table__.c.status
-    default_section = Board.__table__.c.default_section
-    index_names = {index.name for index in Board.__table__.indexes}
+def test_department_board_follows_the_department_level(integration_owner_db: Session) -> None:
+    db = integration_owner_db
+    inventory = add_department(db, f"Inventory {uuid7().hex[:8]}")
+    finance = add_department(db, f"Finance {uuid7().hex[:8]}")
+    inventory_board, finance_board = department_board(db, inventory), department_board(db, finance)
+    writer, reader, outsider, visitor = member(db), member(db), member(db), guest(db)
+    make_group_access(db, [writer], inventory, level=AccessLevel.WRITE)
+    make_group_access(db, [reader], inventory, level=AccessLevel.READ)
+    make_group_access(db, [outsider], finance, level=AccessLevel.MANAGE)
+    make_group_access(db, [visitor], inventory, level=AccessLevel.MANAGE)
 
-    assert department_id.nullable
-    department_fk = next(iter(department_id.foreign_keys))
-    assert department_fk.target_fullname == "departments.id"
-    assert department_fk.ondelete == "RESTRICT"
-    assert "ix_boards_department_id" in index_names
-    assert status.default is not None and status.default.arg == "active"
-    assert status.server_default is not None and str(status.server_default.arg) == "'active'"
-    assert default_section.default is not None and default_section.default.arg == "overview"
+    assert board_level(db, writer, inventory_board) is AccessLevel.WRITE
+    assert board_level(db, reader, inventory_board) is AccessLevel.READ
+    assert board_level(db, outsider, inventory_board) is None
+    assert board_level(db, outsider, finance_board) is AccessLevel.MANAGE
+    assert board_level(db, visitor, inventory_board) is AccessLevel.READ
+
+    posted = client(db, writer, *ROUTERS).post(
+        f"/api/boards/{inventory_board.id}/posts", json=_post(inventory_board)
+    )
+    assert posted.status_code == 201
+    db.refresh(inventory_board)
     assert (
-        default_section.server_default is not None
-        and str(default_section.server_default.arg) == "'overview'"
+        client(db, writer, *ROUTERS)
+        .post(f"/api/boards/{inventory_board.id}/events", json=_event(inventory_board))
+        .status_code
+        == 201
     )
+    hidden = client(db, outsider, *ROUTERS)
+    assert hidden.get(f"/api/boards/{inventory_board.id}").status_code == 404
+    assert hidden.get(f"/api/boards/{inventory_board.id}/posts").status_code == 404
+    listed = {item["id"] for item in hidden.get("/api/boards?limit=100").json()["items"]}
+    assert str(finance_board.id) in listed and str(inventory_board.id) not in listed
+
+
+def test_a_member_who_reads_only_some_modules_reads_the_department_board(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    department = add_department(db)
+    module = add_module(db, department)
+    board = department_board(db, department)
+    module_reader = member(db)
+    make_group_access(db, [module_reader], department, module, level=AccessLevel.WRITE)
+
+    assert board_level(db, module_reader, board) is AccessLevel.READ
+    assert module_reader.id in board_reader_ids(db, board)
+    assert (
+        client(db, module_reader, *ROUTERS)
+        .post(f"/api/boards/{board.id}/posts", json=_post(board))
+        .status_code
+        == 403
+    )
+
+
+def test_project_board_follows_board_groups(integration_owner_db: Session) -> None:
+    db = integration_owner_db
+    board = project_board(db)
+    reader, writer, manager, outsider = member(db), member(db), member(db), member(db)
+    board_group(db, board, [reader], AccessLevel.READ)
+    board_group(db, board, [writer], AccessLevel.WRITE)
+    both = board_group(db, board, [manager], AccessLevel.READ)
+    board_group(db, board, [manager], AccessLevel.MANAGE)
+
+    assert board_level(db, reader, board) is AccessLevel.READ
+    assert board_level(db, writer, board) is AccessLevel.WRITE
+    assert board_level(db, manager, board) is AccessLevel.MANAGE
+    assert board_level(db, outsider, board) is None
+    assert both.level == "read"
+    assert board_reader_ids(db, board) >= {reader.id, writer.id, manager.id}
+    assert outsider.id not in board_reader_ids(db, board)
+    assert client(db, outsider, *ROUTERS).get(f"/api/boards/{board.id}").status_code == 404
+    assert client(db, reader, *ROUTERS).get(f"/api/boards/{board.id}").status_code == 200
+
+
+def test_readers_and_members_without_a_group_cannot_change_board_content(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    department = add_department(db)
+    module = add_module(db, department)
+    board = department_board(db, department)
+    reader, no_group, author = member(db), member(db), member(db)
+    make_group_access(db, [reader], department, level=AccessLevel.READ)
+    make_group_access(db, [author], department, level=AccessLevel.WRITE)
+    item = BoardPost(board_id=board.id, author_id=author.id, title="Mine", body="Body")
+    widget = BoardWidget(
+        board_id=board.id,
+        module_id=module.id,
+        name="Tile",
+        position=0,
+        widget_type="records",
+        config={"version": 1, "fields": [], "filters": []},
+    )
+    db.add_all([item, widget])
+    db.flush()
+    revision = {"board_revision": board.revision, "post_revision": item.revision}
+
+    for actor, missing in ((reader, 403), (no_group, 404)):
+        api = client(db, actor, *ROUTERS)
+        root = f"/api/boards/{board.id}"
+        assert api.post(f"{root}/posts", json=_post(board)).status_code == missing
+        assert api.post(f"{root}/events", json=_event(board)).status_code == missing
+        assert (
+            api.post(f"{root}/widgets", json=_widget_payload(board, module.id)).status_code
+            == missing
+        )
+        assert (
+            api.patch(f"{root}/posts/{item.id}", json={**revision, "title": "Changed"}).status_code
+            == missing
+        )
+        assert (
+            api.request("DELETE", f"{root}/posts/{item.id}", json=revision).status_code == missing
+        )
+        assert (
+            api.delete(f"{root}/widgets/{widget.id}?revision={board.revision}").status_code
+            == missing
+        )
+        assert api.patch(
+            root, json={"revision": board.revision, "description": "x"}
+        ).status_code in {
+            missing,
+            403,
+        }
+        assert api.post("/api/boards", json={"name": "Mine"}).status_code == 403
+
+
+def test_managers_pin_change_tiles_and_change_the_posts_of_others(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    department = add_department(db)
+    module = add_module(db, department)
+    board = department_board(db, department)
+    writer, other_writer, manager = member(db), member(db), member(db)
+    make_group_access(db, [writer, other_writer], department, level=AccessLevel.WRITE)
+    make_group_access(db, [manager], department, level=AccessLevel.MANAGE)
+    item = BoardPost(board_id=board.id, author_id=other_writer.id, title="Theirs", body="Body")
+    db.add(item)
+    db.flush()
+    root = f"/api/boards/{board.id}"
+
+    pin = {"board_revision": board.revision, "post_revision": item.revision, "pinned": True}
+    assert (
+        client(db, writer, *ROUTERS).patch(f"{root}/posts/{item.id}", json=pin).status_code == 403
+    )
+    assert (
+        client(db, writer, *ROUTERS)
+        .post(f"{root}/posts", json={**_post(board), "pinned": True})
+        .status_code
+        == 403
+    )
+    assert (
+        client(db, writer, *ROUTERS)
+        .post(f"{root}/widgets", json=_widget_payload(board, module.id))
+        .status_code
+        == 403
+    )
+    changed = client(db, manager, *ROUTERS).patch(f"{root}/posts/{item.id}", json=pin)
+    assert changed.status_code == 200
+    db.refresh(board)
+    tile = client(db, manager, *ROUTERS).post(
+        f"{root}/widgets", json=_widget_payload(board, module.id)
+    )
+    assert tile.status_code == 201
+
+
+def test_only_administrators_create_project_boards_and_company_scope_is_fixed(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    administrator = admin(db)
+    manager = member(db)
+    board = project_board(db)
+    grant(db, board, [manager], AccessLevel.MANAGE)
+
+    created = client(db, administrator, *ROUTERS).post("/api/boards", json={"name": "Opening"})
+    assert created.status_code == 201
+    assert created.json()["scope"] == "project"
+    assert client(db, manager, *ROUTERS).post("/api/boards", json={"name": "No"}).status_code == 403
+
+    renamed = client(db, manager, *ROUTERS).patch(
+        f"/api/boards/{board.id}", json={"revision": board.revision, "name": "Store opening"}
+    )
+    assert renamed.status_code == 200
+    company = company_board(db)
+    archived = client(db, administrator, *ROUTERS).post(
+        f"/api/boards/{company.id}/archive", json={"revision": company.revision}
+    )
+    assert archived.status_code == 409
+    assert archived.json()["detail"]["code"] == "board_scope_fixed"
+
+
+def test_department_board_name_follows_the_department(integration_owner_db: Session) -> None:
+    db = integration_owner_db
+    department = add_department(db, f"Inventory {uuid7().hex[:8]}")
+    board = department_board(db, department)
+    administrator = admin(db)
+
+    refused = client(db, administrator, *ROUTERS).patch(
+        f"/api/boards/{board.id}", json={"revision": board.revision, "name": "Other"}
+    )
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["code"] == "board_name_fixed"
+    department.department_name = f"Stock {uuid7().hex[:8]}"
+    department.is_deleted = True
+    department_board(db, department)
+    db.refresh(board)
+    assert board.name == department.department_name
+    assert board.status == "archived"
+
+
+def test_an_expired_guest_reads_nothing(integration_owner_db: Session) -> None:
+    db = integration_owner_db
+    visitor = add_user(
+        db, "expired", role=UserRole.GUEST, expires_at=datetime.now(UTC) - timedelta(days=1)
+    )
+    assert board_level(db, visitor, company_board(db)) is None
+    assert visitor.id not in board_reader_ids(db, company_board(db))

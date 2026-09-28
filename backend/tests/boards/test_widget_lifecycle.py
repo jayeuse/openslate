@@ -76,8 +76,7 @@ def test_field_purge_blocks_retained_board_widget_references_and_detects_drift(
     other = Field(
         module_id=module.id, name="Other", type=field_type, position=1, config={}
     )
-    board = Board(
-        owner_id=owner.id,
+    board = Board(scope="project",
         name="Retained Board",
         status=BoardStatus.ARCHIVED if location == "filters" else BoardStatus.ACTIVE,
         is_deleted=location == "metric",
@@ -88,12 +87,10 @@ def test_field_purge_blocks_retained_board_widget_references_and_detects_drift(
     widget = BoardWidget(
         board_id=board.id,
         module_id=module.id,
-        creator_id=owner.id,
         name="Source widget",
         position=0,
         widget_type="chart" if location == "metric" else "records",
         config=_config(target, location),
-        audience_kind="everyone",
         is_deleted=location == "filters",
         deleted_at=now if location == "filters" else None,
     )
@@ -134,7 +131,7 @@ def test_parent_purge_blocks_archived_and_deleted_board_widgets(
 ) -> None:
     owner = actor(integration_db)
     module = _closed_module(integration_db)
-    board = Board(owner_id=owner.id, name="Archived Board", status=BoardStatus.ARCHIVED)
+    board = Board(scope="project", name="Archived Board", status=BoardStatus.ARCHIVED)
     field = Field(
         module_id=module.id,
         name="Source",
@@ -150,22 +147,18 @@ def test_parent_purge_blocks_archived_and_deleted_board_widgets(
     active = BoardWidget(
         board_id=board.id,
         module_id=module.id,
-        creator_id=owner.id,
         name="Archived source",
         position=0,
         widget_type="summary",
         config=_config(field, "fields"),
-        audience_kind="everyone",
     )
     deleted = BoardWidget(
         board_id=board.id,
         module_id=module.id,
-        creator_id=owner.id,
         name="Deleted widget",
         position=1,
         widget_type="summary",
         config={"version": 1, "fields": [], "filters": [], "metric": None},
-        audience_kind="everyone",
         is_deleted=True,
         deleted_at=now,
     )

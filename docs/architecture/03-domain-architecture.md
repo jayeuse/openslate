@@ -9,7 +9,7 @@ OpenSlate groups domain behavior under FastAPI `systems` packages:
 | `access` | Supabase Auth identity binding, application users, roles, groups, Access policy, invitations, recovery, service-identity metadata |
 | `sandbox` | Shared design draft/history, safe publication, departments, modules, fields, records, relationships, lifecycle, temporary tests, and record trigger execution |
 | `openview` | Department dashboards, shared saved views, reports, frozen report runs and schedules |
-| `boards` | Shared boards, grants, widgets, announcements, events, reminders, attachments and record links |
+| `boards` | The company Board, one Board for each department, project Boards and their groups; posts with their published revisions, events with author-set reminders, tiles, attachments and record links |
 | `manage` | Workspace profile and audit history |
 | `platform` | Private files and scan queue, SSE invalidations, scheduled work, and in-app notifications |
 
@@ -27,5 +27,15 @@ OpenView content belongs to departments. There is no personal content and no aud
 4. The users who can read the module when a run is created may open that run. Access is checked again when a run is opened, so a user who loses read on the module cannot open earlier runs.
 5. Chart settings are not saved. The Charts screen keeps them for the open page only.
 6. A department purge removes the department's dashboards and their widgets, as it removes the saved views of its modules. A widget in another department's dashboard that reads a purged module or field blocks the purge.
+
+Boards are for communication. The Board scope decides who sees it; there is no audience on a post, an event or a tile, and there is no personal Board state:
+
+1. There is one company Board. Every active account reads it; only administrators post, add events and change tiles on it.
+2. Each department has one Board. A Sandbox publish creates it for a new department and keeps its name equal to the department name; closing the department archives the Board and reopening restores it. The level on it is the department level ([`boards/access.py`](../../backend/app/systems/boards/access.py)); a user who reads only some modules of the department reads the Board. A department purge removes an empty Board and is blocked while the Board has posts, events, tiles, groups or files.
+3. Administrators create project Boards and choose their groups in `board_groups`. The level on a project Board is the highest level of the user's groups there.
+4. `read` shows posts, events and tiles. `write` adds posts and events and changes the user's own. `manage` also pins posts, changes tiles, and changes the posts and events of other users. A guest reads at most.
+5. Each publish of a post adds an immutable revision; readers open earlier versions through `GET /api/boards/{id}/posts/{post_id}/revisions`. Deleting a post that was never published removes it; deleting a published post archives it. Only the Board purge removes revisions.
+6. The author sets reminder timings (at the start, 15 minutes before, 1 day before) on an event. The worker queues one `scheduled_work` row for each reminder and occurrence and notifies every reader of the Board when it is due. A reminder whose due time has passed is not sent late.
+7. Publication and reminder notifications go to every account that can read the Board when they are delivered.
 
 Lifecycle and audit behavior are application services. Audit captures ORM mutations in the same transaction as the domain change; Alembic and direct SQL are outside that capture boundary.

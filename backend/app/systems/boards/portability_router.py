@@ -1,4 +1,4 @@
-"""Board structure export, import and duplicate routes; not mounted in the application yet."""
+"""Board structure export, and import or duplicate into a new project Board."""
 
 from typing import Annotated
 from uuid import UUID
@@ -9,11 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import get_current_user, require_non_guest
+from app.common.dependencies import get_current_user, require_admin
 from app.core.database import get_db
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
-from app.systems.boards.access import can_read_board_grants
-from app.systems.boards.models import Board, BoardGrant, BoardPermission, BoardStatus, BoardWidget
+from app.systems.boards.models import Board, BoardScope, BoardStatus, BoardWidget
 from app.systems.boards.portability import (
     MAX_PORTABLE_BOARD_BYTES,
     PortabilityError,
@@ -30,8 +30,8 @@ from app.systems.boards.portability_schemas import (
     PortableWidgetSource,
 )
 from app.systems.boards.router import _board_with_access
+from app.systems.boards.router import _response as board_response
 from app.systems.boards.schemas import BoardResponse
-from app.systems.boards.widget_router import _visible_clause
 from app.systems.boards.widget_schemas import BoardWidgetConfig
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
@@ -44,7 +44,7 @@ def _private_cache(response: Response) -> None:
 
 router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_private_cache)])
 Reader = Annotated[User, Depends(get_current_user)]
-Writer = Annotated[User, Depends(require_non_guest)]
+Admin = Annotated[User, Depends(require_admin)]
 Database = Annotated[Session, Depends(get_db)]
 
 
@@ -138,42 +138,16 @@ def _portable_field(
     return PortableFieldReference(name=field.name, expected_type=field.type)
 
 
-def _read_managed_board(db: Session, board_id: UUID, actor: User) -> Board:
-    board = db.scalar(
-        select(Board)
-        .where(Board.id == board_id, Board.is_deleted.is_(False), Board.deleted_at.is_(None))
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    if board is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Board not found")
-    grants = db.scalars(
-        select(BoardGrant).where(
-            BoardGrant.board_id == board.id,
-            BoardGrant.is_deleted.is_(False),
-            BoardGrant.deleted_at.is_(None),
-        )
-    ).all()
-    if not can_read_board_grants(board, actor, grants):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Board not found")
-    return board
-
-
 def _bundle_from_board(
     db: Session, board_id: UUID, actor: User, *, mutation: bool
 ) -> PortableBoardBundle:
-    board = (
-        _board_with_access(db, actor, board_id, BoardPermission.MANAGE, lock=True)
-        if mutation
-        else _read_managed_board(db, board_id, actor)
-    )
+    board = _board_with_access(db, actor, board_id, AccessLevel.MANAGE, lock=mutation)
     widgets = db.scalars(
         select(BoardWidget)
         .where(
             BoardWidget.board_id == board.id,
             BoardWidget.is_deleted.is_(False),
             BoardWidget.deleted_at.is_(None),
-            _visible_clause(actor),
         )
         .order_by(BoardWidget.position, BoardWidget.id)
         .with_for_update()
@@ -192,8 +166,6 @@ def _bundle_from_board(
     if {module.id for module in candidates} != module_ids:
         raise _source_unavailable()
     department_ids = {module.department_id for module in candidates}
-    if board.department_id is not None:
-        department_ids.add(board.department_id)
     departments = _locked_departments(db, department_ids)
     modules = _locked_modules(db, module_ids)
     if any(modules[module.id].department_id != module.department_id for module in candidates):
@@ -257,16 +229,10 @@ def _bundle_from_board(
             )
         bundle = PortableBoardBundle(
             kind="openslate-board",
-            version=2,
+            version=3,
             configuration=PortableBoardConfiguration(
                 name=board.name,
                 description=board.description,
-                department_name=(
-                    departments[board.department_id].department_name
-                    if board.department_id is not None
-                    else None
-                ),
-                default_section=board.default_section,
                 widgets=portable_widgets,
             ),
         )
@@ -275,7 +241,7 @@ def _bundle_from_board(
     if len(bundle.model_dump_json().encode()) > MAX_PORTABLE_BOARD_BYTES:
         raise PortabilityError("board_bundle_too_large")
     resolved = resolve_portable_board(db, bundle)
-    if resolved.board.department_id != board.department_id or any(
+    if any(
         mapped.module_id != original.module_id
         or mapped.config.model_dump(mode="json") != configs[original.id].model_dump(mode="json")
         for mapped, original in zip(resolved.widgets, widgets, strict=True)
@@ -284,15 +250,13 @@ def _bundle_from_board(
     return bundle
 
 
-def _create_private_board(db: Session, actor: User, bundle: PortableBoardBundle) -> Board:
+def _create_project_board(db: Session, bundle: PortableBoardBundle) -> Board:
     resolved = resolve_portable_board(db, bundle)
     board = Board(
-        owner_id=actor.id,
-        department_id=resolved.board.department_id,
+        scope=BoardScope.PROJECT.value,
         name=resolved.board.name,
         description=resolved.board.description,
         status=BoardStatus.ACTIVE,
-        default_section=resolved.board.default_section,
     )
     try:
         db.add(board)
@@ -301,13 +265,11 @@ def _create_private_board(db: Session, actor: User, bundle: PortableBoardBundle)
             db.add(
                 BoardWidget(
                     board_id=board.id,
-                    creator_id=actor.id,
                     position=position,
                     name=spec.name,
                     widget_type=spec.widget_type,
                     module_id=spec.module_id,
                     config=spec.config.model_dump(mode="json"),
-                    audience_kind="everyone",
                 )
             )
         db.commit()
@@ -340,32 +302,32 @@ def export_board_configuration(
 @router.post("/import", response_model=BoardResponse, status_code=status.HTTP_201_CREATED)
 def import_board_configuration(
     raw: Annotated[bytes, Body(media_type="application/octet-stream")],
-    actor: Writer,
+    actor: Admin,
     db: Database,
     response: Response,
 ) -> BoardResponse:
     try:
         bundle = parse_portable_board(raw)
-        board = _create_private_board(db, actor, bundle)
+        board = _create_project_board(db, bundle)
     except PortabilityError as error:
         db.rollback()
         raise _http_error(error) from error
     response.headers["Location"] = f"/api/boards/{board.id}"
-    return BoardResponse.model_validate(board)
+    return board_response(db, actor, board)
 
 
 @router.post(
     "/{board_id}/duplicate", response_model=BoardResponse, status_code=status.HTTP_201_CREATED
 )
 def duplicate_board(
-    board_id: UUID, actor: Reader, _: Writer, db: Database, response: Response
+    board_id: UUID, actor: Admin, db: Database, response: Response
 ) -> BoardResponse:
     try:
         bundle = _bundle_from_board(db, board_id, actor, mutation=True)
         bundle.configuration.name = f"{bundle.configuration.name[:193]} (copy)"
-        board = _create_private_board(db, actor, bundle)
+        board = _create_project_board(db, bundle)
     except PortabilityError as error:
         db.rollback()
         raise _http_error(error) from error
     response.headers["Location"] = f"/api/boards/{board.id}"
-    return BoardResponse.model_validate(board)
+    return board_response(db, actor, board)

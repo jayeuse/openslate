@@ -14,9 +14,9 @@ from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.systems.access.policy.models import GroupAccess
 from app.systems.access.users.models import User
-from app.systems.boards.announcement_models import BoardAnnouncement, BoardAnnouncementRevision
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
+from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.reminder_models import BoardEventReminder
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditLog
@@ -30,6 +30,7 @@ from app.systems.platform.scheduling.models import (
 from app.systems.platform.scheduling.notification_router import router
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
+from tests.boards.support import board_group
 from tests.rbac.support import capability_actor, grant_capability_actors
 
 pytestmark = pytest.mark.integration
@@ -169,43 +170,42 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
 ) -> None:
     db = integration_owner_db
     owner = _actor(db)
-    board = Board(owner_id=owner.id, name=f"Notification hydration {uuid7().hex}")
+    board = Board(scope="project", name=f"Notification hydration {uuid7().hex}")
     db.add(board)
     db.flush()
+    board_group(db, board, [owner], "read")
     expected_items: list[tuple[datetime, str, dict[str, str], set[str]]] = []
     private_content: list[str] = []
 
     for index in range(4):
         scheduled_for = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=index)
         if index % 2 == 0:
-            announcement = BoardAnnouncement(
+            post = BoardPost(
                 board_id=board.id,
                 author_id=owner.id,
                 title=f"Private heading {index}",
                 body=f"Private body {index}",
                 status="published",
                 displayed_publication_number=1,
-                audience_kind="everyone",
             )
-            private_content.extend((announcement.title, announcement.body))
-            db.add(announcement)
+            private_content.extend((post.title, post.body))
+            db.add(post)
             db.flush()
-            revision = BoardAnnouncementRevision(
-                announcement_id=announcement.id,
+            revision = BoardPostRevision(
+                post_id=post.id,
                 publication_number=1,
                 publication_key=uuid7(),
                 content_fingerprint="a" * 64,
                 author_id=owner.id,
-                title=announcement.title,
-                body=announcement.body,
-                audience_kind="everyone",
+                title=post.title,
+                body=post.body,
                 published_at=scheduled_for,
             )
             db.add(revision)
             db.flush()
             work = ScheduledWork(
-                kind=WorkKind.ANNOUNCEMENT_PUBLISH,
-                announcement_id=announcement.id,
+                kind=WorkKind.POST_PUBLISH,
+                post_id=post.id,
                 source_revision=1,
                 scheduling_actor_id=owner.id,
                 publication_result_id=revision.id,
@@ -214,16 +214,16 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
                 state=WorkState.SUCCEEDED,
             )
             reference_fields = {
-                "kind": "announcement-publish",
+                "kind": "post-publish",
                 "board_id": str(board.id),
-                "announcement_id": str(announcement.id),
+                "post_id": str(post.id),
                 "publication_revision_id": str(revision.id),
             }
             expected_keys = {
                 "id",
                 "kind",
                 "board_id",
-                "announcement_id",
+                "post_id",
                 "publication_revision_id",
                 "status",
                 "scheduled_for",
@@ -240,25 +240,19 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
                 start_at=event_start,
                 end_at=event_start + timedelta(hours=1),
                 timezone_name="UTC",
-                audience_kind="everyone",
             )
             private_content.append(board_event.title)
             db.add(board_event)
             db.flush()
             reminder = BoardEventReminder(
-                board_id=board.id,
-                event_id=board_event.id,
-                recipient_id=owner.id,
-                occurrence_id=f"{board_event.id}:{event_start.isoformat()}",
-                occurrence_start_at=event_start,
-                timing="now",
-                due_at=scheduled_for,
+                board_id=board.id, event_id=board_event.id, timing="1d"
             )
             db.add(reminder)
             db.flush()
             work = ScheduledWork(
                 kind=WorkKind.EVENT_REMINDER,
                 reminder_id=reminder.id,
+                occurrence_start_at=event_start,
                 scheduled_for=scheduled_for,
                 next_attempt_at=scheduled_for,
                 state=WorkState.SUCCEEDED,
@@ -267,7 +261,9 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
                 "kind": "event-reminder",
                 "board_id": str(board.id),
                 "event_id": str(board_event.id),
-                "occurrence_id": reminder.occurrence_id,
+                "occurrence_id": (
+                    f"{board_event.id}:{event_start.isoformat().replace('+00:00', 'Z')}"
+                ),
             }
             expected_keys = {
                 "id",
@@ -275,6 +271,7 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
                 "board_id",
                 "event_id",
                 "occurrence_id",
+                "occurrence_start_at",
                 "status",
                 "scheduled_for",
                 "created_at",
@@ -330,7 +327,7 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
                 expected[1] for expected in expected_page
             ]
             assert {item["kind"] for item in page["items"]} == {
-                "announcement-publish",
+                "post-publish",
                 "event-reminder",
             }
             for item, expected in zip(page["items"], expected_page, strict=True):

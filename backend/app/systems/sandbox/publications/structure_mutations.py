@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.systems.boards.department_boards import sync_department_board
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
@@ -98,6 +100,14 @@ def close_removed_structure(
                         field.name = original[0]
                         if original[1] is not None:
                             field.position = original[1]
+
+
+def sync_department_boards(db: Session, actor_id: UUID) -> None:
+    """Give every department its Board after a publish, and follow closes and reopens."""
+
+    for department in db.scalars(select(Department).order_by(Department.id)):
+        sync_department_board(db, department, actor_id=actor_id)
+    db.flush()
 
 
 def _close(row: Department | Module | Field, actor_id: UUID) -> None:

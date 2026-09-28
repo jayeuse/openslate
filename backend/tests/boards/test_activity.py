@@ -1,187 +1,110 @@
-"""Board activity is a viewer-safe projection, not the administrator audit API."""
+"""Board activity is a reader-safe projection, not the administrator audit API."""
 
 from uuid import UUID
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
-from app.core.database import get_db
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.boards.activity_router import router
-from app.systems.boards.models import Board, BoardGrant, BoardRecordPlacement, BoardWidget
+from app.systems.boards.models import BoardWidget
 from app.systems.manage.audit.context import set_audit_actor
-from app.systems.sandbox.departments.models import Department
-from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.records.models import Record
-from tests.rbac.support import capability_actor, grant_capability_actors
+from tests.boards.support import board_group, client, member, project_board
+from tests.rbac.support import add_department, add_module
 
 pytestmark = pytest.mark.integration
 
 
-def _actor(db: Session, *, read: bool = True) -> User:
-    """A member; Boards reads need no capability since slice 3."""
-
-    return capability_actor(db, "board", {"records.write": True})
-
-
-def _client(db: Session, actor: User) -> TestClient:
-    app = FastAPI()
-    app.include_router(router, prefix="/api")
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
-    return TestClient(app)
+def _widget(board_id: UUID, module_id: UUID, name: str, position: int) -> BoardWidget:
+    return BoardWidget(
+        board_id=board_id,
+        module_id=module_id,
+        name=name,
+        position=position,
+        widget_type="records",
+        config={"private_note": f"{name.upper()} CONFIG"},
+    )
 
 
-def test_board_activity_filters_acl_and_widget_audience_before_count_and_page(
+def test_board_activity_lists_metadata_groups_and_tiles_without_content(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db)
-    manager = _actor(db)
-    outsider = _actor(db)
-    set_audit_actor(db, owner.id)
-    board = Board(owner_id=owner.id, name="Operations", description="PRIVATE BOARD NOTES")
-    other = Board(owner_id=owner.id, name="Other")
-    department = Department(department_name=f"Activity {uuid7()}")
-    db.add_all([board, other, department])
-    db.flush()
-    module = Module(department_id=department.id, module_name="Requests")
-    db.add(module)
-    db.flush()
-    grant_capability_actors(db, department, module)
-    record = Record(module_id=module.id, data={})
-    db.add(record)
-    db.flush()
-    grant = BoardGrant(
-        board_id=board.id,
-        principal_type="user",
-        principal_user_id=manager.id,
-        permission="manage",
-        effect="allow",
+    manager: User = member(db)
+    reader, outsider = member(db), member(db)
+    set_audit_actor(db, manager.id)
+    board = project_board(db, description="PRIVATE BOARD NOTES")
+    module = add_module(db, add_department(db))
+    group_row = board_group(db, board, [reader], AccessLevel.READ)
+    first, second = (
+        _widget(board.id, module.id, "First tile", 0),
+        _widget(board.id, module.id, "Second tile", 1),
     )
-    private = BoardWidget(
-        board_id=board.id,
-        module_id=module.id,
-        creator_id=owner.id,
-        name="Secret widget",
-        position=0,
-        widget_type="records",
-        config={"private_note": "HIDDEN WIDGET CONFIG"},
-        audience_kind="private",
-    )
-    public = BoardWidget(
-        board_id=board.id,
-        module_id=module.id,
-        creator_id=owner.id,
-        name="Visible widget",
-        position=1,
-        widget_type="records",
-        config={"private_note": "VISIBLE WIDGET CONFIG"},
-        audience_kind="everyone",
-    )
-    placement = BoardRecordPlacement(board_id=board.id, record_id=record.id)
-    db.add_all([grant, private, public, placement])
+    db.add_all([first, second])
     db.flush()
-    board.revision += 1  # A hidden-widget mutation also produces a Board revision audit row.
+    board.revision += 1  # A content change also moves the Board revision; it is not activity.
     db.commit()
 
     root = f"/api/boards/{board.id}/activity"
-    manager_client = _client(db, manager)
-    response = manager_client.get(root)
+    reader_client = client(db, reader, router)
+    response = reader_client.get(root)
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "private, no-store"
     result = response.json()
+    assert {item["kind"] for item in result["items"]} == {"board", "group", "widget"}
     assert result["pagination"]["total"] == 4
-    assert result["pagination"]["count"] == 4
-    assert {item["kind"] for item in result["items"]} == {
-        "board", "grant", "widget", "placement"
-    }
     assert {frozenset(item) for item in result["items"]} == {
         frozenset({"id", "created_at", "kind", "action", "summary", "actor_label"})
     }
-    assert all(item["actor_label"] == owner.username for item in result["items"])
-    serialized = response.text
+    assert all(item["actor_label"] == manager.username for item in result["items"])
     for secret in (
-        str(manager.id), str(private.id), str(public.id), str(record.id),
-        "PRIVATE BOARD NOTES", "HIDDEN WIDGET CONFIG", "VISIBLE WIDGET CONFIG",
-        "Secret widget", "Visible widget", "private_note", "request_path", "before", "after",
+        str(reader.id),
+        str(group_row.group_id),
+        str(first.id),
+        "PRIVATE BOARD NOTES",
+        "FIRST TILE CONFIG",
+        "Second tile",
+        "private_note",
+        "before",
+        "after",
     ):
-        assert secret not in serialized
+        assert secret not in response.text
 
-    first = manager_client.get(f"{root}?limit=2&offset=0").json()
-    second = manager_client.get(f"{root}?limit=2&offset=2").json()
-    assert first["pagination"] == {
-        "limit": 2, "offset": 0, "count": 2, "total": 4, "has_more": True
-    }
-    assert second["pagination"] == {
+    page = reader_client.get(f"{root}?limit=2&offset=2").json()
+    assert page["pagination"] == {
         "limit": 2, "offset": 2, "count": 2, "total": 4, "has_more": False
     }
-    assert {item["id"] for item in first["items"]}.isdisjoint(
-        {item["id"] for item in second["items"]}
-    )
-    assert _client(db, owner).get(root).json()["pagination"]["total"] == 5
-    assert _client(db, outsider).get(root).status_code == 404
-    assert manager_client.get(f"/api/boards/{uuid7()}/activity").json() == {
+    assert client(db, outsider, router).get(root).status_code == 404
+    assert reader_client.get(f"/api/boards/{uuid7()}/activity").json() == {
         "detail": "Board not found"
     }
 
-    # Physically removed child rows remain Board-scoped only through private audit
-    # snapshots; the endpoint must still return no principal or record identifier.
-    db.delete(grant)
-    db.delete(placement)
+    # A removed group row stays Board-scoped only through its audit snapshot.
+    db.delete(group_row)
+    db.delete(second)
     db.commit()
-    owner_activity = _client(db, owner).get(root)
-    assert owner_activity.status_code == 200
-    assert {(item["kind"], item["action"]) for item in owner_activity.json()["items"]} >= {
-        ("grant", "delete"), ("placement", "delete")
-    }
-    assert str(manager.id) not in owner_activity.text
-    assert str(record.id) not in owner_activity.text
+    board_group(db, board, [reader], AccessLevel.READ)
+    db.commit()
+    after = client(db, reader, router).get(root)
+    assert ("group", "delete") in {(item["kind"], item["action"]) for item in after.json()["items"]}
+    assert all(
+        item["kind"] != "widget" or item["action"] != "delete" for item in after.json()["items"]
+    )
 
 
-def test_board_activity_omits_deleted_widget_history_and_inactive_actor_label(
-    integration_owner_db: Session,
-) -> None:
+def test_board_activity_hides_the_labels_of_inactive_actors(integration_owner_db: Session) -> None:
     db = integration_owner_db
-    owner = _actor(db)
-    author = _actor(db)
-    viewer = _actor(db)
-    board = Board(owner_id=owner.id, name="Updates")
-    department = Department(department_name=f"Activity deletion {uuid7()}")
-    db.add_all([board, department])
-    db.flush()
-    db.add(
-        BoardGrant(
-            board_id=board.id, principal_type="user", principal_user_id=viewer.id,
-            permission="view", effect="allow",
-        )
-    )
-    module = Module(department_id=department.id, module_name="Requests")
-    db.add(module)
-    db.flush()
-    grant_capability_actors(db, department, module)
+    author, viewer = member(db), member(db)
+    board = project_board(db)
+    board_group(db, board, [viewer], AccessLevel.READ)
     set_audit_actor(db, author.id)
-    widget = BoardWidget(
-        board_id=board.id, module_id=module.id, creator_id=author.id,
-        name="Removed", position=0, widget_type="records", config={},
-        audience_kind="everyone",
-    )
-    db.add(widget)
     board.name = "Renamed"
     db.commit()
-    widget_id: UUID = widget.id
-    db.delete(widget)
     author.status = "disabled"
     db.commit()
 
-    response = _client(db, viewer).get(f"/api/boards/{board.id}/activity")
-    assert response.status_code == 200
-    result = response.json()
-    assert all(item["kind"] != "widget" for item in result["items"])
-    assert str(widget_id) not in response.text
+    result = client(db, viewer, router).get(f"/api/boards/{board.id}/activity").json()
+    assert result["items"]
     assert all(item["actor_label"] is None for item in result["items"])
-    assert result["pagination"]["total"] == len(result["items"])

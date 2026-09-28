@@ -1,16 +1,24 @@
-"""Persisted Report schedule occurrence calculation and materialization."""
+"""Report schedule occurrences and the next occurrence of each event reminder."""
 
 from datetime import UTC, datetime, time, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select
+from sqlalchemy import and_, exists, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
+from app.systems.boards.event_models import BoardEvent
+from app.systems.boards.models import Board, BoardStatus
+from app.systems.boards.reminder_models import BoardEventReminder
+from app.systems.boards.reminder_service import next_occurrence_start, reminder_due_at
 from app.systems.openview.reports.models import Report
 from app.systems.openview.reports.schedule_models import ReportSchedule
+from app.systems.platform.scheduling.models import ScheduledWork, WorkKind, WorkState
 from app.systems.platform.scheduling.service import queue_report_occurrence
+
+MAX_REMINDER_BATCH = 100
 
 
 def next_due_after(
@@ -124,5 +132,73 @@ def materialize_due_schedules(
             schedule.revision += 1
             continue
         schedule.next_due_at = following
+        work_ids.append(work.id)
+    return work_ids
+
+
+def materialize_event_reminders(
+    db: Session, *, now: datetime | None = None, limit: int = MAX_REMINDER_BATCH
+) -> list[UUID]:
+    """Queue the next occurrence of each live reminder that has nothing queued.
+
+    One ``scheduled_work`` row exists for each reminder and occurrence. A reminder
+    whose next due time has passed is skipped, not sent late: a reminder set after
+    its due time, or while its Board was archived, starts with the next occurrence.
+    The caller owns commit or rollback.
+    """
+
+    if not 1 <= limit <= MAX_REMINDER_BATCH:
+        raise ValueError("Reminder materialization batch limit is out of range")
+    current = now or utc_now()
+    if current.tzinfo is None or current.utcoffset() != timedelta(0):
+        raise ValueError("Materialization requires a UTC instant")
+    earliest_day = current.date() - timedelta(days=2)
+    queued = exists(
+        select(ScheduledWork.id).where(
+            ScheduledWork.reminder_id == BoardEventReminder.id,
+            ScheduledWork.state.in_((WorkState.PENDING, WorkState.RUNNING)),
+        )
+    )
+    candidates = db.execute(
+        select(BoardEventReminder.id, BoardEventReminder.timing, BoardEvent)
+        .join(BoardEvent, BoardEvent.id == BoardEventReminder.event_id)
+        .join(Board, Board.id == BoardEventReminder.board_id)
+        .where(
+            BoardEventReminder.is_deleted.is_(False),
+            BoardEvent.is_deleted.is_(False),
+            BoardEvent.deleted_at.is_(None),
+            BoardEvent.archived.is_(False),
+            Board.is_deleted.is_(False),
+            Board.status == BoardStatus.ACTIVE,
+            ~queued,
+            or_(
+                and_(BoardEvent.recurrence != "none", BoardEvent.repeat_until >= earliest_day),
+                BoardEvent.start_at > current,
+                BoardEvent.start_date >= earliest_day,
+            ),
+        )
+        .order_by(BoardEventReminder.id)
+        .limit(limit)
+    ).all()
+    work_ids: list[UUID] = []
+    for reminder_id, timing, event in candidates:
+        start = next_occurrence_start(event, timing, current)
+        if start is None:
+            continue
+        due = reminder_due_at(start, timing)
+        work = ScheduledWork(
+            kind=WorkKind.EVENT_REMINDER,
+            reminder_id=reminder_id,
+            occurrence_start_at=start,
+            scheduled_for=due,
+            next_attempt_at=due,
+        )
+        try:
+            with db.begin_nested():
+                db.add(work)
+                db.flush()
+        except IntegrityError:
+            # This occurrence already has a row (delivered or canceled): skip it.
+            continue
         work_ids.append(work.id)
     return work_ids

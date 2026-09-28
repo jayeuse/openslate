@@ -10,7 +10,6 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.systems.access.policy.checks import module_filter, module_level
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
-from app.systems.boards.announcement_models import BoardAnnouncement
 from app.systems.boards.attachment_service import (
     _content,
     _content_changed,
@@ -18,9 +17,10 @@ from app.systems.boards.attachment_service import (
     _draft,
     _hidden,
 )
+from app.systems.boards.post_models import BoardPost
 from app.systems.boards.record_link_models import (
-    BoardAnnouncementRevisionRecordLink,
-    BoardContentRecordLink,
+    BoardPostRevisionRecordLink,
+    BoardRecordLink,
 )
 from app.systems.platform.files.access import error
 from app.systems.sandbox.modules.models import Module
@@ -29,9 +29,9 @@ from app.systems.sandbox.records.models import Record
 
 def _owner_filter(kind: str, content_id: UUID) -> ColumnElement[bool]:
     return (
-        BoardContentRecordLink.event_id == content_id
+        BoardRecordLink.event_id == content_id
         if kind == "event"
-        else BoardContentRecordLink.announcement_id == content_id
+        else BoardRecordLink.post_id == content_id
     )
 
 
@@ -75,7 +75,7 @@ def listed_links(
     view: str,
     limit: int,
     offset: int,
-) -> tuple[list[BoardContentRecordLink | BoardAnnouncementRevisionRecordLink], dict[UUID, UUID]]:
+) -> tuple[list[BoardRecordLink | BoardPostRevisionRecordLink], dict[UUID, UUID]]:
     board, item = _content(
         db,
         actor,
@@ -83,37 +83,36 @@ def listed_links(
         kind,
         content_id,
         write=False,
-        published=kind == "announcement" and view == "published",
     )
-    if kind == "announcement" and view == "published":
-        assert isinstance(item, BoardAnnouncement)
+    if kind == "post" and view == "published":
+        assert isinstance(item, BoardPost)
         revision = _displayed(db, board, item, actor)
-        links: list[BoardContentRecordLink | BoardAnnouncementRevisionRecordLink] = list(
+        links: list[BoardRecordLink | BoardPostRevisionRecordLink] = list(
             db.scalars(
-                select(BoardAnnouncementRevisionRecordLink)
-                .where(BoardAnnouncementRevisionRecordLink.revision_id == revision.id)
+                select(BoardPostRevisionRecordLink)
+                .where(BoardPostRevisionRecordLink.revision_id == revision.id)
                 .order_by(
-                    BoardAnnouncementRevisionRecordLink.created_at,
-                    BoardAnnouncementRevisionRecordLink.id,
+                    BoardPostRevisionRecordLink.created_at,
+                    BoardPostRevisionRecordLink.id,
                 )
                 .limit(limit)
                 .offset(offset)
             )
         )
     else:
-        if kind == "announcement":
-            assert isinstance(item, BoardAnnouncement)
+        if kind == "post":
+            assert isinstance(item, BoardPost)
             _draft(db, board, item, actor)
         elif view != "current":
             raise _hidden()
         links = list(
             db.scalars(
-                select(BoardContentRecordLink)
+                select(BoardRecordLink)
                 .where(
-                    BoardContentRecordLink.board_id == board_id,
+                    BoardRecordLink.board_id == board_id,
                     _owner_filter(kind, content_id),
                 )
-                .order_by(BoardContentRecordLink.created_at, BoardContentRecordLink.id)
+                .order_by(BoardRecordLink.created_at, BoardRecordLink.id)
                 .limit(limit)
                 .offset(offset)
             )
@@ -152,29 +151,29 @@ def link_record(
     *,
     board_revision: int,
     content_revision: int,
-) -> BoardContentRecordLink:
+) -> BoardRecordLink:
     board, item = _content(db, actor, board_id, kind, content_id, write=True, lock=True)
     if board.revision != board_revision or item.revision != content_revision:
         raise error("stale_revision", "Board content changed; reload before linking")
     count = db.scalar(
-        select(func.count(BoardContentRecordLink.id)).where(
-            BoardContentRecordLink.board_id == board_id, _owner_filter(kind, content_id)
+        select(func.count(BoardRecordLink.id)).where(
+            BoardRecordLink.board_id == board_id, _owner_filter(kind, content_id)
         )
     )
     if count is not None and count >= 20:
         raise error("record_link_limit", "Board content supports at most 20 Record links")
     existing = db.scalar(
-        select(BoardContentRecordLink.id).where(
-            _owner_filter(kind, content_id), BoardContentRecordLink.record_id == record_id
+        select(BoardRecordLink.id).where(
+            _owner_filter(kind, content_id), BoardRecordLink.record_id == record_id
         )
     )
     if existing is not None:
         raise error("record_link_exists", "Record is already linked to this content")
     record = _available_record(db, actor, record_id)
-    link = BoardContentRecordLink(
+    link = BoardRecordLink(
         board_id=board_id,
         event_id=content_id if kind == "event" else None,
-        announcement_id=content_id if kind == "announcement" else None,
+        post_id=content_id if kind == "post" else None,
         record_id=record.id,
         module_id=record.module_id,
         label=label,
@@ -204,10 +203,10 @@ def unlink_record(
     if board.revision != board_revision or item.revision != content_revision:
         raise error("stale_revision", "Board content changed; reload before unlinking")
     link = db.scalar(
-        select(BoardContentRecordLink)
+        select(BoardRecordLink)
         .where(
-            BoardContentRecordLink.id == link_id,
-            BoardContentRecordLink.board_id == board_id,
+            BoardRecordLink.id == link_id,
+            BoardRecordLink.board_id == board_id,
             _owner_filter(kind, content_id),
         )
         .with_for_update()
@@ -221,9 +220,9 @@ def unlink_record(
 
 def delete_content_links(db: Session, kind: str, content_id: UUID) -> None:
     rows = db.scalars(
-        select(BoardContentRecordLink)
+        select(BoardRecordLink)
         .where(_owner_filter(kind, content_id))
-        .order_by(BoardContentRecordLink.id)
+        .order_by(BoardRecordLink.id)
         .with_for_update()
     )
     for row in rows:
@@ -235,9 +234,9 @@ def delete_revision_links(db: Session, revision_ids: list[UUID]) -> None:
     if not revision_ids:
         return
     rows = db.scalars(
-        select(BoardAnnouncementRevisionRecordLink)
-        .where(BoardAnnouncementRevisionRecordLink.revision_id.in_(revision_ids))
-        .order_by(BoardAnnouncementRevisionRecordLink.id)
+        select(BoardPostRevisionRecordLink)
+        .where(BoardPostRevisionRecordLink.revision_id.in_(revision_ids))
+        .order_by(BoardPostRevisionRecordLink.id)
         .with_for_update()
     )
     for row in rows:

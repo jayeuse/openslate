@@ -64,13 +64,10 @@ def load_board_widget_purge_dependencies(
                 for key in (
                     "board_id",
                     "module_id",
-                    "creator_id",
                     "name",
                     "position",
                     "widget_type",
                     "config",
-                    "audience_kind",
-                    "audience_user_id",
                 )
             }
         )

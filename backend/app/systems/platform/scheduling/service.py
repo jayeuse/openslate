@@ -14,16 +14,11 @@ from app.systems.access.policy.checks import module_filter
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import User, UserStatus
-from app.systems.boards.announcement_models import (
-    BoardAnnouncement,
-    BoardAnnouncementRevision,
-)
-from app.systems.boards.announcement_service import audience_clause as announcement_audience_clause
+from app.systems.boards.access import visible_board_clause
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.event_router import _audience_clause as event_audience_clause
 from app.systems.boards.models import Board, BoardStatus
+from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.reminder_models import BoardEventReminder
-from app.systems.boards.router import _board_view_clause
 from app.systems.manage.audit.context import get_audit_context
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunEligibleUser
 from app.systems.platform.scheduling.models import (
@@ -301,7 +296,6 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
             InAppNotification.is_deleted.is_(False),
             ScheduledWork.kind == WorkKind.EVENT_REMINDER,
             ScheduledWork.state == WorkState.SUCCEEDED,
-            BoardEventReminder.recipient_id == user_id,
             BoardEventReminder.is_deleted.is_(False),
             BoardEventReminder.deleted_at.is_(None),
             BoardEvent.board_id == Board.id,
@@ -311,41 +305,39 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
             Board.is_deleted.is_(False),
             Board.deleted_at.is_(None),
             Board.status == BoardStatus.ACTIVE,
-            _board_view_clause(user),
-            event_audience_clause(user),
+            visible_board_clause(user),
         )
     )
-    announcement_ids = (
+    post_ids = (
         select(InAppNotification.id)
         .join(ScheduledWork, ScheduledWork.id == InAppNotification.work_id)
-        .join(BoardAnnouncement, BoardAnnouncement.id == ScheduledWork.announcement_id)
+        .join(BoardPost, BoardPost.id == ScheduledWork.post_id)
         .join(
-            BoardAnnouncementRevision,
-            BoardAnnouncementRevision.id == ScheduledWork.publication_result_id,
+            BoardPostRevision,
+            BoardPostRevision.id == ScheduledWork.publication_result_id,
         )
-        .join(Board, Board.id == BoardAnnouncement.board_id)
+        .join(Board, Board.id == BoardPost.board_id)
         .where(
             InAppNotification.recipient_id == user_id,
             InAppNotification.is_deleted.is_(False),
-            ScheduledWork.kind == WorkKind.ANNOUNCEMENT_PUBLISH,
+            ScheduledWork.kind == WorkKind.POST_PUBLISH,
             ScheduledWork.state == WorkState.SUCCEEDED,
-            BoardAnnouncement.is_deleted.is_(False),
-            BoardAnnouncement.deleted_at.is_(None),
-            BoardAnnouncement.status == "published",
-            BoardAnnouncement.displayed_publication_number
-            == BoardAnnouncementRevision.publication_number,
-            BoardAnnouncementRevision.announcement_id == BoardAnnouncement.id,
-            BoardAnnouncementRevision.is_deleted.is_(False),
-            BoardAnnouncementRevision.deleted_at.is_(None),
+            BoardPost.is_deleted.is_(False),
+            BoardPost.deleted_at.is_(None),
+            BoardPost.status == "published",
+            BoardPost.displayed_publication_number
+            == BoardPostRevision.publication_number,
+            BoardPostRevision.post_id == BoardPost.id,
+            BoardPostRevision.is_deleted.is_(False),
+            BoardPostRevision.deleted_at.is_(None),
             Board.is_deleted.is_(False),
             Board.deleted_at.is_(None),
             Board.status == BoardStatus.ACTIVE,
-            _board_view_clause(user),
+            visible_board_clause(user),
             or_(
-                BoardAnnouncementRevision.expires_at.is_(None),
-                BoardAnnouncementRevision.expires_at > utc_now(),
+                BoardPostRevision.expires_at.is_(None),
+                BoardPostRevision.expires_at > utc_now(),
             ),
-            announcement_audience_clause(BoardAnnouncementRevision, user),
         )
     )
 
@@ -353,7 +345,7 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
         or_(
             InAppNotification.id.in_(report_ids),
             InAppNotification.id.in_(reminder_ids),
-            InAppNotification.id.in_(announcement_ids),
+            InAppNotification.id.in_(post_ids),
         )
     )
 

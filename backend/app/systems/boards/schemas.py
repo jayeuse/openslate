@@ -1,4 +1,4 @@
-"""HTTP schemas for Board metadata and its bounded list contract."""
+"""HTTP schemas for Board metadata, its groups and its bounded list contract."""
 
 from datetime import datetime
 from enum import StrEnum
@@ -8,7 +8,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.common.listing import StandardListRequest, StandardListResponse
-from app.systems.boards.models import BoardSection, BoardStatus
+from app.systems.access.policy.models import AccessLevel
+from app.systems.boards.models import BoardScope, BoardStatus
 
 
 class BoardSort(StrEnum):
@@ -25,17 +26,17 @@ class BoardStatusFilter(StrEnum):
 
 class BoardListRequest(StandardListRequest[BoardSort]):
     status: BoardStatusFilter = BoardStatusFilter.ACTIVE
+    scope: BoardScope | None = None
     department_id: UUID | None = None
-    favorites_only: bool = False
 
 
 class BoardCreate(BaseModel):
+    """A new project Board. Company and department Boards are created by the system."""
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None
-    department_id: UUID | None = None
-    default_section: BoardSection = BoardSection.OVERVIEW
 
 
 class BoardUpdate(BaseModel):
@@ -44,16 +45,11 @@ class BoardUpdate(BaseModel):
     revision: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
-    department_id: UUID | None = None
-    default_section: BoardSection | None = None
 
     @model_validator(mode="after")
     def require_change(self) -> Self:
         changed = self.model_fields_set - {"revision"}
-        if not changed or any(
-            getattr(self, field) is None and field in {"name", "default_section"}
-            for field in changed
-        ):
+        if not changed or ("name" in changed and self.name is None):
             raise ValueError("At least one valid Board field is required")
         return self
 
@@ -65,19 +61,53 @@ class BoardRevisionRequest(BaseModel):
 
 
 class BoardResponse(BaseModel):
+    """A Board and the reader's own level on it."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    owner_id: UUID
+    scope: BoardScope
     department_id: UUID | None
     name: str
     description: str | None
     status: BoardStatus
-    default_section: BoardSection
     revision: int
+    level: AccessLevel
     created_at: datetime
     updated_at: datetime
 
 
 class BoardListResponse(StandardListResponse[BoardResponse]):
     pass
+
+
+class BoardGroupEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    group_id: UUID
+    level: AccessLevel
+
+
+class BoardGroupsReplace(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    revision: int = Field(ge=1)
+    groups: list[BoardGroupEntry] = Field(max_length=100)
+
+    @model_validator(mode="after")
+    def distinct_groups(self) -> Self:
+        if len({entry.group_id for entry in self.groups}) != len(self.groups):
+            raise ValueError("Each group can appear once")
+        return self
+
+
+class BoardGroupResponse(BaseModel):
+    group_id: UUID
+    name: str
+    level: AccessLevel
+
+
+class BoardGroupsResponse(BaseModel):
+    board_id: UUID
+    revision: int
+    groups: list[BoardGroupResponse]

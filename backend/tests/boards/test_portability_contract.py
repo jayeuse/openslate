@@ -23,12 +23,10 @@ from app.systems.sandbox.modules.models import Module
 def _bundle() -> dict:
     return {
         "kind": "openslate-board",
-        "version": 2,
+        "version": 3,
         "configuration": {
             "name": "Operations",
             "description": "Team board",
-            "department_name": "Operations",
-            "default_section": "overview",
             "widgets": [
                 {
                     "name": "Open requests",
@@ -102,21 +100,20 @@ def _database(departments: list[Department], modules: list[Module], fields: list
     return db
 
 
-def test_v2_structure_resolves_exact_active_names_types_without_mutating() -> None:
+def test_v3_structure_resolves_exact_active_names_types_without_mutating() -> None:
     department, module, fields = _catalog()
     db = _database([department], [module], fields)
 
     resolved = resolve_portable_board(db, parse_portable_board(_bytes(_bundle())))
 
     assert resolved.board.name == "Operations"
-    assert resolved.board.department_id == department.id
+    assert resolved.board.description == "Team board"
     assert len(resolved.widgets) == 1
     widget = resolved.widgets[0]
     assert widget.module_id == module.id
     assert widget.config.fields[0].field_id == fields[0].id
     assert widget.config.filters[0].field_id == fields[1].id
     assert widget.config.filters[0].value == "Open"
-    assert widget.audience.kind == "everyone"
     statements = [
         str(call.args[0].compile(dialect=postgresql.dialect()))
         for call in db.scalars.call_args_list
@@ -133,7 +130,7 @@ def test_v2_structure_resolves_exact_active_names_types_without_mutating() -> No
 
 
 @pytest.mark.parametrize("extra", ["id", "audience", "grants", "files", "placements"])
-def test_v2_bundle_rejects_nonportable_widget_data(extra: str) -> None:
+def test_v3_bundle_rejects_nonportable_widget_data(extra: str) -> None:
     bundle = _bundle()
     bundle["configuration"]["widgets"][0][extra] = str(uuid7())
 
@@ -143,18 +140,26 @@ def test_v2_bundle_rejects_nonportable_widget_data(extra: str) -> None:
     assert error.value.code == "board_bundle_invalid"
 
 
-def test_v2_bundle_rejects_oversize_unknown_version_and_duplicate_keys() -> None:
+def test_v3_bundle_rejects_oversize_unknown_version_and_duplicate_keys() -> None:
     with pytest.raises(PortabilityError) as oversized:
         parse_portable_board(b" " * (1024 * 1024 + 1))
     assert oversized.value.code == "board_bundle_too_large"
 
     bundle = _bundle()
-    bundle["version"] = 1
-    with pytest.raises(PortabilityError) as version:
-        parse_portable_board(_bytes(bundle))
-    assert version.value.code == "board_bundle_invalid"
+    for retired in (1, 2):
+        bundle["version"] = retired
+        with pytest.raises(PortabilityError) as version:
+            parse_portable_board(_bytes(bundle))
+        assert version.value.code == "board_bundle_invalid"
 
-    bundle["version"] = 2.0
+    for scope_field in ("department_name", "default_section", "scope"):
+        scoped = _bundle()
+        scoped["configuration"][scope_field] = "Operations"
+        with pytest.raises(PortabilityError) as scoped_error:
+            parse_portable_board(_bytes(scoped))
+        assert scoped_error.value.code == "board_bundle_invalid"
+
+    bundle["version"] = 3.0
     with pytest.raises(PortabilityError) as coerced_version:
         parse_portable_board(_bytes(bundle))
     assert coerced_version.value.code == "board_bundle_invalid"
@@ -172,7 +177,7 @@ def test_v2_bundle_rejects_oversize_unknown_version_and_duplicate_keys() -> None
     ("section", "count"),
     [("widgets", 13), ("fields", 25), ("filters", 9)],
 )
-def test_v2_bundle_enforces_widget_and_reference_limits(section: str, count: int) -> None:
+def test_v3_bundle_enforces_widget_and_reference_limits(section: str, count: int) -> None:
     bundle = _bundle()
     widget = bundle["configuration"]["widgets"][0]
     if section == "widgets":
@@ -191,7 +196,7 @@ def test_v2_bundle_enforces_widget_and_reference_limits(section: str, count: int
     assert error.value.code == "board_bundle_invalid"
 
 
-def test_v2_resolution_rejects_missing_or_ambiguous_source_without_writes() -> None:
+def test_v3_resolution_rejects_missing_or_ambiguous_source_without_writes() -> None:
     bundle = parse_portable_board(_bytes(_bundle()))
     department, module, fields = _catalog()
     for db in (
@@ -208,7 +213,7 @@ def test_v2_resolution_rejects_missing_or_ambiguous_source_without_writes() -> N
         db.commit.assert_not_called()
 
 
-def test_v2_resolution_rejects_type_or_filter_value_mismatch() -> None:
+def test_v3_resolution_rejects_type_or_filter_value_mismatch() -> None:
     department, module, fields = _catalog()
     bundle = _bundle()
     bundle["configuration"]["widgets"][0]["config"]["fields"][0]["expected_type"] = "date"
@@ -227,7 +232,7 @@ def test_v2_resolution_rejects_type_or_filter_value_mismatch() -> None:
     assert invalid_filter.value.code == "board_source_unavailable"
 
 
-def test_v2_resolution_rejects_closed_module_and_soft_deleted_field() -> None:
+def test_v3_resolution_rejects_closed_module_and_soft_deleted_field() -> None:
     department, module, fields = _catalog()
     module.is_deleted = True
     with pytest.raises(PortabilityError):

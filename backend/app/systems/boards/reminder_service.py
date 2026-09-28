@@ -1,6 +1,14 @@
-"""Personal Event occurrence validation, queueing, and pending-work reconciliation."""
+"""Author-set event reminders, their occurrences, and their pending work.
 
-from dataclasses import dataclass
+A reminder is a timing of an event ("1 day before"). Each occurrence of the
+event gets one ``scheduled_work`` row, keyed by ``(reminder_id,
+occurrence_start_at)``, that notifies every reader of the Board when it is due.
+The worker queues the next occurrence of each reminder (see
+``platform/scheduling/materializer.py``). An edit to the event's time deletes the
+pending rows, so the next poll queues them again for the new schedule.
+"""
+
+from collections.abc import Iterable
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -8,14 +16,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.base_model import utc_now
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.event_occurrences import (
     BoardEventOccurrence,
     _compatible_local_instant,
     expand_board_event_occurrences,
 )
-from app.systems.boards.reminder_models import BoardEventReminder
+from app.systems.boards.reminder_models import REMINDER_TIMINGS, BoardEventReminder
 from app.systems.platform.scheduling.models import (
     InAppNotification,
     ScheduledWork,
@@ -23,136 +30,24 @@ from app.systems.platform.scheduling.models import (
     WorkState,
 )
 
-_OFFSETS = {"start": timedelta(), "15m": timedelta(minutes=15), "1d": timedelta(days=1)}
+OFFSETS = {"start": timedelta(), "15m": timedelta(minutes=15), "1d": timedelta(days=1)}
+_SEARCH_STEP_DAYS = 31
+_SEARCH_LIMIT_DAYS = 366
+TIMING_FIELDS = (
+    "all_day",
+    "start_date",
+    "end_date",
+    "start_at",
+    "end_at",
+    "timezone_name",
+    "recurrence",
+    "repeat_until",
+)
 
 
-@dataclass(frozen=True, slots=True)
-class EventTiming:
-    """The fields needed to identify an occurrence before a series edit."""
-
-    id: UUID
-    all_day: bool
-    start_date: date | None
-    end_date: date | None
-    start_at: datetime | None
-    end_at: datetime | None
-    timezone_name: str
-    recurrence: str
-    repeat_until: date | None
-
-
-def snapshot_event_timing(event: BoardEvent) -> EventTiming:
-    return EventTiming(
-        id=event.id,
-        all_day=event.all_day,
-        start_date=event.start_date,
-        end_date=event.end_date,
-        start_at=event.start_at,
-        end_at=event.end_at,
-        timezone_name=event.timezone_name,
-        recurrence=event.recurrence,
-        repeat_until=event.repeat_until,
-    )
-
-
-def _anchor_date(event: EventTiming | BoardEvent) -> date | None:
-    if event.all_day:
-        return event.start_date
-    if event.start_at is None:
-        return None
-    try:
-        return event.start_at.astimezone(ZoneInfo(event.timezone_name)).date()
-    except (TypeError, ValueError, OverflowError):
-        return None
-
-
-def _month(ordinal: int) -> tuple[int, int]:
-    return ordinal // 12, ordinal % 12 + 1
-
-
-def _monthly_date(anchor: date, index: int) -> date | None:
-    from calendar import monthrange
-
-    month = anchor.year * 12 + anchor.month - 1
-    found = -1
-    while month <= 9999 * 12 - 1:
-        year, month_number = _month(month)
-        if anchor.day <= monthrange(year, month_number)[1]:
-            found += 1
-            if found == index:
-                return date(year, month_number, anchor.day)
-        month += 1
-    return None
-
-
-def _occurrence_index(event: EventTiming, occurrence: date) -> int | None:
-    anchor = _anchor_date(event)
-    if anchor is None or occurrence < anchor:
-        return None
-    if event.recurrence == "none":
-        return 0 if occurrence == anchor else None
-    if event.recurrence in ("daily", "weekly"):
-        step = 1 if event.recurrence == "daily" else 7
-        elapsed = (occurrence - anchor).days
-        return elapsed // step if elapsed % step == 0 else None
-    if event.recurrence == "monthly":
-        from calendar import monthrange
-
-        if occurrence.day != anchor.day:
-            return None
-        index = 0
-        first_month = anchor.year * 12 + anchor.month - 1
-        final_month = occurrence.year * 12 + occurrence.month - 1
-        for month in range(first_month, final_month + 1):
-            year, month_number = _month(month)
-            if anchor.day > monthrange(year, month_number)[1]:
-                continue
-            if month == final_month:
-                return index
-            index += 1
-    return None
-
-
-def _date_at_index(event: BoardEvent, index: int) -> date | None:
-    anchor = _anchor_date(event)
-    if anchor is None:
-        return None
-    try:
-        if event.recurrence == "none":
-            return anchor if index == 0 else None
-        if event.recurrence == "daily":
-            return anchor + timedelta(days=index)
-        if event.recurrence == "weekly":
-            return anchor + timedelta(days=index * 7)
-        if event.recurrence == "monthly":
-            return _monthly_date(anchor, index)
-    except (OverflowError, ValueError):
-        return None
-    return None
-
-
-def _occurrence_date(occurrence_id: str, event_id: UUID) -> date | None:
-    prefix = f"{event_id}:"
-    if not occurrence_id.startswith(prefix):
-        return None
-    tail = occurrence_id[len(prefix) :]
-    try:
-        return date.fromisoformat(tail[:10])
-    except ValueError:
-        return None
-
-
-def _one_occurrence(event: BoardEvent, day: date) -> BoardEventOccurrence | None:
-    result = expand_board_event_occurrences(event, day, day)
-    return next((item for item in result.occurrences if item.date == day.isoformat()), None)
-
-
-def occurrence_for_id(event: BoardEvent, occurrence_id: str) -> BoardEventOccurrence | None:
-    day = _occurrence_date(occurrence_id, event.id)
-    if day is None:
-        return None
-    occurrence = _one_occurrence(event, day)
-    return occurrence if occurrence is not None and occurrence.id == occurrence_id else None
+def ordered_timings(timings: Iterable[str]) -> list[str]:
+    chosen = set(timings)
+    return [timing for timing in REMINDER_TIMINGS if timing in chosen]
 
 
 def occurrence_instant(event: BoardEvent, occurrence: BoardEventOccurrence) -> datetime:
@@ -166,156 +61,141 @@ def occurrence_instant(event: BoardEvent, occurrence: BoardEventOccurrence) -> d
     return start
 
 
-def reminder_due_at(start: datetime, timing: str, *, now: datetime | None = None) -> datetime:
-    if timing == "now":
-        return (now or utc_now()).astimezone(UTC)
-    if timing not in _OFFSETS:
+def reminder_due_at(start: datetime, timing: str) -> datetime:
+    if timing not in OFFSETS:
         raise ValueError("Unsupported reminder timing")
-    return start.astimezone(UTC) - _OFFSETS[timing]
+    return start.astimezone(UTC) - OFFSETS[timing]
 
 
-def _cancel(work: ScheduledWork) -> None:
-    work.state = WorkState.CANCELED
-    work.failure_code = "occurrence_removed"
-    work.lease_token = None
-    work.lease_expires_at = None
+def _local_date(event: BoardEvent, instant: datetime) -> date:
+    return instant.astimezone(ZoneInfo(event.timezone_name)).date()
 
 
-def cancel_event_reminders(db: Session, event_id: UUID) -> None:
-    """Cancel every pending reminder while the Event is locked by its caller."""
+def occurrence_at(event: BoardEvent, start: datetime) -> BoardEventOccurrence | None:
+    """The occurrence of the event that starts at this instant, if it still exists."""
 
-    for work in db.scalars(
-        select(ScheduledWork)
-        .join(BoardEventReminder, BoardEventReminder.id == ScheduledWork.reminder_id)
-        .where(
-            ScheduledWork.kind == WorkKind.EVENT_REMINDER,
-            ScheduledWork.state == WorkState.PENDING,
-            BoardEventReminder.event_id == event_id,
+    try:
+        day = _local_date(event, start)
+        found = expand_board_event_occurrences(
+            event, day - timedelta(days=1), day + timedelta(days=1)
         )
-        .order_by(ScheduledWork.id)
-        .with_for_update(of=ScheduledWork)
-    ):
-        _cancel(work)
+    except (OverflowError, ValueError):
+        return None
+    for occurrence in found.occurrences:
+        try:
+            if occurrence_instant(event, occurrence) == start.astimezone(UTC):
+                return occurrence
+        except ValueError:
+            continue
+    return None
 
 
-def delete_event_reminders(db: Session, event_id: UUID) -> None:
-    """Delete dependent notices and work before permanent Event deletion."""
+def next_occurrence_start(event: BoardEvent, timing: str, after: datetime) -> datetime | None:
+    """The start of the first occurrence whose reminder falls strictly after ``after``."""
 
-    reminders = list(
-        db.scalars(
-            select(BoardEventReminder)
-            .where(BoardEventReminder.event_id == event_id)
-            .order_by(BoardEventReminder.id)
-            .with_for_update()
-        )
+    offset = OFFSETS[timing]
+    try:
+        first = _local_date(event, after + offset) - timedelta(days=1)
+    except (OverflowError, ValueError):
+        return None
+    for step in range(0, _SEARCH_LIMIT_DAYS, _SEARCH_STEP_DAYS):
+        window_start = first + timedelta(days=step)
+        window_end = window_start + timedelta(days=_SEARCH_STEP_DAYS - 1)
+        found = expand_board_event_occurrences(event, window_start, window_end)
+        for occurrence in found.occurrences:
+            try:
+                start = occurrence_instant(event, occurrence)
+            except ValueError:
+                continue
+            if start - offset > after:
+                return start
+    return None
+
+
+def event_reminders(db: Session, event_id: UUID, *, lock: bool = False) -> list[BoardEventReminder]:
+    statement = (
+        select(BoardEventReminder)
+        .where(BoardEventReminder.event_id == event_id, BoardEventReminder.is_deleted.is_(False))
+        .order_by(BoardEventReminder.id)
     )
-    for reminder in reminders:
-        work = db.scalar(
-            select(ScheduledWork).where(ScheduledWork.reminder_id == reminder.id).with_for_update()
+    if lock:
+        statement = statement.with_for_update()
+    return list(db.scalars(statement))
+
+
+def timings_by_event(db: Session, event_ids: Iterable[UUID]) -> dict[UUID, list[str]]:
+    ids = sorted(set(event_ids))
+    found: dict[UUID, list[str]] = {event_id: [] for event_id in ids}
+    if not ids:
+        return found
+    for event_id, timing in db.execute(
+        select(BoardEventReminder.event_id, BoardEventReminder.timing).where(
+            BoardEventReminder.event_id.in_(ids), BoardEventReminder.is_deleted.is_(False)
         )
-        if work is not None:
-            for notice in db.scalars(
-                select(InAppNotification)
-                .where(InAppNotification.work_id == work.id)
-                .order_by(InAppNotification.id)
-                .with_for_update()
-            ):
-                db.delete(notice)
-            db.flush()
-            db.delete(work)
-            db.flush()
-        db.delete(reminder)
+    ):
+        found[event_id].append(timing)
+    return {event_id: ordered_timings(timings) for event_id, timings in found.items()}
+
+
+def _delete_work(db: Session, reminder_ids: list[UUID], *, pending_only: bool) -> None:
+    if not reminder_ids:
+        return
+    statement = select(ScheduledWork).where(
+        ScheduledWork.kind == WorkKind.EVENT_REMINDER,
+        ScheduledWork.reminder_id.in_(reminder_ids),
+    )
+    if pending_only:
+        statement = statement.where(ScheduledWork.state == WorkState.PENDING)
+    rows = list(db.scalars(statement.order_by(ScheduledWork.id).with_for_update()))
+    if not rows:
+        return
+    for notice in db.scalars(
+        select(InAppNotification)
+        .where(InAppNotification.work_id.in_([work.id for work in rows]))
+        .order_by(InAppNotification.id)
+        .with_for_update()
+    ):
+        db.delete(notice)
+    db.flush()
+    for work in rows:
+        db.delete(work)
     db.flush()
 
 
-def reconcile_event_reminders(db: Session, event: BoardEvent, previous: EventTiming) -> None:
-    """Move pending occurrence work by recurrence ordinal, cancel removed instances."""
+def clear_pending_reminder_work(db: Session, event_id: UUID) -> None:
+    """Delete queued occurrences after a time change or an archive; the worker queues again.
 
-    reminders = list(
-        db.scalars(
-            select(BoardEventReminder)
-            .where(BoardEventReminder.event_id == event.id)
-            .order_by(BoardEventReminder.id)
-            .with_for_update()
-        )
-    )
-    occupied = {
-        (reminder.recipient_id, reminder.occurrence_id): reminder.id for reminder in reminders
-    }
+    Pending rows have no notifications yet. A deleted row frees its occurrence key,
+    so an occurrence that keeps its start can be queued again.
+    """
+
+    _delete_work(db, [item.id for item in event_reminders(db, event_id)], pending_only=True)
+
+
+def set_event_reminders(db: Session, event: BoardEvent, timings: Iterable[str]) -> None:
+    """Make the event's reminders exactly these timings; the caller locked the event."""
+
+    wanted = set(timings)
     removed: list[BoardEventReminder] = []
-    planned: dict[
-        UUID,
-        tuple[BoardEventReminder, ScheduledWork, BoardEventOccurrence, datetime, datetime],
-    ] = {}
-    for reminder in reminders:
-        work = db.scalar(
-            select(ScheduledWork)
-            .where(
-                ScheduledWork.reminder_id == reminder.id,
-                ScheduledWork.kind == WorkKind.EVENT_REMINDER,
-            )
-            .with_for_update()
-        )
-        if work is None or work.state != WorkState.PENDING:
-            continue
-        old_day = _occurrence_date(reminder.occurrence_id, event.id)
-        index = _occurrence_index(previous, old_day) if old_day is not None else None
-        new_day = _date_at_index(event, index) if index is not None else None
-        occurrence = _one_occurrence(event, new_day) if new_day is not None else None
-        if occurrence is None or event.archived:
-            _cancel(work)
-            if occurrence is None:
-                removed.append(reminder)
-                occupied.pop((reminder.recipient_id, reminder.occurrence_id))
-            continue
-        start = occurrence_instant(event, occurrence)
-        due = (
-            reminder.due_at if reminder.timing == "now" else reminder_due_at(start, reminder.timing)
-        )
-        planned[reminder.id] = reminder, work, occurrence, start, due
-
-    # Every destination occupied by another moving reminder becomes free only
-    # after that row moves. A blocked move leaves its old ID occupied, so repeat
-    # the collision check until those dependent moves have also been canceled.
-    moving = {
-        reminder_id
-        for reminder_id, (reminder, _, occurrence, _, _) in planned.items()
-        if reminder.occurrence_id != occurrence.id
-    }
-    while moving:
-        blocked: set[UUID] = set()
-        destinations: dict[tuple[UUID, str], UUID] = {}
-        for reminder_id in sorted(moving):
-            reminder, _, occurrence, _, _ = planned[reminder_id]
-            destination = reminder.recipient_id, occurrence.id
-            if destination in destinations:
-                blocked.add(reminder_id)
-                continue
-            destinations[destination] = reminder_id
-            holder = occupied.get(destination)
-            if holder is not None and holder != reminder_id and holder not in moving:
-                blocked.add(reminder_id)
-        if not blocked:
-            break
-        for reminder_id in blocked:
-            moving.remove(reminder_id)
-            _cancel(planned[reminder_id][1])
-
-    # Release removed and moving old IDs before assigning any destination;
-    # the database checks uniqueness on each flush, not just the final mapping.
+    for reminder in event_reminders(db, event.id, lock=True):
+        if reminder.timing in wanted:
+            wanted.discard(reminder.timing)
+        else:
+            removed.append(reminder)
+    _delete_work(db, [item.id for item in removed], pending_only=False)
     for reminder in removed:
-        reminder.occurrence_id = f"{event.id}:removed:{reminder.id}"
-    for reminder_id in moving:
-        planned[reminder_id][0].occurrence_id = f"{event.id}:moving:{reminder_id}"
-    if removed or moving:
-        db.flush()
-    for reminder, work, occurrence, start, due in planned.values():
-        if work.state != WorkState.PENDING:
-            continue
-        reminder.occurrence_id = occurrence.id
-        reminder.occurrence_start_at = start
-        reminder.due_at = due
-        due_changed = work.scheduled_for != due
-        work.scheduled_for = due
-        if due_changed:
-            work.next_attempt_at = due
+        db.delete(reminder)
+    db.flush()
+    for timing in ordered_timings(wanted):
+        db.add(BoardEventReminder(board_id=event.board_id, event_id=event.id, timing=timing))
+    db.flush()
+
+
+def delete_event_reminders(db: Session, event_id: UUID) -> None:
+    """Delete dependent notices, work and reminders before permanent event deletion."""
+
+    reminders = event_reminders(db, event_id, lock=True)
+    _delete_work(db, [item.id for item in reminders], pending_only=False)
+    for reminder in reminders:
+        db.delete(reminder)
+    db.flush()

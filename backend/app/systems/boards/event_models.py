@@ -39,15 +39,6 @@ class BoardEvent(BaseModel):
         ),
         CheckConstraint("revision > 0", name="ck_board_events_revision_positive"),
         CheckConstraint(
-            "(audience_kind IN ('everyone', 'author') "
-            "AND audience_user_id IS NULL AND audience_department_id IS NULL) OR "
-            "(audience_kind = 'user' "
-            "AND audience_user_id IS NOT NULL AND audience_department_id IS NULL) OR "
-            "(audience_kind = 'department' "
-            "AND audience_user_id IS NULL AND audience_department_id IS NOT NULL)",
-            name="ck_board_events_audience",
-        ),
-        CheckConstraint(
             "(all_day = true AND start_date IS NOT NULL AND end_date IS NOT NULL "
             "AND start_at IS NULL AND end_at IS NULL AND end_date >= start_date) OR "
             "(all_day = false AND start_date IS NULL AND end_date IS NULL "
@@ -68,8 +59,6 @@ class BoardEvent(BaseModel):
         ),
         Index("ix_board_events_board_id", "board_id"),
         Index("ix_board_events_author_id", "author_id"),
-        Index("ix_board_events_audience_user_id", "audience_user_id"),
-        Index("ix_board_events_audience_department_id", "audience_department_id"),
     )
 
     board_id: Mapped[UUID] = mapped_column(
@@ -98,13 +87,6 @@ class BoardEvent(BaseModel):
         String(10), nullable=False, default="none", server_default=text("'none'")
     )
     repeat_until: Mapped[date | None] = mapped_column(Date, nullable=True)
-    audience_kind: Mapped[str] = mapped_column(String(20), nullable=False)
-    audience_user_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
-    )
-    audience_department_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("departments.id", ondelete="RESTRICT"), nullable=True
-    )
     archived: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )

@@ -6,6 +6,9 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from uuid6 import uuid7
+
+from app.systems.boards.department_boards import COMPANY_BOARD_NAME
 from app.systems.sandbox.designs.defaults import empty_document
 from app.systems.sandbox.designs.schemas import DOCUMENT_SCHEMA_VERSION
 from app.systems.sandbox.designs.service import canonical_document
@@ -89,6 +92,17 @@ def _reset_sandbox_workspace(connection: Any) -> None:
     )
 
 
+def _reset_company_board(connection: Any) -> None:
+    """Restore the one company Board after every Board row was deleted."""
+
+    _execute(
+        connection,
+        """INSERT INTO public.boards (id, scope, department_id, name, status)
+           VALUES (%s, 'company', NULL, %s, 'active')""",
+        (uuid7(), COMPANY_BOARD_NAME),
+    )
+
+
 def _validate_postconditions(
     connection: Any,
     plan: ResetPlan,
@@ -108,6 +122,15 @@ def _validate_postconditions(
         or _single_value(connection, count_statements["sandbox_versions"]) != 0
     ):
         raise ResetError("The Sandbox reset postcondition was not met")
+    if (
+        _single_value(connection, count_statements["boards"]) != 1
+        or _single_value(
+            connection,
+            "SELECT count(*) FROM public.boards WHERE scope = 'company' AND status = 'active'",
+        )
+        != 1
+    ):
+        raise ResetError("The company Board reset postcondition was not met")
 
     profile = read_profile(connection, plan.preserved_admin_id)
     if (
@@ -237,6 +260,7 @@ def apply_reset(
         for table_name in DELETE_ORDER:
             _execute(connection, f"DELETE FROM public.{table_name}")
         _reset_sandbox_workspace(connection)
+        _reset_company_board(connection)
         _execute(
             connection,
             "DELETE FROM public.users WHERE role = 'guest' AND id <> %s",

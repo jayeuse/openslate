@@ -83,7 +83,7 @@ Supabase Auth establishes provider identity. FastAPI verifies the provider token
 - FastAPI is the canonical application data API; browsers never access application tables directly.
 - Supabase Database is PostgreSQL. Alembic exclusively owns OpenSlate application schema evolution; Supabase owns provider schemas and initialization.
 - Supabase Auth authenticates. FastAPI owns explicit provider-subject binding, revocable application sessions, and all application authorization decisions.
-- Application roles, groups, permissions, Workspace policy, Board grants, and Report audiences remain OpenSlate data; Auth metadata is never an authorization source.
+- Application roles, groups, permissions, Workspace policy, Board groups, and Report audiences remain OpenSlate data; Auth metadata is never an authorization source.
 - Normal domain mutations use audited ORM sessions and explicit commits. Provider Auth and Storage operations are separate service boundaries.
 - Private file bytes live in Supabase Storage quarantine/ready buckets; FastAPI authorizes each operation, and the OpenSlate scanner workflow gates promotion and download.
 - Close/reopen is the default hierarchical lifecycle; purge is explicit and disabled by default.
