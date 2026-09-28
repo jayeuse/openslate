@@ -146,15 +146,39 @@ def disposable_target(tmp_path, monkeypatch):
         "volume": volumes["supabase-db-data"], "containers": containers,
         "networks": networks, "volumes": volumes, "project_ids": project_ids,
     }
+    inspection_calls = []
+    inspection_faults = {}
+    reverse_inspections = False
+
     def inspect(arguments):
+        inspection_calls.append(arguments)
         if arguments[0] == "ps":
             return project_ids
         if arguments[0] == "inspect":
             return [container for container in containers.values()
                     if container["Id"] in arguments[1:]]
-        if arguments[0] == "network":
-            return [networks[arguments[2].removeprefix(f"{project}_")]]
-        return [volumes[arguments[2].removeprefix(f"{project}_")]]
+        kind, names = arguments[0], arguments[2:]
+        source = networks if kind == "network" else volumes
+        results = [source[name.removeprefix(f"{project}_")] for name in names]
+        fault = inspection_faults.get(kind)
+        if fault == "missing":
+            results.pop()
+        elif fault == "duplicate":
+            results.append(dict(results[0]))
+        elif fault == "extra":
+            results.append({**results[0], "Name": f"{project}_unowned"})
+        if reverse_inspections:
+            results.reverse()
+        return results
+
+    facts["inspection_calls"] = inspection_calls
+    facts["inspection_faults"] = inspection_faults
+
+    def reverse_results():
+        nonlocal reverse_inspections
+        reverse_inspections = True
+
+    facts["reverse_results"] = reverse_results
     monkeypatch.setattr(instance, "_docker_json", inspect)
     connection = MagicMock()
     connection.exec_driver_sql.return_value.one.return_value = (
@@ -335,6 +359,37 @@ def test_live_ownership_mismatch_is_rejected_before_connection(disposable_target
         facts["container"]["State"]["Running"] = False
     with pytest.raises(RuntimeError, match="live runner-owned"):
         _guard_integration_database(url)
+
+
+@pytest.mark.parametrize("resource", ["network", "volume"])
+@pytest.mark.parametrize("malformation", ["missing", "duplicate", "extra"])
+def test_malformed_live_resource_inspection_is_rejected(disposable_target, resource, malformation):
+    url, facts = disposable_target
+    facts["inspection_faults"][resource] = malformation
+
+    with pytest.raises(RuntimeError, match="live runner-owned"):
+        _guard_integration_database(url)
+
+
+def test_live_resource_inspections_are_batched_and_accept_reordered_results(disposable_target):
+    url, facts = disposable_target
+    facts["reverse_results"]()
+
+    _guard_integration_database(url)
+
+    calls = facts["inspection_calls"]
+    assert len(calls) == 4
+    assert sum(call[0] == "ps" for call in calls) == 1
+    assert sum(call[0] == "inspect" for call in calls) == 1
+    network_calls = [call for call in calls if call[:2] == ["network", "inspect"]]
+    volume_calls = [call for call in calls if call[:2] == ["volume", "inspect"]]
+    assert len(network_calls) == len(volume_calls) == 1
+    assert set(network_calls[0][2:]) == {
+        network["Name"] for network in facts["networks"].values()
+    }
+    assert set(volume_calls[0][2:]) == {
+        volume["Name"] for volume in facts["volumes"].values()
+    }
 
 
 def test_scanner_startup_rechecks_live_database_ownership(disposable_target):

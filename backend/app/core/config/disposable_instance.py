@@ -268,6 +268,18 @@ def _accepted_bind_sources(compose_directory: str, relative: str) -> set[str]:
     return accepted
 
 
+def _inspect_named_resources(
+    inspect: Callable[[list[str]], Any], resource_type: str, names: tuple[str, ...]
+) -> dict[str, dict[str, Any]]:
+    resources = inspect([resource_type, "inspect", *names])
+    if not isinstance(resources, list) or len(resources) != len(names):
+        raise ValueError
+    by_name = {resource["Name"]: resource for resource in resources}
+    if len(by_name) != len(resources) or set(by_name) != set(names):
+        raise ValueError
+    return by_name
+
+
 def assert_live_disposable_ownership(
     ownership: dict[str, Any], run_id: str, inspect: Callable[[list[str]], Any]
 ) -> None:
@@ -312,11 +324,10 @@ def assert_live_disposable_ownership(
                 and all(actual_labels.get(key) == value for key, value in labels.items())
             ):
                 raise ValueError
-        networks = {
-            name: inspect(["network", "inspect", f"{project}_{name}"])[0]
-            for name in PROVIDER_NETWORKS
-        }
-        for name, network in networks.items():
+        network_names = tuple(f"{project}_{name}" for name in PROVIDER_NETWORKS)
+        networks = _inspect_named_resources(inspect, "network", network_names)
+        for name in PROVIDER_NETWORKS:
+            network = networks[f"{project}_{name}"]
             actual_labels = network["Labels"]
             if not (
                 network["Id"] == ownership["network_ids"][name]
@@ -327,11 +338,10 @@ def assert_live_disposable_ownership(
                 and network["Internal"] is (name in {"provider", "operator", "studio-ingress"})
             ):
                 raise ValueError
-        volumes = {
-            name: inspect(["volume", "inspect", f"{project}_{name}"])[0]
-            for name in PROVIDER_VOLUMES
-        }
-        for name, volume in volumes.items():
+        volume_names = tuple(f"{project}_{name}" for name in PROVIDER_VOLUMES)
+        volumes = _inspect_named_resources(inspect, "volume", volume_names)
+        for name in PROVIDER_VOLUMES:
+            volume = volumes[f"{project}_{name}"]
             actual_labels = volume["Labels"]
             if not (
                 volume["Name"] == f"{project}_{name}"
