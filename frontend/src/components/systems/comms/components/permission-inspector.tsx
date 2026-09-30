@@ -100,9 +100,7 @@ export function PermissionFields({
         <p className="text-muted-foreground max-w-md text-xs">
           Access is decided from the workspace down to the channel. At each
           level, a rule for a person beats a rule for their role, which beats
-          the rule for everyone. Inherit uses the broader rule. Who can use, on
-          a channel’s Overview, shows access by group; it is not enforced yet,
-          and these rules are.
+          the rule for everyone. Inherit uses the broader rule.
         </p>
         <Action type="button" onClick={onInspect}>
           Inspect effective access

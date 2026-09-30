@@ -40,6 +40,7 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubTrigger,
@@ -144,12 +145,15 @@ import {
 } from "./components/confirm-action-dialog";
 import { reportCommsDone, reportCommsError } from "./state/comms-feedback";
 import { EXAMPLE_FLOWS } from "./data/examples";
+import { isCommsManager } from "./domain/message-policy";
 import {
   channelGroupAccess,
   channelTone,
   commsGroup,
+  personGroupAccess,
   recordContext,
   visibleToLabel,
+  type GroupTone,
 } from "./domain/groups";
 import { GroupMark } from "./components/group-mark";
 import { RecordPanel } from "./components/record-panel";
@@ -213,6 +217,41 @@ type WorkspaceSetting =
   | "outbox"
   | "retention";
 
+/** Who can use the open channel. Opens its settings for people who may
+ *  change them; for everyone else it is plain text. */
+function AccessChip({
+  label,
+  tone,
+  onOpen,
+}: {
+  label: string;
+  tone: GroupTone;
+  onOpen?: (opener: HTMLElement) => void;
+}) {
+  const body = (
+    <>
+      <GroupMark tone={tone} className="size-2" />
+      <span className="truncate">{label}</span>
+    </>
+  );
+  const chip =
+    "bg-muted text-muted-foreground hidden h-7 max-w-64 shrink-0 items-center gap-1.5 rounded-[var(--radius)] px-2 text-xs shadow-[inset_0_0_0_1px_var(--border)] sm:inline-flex";
+  if (!onOpen) return <span className={chip}>{body}</span>;
+  return (
+    <button
+      type="button"
+      onClick={(event) => onOpen(event.currentTarget)}
+      className={cn(
+        chip,
+        "hover:text-foreground focus-visible:outline-ring outline-none focus-visible:outline-2",
+      )}
+    >
+      {body}
+      <span className="sr-only">. Change who can use this channel.</span>
+    </button>
+  );
+}
+
 /** How many removed messages wait in Moderation; the words are read out,
  *  the number is shown. */
 function RecoverableBadge({ count }: { count: number }) {
@@ -268,15 +307,25 @@ function CommsMenu({
     label: string;
     icon: typeof Hash;
   }[][];
-  const adminTools = [
-    { id: "workspace", label: "Workspace settings" },
-    { id: "moderation", label: "Moderation" },
-    { id: "outbox", label: "Scheduled messages" },
-    { id: "history", label: "Settings history" },
-    { id: "retention", label: "Message retention" },
-    { id: "automation", label: "Automation" },
-    { id: "templates", label: "Channel templates" },
-    { id: "management", label: "Bulk channel changes" },
+  const adminGroups = [
+    {
+      label: "Messages and safety",
+      tools: [
+        { id: "moderation", label: "Moderation" },
+        { id: "outbox", label: "Scheduled messages" },
+        { id: "retention", label: "Message retention" },
+      ],
+    },
+    {
+      label: "Setup",
+      tools: [
+        { id: "workspace", label: "Workspace settings" },
+        { id: "templates", label: "Channel templates" },
+        { id: "automation", label: "Automation" },
+        { id: "management", label: "Bulk channel changes" },
+        { id: "history", label: "Settings history" },
+      ],
+    },
   ] as const;
   const select = (id: WorkspaceSetting) => {
     if (trigger.current) onSelect(id, trigger.current);
@@ -338,20 +387,26 @@ function CommsMenu({
                   sideOffset={6}
                   className="w-56 max-w-[calc(100vw-32px)] p-1.5"
                 >
-                  <DropdownMenuGroup>
-                    {adminTools.map(({ id, label }) => (
-                      <DropdownMenuItem
-                        key={id}
-                        className="min-h-10"
-                        onClick={() => select(id)}
-                      >
-                        {label}
-                        {id === "moderation" && recoverableCount > 0 && (
-                          <RecoverableBadge count={recoverableCount} />
-                        )}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuGroup>
+                  {adminGroups.map((group, index) => (
+                    <DropdownMenuGroup key={group.label}>
+                      {index > 0 && <DropdownMenuSeparator />}
+                      <DropdownMenuLabel className="text-muted-foreground px-2 pt-1.5 pb-1 text-xs font-semibold">
+                        {group.label}
+                      </DropdownMenuLabel>
+                      {group.tools.map(({ id, label }) => (
+                        <DropdownMenuItem
+                          key={id}
+                          className="min-h-10"
+                          onClick={() => select(id)}
+                        >
+                          {label}
+                          {id === "moderation" && recoverableCount > 0 && (
+                            <RecoverableBadge count={recoverableCount} />
+                          )}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuGroup>
+                  ))}
                 </DropdownMenuContent>
               </DropdownMenuSub>
             </>
@@ -613,7 +668,9 @@ export default function SampleComms() {
   const canPost =
     canParticipate &&
     permission("post") &&
-    (settings.mode !== "announcements" || viewerId === "sample-eli");
+    // Announcements: the same manager rule the send check uses.
+    (settings.mode !== "announcements" ||
+      isCommsManager({ config, person: viewer, channel, categories }));
   const elevated = permission("pin");
   const commsMenuAccess = {
     canManageChannel: permission("manageChannel"),
@@ -674,13 +731,12 @@ export default function SampleComms() {
         ...channelThreads.flatMap(threadMessages),
       ].filter((item) => item.pinned)
     : [];
+  // A channel's members are the people its groups let in (shown, not yet
+  // enforced), so the list agrees with "Who can use".
   const members = activePeople.filter((person) =>
     channel
-      ? resolveCommsPermission(
-          config,
-          { person, channel, categories },
-          "viewChannel",
-        ).allowed
+      ? personGroupAccess(person, channelGroupAccess(channel, categories)) !==
+        "none"
       : person.name === direct?.user,
   );
   const currentThread = canView
@@ -688,6 +744,7 @@ export default function SampleComms() {
     : undefined;
   // A linked record opens in the same place as a thread; a thread wins.
   const [recordId, setRecordId] = useState("");
+  const conversationsLoaded = commsResource.data !== undefined;
   const openRecord = currentThread
     ? undefined
     : records.find((item) => item.id === recordId);
@@ -786,7 +843,10 @@ export default function SampleComms() {
       target?.scrollIntoView({ block: "center" });
     } else
       messageList.current?.scrollTo({ top: messageList.current.scrollHeight });
-  }, [selected, mobileConversation, desktop]);
+    // Runs again once the conversations load, so the first view opens at
+    // the latest message instead of the oldest.
+  }, [selected, mobileConversation, desktop, conversationsLoaded]);
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const shortcut = [
@@ -1020,14 +1080,20 @@ export default function SampleComms() {
       );
     }
   }
-  /** Deleting shows a notice with Undo, so a slip costs one click. */
+  /** Deleting shows a notice with Undo, so a slip costs one click. Undos
+   *  run one after another: two at once would cancel each other. */
+  const undoQueue = useRef<Promise<unknown>>(Promise.resolve());
   async function deleteWithUndo(id: string): Promise<string | null> {
     const original = messages.find((item) => item.id === id);
     const error = await deleteMessage(id);
     if (!error && original)
       reportCommsDone("Message deleted.", {
         label: "Undo",
-        onClick: () => void undoDelete(original),
+        onClick: () => {
+          undoQueue.current = undoQueue.current.then(() =>
+            undoDelete(original),
+          );
+        },
       });
     return error;
   }
@@ -1422,20 +1488,22 @@ export default function SampleComms() {
                           {...commsMenuAccess}
                           onSelect={openWorkspaceSetting}
                         />
-                        <Action
-                          aria-label="Create channel"
-                          size="icon"
-                          variant="ghost"
-                          onClick={(event) =>
-                            setEditor({
-                              opener: event.currentTarget,
-                              kind: "channel",
-                              value: newChannel(categories[0].id),
-                            })
-                          }
-                        >
-                          <Plus className="size-4" />
-                        </Action>
+                        {commsMenuAccess.canCreate && (
+                          <Action
+                            aria-label="Create channel"
+                            size="icon"
+                            variant="ghost"
+                            onClick={(event) =>
+                              setEditor({
+                                opener: event.currentTarget,
+                                kind: "channel",
+                                value: newChannel(categories[0].id),
+                              })
+                            }
+                          >
+                            <Plus className="size-4" />
+                          </Action>
+                        )}
                       </div>
                       <SampleDataNote className="border-b px-4 py-2 text-xs">
                         Conversations here are examples.
@@ -1504,43 +1572,55 @@ export default function SampleComms() {
                                         },
                                       }),
                                   },
-                                  {
-                                    label: "Create channel in category",
-                                    onSelect: (opener) =>
-                                      setEditor({
-                                        kind: "channel",
-                                        value: newChannel(category.id),
-                                        opener,
-                                      }),
-                                  },
-                                  {
-                                    label: "Move category up",
-                                    disabled: categoryIndex === 0,
-                                    onSelect: () =>
-                                      moveCategory(category.id, -1),
-                                  },
-                                  {
-                                    label: "Move category down",
-                                    disabled:
-                                      categoryIndex === categories.length - 1,
-                                    onSelect: () =>
-                                      moveCategory(category.id, 1),
-                                  },
-                                  {
-                                    label: "Apply template",
-                                    onSelect: (opener) =>
-                                      setToolsDialog({
-                                        view: "templates",
-                                        opener,
-                                      }),
-                                  },
+                                  ...(commsMenuAccess.canCreate
+                                    ? [
+                                        {
+                                          label: "Create channel in category",
+                                          onSelect: (opener: HTMLElement) =>
+                                            setEditor({
+                                              kind: "channel",
+                                              value: newChannel(category.id),
+                                              opener,
+                                            }),
+                                        },
+                                      ]
+                                    : []),
+                                  ...(commsMenuAccess.canManageChannel
+                                    ? [
+                                        {
+                                          label: "Move category up",
+                                          disabled: categoryIndex === 0,
+                                          onSelect: () =>
+                                            moveCategory(category.id, -1),
+                                        },
+                                        {
+                                          label: "Move category down",
+                                          disabled:
+                                            categoryIndex ===
+                                            categories.length - 1,
+                                          onSelect: () =>
+                                            moveCategory(category.id, 1),
+                                        },
+                                        {
+                                          label: "Apply template",
+                                          onSelect: (opener: HTMLElement) =>
+                                            setToolsDialog({
+                                              view: "templates",
+                                              opener,
+                                            }),
+                                        },
+                                      ]
+                                    : []),
                                 ]}
-                                onEdit={(opener) =>
-                                  setEditor({
-                                    kind: "category",
-                                    value: category,
-                                    opener,
-                                  })
+                                onEdit={
+                                  commsMenuAccess.canManageChannel
+                                    ? (opener) =>
+                                        setEditor({
+                                          kind: "category",
+                                          value: category,
+                                          opener,
+                                        })
+                                    : undefined
                                 }
                               >
                                 <div className="group flex items-center">
@@ -1580,20 +1660,22 @@ export default function SampleComms() {
                                       )}
                                     </span>
                                   </CollapsibleTrigger>
-                                  <Action
-                                    size="icon"
-                                    variant="ghost"
-                                    aria-label={`Category settings: ${category.name}`}
-                                    onClick={(event) =>
-                                      setEditor({
-                                        kind: "category",
-                                        value: category,
-                                        opener: event.currentTarget,
-                                      })
-                                    }
-                                  >
-                                    <Settings2 className="size-3" />
-                                  </Action>
+                                  {commsMenuAccess.canManageChannel && (
+                                    <Action
+                                      size="icon"
+                                      variant="ghost"
+                                      aria-label={`Category settings: ${category.name}`}
+                                      onClick={(event) =>
+                                        setEditor({
+                                          kind: "category",
+                                          value: category,
+                                          opener: event.currentTarget,
+                                        })
+                                      }
+                                    >
+                                      <Settings2 className="size-3" />
+                                    </Action>
+                                  )}
                                 </div>
                               </RowEditMenu>
                               <CollapsibleContent>
@@ -1675,42 +1757,58 @@ export default function SampleComms() {
                                             onSelect: () =>
                                               copyConversation(item.id),
                                           },
-                                          {
-                                            // The category field is on the
-                                            // settings Overview.
-                                            label: "Move to another category…",
-                                            disabled: categories.length < 2,
-                                            onSelect: (opener) =>
-                                              setEditor({
-                                                kind: "channel",
-                                                value: item,
-                                                opener,
-                                              }),
-                                          },
-                                          {
-                                            label: "Duplicate channel",
-                                            onSelect: () =>
-                                              void duplicateChannel(item),
-                                          },
-                                          {
-                                            label: item.archived
-                                              ? "Restore channel"
-                                              : "Archive channel",
-                                            onSelect: (opener) =>
-                                              item.archived
-                                                ? void setChannelArchived(
-                                                    item,
-                                                    false,
-                                                  )
-                                                : confirmArchive(item, opener),
-                                          },
+                                          ...(commsMenuAccess.canManageChannel
+                                            ? [
+                                                {
+                                                  // The category field is on the
+                                                  // settings Overview.
+                                                  label:
+                                                    "Move to another category…",
+                                                  disabled:
+                                                    categories.length < 2,
+                                                  onSelect: (
+                                                    opener: HTMLElement,
+                                                  ) =>
+                                                    setEditor({
+                                                      kind: "channel",
+                                                      value: item,
+                                                      opener,
+                                                    }),
+                                                },
+                                                {
+                                                  label: "Duplicate channel",
+                                                  onSelect: () =>
+                                                    void duplicateChannel(item),
+                                                },
+                                                {
+                                                  label: item.archived
+                                                    ? "Restore channel"
+                                                    : "Archive channel",
+                                                  onSelect: (
+                                                    opener: HTMLElement,
+                                                  ) =>
+                                                    item.archived
+                                                      ? void setChannelArchived(
+                                                          item,
+                                                          false,
+                                                        )
+                                                      : confirmArchive(
+                                                          item,
+                                                          opener,
+                                                        ),
+                                                },
+                                              ]
+                                            : []),
                                         ]}
-                                        onEdit={(opener) =>
-                                          setEditor({
-                                            kind: "channel",
-                                            value: item,
-                                            opener,
-                                          })
+                                        onEdit={
+                                          commsMenuAccess.canManageChannel
+                                            ? (opener) =>
+                                                setEditor({
+                                                  kind: "channel",
+                                                  value: item,
+                                                  opener,
+                                                })
+                                            : undefined
                                         }
                                       >
                                         <Button
@@ -1720,7 +1818,20 @@ export default function SampleComms() {
                                               ? "secondary"
                                               : "ghost"
                                           }
-                                          aria-label={item.name}
+                                          aria-label={[
+                                            item.name,
+                                            selected !== item.id &&
+                                            channelUnread(item.id)
+                                              ? "unread"
+                                              : "",
+                                            (preferences.mutedUntil[item.id] ??
+                                              0) > Date.now()
+                                              ? "muted"
+                                              : "",
+                                            item.archived ? "archived" : "",
+                                          ]
+                                            .filter(Boolean)
+                                            .join(", ")}
                                           aria-current={
                                             selected === item.id &&
                                             !currentThread
@@ -1728,7 +1839,13 @@ export default function SampleComms() {
                                               : undefined
                                           }
                                           onClick={() => select(item.id)}
-                                          className="h-auto min-h-11 w-full justify-start py-2 pr-10 pl-3 text-left"
+                                          className={cn(
+                                            "h-auto min-h-11 w-full justify-start py-2 pr-10 pl-3 text-left",
+                                            // Unread channels stand out; read ones step back.
+                                            selected !== item.id &&
+                                              !channelUnread(item.id) &&
+                                              "text-muted-foreground font-medium",
+                                          )}
                                         >
                                           <Hash className="text-muted-foreground size-4 shrink-0" />
                                           <span className="truncate">
@@ -1745,12 +1862,13 @@ export default function SampleComms() {
                                               Muted
                                             </span>
                                           )}
-                                          {channelUnread(item.id) && (
-                                            <span
-                                              aria-label="Unread"
-                                              className="bg-foreground ml-auto size-1.5 shrink-0 rounded-full"
-                                            />
-                                          )}
+                                          {selected !== item.id &&
+                                            channelUnread(item.id) && (
+                                              <span
+                                                aria-label="Unread"
+                                                className="bg-foreground ml-auto size-1.5 shrink-0 rounded-full"
+                                              />
+                                            )}
                                           {item.archived && (
                                             <span className="text-muted-foreground ml-auto text-xs">
                                               Archived
@@ -1818,7 +1936,16 @@ export default function SampleComms() {
                                                           item.id,
                                                         )
                                                       }
-                                                      className="h-auto min-h-9 min-w-0 justify-start pr-2 pl-0 text-left"
+                                                      className={cn(
+                                                        "h-auto min-h-9 min-w-0 justify-start pr-2 pl-0 text-left",
+                                                        // Threads step back with a read channel.
+                                                        currentThread?.id !==
+                                                          entry.thread.id &&
+                                                          !channelUnread(
+                                                            item.id,
+                                                          ) &&
+                                                          "text-muted-foreground font-normal",
+                                                      )}
                                                     />
                                                   }
                                                 >
@@ -1850,24 +1977,26 @@ export default function SampleComms() {
                               </CollapsibleContent>
                             </Collapsible>
                           ))}
-                          <Action
-                            variant="ghost"
-                            className="text-muted-foreground w-full justify-start"
-                            onClick={(event) =>
-                              setEditor({
-                                opener: event.currentTarget,
-                                kind: "category",
-                                value: {
-                                  id: "",
-                                  name: "",
-                                  ...OPEN_PERMISSIONS,
-                                },
-                              })
-                            }
-                          >
-                            <Plus className="size-3" />
-                            Create category
-                          </Action>
+                          {commsMenuAccess.canCreate && (
+                            <Action
+                              variant="ghost"
+                              className="text-muted-foreground w-full justify-start"
+                              onClick={(event) =>
+                                setEditor({
+                                  opener: event.currentTarget,
+                                  kind: "category",
+                                  value: {
+                                    id: "",
+                                    name: "",
+                                    ...OPEN_PERMISSIONS,
+                                  },
+                                })
+                              }
+                            >
+                              <Plus className="size-3" />
+                              Create category
+                            </Action>
+                          )}
                           {followedRecords.length > 0 && (
                             <section className="mt-5">
                               <h2 className="text-muted-foreground px-2 text-xs font-semibold">
@@ -2036,34 +2165,24 @@ export default function SampleComms() {
                           )}
                         </div>
                         {channel && (
-                          <button
-                            type="button"
-                            title="Group access is shown but not enforced yet."
-                            onClick={(event) =>
-                              setEditor({
-                                kind: "channel",
-                                value: channel,
-                                opener: event.currentTarget,
-                              })
+                          <AccessChip
+                            label={visibleToLabel(
+                              channelGroupAccess(channel, categories),
+                            )}
+                            tone={channelTone(
+                              channelGroupAccess(channel, categories),
+                            )}
+                            onOpen={
+                              commsMenuAccess.canManageChannel
+                                ? (opener) =>
+                                    setEditor({
+                                      kind: "channel",
+                                      value: channel,
+                                      opener,
+                                    })
+                                : undefined
                             }
-                            className="bg-muted text-muted-foreground hover:text-foreground focus-visible:outline-ring hidden h-7 max-w-64 shrink-0 items-center gap-1.5 rounded-[var(--radius)] px-2 text-xs shadow-[inset_0_0_0_1px_var(--border)] outline-none focus-visible:outline-2 sm:inline-flex"
-                          >
-                            <GroupMark
-                              tone={channelTone(
-                                channelGroupAccess(channel, categories),
-                              )}
-                              className="size-2"
-                            />
-                            <span className="truncate">
-                              {visibleToLabel(
-                                channelGroupAccess(channel, categories),
-                              )}
-                            </span>
-                            <span className="sr-only">
-                              . Group access is shown but not enforced yet.
-                              Opens channel settings.
-                            </span>
-                          </button>
+                          />
                         )}
                         <FloatingList
                           label="Threads"
@@ -2141,7 +2260,7 @@ export default function SampleComms() {
                         >
                           <Users className="size-4" />
                         </Action>
-                        {channel && (
+                        {channel && commsMenuAccess.canManageChannel && (
                           <Action
                             variant="ghost"
                             size="icon"
@@ -2235,7 +2354,11 @@ export default function SampleComms() {
                                 <>
                                   <div className="mt-4 mb-8 px-3">
                                     <div className="bg-muted mb-3 flex size-12 items-center justify-center rounded-2xl">
-                                      <Hash className="text-muted-foreground size-6" />
+                                      {channel ? (
+                                        <Hash className="text-muted-foreground size-6" />
+                                      ) : (
+                                        <MessageSquare className="text-muted-foreground size-6" />
+                                      )}
                                     </div>
                                     <h3 className="text-xl font-semibold tracking-tight">
                                       {channel

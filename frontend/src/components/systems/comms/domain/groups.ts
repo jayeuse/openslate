@@ -49,6 +49,22 @@ export function channelGroupAccess(
     : { [EVERYONE_GROUP_ID]: "post" };
 }
 
+/** What one person can do in a channel through their groups. */
+export function personGroupAccess(
+  person: Person,
+  access: Record<string, GroupAccessLevel>,
+): GroupAccessLevel {
+  const levels = [
+    access[EVERYONE_GROUP_ID] ?? "none",
+    ...person.departments.map((group) => access[group] ?? "none"),
+  ];
+  return levels.includes("post")
+    ? "post"
+    : levels.includes("read")
+      ? "read"
+      : "none";
+}
+
 /** "Visible to Operations and Commercial", or "Visible to everyone". */
 export function visibleToLabel(
   access: Record<string, GroupAccessLevel>,

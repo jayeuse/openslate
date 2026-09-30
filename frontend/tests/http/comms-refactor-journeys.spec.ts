@@ -21,10 +21,10 @@ test("Comms keeps separate conversation drafts and clears only a successfully se
   const message = page.getByRole("textbox", { name: "Message", exact: true });
   await expect(message).toBeVisible();
   await message.fill("Operations unsent journey draft");
-  await page.getByRole("button", { name: "workshop", exact: true }).click();
+  await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
   await expect(message).toHaveValue("");
   await message.fill("Workshop retained journey draft");
-  await page.getByRole("button", { name: "operations", exact: true }).click();
+  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
   await expect(message).toHaveValue("Operations unsent journey draft");
   await page.getByLabel("Messages", { exact: true }).evaluate((element) => {
     element.scrollTop = 0;
@@ -38,9 +38,7 @@ test("Comms keeps separate conversation drafts and clears only a successfully se
   const sentMessage = page
     .getByRole("article")
     .filter({ hasText: "Operations unsent journey draft" });
-  await sentMessage
-    .getByRole("button", { name: "Message actions", exact: true })
-    .click();
+  await sentMessage.getByRole("button", { name: /^Message actions: / }).click();
   await page
     .getByRole("menuitem", { name: "Edit message", exact: true })
     .click();
@@ -51,10 +49,10 @@ test("Comms keeps separate conversation drafts and clears only a successfully se
   await expect(
     page.getByText("Edited operations journey message", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "workshop", exact: true }).click();
+  await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
   await expect(message).toHaveValue("Workshop retained journey draft");
   await page.reload();
-  await page.getByRole("button", { name: "workshop", exact: true }).click();
+  await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
   await expect(message).toHaveValue("Workshop retained journey draft");
 });
 
@@ -122,9 +120,7 @@ test("a deleted message can be put back from the visible Undo notice", async ({
   const sent = page
     .getByRole("article")
     .filter({ hasText: "Undo journey message" });
-  await sent
-    .getByRole("button", { name: "Message actions", exact: true })
-    .click();
+  await sent.getByRole("button", { name: /^Message actions: / }).click();
   await page
     .getByRole("menuitem", { name: "Delete message", exact: true })
     .click();
@@ -132,15 +128,13 @@ test("a deleted message can be put back from the visible Undo notice", async ({
   const notice = page.getByText("Message deleted.", { exact: true });
   await expect(notice).toBeVisible();
   // Undo still restores the message after the person moves on.
-  await page.getByRole("button", { name: "workshop", exact: true }).click();
+  await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
-  await page.getByRole("button", { name: "operations", exact: true }).click();
+  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
   await expect(sent).toHaveCount(1);
   // A used or dismissed notice clears, so the next delete reports again.
   for (const close of ["Undo", "Dismiss notification"]) {
-    await sent
-      .getByRole("button", { name: "Message actions", exact: true })
-      .click();
+    await sent.getByRole("button", { name: /^Message actions: / }).click();
     await page
       .getByRole("menuitem", { name: "Delete message", exact: true })
       .click();
@@ -153,7 +147,7 @@ test("a deleted message can be put back from the visible Undo notice", async ({
 
 test("archiving a channel asks first and can be undone", async ({ page }) => {
   await page.goto("/comms");
-  const row = page.getByRole("button", { name: "workshop", exact: true });
+  const row = page.getByRole("button", { name: /^workshop(,|$)/ });
   await row.click({ button: "right" });
   await page
     .getByRole("menuitem", { name: "Archive channel", exact: true })
@@ -274,14 +268,14 @@ test("the OpenComms menu keeps everyday items up front and admin tools behind on
   await menu.getByRole("menuitem", { name: "Admin tools" }).click();
   const tools = page.getByRole("menu", { name: "Admin tools" });
   await expect(tools.getByRole("menuitem")).toHaveText([
-    "Workspace settings",
     "Moderation",
     "Scheduled messages",
-    "Settings history",
     "Message retention",
-    "Automation",
+    "Workspace settings",
     "Channel templates",
+    "Automation",
     "Bulk channel changes",
+    "Settings history",
   ]);
   await tools.getByRole("menuitem", { name: "Moderation" }).click();
   await expect(page.getByRole("dialog", { name: "Moderation" })).toBeVisible();
@@ -291,7 +285,7 @@ test("a channel has one settings dialog, reached the same way from its row and i
   page,
 }) => {
   await page.goto("/comms");
-  const row = page.getByRole("button", { name: "workshop", exact: true });
+  const row = page.getByRole("button", { name: /^workshop(,|$)/ });
   await row.click({ button: "right" });
   const rowMenu = page.getByRole("menu", { name: "Channel actions: workshop" });
   await expect(
@@ -328,7 +322,7 @@ test("two quick deletes each get their own Undo", async ({ page }) => {
     page.getByRole("article").filter({ hasText: text });
   for (const text of ["First quick delete", "Second quick delete"]) {
     await article(text)
-      .getByRole("button", { name: "Message actions", exact: true })
+      .getByRole("button", { name: /^Message actions: / })
       .click();
     await page
       .getByRole("menuitem", { name: "Delete message", exact: true })
@@ -350,11 +344,11 @@ test("categories carry their access group, and a channel says who can use it", a
   await expect(
     page.getByRole("button", { name: /^Service delivery/ }),
   ).toContainText("Operations");
-  await page.getByRole("button", { name: "dispatch", exact: true }).click();
+  await page.getByRole("button", { name: /^dispatch(,|$)/ }).click();
   await expect(
     page.getByRole("button", { name: /^Visible\ to\ Operations \./ }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "finance-desk", exact: true }).click();
+  await page.getByRole("button", { name: /^finance\-desk(,|$)/ }).click();
   await expect(
     page.getByRole("button", {
       name: /^Visible\ to\ Finance\ and\ Commercial \./,
@@ -412,7 +406,7 @@ test("group access in channel settings changes who the channel says it is for", 
   page,
 }) => {
   await page.goto("/comms");
-  await page.getByRole("button", { name: "dispatch", exact: true }).click();
+  await page.getByRole("button", { name: /^dispatch(,|$)/ }).click();
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
@@ -439,7 +433,7 @@ test("lowering Everyone keeps what each group can already do", async ({
   page,
 }) => {
   await page.goto("/comms");
-  await page.getByRole("button", { name: "operations", exact: true }).click();
+  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
@@ -463,7 +457,7 @@ test("on a phone, a record's mention closes the record and shows the message", a
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/comms");
-  await page.getByRole("button", { name: "operations", exact: true }).click();
+  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
   await page
     .getByRole("button", { name: /^Open record: .*Replace pump seal/ })
     .first()
@@ -481,4 +475,118 @@ test("on a phone, a record's mention closes the record and shows the message", a
       { exact: true },
     ),
   ).toBeInViewport();
+});
+
+test("OpenComms opens at the latest message, with few and meaningful unread marks", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/comms");
+  const list = page.getByLabel("Messages", { exact: true });
+  await expect
+    .poll(() =>
+      list.evaluate(
+        (element) =>
+          element.scrollHeight - element.scrollTop - element.clientHeight,
+      ),
+    )
+    .toBeLessThan(40);
+  const conversations = page.getByRole("complementary", {
+    name: "Conversations",
+  });
+  // The open channel counts as read; only a few examples start unread.
+  await expect
+    .poll(() => conversations.getByLabel("Unread", { exact: true }).count())
+    .toBeLessThanOrEqual(8);
+  await expect(
+    page
+      .getByRole("button", { name: /^operations(,|$)/ })
+      .getByLabel("Unread", { exact: true }),
+  ).toHaveCount(0);
+});
+
+test("each message's actions are named for it and fit its author", async ({
+  page,
+}) => {
+  await page.goto("/comms");
+  const buttons = page.getByRole("button", { name: /^Message actions: / });
+  const names = await buttons.evaluateAll((items) =>
+    items.slice(0, 3).map((item) => item.getAttribute("aria-label")),
+  );
+  expect(new Set(names).size).toBe(names.length);
+  // Someone else's message can be reported, not scheduled.
+  await page
+    .getByRole("article")
+    .filter({ hasText: "Two vans are loaded." })
+    .getByRole("button", { name: /^Message actions: / })
+    .click();
+  await expect(
+    page.getByRole("menuitem", { name: "Report message" }),
+  ).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Schedule/ })).toHaveCount(0);
+});
+
+test("groups decide a category, a channel's members, and the Permissions summary", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/comms");
+  await page.getByRole("button", { name: /^dispatch(,|$)/ }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Channel members" }),
+  ).toContainText("Members 14");
+  // A category's group is chosen in its settings.
+  await page
+    .getByRole("button", { name: "Category settings: Service delivery" })
+    .click();
+  const category = page.getByRole("dialog", { name: "Category settings" });
+  await category.getByLabel("Access group").selectOption("Finance");
+  await category
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: /^Service delivery/ }),
+  ).toContainText("Finance group");
+  // Permissions start from groups; exceptions are folded away.
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  const settings = page.getByRole("dialog", { name: "Channel settings" });
+  await settings.getByRole("tab", { name: "Permissions" }).click();
+  await expect(
+    settings.getByRole("list", { name: "Access by group" }),
+  ).toContainText("Finance");
+  await expect(
+    settings.getByText("Permissions for", { exact: true }),
+  ).toBeHidden();
+});
+
+test("on a phone, opening a channel from the list shows no error", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/comms");
+  await expect(page.getByText("Team spaces", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /^dispatch(,|$)/ }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('[data-type="error"]')).toHaveCount(0);
+});
+
+test("a channel row names its state, and leaving a channel marks it read", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/comms");
+  await expect(
+    page.getByRole("button", { name: "workshop, unread", exact: true }),
+  ).toBeVisible();
+  // Switching right after load saves once, without a conflict.
+  await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
+  await page.getByRole("button", { name: /^dispatch(,|$)/ }).click();
+  await expect(page.locator('[data-type="error"]')).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "workshop", exact: true }),
+  ).toBeVisible();
 });

@@ -47,10 +47,14 @@ export function isCommsManager(
     input.categories,
   );
   return (
-    person.id === "sample-eli" ||
     person.role === "sample-admin" ||
     values.ownerId === person.id ||
-    values.moderatorIds.includes(person.id)
+    values.moderatorIds.includes(person.id) ||
+    resolveCommsPermission(
+      input.config,
+      { person, channel: input.channel, categories: input.categories },
+      "manageWorkspace",
+    ).allowed
   );
 }
 function unavailable(

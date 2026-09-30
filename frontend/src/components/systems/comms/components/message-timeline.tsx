@@ -172,6 +172,18 @@ function FlowRow({
   );
 }
 
+/** A record's due date in the viewer's own date format. */
+export function formatDueDate(value: string): string {
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleDateString([], {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+}
+
 /** Plain names for the record details a linked record card can show. */
 const RECORD_CARD_LABELS: Record<string, string> = {
   status: "Status",
@@ -280,6 +292,8 @@ export function MessageTimeline({
                 preferences.density === "compact" ? "py-0.5" : "py-1.5",
                 !grouped && "mt-3",
               )}
+              label={`${authorName}, ${new Date(message.created).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+              own={own}
               mutable={mutable}
               canEdit={own && mutable}
               editExpired={
@@ -586,10 +600,10 @@ export function MessageTimeline({
                             </button>
                             <Link
                               href={`/openview?record=${encodeURIComponent(message.recordId)}`}
-                              aria-label={`OpenView: open ${title}`}
+                              aria-label={`Open in OpenView: ${title}`}
                               className="text-action-text shrink-0 text-xs font-semibold hover:underline"
                             >
-                              OpenView
+                              Open in OpenView
                             </Link>
                           </div>
                           {settings.recordCardFields.some(
@@ -606,11 +620,21 @@ export function MessageTimeline({
                                     <dt className="text-muted-foreground text-xs">
                                       {RECORD_CARD_LABELS[field] ?? field}
                                     </dt>
-                                    <dd className="truncate font-mono text-xs">
-                                      {String(
-                                        record?.[field as keyof SampleRecord] ??
-                                          "—",
+                                    <dd
+                                      className={cn(
+                                        "truncate text-xs",
+                                        // Code font is for data: dates.
+                                        field === "dueDate" &&
+                                          "font-mono tabular-nums",
                                       )}
+                                    >
+                                      {field === "dueDate" && record
+                                        ? formatDueDate(record.dueDate)
+                                        : String(
+                                            record?.[
+                                              field as keyof SampleRecord
+                                            ] ?? "—",
+                                          )}
                                     </dd>
                                   </div>
                                 ))}

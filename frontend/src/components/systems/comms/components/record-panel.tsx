@@ -7,6 +7,8 @@ import type { SampleRecord } from "../../shared/data/sample-data";
 import type { Person } from "../../shared/data/sample-people";
 import { recordContext, recordNumber } from "../domain/groups";
 import { GroupMark } from "./group-mark";
+import { formatDueDate } from "./message-timeline";
+import { cn } from "@/lib/utils";
 
 export type RecordMention = {
   messageId: string;
@@ -31,12 +33,13 @@ export function RecordPanel({
   onClose: () => void;
 }) {
   const { module, group } = recordContext(record, people);
+  // Code font only for data people read as data: the number and the date.
   const details = [
-    ["Record", recordNumber(record.id)],
-    ["Customer", record.customer],
-    ["Status", record.status],
-    ["Assigned to", record.assignee],
-    ["Due date", record.dueDate],
+    ["Record", recordNumber(record.id), true],
+    ["Customer", record.customer, false],
+    ["Status", record.status, false],
+    ["Assigned to", record.assignee, false],
+    ["Due date", formatDueDate(record.dueDate), true],
   ] as const;
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -76,13 +79,18 @@ export function RecordPanel({
           </h3>
         </div>
         <dl className="border-card-edge overflow-hidden rounded-[calc(var(--radius)*1.25)] border text-sm">
-          {details.map(([label, value]) => (
+          {details.map(([label, value, data]) => (
             <div
               key={label}
               className="even:bg-muted/40 flex justify-between gap-3 border-b px-3 py-2 last:border-b-0"
             >
               <dt className="text-muted-foreground">{label}</dt>
-              <dd className="truncate text-right font-mono text-xs leading-5 tabular-nums">
+              <dd
+                className={cn(
+                  "truncate text-right text-sm",
+                  data && "font-mono text-xs leading-5 tabular-nums",
+                )}
+              >
                 {value}
               </dd>
             </div>

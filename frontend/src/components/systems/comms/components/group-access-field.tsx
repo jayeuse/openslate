@@ -86,7 +86,11 @@ export function GroupAccessField({
     });
   }
   return (
-    <fieldset className="flex flex-col gap-3">
+    <fieldset
+      id={`who-can-use-${channel.id}`}
+      tabIndex={-1}
+      className="flex scroll-mt-4 flex-col gap-3 outline-none"
+    >
       <legend className="mb-1 text-sm font-semibold">
         Who can use {name.startsWith("this") ? name : `#${name}`}
       </legend>

@@ -100,9 +100,15 @@ export function createCommsNavigationActions({
   }
 
   function select(id: string) {
+    const left = state.selected;
     patchPreferences({
       readAt: {
         ...preferences.readAt,
+        // The conversation being left was seen too, including the one that
+        // was open on arrival, so it does not come back as unread.
+        ...(left && left !== id
+          ? { [left]: Math.max(clockNow, latestChannelActivity(left)) }
+          : {}),
         [id]: Math.max(clockNow, latestChannelActivity(id)),
       },
     });

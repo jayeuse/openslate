@@ -1,4 +1,5 @@
 "use client";
+import { ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -49,6 +50,7 @@ import {
   SETTINGS_SECTIONS,
 } from "./settings-fields";
 import { PermissionFields, PermissionInspector } from "./permission-inspector";
+import { GroupAccessSummary } from "./group-access-summary";
 import {
   ConfirmActionDialog,
   type ConfirmActionRequest,
@@ -73,6 +75,8 @@ export interface CommsSettingsDialogProps {
   onClose: () => void;
   title?: string;
   overview?: ReactNode;
+  /** Shown at the end of Overview, after its settings (for example, archive). */
+  overviewEnd?: ReactNode;
   additionalDirty?: boolean;
   onBeforeSave?: () => boolean | Promise<boolean>;
   onBeforeSaveTransaction?: (draft: SampleTransactionDraft) => void;
@@ -92,6 +96,7 @@ export function CommsSettingsDialog({
   onClose,
   title,
   overview,
+  overviewEnd,
   additionalDirty = false,
   onBeforeSave,
   onBeforeSaveTransaction,
@@ -444,7 +449,6 @@ export function CommsSettingsDialog({
         keys={visible}
         values={values}
         overrides={overrides}
-        sources={resolved.sources}
         locked={lockedSettings}
         workspace={!personal && target.kind === "workspace"}
         people={people}
@@ -723,37 +727,77 @@ export function CommsSettingsDialog({
               </FieldGroup>
             </TabsContent>
           ) : section === "permissions" ? (
-            <TabsContent value="permissions">
-              <PermissionFields
-                initialSubject={initialSubject}
-                value={draft.permissions}
-                roles={roles}
-                people={people}
-                locked={lockedPermissions}
-                workspace={target.kind === "workspace"}
-                search=""
-                modifiedOnly={modifiedOnly}
-                onChange={(subject, permission, value) =>
-                  setDraft((current) => ({
-                    ...current,
-                    permissions: {
-                      ...current.permissions,
-                      [subject]: {
-                        ...current.permissions[subject],
-                        [permission]: value,
-                      },
-                    },
-                  }))
+            <TabsContent value="permissions" className="flex flex-col gap-6">
+              <GroupAccessSummary
+                scope={target.kind}
+                channel={channels.find((item) => item.id === target.id)}
+                category={categories.find((item) => item.id === target.id)}
+                categories={categories}
+                onChangeGroups={
+                  overview && target.kind !== "workspace"
+                    ? () => {
+                        setSection("overview");
+                        // Keep keyboard focus: go to the field it names.
+                        setTimeout(() => {
+                          const field = document.getElementById(
+                            `who-can-use-${target.id}`,
+                          );
+                          field?.scrollIntoView({ block: "start" });
+                          field?.focus();
+                        });
+                      }
+                    : undefined
                 }
-                onLock={(permission, locked) =>
-                  setLockedPermissions((current) =>
-                    locked
-                      ? [...new Set([...current, permission])]
-                      : current.filter((item) => item !== permission),
-                  )
-                }
-                onInspect={() => setInspect(true)}
               />
+              <details
+                open={Boolean(initialSubject)}
+                className="group/exceptions border-card-edge rounded-[calc(var(--radius)*1.25)] border"
+              >
+                <summary className="hover:bg-muted focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-[calc(var(--radius)*1.25)] px-3 text-sm font-semibold outline-none focus-visible:outline-2 [&::-webkit-details-marker]:hidden">
+                  <ChevronRight
+                    aria-hidden="true"
+                    className="text-muted-foreground size-4 shrink-0 transition-transform duration-(--motion-fast) group-open/exceptions:rotate-90 motion-reduce:transition-none"
+                  />
+                  <span className="mr-auto">
+                    Exceptions for roles and people
+                  </span>
+                  <span className="text-muted-foreground text-xs font-normal">
+                    Applied today
+                  </span>
+                </summary>
+                <div className="border-t p-3">
+                  <PermissionFields
+                    initialSubject={initialSubject}
+                    value={draft.permissions}
+                    roles={roles}
+                    people={people}
+                    locked={lockedPermissions}
+                    workspace={target.kind === "workspace"}
+                    search=""
+                    modifiedOnly={modifiedOnly}
+                    onChange={(subject, permission, value) =>
+                      setDraft((current) => ({
+                        ...current,
+                        permissions: {
+                          ...current.permissions,
+                          [subject]: {
+                            ...current.permissions[subject],
+                            [permission]: value,
+                          },
+                        },
+                      }))
+                    }
+                    onLock={(permission, locked) =>
+                      setLockedPermissions((current) =>
+                        locked
+                          ? [...new Set([...current, permission])]
+                          : current.filter((item) => item !== permission),
+                      )
+                    }
+                    onInspect={() => setInspect(true)}
+                  />
+                </div>
+              </details>
             </TabsContent>
           ) : (
             <TabsContent value={section}>
@@ -791,6 +835,7 @@ export function CommsSettingsDialog({
                   SETTINGS_SECTIONS.find((item) => item.id === section)?.keys ??
                     [],
                 )}
+                {section === "overview" && overviewEnd}
                 {section === "notifications" && (
                   <>
                     <Action

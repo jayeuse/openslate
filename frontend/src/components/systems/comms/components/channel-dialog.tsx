@@ -16,6 +16,7 @@ import {
 } from "../../shared/runtime/sample-state";
 import { CommsSettingsDialog } from "./settings-dialog";
 import { GroupAccessField } from "./group-access-field";
+import { COMMS_GROUPS } from "../domain/groups";
 import { Action, Choice } from "../../shared/components/ui";
 import { TextField } from "./ui";
 import { OPEN_PERMISSIONS, type Category, type Channel } from "../domain/model";
@@ -136,6 +137,30 @@ export function ChannelDialog(props: EditorProps) {
         beforeId !== "unchanged"
       }
       saveLabel={creating ? `Create ${props.kind}` : "Save changes"}
+      overviewEnd={
+        channel && !creating ? (
+          <div className="flex flex-col items-start gap-2 border-t pt-4">
+            <Action
+              type="button"
+              onClick={() =>
+                setDraft({ ...channel, archived: !channel.archived })
+              }
+            >
+              {channel.archived ? "Restore channel" : "Archive channel"}
+            </Action>
+            <p className="text-muted-foreground text-xs">
+              {channel.archived ===
+              ("archived" in props.value && props.value.archived)
+                ? channel.archived
+                  ? "This channel is archived. Restoring it lets people post again."
+                  : "Archiving keeps messages and pauses posting."
+                : channel.archived
+                  ? "This channel will be archived when you save. Messages stay available."
+                  : "This channel will be restored when you save."}
+            </p>
+          </div>
+        ) : undefined
+      }
       overview={
         <FieldGroup>
           {error && (
@@ -190,6 +215,25 @@ export function ChannelDialog(props: EditorProps) {
               />
             </>
           )}
+          {!channel && (
+            <Choice
+              label="Access group"
+              value={"groupId" in draft ? (draft.groupId ?? "") : ""}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  groupId: event.target.value || undefined,
+                })
+              }
+            >
+              <NativeSelectOption value="">Everyone</NativeSelectOption>
+              {COMMS_GROUPS.map((group) => (
+                <NativeSelectOption key={group.id} value={group.id}>
+                  {group.name}
+                </NativeSelectOption>
+              ))}
+            </Choice>
+          )}
           <Choice
             label={channel ? "Channel order" : "Category order"}
             value={beforeId}
@@ -213,23 +257,6 @@ export function ChannelDialog(props: EditorProps) {
               ))}
             <NativeSelectOption value="">At the end</NativeSelectOption>
           </Choice>
-          {channel && !creating && (
-            <div className="flex flex-col items-start gap-2">
-              <Action
-                type="button"
-                onClick={() =>
-                  setDraft({ ...channel, archived: !channel.archived })
-                }
-              >
-                {channel.archived ? "Restore channel" : "Archive channel"}
-              </Action>
-              <p className="text-muted-foreground text-xs">
-                {channel.archived
-                  ? "This channel will be archived when you save. Messages stay available."
-                  : "Archiving keeps messages and pauses posting."}
-              </p>
-            </div>
-          )}
         </FieldGroup>
       }
     />

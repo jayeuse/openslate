@@ -654,13 +654,6 @@ export function ManagementTools({
           keys={keys}
           values={values}
           overrides={parsed}
-          sources={
-            resolveCommsSettings(
-              config,
-              channels.find((c) => c.id === targets[0]),
-              categories,
-            ).sources
-          }
           locked={config.lockedSettings}
           workspace={false}
           people={people}

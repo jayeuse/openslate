@@ -201,7 +201,6 @@ export function SettingsFields({
   keys,
   values,
   overrides,
-  sources,
   locked,
   workspace,
   people,
@@ -211,7 +210,6 @@ export function SettingsFields({
   keys: CommsSettingKey[];
   values: CommsSettings;
   overrides: Partial<CommsSettings>;
-  sources: Record<CommsSettingKey, string>;
   locked: CommsSettingKey[];
   workspace: boolean;
   people: Person[];
@@ -404,15 +402,12 @@ export function SettingsFields({
                 {hints[key]}
               </FieldDescription>
             )}
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* Only a value that differs from what it inherits gets a label. */}
+            {(disabled || override) && (
               <span className="text-muted-foreground text-xs">
-                {disabled
-                  ? "Locked by workspace"
-                  : override
-                    ? "Customized here"
-                    : `Inherited · ${sources[key]}`}
+                {disabled ? "Locked by workspace" : "Customized here"}
               </span>
-            </div>
+            )}
             {workspace && onLock && (
               <Toggle
                 control="switch"
