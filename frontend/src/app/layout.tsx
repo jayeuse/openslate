@@ -25,10 +25,15 @@ const geistMono = Geist_Mono({
 
 // Organization themes (src/app/themes). Without preload, a browser fetches a
 // face only when rendered text uses it, so Slate pages load none of these.
+// next/font has no fallback metrics for Atkinson Hyperlegible Next or Big
+// Shoulders Stencil, and the dev server warns on every compile when it looks
+// them up. An explicit fallback list skips that lookup; it matches the stacks
+// the Whiteboard and Stockroom looks already put after these faces.
 const atkinson = Atkinson_Hyperlegible_Next({
   variable: "--font-atkinson",
   subsets: ["latin"],
   preload: false,
+  fallback: ["system-ui", "sans-serif"],
 });
 
 const archivo = Archivo({
@@ -42,6 +47,7 @@ const bigShouldersStencil = Big_Shoulders_Stencil({
   variable: "--font-stencil",
   subsets: ["latin"],
   preload: false,
+  fallback: ["sans-serif"],
 });
 
 const martianMono = Martian_Mono({
