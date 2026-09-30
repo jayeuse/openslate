@@ -487,7 +487,13 @@ export function CommsSettingsDialog({
           className="mr-auto"
           onClick={(event) =>
             setConfirmReset({
-              title: `Reset ${title ?? currentLabel} to default?`,
+              title: `Reset ${
+                personal
+                  ? "your preferences"
+                  : target.kind === "workspace"
+                    ? "workspace settings"
+                    : `these ${target.kind} settings`
+              } to default?`,
               description: `This clears every section of this dialog back to its default. Nothing is saved until you select ${saveLabel ?? "Save changes"}.`,
               confirmLabel: "Reset to default",
               onConfirm: resetDefaults,

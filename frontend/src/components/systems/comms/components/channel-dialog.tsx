@@ -112,7 +112,11 @@ export function ChannelDialog(props: EditorProps) {
   return (
     <CommsSettingsDialog
       scope={{ kind: props.kind, id: draft.id }}
-      title={`${creating ? "Create" : "Edit"} ${props.kind}`}
+      title={
+        creating
+          ? `Create ${props.kind}`
+          : `${props.kind === "channel" ? "Channel" : "Category"} settings`
+      }
       channels={channels}
       categories={categories}
       people={people}

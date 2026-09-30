@@ -9,7 +9,6 @@ import {
 } from "react";
 import {
   ChevronDown,
-  ChevronUp,
   Hash,
   MessageSquare,
   Pin,
@@ -19,6 +18,9 @@ import {
   ArrowLeft,
   CornerDownRight,
   FolderPlus,
+  FolderOpen,
+  ShieldCheck,
+  UserRound,
   X,
 } from "lucide-react";
 import {
@@ -39,6 +41,8 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   ResizablePanelGroup,
@@ -199,75 +203,142 @@ type WorkspaceSetting =
   | "outbox"
   | "retention";
 
+/** Everyday items first, in small groups; tools for administrators and
+ *  moderators wait behind one Admin tools entry. */
 function CommsMenu({
   compact = false,
   hasChannel,
+  canManageChannel,
+  canCreate,
+  canAdminister,
+  recoverableCount,
   onSelect,
 }: {
   compact?: boolean;
   hasChannel: boolean;
+  canManageChannel: boolean;
+  canCreate: boolean;
+  canAdminister: boolean;
+  recoverableCount: number;
   onSelect: (setting: WorkspaceSetting, opener: HTMLElement) => void;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
-  const actions = [
-    { id: "personal", label: "My preferences", icon: Settings2 },
-    { id: "workspace", label: "Workspace settings", icon: Settings2 },
-    { id: "management", label: "Channel management", icon: Hash },
-    { id: "templates", label: "Templates", icon: FolderPlus },
-    { id: "automation", label: "Automation", icon: Settings2 },
-    { id: "history", label: "History", icon: MessageSquare },
-    { id: "moderation", label: "Moderation", icon: Users },
-    { id: "outbox", label: "Scheduled messages", icon: MessageSquare },
-    { id: "retention", label: "Retention", icon: Settings2 },
-    { id: "create-channel", label: "Create channel", icon: Plus },
-    { id: "edit-channel", label: "Edit channel", icon: Settings2 },
-    { id: "create-category", label: "Create category", icon: FolderPlus },
-    { id: "edit-category", label: "Edit category", icon: Settings2 },
+  const groups = [
+    [
+      { id: "personal", label: "My preferences", icon: UserRound },
+      { id: "threads", label: "Browse threads", icon: MessageSquare },
+    ],
+    canManageChannel
+      ? [
+          { id: "edit-channel", label: "Channel settings", icon: Hash },
+          { id: "edit-category", label: "Category settings", icon: FolderOpen },
+        ]
+      : [],
+    canCreate
+      ? [
+          { id: "create-channel", label: "New channel", icon: Plus },
+          { id: "create-category", label: "New category", icon: FolderPlus },
+        ]
+      : [],
+  ].filter((group) => group.length > 0) as {
+    id: WorkspaceSetting;
+    label: string;
+    icon: typeof Hash;
+  }[][];
+  const adminTools = [
+    { id: "workspace", label: "Workspace settings" },
+    { id: "moderation", label: "Moderation" },
+    { id: "outbox", label: "Scheduled messages" },
+    { id: "history", label: "History" },
+    { id: "retention", label: "Retention" },
+    { id: "automation", label: "Automation" },
+    { id: "templates", label: "Templates" },
+    { id: "management", label: "Channel management" },
   ] as const;
+  const select = (id: WorkspaceSetting) => {
+    if (trigger.current) onSelect(id, trigger.current);
+  };
   return (
-    <h1 className={cn("min-w-0", compact && "md:hidden")}>
+    <div
+      className={cn(
+        "flex min-w-0 items-center gap-0.5",
+        compact && "md:hidden",
+      )}
+    >
+      <h1
+        className={cn(
+          "truncate pl-2 font-semibold tracking-tight",
+          compact && "pl-0 text-xs",
+        )}
+      >
+        OpenComms
+      </h1>
       <DropdownMenu>
         <DropdownMenuTrigger
           ref={trigger}
+          aria-label="OpenComms menu"
           className={cn(
-            "hover:bg-muted focus-visible:ring-ring flex min-h-11 items-center gap-2 rounded-md px-2 text-left font-semibold tracking-tight outline-none focus-visible:ring-2",
-            compact && "min-h-7 px-0 text-xs",
+            "hover:bg-muted focus-visible:ring-ring grid size-11 shrink-0 place-items-center rounded-md outline-none focus-visible:ring-2",
+            compact && "size-7",
           )}
         >
-          OpenComms <ChevronDown aria-hidden="true" className="size-3.5" />
+          <ChevronDown aria-hidden="true" className="size-3.5" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent
-          className="w-60 max-w-[calc(100vw-32px)] p-1.5"
-          aria-label="OpenComms settings"
-        >
-          <DropdownMenuGroup>
-            {actions.map(({ id, label, icon: Icon }) => (
-              <DropdownMenuItem
-                key={id}
-                className="min-h-10"
-                disabled={id.startsWith("edit-") && !hasChannel}
-                onClick={() => {
-                  if (trigger.current) onSelect(id, trigger.current);
-                }}
-              >
-                <Icon aria-hidden="true" /> {label}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem
-              className="min-h-10"
-              onClick={() => {
-                if (trigger.current) onSelect("threads", trigger.current);
-              }}
-            >
-              <MessageSquare aria-hidden="true" /> Browse threads
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
+        <DropdownMenuContent className="w-60 max-w-[calc(100vw-32px)] p-1.5">
+          {groups.map((group, index) => (
+            <DropdownMenuGroup key={group[0].id}>
+              {index > 0 && <DropdownMenuSeparator />}
+              {group.map(({ id, label, icon: Icon }) => (
+                <DropdownMenuItem
+                  key={id}
+                  className="min-h-10"
+                  disabled={id.startsWith("edit-") && !hasChannel}
+                  onClick={() => select(id)}
+                >
+                  <Icon aria-hidden="true" /> {label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuGroup>
+          ))}
+          {canAdminister && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="min-h-10">
+                  <ShieldCheck aria-hidden="true" /> Admin tools
+                  {recoverableCount > 0 && (
+                    <Badge
+                      variant="warning"
+                      className="ml-1"
+                      aria-label={`${recoverableCount} recoverable ${recoverableCount === 1 ? "message" : "messages"}`}
+                    >
+                      {recoverableCount}
+                    </Badge>
+                  )}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuContent
+                  side="right"
+                  sideOffset={6}
+                  className="w-56 max-w-[calc(100vw-32px)] p-1.5"
+                >
+                  <DropdownMenuGroup>
+                    {adminTools.map(({ id, label }) => (
+                      <DropdownMenuItem
+                        key={id}
+                        className="min-h-10"
+                        onClick={() => select(id)}
+                      >
+                        {label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenuSub>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
-    </h1>
+    </div>
   );
 }
 
@@ -524,6 +595,12 @@ export default function SampleComms() {
     permission("post") &&
     (settings.mode !== "announcements" || viewerId === "sample-eli");
   const elevated = permission("pin");
+  const commsMenuAccess = {
+    canManageChannel: permission("manageChannel"),
+    canCreate: permission("createChannel"),
+    canAdminister: permission("manageWorkspace") || permission("moderate"),
+    recoverableCount: Object.keys(config.tombstones).length,
+  };
   async function patchPreferences(patch: Partial<CommsPreferences>) {
     try {
       await run(
@@ -880,25 +957,6 @@ export default function SampleComms() {
     } catch (error) {
       setNotice(
         messageFromCommsError(error, "The category order could not be saved."),
-      );
-    }
-  }
-  async function moveChannelToCategory(channelId: string, categoryId: string) {
-    try {
-      await run(
-        `channel:move:${channelId}`,
-        (draft) => {
-          draft.update<Channel[]>("commsChannels", CHANNELS, (items) =>
-            items.map((item) =>
-              item.id === channelId ? { ...item, categoryId } : item,
-            ),
-          );
-        },
-        ["commsChannels"],
-      );
-    } catch (error) {
-      setNotice(
-        messageFromCommsError(error, "The channel could not be moved."),
       );
     }
   }
@@ -1273,6 +1331,7 @@ export default function SampleComms() {
                       <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
                         <CommsMenu
                           hasChannel={!!channel}
+                          {...commsMenuAccess}
                           onSelect={openWorkspaceSetting}
                         />
                         <Action
@@ -1319,7 +1378,7 @@ export default function SampleComms() {
                               }
                             >
                               <RowEditMenu
-                                label="Edit category"
+                                label="Category settings"
                                 actionsLabel={`Category actions: ${category.name}`}
                                 showActions={false}
                                 actions={[
@@ -1363,17 +1422,6 @@ export default function SampleComms() {
                                       setEditor({
                                         kind: "channel",
                                         value: newChannel(category.id),
-                                        opener,
-                                      }),
-                                  },
-                                  {
-                                    label: "Category settings",
-                                    onSelect: (opener) =>
-                                      setSettingsDialog({
-                                        scope: {
-                                          kind: "category",
-                                          id: category.id,
-                                        },
                                         opener,
                                       }),
                                   },
@@ -1431,7 +1479,7 @@ export default function SampleComms() {
                                   <Action
                                     size="icon"
                                     variant="ghost"
-                                    aria-label={`Edit category ${category.name}`}
+                                    aria-label={`Category settings: ${category.name}`}
                                     onClick={(event) =>
                                       setEditor({
                                         kind: "category",
@@ -1441,24 +1489,6 @@ export default function SampleComms() {
                                     }
                                   >
                                     <Settings2 className="size-3" />
-                                  </Action>
-                                  <Action
-                                    size="icon"
-                                    variant="ghost"
-                                    aria-label={`Move ${category.name} ${categoryIndex ? "up" : "down"}`}
-                                    disabled={categories.length < 2}
-                                    onClick={() =>
-                                      moveCategory(
-                                        category.id,
-                                        categoryIndex ? -1 : 1,
-                                      )
-                                    }
-                                  >
-                                    {categoryIndex ? (
-                                      <ChevronUp className="size-3" />
-                                    ) : (
-                                      <ChevronDown className="size-3" />
-                                    )}
                                   </Action>
                                 </div>
                               </RowEditMenu>
@@ -1470,7 +1500,7 @@ export default function SampleComms() {
                                   .map((item) => (
                                     <div key={item.id}>
                                       <RowEditMenu
-                                        label="Edit channel"
+                                        label="Channel settings"
                                         actionsLabel={`Channel actions: ${item.name}`}
                                         actions={[
                                           {
@@ -1542,29 +1572,17 @@ export default function SampleComms() {
                                               copyConversation(item.id),
                                           },
                                           {
-                                            label: "Channel settings",
+                                            // The category field is on the
+                                            // settings Overview.
+                                            label: "Move to another category…",
+                                            disabled: categories.length < 2,
                                             onSelect: (opener) =>
-                                              setSettingsDialog({
-                                                scope: {
-                                                  kind: "channel",
-                                                  id: item.id,
-                                                },
+                                              setEditor({
+                                                kind: "channel",
+                                                value: item,
                                                 opener,
                                               }),
                                           },
-                                          ...categories
-                                            .filter(
-                                              (category) =>
-                                                category.id !== item.categoryId,
-                                            )
-                                            .map((category) => ({
-                                              label: `Move to ${category.name}`,
-                                              onSelect: () =>
-                                                void moveChannelToCategory(
-                                                  item.id,
-                                                  category.id,
-                                                ),
-                                            })),
                                           {
                                             label: "Duplicate channel",
                                             onSelect: () =>
@@ -1839,6 +1857,7 @@ export default function SampleComms() {
                           <CommsMenu
                             compact
                             hasChannel={!!channel}
+                            {...commsMenuAccess}
                             onSelect={openWorkspaceSetting}
                           />
                           <h2

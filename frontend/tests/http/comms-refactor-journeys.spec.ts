@@ -71,7 +71,10 @@ test("Comms preferences keep an editing draft, discard cancelled changes, and pe
     exact: true,
   });
   async function openPreferences() {
-    await page.getByRole("button", { name: "OpenComms", exact: true }).click();
+    await page
+      .getByRole("button", { name: "OpenComms menu", exact: true })
+      .first()
+      .click();
     await page
       .getByRole("menuitem", { name: "My preferences", exact: true })
       .click();
@@ -208,7 +211,10 @@ test("Reset to default asks first and says nothing is saved yet", async ({
   page,
 }) => {
   await page.goto("/comms");
-  await page.getByRole("button", { name: "OpenComms", exact: true }).click();
+  await page
+    .getByRole("button", { name: "OpenComms menu", exact: true })
+    .first()
+    .click();
   await page
     .getByRole("menuitem", { name: "My preferences", exact: true })
     .click();
@@ -217,7 +223,7 @@ test("Reset to default asks first and says nothing is saved yet", async ({
     .getByRole("button", { name: "Reset to default", exact: true })
     .click();
   const confirm = page.getByRole("alertdialog", {
-    name: "Reset My preferences to default?",
+    name: "Reset your preferences to default?",
   });
   await expect(confirm).toContainText("Nothing is saved until you select");
   await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -234,4 +240,70 @@ test("OpenComms loads its example conversations without showing an error", async
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeVisible();
   await expect(page.locator('[data-type="error"]')).toHaveCount(0);
+});
+
+test("the OpenComms menu keeps everyday items up front and admin tools behind one entry", async ({
+  page,
+}) => {
+  await page.goto("/comms");
+  // The page heading is plain text, and the menu is a separate button.
+  await expect(
+    page.getByRole("heading", { name: "OpenComms", level: 1 }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "OpenComms menu", exact: true })
+    .first()
+    .click();
+  const menu = page.getByRole("menu", { name: "OpenComms menu" });
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "My preferences",
+    "Browse threads",
+    "Channel settings",
+    "Category settings",
+    "New channel",
+    "New category",
+    "Admin tools",
+  ]);
+  await menu.getByRole("menuitem", { name: "Admin tools" }).click();
+  const tools = page.getByRole("menu", { name: "Admin tools" });
+  await expect(tools.getByRole("menuitem")).toHaveText([
+    "Workspace settings",
+    "Moderation",
+    "Scheduled messages",
+    "History",
+    "Retention",
+    "Automation",
+    "Templates",
+    "Channel management",
+  ]);
+  await tools.getByRole("menuitem", { name: "Moderation" }).click();
+  await expect(page.getByRole("dialog", { name: "Moderation" })).toBeVisible();
+});
+
+test("a channel has one settings dialog, reached the same way from its row and its header", async ({
+  page,
+}) => {
+  await page.goto("/comms");
+  const row = page.getByRole("button", { name: "workshop", exact: true });
+  await row.click({ button: "right" });
+  const rowMenu = page.getByRole("menu", { name: "Channel actions: workshop" });
+  await expect(
+    rowMenu.getByRole("menuitem", { name: "Channel settings" }),
+  ).toHaveCount(1);
+  await expect(
+    rowMenu.getByRole("menuitem", { name: /^Move to (?!another)/ }),
+  ).toHaveCount(0);
+  await rowMenu
+    .getByRole("menuitem", { name: "Move to another category…" })
+    .click();
+  const settings = page.getByRole("dialog", { name: "Channel settings" });
+  await expect(settings.getByLabel("Category")).toBeVisible();
+  await settings.getByRole("button", { name: "Cancel", exact: true }).click();
+  await row.click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await expect(
+    settings.getByLabel("Channel name", { exact: true }),
+  ).toHaveValue("workshop");
 });

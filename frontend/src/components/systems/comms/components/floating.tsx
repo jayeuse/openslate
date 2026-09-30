@@ -529,7 +529,7 @@ export function RowEditMenu({
   onEdit,
   actions = [],
 }: {
-  label: "Edit channel" | "Edit category";
+  label: "Channel settings" | "Category settings";
   actionsLabel: string;
   showActions?: boolean;
   children: ReactNode;
