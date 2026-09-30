@@ -117,6 +117,16 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "INSERT INTO public.modules (id, department_id, module_name) VALUES (%s, %s, %s)",
                 (module_id, department_id, f"reset-module-{module_id.hex[:12]}"),
             )
+            title_field_id = uuid4()
+            cursor.execute(
+                "INSERT INTO public.fields (id, module_id, name, type, required, position) "
+                "VALUES (%s, %s, 'Title', 'text', true, 0)",
+                (title_field_id, module_id),
+            )
+            cursor.execute(
+                "UPDATE public.modules SET title_field_id = %s WHERE id = %s",
+                (title_field_id, module_id),
+            )
             file_id = uuid4()
             cursor.execute(
                 "INSERT INTO public.files "
@@ -255,6 +265,8 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
         ).split():
             assert plan.counts[table] == 1
         assert plan.counts["boards"] == 3
+        assert plan.counts["fields"] == 1
+        assert plan.counts["modules"] == 1
         assert plan.impact_digest != plan_before_dashboard.impact_digest
         execution.apply_reset(
             database,

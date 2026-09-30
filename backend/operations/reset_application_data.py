@@ -7,6 +7,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from psycopg import connect
 
@@ -21,68 +22,55 @@ from app.core.config.instance import (
 )
 from app.core.config.provider_instance import assert_provider_instance
 from app.core.config.settings import DOTENV_PATH
-
-if __package__:
-    from .reset_auth import ResetAuth  # type: ignore[import-not-found]
-    from .reset_execution import (  # type: ignore[import-not-found]
-        _validate_postconditions as _execution_validate_postconditions,
-    )
-    from .reset_execution import apply_reset as _execute_reset
-    from .reset_models import (  # type: ignore[import-not-found]
-        _LOCK_APPLICATION_STATEMENT,
-        _RESET_ADVISORY_LOCK_KEY,
-        APPLICATION_TABLES,
-        DELETE_ORDER,
-        NON_PRESERVED_TABLES,
-        ResetError,
-        ResetPlan,
-    )
-    from .reset_planning import (  # type: ignore[import-not-found]
-        _read_alembic_head,
-        _read_profile,
-        required_environment,
-        validate_local_database_url,
-    )
-    from .reset_planning import (
-        _validated_database_url as _psycopg_database_url,
-    )
-    from .reset_planning import (
-        build_reset_plan as _build_reset_plan,
-    )
-    from .reset_storage import ResetStorage, require_api_stopped  # type: ignore[import-not-found]
-else:
-    from reset_auth import ResetAuth
-    from reset_execution import _validate_postconditions as _execution_validate_postconditions
-    from reset_execution import apply_reset as _execute_reset
-    from reset_models import (
-        _LOCK_APPLICATION_STATEMENT,
-        _RESET_ADVISORY_LOCK_KEY,
-        APPLICATION_TABLES,
-        DELETE_ORDER,
-        NON_PRESERVED_TABLES,
-        ResetError,
-        ResetPlan,
-    )
-    from reset_planning import (
-        _read_alembic_head,
-        _read_profile,
-        required_environment,
-        validate_local_database_url,
-    )
-    from reset_planning import (
-        _validated_database_url as _psycopg_database_url,
-    )
-    from reset_planning import (
-        build_reset_plan as _build_reset_plan,
-    )
-    from reset_storage import ResetStorage, require_api_stopped
+from operations.reset_auth import ResetAuth
+from operations.reset_execution import (
+    _validate_postconditions as _execution_validate_postconditions,
+)
+from operations.reset_execution import apply_reset as _execute_reset
+from operations.reset_models import (
+    _LOCK_APPLICATION_STATEMENT,
+    _RESET_ADVISORY_LOCK_KEY,
+    APPLICATION_TABLES,
+    DELETE_ORDER,
+    NON_PRESERVED_TABLES,
+    ResetError,
+    ResetPlan,
+)
+from operations.reset_planning import (
+    _read_alembic_head,
+    _read_profile,
+    required_environment,
+    validate_local_database_url,
+)
+from operations.reset_planning import (
+    _validated_database_url as _psycopg_database_url,
+)
+from operations.reset_planning import (
+    build_reset_plan as _build_reset_plan,
+)
+from operations.reset_storage import ResetStorage, require_api_stopped
 
 __all__ = (
-    "APPLICATION_TABLES", "DELETE_ORDER", "NON_PRESERVED_TABLES", "ResetError", "ResetPlan",
-    "_LOCK_APPLICATION_STATEMENT", "_RESET_ADVISORY_LOCK_KEY", "_parser", "_print_plan",
-    "_psycopg_database_url", "_read_alembic_head", "_read_profile",
-    "ResetStorage", "_validate_postconditions", "apply_reset", "build_reset_plan",
-    "main", "require_api_stopped", "required_environment", "required_storage_environment",
+    "APPLICATION_TABLES",
+    "DELETE_ORDER",
+    "NON_PRESERVED_TABLES",
+    "ResetError",
+    "ResetPlan",
+    "_LOCK_APPLICATION_STATEMENT",
+    "_RESET_ADVISORY_LOCK_KEY",
+    "_parser",
+    "_print_plan",
+    "_psycopg_database_url",
+    "_read_alembic_head",
+    "_read_profile",
+    "ResetStorage",
+    "_validate_postconditions",
+    "apply_reset",
+    "build_reset_plan",
+    "main",
+    "require_api_stopped",
+    "required_environment",
+    "required_storage_environment",
     "validate_local_database_url",
 )
 
@@ -103,17 +91,26 @@ def required_storage_environment(mapping: Mapping[str, str]) -> tuple[str, str, 
 
 
 def build_reset_plan(
-    connection: Any, sample_email: str, *, storage_object_keys: tuple[str, ...] = ()
+    connection: Any,
+    sample_email: str,
+    *,
+    storage_object_keys: tuple[str, ...] = (),
+    provider_account_ids: tuple[UUID, ...] | None = None,
 ) -> ResetPlan:
     return _build_reset_plan(
-        connection, sample_email, storage_object_keys=storage_object_keys,
+        connection,
+        sample_email,
+        storage_object_keys=storage_object_keys,
+        provider_account_ids=provider_account_ids,
         read_profile_fn=_read_profile,
     )
 
 
 def _validate_postconditions(connection: Any, plan: ResetPlan) -> None:
     _execution_validate_postconditions(
-        connection, plan, read_profile_fn=_read_profile,
+        connection,
+        plan,
+        read_profile_fn=_read_profile,
     )
 
 
@@ -134,8 +131,14 @@ def apply_reset(
             raise ResetError("BACKEND_BIND_HOST and BACKEND_PORT are required for execute mode")
         require_api_stopped(backend_host, backend_port)
     _execute_reset(
-        connection, plan, execute=execute, stdin_is_tty=stdin_is_tty, confirmation=confirmation,
-        storage=storage, auth=auth, read_profile_fn=_read_profile,
+        connection,
+        plan,
+        execute=execute,
+        stdin_is_tty=stdin_is_tty,
+        confirmation=confirmation,
+        storage=storage,
+        auth=auth,
+        read_profile_fn=_read_profile,
         build_plan_fn=build_reset_plan,
     )
 
@@ -155,7 +158,12 @@ def _print_plan(plan: ResetPlan) -> None:
     print(f"admin_id={plan.preserved_admin_id}")
     print(f"profiles_to_delete={plan.profiles_to_delete}")
     print(f"inactive_admin_profiles_to_delete={plan.inactive_admin_profiles_to_delete}")
-    print(f"provider_accounts_to_delete={sum(id is not None for _, id in plan.provider_subjects)}")
+    print(f"provider_accounts_to_delete={len(plan.provider_account_ids)}")
+    linked_ids = {
+        provider_id for _, provider_id in plan.provider_subjects if provider_id is not None
+    }
+    orphan_count = len(set(plan.provider_account_ids) - linked_ids)
+    print(f"unlinked_provider_accounts_to_delete={orphan_count}")
     print(f"private_storage_objects_to_delete={len(plan.storage_object_keys)}")
     print("counts:")
     for table_name in APPLICATION_TABLES:
@@ -197,8 +205,16 @@ def main(argv: Sequence[str] | None = None) -> None:
             assert_psycopg_target(connection, target, expected_user="openslate_owner")
         storage = ResetStorage(provider_url, secret_key, timeout)
         auth = ResetAuth(provider_url, secret_key, timeout)
+        storage_keys = storage.list_object_keys()
+        local_plan = build_reset_plan(connection, admin_email, storage_object_keys=storage_keys)
+        provider_account_ids = auth.list_account_ids(
+            local_plan.preserved_admin_provider_id, local_plan.sample_email
+        )
         plan = build_reset_plan(
-            connection, admin_email, storage_object_keys=storage.list_object_keys()
+            connection,
+            admin_email,
+            storage_object_keys=storage_keys,
+            provider_account_ids=provider_account_ids,
         )
         connection.rollback()
         _print_plan(plan)
@@ -207,9 +223,15 @@ def main(argv: Sequence[str] | None = None) -> None:
                 raise ResetError("Execute mode requires a TTY")
             confirmation = input("Enter the impact digest exactly as shown to execute: ")
             apply_reset(
-                connection, plan, execute=True, stdin_is_tty=True, confirmation=confirmation,
-                storage=storage, auth=auth,
-                backend_host=backend_host, backend_port=backend_port,
+                connection,
+                plan,
+                execute=True,
+                stdin_is_tty=True,
+                confirmation=confirmation,
+                storage=storage,
+                auth=auth,
+                backend_host=backend_host,
+                backend_port=backend_port,
             )
             print(
                 "Application data reset completed; the administrator account was preserved "

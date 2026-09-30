@@ -272,3 +272,4 @@ class ResetPlan:
     workspace_snapshot: WorkspaceSnapshot
     storage_object_keys: tuple[str, ...]
     alembic_head: str
+    provider_account_ids: tuple[UUID, ...] = ()

@@ -15,6 +15,7 @@ from operations import reset_planning
 
 
 def _plan() -> SimpleNamespace:
+    provider_id = uuid4()
     return SimpleNamespace(
         impact_digest="exact",
         sample_email="admin@example.test",
@@ -23,7 +24,8 @@ def _plan() -> SimpleNamespace:
         inactive_admin_profiles_to_delete=0,
         preserved_admin_id=uuid4(),
         preserved_admin_provider_id=uuid4(),
-        provider_subjects=((uuid4(), uuid4()),),
+        provider_subjects=((uuid4(), provider_id),),
+        provider_account_ids=(provider_id,),
         profile_snapshot=SimpleNamespace(id=uuid4()),
         credential_snapshot=SimpleNamespace(user_id=uuid4()),
         workspace_snapshot=SimpleNamespace(
@@ -32,6 +34,12 @@ def _plan() -> SimpleNamespace:
         storage_object_keys=("objects/aa/object",),
         alembic_head="head",
     )
+
+
+def _auth(plan: SimpleNamespace) -> Mock:
+    auth = Mock()
+    auth.list_account_ids.side_effect = [plan.provider_account_ids, ()]
+    return auth
 
 
 def test_reset_impact_digest_includes_the_invitation_settings() -> None:
@@ -51,6 +59,15 @@ def test_reset_impact_digest_freezes_provider_subject_mapping() -> None:
     changed = SimpleNamespace(**vars(plan))
     app_id, _ = plan.provider_subjects[0]
     changed.provider_subjects = ((app_id, uuid4()),)
+
+    assert reset_planning._impact_digest(changed) != reset_planning._impact_digest(plan)
+
+
+def test_reset_impact_digest_freezes_orphan_provider_accounts() -> None:
+    plan = _plan()
+    plan.provider_account_ids = (plan.provider_subjects[0][1],)
+    changed = SimpleNamespace(**vars(plan))
+    changed.provider_account_ids = tuple(sorted((*plan.provider_account_ids, uuid4()), key=str))
 
     assert reset_planning._impact_digest(changed) != reset_planning._impact_digest(plan)
 
@@ -120,7 +137,7 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
             stdin_is_tty=True,
             confirmation=plan.impact_digest,
             storage=storage,
-            auth=Mock(),
+            auth=_auth(plan),
             build_plan_fn=lambda *_, **__: plan,
         )
 
@@ -152,6 +169,8 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
 
 def test_provider_accounts_are_deleted_before_application_profiles(monkeypatch) -> None:
     plan = _plan()
+    orphan_id = uuid4()
+    plan.provider_account_ids = tuple(sorted((*plan.provider_account_ids, orphan_id), key=str))
     events: list[str] = []
     database = Mock()
     storage = Mock()
@@ -161,7 +180,7 @@ def test_provider_accounts_are_deleted_before_application_profiles(monkeypatch) 
         return plan.storage_object_keys
 
     storage.list_object_keys.side_effect = list_storage
-    auth = Mock()
+    auth = _auth(plan)
     auth.require_present.side_effect = lambda _: events.append("admin_checked")
     auth.delete_and_verify_missing.side_effect = lambda _: events.append("provider_deleted")
     monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
@@ -178,7 +197,7 @@ def test_provider_accounts_are_deleted_before_application_profiles(monkeypatch) 
 
     auth.require_present.assert_called_once_with(plan.preserved_admin_provider_id)
     auth.delete_and_verify_missing.assert_called_once_with(
-        (plan.provider_subjects[0][1],)
+        plan.provider_account_ids
     )
     assert events.index("provider_deleted") < events.index(
         "DELETE FROM public.users WHERE id <> %s"
@@ -188,11 +207,35 @@ def test_provider_accounts_are_deleted_before_application_profiles(monkeypatch) 
     )
 
 
+def test_changed_auth_inventory_refuses_reset_before_any_provider_deletion(monkeypatch) -> None:
+    plan = _plan()
+    changed = SimpleNamespace(**vars(plan))
+    changed.impact_digest = "changed"
+    database = Mock()
+    storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
+    auth = Mock(list_account_ids=Mock(return_value=tuple(sorted(
+        (*plan.provider_account_ids, uuid4()), key=str
+    ))))
+    monkeypatch.setattr(execution, "_single_value", lambda *_: True)
+
+    with pytest.raises(reset.ResetError, match="reset plan changed"):
+        execution.apply_reset(
+            database, plan, execute=True, stdin_is_tty=True,
+            confirmation=plan.impact_digest, storage=storage, auth=auth,
+            build_plan_fn=lambda *_, **kwargs: (
+                changed if kwargs["provider_account_ids"] != plan.provider_account_ids else plan
+            ),
+        )
+
+    auth.delete_and_verify_missing.assert_not_called()
+    database.rollback.assert_called()
+
+
 def test_provider_failure_keeps_application_profiles_for_safe_retry(monkeypatch) -> None:
     plan = _plan()
     database = Mock()
     storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
-    auth = Mock()
+    auth = _auth(plan)
     auth.delete_and_verify_missing.side_effect = RuntimeError("provider error")
     statements: list[str] = []
     monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
@@ -216,7 +259,7 @@ def test_database_failure_after_provider_cleanup_reports_partial_reset(monkeypat
     plan = _plan()
     database = Mock()
     storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
-    auth = Mock()
+    auth = _auth(plan)
     monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
 
     def execute(_, statement, *_args):
@@ -244,7 +287,7 @@ def test_plan_drift_after_auth_cleanup_keeps_profiles_and_reports_partial(monkey
     changed.impact_digest = "changed"
     database = Mock()
     storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
-    auth = Mock()
+    auth = _auth(plan)
     statements: list[str] = []
     monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
     monkeypatch.setattr(
@@ -269,7 +312,7 @@ def test_ambiguous_database_commit_does_not_claim_profiles_were_retained(monkeyp
     database = Mock()
     database.commit.side_effect = [None, None, RuntimeError("connection lost")]
     storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
-    auth = Mock()
+    auth = _auth(plan)
     monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
     monkeypatch.setattr(execution, "_execute", lambda *_args: None)
     monkeypatch.setattr(execution, "_single_value", lambda *_: True)
@@ -314,9 +357,16 @@ def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
     monkeypatch.setattr(reset, "instance_target_for_process", lambda *_args: target)
     monkeypatch.setattr(reset, "connect", lambda _url: connection)
     monkeypatch.setattr(reset, "ResetStorage", lambda *_args: storage)
-    monkeypatch.setattr(reset, "ResetAuth", lambda *_args: Mock())
+    monkeypatch.setattr(
+        reset, "ResetAuth", lambda *_args: Mock(list_account_ids=Mock(return_value=()))
+    )
     monkeypatch.setattr(reset, "assert_provider_instance", Mock())
-    monkeypatch.setattr(reset, "build_reset_plan", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        reset, "build_reset_plan",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            preserved_admin_provider_id=uuid4(), sample_email="admin@example.test"
+        ),
+    )
     monkeypatch.setattr(reset, "_print_plan", lambda _plan: None)
     monkeypatch.setattr(reset, "assert_psycopg_target", Mock())
 
