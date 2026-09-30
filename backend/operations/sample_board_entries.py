@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as day_time
 from decimal import Decimal, InvalidOperation
@@ -107,17 +107,27 @@ def validate_board_scenarios(
     fields: Mapping[str, list[Mapping[str, Any]]],
     *,
     organization: OrganizationPack | None = None,
+    only: Collection[str] | None = None,
 ) -> dict[str, Any]:
-    """Validate golden operational records before any Board metadata is written."""
+    """Validate golden operational records before any Board metadata is written.
+
+    `only` limits the check to the records one link step uses, so a step does not
+    wait for scenario records that a later department creates.
+    """
     spec = (organization or default_pack()).content.data
-    amounts = {item.key: _money(records, fields, item.record, item.field) for item in spec.amounts}
-    if any(amounts[item.key] != item.expected for item in spec.amounts) or (
+    in_scope = spec.required_records.keys() if only is None else set(only)
+    money = [item for item in spec.amounts if item.record in in_scope]
+    amounts = {item.key: _money(records, fields, item.record, item.field) for item in money}
+    if any(amounts[item.key] != item.expected for item in money) or (
         len(spec.amounts) >= 2
+        and all(item.key in amounts for item in spec.amounts[:2])
         and amounts[spec.amounts[0].key] - amounts[spec.amounts[1].key] != spec.scenario_balance
     ):
         raise SampleContentError("Planned linked records do not match their expected amounts")
     record_ids: dict[str, str] = {}
     for logical_id, module_key in spec.required_records.items():
+        if logical_id not in in_scope:
+            continue
         record = records.get(logical_id)
         if record is None or record.get("module_key") != module_key:
             raise SampleContentError(f"Required scenario record is unavailable: {logical_id}")

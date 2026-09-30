@@ -182,9 +182,9 @@ class BoardQueue:
         client: SampleClient,
         records: Mapping[str, Mapping[str, Any]],
     ) -> None:
-        record_ids = validate_board_scenarios(records, self.fields, organization=self.organization)[
-            "record_ids"
-        ]
+        record_ids = validate_board_scenarios(
+            records, self.fields, organization=self.organization, only=step.needs_records
+        )["record_ids"]
         item_id = self._items[step.needs_steps[0]]["id"]
         is_post = step.needs_steps[0].startswith("post:")
         for logical_id in step.needs_records:

@@ -97,14 +97,16 @@ def _view_presentation(
     layout: str,
     fields: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    ids = [_id(field) for field in fields[:12]]
-    date_ids = [_id(field) for field in fields if _kind(field) in _DATE_TYPES]
+    # The API requires every field a layout uses to be one of the query columns.
+    columns = fields[:12]
+    ids = [_id(field) for field in columns]
+    date_ids = [_id(field) for field in columns if _kind(field) in _DATE_TYPES]
     if not date_ids:
         raise SampleContentError("OpenView layout requires an active date field")
-    primary = next((_id(field) for field in fields if _kind(field) in _TEXT_TYPES), ids[0])
-    secondary = next((_id(field) for field in fields if _kind(field) == "select"), None)
+    primary = next((_id(field) for field in columns if _kind(field) in _TEXT_TYPES), ids[0])
+    secondary = next((_id(field) for field in columns if _kind(field) == "select"), None)
     group = secondary or primary
-    numeric = next((_id(field) for field in fields if _kind(field) in _NUMBER_TYPES), None)
+    numeric = next((_id(field) for field in columns if _kind(field) in _NUMBER_TYPES), None)
     result: dict[str, Any] = {
         "version": 1,
         "layout": layout,

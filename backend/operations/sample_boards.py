@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -22,6 +23,12 @@ _DATE_TYPES = {"date", "datetime"}
 _NUMBER_TYPES = {"number", "decimal", "int"}
 _TEXT_TYPES = {"text", "long_text", "email", "url"}
 _PRIMITIVE_TYPES = _DATE_TYPES | _NUMBER_TYPES | _TEXT_TYPES | {"boolean", "select", "user"}
+
+
+def project_board_logical_id(department_key: str, name: str) -> str:
+    """The run journal's ID for a project Board: the name as a lowercase slug."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")
+    return f"project:{department_key}:{slug}"
 
 
 def replace_project_board_groups(
@@ -221,7 +228,7 @@ def _create_project_boards(
             expected=(201,),
         )
         board_id = _id(created)
-        logical = f"project:{department_key}:{name.casefold().replace(' ', '-')}"
+        logical = project_board_logical_id(department_key, name)
         admin.record_mapping("boards", logical, board_id)
         replace_project_board_groups(
             admin, board_id, department_key, groups, organization=organization
@@ -341,7 +348,7 @@ def verify_boards(
     spec = (organization or default_pack()).content.data
     project_departments = {
         mappings.get("boards", {}).get(
-            f"project:{department_key}:{name.casefold().replace(' ', '-')}"
+            project_board_logical_id(department_key, name)
         ): department_key
         for name, department_key in spec.projects
     }
