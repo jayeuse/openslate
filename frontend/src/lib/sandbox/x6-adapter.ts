@@ -14,21 +14,32 @@ import {
 import { FIELD_TYPE_META, type SandboxField, type SandboxState } from "./model";
 
 /**
- * A relationship line. A handoff connects modules in different departments;
- * it is dashed so the key can name it. Shared by persisted relationships and
- * the provisional connection preview.
+ * A relationship line. A relationship is dashed in the action color; a
+ * handoff connects modules in different departments and is a solid neutral
+ * line, so the key can name both. Both end in an arrowhead at the target
+ * module. Shared by persisted relationships and the provisional connection
+ * preview.
  */
 export function relationshipLineAttrs(selected = false, handoff = false) {
   return {
     "data-sandbox-line": "true",
     "data-sandbox-edge-kind": handoff ? "handoff" : "relationship",
     stroke: selected
-      ? "var(--primary, #3b82f6)"
-      : "var(--canvas-edge, #68707d)",
-    strokeWidth: 1.5,
-    strokeDasharray: handoff ? "6 4" : "",
+      ? "var(--primary)"
+      : handoff
+        ? "var(--canvas-edge)"
+        : "var(--action)",
+    strokeWidth: selected ? 2 : 1.6,
+    strokeDasharray: handoff ? "" : "5 4",
+    strokeLinecap: "round",
     sourceMarker: null,
-    targetMarker: null,
+    // X6 fills the arrowhead with the line's stroke color.
+    targetMarker: {
+      name: "block",
+      width: 8,
+      height: 7,
+      strokeDasharray: "none",
+    },
   };
 }
 
@@ -47,8 +58,8 @@ export const NODE_KINDS = ["department", "module"] as const;
 /** The shared canvas unit used by node dragging and the visual world grid. */
 export const SANDBOX_GRID_SIZE = 24;
 
-/** Major grid lines repeat every five minor cells. */
-export const SANDBOX_GRID_MAJOR_SIZE = SANDBOX_GRID_SIZE * 5;
+/** Major grid dots repeat every four minor cells (96px), as on the website. */
+export const SANDBOX_GRID_MAJOR_SIZE = SANDBOX_GRID_SIZE * 4;
 
 export interface SandboxCanvasPosition {
   x: number;
@@ -77,17 +88,25 @@ export const MODULE_TABLE = {
 } as const;
 
 // Canvas skin tokens (globals.css and src/app/themes). Each theme sets them
-// for light and dark; the fallbacks only cover a missing stylesheet.
+// for light and dark.
 export const MODULE_TABLE_COLORS = {
-  headerText: "var(--canvas-module-ink, #20242c)",
-  bodyFill: "var(--canvas-module-fill, #ffffff)",
-  bodyStroke: "var(--canvas-module-frame, #a8b2c1)",
-  rowStroke: "var(--canvas-row-rule, #e4e7ec)",
-  selectedRowFill: "var(--accent, #dce8ff)",
-  nameText: "var(--canvas-field-ink, #1f2d4d)",
-  typeText: "var(--canvas-type-ink, #555e6c)",
-  emptyText: "var(--canvas-type-ink, #555e6c)",
+  headerText: "var(--canvas-module-ink)",
+  bodyFill: "var(--canvas-module-fill)",
+  bodyStroke: "var(--canvas-module-frame)",
+  rowStroke: "var(--canvas-row-rule)",
+  selectedRowFill: "var(--accent)",
+  nameText: "var(--canvas-field-ink)",
+  typeText: "var(--canvas-type-ink)",
+  emptyText: "var(--canvas-type-ink)",
 } as const;
+
+/** The table glyph beside a module name (16px box, as on the website). */
+function tableGlyphPath(x: number, y: number): string {
+  return (
+    `M${x + 4} ${y + 2.5}h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z` +
+    `M${x + 2} ${y + 6.5}h12M${x + 6.5} ${y + 6.5}v7`
+  );
+}
 
 export interface SandboxMarkupUnit {
   tagName: string;
@@ -115,7 +134,7 @@ export function moduleTableMarkup(fieldCount: number): SandboxMarkupUnit[] {
   const markup: SandboxMarkupUnit[] = [
     { tagName: "rect", selector: "body" },
     { tagName: "rect", selector: "headerBar" },
-    { tagName: "rect", selector: "identity" },
+    { tagName: "path", selector: "glyph" },
     { tagName: "text", selector: "headerTitle" },
   ];
   for (let i = 0; i < rows; i += 1) {
@@ -152,21 +171,23 @@ export function moduleTableAttrs(
       "data-sandbox-kind": "module",
       width,
       height: tableHeight,
-      rx: 8,
-      ry: 8,
+      // Corners come from the look's --radius in CSS (globals.css); these
+      // are the Slate values for a missing stylesheet.
+      rx: 10,
+      ry: 10,
       fill:
         feedback === "moving"
-          ? "var(--canvas-moving, #fff8eb)"
+          ? "var(--canvas-moving)"
           : feedback === "drop"
-            ? "var(--canvas-drop, #eff6ff)"
+            ? "var(--canvas-drop)"
             : selectedModule
-              ? "var(--accent, #edf4ff)"
-              : `var(--dept-${tone}-module, #ffffff)`,
+              ? "var(--accent)"
+              : `var(--dept-${tone}-module)`,
       stroke:
         feedback === "moving"
-          ? "var(--warning, #f59e0b)"
+          ? "var(--warning)"
           : feedback === "drop" || selectedModule
-            ? "var(--primary, #2563eb)"
+            ? "var(--primary)"
             : colors.bodyStroke,
       strokeWidth: feedback === null && !selectedModule ? 1 : 2,
       "data-selected": selectedModule ? "true" : "false",
@@ -177,37 +198,33 @@ export function moduleTableAttrs(
       "data-sandbox-part": "header",
       width,
       height: headerHeight,
-      rx: 8,
-      ry: 8,
+      rx: 10,
+      ry: 10,
       stroke: "none",
       fill:
         feedback === "moving"
-          ? "var(--warning, #d97706)"
+          ? "var(--warning)"
           : selectedModule || feedback === "drop"
-            ? "var(--accent, #edf3ff)"
-            : `var(--dept-${tone}-card, #f1f3f5)`,
+            ? "var(--accent)"
+            : `var(--dept-${tone}-card)`,
       "data-selected": selectedModule ? "true" : "false",
     },
-    // The department's identity square, the same mark as on the
-    // department head.
-    identity: {
-      "data-sandbox-part": "identity",
-      x: 12,
-      y: headerHeight / 2 - 5,
-      width: 10,
-      height: 10,
-      rx: 2,
-      fill: `var(--dept-${tone}, #8e79b8)`,
-      stroke: "none",
+    glyph: {
+      "data-sandbox-part": "glyph",
+      d: tableGlyphPath(10, headerHeight / 2 - 8),
+      fill: "none",
+      stroke: colors.typeText,
+      strokeWidth: 1.4,
       pointerEvents: "none",
+      "aria-hidden": "true",
     },
     headerTitle: {
-      x: 30,
+      x: 32,
       y: headerHeight / 2,
       textAnchor: "start",
       textVerticalAnchor: "middle",
       fontSize: 13,
-      fontWeight: "bold",
+      fontWeight: 600,
       fill: colors.headerText,
       text: truncateModuleTitle(name, 24),
     },
@@ -222,13 +239,13 @@ export function moduleTableAttrs(
       y: rowTop,
       width: width - 2,
       height: rowHeight - (i === rows - 1 ? 1 : 0),
-      rx: i === rows - 1 ? 7 : 0,
+      rx: i === rows - 1 ? 9 : 0,
       fill: selected
         ? colors.selectedRowFill
         : i % 2 === 1
-          ? `var(--dept-${tone}-stripe, #f7f8fa)`
-          : `var(--dept-${tone}-module, #ffffff)`,
-      stroke: selected ? "var(--primary, #2563eb)" : "none",
+          ? `var(--dept-${tone}-stripe)`
+          : `var(--dept-${tone}-module)`,
+      stroke: selected ? "var(--primary)" : "none",
       strokeWidth: selected ? 1 : 0,
       tabindex: field === undefined ? -1 : 0,
       role: field === undefined ? "presentation" : "button",
@@ -279,6 +296,8 @@ export function moduleTableAttrs(
       "aria-hidden": "true",
     };
     attrs[`type${i}`] = {
+      // Field types are data, set in the look's code face (globals.css).
+      "data-sandbox-part": "field-type",
       pointerEvents: "none",
       x: width - 10,
       y: rowCenter,
@@ -387,9 +406,9 @@ export function getModulePorts(
   const magnet = {
     r: 6,
     magnet: true,
-    stroke: "var(--muted-foreground, #68707d)",
+    stroke: "var(--muted-foreground)",
     strokeWidth: 2,
-    fill: "var(--card, #ffffff)",
+    fill: "var(--card)",
     opacity: relationshipMode ? 1 : 0,
   };
   return {

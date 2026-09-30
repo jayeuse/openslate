@@ -1996,7 +1996,7 @@ export function Designer({
         <ResizablePanelGroup
           orientation="horizontal"
           elementRef={panelGroupElementRef}
-          className="sandbox-ui border-card-edge bg-card shadow-card overflow-hidden rounded-xl border [--canvas-grid-major:var(--rule-strong)] [--canvas-grid:var(--border)] max-xl:h-auto xl:h-full"
+          className="sandbox-ui border-card-edge bg-card shadow-card overflow-hidden rounded-2xl border max-xl:h-auto xl:h-full"
           onLayoutChanged={(layout, meta) => {
             if (
               !meta.isUserInteraction ||

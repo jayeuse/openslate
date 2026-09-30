@@ -42,11 +42,11 @@ colors:
   dept-4: "#c0677e"
 typography:
   headline:
-    fontFamily: "Geist, sans-serif"
+    fontFamily: "Schibsted Grotesk, Geist, sans-serif"
     fontSize: "30px"
-    fontWeight: 600
+    fontWeight: 700
     lineHeight: 1.25
-    letterSpacing: "-0.035em"
+    letterSpacing: "-0.025em"
   title-lg:
     fontFamily: "Geist, sans-serif"
     fontSize: "18px"
@@ -66,7 +66,7 @@ typography:
   control:
     fontFamily: "Geist, sans-serif"
     fontSize: "14px"
-    fontWeight: 500
+    fontWeight: 600
     lineHeight: "20px"
   label:
     fontFamily: "Geist, sans-serif"
@@ -75,19 +75,32 @@ typography:
     lineHeight: "16px"
   code:
     fontFamily: "Geist Mono, monospace"
+  canvas-department:
+    fontFamily: "Schibsted Grotesk, Geist, sans-serif"
+    fontSize: "15px"
+    fontWeight: 700
+    letterSpacing: "-0.02em"
   canvas-table:
     fontFamily: "Geist, sans-serif"
     fontSize: "13px"
-    fontWeight: 700
+    fontWeight: 600
   canvas-field:
     fontFamily: "Geist, sans-serif"
+    fontSize: "12px"
+    fontWeight: 400
+  canvas-type:
+    fontFamily: "Geist Mono, monospace"
     fontSize: "12px"
     fontWeight: 400
 rounded:
   sm: "4px"
   md: "6px"
   lg: "8px"
-  canvas-node: "8px"
+  xl: "12px"
+  2xl: "16px"
+  canvas-department: "14px"
+  canvas-node: "10px"
+  canvas-label: "6px"
 spacing:
   xs: "4px"
   sm: "8px"
@@ -255,9 +268,9 @@ Density is calm and practical: 14px body text, 36px buttons, hairline rules, and
 
 | Look            | Selector and file                 | Type (`--font-ui` / `--font-code`)      | Radius (`--radius`) | Material                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | --------------- | --------------------------------- | --------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Slate (default) | `:root`, `.dark` in `globals.css` | Geist / Geist Mono                      | 8px                 | Calm neutral surfaces, precise hairlines, flat cards with a rule edge. No page pattern and no canvas frame.                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Slate (default) | `:root`, `.dark` in `globals.css` | Geist / Geist Mono, Schibsted Grotesk titles | 8px            | The same look as the website and the film: calm neutral surfaces (neutral grays in dark, not blue-leaning ones), precise hairlines, flat cards with a rule edge, titles in Schibsted Grotesk. On the canvas: a 3px department-color top edge, mono field types, dashed action-blue relationships and solid handoffs with arrowheads. No page pattern and no canvas frame.                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Whiteboard      | `themes/whiteboard.css`           | Atkinson Hyperlegible Next / Geist Mono | 6px                 | The planning board. The page is a white board with a faint 24px marker grid inside an aluminium frame; the same frame surrounds the canvas and each dialog. Marker weights everywhere: bold type, 2px field and outline-button edges, a rounded marker underline under the page title, open tabs with a 4px marker underline. Edgeless raised cards. On the canvas: taped department frames, frameless modules in their department's pastel tint, bold round-capped marker lines. Dark is a slate chalkboard.  |
-| Triplicate      | `themes/triplicate.css`           | Archivo (width axis) / Geist Mono       | 2px                 | The carbon-copy business form. The page is ruled paper; the top bar is a printed header with a double rule. Navy printed structure, ballpoint blue for what people typed, condensed tracked labels, perforated card headers and dialog tops, rubber-stamp chips, numbered ledger rows, double-ruled notices. On the canvas: each department is a tinted carbon copy, modules share their department's paper, field names are in ballpoint blue, solid carbon lines with dashed handoffs. Dark is carbon paper. |
+| Triplicate      | `themes/triplicate.css`           | Archivo (width axis) / Geist Mono       | 2px                 | The carbon-copy business form. The page is ruled paper; the top bar is a printed header with a double rule. Navy printed structure, ballpoint blue for what people typed, condensed tracked labels, perforated card headers and dialog tops, rubber-stamp chips, numbered ledger rows, double-ruled notices. On the canvas: each department is a tinted carbon copy, modules share their department's paper, field names are in ballpoint blue, dashed carbon relationships with solid handoffs. Dark is carbon paper. |
 | Stockroom       | `themes/stockroom.css`            | Archivo (width axis) / Martian Mono     | 2px                 | Steel shelving and kraft boxes. A flat wall-colored page, a painted steel sidebar, a top bar on a steel rail, stencilled uppercase page titles, a heavy shelf rule under card headers, label-maker tape chips, steel table-head bands, steel-topped dialogs. On the canvas: steel uprights on the frame and on each department bay, kraft module boxes with a white paper end label and a steel shelf lip.                                                                                                     |
 
 The choice is saved in the browser under `openslate-org-theme` (`public/theme-init.js` applies it before paint; `lib/appearance-preferences.ts` owns it). The light and dark choice is saved under `openslate-theme`. The organization look moves to a workspace setting when the backend has one.
@@ -319,13 +332,13 @@ The palette is a set of semantic roles, not a hue list. Each look supplies its o
 - **Surface family** (`--surface`, `--surface-raised`, `--surface-sunken`, `--surface-hover`): cards and inputs, popovers and menus, tab rails and secondary fills, and hover fills.
 - **Ink** (`--ink`, `--ink-muted`): body text and secondary text. `--ink-muted` passes AA on ground, surface, and the sunken fill in every look.
 - **Data ink** (`--data-ink`): the text that people type into an input. It is `--ink` in every look except Triplicate, where it is ballpoint blue (the pen on a printed form). Input and Textarea read it. Table cells stay `--ink` on purpose, so stored data never looks like a link.
-- **Outline button material** (`--button-edge`, `--button-ink`): the outline button's border and text. Slate leaves `--button-edge` unset and falls back to `--border` where the outline variant reads it, so the Sandbox's stronger `--border` still applies; its ink is the foreground; Whiteboard uses a marker grey edge; Triplicate uses `--action` for both; Stockroom uses a `--ink-muted` edge with `--ink` text.
+- **Outline button material** (`--button-edge`, `--button-ink`): the outline button's border and text. Slate uses `--rule-strong` for the edge, as on the website, and the foreground for the ink; Whiteboard uses a marker grey edge; Triplicate uses `--action` for both; Stockroom uses a `--ink-muted` edge with `--ink` text.
 - **Rules** (`--rule`, `--rule-strong`): hairline borders and dividers. The Sandbox raises its borders to `--rule-strong` (`.sandbox-ui`).
 - **Control edge** (`--control-edge`): input and control borders, 3:1 against surface and ground.
 
 ### Canvas skin
 
-The canvas has its own layer so a look can restyle the Sandbox without new markup: `--canvas-background`, `--canvas-grid`, `--canvas-grid-major`; departments (`--canvas-dept-fill`, `--canvas-dept-frame`, `--canvas-dept-ink`); module cards (`--canvas-module-fill`, `--canvas-module-frame`, `--canvas-module-ink`); field rows (`--canvas-row-rule`, `--canvas-row-stripe`, `--canvas-field-ink` for field names, `--canvas-type-ink` for type labels); lines (`--canvas-edge`); and line labels (`--canvas-label-fill`, `--canvas-label-frame`, `--canvas-label-ink`). In Slate these are aliases of the neutrals. Whiteboard, Triplicate, and Stockroom give them their own materials. `--canvas-field-ink` is `--canvas-module-ink` in every look except Triplicate, where field names are ballpoint blue.
+The canvas has its own layer so a look can restyle the Sandbox without new markup: `--canvas-background`, `--canvas-grid`, `--canvas-grid-major`; departments (`--canvas-dept-fill`, `--canvas-dept-frame`, `--canvas-dept-ink` for the count, `--canvas-dept-name` for the name: `--ink` in Slate, `--canvas-dept-ink` in the other looks); module cards (`--canvas-module-fill`, `--canvas-module-frame`, `--canvas-module-ink`); field rows (`--canvas-row-rule`, `--canvas-row-stripe`, `--canvas-field-ink` for field names, `--canvas-type-ink` for type labels); lines (`--canvas-edge`); and line labels (`--canvas-label-fill`, `--canvas-label-frame`, `--canvas-label-ink`). In Slate these are aliases of the neutrals. Whiteboard, Triplicate, and Stockroom give them their own materials. `--canvas-field-ink` is `--canvas-module-ink` in every look except Triplicate, where field names are ballpoint blue.
 
 ### Department identity
 
@@ -335,7 +348,7 @@ Four identity colors per look (`--dept-1` to `--dept-4`), cycled in department o
 | ----------------- | --------------------- | ---------------------- | --------------------- | ------------------- | ------------------------------------ |
 | `--dept-n`        | identity mark         | identity hue           | pastel marker hue     | identity hue        | identity hue                         |
 | `--dept-n-band`   | department head       | `--canvas-dept-fill`   | the pastel `--dept-n` | paper tint          | one steel band for all               |
-| `--dept-n-card`   | module header         | `--surface-sunken`     | light pastel tint     | the same paper tint | paper end label (white in light)     |
+| `--dept-n-card`   | module header         | `--canvas-module-fill` | light pastel tint     | the same paper tint | paper end label (white in light)     |
 | `--dept-n-sheet`  | department frame body | `--canvas-dept-fill`   | `--canvas-dept-fill`  | paper tint          | `--canvas-dept-fill`                 |
 | `--dept-n-module` | module body           | `--canvas-module-fill` | `--dept-n-card`       | `--dept-n-sheet`    | kraft (`--canvas-module-fill`)       |
 | `--dept-n-stripe` | alternate field rows  | `--canvas-row-stripe`  | `--dept-n-card`       | `--dept-n-sheet`    | darker kraft (`--canvas-row-stripe`) |
@@ -386,13 +399,14 @@ Wrong: a new chip tint that is checked only in Slate light.
 
 **UI Font:** `--font-ui`, which each look sets. Slate uses Geist; Whiteboard uses Atkinson Hyperlegible Next; Triplicate and Stockroom use Archivo with its width axis.
 **Code Font:** `--font-code`. Geist Mono in Slate, Whiteboard, and Triplicate; Martian Mono in Stockroom.
+**Display Font:** `--font-display`, which each look sets. Slate uses Schibsted Grotesk (700 and 800) for page titles, other `h1` headings, and canvas department names, the same face the website and the film use for headings. The other looks set it to their UI font.
 **Stencil Font:** `--font-stencil`, Big Shoulders Stencil. Only Stockroom page titles use it.
 
-**Character:** Slate reads as a precise, familiar product sans. Each other look changes the face and the width, not the hierarchy. Faces load without preload, so a browser fetches a face only when rendered text uses it, and Slate pages load none of the look faces. Canvas lettering follows `--font-ui` too.
+**Character:** Slate reads as a precise, familiar product sans with a firm grotesk for titles. Each other look changes the face and the width, not the hierarchy. Faces load without preload, so a browser fetches a face only when rendered text uses it, and Slate pages load none of the look faces. Canvas lettering follows `--font-ui`; department names follow `--font-display` and field types follow `--font-code`.
 
 ### Hierarchy
 
-- **Headline** (600, 24px, 30px from 640px up, line height 1.25, -0.035em): page titles only, through `PageHeader` (`data-slot="page-title"`). One per page.
+- **Headline** (`--font-display`, 700, 24px, 30px from 640px up, line height 1.25, -0.025em): page titles only, through `PageHeader` (`data-slot="page-title"`). One per page.
 - **Title Large** (600, 18px, 28px line, tight tracking): section headings inside a page, such as "Organization look" (`data-slot="section-title"`).
 - **Title** (600, 16px): card titles (`data-slot="card-title"`).
 - **Body** (400, 14px, 20px line; descriptions use a 24px line and a 672px maximum width): the default text size for content, tables, and descriptions.
@@ -438,7 +452,7 @@ The system is a hybrid: tonal layering first, and a lift that each look sets. Fo
 
 ### Shadow Vocabulary
 
-- **Slate:** a soft ambient lift. Cards are flat (`--card-lift` is none) and take a `--rule` edge. Popovers take a two-layer soft shadow.
+- **Slate:** a soft ambient lift. Cards are flat (`--card-lift` is none) and take a `--rule` edge. Popovers take the two-layer `--lift-raised`. Every Tailwind shadow step maps to a lift token in `globals.css` (`shadow-xs` and `shadow-sm` to `--lift`, `shadow-md` and up to `--lift-raised`), so no component draws a shadow that its look did not set.
 - **Whiteboard:** a 1px zero-blur ledge under a soft 6px shadow, like a board sitting on its tray. Cards have no edge (`--card-edge: transparent`) and use the raised lift. Dialogs and sheets take a 3px aluminium frame, a 1px inner highlight, and the raised lift. Canvas modules rest on the board with `--lift-filter`.
 - **Triplicate:** a thin paper shadow. Cards take a `--rule-strong` edge and the resting lift, like a form on a desk. Canvas departments rest with `--lift-filter`, like copies on the desk.
 - **Stockroom:** a 2px zero-blur shelf edge under a soft shadow. Cards take a `--rule-strong` edge and the resting lift. Dialogs and sheets take a 5px inset steel band on top and the raised lift. Canvas modules sit on a 2px solid steel shelf lip (`drop-shadow(0 2px 0 var(--sr-steel))`).
@@ -467,7 +481,7 @@ Wrong: hover scales the table up or slides the connected tables toward it.
 
 ## Shapes
 
-Corners come from one token, `--radius`: 8px in Slate, 6px in Whiteboard, 2px in Triplicate and Stockroom. Tailwind derives the steps: large is `--radius`, medium is 2px less, small is 4px less (and resolves to square in the 2px looks). Buttons, inputs, cards, tab rails, and notices use large; chips use medium; the active tab uses small. Skin rules set a few corners directly: Whiteboard gives tabs a 6px top-only corner; Triplicate squares chips, tabs, notices, dialogs, sheets, and menus; Stockroom sets 1px on chips and 2px on the tab rail and notices.
+Corners come from one token, `--radius`: 8px in Slate, 6px in Whiteboard, 2px in Triplicate and Stockroom. Tailwind derives the steps: large is `--radius`, medium is 2px less, small is 4px less (and resolves to square in the 2px looks); extra large is 1.5x and 2xl is 2x `--radius`. Buttons, inputs, cards, tab rails, and notices use large; chips use medium; the active tab uses small. Skin rules set a few corners directly: Whiteboard gives tabs a 6px top-only corner; Triplicate squares chips, tabs, notices, dialogs, sheets, and menus; Stockroom sets 1px on chips and 2px on the tab rail and notices.
 
 Borders start as hairlines (1px). A look may thicken or restyle a border for its material:
 
@@ -475,14 +489,14 @@ Borders start as hairlines (1px). A look may thicken or restyle a border for its
 - **Triplicate (printed form):** 1.5px on outline buttons and chips (with a second inner stamp line); a 1.5px ink rule under table heads; a 3px double border on notices; a dashed perforation under card headers and a 2px dashed ink top on dialogs and sheets; a 1px ink rule on the sidebar and menus.
 - **Stockroom (steel):** a 3px `--sr-steel` shelf beam under card headers; a 2px steel rule under the steel table-head band; 1px row rules.
 
-Canvas nodes draw an 8px corner in SVG. Triplicate squares department and module bodies and headers (`rx: 0`); Stockroom sets 2px. The Sandbox uses the stronger rule. On the canvas, a look may thicken strokes for its material:
+Canvas corners derive from `--radius` in CSS (`rx` on the `data-sandbox-*` hooks): departments 1.75x (14px in Slate), modules 1.25x (10px), line labels 0.75x (6px). Triplicate squares department and module bodies, headers, and the department edge (`rx: 0`); Stockroom sets 2px. The Sandbox uses the stronger rule. On the canvas, a look may thicken strokes for its material:
 
 | Look       | Department frame (idle / selected) | Lines                                           | Relationship     | Handoff                 |
 | ---------- | ---------------------------------- | ----------------------------------------------- | ---------------- | ----------------------- |
-| Slate      | 1px / 2px                          | 1.5px, drift on                                 | solid            | dashed (6 4)            |
-| Whiteboard | 2.5px tape / 3.5px (any node)      | 2.6px, round caps, 3.4px when traced, drift off | solid            | dashed (10 6)           |
-| Triplicate | 1px dashed (6 4) / 2px solid       | 1.5px, drift on                                 | solid, butt caps | dashed (6 4), butt caps |
-| Stockroom  | 6px steel uprights / 7px           | 1.6px, drift off                                | solid            | dashed (8 5)            |
+| Slate      | 1px / 2px                          | 1.6px, arrowheads, drift when traced            | dashed (5 4), `--action` | solid, `--canvas-edge` |
+| Whiteboard | 2.5px tape / 3.5px (any node)      | 2.6px, round caps, 3.4px when traced, drift off | dashed (10 6)            | solid                  |
+| Triplicate | 1px dotted (1 3) / 2px solid       | 1.5px, drift when traced                        | dashed (6 4), butt caps  | solid, butt caps       |
+| Stockroom  | 6px steel uprights / 7px           | 1.6px, drift off                                | dashed (8 5)             | solid                  |
 
 State strokes (selected, moving, drop target, pressed) stay heavier than idle strokes in every look. Whiteboard modules have no frame (`--canvas-module-frame: transparent`); Triplicate modules take a navy frame; Stockroom modules take a kraft edge.
 
@@ -492,13 +506,13 @@ The page ground (`data-skin="page"`) carries a look's surface: a white board wit
 
 ### Named Rules
 
-**The Dash Means Handoff Rule.** On the canvas, a dash carries meaning. In Slate a relationship line is solid and a handoff to another department is dashed (6 4). A look may restyle width, cap, color, and dash length, but a relationship stays solid and a handoff stays dashed in every look, so the dash means the same thing wherever an owner sees it. Looks target the two kinds through `data-sandbox-edge-kind`. The Key's sample lines carry the same hooks, so they always match the canvas.
+**The Dash Means Link Rule.** On the canvas, a dash carries meaning, the same meaning as on the website and in the film. In Slate a relationship line is dashed (5 4) in `--action`, and a handoff to another department is a solid `--canvas-edge` line; both end in an arrowhead at the target module. A look may restyle width, cap, color, and dash length, but a relationship stays dashed and a handoff stays solid in every look, so the dash means the same thing wherever an owner sees it. Looks target the two kinds through `data-sandbox-edge-kind`. The Key's sample lines carry the same hooks, so they always match the canvas.
 
-Correct: `[data-theme="stockroom"] .sandbox-ui [data-sandbox-line][data-sandbox-edge-kind="handoff"] { stroke-dasharray: 8 5; }` beside a solid relationship rule.
+Correct: `[data-theme="stockroom"] .sandbox-ui [data-sandbox-line][data-sandbox-edge-kind="relationship"] { stroke-dasharray: 8 5; }` beside a solid handoff rule.
 
-Wrong: Triplicate draws relationships dashed and handoffs dotted (both kinds are dashed, so a dash no longer means handoff).
+Wrong: Triplicate draws handoffs dashed and relationships dotted (both kinds are dashed, so a dash no longer means link).
 
-Wrong: `[data-theme="whiteboard"] .sandbox-ui [data-sandbox-line] { stroke-dasharray: none; }` (every handoff turns solid, and the Key no longer matches the canvas).
+Wrong: `[data-theme="whiteboard"] .sandbox-ui [data-sandbox-line] { stroke-dasharray: none; }` (every relationship turns solid, and the Key no longer matches the canvas).
 
 **The Hairline Pattern Rule.** A look may draw a flat hairline pattern with CSS gradients on the page ground and the canvas, when the pattern comes from the look's own material (a whiteboard's marker grid, a form's ruled paper). Lines are 1px, in a quiet tint of the ground, on a regular step. Photo textures, handwriting fonts, glossy gradients, and glass stay out of every look.
 
@@ -595,7 +609,7 @@ Quiet and direct. A button is text first, with a 16px icon when it helps.
 
 The open-tab mark is one element, `data-slot="tabs-indicator"` (Base UI's tab indicator), that glides between tabs over `--motion-base`; the open tab itself only changes its ink and weight. Each look styles the indicator:
 
-- **Slate:** a sunken rail (`--surface-sunken`, 4px pad); the indicator is the lifted `--surface` pill.
+- **Slate:** a sunken rail (`--surface-sunken`, 4px pad, inset `--rule` hairline); the indicator is the lifted `--surface-raised` pill with an inset `--rule` hairline, and the open tab takes `--action-text`.
 - **Whiteboard:** no rail (transparent, no pad, 4px gaps). Tabs have a 6px top-only corner; the indicator is a 4px inset `--action` marker stroke, and the open tab is weight 700.
 - **Triplicate:** form sections. The list has no fill and a 1px `--ink` rule under it; tabs are square; the indicator is a 3px `--ink` rule, and the open tab is weight 700.
 - **Stockroom:** a steel rail (`--sr-steel-lite`, 2px corner, 2px `--sr-steel` inset at the bottom). The indicator is a surface tab with a 3px `--action` edge on a 1px steel lip, and the open tab is weight 700.
@@ -632,7 +646,7 @@ A radio group of four tiles (two columns from 640px, four from 1280px). Each til
 
 ### Sandbox canvas (signature)
 
-An ERD-style canvas of the owner's own structure. Departments are named frames on their own sheet (`--dept-n-sheet`) with a head band (`--dept-n-band`) and an identity mark. Modules are compact 232px table cards on `--dept-n-module`: a 34px header (`--dept-n-card`) with the identity mark and the table name, then 26px field rows with the name on the left in `--canvas-field-ink` and a quiet type label on the right in `--canvas-type-ink`, on `--dept-n-stripe` for alternate rows. A filled dot marks a required field; a hollow dot marks an optional one. Lines join tables at 1.5px in `--canvas-edge`, with a label chip (`--canvas-label-*`) at the middle of the line, or at the first stop along it (35%, 65%, 20%, 80%) that no other line crosses and no table covers. Dashed lines drift slowly (2.4s per cycle) in Slate and Triplicate; Whiteboard and Stockroom turn the drift off. The Key (closed by default, opens upward) names relationship, handoff, required field, and optional field, and says in one line what a module and a line are. The minimap hides text and lines and shows frames and tables. Under reduced motion, the drift and the trace fade stop.
+An ERD-style canvas of the owner's own structure, drawn in the same materials as the website and the film. Departments are named frames on their own sheet (`--dept-n-sheet`) with a head band (`--dept-n-band`), a 3px top edge in the department color (the frame's own shape, clipped), an identity mark, and the name in `--font-display`. Modules are compact 232px table cards on `--dept-n-module`: a 34px header (`--dept-n-card`) with a table glyph and the table name, then 26px field rows with the name on the left in `--canvas-field-ink` and the type label on the right in `--font-code` and `--canvas-type-ink`, on `--dept-n-stripe` for alternate rows. A filled dot marks a required field; a hollow dot marks an optional one. Lines join tables at 1.6px and end in an arrowhead: a relationship is dashed in `--action`, a handoff is solid in `--canvas-edge` (the Dash Means Link Rule). Each line has a label chip (`--canvas-label-*`; `--action-text` ink on relationships) at the middle of the line, or at the first stop along it (35%, 65%, 20%, 80%) that no other line crosses and no table covers. Hovering a module or line traces its connections in `--flow`, and only traced lines drift (2.4s per cycle) in Slate and Triplicate; Whiteboard and Stockroom turn the drift off. The Key (closed by default, opens upward) names relationship, handoff, required field, and optional field, and says in one line what a module and a line are. The minimap hides text and lines and shows frames and tables. Under reduced motion, the drift and the trace fade stop.
 
 ## Do's and Don'ts
 

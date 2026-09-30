@@ -13,9 +13,14 @@ export function Badge({
   const styles = {
     default: "bg-accent text-accent-foreground",
     secondary: "bg-secondary text-secondary-foreground",
-    success: "bg-flow-tint text-flow-text",
-    warning: "bg-warn-tint text-warn-text",
-    destructive: "bg-danger-tint text-danger-text",
+    // Status chips: an inset hairline in the signal's rule, as on the website.
+    // Sentence case, because many carry dates or phrases.
+    success:
+      "bg-flow-tint text-flow-text shadow-[inset_0_0_0_1px_var(--flow-rule)] rounded-chip font-semibold",
+    warning:
+      "bg-warn-tint text-warn-text shadow-[inset_0_0_0_1px_var(--warn-rule)] rounded-chip font-semibold",
+    destructive:
+      "bg-danger-tint text-danger-text shadow-[inset_0_0_0_1px_var(--danger-rule)] rounded-chip font-semibold",
     outline: "border border-border text-muted-foreground",
   };
   return (

@@ -115,6 +115,9 @@
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --font-ui: var(--font-geist-sans);
   --font-code: var(--font-geist-mono);
+  /* Headings, page titles, and department names. Each look sets its own;
+     a look without a display face uses its UI face. */
+  --font-display: var(--font-schibsted), var(--font-ui), sans-serif;
   /* Card material. Themes set these instead of overriding Card, so a card's
      own border or ring classes still win. Slate leaves --card-edge unset;
      it falls back to --border where it is read. */
@@ -124,6 +127,8 @@
   --canvas-dept-fill: var(--surface);
   --canvas-dept-frame: var(--rule-strong);
   --canvas-dept-ink: var(--ink-muted);
+  /* Department names; the head's count and meta use --canvas-dept-ink. */
+  --canvas-dept-name: var(--ink);
   --canvas-module-fill: var(--surface);
   --canvas-module-frame: var(--rule-strong);
   --canvas-module-ink: var(--ink);
@@ -135,7 +140,7 @@
   --canvas-label-frame: var(--rule);
   --canvas-label-ink: var(--ink);
   /* Department identity, always shown beside the department name. Slate
-     keeps it to a mark and a card edge. */
+     keeps it to a mark and a 3px top edge. */
   --dept-1: #8e79b8;
   --dept-2: #3e8f8a;
   --dept-3: #c08a3e;
@@ -144,10 +149,10 @@
   --dept-2-band: var(--canvas-dept-fill);
   --dept-3-band: var(--canvas-dept-fill);
   --dept-4-band: var(--canvas-dept-fill);
-  --dept-1-card: var(--surface-sunken);
-  --dept-2-card: var(--surface-sunken);
-  --dept-3-card: var(--surface-sunken);
-  --dept-4-card: var(--surface-sunken);
+  --dept-1-card: var(--canvas-module-fill);
+  --dept-2-card: var(--canvas-module-fill);
+  --dept-3-card: var(--canvas-module-fill);
+  --dept-4-card: var(--canvas-module-fill);
   /* Department sheet (frame fill) and module body fill, per department. */
   --dept-1-sheet: var(--canvas-dept-fill);
   --dept-2-sheet: var(--canvas-dept-fill);
@@ -170,23 +175,26 @@
   );
   /* Values people type into inputs and text areas. */
   --data-ink: var(--ink);
-  /* Outline button material. --button-edge falls back to --border where
-     it is read, so scoped --border overrides (.sandbox-ui) still apply. */
+  /* Outline button material: a strong hairline, as on the website. */
   --button-ink: var(--foreground);
+  --button-edge: var(--rule-strong);
+  --sidebar-border: var(--rule);
 }
 
 .dark,
 .dark [data-theme-preview="slate"] {
-  --ground: #0d1014;
-  --surface: #151920;
-  --surface-raised: #1b2028;
-  --surface-sunken: #1a1e25;
-  --surface-hover: #232933;
-  --ink: #eceff3;
-  --ink-muted: #9ea7b3;
-  --rule: #262c35;
-  --rule-strong: #3a424e;
-  --control-edge: #636c79;
+  /* Neutral grays, not blue-leaning ones: the same dark as the website
+     and the film, so every Slate surface reads as one design. */
+  --ground: #121212;
+  --surface: #1b1b1b;
+  --surface-raised: #222222;
+  --surface-sunken: #1e1e1e;
+  --surface-hover: #2a2a2a;
+  --ink: #ededed;
+  --ink-muted: #a3a3a3;
+  --rule: #2d2d2d;
+  --rule-strong: #424242;
+  --control-edge: #6e6e6e;
   --action: #6ea2ff;
   --action-ink: #0b1220;
   --action-text: #8db6ff;
@@ -216,14 +224,14 @@
   --chart-3: #83b58e;
   --chart-4: #ad93c1;
   --chart-5: #d3948c;
-  --canvas-background: #12161b;
-  --canvas-edge: #7a8391;
+  --canvas-background: #171717;
+  --canvas-edge: #8a8a8a;
   --dept-1: #a693d0;
   --dept-2: #5fb3ad;
   --dept-3: #d6a45c;
   --dept-4: #d88aa0;
-  --canvas-grid: color-mix(in srgb, #343b46 45%, transparent);
-  --canvas-grid-major: color-mix(in srgb, #4a5360 55%, transparent);
+  --canvas-grid: color-mix(in srgb, #3b3b3b 45%, transparent);
+  --canvas-grid-major: color-mix(in srgb, #525252 55%, transparent);
 }
 
 @theme inline {
@@ -275,9 +283,22 @@
   --color-chart-5: var(--chart-5);
   --font-sans: var(--font-ui);
   --font-mono: var(--font-code);
+  --font-heading: var(--font-display);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
+  /* Every corner derives from --radius (cards 1.5x, panels 2x), and every
+     shadow is a lift token, so each look's materials reach all components. */
+  --radius-chip: calc(var(--radius) * 0.5);
+  --radius-xl: calc(var(--radius) * 1.5);
+  --radius-2xl: calc(var(--radius) * 2);
+  --shadow-2xs: var(--lift);
+  --shadow-xs: var(--lift);
+  --shadow-sm: var(--lift);
+  --shadow-md: var(--lift-raised);
+  --shadow-lg: var(--lift-raised);
+  --shadow-xl: var(--lift-raised);
+  --shadow-2xl: var(--lift-raised);
 }
 
 /* Layered so border-color utilities (border-input, border-primary, …) win. */
@@ -285,6 +306,11 @@
   * {
     border-color: var(--border);
     box-sizing: border-box;
+  }
+
+  h1,
+  [data-slot="page-title"] {
+    font-family: var(--font-display);
   }
 }
 
@@ -326,7 +352,7 @@ textarea:focus-visible {
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--action) 22%, transparent);
+  background: var(--action-tint);
   color: var(--ink);
 }
 
@@ -489,19 +515,58 @@ textarea {
   }
 }
 
-.sandbox-ui [data-sandbox-line="true"] {
+/* Motion follows input: only the lines a hover traces drift. */
+.sandbox-ui .x6-edge[data-trace="on"] [data-sandbox-line="true"] {
   animation: sandbox-relationship-flow 2.4s linear infinite;
 }
 
-/* A handoff to another department is dashed in every look; themes may
-   change the dash but never make it match a relationship. */
-.sandbox-ui [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
-  stroke-dasharray: 6 4;
+/* A relationship is dashed and a handoff to another department is solid in
+   every look; themes may change the dash but never make the two match. */
+.sandbox-ui [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
+  stroke-dasharray: 5 4;
 }
 
-/* Canvas lettering follows the theme's type. */
+.sandbox-ui [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
+  stroke-dasharray: none;
+}
+
+/* Canvas lettering follows the theme's type: department names in the
+   display face, field types in the code face. */
 .sandbox-ui svg text {
   font-family: var(--font-ui), sans-serif;
+}
+
+.sandbox-ui svg [data-sandbox-part="department-name"] {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+.sandbox-ui svg [data-sandbox-part="field-type"] {
+  font-family: var(--font-code), monospace;
+}
+
+/* Canvas corners derive from the look's --radius: departments 1.75x,
+   modules 1.25x, line labels 0.75x. Looks with their own shape override
+   these hooks. */
+.sandbox-ui :is([data-sandbox-kind="department"], [data-sandbox-part="edge"]) {
+  rx: calc(var(--radius) * 1.75);
+  ry: calc(var(--radius) * 1.75);
+}
+
+.sandbox-ui :is([data-sandbox-kind="module"], [data-sandbox-part="header"]) {
+  rx: calc(var(--radius) * 1.25);
+  ry: calc(var(--radius) * 1.25);
+}
+
+.sandbox-ui [data-sandbox-part="line-label"] {
+  rx: calc(var(--radius) * 0.75);
+  ry: calc(var(--radius) * 0.75);
+}
+
+/* The department color shows as a 3px top edge (the frame's own shape,
+   clipped), never as a fill. */
+.sandbox-ui [data-sandbox-part="edge"] {
+  clip-path: inset(0 0 calc(100% - 3px) 0);
 }
 
 /* The selected module or department lifts off the canvas. */
@@ -519,8 +584,16 @@ textarea {
   opacity: 0.35;
 }
 
+/* A traced path shows movement, so it takes the flow color. */
 .sandbox-ui .x6-edge[data-trace="on"] [data-sandbox-line] {
-  stroke: var(--action);
+  stroke: var(--flow);
+  stroke-width: 2px;
+}
+
+.sandbox-ui
+  .x6-node[data-trace="on"]
+  [data-sandbox-kind="module"][data-selected="false"][data-feedback=""] {
+  stroke: var(--flow);
   stroke-width: 2px;
 }
 
@@ -542,7 +615,7 @@ textarea {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sandbox-ui [data-sandbox-line="true"] {
+  .sandbox-ui .x6-edge[data-trace="on"] [data-sandbox-line="true"] {
     animation: none;
   }
 
@@ -551,7 +624,10 @@ textarea {
   }
 }
 
-[data-motion="reduced"] .sandbox-ui [data-sandbox-line="true"] {
+[data-motion="reduced"]
+  .sandbox-ui
+  .x6-edge[data-trace="on"]
+  [data-sandbox-line="true"] {
   animation: none;
 }
 

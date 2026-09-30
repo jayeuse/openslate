@@ -48,6 +48,7 @@
   --radius: 0.125rem;
   --font-ui: var(--font-archivo), system-ui, sans-serif;
   --font-code: var(--font-martian-mono), ui-monospace, monospace;
+  --font-display: var(--font-ui);
   /* Materials, private to this theme's skin rules. */
   --sr-steel: #8d959d;
   --card-edge: var(--rule-strong);
@@ -56,6 +57,7 @@
   --canvas-dept-fill: #deddd6;
   --canvas-dept-frame: #8d959d;
   --canvas-dept-ink: #1c1e21;
+  --canvas-dept-name: var(--canvas-dept-ink);
   --canvas-module-fill: #d9bc92;
   --canvas-module-frame: #b08c60;
   --canvas-module-ink: #1c1e21;
@@ -147,6 +149,7 @@
   --radius: 0.125rem;
   --font-ui: var(--font-archivo), system-ui, sans-serif;
   --font-code: var(--font-martian-mono), ui-monospace, monospace;
+  --font-display: var(--font-ui);
   --sr-steel: #5d656c;
   --card-edge: var(--rule-strong);
   --card-lift: var(--lift);
@@ -154,6 +157,7 @@
   --canvas-dept-fill: #1b1e21;
   --canvas-dept-frame: #5d656c;
   --canvas-dept-ink: #ecedea;
+  --canvas-dept-name: var(--canvas-dept-ink);
   --canvas-module-fill: #6b5538;
   /* Changed test rows sit on a darker base, so light type ink stays AA. */
   --canvas-test-fill: color-mix(in srgb, var(--action) 20%, #453622);
@@ -376,7 +380,11 @@
 
 [data-theme="stockroom"]
   .sandbox-ui
-  :is([data-sandbox-body], [data-sandbox-part="header"]) {
+  :is(
+    [data-sandbox-body],
+    [data-sandbox-part="header"],
+    [data-sandbox-part="edge"]
+  ) {
   rx: 2px;
   ry: 2px;
 }
@@ -392,12 +400,12 @@
 
 [data-theme="stockroom"]
   .sandbox-ui
-  [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
+  [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
   stroke-dasharray: none;
 }
 
 [data-theme="stockroom"]
   .sandbox-ui
-  [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
+  [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
   stroke-dasharray: 8 5;
 }

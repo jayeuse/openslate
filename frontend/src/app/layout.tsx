@@ -7,6 +7,7 @@ import {
   Geist,
   Geist_Mono,
   Martian_Mono,
+  Schibsted_Grotesk,
 } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
@@ -21,6 +22,15 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
   preload: false,
+});
+
+// Slate's display face: headings, page titles, and department names.
+// Preloaded because Slate is the default look and every page has a title,
+// so the title never swaps face after the first paint.
+const schibstedGrotesk = Schibsted_Grotesk({
+  variable: "--font-schibsted",
+  subsets: ["latin"],
+  weight: ["700", "800"],
 });
 
 // Organization themes (src/app/themes). Without preload, a browser fetches a
@@ -75,7 +85,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       // differs from this render. Suppress the warning and keep React
       // from patching those attributes back.
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} ${atkinson.variable} ${archivo.variable} ${martianMono.variable} ${bigShouldersStencil.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${schibstedGrotesk.variable} ${atkinson.variable} ${archivo.variable} ${martianMono.variable} ${bigShouldersStencil.variable} h-full antialiased`}
     >
       <head>
         {/* eslint-disable-next-line @next/next/no-sync-scripts */}

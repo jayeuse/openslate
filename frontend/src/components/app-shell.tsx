@@ -369,7 +369,7 @@ export function AppShell({
           >
             <header
               data-skin="topbar"
-              className="border-border bg-background sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5"
+              className="border-border bg-card sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5"
             >
               <div className="flex min-w-0 items-center gap-2.5">
                 <Button

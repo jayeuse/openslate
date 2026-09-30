@@ -983,7 +983,9 @@ test("a line to another department is drawn as a handoff", async ({ page }) => {
         ),
       };
     }, theme);
-    expect(dashes.handoff, theme).not.toBe(dashes.relationship);
+    // The dash means a link: relationships are dashed, handoffs are solid.
+    expect(dashes.relationship, theme).not.toBe("none");
+    expect(dashes.handoff, theme).toBe("none");
     expect(dashes.keyRelationship, theme).toBe(dashes.relationship);
     expect(dashes.keyHandoff, theme).toBe(dashes.handoff);
   }
