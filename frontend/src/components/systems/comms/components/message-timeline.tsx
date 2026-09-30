@@ -41,6 +41,7 @@ import {
   type TimelineActions,
   type TimelinePeople,
 } from "./message-shared";
+import { reportCommsError } from "../state/comms-feedback";
 
 function MessageText({
   text,
@@ -107,7 +108,8 @@ export function MessageTimeline({
   TimelineActions) {
   const [editing, setEditing] = useState("");
   const [editText, setEditText] = useState("");
-  const [notice, setNotice] = useState("");
+  // Failures show as a visible OpenComms notice (state/comms-feedback.ts).
+  const setNotice = reportCommsError;
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -115,9 +117,6 @@ export function MessageTimeline({
   }, []);
   return (
     <>
-      <p role="status" className="sr-only">
-        {notice}
-      </p>
       {visibleMessages.map((message, index) => {
         const authorId = messageAuthorId(message, people);
         const person = people.find((item) => item.id === authorId);

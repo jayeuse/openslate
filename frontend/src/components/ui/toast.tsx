@@ -4,22 +4,43 @@ import { CheckCircle2, CircleAlert, Info, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 const manager = Toast.createToastManager();
 export const toast = {
-  add(options: {
+  /** Errors stay until dismissed; other toasts close on their own. An
+   *  action (such as Undo) closes the toast when used. */
+  add({
+    action,
+    ...options
+  }: {
     title: string;
     description?: string;
     type: "success" | "error" | "info";
+    action?: { label: string; onClick: () => void };
+    /** Runs when the toast starts closing (timeout, dismiss, or action). */
+    onClose?: () => void;
   }) {
-    return manager.add({
+    const id: string = manager.add({
       ...options,
       priority: options.type === "error" ? "high" : "low",
+      timeout: options.type === "error" ? 0 : 6000,
+      actionProps: action && {
+        children: action.label,
+        onClick: () => {
+          action.onClick();
+          manager.close(id);
+        },
+      },
     });
+    return id;
   },
 };
 function ToastList() {
   const { toasts } = Toast.useToastManager<Record<string, never>>();
   return (
     <Toast.Portal>
-      <Toast.Viewport className="fixed right-4 bottom-4 z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2 outline-none">
+      {/* A notice never covers a primary control: bottom left on wider
+          screens (over lists, clear of composers and page actions), and
+          below the 56px top bar on phones, where a composer fills the
+          bottom edge. */}
+      <Toast.Viewport className="fixed z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2 outline-none max-sm:top-[calc(3.5rem+0.5rem)] max-sm:left-1/2 max-sm:-translate-x-1/2 sm:bottom-4 sm:left-4">
         {toasts.map((item) => {
           const Icon =
             item.type === "success"
@@ -44,7 +65,13 @@ function ToastList() {
                   <Toast.Title className="text-sm font-medium" />
                   <Toast.Description className="text-muted-foreground text-sm" />
                 </div>
+                {item.actionProps && (
+                  <Toast.Action className="text-action-text hover:bg-muted focus-visible:outline-ring -my-1 min-h-8 shrink-0 rounded-[var(--radius)] px-2.5 text-sm font-semibold outline-none focus-visible:outline-2" />
+                )}
+                {/* Base UI hides Close from assistive technology but keeps it
+                    focusable; a focusable control must keep its name. */}
                 <Toast.Close
+                  aria-hidden={false}
                   aria-label="Dismiss notification"
                   className="text-muted-foreground hover:bg-muted focus-visible:outline-ring rounded-sm p-1 outline-none focus-visible:outline-2"
                 >

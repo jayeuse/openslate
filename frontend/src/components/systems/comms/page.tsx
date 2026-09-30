@@ -134,6 +134,11 @@ import {
 } from "./domain/configuration";
 import { CommsSettingsDialog } from "./components/settings-dialog";
 import { CommsToolsDialog } from "./components/tools-dialog";
+import {
+  ConfirmActionDialog,
+  type ConfirmActionRequest,
+} from "./components/confirm-action-dialog";
+import { reportCommsDone, reportCommsError } from "./state/comms-feedback";
 
 function stageCommsEditor(
   draft: SampleTransactionDraft,
@@ -379,7 +384,12 @@ function CommsSkeleton({
 }
 
 export default function SampleComms() {
-  const [notice, setNotice] = useState("");
+  // Failures show as a visible notice; results that are already visible
+  // (a sent message) are only announced.
+  const setNotice = reportCommsError;
+  const [announcement, setAnnouncement] = useState("");
+  const [confirmRequest, setConfirmRequest] =
+    useState<ConfirmActionRequest | null>(null);
   const { commsResource, workspace, run, isPending } =
     useCommsWorkspace(setNotice);
   const {
@@ -731,7 +741,7 @@ export default function SampleComms() {
         `${window.location.origin}/comms?conversation=${encodeURIComponent(id)}`,
       )
       .then(
-        () => setNotice("Conversation link copied."),
+        () => reportCommsDone("Conversation link copied."),
         () => setNotice("The browser could not copy the link."),
       );
   }
@@ -825,26 +835,32 @@ export default function SampleComms() {
       ),
     }),
   );
-  const { changeMessage, deleteMessage, validateDraft, sendMessage } =
-    createCommsMessageOperations({
-      run,
-      selected,
-      viewerId,
-      replyingTo,
-      setThreadId,
-      setReplyingTo,
-      setNotice,
-      scrollToLatest,
-      config,
-      viewer,
-      channel,
-      categories,
-      people,
-      roles,
-      allMessages,
-      channelThreads,
-      records,
-    });
+  const {
+    changeMessage,
+    deleteMessage,
+    undoDelete,
+    validateDraft,
+    sendMessage,
+  } = createCommsMessageOperations({
+    run,
+    selected,
+    viewerId,
+    replyingTo,
+    setThreadId,
+    setReplyingTo,
+    setNotice,
+    announce: setAnnouncement,
+    scrollToLatest,
+    config,
+    viewer,
+    channel,
+    categories,
+    people,
+    roles,
+    allMessages,
+    channelThreads,
+    records,
+  });
   async function moveCategory(id: string, direction: number) {
     try {
       await run(
@@ -921,7 +937,40 @@ export default function SampleComms() {
       );
     }
   }
+  /** Deleting shows a notice with Undo, so a slip costs one click. */
+  async function deleteWithUndo(id: string): Promise<string | null> {
+    const original = messages.find((item) => item.id === id);
+    const error = await deleteMessage(id);
+    if (!error && original)
+      reportCommsDone("Message deleted.", {
+        label: "Undo",
+        onClick: () => void undoDelete(original),
+      });
+    return error;
+  }
+  function confirmArchive(channel: Channel, opener: HTMLElement) {
+    setConfirmRequest({
+      title: `Archive #${channel.name}?`,
+      description:
+        "No one can post in an archived channel. Its messages stay readable, and you can restore it at any time.",
+      confirmLabel: "Archive channel",
+      onConfirm: () => void toggleChannelArchive(channel.id),
+      opener,
+    });
+  }
+  function confirmBlock(directId: string, name: string, opener: HTMLElement) {
+    setConfirmRequest({
+      title: `Block ${name}?`,
+      description:
+        "Neither of you can send messages in this conversation until you unblock them. Earlier messages stay.",
+      confirmLabel: "Block user",
+      destructive: true,
+      onConfirm: () => void toggleDirect(directId, "blocked"),
+      opener,
+    });
+  }
   async function toggleChannelArchive(channelId: string) {
+    const target = channels.find((item) => item.id === channelId);
     try {
       await run(
         `channel:archive:${channelId}`,
@@ -943,7 +992,15 @@ export default function SampleComms() {
           "The channel archive state could not be saved.",
         ),
       );
+      return;
     }
+    if (!target) return;
+    if (target.archived) reportCommsDone(`#${target.name} restored.`);
+    else
+      reportCommsDone(`#${target.name} archived.`, {
+        label: "Undo",
+        onClick: () => void toggleChannelArchive(channelId),
+      });
   }
   async function ensureRecordThread(item: RecordThread) {
     try {
@@ -1156,6 +1213,10 @@ export default function SampleComms() {
                   )}
                 </div>
               )}
+              <ConfirmActionDialog
+                request={confirmRequest}
+                onClose={() => setConfirmRequest(null)}
+              />
               {settingsDialog && (
                 <CommsSettingsDialog
                   {...settingsDialog}
@@ -1513,10 +1574,12 @@ export default function SampleComms() {
                                             label: item.archived
                                               ? "Restore channel"
                                               : "Archive channel",
-                                            onSelect: () =>
-                                              void toggleChannelArchive(
-                                                item.id,
-                                              ),
+                                            onSelect: (opener) =>
+                                              item.archived
+                                                ? void toggleChannelArchive(
+                                                    item.id,
+                                                  )
+                                                : confirmArchive(item, opener),
                                           },
                                         ]}
                                         onEdit={(opener) =>
@@ -1905,8 +1968,14 @@ export default function SampleComms() {
                           <Action
                             size="sm"
                             variant="ghost"
-                            onClick={() =>
-                              void toggleDirect(selected, "blocked")
+                            onClick={(event) =>
+                              direct.blocked
+                                ? void toggleDirect(selected, "blocked")
+                                : confirmBlock(
+                                    selected,
+                                    direct.user,
+                                    event.currentTarget,
+                                  )
                             }
                           >
                             {direct.blocked ? "Unblock user" : "Block user"}
@@ -1946,9 +2015,9 @@ export default function SampleComms() {
                             <MessageScrollerContent className="gap-0">
                               {!canView ? (
                                 <Alert>
-                                  Your role does not have access to this
-                                  channel. Choose another conversation or update
-                                  the channel settings.
+                                  You do not have access to this channel. Choose
+                                  another conversation, or ask an administrator
+                                  for access.
                                 </Alert>
                               ) : (
                                 <>
@@ -1993,7 +2062,7 @@ export default function SampleComms() {
                                       })
                                     }
                                     onChange={changeMessage}
-                                    onDelete={deleteMessage}
+                                    onDelete={deleteWithUndo}
                                     onReply={beginReply}
                                     onThread={startThread}
                                     onJump={jumpToMessage}
@@ -2046,7 +2115,9 @@ export default function SampleComms() {
                         onSend={sendMessage}
                         pending={isPending(`message:send:${selected}`)}
                       />
-                      {notice && <Alert className="sr-only">{notice}</Alert>}
+                      <p role="status" className="sr-only">
+                        {announcement}
+                      </p>
                     </section>
                   </ResizablePanel>
                 )}

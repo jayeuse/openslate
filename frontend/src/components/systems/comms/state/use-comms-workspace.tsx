@@ -12,6 +12,7 @@ import {
   type SampleRecord,
 } from "../../shared/data/sample-data";
 import { useSampleResource } from "../../shared/runtime/sample-async";
+import { SampleOperationError } from "../../shared/runtime/sample-runtime";
 import {
   useSampleRuntime,
   useSampleState,
@@ -229,6 +230,11 @@ export function useCommsWorkspace(onSeedError: (message: string) => void) {
         "commsExamplesLoaded",
       ],
     ).catch((error: unknown) => {
+      // A newer run of this seed (React runs effects twice in development)
+      // or a newer change cancelled this one; that run seeds instead, so a
+      // cancellation is not a failure to report.
+      if (error instanceof SampleOperationError && error.kind === "aborted")
+        return;
       onSeedError(
         messageFromCommsError(error, "Conversations could not be loaded."),
       );

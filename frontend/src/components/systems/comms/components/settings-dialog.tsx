@@ -50,6 +50,10 @@ import {
 } from "./settings-fields";
 import { PermissionFields, PermissionInspector } from "./permission-inspector";
 import {
+  ConfirmActionDialog,
+  type ConfirmActionRequest,
+} from "./confirm-action-dialog";
+import {
   COMMS_CONFIGURATION_KEY,
   messageFromCommsError,
   readCommsConfiguration,
@@ -106,6 +110,9 @@ export function CommsSettingsDialog({
     structuredClone(getCommsScope(config, target)),
   );
   const [draft, setDraft] = useState(baseline);
+  const [confirmReset, setConfirmReset] = useState<ConfirmActionRequest | null>(
+    null,
+  );
   const [initialPreferences] = useState(() =>
     structuredClone(config.preferences[PERSON_ID] ?? DEFAULT_COMMS_PREFERENCES),
   );
@@ -475,7 +482,19 @@ export function CommsSettingsDialog({
       onSave={save}
       saveLabel={saveLabel}
       footer={
-        <Action type="button" className="mr-auto" onClick={resetDefaults}>
+        <Action
+          type="button"
+          className="mr-auto"
+          onClick={(event) =>
+            setConfirmReset({
+              title: `Reset ${title ?? currentLabel} to default?`,
+              description: `This clears every section of this dialog back to its default. Nothing is saved until you select ${saveLabel ?? "Save changes"}.`,
+              confirmLabel: "Reset to default",
+              onConfirm: resetDefaults,
+              opener: event.currentTarget,
+            })
+          }
+        >
           Reset to default
         </Action>
       }
@@ -782,6 +801,10 @@ export function CommsSettingsDialog({
           )}
         </div>
       </Tabs>
+      <ConfirmActionDialog
+        request={confirmReset}
+        onClose={() => setConfirmReset(null)}
+      />
     </ConfigurationFrame>
   );
 }
