@@ -143,6 +143,16 @@ import {
   type ConfirmActionRequest,
 } from "./components/confirm-action-dialog";
 import { reportCommsDone, reportCommsError } from "./state/comms-feedback";
+import { EXAMPLE_FLOWS } from "./data/examples";
+import {
+  channelGroupAccess,
+  channelTone,
+  commsGroup,
+  recordContext,
+  visibleToLabel,
+} from "./domain/groups";
+import { GroupMark } from "./components/group-mark";
+import { RecordPanel } from "./components/record-panel";
 
 function stageCommsEditor(
   draft: SampleTransactionDraft,
@@ -676,6 +686,11 @@ export default function SampleComms() {
   const currentThread = canView
     ? threads.find((item) => item.id === threadId)
     : undefined;
+  // A linked record opens in the same place as a thread; a thread wins.
+  const [recordId, setRecordId] = useState("");
+  const openRecord = currentThread
+    ? undefined
+    : records.find((item) => item.id === recordId);
   const {
     container,
     channelsPanel,
@@ -692,7 +707,7 @@ export default function SampleComms() {
     threadWidth,
   } = useCommsPanelLayout({
     preferences,
-    hasThread: !!currentThread,
+    hasThread: !!currentThread || !!openRecord,
     membersVisible,
   });
   const {
@@ -1224,6 +1239,67 @@ export default function SampleComms() {
       pending={isPending(`thread:update:${currentThread.id}`)}
     />
   );
+  function showRecord(id: string) {
+    setThreadId("");
+    setRecordId(id);
+  }
+  function conversationName(id: string): string {
+    const namedChannel = channels.find((item) => item.id === id);
+    if (namedChannel) return `#${namedChannel.name}`;
+    return directs.find((item) => item.id === id)?.user ?? "A conversation";
+  }
+  // Records linked in conversations, most recently mentioned first.
+  // Only conversations this person can open feed the record lists.
+  const visibleConversation = (id: string) => {
+    const target = channels.find((item) => item.id === id);
+    if (!target) return directs.some((item) => item.id === id);
+    return resolveCommsPermission(
+      config,
+      { person: viewer, channel: target, categories },
+      "viewChannel",
+    ).allowed;
+  };
+  const recordMessages = messages.filter(
+    (item) => item.recordId && visibleConversation(item.conversation),
+  );
+  const followedRecords = [
+    ...new Map(
+      [...recordMessages]
+        .sort((a, b) => b.created - a.created)
+        .map((item) => [item.recordId!, item] as const),
+    ).keys(),
+  ]
+    .map((id) => records.find((record) => record.id === id))
+    .filter((record) => record !== undefined)
+    .slice(0, 4);
+  const recordContent = openRecord && (
+    <RecordPanel
+      key={openRecord.id}
+      record={openRecord}
+      people={people}
+      mentions={recordMessages
+        .filter((item) => item.recordId === openRecord.id)
+        .sort((a, b) => b.created - a.created)
+        .map((item) => ({
+          messageId: item.id,
+          conversationName: conversationName(item.conversation),
+          author: item.author,
+          // Mentions are a preview; formatting marks are not shown.
+          text: item.text
+            .replace(/\*\*(.+?)\*\*\n/g, "$1: ")
+            .replace(/[*_`]/g, ""),
+        }))}
+      onJump={(messageId) => {
+        // On narrow screens the record covers the timeline; close it first.
+        if (!wide) setRecordId("");
+        const target = messages.find((item) => item.id === messageId);
+        if (target && target.conversation !== selected)
+          select(target.conversation);
+        requestAnimationFrame(() => jumpToMessage(messageId));
+      }}
+      onClose={() => setRecordId("")}
+    />
+  );
 
   if (commsResource.status === "error" && commsResource.data === undefined)
     return (
@@ -1484,8 +1560,24 @@ export default function SampleComms() {
                                           "-rotate-90",
                                       )}
                                     />
-                                    <span className="truncate">
-                                      {category.name}
+                                    {category.groupId && (
+                                      <GroupMark
+                                        tone={
+                                          commsGroup(category.groupId)?.tone ??
+                                          0
+                                        }
+                                        className="ml-0.5"
+                                      />
+                                    )}
+                                    <span className="flex min-w-0 flex-col">
+                                      <span className="truncate">
+                                        {category.name}
+                                      </span>
+                                      {category.groupId && (
+                                        <span className="text-muted-foreground truncate text-xs font-normal">
+                                          {category.groupId} group
+                                        </span>
+                                      )}
                                     </span>
                                   </CollapsibleTrigger>
                                   <Action
@@ -1776,6 +1868,49 @@ export default function SampleComms() {
                             <Plus className="size-3" />
                             Create category
                           </Action>
+                          {followedRecords.length > 0 && (
+                            <section className="mt-5">
+                              <h2 className="text-muted-foreground px-2 text-xs font-semibold">
+                                Records you follow
+                              </h2>
+                              <ul
+                                aria-label="Records you follow"
+                                className="mt-1 flex flex-col"
+                              >
+                                {followedRecords.map((record) => {
+                                  const { module, group } = recordContext(
+                                    record,
+                                    people,
+                                  );
+                                  return (
+                                    <li key={record.id}>
+                                      <Button
+                                        type="button"
+                                        variant={
+                                          openRecord?.id === record.id
+                                            ? "secondary"
+                                            : "ghost"
+                                        }
+                                        className="h-auto min-h-11 w-full justify-start gap-2 px-2 py-1.5 text-left font-normal"
+                                        onClick={() => showRecord(record.id)}
+                                      >
+                                        <GroupMark tone={group?.tone ?? 0} />
+                                        <span className="flex min-w-0 flex-col">
+                                          <span className="truncate text-sm font-semibold">
+                                            {record.title}
+                                          </span>
+                                          <span className="text-muted-foreground truncate text-xs">
+                                            {group?.name ?? module} ·{" "}
+                                            {record.status}
+                                          </span>
+                                        </span>
+                                      </Button>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </section>
+                          )}
                           <div className="mt-5 flex items-center justify-between px-2">
                             <h2 className="text-muted-foreground text-xs font-semibold">
                               Direct messages
@@ -1884,7 +2019,52 @@ export default function SampleComms() {
                           <p className="text-muted-foreground hidden truncate text-xs lg:block">
                             {channel?.description ?? "Private conversation"}
                           </p>
+                          {channel && (
+                            <p className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs sm:hidden">
+                              <GroupMark
+                                tone={channelTone(
+                                  channelGroupAccess(channel, categories),
+                                )}
+                                className="size-2"
+                              />
+                              <span className="truncate">
+                                {visibleToLabel(
+                                  channelGroupAccess(channel, categories),
+                                )}
+                              </span>
+                            </p>
+                          )}
                         </div>
+                        {channel && (
+                          <button
+                            type="button"
+                            title="Group access is shown but not enforced yet."
+                            onClick={(event) =>
+                              setEditor({
+                                kind: "channel",
+                                value: channel,
+                                opener: event.currentTarget,
+                              })
+                            }
+                            className="bg-muted text-muted-foreground hover:text-foreground focus-visible:outline-ring hidden h-7 max-w-64 shrink-0 items-center gap-1.5 rounded-[var(--radius)] px-2 text-xs shadow-[inset_0_0_0_1px_var(--border)] outline-none focus-visible:outline-2 sm:inline-flex"
+                          >
+                            <GroupMark
+                              tone={channelTone(
+                                channelGroupAccess(channel, categories),
+                              )}
+                              className="size-2"
+                            />
+                            <span className="truncate">
+                              {visibleToLabel(
+                                channelGroupAccess(channel, categories),
+                              )}
+                            </span>
+                            <span className="sr-only">
+                              . Group access is shown but not enforced yet.
+                              Opens channel settings.
+                            </span>
+                          </button>
+                        )}
                         <FloatingList
                           label="Threads"
                           icon={<MessageSquare className="size-4" />}
@@ -2080,6 +2260,10 @@ export default function SampleComms() {
                                     key={selected}
                                     visibleMessages={visibleMessages}
                                     allMessages={allMessages}
+                                    flows={EXAMPLE_FLOWS.filter(
+                                      (flow) => flow.conversation === selected,
+                                    )}
+                                    onOpenRecord={showRecord}
                                     records={records}
                                     threads={channelThreads}
                                     highlightedId={highlightedId}
@@ -2157,7 +2341,11 @@ export default function SampleComms() {
                   <>
                     <ResizableHandle
                       aria-label={
-                        currentThread ? "Resize thread" : "Resize members"
+                        currentThread
+                          ? "Resize thread"
+                          : openRecord
+                            ? "Resize record"
+                            : "Resize members"
                       }
                       onKeyDownCapture={(event) => {
                         if (event.key !== "Home" && event.key !== "End") return;
@@ -2165,38 +2353,62 @@ export default function SampleComms() {
                         event.stopPropagation();
                         const width =
                           event.key === "Home"
-                            ? currentThread
+                            ? currentThread || openRecord
                               ? 320
                               : 200
-                            : currentThread
+                            : currentThread || openRecord
                               ? threadMaximum
                               : memberMaximum;
                         rightPanel.current?.resize(width);
                         patchPreferences(
-                          currentThread
+                          currentThread || openRecord
                             ? { threadWidth: width }
                             : { memberWidth: width },
                         );
                       }}
                     />
                     <ResizablePanel
-                      key={currentThread ? "thread" : "members"}
-                      id={currentThread ? "thread" : "members"}
+                      key={
+                        currentThread
+                          ? "thread"
+                          : openRecord
+                            ? "record"
+                            : "members"
+                      }
+                      id={
+                        currentThread
+                          ? "thread"
+                          : openRecord
+                            ? "record"
+                            : "members"
+                      }
                       panelRef={rightPanel}
-                      defaultSize={currentThread ? threadWidth : memberWidth}
-                      minSize={currentThread ? 320 : 200}
-                      maxSize={currentThread ? threadMaximum : memberMaximum}
+                      defaultSize={
+                        currentThread || openRecord ? threadWidth : memberWidth
+                      }
+                      minSize={currentThread || openRecord ? 320 : 200}
+                      maxSize={
+                        currentThread || openRecord
+                          ? threadMaximum
+                          : memberMaximum
+                      }
                       groupResizeBehavior="preserve-pixel-size"
                     >
                       <aside
                         id="comms-members"
                         aria-label={
-                          currentThread ? "Thread panel" : "Channel members"
+                          currentThread
+                            ? "Thread panel"
+                            : openRecord
+                              ? "Record"
+                              : "Channel members"
                         }
                         className="bg-muted/15 h-full min-h-0 overflow-hidden border-l"
                       >
                         {currentThread ? (
                           threadContent
+                        ) : openRecord ? (
+                          recordContent
                         ) : (
                           <ScrollArea className="h-full">
                             {membersContent}
@@ -2211,32 +2423,43 @@ export default function SampleComms() {
                 {!wide &&
                   !toolsDialog &&
                   !settingsDialog &&
-                  (memberOpen || currentThread) && (
+                  (memberOpen || currentThread || openRecord) && (
                     <Dialog
                       open
                       onOpenChange={(open) => {
                         if (!open) {
                           setMemberOpen(false);
                           setThreadId("");
+                          setRecordId("");
                         }
                       }}
                     >
                       <DialogContent
                         className={
-                          currentThread
+                          currentThread || openRecord
                             ? "h-[calc(100dvh-24px)] max-h-[calc(100dvh-24px)] max-w-lg overflow-hidden p-0"
                             : "h-[85dvh] max-w-md"
                         }
                       >
                         <DialogTitle className="sr-only">
-                          {currentThread ? "Thread" : "Members"}
+                          {currentThread
+                            ? "Thread"
+                            : openRecord
+                              ? "Record"
+                              : "Members"}
                         </DialogTitle>
                         <DialogDescription className="sr-only">
                           {currentThread
                             ? "Replies to this message"
-                            : "People with access to this conversation"}
+                            : openRecord
+                              ? "A linked record and where it is mentioned"
+                              : "People with access to this conversation"}
                         </DialogDescription>
-                        {currentThread ? threadContent : membersContent}
+                        {currentThread
+                          ? threadContent
+                          : openRecord
+                            ? recordContent
+                            : membersContent}
                       </DialogContent>
                     </Dialog>
                   )}

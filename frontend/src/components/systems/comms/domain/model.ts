@@ -6,9 +6,27 @@ export interface Permissions {
   posting: "everyone" | "roles";
   postRoles: string[];
 }
+/**
+ * A handoff between groups, shown as a quiet row in a conversation. These are
+ * sample events until OpenComms is connected to the Sandbox and records.
+ */
+export interface CommsFlow {
+  id: string;
+  conversation: string;
+  created: number;
+  /** Group ids, as in COMMS_GROUPS. */
+  from: string;
+  to: string;
+  recordId?: string;
+  text: string;
+}
+/** What an access group may do in a channel. */
+export type GroupAccessLevel = "none" | "read" | "post";
 export interface Category extends Permissions {
   id: string;
   name: string;
+  /** The access group this category belongs to; none means everyone. */
+  groupId?: string;
 }
 export interface Channel extends Permissions {
   id: string;
@@ -18,6 +36,9 @@ export interface Channel extends Permissions {
   inherit: boolean;
   archived: boolean;
   system: boolean;
+  /** Per-group access, keyed by group id ("everyone" for the rest). When
+   *  absent, the category's group can post and nobody else can open it. */
+  groupAccess?: Record<string, GroupAccessLevel>;
 }
 export const OPEN_PERMISSIONS: Permissions = {
   access: "everyone",

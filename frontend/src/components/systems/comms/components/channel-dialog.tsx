@@ -15,6 +15,7 @@ import {
   type SampleTransactionDraft,
 } from "../../shared/runtime/sample-state";
 import { CommsSettingsDialog } from "./settings-dialog";
+import { GroupAccessField } from "./group-access-field";
 import { Action, Choice } from "../../shared/components/ui";
 import { TextField } from "./ui";
 import { OPEN_PERMISSIONS, type Category, type Channel } from "../domain/model";
@@ -179,6 +180,14 @@ export function ChannelDialog(props: EditorProps) {
                   </NativeSelectOption>
                 ))}
               </Choice>
+              <GroupAccessField
+                channel={channel}
+                categories={props.categories}
+                people={people}
+                onChange={(groupAccess) =>
+                  setDraft({ ...channel, groupAccess })
+                }
+              />
             </>
           )}
           <Choice

@@ -541,7 +541,7 @@ export function CommsSettingsDialog({
       >
         <TabsList
           aria-label="Settings sections"
-          className="bg-muted/20 max-w-full items-stretch justify-start overflow-x-auto rounded-none border-b p-2 sm:flex-col sm:border-r sm:border-b-0"
+          className="bg-muted/20 max-w-full items-stretch justify-start overflow-x-auto rounded-none border-b p-2 sm:sticky sm:top-0 sm:flex-col sm:self-start sm:border-r sm:border-b-0"
         >
           {sections.map((item) => (
             <TabsTrigger

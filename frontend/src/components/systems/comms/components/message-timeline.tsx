@@ -1,12 +1,19 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { MessagesSquare, Paperclip, Pin, Reply } from "lucide-react";
+import {
+  ArrowRight,
+  MessagesSquare,
+  Paperclip,
+  Pin,
+  Reply,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SampleRecord } from "../../shared/data/sample-data";
 import {
   messageAuthorId,
   samplePresence,
+  type CommsFlow,
   type Message,
   type Thread,
 } from "../domain/model";
@@ -42,6 +49,13 @@ import {
   type TimelinePeople,
 } from "./message-shared";
 import { reportCommsError } from "../state/comms-feedback";
+import {
+  commsGroup,
+  recordContext,
+  recordNumber,
+  type GroupTone,
+} from "../domain/groups";
+import { GroupMark } from "./group-mark";
 
 function MessageText({
   text,
@@ -75,6 +89,89 @@ function MessageText({
       ),
     );
 }
+// The department's top edge on a record card, as on a canvas module.
+const TONE_EDGE: Record<GroupTone, string> = {
+  0: "shadow-[inset_0_3px_0_var(--rule-strong)]",
+  1: "shadow-[inset_0_3px_0_var(--dept-1)]",
+  2: "shadow-[inset_0_3px_0_var(--dept-2)]",
+  3: "shadow-[inset_0_3px_0_var(--dept-3)]",
+  4: "shadow-[inset_0_3px_0_var(--dept-4)]",
+};
+
+/** The table glyph of a module card on the Sandbox canvas. */
+function TableGlyph() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      className="text-muted-foreground size-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+    >
+      <rect x="2" y="2.5" width="12" height="11" rx="2" />
+      <path d="M2 6.5h12M6.5 6.5v7" />
+    </svg>
+  );
+}
+
+/** A handoff between groups, drawn with the canvas's own line and arrow. */
+function FlowRow({
+  flow,
+  records,
+}: {
+  flow: CommsFlow;
+  records: SampleRecord[];
+}) {
+  const from = commsGroup(flow.from);
+  const to = commsGroup(flow.to);
+  const record = records.find((item) => item.id === flow.recordId);
+  return (
+    <div
+      role="note"
+      aria-label={`Handoff from ${from?.name ?? flow.from} to ${to?.name ?? flow.to}`}
+      className="my-3 flex items-center gap-3 px-3"
+    >
+      <span className="text-muted-foreground grid w-9 shrink-0 place-items-center">
+        <ArrowRight aria-hidden="true" className="size-4" />
+      </span>
+      <div className="bg-background flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-[calc(var(--radius)*1.25)] px-3 py-2 text-sm shadow-[inset_0_0_0_1px_var(--border)]">
+        <span className="inline-flex items-center gap-1.5 font-semibold">
+          <GroupMark tone={from?.tone ?? 0} />
+          {from?.name ?? flow.from}
+        </span>
+        <svg
+          viewBox="0 0 48 12"
+          aria-hidden="true"
+          className="h-3 w-12 shrink-0 text-[color:var(--canvas-edge)]"
+        >
+          <path d="M1 6h41" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M40 2l6 4-6 4z" fill="currentColor" />
+        </svg>
+        <span className="inline-flex items-center gap-1.5 font-semibold">
+          <GroupMark tone={to?.tone ?? 0} />
+          {to?.name ?? flow.to}
+        </span>
+        <span className="text-muted-foreground min-w-0">
+          {flow.recordId && (
+            <b className="text-foreground font-mono text-xs font-medium">
+              {recordNumber(flow.recordId)}
+            </b>
+          )}{" "}
+          {record ? `${record.title} · ` : ""}
+          {flow.text}
+        </span>
+        <time className="text-muted-foreground ml-auto text-xs tabular-nums">
+          {new Date(flow.created).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </time>
+      </div>
+    </div>
+  );
+}
+
 /** Plain names for the record details a linked record card can show. */
 const RECORD_CARD_LABELS: Record<string, string> = {
   status: "Status",
@@ -86,6 +183,8 @@ const RECORD_CARD_LABELS: Record<string, string> = {
 export function MessageTimeline({
   visibleMessages,
   allMessages,
+  flows = [],
+  onOpenRecord,
   records,
   threads,
   highlightedId,
@@ -108,6 +207,9 @@ export function MessageTimeline({
 }: {
   visibleMessages: Message[];
   allMessages: Message[];
+  /** Handoffs for this conversation, placed between messages by time. */
+  flows?: CommsFlow[];
+  onOpenRecord?: (recordId: string) => void;
   records: SampleRecord[];
   threads: Thread[];
   highlightedId?: string;
@@ -131,7 +233,14 @@ export function MessageTimeline({
         const authorName = person?.name ?? message.author;
         const own = authorId === viewerId;
         const previous = visibleMessages[index - 1];
+        // Handoffs that happened before this message and after the last one.
+        const flowsBefore = flows.filter(
+          (flow) =>
+            flow.created <= message.created &&
+            (!previous || flow.created > previous.created),
+        );
         const grouped =
+          !flowsBefore.length &&
           preferences.groupMessages &&
           previous &&
           messageAuthorId(previous, people) === authorId &&
@@ -160,6 +269,9 @@ export function MessageTimeline({
                 <Separator className="flex-1" />
               </div>
             )}
+            {flowsBefore.map((flow) => (
+              <FlowRow key={flow.id} flow={flow} records={records} />
+            ))}
             <MessageMenu
               id={message.id}
               highlighted={highlightedId === message.id}
@@ -439,39 +551,74 @@ export function MessageTimeline({
                       </AttachmentContent>
                     </Attachment>
                   ))}
-                  {message.recordId && preferences.previews && (
-                    <Link
-                      href={`/openview?record=${encodeURIComponent(message.recordId)}`}
-                      className="mt-2 block text-sm"
-                    >
-                      <Card className="hover:bg-muted w-full">
-                        <CardContent className="p-3">
-                          <span className="text-muted-foreground mb-1 block text-xs font-semibold">
-                            Linked record in OpenView
-                          </span>
-                          <span className="underline underline-offset-4">
-                            {settings.recordCardFields.includes("title")
-                              ? (records.find(
-                                  (record) => record.id === message.recordId,
-                                )?.title ?? "View record")
-                              : "View linked record"}
-                          </span>
-                          {settings.recordCardFields
-                            .filter((field) => field !== "title")
-                            .map((field) => (
-                              <span className="mt-1 block text-xs" key={field}>
-                                {RECORD_CARD_LABELS[field] ?? field}:{" "}
-                                {String(
-                                  records.find(
-                                    (record) => record.id === message.recordId,
-                                  )?.[field as keyof SampleRecord] ?? "—",
-                                )}
+                  {message.recordId &&
+                    preferences.previews &&
+                    (() => {
+                      const record = records.find(
+                        (item) => item.id === message.recordId,
+                      );
+                      const title = record?.title ?? "Linked record";
+                      const { module, group } = recordContext(record, people);
+                      return (
+                        <div
+                          className={cn(
+                            "border-card-edge bg-card mt-2 max-w-md overflow-hidden rounded-[calc(var(--radius)*1.25)] border",
+                            TONE_EDGE[group?.tone ?? 0],
+                          )}
+                        >
+                          <div className="flex items-center gap-2 border-b pr-3">
+                            <button
+                              type="button"
+                              onClick={() => onOpenRecord?.(message.recordId!)}
+                              className="hover:bg-muted focus-visible:outline-ring flex min-h-11 min-w-0 flex-1 flex-wrap items-center gap-x-2 px-3 py-1.5 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 sm:flex-nowrap"
+                            >
+                              <span className="sr-only">Open record: </span>
+                              <TableGlyph />
+                              <span className="text-muted-foreground order-first w-full text-xs sm:order-none sm:w-auto sm:shrink-0">
+                                {group ? `${group.name} › ` : ""}
+                                {module}
                               </span>
-                            ))}
-                        </CardContent>
-                      </Card>
-                    </Link>
-                  )}
+                              {settings.recordCardFields.includes("title") && (
+                                <span className="truncate text-sm font-semibold">
+                                  {title}
+                                </span>
+                              )}
+                            </button>
+                            <Link
+                              href={`/openview?record=${encodeURIComponent(message.recordId)}`}
+                              aria-label={`OpenView: open ${title}`}
+                              className="text-action-text shrink-0 text-xs font-semibold hover:underline"
+                            >
+                              OpenView
+                            </Link>
+                          </div>
+                          {settings.recordCardFields.some(
+                            (field) => field !== "title",
+                          ) && (
+                            <dl className="grid grid-cols-2 sm:grid-cols-3">
+                              {settings.recordCardFields
+                                .filter((field) => field !== "title")
+                                .map((field) => (
+                                  <div
+                                    key={field}
+                                    className="min-w-0 border-r px-3 py-2 last:border-r-0"
+                                  >
+                                    <dt className="text-muted-foreground text-xs">
+                                      {RECORD_CARD_LABELS[field] ?? field}
+                                    </dt>
+                                    <dd className="truncate font-mono text-xs">
+                                      {String(
+                                        record?.[field as keyof SampleRecord] ??
+                                          "—",
+                                      )}
+                                    </dd>
+                                  </div>
+                                ))}
+                            </dl>
+                          )}
+                        </div>
+                      );
+                    })()}
                   <div className="flex flex-wrap gap-1">
                     {Object.entries(message.reactions ?? {})
                       .filter(([, users]) => users.length)
@@ -525,6 +672,14 @@ export function MessageTimeline({
           </MessageScrollerItem>
         );
       })}
+      {flows
+        .filter(
+          (flow) =>
+            flow.created > (visibleMessages.at(-1)?.created ?? -Infinity),
+        )
+        .map((flow) => (
+          <FlowRow key={flow.id} flow={flow} records={records} />
+        ))}
     </>
   );
 }

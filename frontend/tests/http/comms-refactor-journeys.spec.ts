@@ -342,3 +342,143 @@ test("two quick deletes each get their own Undo", async ({ page }) => {
   await expect(article("First quick delete")).toHaveCount(1);
   await expect(article("Second quick delete")).toHaveCount(1);
 });
+
+test("categories carry their access group, and a channel says who can use it", async ({
+  page,
+}) => {
+  await page.goto("/comms");
+  await expect(
+    page.getByRole("button", { name: /^Service delivery/ }),
+  ).toContainText("Operations");
+  await page.getByRole("button", { name: "dispatch", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: /^Visible\ to\ Operations \./ }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "finance-desk", exact: true }).click();
+  await expect(
+    page.getByRole("button", {
+      name: /^Visible\ to\ Finance\ and\ Commercial \./,
+    }),
+  ).toBeVisible();
+});
+
+test("a linked record opens beside the conversation and gives way to a thread", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/comms");
+  const followed = page.getByRole("list", { name: "Records you follow" });
+  await followed.getByRole("button", { name: /Replace pump seal/ }).click();
+  const panel = page.getByRole("complementary", { name: "Record" });
+  await expect(
+    panel.getByRole("heading", { name: "Replace pump seal" }),
+  ).toBeVisible();
+  await expect(panel).toContainText("Service requests");
+  await expect(
+    panel.getByRole("link", { name: "Open in OpenView" }),
+  ).toHaveAttribute("href", /record=sample-sr-1004/);
+  await expect(panel.getByRole("list", { name: "Mentioned in" })).toContainText(
+    "#operations",
+  );
+  // A thread takes the same place.
+  await page.getByRole("button", { name: /^Thread: Riverside asked/ }).click();
+  await expect(panel).toHaveCount(0);
+  await expect(
+    page.getByRole("complementary", { name: "Thread panel" }),
+  ).toBeVisible();
+  // The record card in the timeline opens the record again.
+  await page
+    .getByRole("button", { name: /^Open record: .*Replace pump seal/ })
+    .first()
+    .click();
+  await expect(panel).toBeVisible();
+});
+
+test("handoffs appear between messages and are not messages", async ({
+  page,
+}) => {
+  await page.goto("/comms");
+  const handoff = page.getByRole("note", {
+    name: "Handoff from Customer service to Operations",
+  });
+  await expect(handoff).toBeVisible();
+  await expect(handoff).toContainText("SR-1004");
+  await expect(
+    page.getByRole("article").filter({ hasText: "SR-1004" }),
+  ).toHaveCount(0);
+});
+
+test("group access in channel settings changes who the channel says it is for", async ({
+  page,
+}) => {
+  await page.goto("/comms");
+  await page.getByRole("button", { name: "dispatch", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  const settings = page.getByRole("dialog", { name: "Channel settings" });
+  const access = settings.getByRole("group", { name: "Who can use #dispatch" });
+  await expect(access).toContainText("not enforced yet");
+  const commercial = access.getByRole("radiogroup", { name: "Commercial" });
+  await commercial.getByText("Read", { exact: true }).click();
+  await expect(
+    commercial.getByRole("radio", { name: "Read", exact: true }),
+  ).toBeChecked();
+  await expect(access).toContainText("can read");
+  await settings
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: /^Visible\ to\ Operations\ and\ Commercial \./,
+    }),
+  ).toBeVisible();
+});
+
+test("lowering Everyone keeps what each group can already do", async ({
+  page,
+}) => {
+  await page.goto("/comms");
+  await page.getByRole("button", { name: "operations", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  const access = page
+    .getByRole("dialog", { name: "Channel settings" })
+    .getByRole("group", { name: "Who can use #operations" });
+  const everyone = access.getByRole("radiogroup", { name: "Everyone" });
+  await everyone.getByText("Read", { exact: true }).click();
+  await expect(
+    access
+      .getByRole("radiogroup", { name: "Operations" })
+      .getByRole("radio", { name: "Read and post" }),
+  ).toBeChecked();
+  await expect(access).toContainText(
+    "can post here, and everyone else can read.",
+  );
+});
+
+test("on a phone, a record's mention closes the record and shows the message", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/comms");
+  await page.getByRole("button", { name: "operations", exact: true }).click();
+  await page
+    .getByRole("button", { name: /^Open record: .*Replace pump seal/ })
+    .first()
+    .click();
+  const record = page.getByRole("dialog", { name: "Record" });
+  await expect(record).toBeVisible();
+  await record
+    .getByRole("list", { name: "Mentioned in" })
+    .getByRole("button", { name: /#operations · Sofia Garcia/ })
+    .click();
+  await expect(record).toHaveCount(0);
+  await expect(
+    page.getByText(
+      "Riverside asked for a clear next update time. Can we confirm one before I call back?",
+      { exact: true },
+    ),
+  ).toBeInViewport();
+});
