@@ -1,4 +1,4 @@
-"""Plan, populate, and verify Harbor Operations sample data through UI APIs.
+"""Plan, populate, and verify organization sample data through UI APIs.
 
 Run from backend/: ``uv run python operations/seed_sample_data.py plan``.
 """
@@ -49,33 +49,16 @@ from operations.reset_auth import ResetAuth
 from operations.sample_blueprint import SampleDataset
 from operations.sample_episodes import plan_sessions
 from operations.sample_history import plan_history
-from operations.sample_rejections import ACTIVITY_CASES, CLOSING_CASES
+from operations.sample_packs.registry import default_pack, get_pack, pack_keys
 from operations.sample_scenario import build_dataset
-
-_MANILA = ZoneInfo("Asia/Manila")
-_SUPPORTING_COUNTS = {
-    "identities": 44,
-    "built_in_account_roles_preserved": 3,
-    "groups": 9,
-    "boards": 12,
-    "widgets": 48,
-    "posts": 96,
-    "events": 144,
-    "reminders": 24,
-    "attachments": 0,
-    "views": 36,
-    "dashboards": 6,
-    "dashboard_widgets": 24,
-    "reports": 12,
-}
 
 
 class SampleOperationError(RuntimeError):
     """A safe operator-facing preflight or population failure."""
 
 
-def _today_manila() -> date:
-    return datetime.now(_MANILA).date()
+def _today_for_organization(key: str | None = None) -> date:
+    return datetime.now(ZoneInfo(get_pack(key).identity.timezone)).date()
 
 
 def _anchor_date(value: str) -> date:
@@ -99,18 +82,19 @@ def build_plan_summary(dataset: SampleDataset) -> dict[str, Any]:
         "operational_records": sum(dataset.module_counts.values()),
         "relationship_edges": len(dataset.edges),
         "module_counts": dict(dataset.module_counts),
-        "supporting_counts": dict(_SUPPORTING_COUNTS),
+        "supporting_counts": dict(dataset.organization.content.supporting_counts),
         "session_count": len(plan_sessions(dataset)),
         "writes_by_person": _writes_by_person(dataset),
-        "planned_rejections": len(ACTIVITY_CASES) + len(CLOSING_CASES),
+        "planned_rejections": len(dataset.organization.rejections.activity_cases)
+        + len(dataset.organization.rejections.closing_cases),
     }
 
 
 def _writes_by_person(dataset: SampleDataset) -> dict[str, int]:
-    """Planned creates, links (by the child record's creator) and history updates."""
+    """Planned creates, links by their actual writers, and history updates."""
     creators = {record.logical_id: record.creator_key for record in dataset.records}
     writes = Counter(creators.values())
-    writes.update(creators[edge.target_record_id] for edge in dataset.edges)
+    writes.update(edge.creator_key or creators[edge.target_record_id] for edge in dataset.edges)
     writes.update(
         step.updater_key for history in plan_history(dataset).values() for step in history.steps
     )
@@ -330,7 +314,7 @@ def _local_preflight() -> tuple[dict[str, Any], str, str]:
 
 def _print_plan(dataset: SampleDataset, preflight: Mapping[str, Any], mailpit_url: str) -> None:
     summary = build_plan_summary(dataset)
-    print("Harbor Operations sample-data plan (read-only)")
+    print(dataset.organization.blueprint.plan_heading)
     print(f"local_instance={preflight['instance']}")
     print(f"schema_head={preflight['alembic_head']}")
     print(f"administrator_eligible={str(preflight['admin_eligible']).lower()}")
@@ -382,8 +366,11 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument(
             "--profile", choices=("small", "standard", "large"), default="standard"
         )
+        command.add_argument(
+            "--organization", choices=pack_keys(), default=default_pack().identity.key
+        )
         command.add_argument("--seed", type=int, default=42)
-        command.add_argument("--anchor-date", type=_anchor_date, default=_today_manila())
+        command.add_argument("--anchor-date", type=_anchor_date, default=None)
         if name == "populate":
             command.add_argument("--run-root", type=Path, required=True)
             command.add_argument("--admin-password-file", type=Path)
@@ -396,9 +383,13 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command in {"plan", "populate"} and args.anchor_date is None:
+            args.anchor_date = _today_for_organization(args.organization)
         report, api_url, mailpit_url = _local_preflight()
         if args.command == "plan":
-            dataset = build_dataset(args.profile, args.seed, args.anchor_date)
+            dataset = build_dataset(
+                args.profile, args.seed, args.anchor_date, organization=get_pack(args.organization)
+            )
             _print_plan(dataset, report, mailpit_url)
             return 0
         if args.command == "populate" and report.get("storage_objects") != 0:
@@ -425,7 +416,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             result: SamplePopulationReport | SampleVerificationReport
             if args.command == "populate":
-                dataset = build_dataset(args.profile, args.seed, args.anchor_date)
+                dataset = build_dataset(
+                    args.profile,
+                    args.seed,
+                    args.anchor_date,
+                    organization=get_pack(args.organization),
+                )
                 _print_plan(dataset, report, mailpit_url)
                 result = populate_sample_data(
                     api_url=api_url,
@@ -438,6 +434,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     profile=args.profile,
                     seed=args.seed,
                     anchor_date=args.anchor_date,
+                    organization=get_pack(args.organization),
                 )
             else:
                 result = verify_sample_data(

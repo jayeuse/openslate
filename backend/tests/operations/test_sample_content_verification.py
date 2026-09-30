@@ -57,18 +57,27 @@ def test_content_readback_rejects_each_missing_required_outcome(
     observed = {**EXPECTED_CONTENT, "report_outputs": 12, "read_failures": 0}
     observed[missing_key] -= 1
     board_keys = {
-        "boards", "widgets", "posts", "events", "reminders", "files", "record_links",
-        "project_group_grants", "post_publications", "publication_revisions", "read_failures",
+        "boards",
+        "widgets",
+        "posts",
+        "events",
+        "reminders",
+        "files",
+        "record_links",
+        "project_group_grants",
+        "post_publications",
+        "publication_revisions",
+        "read_failures",
     }
     monkeypatch.setattr(
         sample_boards,
         "verify_boards",
-        lambda _admin, *, mappings: {key: observed[key] for key in board_keys},
+        lambda _admin, *, mappings, organization=None: {key: observed[key] for key in board_keys},
     )
     monkeypatch.setattr(
         sample_openview,
         "verify_openview",
-        lambda _admin, *, mappings: {
+        lambda _admin, *, mappings, organization=None: {
             key: value for key, value in observed.items() if key not in board_keys
         },
     )
@@ -128,9 +137,7 @@ def test_project_board_grants_require_exact_intended_groups_and_levels(
         if request.url.path == "/api/boards":
             return httpx.Response(200, json=_page([{"id": BOARD_ID, "scope": "project"}]))
         if request.url.path == f"/api/boards/{BOARD_ID}/groups":
-            return httpx.Response(
-                200, json={"board_id": BOARD_ID, "revision": 3, "groups": grants}
-            )
+            return httpx.Response(200, json={"board_id": BOARD_ID, "revision": 3, "groups": grants})
         if request.url.path in {
             f"/api/boards/{BOARD_ID}/widgets",
             f"/api/boards/{BOARD_ID}/posts",

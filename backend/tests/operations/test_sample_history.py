@@ -9,7 +9,7 @@ import pytest
 
 from operations.sample_blueprint import SampleDataset
 from operations.sample_episodes import plan_sessions
-from operations.sample_history import STATUS_PATHS, RecordHistory, plan_history
+from operations.sample_history import RecordHistory, plan_history
 from operations.sample_scenario import build_dataset
 
 
@@ -42,7 +42,7 @@ def test_each_history_ends_at_the_generated_status_through_real_steps() -> None:
     for logical_id, history in plan_history(dataset).items():
         record = records[logical_id]
         final = _status_label(dataset, record.module_key, record.data)
-        path = STATUS_PATHS[record.module_key][final]
+        path = dataset.organization.history.status_paths[record.module_key][final]
         assert history.initial_status == path[0]
         assert [step.status for step in history.steps] == [*path[1:], final]
         assert all(
@@ -52,13 +52,15 @@ def test_each_history_ends_at_the_generated_status_through_real_steps() -> None:
 
 @pytest.mark.parametrize("profile", ["small", "standard"])
 def test_named_cases_and_automation_inputs_are_left_alone(profile: str) -> None:
-    from operations.sample_trigger_population import _PATCH_TRIGGERS, _trigger_mutation
-
     dataset = _dataset(profile)
     histories = plan_history(dataset)
-    edited = {_trigger_mutation(dataset, key)[0] for key in _PATCH_TRIGGERS}
-    named = {"invoices:000001", "payments:000001", "sales_orders:000001", "customers:000001"}
-    assert not (edited | named) & set(histories)
+    edited = {
+        dataset.organization.blueprint.trigger_mutation(dataset, key)[0]
+        for key in dataset.organization.blueprint.patch_trigger_keys
+    }
+    named = {record_id for scenario in dataset.named_scenarios for record_id in scenario.record_ids}
+    protected = dataset.organization.history.protected_records
+    assert not (edited | named | protected) & set(histories)
 
 
 def test_update_steps_come_after_creation_and_in_order() -> None:
@@ -91,7 +93,7 @@ def test_some_records_are_reassigned_back_to_their_final_owner() -> None:
 
 def test_every_planned_status_is_a_real_option_of_its_module() -> None:
     dataset = _dataset("small")
-    for module_key, paths in STATUS_PATHS.items():
+    for module_key, paths in dataset.organization.history.status_paths.items():
         module = next(
             item
             for item in dataset.document["design"]["modules"]

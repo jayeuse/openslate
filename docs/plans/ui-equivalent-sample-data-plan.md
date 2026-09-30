@@ -12,7 +12,7 @@ Every populated value must be enterable through an existing supported UI control
 
 Current OpenView record inspection is read-only. Add New Record to the selected module's Views results, Edit to its inspector, and relationship assignment/link/unlink controls. These controls establish UI equivalence for the existing record and relationship APIs before operational population. Sandbox Test inputs remain temporary simulations; Platform's local sample controls do not establish live authoring eligibility.
 
-The authorized operational target is 20,000 Harbor Operations Group records and a coherent relationship graph. Populate only after the authoring controls are implemented and verified. Empty results and failures must remain honest; no fallback examples may stand in for seeded records.
+The authorized operational target is the counts the run manifest records for the selected organization pack and profile. Populate only after the authoring controls are implemented and verified. Empty results and failures must remain honest; no fallback examples may stand in for seeded records.
 
 ## Department boundary and cross-department references
 
@@ -32,8 +32,7 @@ and still exercises one-to-one, one-to-many and many-to-many cardinalities.
 Exact definition and edge counts are printed from the generated profile before
 population. No backend authorization or relationship contract is changed.
 
-The admitted design has 18 relationship definitions. Small contains 1,001
-records and 1,145 edges; Standard contains 20,000 records and 22,880 edges. These are the Harbor sizes before organization packs; "Proposed: run sizes and organization packs" replaces them.
+The admitted Harbor design has 18 relationship definitions. Record, edge and content totals are the counts the run manifest records. Current Harbor record totals are Small 1,001, Standard 5,001 and Large 20,004. Version 1 manifests retain the old sizes for verification.
 
 ## Supported scope
 
@@ -42,7 +41,7 @@ Retain Harbor Operations Group with six departments and 24 modules. Use the exis
 | Area | Proposed coverage through current controls |
 | --- | --- |
 | Sandbox | Six departments, 24 modules, supported field types, relationship definitions, readable layout, checkpoints, temporary Test history, and actual publication history |
-| Operational records | 20,000 Standard records across the 24 modules, with real relationship edges and named financial, service and purchasing scenarios |
+| Operational records | The counts the run manifest records across the pack's modules, with real relationship edges and named financial, service and purchasing scenarios |
 | Record triggers | Eight supported same-record Set-field rules using record-created, field-changed, threshold-crossed, and daily/weekly schedules; clearly distinguish simulated Test results from live executions |
 | People | 36 invited internal identities: 30 active, four pending, two disabled; eight guests: six active, one pending, one disabled, with valid sponsors and expiry |
 | Groups and access | Nine groups with overlapping membership and department/module read, write, and manage rows, including a read-only Internal Audit group; roles are only admin, member, and guest |
@@ -56,9 +55,9 @@ Counts are proposed targets, not evidence of created data. `plan` must report th
 
 Exclude file insertion and scanner acceptance, removed custom roles, service identities, access rules/defaults/deny policies, Board grants/templates/favorites/homes/personal read or bookmark states, content audiences, private Dashboards, and saved chart preferences. Workspace execution is not represented as a fabricated service account. Include real record links, live record-trigger scenarios, populated CSV/report outputs, and cross-module business journeys after the authoring prerequisite passes.
 
-The operational target retains the following distributions. Small uses five percent of each count rounded upward, with a minimum of one (1,001 records); Standard totals 20,000; Large uses five times each count (100,000) and remains opt-in. "Proposed: run sizes and organization packs" replaces these sizes. Retain deterministic business values with seed 42 and an explicit Asia/Manila business-date anchor; server IDs, passwords and authentication timestamps remain newly generated.
+Use the counts the run manifest records. Harbor Standard uses each old module count divided by four and rounded upward (5,001 records). Small uses each Standard count divided by five and rounded upward, with a minimum of one (1,001 records). Large uses four times each Standard count (20,004 records) and remains opt-in. The table below records the frozen version 1 distribution: Small used five percent rounded upward, Standard used 20,000, and Large used five times Standard. Retain deterministic business values with seed 42 and an explicit pack-local business-date anchor; server IDs, passwords and authentication timestamps remain newly generated.
 
-| Department | Standard module counts |
+| Department | Legacy version 1 Standard module counts |
 | --- | --- |
 | Sales | Customers 300; Contacts 600; Quotes 800; Sales Orders 2,000 |
 | Customer Service | Customer Sites 300; Service Contracts 200; Service Requests 1,200; Request Updates 1,400 |
@@ -244,7 +243,7 @@ A generator test fails if any value contains a whole-word match for `sample`, `t
 | SIM-1 | For the same seed, anchor and profile, `plan` prints the same episode count, per-user write counts and planned rejections on every run. |
 | SIM-2 | Every create, update and relationship audit row matches the planned actor for that write. No write comes from a user without the required access. |
 | SIM-3 | At least 80% of active internal members make at least one write in Small, and all of them do in Standard. |
-| SIM-4 | Record, edge and content totals equal the admitted profile totals (Small 1,001 records and 1,145 edges; Standard 20,000 and 22,880). After run sizes change, the totals are the counts the run manifest records. |
+| SIM-4 | Record, edge and content totals equal the counts the run manifest records. |
 | SIM-5 | Each planned rejection returns its expected status and detail. Read-back shows no record, edge, group, Board or audit change from these requests. |
 | SIM-6 | No generated value contains a deny-listed word or brand. Title repetition stays under the configured limit in each module. |
 | SIM-7 | A Standard run longer than the access-token lifetime completes without a 401 or a Supabase 429. |
@@ -273,7 +272,7 @@ Backend files keep the 500-line limit. `sample_people.py`, `sample_scenario.py` 
 
 ## Proposed: run sizes and organization packs
 
-Status: **proposed, not implemented.** Decided with the user on 2026-09-30.
+Status: **Harbor and School pack data are implemented.** Organization extraction, run sizes and manifest version 2 are complete. School has offline admission checks. Its live Small run and user check are pending. No live run was performed for these changes. Decided with the user on 2026-09-30.
 
 ### Run sizes
 
@@ -282,10 +281,10 @@ Each run populates one organization pack. The operator runs one pack, checks it 
 | Profile | Records | Use |
 | --- | --- | --- |
 | Standard | 5,000 to 7,000 per pack, across all its departments and modules | The normal run for each organization |
-| Small | About one fifth of Standard | A quick check while a pack is being built |
+| Small | Each Standard module count divided by five, rounded upward, minimum one | A quick check while a pack is being built |
 | Large | Four times Standard | Occasional scale check; opt-in |
 
-Each pack sets its own module counts so that its Standard run falls in the 5,000 to 7,000 range. Each run manifest records its organization pack and exact module counts, and `verify` uses the recorded counts, so a later change to a pack does not break the verification of an older run. The 20,000-record Harbor run from 2026-09-30 is a Large-size run under the old definition.
+Each pack sets its own module counts so that its Standard run falls in the 5,000 to 7,000 range. Version 2 manifests record the organization pack, profile, simulated span, sampling scope, exact module counts and planned totals. `verify` rebuilds the dataset from the recorded module counts, so later default-count changes do not alter an older run. Version 1 manifests use the frozen Harbor counts under the old rules. Changes to a pack's fields or generators can still affect verification; these manifests do not freeze a full pack revision. The 20,000-record Harbor run from 2026-09-30 is a Large-size run under the old definition.
 
 ### Organization packs
 

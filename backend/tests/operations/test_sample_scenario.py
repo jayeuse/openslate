@@ -9,33 +9,6 @@ from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.validation import validate_document
 from operations.sample_scenario import build_dataset, build_document, module_counts
 
-STANDARD_COUNTS = {
-    "customers": 300,
-    "contacts": 600,
-    "quotes": 800,
-    "sales_orders": 2_000,
-    "customer_sites": 300,
-    "service_contracts": 200,
-    "service_requests": 1_200,
-    "request_updates": 1_400,
-    "equipment": 600,
-    "work_orders": 2_000,
-    "inspections": 1_000,
-    "maintenance_plans": 200,
-    "products": 500,
-    "warehouses": 10,
-    "stock_movements": 3_500,
-    "stock_counts": 490,
-    "suppliers": 100,
-    "purchase_orders": 700,
-    "purchase_lines": 1_400,
-    "goods_receipts": 700,
-    "invoices": 800,
-    "payments": 600,
-    "expenses": 500,
-    "credit_notes": 100,
-}
-
 
 def _module(dataset, key: str) -> dict[str, object]:
     return next(
@@ -73,40 +46,7 @@ def _edges_for(dataset, relationship_key: str):
     return [edge for edge in dataset.edges if edge.relationship_id == relationship_id]
 
 
-def test_profiles_have_the_admitted_exact_counts() -> None:
-    expected_small = {
-        "customers": 15,
-        "contacts": 30,
-        "quotes": 40,
-        "sales_orders": 100,
-        "customer_sites": 15,
-        "service_contracts": 10,
-        "service_requests": 60,
-        "request_updates": 70,
-        "equipment": 30,
-        "work_orders": 100,
-        "inspections": 50,
-        "maintenance_plans": 10,
-        "products": 25,
-        "warehouses": 1,
-        "stock_movements": 175,
-        "stock_counts": 25,
-        "suppliers": 5,
-        "purchase_orders": 35,
-        "purchase_lines": 70,
-        "goods_receipts": 35,
-        "invoices": 40,
-        "payments": 30,
-        "expenses": 25,
-        "credit_notes": 5,
-    }
-
-    assert module_counts("standard") == STANDARD_COUNTS
-    assert sum(module_counts("standard").values()) == 20_000
-    assert module_counts("small") == expected_small
-    assert sum(module_counts("small").values()) == 1_001
-    assert module_counts("large") == {key: value * 5 for key, value in STANDARD_COUNTS.items()}
-    assert sum(module_counts("large").values()) == 100_000
+def test_unknown_profile_is_rejected() -> None:
     with pytest.raises(ValueError, match="profile"):
         module_counts("enormous")
 
@@ -397,38 +337,53 @@ def test_purchase_and_sales_document_statuses_match_their_linked_activity(profil
         for edge in _edges_for(dataset, "purchase_order_receipts")
         if edge.source_record_id in order_ids
     }
-    wanted = receipt_ids | order_ids | {
-        f"purchase_lines:{index * 2 + line + 1:06d}"
-        for index in purchase_cases
-        for line in (0, 1)
-    } | {
-        "sales_orders:000003", "sales_orders:000008", "invoices:000003",
-        "invoices:000008", "payments:000007", "sales_orders:001001", "invoices:001001",
-    }
+    wanted = (
+        receipt_ids
+        | order_ids
+        | {
+            f"purchase_lines:{index * 2 + line + 1:06d}"
+            for index in purchase_cases
+            for line in (0, 1)
+        }
+        | {
+            "sales_orders:000003",
+            "sales_orders:000008",
+            "invoices:000003",
+            "invoices:000008",
+            "payments:000007",
+            "sales_orders:001001",
+        }
+    )
     records = {
         record.logical_id: record for record in dataset.records if record.logical_id in wanted
     }
 
     for index, (expected_order, expected_lines, accepted_total) in purchase_cases.items():
         order_id = f"purchase_orders:{index + 1:06d}"
-        line_ids = {
-            f"purchase_lines:{index * 2 + line + 1:06d}" for line in (0, 1)
-        }
+        line_ids = {f"purchase_lines:{index * 2 + line + 1:06d}" for line in (0, 1)}
         assert {
             edge.target_record_id
             for edge in _edges_for(dataset, "purchase_order_lines")
             if edge.source_record_id == order_id
         } == line_ids
         assert _select_label(dataset, records[order_id], "Status") == expected_order
-        assert tuple(
-            _select_label(dataset, records[f"purchase_lines:{index * 2 + line + 1:06d}"], "Status")
-            for line in (0, 1)
-        ) == expected_lines
-        assert sum(
-            _value(dataset, records[edge.target_record_id], "Units accepted")
-            for edge in _edges_for(dataset, "purchase_order_receipts")
-            if edge.source_record_id == order_id
-        ) == accepted_total
+        assert (
+            tuple(
+                _select_label(
+                    dataset, records[f"purchase_lines:{index * 2 + line + 1:06d}"], "Status"
+                )
+                for line in (0, 1)
+            )
+            == expected_lines
+        )
+        assert (
+            sum(
+                _value(dataset, records[edge.target_record_id], "Units accepted")
+                for edge in _edges_for(dataset, "purchase_order_receipts")
+                if edge.source_record_id == order_id
+            )
+            == accepted_total
+        )
 
     assert _select_label(dataset, records["sales_orders:000003"], "Status") == "Cancelled"
     assert _select_label(dataset, records["invoices:000003"], "Status") == "Cancelled"
@@ -439,8 +394,7 @@ def test_purchase_and_sales_document_statuses_match_their_linked_activity(profil
         dataset, records["sales_orders:000008"], "Reference"
     )
     assert any(
-        edge.source_record_id == "invoices:000008"
-        and edge.target_record_id == "payments:000007"
+        edge.source_record_id == "invoices:000008" and edge.target_record_id == "payments:000007"
         for edge in _edges_for(dataset, "invoice_payments")
     )
     orders_by_reference = {
@@ -453,8 +407,23 @@ def test_purchase_and_sales_document_statuses_match_their_linked_activity(profil
         order_cancelled = _select_label(dataset, order, "Status") == "Cancelled"
         invoice_cancelled = _select_label(dataset, invoice, "Status") == "Cancelled"
         assert order_cancelled == invoice_cancelled
-    if profile == "standard":
-        assert _select_label(dataset, records["sales_orders:001001"], "Status") == "Cancelled"
     if profile == "large":
-        assert _select_label(dataset, records["sales_orders:001001"], "Status") != "Cancelled"
-        assert _select_label(dataset, records["invoices:001001"], "Status") != "Cancelled"
+        assert _select_label(dataset, records["sales_orders:001001"], "Status") == "Cancelled"
+
+
+def test_legacy_standard_counts_keep_the_high_index_cancellation_case() -> None:
+    from operations.sample_packs import default_pack
+
+    pack = default_pack()
+    legacy_counts = pack.catalog.legacy_counts_by_profile
+    assert legacy_counts is not None
+    dataset = build_dataset(
+        "standard",
+        seed=42,
+        anchor_date=date(2026, 9, 29),
+        organization=pack,
+        module_counts_override=legacy_counts["standard"],
+    )
+    records = _records_by_id(dataset)
+
+    assert _select_label(dataset, records["sales_orders:001001"], "Status") == "Cancelled"

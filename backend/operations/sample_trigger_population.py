@@ -12,24 +12,15 @@ from operations.sample_client import SampleClient
 from operations.sample_population import SamplePopulationError, _api, _api_id
 from operations.sample_verification import SampleVerificationError, list_all_rows
 
-_RECORD_CREATED = ("order-created-confirmation", "urgent-request-created")
-_PATCH_TRIGGERS = (
-    "quote-value-changed",
-    "work-order-state-changed",
-    "large-invoice-threshold",
-    "large-movement-threshold",
-)
-_SCHEDULE_TRIGGERS = ("daily-stock-review", "weekly-maintenance-review")
-
 
 def validate_record_trigger_candidates(dataset: SampleDataset) -> None:
-    """Ensure generated records exercise both enabled record-created rules."""
-    for key in _RECORD_CREATED:
+    """Ensure generated records exercise enabled record-created rules."""
+    for key in dataset.organization.blueprint.record_created_trigger_keys:
         trigger = _trigger_by_key(dataset, key)
         candidates = _candidate_records(dataset, trigger)
         if not candidates:
             raise SamplePopulationError(f"No authored record exercises trigger {key}")
-    for key in _PATCH_TRIGGERS:
+    for key in dataset.organization.blueprint.patch_trigger_keys:
         _trigger_mutation(dataset, key)
 
 
@@ -45,7 +36,7 @@ def exercise_record_triggers(
     """Wait for real actions and prove their values through the records API."""
     evidence: list[dict[str, Any]] = []
     mutations: list[dict[str, Any]] = []
-    for key in _RECORD_CREATED:
+    for key in dataset.organization.blueprint.record_created_trigger_keys:
         trigger = _trigger_by_key(dataset, key)
         candidates = _candidate_records(dataset, trigger)
         evidence.append(
@@ -63,7 +54,7 @@ def exercise_record_triggers(
             )
         )
 
-    for key in _PATCH_TRIGGERS:
+    for key in dataset.organization.blueprint.patch_trigger_keys:
         trigger = _trigger_by_key(dataset, key)
         logical_id, changed_doc_field, changed_value = _trigger_mutation(dataset, key)
         sample = next((item for item in dataset.records if item.logical_id == logical_id), None)
@@ -135,7 +126,7 @@ def exercise_record_triggers(
                 timeout=180,
             )
         )
-    for key in _SCHEDULE_TRIGGERS:
+    for key in dataset.organization.blueprint.schedule_trigger_keys:
         trigger = _trigger_by_key(dataset, key)
         if trigger.get("enabled") is not False:
             raise SamplePopulationError("Scheduled sample automations must finish disabled")
@@ -215,42 +206,11 @@ def _changed_run_snapshot(error: SampleVerificationError) -> bool:
 
 
 def _trigger_mutation(dataset: SampleDataset, key: str) -> tuple[str, str, Any]:
-    if key == "quote-value-changed":
-        sample = next(item for item in dataset.records if item.logical_id == "quotes:000001")
-        field_id = dataset.field_ids["quotes"]["total"]
-        current = sample.data.get(field_id, 0)
-        if isinstance(current, bool) or not isinstance(current, (int, float)):
-            raise SamplePopulationError("Quote trigger input is not numeric")
-        return sample.logical_id, field_id, max(current + 1, 5_001)
-    if key == "work-order-state-changed":
-        sample = next(item for item in dataset.records if item.logical_id == "work_orders:000001")
-        field_id = dataset.field_ids["work_orders"]["status"]
-        current = sample.data.get(field_id)
-        target = _select_option_id(dataset, "work_orders", "status", "Scheduled")
-        alternative = _select_option_id(dataset, "work_orders", "status", "Overdue")
-        return sample.logical_id, field_id, alternative if current == target else target
-    if key == "large-invoice-threshold":
-        total_id = dataset.field_ids["invoices"]["total"]
-        status_id = dataset.field_ids["invoices"]["status"]
-        defaults = _module_defaults(dataset, "invoices")
-        cancelled = _select_option_id(dataset, "invoices", "status", "Cancelled")
-        paid = _select_option_id(dataset, "invoices", "status", "Paid")
-        for sample in dataset.records:
-            if sample.module_key != "invoices" or sample.logical_id == "invoices:000001":
-                continue
-            total = sample.data.get(total_id, defaults.get(total_id))
-            status = sample.data.get(status_id, defaults.get(status_id))
-            if (
-                isinstance(total, (int, float))
-                and not isinstance(total, bool)
-                and total <= 10_000
-                and status not in {cancelled, paid}
-            ):
-                return sample.logical_id, total_id, 10_001
-        raise SamplePopulationError("No non-cancelled open invoice exercises the threshold rule")
-    if key == "large-movement-threshold":
-        return "stock_movements:000001", dataset.field_ids["stock_movements"]["quantity"], 20
-    raise SamplePopulationError("Unknown record trigger mutation")
+    """Return the record and input-field change defined for a pack trigger."""
+    result = dataset.organization.blueprint.trigger_mutation(dataset, key)
+    if not isinstance(result, tuple) or len(result) != 3:
+        raise SamplePopulationError("Record trigger mutation rule is invalid")
+    return result
 
 
 def _candidate_records(dataset: SampleDataset, trigger: Mapping[str, Any]) -> list[SampleRecord]:
@@ -260,12 +220,13 @@ def _candidate_records(dataset: SampleDataset, trigger: Mapping[str, Any]) -> li
     )
     if module_key is None:
         raise SamplePopulationError("Record trigger module mapping is incomplete")
-    conditions = _trigger_conditions(trigger)
+    operator, conditions = _trigger_conditions(trigger)
     defaults = _module_defaults(dataset, module_key)
     return [
         record
         for record in dataset.records
-        if record.module_key == module_key and _matches_conditions(record, conditions, defaults)
+        if record.module_key == module_key
+        and _matches_conditions(record, conditions, defaults, operator=operator)
     ]
 
 
@@ -273,6 +234,8 @@ def _matches_conditions(
     record: SampleRecord,
     conditions: Sequence[Mapping[str, Any]],
     defaults: Mapping[str, Any],
+    *,
+    operator: str,
 ) -> bool:
     values = {**defaults, **record.data}
     results: list[bool] = []
@@ -285,7 +248,7 @@ def _matches_conditions(
             return False
         actual = values.get(field_id)
         results.append(_compare_values(actual, expected, condition.get("operator")))
-    return all(results) if conditions and conditions[0].get("_operator") == "all" else any(results)
+    return all(results) if operator == "all" else any(results)
 
 
 def _compare_values(actual: Any, expected: Any, operator: object) -> bool:
@@ -307,13 +270,13 @@ def _compare_values(actual: Any, expected: Any, operator: object) -> bool:
     return False
 
 
-def _trigger_conditions(trigger: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _trigger_conditions(trigger: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     group = trigger.get("conditionGroup")
     conditions = group.get("conditions") if isinstance(group, Mapping) else None
     operator = group.get("operator") if isinstance(group, Mapping) else None
     if not isinstance(conditions, list) or operator not in {"all", "any"}:
         raise SamplePopulationError("Generated trigger condition group is invalid")
-    return [{**item, "_operator": operator} for item in conditions if isinstance(item, dict)]
+    return operator, [item for item in conditions if isinstance(item, dict)]
 
 
 def _module_defaults(dataset: SampleDataset, module_key: str) -> dict[str, Any]:

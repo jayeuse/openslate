@@ -6,48 +6,13 @@ import re
 from collections.abc import Mapping
 from datetime import date
 from typing import Any
-from zoneinfo import ZoneInfo
 
-from operations.sample_actors import department_lead
 from operations.sample_client import SampleClient, SampleClientError
+from operations.sample_packs.interface import OrganizationPack
+from operations.sample_packs.registry import default_pack
 
 _PAGE_LIMIT = 100
-_TZ = ZoneInfo("Asia/Manila")
-_DEPARTMENT_GROUPS = {
-    "sales": ("sales-desk", "manage"),
-    "service": ("service-triage", "manage"),
-    "field": ("field-operations", "write"),
-    "inventory": ("inventory-control", "write"),
-    "purchasing": ("purchasing-review", "write"),
-    "finance": ("finance-review", "write"),
-}
-_DEPARTMENT_KEYS = ("sales", "service", "field", "inventory", "purchasing", "finance")
 # Department leads build their department's shared views, dashboards and reports.
-_LEADS = {department: department_lead(department) for department in _DEPARTMENT_KEYS}
-_PROJECTS = (
-    ("Customer Renewal", "sales"),
-    ("Service Recovery", "service"),
-    ("Fleet Reliability", "field"),
-    ("Inventory Resilience", "inventory"),
-    ("Month-end Close", "finance"),
-)
-_LAYOUTS = ("table", "grid", "kanban", "calendar", "timeline", "gallery")
-_EVENT_TITLES = (
-    "Customer account review",
-    "Service response checkpoint",
-    "Equipment inspection window",
-    "Inventory replenishment review",
-    "Supplier delivery coordination",
-    "Finance close preparation",
-    "Regional operations handoff",
-    "Quality follow-up",
-    "Weekly capacity review",
-    "Customer commitment check",
-    "Maintenance planning session",
-    "Department metrics review",
-)
-_POST_STATES = ("draft", "published", "scheduled", "archived")
-_REMINDERS = ("start", "15m", "1d")
 
 
 class SampleContentError(RuntimeError):
@@ -205,6 +170,7 @@ def prepare_content(
     fields: Mapping[str, list[Mapping[str, Any]]],
     groups: Mapping[str, str],
     anchor_date: date,
+    organization: OrganizationPack | None = None,
 ) -> tuple[Any, dict[str, int]]:
     """Set up Boards and plan the Board work people do between record sessions."""
     from operations.sample_board_steps import BoardMeta, BoardQueue, plan_board_steps
@@ -217,17 +183,19 @@ def prepare_content(
         modules=modules,
         fields=fields,
         groups=groups,
+        organization=organization,
     )
     metas = [
         BoardMeta(board["logical_id"], board["department_key"], board["scope"], board["authors"])
         for board in board_specs
     ]
     queue = BoardQueue(
-        steps=plan_board_steps(metas),
+        steps=plan_board_steps(metas, organization=organization),
         boards={board["logical_id"]: board for board in board_specs},
         clients=clients,
         fields=fields,
         anchor_date=anchor_date,
+        organization=organization,
     )
     return queue, counts
 
@@ -244,12 +212,14 @@ def finish_content(
     fields: Mapping[str, list[Mapping[str, Any]]],
     anchor_date: date,
     seed: int,
+    organization: OrganizationPack | None = None,
 ) -> Mapping[str, int]:
     """Finish remaining Board work, then leads build views, dashboards and reports."""
     from operations.sample_openview import populate_openview
 
     entries = queue.flush(records)
-    writers = {key: clients.get(_LEADS[key], admin) for key in departments}
+    pack = organization or default_pack()
+    writers = {key: clients.get(pack.content.data.leads[key], admin) for key in departments}
     openview = populate_openview(
         admin,
         departments=departments,
@@ -258,6 +228,8 @@ def finish_content(
         anchor_date=anchor_date,
         seed=seed,
         writers=writers,
+        actor_clients=clients,
+        organization=pack,
     )
     return {**board_counts, **entries, **openview}
 
@@ -267,11 +239,12 @@ def verify_content(
     *,
     run_manifest: Mapping[str, Any],
     mappings: Mapping[str, Mapping[str, str]],
+    organization: OrganizationPack | None = None,
 ) -> Mapping[str, int]:
     from operations.sample_boards import verify_boards
     from operations.sample_openview import verify_openview
 
-    board_counts = verify_boards(admin, mappings=mappings)
+    board_counts = verify_boards(admin, mappings=mappings, organization=organization)
     openview_counts = verify_openview(admin, mappings=mappings)
     observed = {**board_counts, **openview_counts}
     observed["read_failures"] = board_counts.get("read_failures", 0) + openview_counts.get(

@@ -1,4 +1,4 @@
-"""Run planned work sessions: each person creates records and links them right away."""
+"""Run planned work sessions with explicit record and relationship writers."""
 
 from __future__ import annotations
 
@@ -13,9 +13,8 @@ from operations.sample_client import SampleClient, SampleWriteOutcomeUnknown
 from operations.sample_episodes import SampleSession
 from operations.sample_history import RecordHistory, plan_history
 from operations.sample_population import SamplePopulationError, _api, _api_id
-from operations.sample_rejections import ACTIVITY_CASES, RejectionContext, run_rejection
+from operations.sample_rejections import RejectionContext, run_rejection
 from operations.sample_trigger_population import (
-    _RECORD_CREATED,
     _matches_conditions,
     _module_defaults,
     _trigger_action_field,
@@ -78,8 +77,13 @@ def create_data(
     if history is not None:
         fields = dataset.field_ids[record.module_key]
         data[fields["status"]] = _option_id(
-            dataset.seed, record.module_key, "status", history.initial_status
+            dataset.seed,
+            record.module_key,
+            "status",
+            history.initial_status,
+            dataset.organization,
         )
+        data.update({fields[key]: value for key, value in history.initial_values.items()})
         if history.initial_assignee is not None:
             data[fields["owner"]] = f"@user:{history.initial_assignee}"
     return data
@@ -90,14 +94,14 @@ def rule_candidates(
 ) -> dict[str, tuple[str, Any]]:
     """Records whose create values fire a record-created rule: the field and value it sets."""
     candidates: dict[str, tuple[str, Any]] = {}
-    for key in _RECORD_CREATED:
+    for key in dataset.organization.blueprint.record_created_trigger_keys:
         trigger = _trigger_by_key(dataset, key)
         module_key = next(
             name
             for name, value in dataset.module_ids.items()
             if value == _trigger_module_id(trigger)
         )
-        conditions = _trigger_conditions(trigger)
+        operator, conditions = _trigger_conditions(trigger)
         defaults = _module_defaults(dataset, module_key)
         action = (_trigger_action_field(trigger), _trigger_action_value(trigger))
         for record in dataset.records:
@@ -106,7 +110,7 @@ def rule_candidates(
             created = replace(
                 record, data=create_data(dataset, record, histories.get(record.logical_id))
             )
-            if _matches_conditions(created, conditions, defaults):
+            if _matches_conditions(created, conditions, defaults, operator=operator):
                 candidates[record.logical_id] = action
     return candidates
 
@@ -133,7 +137,15 @@ class _RuleWaits:
         self.timeouts: list[str] = []
         self._in_a_row = 0
 
-    def wait(self, client: SampleClient, record_id: str, field_id: str, value: Any) -> None:
+    def wait(
+        self,
+        client: SampleClient,
+        record_id: str,
+        field_id: str,
+        value: Any,
+        *,
+        required: bool = False,
+    ) -> None:
         deadline = time.monotonic() + _RULE_WAIT_SECONDS
         while True:
             current = _api(client, "GET", f"/api/records/{record_id}")
@@ -146,7 +158,7 @@ class _RuleWaits:
             time.sleep(_RULE_POLL_SECONDS)
         self.timeouts.append(record_id)
         self._in_a_row += 1
-        if self._in_a_row >= _RULE_TIMEOUTS_IN_A_ROW:
+        if required or self._in_a_row >= _RULE_TIMEOUTS_IN_A_ROW:
             raise SamplePopulationError(
                 "Record-created automation results did not appear; check the automation worker"
             )
@@ -208,6 +220,68 @@ class ActivityResult:
     history_skipped: list[str] = field(default_factory=list)
 
 
+def _write_edge(
+    client: SampleClient,
+    edge: SampleEdge,
+    result: ActivityResult,
+    relation_key: Mapping[str, str],
+    relationship_fields: Mapping[str, Mapping[str, Any]],
+) -> None:
+    key = relation_key.get(edge.relationship_id, "")
+    relation = relationship_fields.get(key)
+    source = result.records.get(edge.source_record_id)
+    target = result.records.get(edge.target_record_id)
+    if relation is None or source is None or target is None:
+        raise SamplePopulationError("Relationship record or field mapping is incomplete")
+    edge_id = _link(
+        client, relation, _api_id(source, "source record ID"), _api_id(target, "target record ID")
+    )
+    client.record_mapping("edge", f"{key}:{edge.source_record_id}:{edge.target_record_id}", edge_id)
+    result.edge_count += 1
+
+
+def _wait_for_followup_flags(
+    dataset: SampleDataset,
+    logical_id: str,
+    records: Mapping[str, Mapping[str, Any]],
+    by_logical: Mapping[str, SampleRecord],
+    field_ids: Mapping[str, Mapping[str, str]],
+    clients: Mapping[str, SampleClient],
+    waits: _RuleWaits,
+) -> None:
+    links = dataset.organization.links
+    required_parents = set(links.after_history.get(logical_id, ())) | set(
+        links.after_flags.get(logical_id, ())
+    )
+    for parent_id in sorted(required_parents):
+        parent = by_logical[parent_id]
+        client = clients.get(parent.creator_key)
+        if client is None:
+            raise SamplePopulationError("Follow-up parent writer is unavailable")
+        for key in dataset.organization.generators.trigger_keys:
+            trigger = _trigger_by_key(dataset, key)
+            event = trigger.get("trigger", {})
+            if (
+                trigger.get("enabled") is not True
+                or event.get("kind") == "schedule"
+                or _trigger_module_id(trigger) != dataset.module_ids[parent.module_key]
+            ):
+                continue
+            operator, conditions = _trigger_conditions(trigger)
+            if not _matches_conditions(
+                parent, conditions, _module_defaults(dataset, parent.module_key), operator=operator
+            ):
+                continue
+            action_field = _trigger_action_field(trigger)
+            waits.wait(
+                client,
+                _api_id(records[parent_id]),
+                field_ids[parent.module_key][action_field],
+                _trigger_action_value(trigger),
+                required=True,
+            )
+
+
 def run_activity(
     dataset: SampleDataset,
     plan: Sequence[SampleSession],
@@ -230,7 +304,7 @@ def run_activity(
     rule_results = _rule_results(dataset, field_ids, histories)
     rule_waits = _RuleWaits()
     result = ActivityResult()
-    cases = {case.key: case for case in ACTIVITY_CASES}
+    cases = {case.key: case for case in dataset.organization.rejections.activity_cases}
     for position, session in enumerate(plan):
         # Board work (posts, events, links) happens between record sessions.
         if content is not None and position:
@@ -244,6 +318,21 @@ def run_activity(
         module_id = str(modules.get(session.module_key, {}).get("id") or "")
         if client is None or not module_id:
             raise SamplePopulationError("Session writer or module mapping is missing")
+        if session.kind == "link":
+            for index in session.edge_indices:
+                if not 0 <= index < len(dataset.edges):
+                    raise SamplePopulationError("Link session edge index is invalid")
+                edge = dataset.edges[index]
+                actor = edge.creator_key or by_logical[edge.target_record_id].creator_key
+                if (
+                    actor != session.creator_key
+                    or by_logical[edge.source_record_id].module_key != session.module_key
+                ):
+                    raise SamplePopulationError(
+                        "Link session differs from its planned writer or source module"
+                    )
+                _write_edge(client, edge, result, relation_key, relationship_fields)
+            continue
         api_fields = field_ids[session.module_key]
         for logical_id, step_index in session.steps:
             history = histories[logical_id]
@@ -251,9 +340,16 @@ def run_activity(
             doc_fields = dataset.field_ids[session.module_key]
             changes: dict[str, Any] = {
                 api_fields[doc_fields["status"]]: _option_id(
-                    dataset.seed, session.module_key, "status", step.status
+                    dataset.seed,
+                    session.module_key,
+                    "status",
+                    step.status,
+                    dataset.organization,
                 )
             }
+            changes.update(
+                {api_fields[doc_fields[key]]: value for key, value in step.values.items()}
+            )
             if step_index == 0 and history.initial_assignee is not None:
                 changes[api_fields[doc_fields["owner"]]] = actor_ids[
                     by_logical[logical_id].assignee_key
@@ -264,6 +360,9 @@ def run_activity(
             else:
                 result.history_skipped.append(f"{logical_id}:{step_index}")
         for logical_id in session.record_ids:
+            _wait_for_followup_flags(
+                dataset, logical_id, result.records, by_logical, field_ids, clients, rule_waits
+            )
             sample = by_logical[logical_id]
             created_as = replace(
                 sample, data=create_data(dataset, sample, histories.get(logical_id))
@@ -283,16 +382,6 @@ def run_activity(
             if logical_id in rule_results:
                 rule_waits.wait(client, record_id, *rule_results[logical_id])
             for edge in edges_by_target.get(logical_id, []):
-                key = relation_key.get(edge.relationship_id, "")
-                relation = relationship_fields.get(key)
-                source = result.records.get(edge.source_record_id)
-                if relation is None or source is None:
-                    raise SamplePopulationError(
-                        "Relationship record or field mapping is incomplete"
-                    )
-                edge_id = _link(client, relation, _api_id(source, "source record ID"), record_id)
-                client.record_mapping(
-                    "edge", f"{key}:{edge.source_record_id}:{logical_id}", edge_id
-                )
-                result.edge_count += 1
+                if not edge.creator_key or edge.creator_key == session.creator_key:
+                    _write_edge(client, edge, result, relation_key, relationship_fields)
     return result

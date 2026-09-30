@@ -1,4 +1,4 @@
-"""Authenticated API workflow for one private Harbor sample-data run."""
+"""Authenticated API workflow for one private organization sample-data run."""
 
 from __future__ import annotations
 
@@ -14,8 +14,9 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 from operations.sample_blueprint import SampleDataset
-from operations.sample_catalog import SampleProfile
 from operations.sample_client import SampleClient
+from operations.sample_packs.interface import OrganizationPack
+from operations.sample_packs.types import SampleProfile
 from operations.sample_scenario import build_dataset
 from operations.sample_verification import (
     failure_report,
@@ -366,13 +367,23 @@ def populate_sample_data(
     profile: SampleProfile,
     seed: int,
     anchor_date: date,
+    organization: OrganizationPack | None = None,
 ) -> SamplePopulationReport:
     """Create a private run, populate through user APIs, then prove the readback."""
-    dataset = build_dataset(profile, seed, anchor_date)
+    dataset = build_dataset(profile, seed, anchor_date, organization=organization)
     run_id = uuid4().hex
     directory = create_private_run_directory(run_root, run_id)
     manifest: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "organization": dataset.organization.identity.key,
+        "span": dataset.organization.identity.span,
+        "sampling_scope": dataset.organization.identity.sampling_scope,
+        "module_counts": dict(dataset.module_counts),
+        "planned_counts": {
+            "records": len(dataset.records),
+            "edges": len(dataset.edges),
+            **dataset.organization.content.supporting_counts,
+        },
         "run_id": run_id,
         "status": "running",
         "profile": profile,

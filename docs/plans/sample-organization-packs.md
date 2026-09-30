@@ -1,6 +1,6 @@
 # Sample organization packs: research-based design
 
-Status: **proposed, not implemented.** This document is the design input for the organization packs in [ui-equivalent-sample-data-plan.md](ui-equivalent-sample-data-plan.md#proposed-run-sizes-and-organization-packs). Each pack's data files in `backend/operations/sample_packs/<key>/` become the source of truth when they exist; this document then only keeps the rules and the product gaps.
+Status: **Harbor and School pack data are implemented; other packs remain proposed.** School has offline admission checks; its live Small run and user check are pending. This document supplies the shared rules and the designs for pending packs in [ui-equivalent-sample-data-plan.md](ui-equivalent-sample-data-plan.md#proposed-run-sizes-and-organization-packs). Each implemented pack's data files in `backend/operations/sample_packs/<key>/` are its source of truth.
 
 The research behind it is seven sourced reports, one per organization type, in [sample-organization-research/](sample-organization-research/): `field-service.md`, `fmcg-distributor.md`, `manufacturer.md`, `school.md`, `clinic.md`, `nonprofit.md` and `local-government.md`. Each report gives the full field lists, Select options, status paths, relationship reasons, volume ratios, status mixes, vocabulary, Board content and numbered sources. Figures that a report marks as judgment are not sourced. This document keeps only the decisions; a report is removed when its pack data files replace it.
 
@@ -16,7 +16,7 @@ The research behind it is seven sourced reports, one per organization type, in [
 
    This also reads more naturally in the audit log, because a named person creates each record.
 6. **Counters change in history steps, not every day.** The research uses fields such as Days pending, Days past due and Expiry band that a real system updates daily. The simulation sets such a field in one or two history steps, to a value that crosses the rule's threshold. The threshold rule then fires once, as it would after many daily updates.
-7. **Separation of duties uses module boundaries.** Each approval or certification lives in the module of the office that owns it. Planned refusals are always across a module or department boundary. Inside one module, the data shows separation with `Requested by` and `Approved by` fields; the API does not refuse a same-person approval there (see product gaps).
+7. **Separation of duties uses module boundaries.** Each approval or certification lives in the module of the office that owns it. Planned refusals are always across a module or department boundary. Relationship writers need write access to the source module and read access to the target module. If the record creator lacks that access, an eligible colleague links the records in a separate short session. The plan, journal and audit checks name that writer. Inside one module, the data shows separation with `Requested by` and `Approved by` fields; the API does not refuse a same-person approval there (see product gaps).
 8. **Sensitive records get their own module.** Safeguarding cases, guidance notes, clinic visits and civil registry entries are in modules that the wide groups cannot read. A guest sees every row of a module it can read, so guests get read access only to modules that are safe to show in full.
 9. **Each pack has one named scenario** in which a child record settles part of a parent amount. Board links and verification read it from the pack.
 10. **Each pack adds its own trade phrases to the marker check.** The check blocks the words `sample`, `test`, `demo`, `dummy`, `fake`, `placeholder`, `lorem`, `ipsum`, `scenario` and `synthetic` in generated content. Real work in these fields uses "test" and "sample", so each pack lists the exact phrases it allows, and the check still blocks the words everywhere else.
@@ -38,6 +38,7 @@ These facts come from the source code, not from the research reports. Several re
 | Conditions and Set field targets must use the trigger's own module | `rules.py` (`trigger_cross_module_reference`) |
 | No value means "today", so no rule can compare a date with the current date | `schemas.py` (`TriggerValue` has only `literal` and `field-reference`) |
 | Access is per department or module (read, write, manage); a guest is capped at read | `backend/app/systems/access/policy/scope.py` |
+| Changing a relationship needs source-module write and target-module read | `backend/app/systems/sandbox/relationships/access.py` (`require_link_change`) |
 
 ## Pack summaries
 

@@ -5,11 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from operations.sample_actors import TEAM_KEYS
 from operations.sample_board_text import project_board
 from operations.sample_client import SampleClient, SampleClientError
 from operations.sample_content import (
-    _DEPARTMENT_GROUPS,
     SampleContentError,
     _attachment_count,
     _id,
@@ -17,18 +15,13 @@ from operations.sample_content import (
     _link_count,
     _pages,
 )
+from operations.sample_packs.interface import OrganizationPack
+from operations.sample_packs.registry import default_pack
 
 _DATE_TYPES = {"date", "datetime"}
 _NUMBER_TYPES = {"number", "decimal", "int"}
 _TEXT_TYPES = {"text", "long_text", "email", "url"}
 _PRIMITIVE_TYPES = _DATE_TYPES | _NUMBER_TYPES | _TEXT_TYPES | {"boolean", "select", "user"}
-_PROJECTS = (
-    ("Customer Renewal", "sales"),
-    ("Service Recovery", "service"),
-    ("Fleet Reliability", "field"),
-    ("Inventory Resilience", "inventory"),
-    ("Month-end Close", "finance"),
-)
 
 
 def replace_project_board_groups(
@@ -36,11 +29,15 @@ def replace_project_board_groups(
     board_id: str,
     department_key: str,
     groups: Mapping[str, str],
+    *,
+    organization: OrganizationPack | None = None,
 ) -> Mapping[str, Any]:
-    if department_key not in _DEPARTMENT_GROUPS:
+    spec = (organization or default_pack()).content.data
+    if department_key not in spec.department_groups:
         raise SampleContentError(f"Unknown department for project Board access: {department_key}")
-    department_group, department_level = _DEPARTMENT_GROUPS[department_key]
-    slugs = ("harbor-operations", "guest-readers", department_group)
+    department_group, department_level = spec.department_groups[department_key]
+    grants = (*spec.project_groups, (department_group, department_level))
+    slugs = tuple(slug for slug, _ in grants)
     if any(not groups.get(slug) for slug in slugs):
         raise SampleContentError("Required project Board access groups are unavailable")
     path = f"/api/boards/{board_id}/groups"
@@ -48,11 +45,7 @@ def replace_project_board_groups(
     revision = current.get("revision")
     if current.get("board_id") != board_id or not isinstance(revision, int):
         raise SampleContentError("Project Board group revision could not be read")
-    wanted = [
-        {"group_id": groups["harbor-operations"], "level": "write"},
-        {"group_id": groups["guest-readers"], "level": "read"},
-        {"group_id": groups[department_group], "level": department_level},
-    ]
+    wanted = [{"group_id": groups[slug], "level": level} for slug, level in grants]
     response = _json(admin, "PUT", path, body={"revision": revision, "groups": wanted})
     if response.get("board_id") != board_id or not isinstance(response.get("revision"), int):
         raise SampleContentError("Project Board access response did not match the requested Board")
@@ -111,14 +104,17 @@ def _refs(fields: Sequence[Mapping[str, Any]], limit: int = 8) -> list[dict[str,
 
 
 def _authors(
-    admin: SampleClient, clients: Mapping[str, SampleClient], board: Mapping[str, Any]
+    admin: SampleClient,
+    clients: Mapping[str, SampleClient],
+    board: Mapping[str, Any],
+    organization: OrganizationPack,
 ) -> tuple[str, ...]:
     """Team members who can write on the Board; the Company Board is written by admin."""
     department_key = board.get("department_key")
     if department_key is None:
         return ("admin",)
     authors = []
-    for key in TEAM_KEYS[str(department_key)]:
+    for key in organization.actors.team_keys[str(department_key)]:
         client = clients.get(key)
         if client is None:
             continue
@@ -139,9 +135,10 @@ def _board_sources(
     departments: Mapping[str, Mapping[str, Any]],
     modules: Mapping[str, Mapping[str, Any]],
     fields: Mapping[str, list[Mapping[str, Any]]],
+    organization: OrganizationPack,
 ) -> tuple[str, Mapping[str, Any], list[dict[str, Any]]]:
     if department_key is None:
-        department_key = "finance"
+        department_key = organization.content.data.company_source_department
     department = departments.get(department_key)
     if department is None:
         raise SampleContentError(f"Department module source is unavailable: {department_key}")
@@ -154,6 +151,7 @@ def _make_widgets(
     departments: Mapping[str, Mapping[str, Any]],
     modules: Mapping[str, Mapping[str, Any]],
     fields: Mapping[str, list[Mapping[str, Any]]],
+    organization: OrganizationPack,
 ) -> int:
     created = 0
     types = (
@@ -164,7 +162,7 @@ def _make_widgets(
     )
     for board in board_specs:
         _, module, active = _board_sources(
-            board["board"], board["department_key"], departments, modules, fields
+            board["board"], board["department_key"], departments, modules, fields, organization
         )
         refs = _refs(active, 8)
         numeric = next((_ref(field) for field in active if _kind(field) in _NUMBER_TYPES), None)
@@ -206,9 +204,10 @@ def _create_project_boards(
     admin: SampleClient,
     departments: Mapping[str, Mapping[str, Any]],
     groups: Mapping[str, str],
+    organization: OrganizationPack,
 ) -> list[dict[str, Any]]:
     result = []
-    for name, department_key in _PROJECTS:
+    for name, department_key in organization.content.data.projects:
         if department_key not in departments:
             raise SampleContentError(f"Project Board department is unavailable: {department_key}")
         created = _json(
@@ -216,15 +215,17 @@ def _create_project_boards(
             "POST",
             "/api/boards",
             body={
-                "name": project_board(name)[0],
-                "description": project_board(name)[1],
+                "name": project_board(name, organization=organization)[0],
+                "description": project_board(name, organization=organization)[1],
             },
             expected=(201,),
         )
         board_id = _id(created)
         logical = f"project:{department_key}:{name.casefold().replace(' ', '-')}"
         admin.record_mapping("boards", logical, board_id)
-        replace_project_board_groups(admin, board_id, department_key, groups)
+        replace_project_board_groups(
+            admin, board_id, department_key, groups, organization=organization
+        )
         result.append(
             {
                 "id": board_id,
@@ -246,27 +247,24 @@ def prepare_boards(
     modules: Mapping[str, Mapping[str, Any]],
     fields: Mapping[str, list[Mapping[str, Any]]],
     groups: Mapping[str, str],
+    organization: OrganizationPack | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Set up Boards before people work: project Boards, their access, and widgets."""
+    pack = organization or default_pack()
+    spec = pack.content.data
     required_groups = {
-        "harbor-operations",
-        "guest-readers",
-        *(slug for slug, _ in _DEPARTMENT_GROUPS.values()),
+        *(slug for slug, _ in spec.project_groups),
+        *(slug for slug, _ in spec.department_groups.values()),
     }
     if required_groups - groups.keys():
         raise SampleContentError("Sample access groups are incomplete for project Boards")
-    for module_key, department_key in (
-        ("invoices", "finance"),
-        ("payments", "finance"),
-        ("equipment", "field"),
-        ("work_orders", "field"),
-    ):
+    for module_key, department_key in spec.required_modules:
         if module_key not in modules or department_key not in departments:
             raise SampleContentError(f"Required scenario module is unavailable: {module_key}")
-    if len(departments) != 6 or len(modules) != 24:
-        raise SampleContentError(
-            "The approved six-department, twenty-four-module structure is required"
-        )
+    if len(departments) != len(pack.catalog.departments) or len(modules) != len(
+        pack.catalog.modules
+    ):
+        raise SampleContentError("The organization pack's approved structure is required")
 
     board_rows = _pages(
         admin,
@@ -289,7 +287,10 @@ def prepare_boards(
         if len(matches) != 1:
             raise SampleContentError("Department Board does not match the published departments")
         by_department[matches[0]].append(board)
-    if any(len(items) != 1 for items in by_department.values()) or len(board_rows) != 7:
+    if (
+        any(len(items) != 1 for items in by_department.values())
+        or len(board_rows) != len(departments) + 1
+    ):
         raise SampleContentError("Expected one Company Board and one Board per department")
 
     board_specs: list[dict[str, Any]] = []
@@ -319,26 +320,30 @@ def prepare_boards(
                 "scope": "department",
             }
         )
-    board_specs.extend(_create_project_boards(admin, departments, groups))
+    board_specs.extend(_create_project_boards(admin, departments, groups, pack))
     for board in board_specs:
-        board["authors"] = _authors(admin, clients, board)
-    widget_count = _make_widgets(admin, board_specs, departments, modules, fields)
+        board["authors"] = _authors(admin, clients, board, pack)
+    widget_count = _make_widgets(admin, board_specs, departments, modules, fields, pack)
     return board_specs, {
         "boards": len(board_specs),
-        "project_boards": len(_PROJECTS),
-        "project_group_grants": len(_PROJECTS) * 3,
+        "project_boards": len(spec.projects),
+        "project_group_grants": sum(len(spec.project_groups) + 1 for _ in spec.projects),
         "widgets": widget_count,
     }
 
 
 def verify_boards(
-    admin: SampleClient, *, mappings: Mapping[str, Mapping[str, str]]
+    admin: SampleClient,
+    *,
+    mappings: Mapping[str, Mapping[str, str]],
+    organization: OrganizationPack | None = None,
 ) -> Mapping[str, int]:
+    spec = (organization or default_pack()).content.data
     project_departments = {
         mappings.get("boards", {}).get(
             f"project:{department_key}:{name.casefold().replace(' ', '-')}"
         ): department_key
-        for name, department_key in _PROJECTS
+        for name, department_key in spec.projects
     }
     group_ids = mappings.get("group", {})
     counts = {
@@ -423,11 +428,10 @@ def verify_boards(
                 department_key = project_departments.get(board_id)
                 if department_key is None:
                     raise SampleContentError("Project Board is absent from the run mapping")
-                department_group, department_level = _DEPARTMENT_GROUPS[department_key]
+                department_group, department_level = spec.department_groups[department_key]
                 expected = {
-                    (group_ids.get("harbor-operations"), "write"),
-                    (group_ids.get("guest-readers"), "read"),
-                    (group_ids.get(department_group), department_level),
+                    (group_ids.get(slug), level)
+                    for slug, level in (*spec.project_groups, (department_group, department_level))
                 }
                 if any(group_id is None for group_id, _ in expected):
                     raise SampleContentError(

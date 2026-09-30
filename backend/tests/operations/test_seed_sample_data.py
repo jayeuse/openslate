@@ -27,7 +27,6 @@ from operations.sample_verification import (
     failure_report,
     has_matching_audit,
     list_all_rows,
-    named_invoice_issues,
     unique_rows_by_name,
 )
 from operations.seed_sample_data import (
@@ -178,43 +177,6 @@ def test_api_read_rejects_inconsistent_pagination_metadata(tmp_path: Path) -> No
     ) as client:
         with pytest.raises(SampleVerificationError, match="pagination"):
             list_all_rows(client, "/api/records", page_size=2)
-
-
-def test_named_invoice_verification_uses_live_values_and_required_edge() -> None:
-    records = {
-        "invoice-server-id": {"data": {"invoice-total-field": 12_000}},
-        "payment-server-id": {"data": {"payment-amount-field": 4_500}},
-    }
-    mappings = {
-        "invoices:000001": "invoice-server-id",
-        "payments:000001": "payment-server-id",
-    }
-    fields = {
-        "invoices:total": "invoice-total-field",
-        "payments:amount": "payment-amount-field",
-    }
-
-    assert (
-        named_invoice_issues(
-            records,
-            mappings,
-            fields,
-            "invoice-payments-field",
-            {("invoice-payments-field", "invoice-server-id", "payment-server-id")},
-        )
-        == []
-    )
-    records["payment-server-id"]["data"]["payment-amount-field"] = 4_600
-    assert named_invoice_issues(
-        records,
-        mappings,
-        fields,
-        "invoice-payments-field",
-        set(),
-    ) == [
-        "partially paid invoice amounts differ from the named scenario",
-        "partially paid invoice relationship is missing",
-    ]
 
 
 def test_audit_verification_requires_entity_actor_and_real_request_context() -> None:

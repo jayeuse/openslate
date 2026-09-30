@@ -7,8 +7,9 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
-from operations.sample_blueprint import SampleDataset, SampleRecord
+from operations.sample_blueprint import SampleDataset, SampleEdge, SampleRecord
 from operations.sample_client import SampleClient
+from operations.sample_named_scenarios import named_scenario_issues
 
 
 class SampleVerificationError(RuntimeError):
@@ -43,44 +44,6 @@ def has_matching_audit(
         ):
             return True
     return False
-
-
-def named_invoice_issues(
-    records_by_id: Mapping[str, Mapping[str, Any]],
-    record_ids: Mapping[str, str],
-    field_ids: Mapping[str, str],
-    relationship_field_id: str,
-    actual_edges: set[tuple[str, str, str]],
-) -> list[str]:
-    """Check the independently specified $12,000/$4,500/$7,500 scenario."""
-    issues: list[str] = []
-    invoice_id = record_ids.get("invoices:000001")
-    payment_id = record_ids.get("payments:000001")
-    invoice_field = field_ids.get("invoices:total")
-    payment_field = field_ids.get("payments:amount")
-    if not invoice_id or not payment_id or not invoice_field or not payment_field:
-        return ["partially paid invoice record or field mapping is incomplete"]
-    invoice = records_by_id.get(invoice_id, {}).get("data")
-    payment = records_by_id.get(payment_id, {}).get("data")
-    invoice_total = invoice.get(invoice_field) if isinstance(invoice, Mapping) else None
-    payment_amount = payment.get(payment_field) if isinstance(payment, Mapping) else None
-    valid_numbers = all(
-        isinstance(value, (int, float)) and not isinstance(value, bool)
-        for value in (invoice_total, payment_amount)
-    )
-    if (
-        not valid_numbers
-        or invoice_total != 12_000
-        or payment_amount != 4_500
-        or invoice_total - payment_amount != 7_500
-    ):
-        issues.append("partially paid invoice amounts differ from the named scenario")
-    if (
-        not relationship_field_id
-        or (relationship_field_id, invoice_id, payment_id) not in actual_edges
-    ):
-        issues.append("partially paid invoice relationship is missing")
-    return issues
 
 
 def assert_pristine_baseline(client: SampleClient, *, admin_id: str) -> dict[str, Any]:
@@ -129,8 +92,12 @@ def expected_record_actor(record: SampleRecord | None, actor_ids: Mapping[str, s
     return actor_ids.get(record.creator_key, "") if record else ""
 
 
-def expected_edge_actor(target: SampleRecord | None, actor_ids: Mapping[str, str]) -> str:
-    """The user who must appear on a link's audit: the creator of the child record."""
+def expected_edge_actor(
+    target: SampleRecord | None, actor_ids: Mapping[str, str], *, edge: SampleEdge | None = None
+) -> str:
+    """The planned link writer, with the child creator retained for legacy edges."""
+    if edge is not None and edge.creator_key:
+        return actor_ids.get(edge.creator_key, "")
     return actor_ids.get(target.creator_key, "") if target else ""
 
 
@@ -196,6 +163,7 @@ def verify_records_and_relationships(
     observed["record_mappings"] = len(record_ids)
 
     expected_edges: set[tuple[str, str, str]] = set()
+    planned_edges: dict[tuple[str, str, str], SampleEdge] = {}
     relation_key_by_document_id = {
         document_id: key for key, document_id in dataset.relationship_ids.items()
     }
@@ -208,6 +176,7 @@ def verify_records_and_relationships(
             issues.append("relationship field or record ID mapping is incomplete")
             continue
         expected_edges.add((field_id, source_id, target_id))
+        planned_edges[(field_id, source_id, target_id)] = sample_edge
 
     edge_rows = list_all_rows(client, "/api/relationships", page_size=100)
     observed["relationships"] = len(edge_rows)
@@ -277,7 +246,7 @@ def verify_records_and_relationships(
     relationship_audit_matches = 0
     for edge_key, edge_id in edge_ids.items():
         target = expected_records.get(logical_by_id.get(edge_key[2]) or "")
-        expected_actor = expected_edge_actor(target, actor_ids)
+        expected_actor = expected_edge_actor(target, actor_ids, edge=planned_edges.get(edge_key))
         matches = relation_audits_by_entity.get(edge_id, [])
         if has_matching_audit(
             matches,
@@ -291,13 +260,16 @@ def verify_records_and_relationships(
             issues.append("a relationship is missing matching authenticated create audit evidence")
     observed["relationship_audit_matches"] = relationship_audit_matches
 
-    invoice_relation_id = relation_fields.get("invoice_payments", "")
-    issues.extend(
-        named_invoice_issues(
-            records_by_id, record_ids, field_ids, invoice_relation_id, actual_edges
-        )
+    named_scenario_findings = named_scenario_issues(
+        dataset,
+        records_by_id,
+        record_ids,
+        field_ids,
+        relation_fields,
+        actual_edges,
     )
-    observed["named_scenario_verified"] = int(not any("partially paid" in item for item in issues))
+    issues.extend(named_scenario_findings)
+    observed["named_scenario_verified"] = int(not named_scenario_findings)
     return observed, issues
 
 

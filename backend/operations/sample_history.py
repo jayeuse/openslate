@@ -1,71 +1,31 @@
-"""Record history: a record is created earlier in its life cycle and people move it on.
-
-Each planned history starts at an earlier status and ends at the record's generated
-status, so the final data is unchanged. Named business cases and the records that
-named automation checks edit are left alone.
-"""
+"""Plan generic status histories from the transitions defined by each pack."""
 
 from __future__ import annotations
 
 import random
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
-from operations.sample_actors import TEAM_KEYS
+from operations.sample_actors import writer_keys, writer_weights
 from operations.sample_blueprint import SampleDataset
-
-# For each module: final status -> the statuses a record passes through before it.
-STATUS_PATHS: dict[str, dict[str, tuple[str, ...]]] = {
-    "customers": {"Active": ("Prospect",), "On hold": ("Prospect", "Active")},
-    "quotes": {"Sent": ("Draft",), "Accepted": ("Draft", "Sent"),
-               "Expired": ("Draft", "Sent"), "Cancelled": ("Draft",)},
-    "sales_orders": {"Confirmed": ("Draft",), "Partially fulfilled": ("Draft", "Confirmed"),
-                     "Complete": ("Draft", "Confirmed", "Partially fulfilled"),
-                     "Cancelled": ("Draft",)},
-    "service_contracts": {"Renewal due": ("Active",), "Expired": ("Active", "Renewal due"),
-                          "Cancelled": ("Active",)},
-    "service_requests": {"In progress": ("Open",), "Overdue": ("Open", "In progress"),
-                         "Resolved": ("Open", "In progress"), "Cancelled": ("Open",)},
-    "equipment": {"Needs service": ("Operational",), "Retired": ("Operational",)},
-    "work_orders": {"Scheduled": ("Open",), "Overdue": ("Open", "Scheduled"),
-                    "In progress": ("Open", "Scheduled"),
-                    "Completed": ("Open", "Scheduled", "In progress"), "Cancelled": ("Open",)},
-    "stock_counts": {"Variance found": ("Open",), "Reconciled": ("Open", "Variance found")},
-    "purchase_orders": {"Confirmed": ("Draft",), "Partially received": ("Draft", "Confirmed"),
-                        "Received": ("Draft", "Confirmed"), "Delayed": ("Draft", "Confirmed"),
-                        "Cancelled": ("Draft",)},
-    "purchase_lines": {"Partially received": ("Open",), "Received": ("Open",),
-                       "Cancelled": ("Open",)},
-    "invoices": {"Issued": ("Draft",), "Partially paid": ("Draft", "Issued"),
-                 "Paid": ("Draft", "Issued"), "Overdue": ("Draft", "Issued"),
-                 "Disputed": ("Draft", "Issued"), "Cancelled": ("Draft",)},
-    "payments": {"Posted": ("Pending",)},
-    "expenses": {"Approved": ("Submitted",), "Rejected": ("Submitted",),
-                 "Reimbursed": ("Submitted", "Approved")},
-    "credit_notes": {"Approved": ("Draft",), "Issued": ("Draft", "Approved"),
-                     "Cancelled": ("Draft",)},
-}  # fmt: skip
-# Records that named business cases or named automation checks depend on.
-_PROTECTED = frozenset(
-    {"invoices:000001", "payments:000001", "sales_orders:000001", "customers:000001",
-     "quotes:000001", "work_orders:000001", "stock_movements:000001"}
-)  # fmt: skip
-_TARGET_SHARE = 0.40
-_REASSIGNED_SHARE = 0.25
+from operations.sample_packs import default_pack
+from operations.sample_packs.types import JsonValue
 
 
 @dataclass(frozen=True)
 class HistoryStep:
     status: str
     updater_key: str
+    values: Mapping[str, JsonValue] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class RecordHistory:
     initial_status: str
     steps: tuple[HistoryStep, ...]
-    initial_assignee: str | None  # Set when the record is reassigned in its first step.
+    initial_assignee: str | None
+    initial_values: Mapping[str, JsonValue] = field(default_factory=dict)
 
 
 def status_label(dataset: SampleDataset, module_key: str, data: Mapping[str, object]) -> str:
@@ -81,13 +41,14 @@ def status_label(dataset: SampleDataset, module_key: str, data: Mapping[str, obj
 
 
 def _eligible(dataset: SampleDataset) -> list[tuple[str, str, tuple[str, ...]]]:
-    from operations.sample_trigger_population import _PATCH_TRIGGERS, _trigger_mutation
-
-    # Records that named automation checks edit keep a single, known update.
-    protected = _PROTECTED | {_trigger_mutation(dataset, key)[0] for key in _PATCH_TRIGGERS}
+    rules = dataset.organization.history
+    protected = rules.protected_records | {
+        dataset.organization.blueprint.trigger_mutation(dataset, key)[0]
+        for key in dataset.organization.blueprint.patch_trigger_keys
+    }
     eligible = []
     for record in dataset.records:
-        paths = STATUS_PATHS.get(record.module_key)
+        paths = rules.status_paths.get(record.module_key)
         if paths is None or record.logical_id in protected:
             continue
         final = status_label(dataset, record.module_key, record.data)
@@ -97,23 +58,50 @@ def _eligible(dataset: SampleDataset) -> list[tuple[str, str, tuple[str, ...]]]:
 
 
 def plan_history(dataset: SampleDataset) -> dict[str, RecordHistory]:
-    """Pick about 40% of all records and plan the status steps that bring them to today."""
+    """Plan status updates for the share of records defined by the organization."""
     records = {record.logical_id: record for record in dataset.records}
     eligible = _eligible(dataset)
-    chance = min(1.0, _TARGET_SHARE * len(dataset.records) / max(1, len(eligible)))
+    rules = dataset.organization.history
+    chance = min(1.0, rules.target_share * len(dataset.records) / max(1, len(eligible)))
     histories: dict[str, RecordHistory] = {}
+    eligible_ids = {item[0] for item in eligible}
+    for logical_id in rules.field_paths:
+        if logical_id not in eligible_ids:
+            record = records[logical_id]
+            final = status_label(dataset, record.module_key, record.data)
+            eligible.append((logical_id, final, (final,)))
     for logical_id, final, path in eligible:
         rng = random.Random(f"{dataset.seed}:history:{logical_id}")
-        if rng.random() >= chance:
+        if rng.random() >= chance and logical_id not in rules.field_paths:
             continue
         record = records[logical_id]
-        team = TEAM_KEYS[record.actor_key]
-        weights = [1] + [3] * (len(team) - 1)
+        team = writer_keys(record.module_key, record.actor_key, dataset.organization)
+        weights = writer_weights(team, record.actor_key, dataset.organization)
         steps = tuple(
             HistoryStep(status, rng.choices(team, weights=weights)[0])
             for status in (*path[1:], final)
         )
         others = [key for key in team if key != record.assignee_key]
-        initial_assignee = rng.choice(others) if rng.random() < _REASSIGNED_SHARE else None
-        histories[logical_id] = RecordHistory(path[0], steps, initial_assignee)
+        initial_assignee = (
+            rng.choice(others) if others and rng.random() < rules.reassigned_share else None
+        )
+        values = rules.field_paths.get(logical_id, {})
+        initial_values = {key: values[0] for key, values in values.items()}
+        extra_steps = tuple(
+            HistoryStep(
+                final,
+                rng.choices(team, weights=weights)[0],
+                {key: path[index] for key, path in values.items() if index < len(path)},
+            )
+            for index in range(1, max((len(path) for path in values.values()), default=1))
+        )
+        histories[logical_id] = RecordHistory(
+            path[0], (*steps, *extra_steps), initial_assignee, initial_values
+        )
     return histories
+
+
+def __getattr__(name: str) -> Any:
+    if name == "STATUS_PATHS":
+        return default_pack().history.status_paths
+    raise AttributeError(name)

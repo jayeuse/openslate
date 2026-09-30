@@ -1,4 +1,4 @@
-"""Harbor sample identities and Access groups populated through the UI APIs."""
+"""Populate pack-defined identities and Access groups through the UI APIs."""
 
 from __future__ import annotations
 
@@ -17,36 +17,13 @@ from operations.sample_invitations import (
     InvitationMailbox,
     SampleInvitationError,
 )
-from operations.sample_vocabulary import GUEST_DOMAINS, INTERNAL_DOMAIN, TEAM_ROSTER, TEAM_TITLES
-
-_DEPARTMENTS = ("sales", "service", "field", "inventory", "purchasing", "finance")
-_MODULES = ("inspections", "products", "purchase_orders", "invoices")
-_TEAM_GROUPS = {
-    "sales": "sales-desk",
-    "service": "service-triage",
-    "field": "field-operations",
-    "inventory": "inventory-control",
-    "purchasing": "purchasing-review",
-    "finance": "finance-review",
-}
+from operations.sample_packs import default_pack
+from operations.sample_packs.interface import OrganizationPack
+from operations.sample_packs.types import PersonSpec
 
 
 class SamplePeopleError(RuntimeError):
     """A safe operator-facing sample identity workflow failure."""
-
-
-@dataclass(frozen=True, slots=True)
-class PersonSpec:
-    key: str
-    email: str
-    username: str
-    name: str
-    title: str
-    role: str
-    status: str
-    groups: tuple[str, ...] = ()
-    actor: str | None = None
-    sponsor: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,123 +49,23 @@ class SamplePeopleResult:
     groups: Mapping[str, str]
 
 
-_TEAM_ROSTER = TEAM_ROSTER
+def _people(organization: OrganizationPack | None = None) -> tuple[PersonSpec, ...]:
+    return (organization or default_pack()).actors.people
 
 
-def _identity(name: str, domain: str = INTERNAL_DOMAIN) -> tuple[str, str]:
-    """A natural e-mail address and username for a person's display name."""
-    first, *rest = name.lower().split()
-    last = "".join(rest)
-    return f"{first}.{last}@{domain}", f"{first}_{last}"
-
-
-def _people() -> tuple[PersonSpec, ...]:
-    people: list[PersonSpec] = []
-    for team, members in _TEAM_ROSTER.items():
-        for index, name in enumerate(members):
-            suffix = "lead" if index == 0 else f"{index + 1:02d}"
-            actor = team if suffix == "lead" else None
-            email, username = _identity(name)
-            groups: tuple[str, ...] = (_TEAM_GROUPS[team],)
-            if actor:
-                groups += ("harbor-operations",)
-            if team == "sales" and index in {3, 4}:
-                groups += ("internal-audit",)
-            people.append(
-                PersonSpec(
-                    key=f"internal_{team}_{suffix}",
-                    email=email,
-                    username=username,
-                    name=name,
-                    title=TEAM_TITLES[team][index],
-                    role="member",
-                    status="active",
-                    groups=groups,
-                    actor=actor,
-                )
-            )
-
-    for index, (team, name, title) in enumerate(
-        (
-            ("sales", "Taylor James", "Sales Associate"),
-            ("service", "Jamie Ortega", "Support Associate"),
-            ("inventory", "Robin Lee", "Stock Associate"),
-            ("finance", "Alex Perez", "Billing Associate"),
-        ),
-        start=1,
-    ):
-        people.append(
-            PersonSpec(
-                f"internal_pending_{index:02d}",
-                *_identity(name),
-                name,
-                title,
-                "member",
-                "pending",
-                (_TEAM_GROUPS[team],),
-            )
-        )
-    people.extend(
-        (
-            PersonSpec(
-                "internal_disabled_01",
-                *_identity("Morgan Ellis"),
-                "Morgan Ellis",
-                "Former Sales Coordinator",
-                "member",
-                "disabled",
-            ),
-            PersonSpec(
-                "internal_disabled_02",
-                *_identity("Casey Flores"),
-                "Casey Flores",
-                "Former Field Technician",
-                "member",
-                "disabled",
-            ),
-        )
-    )
-    guest_rows = (
-        ("01", "Amara Cole", "Customer Auditor", "active"),
-        ("02", "Ben Ito", "Supplier Reviewer", "active"),
-        ("03", "Cora Mills", "Project Observer", "active"),
-        ("04", "Drew Kim", "Service Partner", "active"),
-        ("05", "Eden Park", "External Analyst", "active"),
-        ("06", "Finn Blake", "Delivery Partner", "active"),
-        ("07", "Gray Patel", "Prospective Partner", "pending"),
-        ("08", "Harper Young", "Former External Reviewer", "disabled"),
-    )
-    for suffix, name, title, state in guest_rows:
-        people.append(
-            PersonSpec(
-                f"guest_{suffix}",
-                *_identity(name, GUEST_DOMAINS[int(suffix) % len(GUEST_DOMAINS)]),
-                name,
-                title,
-                "guest",
-                state,
-                ("guest-readers",),
-                sponsor="internal_sales_lead",
-            )
-        )
-    if len(people) != 44:
-        raise SamplePeopleError("The people catalogue must contain 44 identities")
-    return tuple(people)
-
-
-_GROUP_ACCESS: dict[str, tuple[tuple[str, str | None, str], ...]] = {
-    # Department leads: they manage shared views, dashboards and reports everywhere.
-    "harbor-operations": tuple((key, None, "manage") for key in _DEPARTMENTS),
-    "sales-desk": (("sales", None, "manage"),),
-    "service-triage": (("service", None, "manage"),),
-    "field-operations": (("field", None, "write"), ("field", "inspections", "manage")),
-    "inventory-control": (("inventory", None, "write"), ("inventory", "products", "manage")),
-    "purchasing-review": (("purchasing", None, "write"),),
-    "finance-review": (("finance", None, "write"),),
-    # Two Sales members review Finance and Purchasing records without changing them.
-    "internal-audit": (("finance", None, "read"), ("purchasing", None, "read")),
-    "guest-readers": tuple((key, None, "manage") for key in _DEPARTMENTS),
-}
+def __getattr__(name: str) -> Any:
+    pack = default_pack()
+    compatibility = {
+        "_DEPARTMENTS": pack.actors.department_keys,
+        "_MODULES": pack.actors.required_module_keys,
+        "_TEAM_GROUPS": pack.actors.team_groups,
+        "_TEAM_ROSTER": pack.actors.team_roster,
+        "_GROUP_ACCESS": pack.actors.group_access,
+    }
+    try:
+        return compatibility[name]
+    except KeyError:
+        raise AttributeError(name) from None
 
 
 def _ids(source: Mapping[str, str], keys: tuple[str, ...]) -> dict[str, str]:
@@ -268,9 +145,10 @@ def _create_groups(
     roster: CredentialRoster,
     department_ids: Mapping[str, str],
     module_ids: Mapping[str, str],
+    group_access: Mapping[str, tuple[tuple[str, str | None, str], ...]],
 ) -> dict[str, str]:
     groups: dict[str, str] = {}
-    for key, entries in _GROUP_ACCESS.items():
+    for key, entries in group_access.items():
         name = " ".join(word.capitalize() for word in key.split("-"))
         roster.operation("group-create", key, "started")
         created = _write_data(
@@ -353,12 +231,13 @@ def populate_people(
     mailpit_url: str,
     origin: str,
     roster_path: Path,
+    organization: OrganizationPack | None = None,
 ) -> SamplePeopleResult:
-    """Create 36 internal accounts, eight guests, and the planned access groups."""
-
-    departments = _ids(department_ids, _DEPARTMENTS)
-    modules = _ids(module_ids, _MODULES)
-    people = _people()
+    """Create the pack-defined identities and access groups."""
+    pack = organization or default_pack()
+    departments = _ids(department_ids, pack.actors.department_keys)
+    modules = _ids(module_ids, pack.actors.required_module_keys)
+    people = _people(pack)
     try:
         roster = CredentialRoster.create(
             roster_path,
@@ -380,7 +259,7 @@ def populate_people(
     mailbox = InvitationMailbox(mailpit_url, origin)
     try:
         mailbox.snapshot()
-        group_ids = _create_groups(admin, roster, departments, modules)
+        group_ids = _create_groups(admin, roster, departments, modules, pack.actors.group_access)
         users: dict[str, SamplePerson] = {}
         actors: dict[str, SampleActorCredential] = {}
         user_ids: dict[str, str] = {}

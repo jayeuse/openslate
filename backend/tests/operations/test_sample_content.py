@@ -244,12 +244,12 @@ def test_content_verify_combines_partial_failures_and_requires_saved_report_outp
     monkeypatch.setattr(
         sample_boards,
         "verify_boards",
-        lambda _admin, *, mappings: {"boards": 1, "read_failures": 2},
+        lambda _admin, *, mappings, organization=None: {"boards": 1, "read_failures": 2},
     )
     monkeypatch.setattr(
         sample_openview,
         "verify_openview",
-        lambda _admin, *, mappings: {
+        lambda _admin, *, mappings, organization=None: {
             "reports": 2,
             "report_runs": 2,
             "report_outputs": 1,

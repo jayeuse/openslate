@@ -1,0 +1,147 @@
+"""Harbor's planned requests that should be refused without a write."""
+
+from operations.sample_packs.types import RejectionCase
+
+FORBIDDEN = "Forbidden"
+HIDDEN = "Module not found"
+BAD_CREDENTIALS = "Invalid authentication credentials"
+INVALID_OPTION_KEY = "openslate:harbor-operations:not-an-option"
+INVALID_FIELD_KEY = "openslate:harbor-operations:never-a-field"
+
+ACTIVITY_CASES = (
+    RejectionCase(
+        "guest_creates_record",
+        "guest_01",
+        (),
+        403,
+        FORBIDDEN,
+        template_record_id="customers:000002",
+    ),
+    RejectionCase(
+        "auditor_creates_invoice",
+        "internal_sales_04",
+        (),
+        403,
+        FORBIDDEN,
+        template_record_id="invoices:000002",
+    ),
+    RejectionCase(
+        "auditor_edits_invoice",
+        "internal_sales_05",
+        ("invoices:000003",),
+        403,
+        FORBIDDEN,
+        operation="edit-record",
+        target_record_id="invoices:000003",
+    ),
+    RejectionCase(
+        "record_in_hidden_department",
+        "internal_sales_02",
+        (),
+        404,
+        HIDDEN,
+        template_record_id="work_orders:000002",
+    ),
+    RejectionCase(
+        "missing_required_field",
+        "internal_sales_02",
+        (),
+        422,
+        "required_field",
+        template_record_id="customers:000002",
+        invalid_field_action="remove",
+        field_key="name",
+    ),
+    RejectionCase(
+        "unknown_select_option",
+        "internal_sales_03",
+        (),
+        422,
+        "invalid_field_value",
+        template_record_id="customers:000002",
+        invalid_field_action="invalid-option",
+        field_key="segment",
+    ),
+    RejectionCase(
+        "wrong_value_type",
+        "internal_sales_03",
+        (),
+        422,
+        "invalid_field_value",
+        template_record_id="customers:000002",
+        invalid_field_action="set",
+        field_key="credit_limit",
+        field_value="about fifty thousand",
+    ),
+    RejectionCase(
+        "unknown_field",
+        "internal_sales_02",
+        (),
+        422,
+        "unknown_field",
+        template_record_id="customers:000002",
+        invalid_field_action="add-unknown-field",
+        field_value="Regional account",
+    ),
+    RejectionCase(
+        "duplicate_link",
+        "internal_sales_02",
+        ("customers:000001", "contacts:000001"),
+        409,
+        "Relationship already exists",
+        operation="create-relationship",
+        relationship_key="customer_contacts",
+        source_record_id="customers:000001",
+        target_record_id="contacts:000001",
+    ),
+    RejectionCase(
+        "second_work_order_for_inspection",
+        "internal_field_02",
+        ("work_orders:000002", "inspections:000001"),
+        409,
+        "Target already has a relationship source",
+        operation="replace-relationship",
+        relationship_key="work_order_inspections",
+        source_record_id="work_orders:000002",
+        target_record_id="inspections:000001",
+    ),
+    RejectionCase(
+        "stale_group_edit",
+        "admin",
+        (),
+        412,
+        "Resource changed",
+        operation="stale-group-edit",
+        group_key="sales-desk",
+        fallback_description="Sales team",
+    ),
+)
+
+CLOSING_CASES = (
+    RejectionCase(
+        "stale_post_edit",
+        "internal_sales_lead",
+        (),
+        409,
+        "stale_post_revision",
+        operation="stale-post-edit",
+        board_key="department:sales",
+        post_key="department:sales:post:03",
+    ),
+    RejectionCase(
+        "pending_account_sign_in",
+        "internal_pending_01",
+        (),
+        401,
+        BAD_CREDENTIALS,
+        operation="sign-in",
+    ),
+    RejectionCase(
+        "disabled_account_sign_in",
+        "internal_disabled_01",
+        (),
+        401,
+        BAD_CREDENTIALS,
+        operation="sign-in",
+    ),
+)

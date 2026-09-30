@@ -6,19 +6,39 @@ from pathlib import Path
 import httpx
 import pytest
 
+from operations.sample_activity import rule_candidates
 from operations.sample_client import SampleClient
+from operations.sample_history import plan_history
+from operations.sample_packs.registry import get_pack, pack_keys
 from operations.sample_population import SamplePopulationError
 from operations.sample_scenario import build_dataset
 from operations.sample_trigger_population import (
+    _candidate_records,
+    _trigger_by_key,
     _wait_trigger,
     validate_record_trigger_candidates,
 )
 
 
-def test_generated_small_dataset_has_real_records_for_created_triggers() -> None:
-    dataset = build_dataset("small", 42, date(2026, 9, 29))
+@pytest.mark.parametrize("organization", pack_keys())
+def test_generated_small_dataset_has_real_records_for_created_triggers(organization: str) -> None:
+    dataset = build_dataset("small", 42, date(2026, 9, 29), organization=get_pack(organization))
 
     validate_record_trigger_candidates(dataset)
+
+
+@pytest.mark.parametrize("operator", ("all", "any"))
+def test_unconditional_school_rule_candidates_match_engine_group_semantics(operator: str) -> None:
+    dataset = build_dataset("small", 42, date(2026, 9, 30), organization=get_pack("school"))
+    trigger = _trigger_by_key(dataset, "academic-alert-parent-contact")
+    trigger["conditionGroup"]["operator"] = operator
+    academic_ids = {
+        record.logical_id for record in dataset.records if record.module_key == "academic_alerts"
+    }
+    # The engine's empty all group matches every record; its empty any group matches none.
+    expected = academic_ids if operator == "all" else set()
+    assert {record.logical_id for record in _candidate_records(dataset, trigger)} == expected
+    assert set(rule_candidates(dataset, plan_history(dataset))) & academic_ids == expected
 
 
 def test_trigger_readback_requires_succeeded_run_and_action_result(tmp_path: Path) -> None:

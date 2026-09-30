@@ -7,14 +7,16 @@ from datetime import date
 from typing import Any
 from uuid import uuid4
 
+from operations.sample_actors import planned_access_level
 from operations.sample_board_text import dashboard_name, report_names, view_name
 from operations.sample_client import SampleClient, SampleClientError
 from operations.sample_content import SampleContentError, _id, _json, _pages
+from operations.sample_packs.interface import OrganizationPack
+from operations.sample_packs.registry import default_pack
 
 _DATE_TYPES = {"date", "datetime"}
 _NUMBER_TYPES = {"number", "decimal", "int"}
 _TEXT_TYPES = {"text", "long_text", "email", "url"}
-_LAYOUTS = ("table", "grid", "kanban", "calendar", "timeline", "gallery")
 
 
 def _kind(field: Mapping[str, Any]) -> str:
@@ -59,11 +61,14 @@ def _source_plans(
     departments: Mapping[str, Mapping[str, Any]],
     modules: Mapping[str, Mapping[str, Any]],
     fields: Mapping[str, list[Mapping[str, Any]]],
+    *,
+    organization: OrganizationPack | None = None,
 ) -> dict[str, tuple[tuple[str, Mapping[str, Any], list[dict[str, Any]]], ...]]:
-    if len(departments) != 6 or len(modules) != 24:
-        raise SampleContentError(
-            "OpenView content requires six departments and twenty-four modules"
-        )
+    pack = organization or default_pack()
+    if len(departments) != len(pack.catalog.departments) or len(modules) != len(
+        pack.catalog.modules
+    ):
+        raise SampleContentError("OpenView content requires the pack's published structure")
     plans: dict[str, tuple[tuple[str, Mapping[str, Any], list[dict[str, Any]]], ...]] = {}
     for department_key, department in departments.items():
         department_id = _id(department)
@@ -80,10 +85,8 @@ def _source_plans(
             score += int("select" in kinds) * 2 + int(bool(kinds & _TEXT_TYPES))
             candidates.append((score, module_key, module, active))
         candidates.sort(key=lambda item: (-item[0], item[1]))
-        if len(candidates) < 2:
-            raise SampleContentError(
-                f"OpenView needs two active report sources for {department_key}"
-            )
+        if not candidates:
+            raise SampleContentError(f"OpenView needs an active report source for {department_key}")
         plans[department_key] = tuple(
             (module_key, module, active) for _, module_key, module, active in candidates[:2]
         )
@@ -165,6 +168,7 @@ def create_report_run_and_disabled_schedule(
     cadence: str,
     *,
     weekday: int | None = None,
+    organization: OrganizationPack | None = None,
 ) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
     if cadence not in {"daily", "weekly"} or (cadence == "weekly") != (weekday is not None):
         raise ValueError("Report schedules must be disabled daily or weekly policies")
@@ -181,7 +185,7 @@ def create_report_run_and_disabled_schedule(
     policy: dict[str, Any] = {
         "enabled": False,
         "cadence": cadence,
-        "timezone_name": "Asia/Manila",
+        "timezone_name": (organization or default_pack()).identity.timezone,
         "local_time": "09:00",
     }
     if weekday is not None:
@@ -190,6 +194,30 @@ def create_report_run_and_disabled_schedule(
     if schedule.get("report_id") != report_id or schedule.get("enabled") is not False:
         raise SampleContentError("Report schedule was not saved disabled")
     return run, schedule
+
+
+def _module_writer(
+    pack: OrganizationPack,
+    department: str,
+    module: str,
+    fallback: SampleClient,
+    actor_clients: Mapping[str, SampleClient] | None,
+) -> SampleClient:
+    if actor_clients is None:
+        return fallback
+    lead = pack.content.data.leads[department]
+    candidates = (lead, *(key for key in pack.actors.team_keys[department] if key != lead))
+    selected = next(
+        (
+            key
+            for key in candidates
+            if key in actor_clients and planned_access_level(pack, key, department, module) >= 3
+        ),
+        None,
+    )
+    if selected is None:
+        raise SampleContentError(f"OpenView module manager is unavailable for {module}")
+    return actor_clients[selected]
 
 
 def populate_openview(
@@ -201,10 +229,13 @@ def populate_openview(
     anchor_date: date,
     seed: int,
     writers: Mapping[str, SampleClient] | None = None,
+    actor_clients: Mapping[str, SampleClient] | None = None,
+    organization: OrganizationPack | None = None,
 ) -> Mapping[str, int]:
     """Each department's shared views, Dashboard and Reports, built by its writer (lead)."""
     del anchor_date, seed
-    plans = _source_plans(departments, modules, fields)
+    pack = organization or default_pack()
+    plans = _source_plans(departments, modules, fields, organization=pack)
     counts = {
         "views": 0,
         "dashboards": 0,
@@ -218,11 +249,14 @@ def populate_openview(
     for department_key, department in departments.items():
         writer = (writers or {}).get(department_key, admin)
         selected_module_key, selected_module, selected_fields = plans[department_key][0]
+        module_writer = _module_writer(
+            pack, department_key, selected_module_key, writer, actor_clients
+        )
         query = _definition(selected_fields)
-        for layout in _LAYOUTS:
-            name = view_name(selected_module_key, layout)
+        for layout in pack.content.data.layouts:
+            name = view_name(selected_module_key, layout, organization=pack)
             saved = _json(
-                writer,
+                module_writer,
                 "POST",
                 "/api/views",
                 body={
@@ -235,7 +269,7 @@ def populate_openview(
                 expected=(201,),
             )
             logical_id = f"department:{department_key}:view:{selected_module_key}:{layout}"
-            writer.record_mapping("views", logical_id, _id(saved))
+            module_writer.record_mapping("views", logical_id, _id(saved))
             counts["views"] += 1
 
         widgets = _dashboard_widgets(selected_module, selected_fields)
@@ -245,7 +279,9 @@ def populate_openview(
             "/api/dashboards",
             body={
                 "department_id": _id(department),
-                "name": dashboard_name(str(department.get("name", department_key))),
+                "name": dashboard_name(
+                    str(department.get("name", department_key)), organization=pack
+                ),
                 "position": 0,
                 "refresh_cadence": "manual",
                 "widgets": widgets,
@@ -269,6 +305,7 @@ def populate_openview(
         counts["dashboard_widgets"] += len(saved_widgets)
 
         for report_index, (module_key, module, active_fields) in enumerate(plans[department_key]):
+            module_writer = _module_writer(pack, department_key, module_key, writer, actor_clients)
             module_id = _id(module)
             recipe_fields = [_reference(field) for field in active_fields[:8]]
             group_by = next(
@@ -278,10 +315,13 @@ def populate_openview(
             cadence = "daily" if report_index == 0 else "weekly"
             group_field = next((field for field in active_fields if _kind(field) == "select"), None)
             report_name, subtitle = report_names(
-                module_key, cadence, str(group_field["name"]) if group_field else None
+                module_key,
+                cadence,
+                str(group_field["name"]) if group_field else None,
+                organization=pack,
             )
             report = _json(
-                writer,
+                module_writer,
                 "POST",
                 "/api/reports",
                 body={
@@ -302,9 +342,13 @@ def populate_openview(
             )
             report_id = _id(report)
             logical_report = f"department:{department_key}:report:{report_index + 1:02d}"
-            writer.record_mapping("reports", logical_report, report_id)
+            module_writer.record_mapping("reports", logical_report, report_id)
             run, schedule = create_report_run_and_disabled_schedule(
-                writer, report_id, cadence, weekday=1 if cadence == "weekly" else None
+                module_writer,
+                report_id,
+                cadence,
+                weekday=1 if cadence == "weekly" else None,
+                organization=pack,
             )
             if not run.get("id") or schedule.get("enabled") is not False:
                 raise SampleContentError("Report output or disabled schedule was not persisted")

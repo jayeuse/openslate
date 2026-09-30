@@ -10,17 +10,15 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from operations.sample_board_text import EVENT_DETAILS, EVENT_LOCATIONS, revised_post
+from operations.sample_board_text import revised_post
 from operations.sample_client import SampleClient
 from operations.sample_content import (
-    _EVENT_TITLES,
-    _REMINDERS,
     SampleContentError,
     _id,
     _json,
 )
-
-_MANILA = ZoneInfo("Asia/Manila")
+from operations.sample_packs.interface import OrganizationPack
+from operations.sample_packs.registry import default_pack
 
 
 def create_board_post(
@@ -107,31 +105,24 @@ def _money(
 def validate_board_scenarios(
     records: Mapping[str, Mapping[str, Any]],
     fields: Mapping[str, list[Mapping[str, Any]]],
+    *,
+    organization: OrganizationPack | None = None,
 ) -> dict[str, Any]:
     """Validate golden operational records before any Board metadata is written."""
-    invoice_total = _money(records, fields, "invoices:000001", "Total")
-    paid = _money(records, fields, "payments:000001", "Amount")
-    if (
-        invoice_total != Decimal(12_000)
-        or paid != Decimal(4_500)
-        or invoice_total - paid != Decimal(7_500)
+    spec = (organization or default_pack()).content.data
+    amounts = {item.key: _money(records, fields, item.record, item.field) for item in spec.amounts}
+    if any(amounts[item.key] != item.expected for item in spec.amounts) or (
+        len(spec.amounts) >= 2
+        and amounts[spec.amounts[0].key] - amounts[spec.amounts[1].key] != spec.scenario_balance
     ):
-        raise SampleContentError(
-            "Golden partial-payment scenario does not match its expected amounts"
-        )
-    required = {
-        "invoices:000001": "invoices",
-        "payments:000001": "payments",
-        "equipment:000001": "equipment",
-        "work_orders:000001": "work_orders",
-    }
+        raise SampleContentError("Planned linked records do not match their expected amounts")
     record_ids: dict[str, str] = {}
-    for logical_id, module_key in required.items():
+    for logical_id, module_key in spec.required_records.items():
         record = records.get(logical_id)
         if record is None or record.get("module_key") != module_key:
             raise SampleContentError(f"Required scenario record is unavailable: {logical_id}")
         record_ids[logical_id] = _id(record)
-    return {"invoice_total": invoice_total, "paid": paid, "record_ids": record_ids}
+    return {**amounts, "record_ids": record_ids}
 
 
 def _record_link(
@@ -174,30 +165,41 @@ def _record_link(
 
 
 def event_payload(
-    board_index: int, index: int, anchor_date: date
+    board_index: int,
+    index: int,
+    anchor_date: date,
+    *,
+    organization: OrganizationPack | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """One Board event as the event editor saves it, and its reminder settings."""
+    pack = organization or default_pack()
+    spec = pack.content.data
+    timezone = ZoneInfo(pack.identity.timezone)
     now = datetime.now(UTC)
     scheduled_reminder = index < 2
     if scheduled_reminder:
-        start = (now + timedelta(days=14 + board_index * 2 + index)).astimezone(_MANILA)
+        start = (now + timedelta(days=14 + board_index * 2 + index)).astimezone(timezone)
         event_day = start.date()
     else:
         delta = ((board_index * 37 + index * 29) % 456) - 365
         event_day = anchor_date + timedelta(days=delta)
-        start = datetime.combine(event_day, day_time(9 + index % 6), tzinfo=_MANILA)
+        start = datetime.combine(event_day, day_time(9 + index % 6), tzinfo=timezone)
     all_day = index % 3 == 2
     recurrence = "weekly" if index in {0, 11} else "monthly" if index in {5, 10} else "none"
     repeat_until = (event_day + timedelta(days=28)).isoformat() if recurrence != "none" else None
-    reminders = [_REMINDERS[(board_index * 2 + index) % 3]] if scheduled_reminder else []
-    title = _EVENT_TITLES[(board_index + index) % len(_EVENT_TITLES)]
+    reminders = (
+        [spec.reminders[(board_index * 2 + index) % len(spec.reminders)]]
+        if scheduled_reminder
+        else []
+    )
+    title = spec.event_titles[(board_index + index) % len(spec.event_titles)]
     payload: dict[str, Any] = {
         "title": title,
-        "details": EVENT_DETAILS[title],
-        "location": EVENT_LOCATIONS[index % len(EVENT_LOCATIONS)],
+        "details": spec.event_details[title],
+        "location": spec.event_locations[index % len(spec.event_locations)],
         "links": [],
         "all_day": all_day,
-        "timezone_name": "Asia/Manila",
+        "timezone_name": pack.identity.timezone,
         "recurrence": recurrence,
         "repeat_until": repeat_until,
         "reminders": reminders,
@@ -214,7 +216,11 @@ def event_payload(
 
 
 def finalize_post(
-    post: Mapping[str, Any], republished_board_ids: set[str], now: datetime
+    post: Mapping[str, Any],
+    republished_board_ids: set[str],
+    now: datetime,
+    *,
+    organization: OrganizationPack | None = None,
 ) -> tuple[int, int]:
     """Publish, schedule or archive one post with fresh revisions; the first published post
     on each Board is edited once and published again."""
@@ -237,7 +243,7 @@ def finalize_post(
         if board["id"] not in republished_board_ids:
             fresh_board = _json(client, "GET", f"/api/boards/{board['id']}")
             fresh_post = _json(client, "GET", item_path, params={"view": "editable"})
-            title, body = revised_post(post["title"], post["body"])
+            title, body = revised_post(post["title"], post["body"], organization=organization)
             _json(client, "PATCH", item_path, body={
                 "board_revision": fresh_board.get("revision"),
                 "post_revision": fresh_post.get("post_revision"),

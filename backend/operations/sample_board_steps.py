@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
-from decimal import Decimal
 from typing import Any
 
 from operations.sample_board_entries import (
@@ -23,10 +22,9 @@ from operations.sample_board_entries import (
 )
 from operations.sample_board_text import post_text
 from operations.sample_client import SampleClient
-from operations.sample_content import _POST_STATES, SampleContentError, _id
-
-_POSTS, _EVENTS = 8, 12
-_SCENARIO_TOTAL, _SCENARIO_PAID = Decimal(12_000), Decimal(4_500)
+from operations.sample_content import SampleContentError, _id
+from operations.sample_packs.interface import OrganizationPack
+from operations.sample_packs.registry import default_pack
 
 
 @dataclass(frozen=True)
@@ -48,13 +46,16 @@ class StepSpec:
     needs_records: tuple[str, ...] = ()
 
 
-def plan_board_steps(boards: Sequence[BoardMeta]) -> list[StepSpec]:
+def plan_board_steps(
+    boards: Sequence[BoardMeta], *, organization: OrganizationPack | None = None
+) -> list[StepSpec]:
     """Interleave posts and events across Boards, then links, then post life cycles."""
+    spec = (organization or default_pack()).content.data
     steps: list[StepSpec] = []
-    for index in range(_EVENTS):
+    for index in range(spec.events_per_board):
         for board_index, board in enumerate(boards):
             rotation = board_index * 3 + index
-            if index < _POSTS:
+            if index < spec.posts_per_board:
                 author = board.authors[rotation % len(board.authors)]
                 steps.append(StepSpec(f"post:{board.logical_id}:{index}", "post",
                                       board.logical_id, index, author))  # fmt: skip
@@ -62,18 +63,22 @@ def plan_board_steps(boards: Sequence[BoardMeta]) -> list[StepSpec]:
             steps.append(StepSpec(f"event:{board.logical_id}:{index}", "event",
                                   board.logical_id, index, author))  # fmt: skip
     by_key = {step.key: step for step in steps}
-    finance = f"post:department:finance:{0}"
-    field_event = f"event:department:field:{0}"
-    if finance in by_key:
-        steps.append(StepSpec("link:finance-post", "link", "department:finance", 0,
-                              by_key[finance].author_key, (finance,),
-                              ("invoices:000001", "payments:000001")))  # fmt: skip
-    if field_event in by_key:
-        steps.append(StepSpec("link:field-event", "link", "department:field", 0,
-                              by_key[field_event].author_key, (field_event,),
-                              ("equipment:000001", "work_orders:000001")))  # fmt: skip
-    for index in range(_POSTS):
-        if _POST_STATES[index // 2] == "draft":
+    for link in spec.board_links:
+        parent = f"{link.kind}:{link.board}:{link.index}"
+        if parent in by_key:
+            steps.append(
+                StepSpec(
+                    link.key,
+                    "link",
+                    link.board,
+                    link.index,
+                    by_key[parent].author_key,
+                    (parent,),
+                    link.records,
+                )
+            )
+    for index in range(spec.posts_per_board):
+        if spec.post_states[index // 2] == "draft":
             continue
         for board in boards:
             post = by_key[f"post:{board.logical_id}:{index}"]
@@ -93,6 +98,7 @@ class BoardQueue:
     clients: Mapping[str, SampleClient]
     fields: Mapping[str, list[Mapping[str, Any]]]
     anchor_date: date
+    organization: OrganizationPack | None = None
     every: int = 1
     counts: dict[str, int] = field(
         default_factory=lambda: dict.fromkeys(
@@ -129,17 +135,23 @@ class BoardQueue:
         return False
 
     def _run(self, step: StepSpec, records: Mapping[str, Mapping[str, Any]]) -> None:
+        pack = self.organization or default_pack()
+        spec = pack.content.data
         board = self.boards[step.board]
         client = self.clients[step.author_key]
         board_index = list(self.boards).index(step.board)
         if step.kind == "post":
-            title, body = post_text(board, step.index, _SCENARIO_TOTAL, _SCENARIO_PAID)
+            title, body = post_text(
+                board, step.index, spec.scenario_total, spec.scenario_paid, organization=pack
+            )
             saved = create_board_post(client, board["id"], title, body)
             client.record_mapping("posts", f"{step.board}:post:{step.index + 1:02d}", _id(saved))
             self._items[step.key] = {"id": _id(saved), "title": title, "body": body}
             self.counts["posts"] += 1
         elif step.kind == "event":
-            payload, reminders = event_payload(board_index, step.index, self.anchor_date)
+            payload, reminders = event_payload(
+                board_index, step.index, self.anchor_date, organization=pack
+            )
             saved = create_board_event(client, board["id"], payload)
             client.record_mapping("events", f"{step.board}:event:{step.index + 1:02d}", _id(saved))
             self._items[step.key] = {"id": _id(saved)}
@@ -149,9 +161,17 @@ class BoardQueue:
             self._link(step, board, client, records)
         else:
             item = self._items[step.needs_steps[0]]
-            post = {**item, "board": board, "writer": client, "index": step.index,
-                    "board_index": board_index, "state": _POST_STATES[step.index // 2]}  # fmt: skip
-            publications, revisions = finalize_post(post, self._republished, datetime.now(UTC))
+            post = {
+                **item,
+                "board": board,
+                "writer": client,
+                "index": step.index,
+                "board_index": board_index,
+                "state": spec.post_states[step.index // 2],
+            }
+            publications, revisions = finalize_post(
+                post, self._republished, datetime.now(UTC), organization=pack
+            )
             self.counts["post_publications"] += publications
             self.counts["publication_revisions"] += revisions
 
@@ -162,9 +182,11 @@ class BoardQueue:
         client: SampleClient,
         records: Mapping[str, Mapping[str, Any]],
     ) -> None:
-        record_ids = validate_board_scenarios(records, self.fields)["record_ids"]
+        record_ids = validate_board_scenarios(records, self.fields, organization=self.organization)[
+            "record_ids"
+        ]
         item_id = self._items[step.needs_steps[0]]["id"]
-        is_post = step.key == "link:finance-post"
+        is_post = step.needs_steps[0].startswith("post:")
         for logical_id in step.needs_records:
             _record_link(client, "post" if is_post else "event", board["id"], item_id,
                          "post_revision" if is_post else "revision", str(record_ids[logical_id]),

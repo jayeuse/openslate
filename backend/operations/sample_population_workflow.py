@@ -1,4 +1,4 @@
-"""Ordered, authenticated UI-API population of one Harbor sample run."""
+"""Ordered, authenticated UI-API population of one organization sample run."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from operations.sample_population import (
     _login,
     _write_manifest,
 )
-from operations.sample_rejections import CLOSING_CASES, RejectionContext, run_rejection
+from operations.sample_rejections import RejectionContext, run_rejection
 from operations.sample_trigger_population import (
     exercise_record_triggers,
     validate_record_trigger_candidates,
@@ -90,15 +90,15 @@ def run_population(
             "/api/workspace",
             body={
                 "revision": workspace["revision"],
-                "display_name": "Harbor Operations Group",
-                "locale": "en-US",
-                "timezone": "Asia/Manila",
+                "display_name": dataset.organization.identity.workspace_name,
+                "locale": dataset.organization.identity.locale,
+                "timezone": dataset.organization.identity.timezone,
             },
         )
         if (
-            updated.get("display_name") != "Harbor Operations Group"
-            or updated.get("locale") != "en-US"
-            or updated.get("timezone") != "Asia/Manila"
+            updated.get("display_name") != dataset.organization.identity.workspace_name
+            or updated.get("locale") != dataset.organization.identity.locale
+            or updated.get("timezone") != dataset.organization.identity.timezone
         ):
             raise SamplePopulationError("Workspace settings readback did not match the sample")
 
@@ -127,6 +127,7 @@ def run_population(
             mailpit_url,
             origin,
             run_directory / "credentials.json",
+            organization=dataset.organization,
         )
         people = {
             key: {
@@ -137,9 +138,15 @@ def run_population(
             for key, person in people_result.users.items()
         }
         actor_ids = {key: value.user_id for key, value in people_result.actors.items()}
-        if set(actor_ids) != {record.creator_key for record in dataset.records} | {
+        required_actors = {
+            person.key
+            for person in dataset.organization.actors.people
+            if person.role == "member" and person.status == "active"
+        }
+        required_actors |= {record.creator_key for record in dataset.records} | {
             record.assignee_key for record in dataset.records
-        }:
+        }
+        if not required_actors <= set(actor_ids):
             raise SamplePopulationError("The acting team member identities are incomplete")
         manifest["people"] = people
         manifest["actor_ids"] = actor_ids
@@ -202,6 +209,7 @@ def run_population(
             fields=fields,
             groups=people_result.groups,
             anchor_date=dataset.anchor_date,
+            organization=dataset.organization,
         )
         sessions = plan_sessions(dataset)
         board_queue.pace(len(sessions))
@@ -250,12 +258,13 @@ def run_population(
             fields=fields,
             anchor_date=dataset.anchor_date,
             seed=dataset.seed,
+            organization=dataset.organization,
         )
         counts = {key: int(content_counts.get(key, -1)) for key in _CONTENT_KEYS}
         if any(value < 0 for value in counts.values()):
             raise SamplePopulationError("Content workflow omitted expected result counts")
         manifest["content_counts"] = counts
-        for case in CLOSING_CASES:
+        for case in dataset.organization.rejections.closing_cases:
             run_rejection(rejections, case)
         manifest["expected_failures"] = rejections.results
         manifest["mappings"] = _journal_mappings(journal)
@@ -321,7 +330,12 @@ def _publish_sandbox(
         body={"expectedRevision": revision},
     )
     counts = preview.get("counts")
-    expected_counts = {"departments": 6, "modules": 24, "relationships": 18, "triggers": 8}
+    expected_counts = {
+        "departments": len(dataset.department_ids),
+        "modules": len(dataset.module_ids),
+        "relationships": len(dataset.relationship_ids),
+        "triggers": len(dataset.trigger_ids),
+    }
     if (
         preview.get("blockers") != []
         or not isinstance(counts, Mapping)

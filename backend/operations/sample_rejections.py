@@ -1,8 +1,4 @@
-"""Planned rejections: requests people make that the API must refuse before any write.
-
-Each case records the actor, request, expected and actual status and detail, and the
-request ID. A case that the API accepts stops the run, because it changed data.
-"""
+"""Execute and verify planned requests that an organization expects the API to refuse."""
 
 from __future__ import annotations
 
@@ -17,98 +13,11 @@ import httpx
 
 from operations.sample_blueprint import SampleDataset
 from operations.sample_client import SampleClient
+from operations.sample_packs import default_pack
+from operations.sample_packs.interface import OrganizationPack
+from operations.sample_packs.types import RejectionCase
 from operations.sample_population import SamplePopulationError
 from operations.sample_verification import list_all_rows
-
-_NEVER_AN_OPTION = str(uuid5(NAMESPACE_URL, "openslate:harbor-operations:not-an-option"))
-_NEVER_A_FIELD = str(uuid5(NAMESPACE_URL, "openslate:harbor-operations:never-a-field"))
-_FORBIDDEN, _HIDDEN = "Forbidden", "Module not found"
-_BAD_CREDENTIALS = "Invalid authentication credentials"
-
-
-@dataclass(frozen=True)
-class RejectionCase:
-    key: str
-    actor_key: str
-    needs: tuple[str, ...]
-    expected_status: int
-    expected_detail: str  # A detail string, a detail code, or a validation error code.
-
-
-ACTIVITY_CASES = (
-    RejectionCase("guest_creates_record", "guest_01", (), 403, _FORBIDDEN),
-    RejectionCase("auditor_creates_invoice", "internal_sales_04", (), 403, _FORBIDDEN),
-    RejectionCase("auditor_edits_invoice", "internal_sales_05", ("invoices:000003",), 403,
-                  _FORBIDDEN),
-    RejectionCase("record_in_hidden_department", "internal_sales_02", (), 404, _HIDDEN),
-    RejectionCase("missing_required_field", "internal_sales_02", (), 422, "required_field"),
-    RejectionCase("unknown_select_option", "internal_sales_03", (), 422, "invalid_field_value"),
-    RejectionCase("wrong_value_type", "internal_sales_03", (), 422, "invalid_field_value"),
-    RejectionCase("unknown_field", "internal_sales_02", (), 422, "unknown_field"),
-    RejectionCase("duplicate_link", "internal_sales_02", ("customers:000001", "contacts:000001"),
-                  409, "Relationship already exists"),
-    RejectionCase("second_work_order_for_inspection", "internal_field_02",
-                  ("work_orders:000002", "inspections:000001"), 409,
-                  "Target already has a relationship source"),
-    RejectionCase("stale_group_edit", "admin", (), 412, "Resource changed"),
-)  # fmt: skip
-CLOSING_CASES = (
-    RejectionCase("stale_post_edit", "internal_sales_lead", (), 409, "stale_post_revision"),
-    RejectionCase("pending_account_sign_in", "internal_pending_01", (), 401, _BAD_CREDENTIALS),
-    RejectionCase("disabled_account_sign_in", "internal_disabled_01", (), 401, _BAD_CREDENTIALS),
-)
-# The generated record each record-payload case starts from.
-_TEMPLATES = {
-    "guest_creates_record": "customers:000002",
-    "auditor_creates_invoice": "invoices:000002",
-    "record_in_hidden_department": "work_orders:000002",
-    "missing_required_field": "customers:000002",
-    "unknown_select_option": "customers:000002",
-    "wrong_value_type": "customers:000002",
-    "unknown_field": "customers:000002",
-}
-
-
-def invalid_record_data(
-    dataset: SampleDataset,
-    case_key: str,
-    data: dict[str, Any],
-    field_map: Mapping[str, str] | None = None,
-) -> dict[str, Any]:
-    """Break exactly one record rule; `field_map` turns document field IDs into API IDs."""
-    fields = dataset.field_ids["customers"]
-
-    def api(key: str) -> str:
-        return field_map[fields[key]] if field_map is not None else fields[key]
-
-    broken = dict(data)
-    if case_key == "missing_required_field":
-        broken.pop(api("name"), None)
-    elif case_key == "unknown_select_option":
-        broken[api("segment")] = _NEVER_AN_OPTION
-    elif case_key == "wrong_value_type":
-        broken[api("credit_limit")] = "about fifty thousand"
-    elif case_key == "unknown_field":
-        broken[_NEVER_A_FIELD] = "Regional account"
-    return broken
-
-
-def outcome_matches(case: RejectionCase, status: int, body: Any) -> bool:
-    """Require the expected status and its specific detail, never the status alone."""
-    if status != case.expected_status or not isinstance(body, Mapping):
-        return False
-    detail = body.get("detail")
-    if detail == case.expected_detail:
-        return True
-    if isinstance(detail, Mapping):
-        errors = detail.get("errors")
-        codes = (
-            [item.get("code") for item in errors if isinstance(item, Mapping)]
-            if isinstance(errors, list)
-            else []
-        )
-        return case.expected_detail == detail.get("code") or case.expected_detail in codes
-    return False
 
 
 @dataclass
@@ -124,7 +33,6 @@ class RejectionContext:
     build_payload: Callable[[str], dict[str, Any]]
     field_map: Callable[[str], Mapping[str, str]]
     results: list[dict[str, Any]]
-    # Saves results as they happen, so a stopped run keeps its rejection evidence.
     save: Callable[[list[dict[str, Any]]], None] = lambda _results: None
 
 
@@ -148,63 +56,146 @@ def _session(context: RejectionContext, key: str) -> SampleClient:
     return client
 
 
+def invalid_record_data(
+    dataset: SampleDataset,
+    case: RejectionCase | str,
+    data: dict[str, Any],
+    field_map: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Apply one pack-described invalid field to a valid generated record payload."""
+    if isinstance(case, str):
+        cases = (
+            *dataset.organization.rejections.activity_cases,
+            *dataset.organization.rejections.closing_cases,
+        )
+        selected = next((item for item in cases if item.key == case), None)
+        if selected is None:
+            raise SamplePopulationError(f"Unknown rejection case: {case}")
+        case = selected
+    broken = dict(data)
+    action = case.invalid_field_action
+    if action is None:
+        return broken
+    if case.template_record_id is None:
+        raise SamplePopulationError("Invalid record rejection has no template record")
+    module_key = case.template_record_id.split(":", maxsplit=1)[0]
+
+    def api_field(key: str) -> str:
+        document_id = dataset.field_ids[module_key][key]
+        return field_map[document_id] if field_map is not None else document_id
+
+    if action == "remove" and case.field_key is not None:
+        broken.pop(api_field(case.field_key), None)
+    elif action == "invalid-option" and case.field_key is not None:
+        key = dataset.organization.rejections.invalid_option_key
+        broken[api_field(case.field_key)] = str(uuid5(NAMESPACE_URL, key))
+    elif action == "set" and case.field_key is not None:
+        broken[api_field(case.field_key)] = case.field_value
+    elif action == "add-unknown-field":
+        key = dataset.organization.rejections.invalid_field_key
+        broken[str(uuid5(NAMESPACE_URL, key))] = case.field_value
+    else:
+        raise SamplePopulationError("Invalid record rejection is missing its field rule")
+    return broken
+
+
+def outcome_matches(case: RejectionCase, status: int, body: Any) -> bool:
+    """Require the expected status and its specific detail, never the status alone."""
+    if status != case.expected_status or not isinstance(body, Mapping):
+        return False
+    detail = body.get("detail")
+    if detail == case.expected_detail:
+        return True
+    if isinstance(detail, Mapping):
+        errors = detail.get("errors")
+        codes = (
+            [item.get("code") for item in errors if isinstance(item, Mapping)]
+            if isinstance(errors, list)
+            else []
+        )
+        return case.expected_detail == detail.get("code") or case.expected_detail in codes
+    return False
+
+
+def _logical_record_id(value: str | None, label: str) -> str:
+    if not value:
+        raise SamplePopulationError(f"Rejection case is missing its {label}")
+    return value
+
+
 def _request(context: RejectionContext, case: RejectionCase) -> httpx.Response:
     maps = context.mappings()
-    records, fields = maps.get("record", {}), maps.get("relationships", {})
-    if case.key in {"pending_account_sign_in", "disabled_account_sign_in"}:
+    records = maps.get("record", {})
+    relationships = maps.get("relationships", {})
+    operation = case.operation
+
+    if operation == "sign-in":
         account = _roster_account(context, case.actor_key)
         password = str(account.get("password") or "Not-the-right-password-2026")
         return context.new_client().login(str(account["email"]), password)
+
     client = _session(context, case.actor_key)
-    if case.key in _TEMPLATES:
-        payload = context.build_payload(_TEMPLATES[case.key])
-        module_key = _TEMPLATES[case.key].split(":")[0]
-        payload["data"] = invalid_record_data(
-            context.dataset, case.key, payload["data"], context.field_map(module_key)
-        )
+    if operation == "create-record":
+        logical_id = _logical_record_id(case.template_record_id, "record template")
+        payload = context.build_payload(logical_id)
+        if case.invalid_field_action is not None:
+            module_key = logical_id.split(":", maxsplit=1)[0]
+            payload["data"] = invalid_record_data(
+                context.dataset, case, payload["data"], context.field_map(module_key)
+            )
         return client.request("POST", "/api/records", json_body=payload)
-    if case.key == "auditor_edits_invoice":
-        record_id = records["invoices:000003"]
+
+    if operation == "read-record":
+        logical_id = _logical_record_id(case.target_record_id, "record")
+        return client.request("GET", f"/api/records/{records[logical_id]}")
+
+    if operation == "edit-record":
+        logical_id = _logical_record_id(case.target_record_id, "record")
+        record_id = records[logical_id]
         current = client.request("GET", f"/api/records/{record_id}").json()
         return client.request(
             "PATCH", f"/api/records/{record_id}", json_body={"data": current["data"]}
         )
-    if case.key == "duplicate_link":
-        body = {
-            "field_id": fields["customer_contacts"],
-            "source_record_id": records["customers:000001"],
-            "target_record_id": records["contacts:000001"],
-        }
-        return client.request("POST", "/api/relationships", json_body=body)
-    if case.key == "second_work_order_for_inspection":
-        path = (f"/api/relationships/fields/{fields['work_order_inspections']}"
-                f"/sources/{records['work_orders:000002']}")  # fmt: skip
-        return client.request(
-            "PUT", path, json_body={"target_record_id": records["inspections:000001"]}
-        )
-    if case.key == "stale_group_edit":
-        group_id = maps.get("group", {})["sales-desk"]
+
+    if operation in {"create-relationship", "replace-relationship"}:
+        relationship_key = _logical_record_id(case.relationship_key, "relationship")
+        source = _logical_record_id(case.source_record_id, "source record")
+        target = _logical_record_id(case.target_record_id, "target record")
+        field_id = relationships[relationship_key]
+        source_id, target_id = records[source], records[target]
+        if operation == "create-relationship":
+            body = {
+                "field_id": field_id,
+                "source_record_id": source_id,
+                "target_record_id": target_id,
+            }
+            return client.request("POST", "/api/relationships", json_body=body)
+        path = f"/api/relationships/fields/{field_id}/sources/{source_id}"
+        return client.request("PUT", path, json_body={"target_record_id": target_id})
+
+    if operation == "stale-group-edit":
+        group_key = _logical_record_id(case.group_key, "group")
+        group_id = maps.get("group", {})[group_key]
         current = client.request("GET", f"/api/access/groups/{group_id}")
         etag = current.headers.get("ETag", "")
         tag_id, _, revision = etag.strip('"').rpartition(":")
         if not tag_id or not revision.isdigit() or int(revision) < 1:
             raise SamplePopulationError("The group's version tag could not be read")
         stale = f'"{tag_id}:{int(revision) - 1}"'
-        description = current.json().get("description") or "Sales team"
+        description = current.json().get("description") or case.fallback_description or "Team group"
         return client.request(
             "PATCH",
             f"/api/access/groups/{group_id}",
             headers={"If-Match": stale},
             json_body={"description": description},
         )
-    if case.key == "stale_post_edit":
-        board_id, post_id = (
-            maps["boards"]["department:sales"],
-            maps["posts"]["department:sales:post:03"],
-        )
+
+    if operation == "stale-post-edit":
+        board_key = _logical_record_id(case.board_key, "Board")
+        post_key = _logical_record_id(case.post_key, "post")
+        board_id, post_id = maps["boards"][board_key], maps["posts"][post_key]
         board = client.request("GET", f"/api/boards/{board_id}").json()
         post_path = f"/api/boards/{board_id}/posts/{post_id}"
-        # The edited post is published, so its current revision is in the editable view.
         post_response = client.request("GET", post_path, params={"view": "editable"})
         post = post_response.json() if post_response.status_code == 200 else {}
         revision = post.get("post_revision")
@@ -220,11 +211,12 @@ def _request(context: RejectionContext, case: RejectionCase) -> httpx.Response:
             "title": post.get("title"),
         }
         return client.request("PATCH", post_path, json_body=edit)
-    raise SamplePopulationError(f"Unknown rejection case: {case.key}")
+
+    raise SamplePopulationError("Unknown rejection operation")
 
 
 def run_rejection(context: RejectionContext, case: RejectionCase) -> None:
-    """Send one refused request, record it, and stop the run if it was accepted."""
+    """Send one refused request, record it, and stop if the API accepted it."""
     response = _request(context, case)
     try:
         body: Any = response.json()
@@ -240,7 +232,7 @@ def run_rejection(context: RejectionContext, case: RejectionCase) -> None:
             "actual_status": response.status_code,
             "request_id": request_id,
             "outcome": "matched" if matched else "mismatch",
-        }  # fmt: skip
+        }
     )
     context.save(context.results)
     if request_id:
@@ -250,11 +242,15 @@ def run_rejection(context: RejectionContext, case: RejectionCase) -> None:
 
 
 def check_rejections(
-    results: Sequence[Mapping[str, Any]], audit_rows: Sequence[Mapping[str, Any]]
+    results: Sequence[Mapping[str, Any]],
+    audit_rows: Sequence[Mapping[str, Any]],
+    organization: OrganizationPack | None = None,
 ) -> list[str]:
-    """Every planned case ran and matched, and no refused request left an audit row."""
+    """Require every pack-planned case and no audit trace from a refused request."""
+    pack = organization or default_pack()
+    cases = (*pack.rejections.activity_cases, *pack.rejections.closing_cases)
     issues = []
-    expected = {case.key for case in (*ACTIVITY_CASES, *CLOSING_CASES)}
+    expected = {case.key for case in cases}
     if sorted(str(item.get("case")) for item in results) != sorted(expected):
         issues.append("planned rejections did not all run exactly once")
     if any(item.get("outcome") != "matched" for item in results):
@@ -266,7 +262,12 @@ def check_rejections(
 
 
 def verify_rejections(
-    client: SampleClient, *, results: Sequence[Mapping[str, Any]], started_at: str, finished_at: str
+    client: SampleClient,
+    *,
+    results: Sequence[Mapping[str, Any]],
+    started_at: str,
+    finished_at: str,
+    organization: OrganizationPack | None = None,
 ) -> tuple[dict[str, int], list[str]]:
     rows: list[Mapping[str, Any]] = []
     for entity_type in ("records", "relationship_edges", "groups", "board_posts"):
@@ -282,4 +283,13 @@ def verify_rejections(
             )
         )
     matched = sum(item.get("outcome") == "matched" for item in results)
-    return {"planned_rejections_matched": matched}, check_rejections(results, rows)
+    return {"planned_rejections_matched": matched}, check_rejections(results, rows, organization)
+
+
+def __getattr__(name: str) -> Any:
+    pack = default_pack()
+    if name == "ACTIVITY_CASES":
+        return pack.rejections.activity_cases
+    if name == "CLOSING_CASES":
+        return pack.rejections.closing_cases
+    raise AttributeError(name)

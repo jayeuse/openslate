@@ -12,11 +12,13 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from operations.sample_catalog import SampleProfile
 from operations.sample_client import SampleClient
 from operations.sample_configuration_verification import verify_configuration
 from operations.sample_content import verify_content
 from operations.sample_history_verification import verify_history
+from operations.sample_packs.interface import OrganizationPack
+from operations.sample_packs.registry import default_pack, get_pack
+from operations.sample_packs.types import SampleProfile
 from operations.sample_people import _people
 from operations.sample_rejections import verify_rejections
 from operations.sample_scenario import build_dataset
@@ -62,7 +64,11 @@ def read_run_manifest(directory: Path, expected_admin_id: str) -> dict[str, Any]
             value = json.load(stream)
     except (OSError, ValueError, UnicodeError):
         raise SampleVerificationError("Run evidence must be valid private files") from None
-    if not isinstance(value, dict) or value.get("schema_version") != 1:
+    if (
+        not isinstance(value, dict)
+        or type(value.get("schema_version")) is not int
+        or value["schema_version"] not in {1, 2}
+    ):
         raise SampleVerificationError("Run manifest schema is unsupported")
     if value.get("admin_id") != expected_admin_id:
         raise SampleVerificationError("Run belongs to another administrator")
@@ -78,24 +84,63 @@ def read_run_manifest(directory: Path, expected_admin_id: str) -> dict[str, Any]
         )
     ):
         raise SampleVerificationError("Run manifest is incomplete or invalid")
+    _manifest_plan(value)
     return value
 
 
+def _manifest_plan(
+    manifest: Mapping[str, Any],
+) -> tuple[OrganizationPack, dict[str, int]]:
+    """Use recorded volumes; schema 1 predates pack selection and the new sizes."""
+    profile = cast(SampleProfile, manifest["profile"])
+    if manifest["schema_version"] == 1:
+        pack = default_pack()
+        legacy = pack.catalog.legacy_counts_by_profile
+        if legacy is None:
+            raise SampleVerificationError("Legacy run counts are unavailable")
+        return pack, dict(legacy[profile])
+    key = manifest.get("organization")
+    if (
+        not isinstance(key, str)
+        or not key
+        or any(
+            not isinstance(manifest.get(field), str) or not manifest[field].strip()
+            for field in ("span", "sampling_scope")
+        )
+    ):
+        raise SampleVerificationError("Run organization metadata is invalid")
+    try:
+        pack = get_pack(key)
+    except ValueError:
+        raise SampleVerificationError("Run organization metadata is invalid") from None
+    counts = manifest.get("module_counts")
+    if (
+        not isinstance(counts, dict)
+        or set(counts) != {module.key for module in pack.catalog.modules}
+        or any(type(count) is not int or count < 1 for count in counts.values())
+    ):
+        raise SampleVerificationError("Run module counts are incomplete or invalid")
+    return pack, dict(counts)
+
+
 def _people_issues(
-    client: SampleClient, manifest: Mapping[str, Any], admin_id: str
+    client: SampleClient,
+    manifest: Mapping[str, Any],
+    admin_id: str,
+    *,
+    organization: OrganizationPack | None = None,
 ) -> tuple[dict[str, int], list[str]]:
     actual = {str(row.get("id")): row for row in list_all_rows(client, "/api/users")}
     expected = manifest["people"]
     issues: list[str] = []
     expected_ids = {str(person.get("user_id")) for person in expected.values()}
-    if len(expected) != 44 or len(expected_ids) != 44:
-        issues.append("identity manifest does not cover 44 unique sample people")
+    specs = _people(organization or default_pack())
+    if len(expected) != len(specs) or len(expected_ids) != len(specs):
+        issues.append("identity manifest does not cover the pack's unique people")
     if set(actual) != expected_ids | {admin_id}:
         issues.append("identity roster differs from the recorded run")
-    specs = _people()
     if set(expected) != {person.key for person in specs}:
         issues.append("identity manifest differs from the authored person catalogue")
-    sponsor_id = expected.get("internal_sales_lead", {}).get("user_id")
     for spec in specs:
         person = expected.get(spec.key, {})
         row = actual.get(str(person.get("user_id")), {})
@@ -115,6 +160,7 @@ def _people_issues(
         ):
             issues.append("a sample person's identity, role or account state differs")
         if spec.role == "guest":
+            sponsor_id = expected.get(spec.sponsor or "", {}).get("user_id")
             expiry = row.get("expires_at")
             try:
                 parsed = datetime.fromisoformat(expiry) if isinstance(expiry, str) else None
@@ -135,7 +181,8 @@ def _people_issues(
         observed[f"people_{status}"] = sum(
             row.get("status") == status for key, row in actual.items() if key != admin_id
         )
-    for status, count in (("active", 36), ("pending", 5), ("disabled", 3)):
+    for status in ("active", "pending", "disabled"):
+        count = sum(person.status == status for person in specs)
         if observed[f"people_{status}"] != count:
             issues.append(f"sample {status} identity count differs")
     return observed, issues
@@ -158,10 +205,13 @@ def verify_sample_data(
             {},
             ("Population did not finish; reconcile the original journal and rebuild.",),
         )
+    pack, counts = _manifest_plan(manifest)
     dataset = build_dataset(
         cast(SampleProfile, manifest["profile"]),
         manifest["seed"],
         date.fromisoformat(manifest["anchor_date"]),
+        organization=pack,
+        module_counts_override=counts,
     )
     observed: dict[str, int] = {}
     issues: list[str] = []
@@ -199,10 +249,13 @@ def verify_sample_data(
                 results=manifest.get("expected_failures", []),
                 started_at=manifest["started_at"],
                 finished_at=manifest["finished_at"],
+                organization=dataset.organization,
             )
             observed.update(rejection_counts)
             issues.extend(rejection_issues)
-            people_counts, people_issues = _people_issues(client, manifest, expected_admin_id)
+            people_counts, people_issues = _people_issues(
+                client, manifest, expected_admin_id, organization=dataset.organization
+            )
             observed.update(people_counts)
             issues.extend(people_issues)
             configuration_counts, configuration_issues = verify_configuration(
@@ -217,11 +270,14 @@ def verify_sample_data(
                 client,
                 run_manifest={"expected": manifest["content_counts"]},
                 mappings=manifest["mappings"],
+                organization=dataset.organization,
             )
             observed.update(content)
             if content.get("content_complete") != 1:
                 issues.append("Board or OpenView content did not satisfy complete readback")
-            trigger_counts, trigger_issues = _verify_triggers(client, manifest)
+            trigger_counts, trigger_issues = _verify_triggers(
+                client, manifest, organization=dataset.organization
+            )
             observed.update(trigger_counts)
             issues.extend(trigger_issues)
         finally:
@@ -268,14 +324,17 @@ def trigger_evidence_issues(
 def _verify_triggers(
     client: SampleClient,
     manifest: Mapping[str, Any],
+    *,
+    organization: OrganizationPack | None = None,
 ) -> tuple[dict[str, int], list[str]]:
+    pack = organization or default_pack()
     evidence = manifest.get("trigger_evidence", [])
     mutations = manifest.get("mutation_evidence", [])
     issues: list[str] = []
-    if not isinstance(evidence, list) or len(evidence) != 8:
-        return {}, ["trigger evidence must cover all eight authored rules"]
-    if not isinstance(mutations, list) or len(mutations) != 4:
-        issues.append("trigger evidence must include the four authored record updates")
+    if not isinstance(evidence, list) or len(evidence) != len(pack.generators.trigger_keys):
+        return {}, ["trigger evidence must cover all authored rules"]
+    if not isinstance(mutations, list) or len(mutations) != len(pack.blueprint.patch_trigger_keys):
+        issues.append("trigger evidence must include the authored record updates")
         mutations = []
     runs = list_all_rows(client, "/api/sandbox/trigger-runs", page_size=50)
     record_data: dict[str, Mapping[str, Any]] = {}

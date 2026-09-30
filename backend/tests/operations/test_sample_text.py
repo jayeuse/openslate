@@ -250,22 +250,44 @@ def test_related_dates_follow_business_order(module_key: str, earlier: str, late
 def _content_texts() -> list[str]:
     from decimal import Decimal
 
-    from operations import sample_board_text as copy
-    from operations.sample_people import _people
+    from operations.sample_packs.harbor import content_text as harbor_content_text
 
-    texts = [text for posts in copy.POSTS.values() for post in posts for text in post]
-    texts += list(copy.EVENT_DETAILS) + list(copy.EVENT_DETAILS.values())
-    texts += list(copy.EVENT_LOCATIONS)
-    texts += [text for name in copy._BOARD_DESCRIPTIONS for text in copy.project_board(name)]
-    texts += list(copy.revised_post("Title", "Body."))
-    finance = {"department_key": "finance", "scope": "department"}
-    texts += list(copy.post_text(finance, 0, Decimal("12000"), Decimal("4500")))
-    modules = dict.fromkeys(record.module_key for record in _dataset("small").records)
-    texts += [copy.view_name(module, layout) for module in modules for layout in copy._LAYOUT_NAMES]
-    texts += [copy.dashboard_name("Customer Service")]
-    texts += list(copy.report_names("sales_orders", "weekly", "Status"))
+    dataset = _dataset("small")
+    organization = dataset.organization
+    content = organization.content.data
+
+    texts = [
+        text for posts in harbor_content_text.POSTS.values() for post in posts for text in post
+    ]
+    texts += list(harbor_content_text.EVENT_DETAILS) + list(
+        harbor_content_text.EVENT_DETAILS.values()
+    )
+    texts += list(harbor_content_text.EVENT_LOCATIONS)
     texts += [
-        value for person in _people() for value in (person.email, person.username, person.title)
+        text
+        for name in harbor_content_text._BOARD_DESCRIPTIONS
+        for text in content.project_board(name)
+    ]
+    texts += list(content.revised_post("Title", "Body."))
+    scenario_board = next(link.board for link in content.board_links if link.kind == "post")
+    department_key = scenario_board.split(":", maxsplit=1)[-1]
+    scenario = {"department_key": department_key, "scope": "department"}
+    texts += list(
+        content.post_text(
+            scenario, 0, Decimal(content.scenario_total), Decimal(content.scenario_paid)
+        )
+    )
+    modules = dict.fromkeys(record.module_key for record in dataset.records)
+    texts += [
+        content.view_name(module, layout) for module in modules for layout in content.layout_names
+    ]
+    department_name = organization.catalog.departments[1][1]
+    texts += [content.dashboard_name(department_name)]
+    texts += list(content.report_names(next(iter(modules)), "weekly", "Status"))
+    texts += [
+        value
+        for person in organization.actors.people
+        for value in (person.email, person.username, person.title)
     ]
     return [text for text in texts if text]
 

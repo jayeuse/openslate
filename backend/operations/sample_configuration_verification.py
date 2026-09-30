@@ -1,4 +1,4 @@
-"""API readback of Harbor workspace, Access, and published Sandbox configuration."""
+"""API readback of pack workspace, Access, and published Sandbox configuration."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any, cast
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from operations.sample_blueprint import SampleDataset
 from operations.sample_client import SampleClient, SampleClientError
-from operations.sample_people import _GROUP_ACCESS, _people
+from operations.sample_people import _people
 from operations.sample_verification import SampleVerificationError, list_all_rows
 
 _FIELD_TYPES = {
@@ -51,27 +51,29 @@ def _ids_match(rows: Sequence[Mapping[str, Any]], expected: Mapping[str, str]) -
 
 def _group_issues(
     client: SampleClient,
+    dataset: SampleDataset,
     mappings: Mapping[str, Mapping[str, str]],
     people: Mapping[str, Mapping[str, Any]],
 ) -> tuple[dict[str, int], list[str]]:
     issues: list[str] = []
     groups = mappings.get("group", mappings.get("groups", {}))
+    group_access = dataset.organization.actors.group_access
     departments = mappings.get("departments", {})
     modules = mappings.get("modules", {})
-    if set(groups) != set(_GROUP_ACCESS) or len(set(groups.values())) != len(_GROUP_ACCESS):
+    if set(groups) != set(group_access) or len(set(groups.values())) != len(group_access):
         issues.append("Access group ID mapping does not cover every planned group")
     rows = list_all_rows(client, "/api/access/groups")
     if not _ids_match(rows, groups):
         issues.append("live Access groups differ from the sample run")
     count = 0
-    for slug, entries in _GROUP_ACCESS.items():
+    for slug, entries in group_access.items():
         group_id = groups.get(slug)
         if not group_id:
             continue
         row = _read_object(client, f"/api/access/groups/{group_id}")
         expected_members = {
             str(people.get(person.key, {}).get("user_id"))
-            for person in _people()
+            for person in _people(dataset.organization)
             if slug in person.groups
         }
         expected_access = {
@@ -134,8 +136,13 @@ def _structure_issues(
     module_map = mappings.get("modules", {})
     field_map = mappings.get("fields", {})
     relationship_map = mappings.get("relationships", {})
-    if len(departments) != 6 or len(modules) != 24 or len(relationships) != 18:
-        issues.append("generated Sandbox structure does not contain 6/24/18 definitions")
+    expected_counts = (
+        len(dataset.organization.catalog.departments),
+        len(dataset.organization.catalog.modules),
+        len(dataset.organization.catalog.relationships),
+    )
+    if (len(departments), len(modules), len(relationships)) != expected_counts:
+        issues.append("generated Sandbox structure differs from the organization pack")
     live_departments = list_all_rows(client, "/api/departments")
     live_modules = list_all_rows(client, "/api/modules")
     live_fields = list_all_rows(client, "/api/fields")
@@ -253,12 +260,12 @@ def _sandbox_issues(
     if any(
         workspace.get(key) != value
         for key, value in (
-            ("display_name", "Harbor Operations Group"),
-            ("locale", "en-US"),
-            ("timezone", "Asia/Manila"),
+            ("display_name", dataset.organization.identity.workspace_name),
+            ("locale", dataset.organization.identity.locale),
+            ("timezone", dataset.organization.identity.timezone),
         )
     ):
-        issues.append("Workspace name, locale or timezone differs from Harbor sample settings")
+        issues.append("Workspace name, locale or timezone differs from the organization pack")
     current = _read_object(client, "/api/sandbox/document")
     expected_document = SandboxDocument.model_validate(dataset.document).model_dump(
         mode="json", by_alias=True
@@ -267,7 +274,7 @@ def _sandbox_issues(
     published = versions.get("published")
     latest = current.get("latestPublishedVersion")
     if current.get("document") != expected_document:
-        issues.append("current Sandbox design or eight rules differ from the generated document")
+        issues.append("current Sandbox design or rules differ from the generated document")
     if (
         not isinstance(latest, Mapping)
         or latest.get("id") != published
@@ -301,11 +308,11 @@ def _sandbox_issues(
     test_ids = mappings.get("sandbox_tests", {})
     by_id = {row.get("id"): row for row in tests}
     if (
-        len(dataset.test_vectors) != 8
+        len(dataset.test_vectors) != len(dataset.organization.generators.trigger_keys)
         or set(test_ids) != {vector.key.replace("-", "_") for vector in dataset.test_vectors}
         or not _ids_match(tests, test_ids)
     ):
-        issues.append("Sandbox Test history does not cover eight saved runs")
+        issues.append("Sandbox Test history does not cover every generated trigger")
     verified_tests = 0
     for vector in dataset.test_vectors:
         row = by_id.get(test_ids.get(vector.key.replace("-", "_")), {})
@@ -344,7 +351,7 @@ def verify_configuration(
     observed: dict[str, int] = {}
     issues: list[str] = []
     checks: tuple[Callable[[], tuple[dict[str, int], list[str]]], ...] = (
-        lambda: _group_issues(client, mappings, people),
+        lambda: _group_issues(client, dataset, mappings, people),
         lambda: _sandbox_issues(client, dataset, mappings),
         lambda: _structure_issues(client, dataset, mappings),
     )
