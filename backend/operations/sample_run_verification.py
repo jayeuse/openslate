@@ -1,0 +1,336 @@
+"""Read back a private sample run through authenticated application APIs."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import stat
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
+from pathlib import Path
+from typing import Any, cast
+
+from operations.sample_catalog import SampleProfile
+from operations.sample_client import SampleClient
+from operations.sample_configuration_verification import verify_configuration
+from operations.sample_content import verify_content
+from operations.sample_history_verification import verify_history
+from operations.sample_people import _people
+from operations.sample_rejections import verify_rejections
+from operations.sample_scenario import build_dataset
+from operations.sample_verification import (
+    SampleVerificationError,
+    list_all_rows,
+    verify_records_and_relationships,
+)
+
+
+@dataclass(frozen=True)
+class SampleVerificationReport:
+    status: str
+    run_directory: Path
+    observed: Mapping[str, int]
+    issues: tuple[str, ...]
+
+
+def read_run_manifest(directory: Path, expected_admin_id: str) -> dict[str, Any]:
+    """Reject public, redirected, mismatched or malformed run evidence."""
+    try:
+        metadata = directory.lstat()
+        if (
+            not directory.is_absolute()
+            or directory.is_symlink()
+            or not stat.S_ISDIR(metadata.st_mode)
+            or (
+                os.name != "nt"
+                and (metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) & 0o077)
+            )
+        ):
+            raise ValueError
+        descriptor = os.open(
+            directory / "manifest.json", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        )
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            metadata = os.fstat(stream.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or (
+                os.name != "nt"
+                and (metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) & 0o077)
+            ):
+                raise ValueError
+            value = json.load(stream)
+    except (OSError, ValueError, UnicodeError):
+        raise SampleVerificationError("Run evidence must be valid private files") from None
+    if not isinstance(value, dict) or value.get("schema_version") != 1:
+        raise SampleVerificationError("Run manifest schema is unsupported")
+    if value.get("admin_id") != expected_admin_id:
+        raise SampleVerificationError("Run belongs to another administrator")
+    if (
+        value.get("run_id") != directory.name
+        or not re.fullmatch(r"[a-f0-9]{32}", directory.name)
+        or value.get("status") not in {"running", "incomplete", "populated", "complete"}
+        or value.get("profile") not in {"small", "standard", "large"}
+        or type(value.get("seed")) is not int
+        or any(
+            not isinstance(value.get(key), dict)
+            for key in ("mappings", "actor_ids", "content_counts", "people")
+        )
+    ):
+        raise SampleVerificationError("Run manifest is incomplete or invalid")
+    return value
+
+
+def _people_issues(
+    client: SampleClient, manifest: Mapping[str, Any], admin_id: str
+) -> tuple[dict[str, int], list[str]]:
+    actual = {str(row.get("id")): row for row in list_all_rows(client, "/api/users")}
+    expected = manifest["people"]
+    issues: list[str] = []
+    expected_ids = {str(person.get("user_id")) for person in expected.values()}
+    if len(expected) != 44 or len(expected_ids) != 44:
+        issues.append("identity manifest does not cover 44 unique sample people")
+    if set(actual) != expected_ids | {admin_id}:
+        issues.append("identity roster differs from the recorded run")
+    specs = _people()
+    if set(expected) != {person.key for person in specs}:
+        issues.append("identity manifest differs from the authored person catalogue")
+    sponsor_id = expected.get("internal_sales_lead", {}).get("user_id")
+    for spec in specs:
+        person = expected.get(spec.key, {})
+        row = actual.get(str(person.get("user_id")), {})
+        if (
+            any(
+                row.get(key) != value
+                for key, value in (
+                    ("email", spec.email),
+                    ("username", spec.username),
+                    ("display_name", spec.name),
+                    ("job_title", spec.title),
+                    ("role", spec.role),
+                    ("status", spec.status),
+                )
+            )
+            or row.get("is_deleted") is not False
+        ):
+            issues.append("a sample person's identity, role or account state differs")
+        if spec.role == "guest":
+            expiry = row.get("expires_at")
+            try:
+                parsed = datetime.fromisoformat(expiry) if isinstance(expiry, str) else None
+            except ValueError:
+                parsed = None
+            if (
+                not sponsor_id
+                or row.get("sponsor_user_id") != sponsor_id
+                or parsed is None
+                or parsed.tzinfo is None
+                or parsed <= datetime.now(UTC)
+            ):
+                issues.append("a guest sponsor or future expiry differs")
+        elif row.get("sponsor_user_id") is not None or row.get("expires_at") is not None:
+            issues.append("an internal sample identity has guest-only settings")
+    observed = {"people": len(actual) - int(admin_id in actual)}
+    for status in ("active", "pending", "disabled"):
+        observed[f"people_{status}"] = sum(
+            row.get("status") == status for key, row in actual.items() if key != admin_id
+        )
+    for status, count in (("active", 36), ("pending", 5), ("disabled", 3)):
+        if observed[f"people_{status}"] != count:
+            issues.append(f"sample {status} identity count differs")
+    return observed, issues
+
+
+def verify_sample_data(
+    *,
+    api_url: str,
+    origin: str,
+    admin_email: str,
+    expected_admin_id: str,
+    admin_password: str,
+    run_directory: Path,
+) -> SampleVerificationReport:
+    manifest = read_run_manifest(run_directory, expected_admin_id)
+    if manifest["status"] not in {"populated", "complete"}:
+        return SampleVerificationReport(
+            "incomplete",
+            run_directory,
+            {},
+            ("Population did not finish; reconcile the original journal and rebuild.",),
+        )
+    dataset = build_dataset(
+        cast(SampleProfile, manifest["profile"]),
+        manifest["seed"],
+        date.fromisoformat(manifest["anchor_date"]),
+    )
+    observed: dict[str, int] = {}
+    issues: list[str] = []
+    with SampleClient(api_url, origin, run_directory / "verification-requests.jsonl") as client:
+        if client.login(admin_email, admin_password).status_code != 200:
+            raise SampleVerificationError("Verification administrator login failed")
+        try:
+            response = client.request("GET", "/api/auth/me")
+            if response.status_code != 200 or response.json().get("id") != expected_admin_id:
+                raise SampleVerificationError("Verification administrator identity differs")
+            counts, record_issues = verify_records_and_relationships(
+                client,
+                dataset=dataset,
+                mappings=manifest["mappings"],
+                actor_ids=manifest["actor_ids"],
+                started_at=manifest["started_at"],
+                finished_at=manifest["finished_at"],
+                require_complete=True,
+            )
+            observed.update(counts)
+            issues.extend(record_issues)
+            history_counts, history_issues = verify_history(
+                client,
+                dataset=dataset,
+                mappings=manifest["mappings"],
+                actor_ids=manifest["actor_ids"],
+                skipped=manifest.get("history_skipped", []),
+                started_at=manifest["started_at"],
+                finished_at=manifest["finished_at"],
+            )
+            observed.update(history_counts)
+            issues.extend(history_issues)
+            rejection_counts, rejection_issues = verify_rejections(
+                client,
+                results=manifest.get("expected_failures", []),
+                started_at=manifest["started_at"],
+                finished_at=manifest["finished_at"],
+            )
+            observed.update(rejection_counts)
+            issues.extend(rejection_issues)
+            people_counts, people_issues = _people_issues(client, manifest, expected_admin_id)
+            observed.update(people_counts)
+            issues.extend(people_issues)
+            configuration_counts, configuration_issues = verify_configuration(
+                client,
+                dataset=dataset,
+                mappings=manifest["mappings"],
+                people=manifest["people"],
+            )
+            observed.update(configuration_counts)
+            issues.extend(configuration_issues)
+            content = verify_content(
+                client,
+                run_manifest={"expected": manifest["content_counts"]},
+                mappings=manifest["mappings"],
+            )
+            observed.update(content)
+            if content.get("content_complete") != 1:
+                issues.append("Board or OpenView content did not satisfy complete readback")
+            trigger_counts, trigger_issues = _verify_triggers(client, manifest)
+            observed.update(trigger_counts)
+            issues.extend(trigger_issues)
+        finally:
+            client.request("POST", "/api/auth/logout")
+    return SampleVerificationReport(
+        "incomplete" if issues else "complete",
+        run_directory,
+        observed,
+        tuple(dict.fromkeys(issues)),
+    )
+
+
+def trigger_evidence_issues(
+    evidence: list[dict[str, Any]],
+    runs: list[Mapping[str, Any]],
+    record_data: Mapping[str, Mapping[str, Any]],
+) -> list[str]:
+    by_id = {str(run.get("id")): run for run in runs}
+    issues: list[str] = []
+    for item in evidence:
+        if item.get("enabled") is False:
+            continue
+        run_ids = item.get("run_ids")
+        if not isinstance(run_ids, list) or not run_ids:
+            issues.append("an exercised trigger has no recorded execution")
+            continue
+        for run_id in run_ids:
+            run = by_id.get(str(run_id), {})
+            details = run.get("details")
+            if (
+                run.get("triggerName") != item.get("name")
+                or run.get("state") != "succeeded"
+                or not isinstance(details, Mapping)
+                or not isinstance(details.get("actionsApplied"), int)
+                or details["actionsApplied"] < 1
+            ):
+                issues.append("a recorded trigger execution is missing or did not apply its action")
+        data = record_data.get(str(item.get("target_logical_id")), {})
+        if data.get(str(item.get("target_field_id"))) != item.get("expected_value"):
+            issues.append("a trigger target no longer contains the expected result")
+    return issues
+
+
+def _verify_triggers(
+    client: SampleClient,
+    manifest: Mapping[str, Any],
+) -> tuple[dict[str, int], list[str]]:
+    evidence = manifest.get("trigger_evidence", [])
+    mutations = manifest.get("mutation_evidence", [])
+    issues: list[str] = []
+    if not isinstance(evidence, list) or len(evidence) != 8:
+        return {}, ["trigger evidence must cover all eight authored rules"]
+    if not isinstance(mutations, list) or len(mutations) != 4:
+        issues.append("trigger evidence must include the four authored record updates")
+        mutations = []
+    runs = list_all_rows(client, "/api/sandbox/trigger-runs", page_size=50)
+    record_data: dict[str, Mapping[str, Any]] = {}
+    record_ids = manifest["mappings"].get("records", {})
+    for item in evidence:
+        if item.get("enabled") is False:
+            continue
+        logical = item.get("target_logical_id")
+        record_id = record_ids.get(logical)
+        if not record_id:
+            issues.append("trigger target mapping is missing")
+            continue
+        response = client.request("GET", f"/api/records/{record_id}")
+        if response.status_code != 200:
+            issues.append("trigger target readback failed")
+            continue
+        data = response.json().get("data")
+        if isinstance(data, dict):
+            record_data[logical] = data
+    issues.extend(trigger_evidence_issues(evidence, runs, record_data))
+    response = client.request("GET", "/api/sandbox/document")
+    if response.status_code != 200:
+        issues.append("published trigger configuration could not be read")
+    else:
+        triggers = response.json().get("document", {}).get("triggers", [])
+        for item in evidence:
+            if item.get("enabled") is False and not any(
+                trigger.get("name") == item.get("name") and trigger.get("enabled") is False
+                for trigger in triggers
+            ):
+                issues.append("a scheduled trigger is not disabled in its saved configuration")
+    matches = 0
+    for mutation in mutations:
+        rows = list_all_rows(
+            client,
+            "/api/audit-logs",
+            params={
+                "entity_type": "records",
+                "entity_id": mutation.get("record_id"),
+                "created_after": manifest["started_at"],
+                "created_before": manifest["finished_at"],
+            },
+        )
+        if mutation.get("request_id") and any(
+            row.get("entity_id") == mutation.get("record_id")
+            and row.get("performed_by") == mutation.get("actor_id")
+            and row.get("action") == "update"
+            and row.get("request_id") == mutation["request_id"]
+            and row.get("request_method") == "PATCH"
+            and row.get("request_path") == mutation.get("request_path")
+            for row in rows
+        ):
+            matches += 1
+        else:
+            issues.append(
+                "an authored record update lacks matching actor and request audit evidence"
+            )
+    return {"trigger_runs": len(runs), "record_update_audit_matches": matches}, issues
