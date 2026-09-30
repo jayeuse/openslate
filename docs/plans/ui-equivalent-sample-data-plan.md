@@ -1,14 +1,39 @@
 # UI-equivalent sample data plan
 
-> Proposed follow-up to the schema redesign. This plan does not authorize population, a reset, new record-editing screens, or changes to an existing installation.
+> **Frontend rollback, 2026-09-30.** At the user's direction the frontend is exactly `main` (`bf64d2f`). The OpenView record and relationship controls and the API-backed Manage and Platform pages that this task added were removed; a backup is in `.agent-runtime/frontend-rollback-2026-09-30/`. The frontend design in `main` takes priority over sample-data needs. Until a design-led frontend task adds record and relationship controls, the seeder still writes records and relationships through the same authenticated APIs, but no current UI control exposes those two operations; Manage and Platform in `main` are local examples, so workspace settings set by a run are visible through the API, not in Manage.
+
+> Implementation plan revalidated against the schema redesign at `bf64d2f`. The user authorized population and minimal API-backed record and relationship controls after the redesign. Resetting or replacing an existing installation still requires its own confirmation.
 
 ## Contract and current limit
 
+The user subsequently excluded **all file insertion and scanner-dependent sample acceptance**. Small and Standard create zero attachments. Remove no scanner feature or application scan enforcement as part of this task; only omit file seeding. Existing partial uploads are cleaned through the guarded reset.
+
 Every populated value must be enterable through an existing supported UI control. Population must use that control's authenticated API operation with the same validation, authorization, concurrency, and audit behavior. Do not insert application rows directly, call internal services, provision identities through provider-admin APIs, or fabricate audit entries.
 
-OpenView remains read-only. Its record inspector has no create/edit/relationship controls. Sandbox Test inputs are temporary simulations; Platform's sample record controls do not write live records. The record and relationship APIs alone therefore do not establish UI equivalence. The earlier proposal to add an OpenView record editor is withdrawn.
+Current OpenView record inspection is read-only. Add New Record to the selected module's Views results, Edit to its inspector, and relationship assignment/link/unlink controls. These controls establish UI equivalence for the existing record and relationship APIs before operational population. Sandbox Test inputs remain temporary simulations; Platform's local sample controls do not establish live authoring eligibility.
 
-The 20,000-record Harbor Operations Group dataset and its live relationship graph are deferred until a separately authorized, API-backed authoring surface exists. Do not bypass this prerequisite by calling backend-only write routes. Configuration and Board content can be planned independently; empty results must remain visibly empty.
+The authorized operational target is 20,000 Harbor Operations Group records and a coherent relationship graph. Populate only after the authoring controls are implemented and verified. Empty results and failures must remain honest; no fallback examples may stand in for seeded records.
+
+## Department boundary and cross-department references
+
+The current publication planner and relationship assignment/create APIs require
+both modules to belong to the same department. Eight proposed links violate
+that rule: Customers–Customer Sites, Customers–Invoices, Equipment–Service
+Requests, Products–Purchase Lines, Goods Receipts–Stock Movements,
+Warehouses–Purchase Orders, Sales Orders–Invoices, and Work Orders–Products.
+The six-department, 26-definition design therefore cannot be published under the
+current contract. Do not bypass this check or describe the design as populated.
+
+Population preserves the current department boundary. Cross-department
+connections use visible Text or Long text reference fields containing the other
+record's business reference codes. These are searchable authored values, not
+relationship edges. The supported relationship graph remains within departments
+and still exercises one-to-one, one-to-many and many-to-many cardinalities.
+Exact definition and edge counts are printed from the generated profile before
+population. No backend authorization or relationship contract is changed.
+
+The admitted design has 18 relationship definitions. Small contains 1,001
+records and 1,145 edges; Standard contains 20,000 records and 22,880 edges. These are the Harbor sizes before organization packs; "Proposed: run sizes and organization packs" replaces them.
 
 ## Supported scope
 
@@ -17,20 +42,30 @@ Retain Harbor Operations Group with six departments and 24 modules. Use the exis
 | Area | Proposed coverage through current controls |
 | --- | --- |
 | Sandbox | Six departments, 24 modules, supported field types, relationship definitions, readable layout, checkpoints, temporary Test history, and actual publication history |
+| Operational records | 20,000 Standard records across the 24 modules, with real relationship edges and named financial, service and purchasing scenarios |
 | Record triggers | Eight supported same-record Set-field rules using record-created, field-changed, threshold-crossed, and daily/weekly schedules; clearly distinguish simulated Test results from live executions |
 | People | 36 invited internal identities: 30 active, four pending, two disabled; eight guests: six active, one pending, one disabled, with valid sponsors and expiry |
-| Groups and access | Eight groups with overlapping membership and department/module read, write, and manage rows; roles are only admin, member, and guest |
+| Groups and access | Nine groups with overlapping membership and department/module read, write, and manage rows, including a read-only Internal Audit group; roles are only admin, member, and guest |
 | Boards | Built-in Company Board, six department Boards, and five project Boards; project access uses groups, department access follows its department |
 | Board content | 96 posts, 144 events, genuine post revisions, and 24 event reminder configurations using supported timings |
 | OpenView | 36 shared module Views across supported layouts, six department Dashboards with four widgets each, and 12 shared Reports; configure only outputs available through current controls |
-| Files | 60 valid Board attachments using normal upload, scan, attachment, and download controls |
+| Files | Excluded by user instruction; zero inserted files or attachments |
 | History | Genuine user-attributed mutations and supported publication, scheduling, notification, and report-run history |
 
 Counts are proposed targets, not evidence of created data. `plan` must report the exact admitted counts and exclusions before any future population. Chart settings are page-local and are not persistent sample entities. Report runs against empty modules may demonstrate empty-output behavior, not populated business results.
 
-Exclude removed custom roles, service identities, access rules/defaults/deny policies, Board grants/templates/favorites/homes/personal read or bookmark states, content audiences, private Dashboards, and saved chart preferences. Workspace execution is not represented as a fabricated service account. Record links, live record-trigger scenarios, populated CSV/report outputs, and cross-module business journeys remain deferred with operational records.
+Exclude file insertion and scanner acceptance, removed custom roles, service identities, access rules/defaults/deny policies, Board grants/templates/favorites/homes/personal read or bookmark states, content audiences, private Dashboards, and saved chart preferences. Workspace execution is not represented as a fabricated service account. Include real record links, live record-trigger scenarios, populated CSV/report outputs, and cross-module business journeys after the authoring prerequisite passes.
 
-The future operational target retains the original 20,000 records across Customers, Contacts, Quotes, Sales Orders; Customer Sites, Service Contracts, Service Requests, Request Updates; Equipment, Work Orders, Inspections, Maintenance Plans; Products, Warehouses, Stock Movements, Stock Counts; Suppliers, Purchase Orders, Purchase Lines, Goods Receipts; and Invoices, Payments, Expenses, Credit Notes. Revalidate exact distributions and Small/Standard/Large profiles when live authoring is authorized. Retain deterministic business values with seed 42 and an explicit Asia/Manila business-date anchor; server IDs and authentication timestamps remain server-generated.
+The operational target retains the following distributions. Small uses five percent of each count rounded upward, with a minimum of one (1,001 records); Standard totals 20,000; Large uses five times each count (100,000) and remains opt-in. "Proposed: run sizes and organization packs" replaces these sizes. Retain deterministic business values with seed 42 and an explicit Asia/Manila business-date anchor; server IDs, passwords and authentication timestamps remain newly generated.
+
+| Department | Standard module counts |
+| --- | --- |
+| Sales | Customers 300; Contacts 600; Quotes 800; Sales Orders 2,000 |
+| Customer Service | Customer Sites 300; Service Contracts 200; Service Requests 1,200; Request Updates 1,400 |
+| Field Operations | Equipment 600; Work Orders 2,000; Inspections 1,000; Maintenance Plans 200 |
+| Inventory | Products 500; Warehouses 10; Stock Movements 3,500; Stock Counts 490 |
+| Purchasing | Suppliers 100; Purchase Orders 700; Purchase Lines 1,400; Goods Receipts 700 |
+| Finance | Invoices 800; Payments 600; Expenses 500; Credit Notes 100 |
 
 ## Control-to-API catalogue
 
@@ -38,29 +73,256 @@ Before implementation, catalogue each admitted operation with its reachable page
 
 Use current boundaries:
 
+| Reachable control | Authenticated operation / editable values | Actor, preconditions and saved evidence |
+| --- | --- | --- |
+| Sign in / session refresh | `POST /api/auth/login`; `POST /api/auth/refresh` | Independent cookie jars, UI Origin and CSRF; real sessions; credentials excluded from journal |
+| Sandbox Save | `PUT /api/sandbox/document`: document v4 and `expectedRevision` | Admin; whole UI-authored design; updated draft revision and genuine audit |
+| Sandbox checkpoint | `POST /api/sandbox/versions`: revision, checkpoint label/note | Admin; saved document; checkpoint history |
+| Sandbox Test | `POST /api/sandbox/tests`: revision, module, values, event and optional trigger IDs | Admin; temporary simulation results, never operational records or stored authored scenarios |
+| Sandbox Review / Publish | `POST /api/sandbox/publication-previews`, then `/publications` | Admin; password, revision, preview token, impact digest, idempotency key; genuine published version and audited structure |
+| Access New group | `POST /api/access/groups`: name, description, optional member IDs | Admin; server-issued group ID and ETag |
+| Access group access / members | `PUT /api/access/groups/{id}/access` or `/members` | Fresh `If-Match`; access rows use department/module IDs and read/write/manage; delegated membership rules preserved |
+| Access Invite | `POST /api/auth/invitations`: email, username, display name, job title, role, groups; guest sponsor/expiry | Admin; existing groups, active non-guest sponsor, future guest expiry; pending profile and actual captured mail |
+| Invitation confirmation | `POST /api/auth/invitations/complete`: token hash and new password | Cookie-free recipient session, matching newly captured Mailpit message; genuine activation |
+| Access Disable | `PATCH /api/users/{id}`: disabled status | Admin; previously accepted account; actual session revocation and audit |
+| OpenView New Record / Edit | `POST /api/records`; `GET` then `PATCH /api/records/{id}` | Module write/manage; complete active field-ID map, valid select UUIDs and eligible person IDs; server ID and actual actor audit |
+| OpenView relationship picker | `GET /api/fields`, `/records`, `/relationships`; `PUT /api/relationships/fields/{id}/sources/{id}` or `POST /api/relationships`, `DELETE /api/relationships/{id}` | Source write and target read; target-module restriction/cardinality; genuine edge or assignment change |
+| Manage organization | `GET/PATCH /api/workspace`: display name, locale, timezone, revision | Admin write; current revision; only visible supported fields |
+| Manage audit / sessions | Existing audit/security/session read and revoke APIs | Real mutation/login history; no authored audit or session rows |
+| Boards New project / project access | `POST /api/boards`: name/description; `PUT /api/boards/{id}/groups`: revision and group/level rows | Admin creates projects; current Board manage for access; Company/department Boards come from initialization/publication |
+| Board post editor | `POST /api/boards/{id}/posts`; `PATCH .../posts/{id}`: title/body/links/expiry/pin | Board write, manage for pin; current `board_revision` and `post_revision`; saved draft and real audit |
+| Post Publish / Schedule / Archive | `POST .../posts/{id}/publish`, `/schedule`, `/archive` | Current revisions; publication uses body `publication_key`; scheduling uses future UTC `publish_at`; genuine immutable revisions |
+| Board event editor | `POST /api/boards/{id}/events`; `PATCH .../events/{id}` | Board write; current Board/event revisions; date or timed event, timezone, recurrence and supported reminder timing |
+| Board widgets | `POST /api/boards/{id}/widgets`; revisioned update/order actions | Board manage; editor-supported widget type/config/position; saved configuration references real content |
+| Board record links | `POST /api/boards/{id}/posts/{id}/record-links` or `/events/{id}/record-links` | Parent content write and record visibility; existing live record, parent revisions; real cross-page link |
+| OpenView Save View | `POST /api/views`; revisioned `PATCH /api/views/{id}` | Module manage; name/query/selected fields/layout settings; shared saved view |
+| OpenView Dashboard editor | `POST /api/dashboards`; revisioned `PATCH /api/dashboards/{id}` | Department manage; name, position, refresh cadence and supported widget queries; department-scoped saved Dashboard |
+| OpenView Report editor / Run | `POST /api/reports`; revisioned `PATCH`; `POST /api/reports/{id}/runs` | Manage recipe, permitted reader run; fields/filters/sorts/grouping/count; run `Idempotency-Key`, real captured rows and eligible readers |
+| Report schedule | `/api/reports/{id}/schedule` create/update operations | Current report/schedule revisions; daily/weekly, timezone/local time, enabled state; finish disabled except an explicitly bounded execution exercise |
+
+The frontend request builders under `systems/boards/adapters` and `systems/openview/adapters` define the remaining Board, View, Dashboard and Report payloads. Each corresponding population routine must retain their request revisions, scoped parent IDs and publication/run idempotency keys; a successful route without its rendered control does not satisfy admission.
+
 - Sandbox document/checkpoint/Test/publication operations under `/api/sandbox`; preserve preview digest, password confirmation, revision, and idempotency requirements.
 - Invitations and account actions through the Access UI's endpoints. Complete selected invitations using matching messages in the owned Mailpit instance and the normal invitation-completion endpoint.
 - Groups through `/api/access/groups`; use the dedicated member and access replacement operations with `If-Match`. Administrators set access; eligible department managers may change membership within the existing policy.
-- Boards through their existing scope, project-group, post, event, widget, file, and lifecycle controls. Record-link APIs are deferred until live records exist through an admitted workflow.
-- Shared Views, department Dashboards, and module Reports through their existing editors; keep OpenView record inspection read-only.
-- Manage and Platform only where the current screen is genuinely connected to an authenticated API. Local sample controls and unsupported settings are exclusions, not a mandate to implement new product features.
+- Boards through their existing scope, project-group, post, event, widget, and lifecycle controls. Use record-link controls after live records exist through the admitted workflow.
+- Shared Views, department Dashboards, and module Reports through their existing editors. Add only the explicitly authorized live record and relationship authoring controls.
+- Manage: connect organization name, locale and timezone to Workspace, and audit/session views to their existing APIs. Show unsupported backup, licensing, update and global security controls as unavailable. Do not reinterpret the bundled mark as an uploaded logo.
+- Platform: replace local people, records and supported files with authorized API reads, route record editing to OpenView, preserve connected notifications and genuine authentication/session flows. Disable simulated import and use supported export. Preserve legitimate device appearance settings and OpenComms owners/defaults.
 
-No new services, API contracts, import system, preference system, or broad placeholder-replacement project is part of this plan.
+The user reauthorized these Manage/Platform connections after the source audit. No new services, API contracts, import system, presence, following or preference APIs are included. OpenComms remains excluded.
+
+## Record control contract
+
+Read complete active field metadata and the complete record before editing. Preserve the existing PATCH replacement semantics by submitting all active values; do not change the backend contract to merge sparse data. Keep module identity immutable. Support select UUIDs and labels, module-scoped eligible person IDs, primitive validation/defaults, optional blanks and valid zero/false values. Preserve inputs and show backend validation failures.
+
+Use the existing assignment endpoint for single-target relationships and link create/delete for multiple targets. Search and paginate only the target module's records, honour cardinality and write access, and guard pending/unsaved changes. Reuse the account-scoped query client, existing metadata keys, tracked read-denial handling and shared invalidation stream. Write refusals remain form errors; confirmed writes refresh results/details without overwriting unrelated drafts. Keep Dashboard's existing refresh behavior.
 
 ## Proposed operator workflow
 
-Rebuild the retired sample tool only as a separate authorized implementation. Keep operator commands under `backend/operations/`: `plan` performs read-only admission and prints counts; `populate` executes admitted controls' API workflows; `verify` reads back counts, states, access, and audit evidence.
+Rebuild the retired sample tool under `backend/operations/`: `plan` performs read-only admission and prints counts; `populate` executes admitted controls' API workflows; `verify` reads back counts, states, access, and audit evidence.
 
 1. Confirm the owned installation, schema, API identity, administrator session, controlled Mailpit delivery, and an explicitly approved empty baseline.
 2. Author and publish the Sandbox design with normal controls' preconditions. Resolve server-issued IDs through authorized reads.
 3. Invite people, complete only the selected invitations, configure groups and access, and exercise allowed and denied users through separate sessions.
-4. Configure Boards, posts, events, reminder settings, widgets, and scanned attachments. Preserve author archiving. Reminders use start, 15 minutes, or one day, with delivery permitted up to 15 minutes late.
-5. Configure shared Views, Dashboards, and Reports. Record empty results honestly. Keep scheduled triggers/reports disabled at completion unless a bounded real scheduling scenario explicitly requires otherwise.
-6. Verify every admitted count and result. Report deferred operational data and any incomplete operation separately.
+4. Create operational records through the new editor's API contract under the six designated sample actors, then resolve and create relationship edges. Exercise genuine updates and record triggers with independently specified expected outcomes. (Current behavior. The proposed simulated activity runs below replace this step with interleaved episodes.)
+5. Configure Boards, posts, events, reminder settings, and widgets; do not insert attachments. Preserve author archiving. Reminders use start, 15 minutes, or one day, with delivery permitted up to 15 minutes late.
+6. Configure shared Views, Dashboards, and Reports. Record empty results honestly. Keep scheduled triggers/reports disabled at completion unless a bounded real scheduling scenario explicitly requires otherwise.
+7. Verify every admitted count and result. Report any incomplete operation separately.
 
 Use the existing HTTP client, normal login/refresh flow, isolated cookie jars, Origin/CSRF handling, and ordinary API validation. Prompt for the administrator password without retaining it. Generate strong sample credentials and keep them in an ignored owner-only roster, separate from evidence. Pending invitees have no completed-login credentials.
 
 Write sequentially, respect rate limits, and retain logical/server ID mappings and completed-operation status in a private journal without credentials. Do not blindly replay an uncertain POST or silently overwrite a partial run. A timeout is an incomplete outcome, not successful population.
+
+Run from `backend/` with the owned API available (the optional development scanner is not a seeding prerequisite):
+
+```sh
+uv run python operations/seed_sample_data.py plan --profile standard
+uv run python operations/seed_sample_data.py populate --profile standard --run-root /absolute/private/sample-runs
+uv run python operations/seed_sample_data.py verify --run-directory /absolute/private/sample-runs/RUN_ID
+```
+
+Population and verification prompt for the current administrator password.
+Each run stores its journal and manifest separately from its owner-only
+`credentials.json` roster. The development Compose overlay allows 1,000 outgoing
+Auth emails per hour into the owned Mailpit catcher, so the 44-person roster and
+reset/rebuild acceptance fit within the local delivery limit. This setting is
+limited to the development overlay; production mail settings are unchanged.
+
+## Proposed: simulated activity runs with natural content
+
+Status: **implemented for Harbor.** A live Small run (`ed0901e2…`) and a live 20,000-record run (`f10919cc…`) completed with all verification passing, including record history, planned rejections and interleaved Board work. This section replaces the phase-block population order (records, then all edges, then content) for future Small and Standard runs. The UI-equivalence contract above does not change: every write still uses a reachable control's authenticated API as a real sample user.
+
+### Outcome
+
+A populated instance reads like a working organization, not a generated dataset:
+
+- Many people act. Each write comes from an active user who has the required access, not from one lead per department.
+- Work is interleaved. A user creates a record and immediately links it, and departments take turns.
+- Records have a history. Some records get status changes and reassignments from different users, and real automations fire from these edits.
+- Planned rejections happen and are recorded, for example a guest who tries to create a record.
+- Record text uses the terms of each business area. No value marks itself as generated.
+
+Audit timestamps show the real run window. Business dates inside records keep their spread over the past year and the next quarter. The run stays controlled: seed 42 and the anchor date give the same actors, order, values and planned rejections every time. Only server IDs, passwords and timestamps change.
+
+### Current source facts that shape the design
+
+| Fact | Source |
+| --- | --- |
+| Before this work, each record's creator and "Assigned to" value was its department lead (`@actor:<department>`), so only 6 people created or owned data | `sample_scenario.py` `_field_value`; `sample_population_workflow.py` `build_record_payload` |
+| Before this work, population signed in 7 accounts (admin and 6 leads); the other 24 active members never acted | `sample_people.py` (actors); `sample_population_workflow.py` actor-set check |
+| Before this work, Inventory, Purchasing and Finance members could write only one module each; guests are capped at read | `sample_people.py` `_GROUP_ACCESS`; `access/policy/scope.py` |
+| All 18 relationship definitions stay inside one department, so a department's records and edges can be written together | `sample_catalog.py`; `test_sample_references.py` |
+| Record verification requires each create audit to match one actor per department | `sample_verification.py` |
+| The API rotates an access token only in its last 30 seconds. The seeder refreshes in the last 20 seconds and stops if the expiry does not advance (implemented after a Standard run stopped at the 15-minute token lifetime) | `provider_sessions.py` refresh; `sample_client.py` |
+| Supabase Auth shares one limit for password sign-in and token refresh (default 150; the hosted documentation describes 150 per 5 minutes, and the Auth source reads a plain value as events per hour). A Supabase 429 during a refresh revokes the local session. FastAPI's own sign-in limits are off in loopback development | `infra/supabase/compose.yaml`; `access/auth/router.py`; `identity/provider_sessions.py` |
+| Titles, notes, e-mail addresses, post bodies and OpenView names use fixed templates. Customers repeat 5 names; one supplier name uses a real airline brand | `sample_scenario.py` `_title`; `sample_catalog.py`; `sample_board_entries.py`; `sample_openview.py` |
+
+### Proposed design
+
+**Actor plan.** Each generated record carries a creator key and an assignee key, chosen by seed from the department's active users who have write access to that module. Assignees spread across department members in proportions that look like normal workload differences. The verifier matches each create, update and relationship audit row to the planned actor of that write, using a map of all acting users. Automation updates are excluded from this check: their audit rows have no user (`performed_by` is empty) and an actor label that starts with `Trigger:`. Admin performs only admin work: Sandbox, invitations, groups, workspace, Board setup (project Boards, their access and widgets), and Company Board posts and events.
+
+**Group access.** Members of Inventory, Purchasing and Finance get write access to all modules in their department, so every department has several writers. The Harbor Operations group, which holds the six department leads, gets manage access to every department, so leads build their department's shared views, Dashboards and Reports. Project Board grants give each project's department team write access. Denial examples come from guests, from members outside a department (404), and from a new small group, Internal Audit. It gives two Sales members read access to Finance and Purchasing, so their create attempts there return 403.
+
+**Episodes.** The planner turns the dataset into one ordered list of episodes. An episode is one user's short piece of work:
+
+| Episode | Writes |
+| --- | --- |
+| Create and link | Create one record, then create its edges to parents that already exist |
+| Update | Change a status, amount or assignee on an existing record (complete-record PATCH) |
+| Board activity | Create, edit, publish or schedule a post or event on a Board the author can write |
+| Planned rejection | Send one request that must be refused (see below) |
+
+Episodes are grouped into short work sessions (decided). A user does two to six episodes in a row (a module's last session can be shorter), then another user takes over. Departments with more work, such as Inventory stock movements and Sales orders, receive more sessions. Business journeys run through the sessions: for example customer → quote → price change → sales order → invoice → payment. A later step starts only after its earlier record exists. Because departments take turns, the steps of one journey spread across the run. Inside a department, a parent record always comes before its children, so an edge is only requested when both records exist. A record-created automation runs just after the create and briefly locks that module and record. The planner knows which planned records fire a rule. For those records, the link episode waits until a read of the record shows the rule's result (for example, status Confirmed), with a bounded wait. The seeder's existing retry covers a following record create in the same module that meets the lock. The read-then-retry for edges (below) is a backstop, not the main defense.
+
+Board work is interleaved with record sessions. Each post, event, record link and post life-cycle action is one step by a team member who can write on that Board. A step runs every few sessions once its earlier steps and records exist, and every Board write reads the current Board and item revisions first. Department leads build views, Dashboards and Reports at the end of the run.
+
+Correct session: `Mika Villanueva creates quote Q-2026-0145, links it to Bayview Coastal Foods, then raises its total to ₱52,600.`
+Wrong session: `Marina Santos creates 800 quotes in a row; all quote links are written 15 minutes later.` Board record links come after the linked records exist. Views, Dashboards and Reports come after their source modules have records.
+
+**Record history.** About 40% of records receive one to three updates that follow each module's normal status order (for example, Open → In progress → Resolved). Every update episode reads the current record first and sends the complete record with only its planned change, so it never overwrites a value that an automation set. Real record-created and field-changed automations fire from these creates and updates. The planner models each published rule's Set-field action, so every record has an expected final state that includes automation results. The verifier compares final values against that expected state after the automation queue is empty. The seeder records automation runs that it observes and never creates them itself. Automations also set other fields, for example Follow-up required on work orders that pass through Scheduled or Overdue; those values are real automation results and can differ from the generated values.
+
+The trigger-runs list has no filter by rule or record. Automation evidence therefore stays limited to the named cases, with a bounded number of pages, and each run is recorded once. Totals of automation runs are reported, not asserted.
+
+**Safe edge retry.** A relationship write that returns the known busy 503 is retried only after the seeder reads that exact edge (field, source and target), with a short pause before the one retry. If the edge exists, the seeder records it as complete. If it does not exist, the seeder retries once. Any other unknown outcome stops the run.
+
+**Planned rejections.** Each case records actor, request, expected status and detail, actual status and detail, and request ID in a separate `expected_failures` manifest section. They do not count toward totals. Only rejections that the API makes before any write are admitted:
+
+| Case | Expected result |
+| --- | --- |
+| Guest creates a record in a module their group can manage | 403 `Forbidden` |
+| Read-only member creates or edits a record | 403 `Forbidden` (edit uses a valid, non-empty body) |
+| Member creates a record in a department they cannot see | 404 `Module not found` |
+| Record with a missing required field, an unknown option, a wrong type, or an unknown field ID | 422 with `required_field`, `invalid_field_value` or `unknown_field` |
+| Second link on the one-to-one Work Order → Inspection, or a duplicate edge | 409 with the exact conflict detail |
+| Group change with an old `If-Match` | 412 `Resource changed` |
+| Board post or event edit with an old item revision and the current Board revision | 409 `stale_post_revision` or `stale_event_revision` |
+| Sign-in of a pending or disabled account, once each | 401 |
+
+Stale record edits and reused report-run keys are not rejection cases: records have no revision check, and a reused key returns the original run. Any 5xx is a harness failure, never an expected result. Rejections run one at a time: record, link and group cases between sessions once their records exist; the stale post edit and sign-in cases after Board work. After the run, read-back must show exact counts and no audit row that carries a rejection's request ID.
+
+**Natural content.** Record values use the language of each business area. Document numbers appear only where a business uses them (quotes, orders, invoices, receipts, work orders). Names of things are names, not codes. Contacts belong to their customer. E-mail addresses and URLs use the reserved `.example` domain with natural local parts, so no real mailbox or site is used. Names are invented, and a deny-list rejects known brands.
+
+Rules for generated text, each with an example:
+
+| Rule | Correct | Wrong |
+| --- | --- | --- |
+| Use the business name of the thing | `Forklift RT-07 hydraulic leak at Bay 3` | `Service Request · HOG-SR-000001` |
+| Use a document number only for documents | `INV-2026-0412` | `Customer Site · HOG-SITE-000001` |
+| Write notes as a person would | `Customer asked to move delivery to Friday; dock 2 is closed Thursday.` | `Harbor Operations Group follow-up for quotes 0001.` |
+| Never mark data as generated | `Quarterly cycle count — Warehouse 2` | `Sample stock count (test data)` |
+| Invent names; avoid real brands | `Tidewater Industrial Supply` | `Cebu Pacific Components` |
+
+A generator test fails if any value contains a whole-word match for `sample`, `test`, `demo`, `dummy`, `fake`, `placeholder`, `lorem`, `ipsum`, `scenario` or `synthetic`, outside the reserved `.example` domain part. A short allow-list in the vocabulary module admits real trade phrases, such as `pressure test`, `load test` and `oil sample`, and the test checks every allow-listed phrase against that list. A second test limits exact-title repetition in each module. The workspace name stays Harbor Operations Group. Identity e-mail addresses move from `@harbor.example.test` to a `.example` domain.
+
+**Development limits.** The development Compose overlay raises the Supabase Auth token and verify limits next to the e-mail limit. Production configuration does not change. The seeder also signs users in one at a time and refreshes each user only near expiry, one refresh at a time. It never retries a refresh in parallel.
+
+### Acceptance criteria
+
+| ID | Criterion |
+| --- | --- |
+| SIM-1 | For the same seed, anchor and profile, `plan` prints the same episode count, per-user write counts and planned rejections on every run. |
+| SIM-2 | Every create, update and relationship audit row matches the planned actor for that write. No write comes from a user without the required access. |
+| SIM-3 | At least 80% of active internal members make at least one write in Small, and all of them do in Standard. |
+| SIM-4 | Record, edge and content totals equal the admitted profile totals (Small 1,001 records and 1,145 edges; Standard 20,000 and 22,880). After run sizes change, the totals are the counts the run manifest records. |
+| SIM-5 | Each planned rejection returns its expected status and detail. Read-back shows no record, edge, group, Board or audit change from these requests. |
+| SIM-6 | No generated value contains a deny-listed word or brand. Title repetition stays under the configured limit in each module. |
+| SIM-7 | A Standard run longer than the access-token lifetime completes without a 401 or a Supabase 429. |
+| SIM-8 | An interrupted run stops with a readable manifest and never resumes by itself. The existing guarded reset clears it. |
+
+### Implementation slices
+
+1. **Development limits.** Change the development overlay, recreate only the owned Auth service, and stagger sign-ins. Proof: a controlled local run of 30 sign-ins and refreshes with no 429.
+2. **Natural content.** Update the generator's names, notes, e-mail addresses, posts, events and OpenView names. Keep named financial and purchasing scenarios and the first record of each module stable. Proof: generator tests for the deny-list and repetition limits, and the existing scenario tests.
+3. **Actor plan and group access.** Add creator and assignee keys, change group access, and match the verifier to planned actors. Proof: generator and verifier tests.
+4. **Episode planner and executor.** Order episodes, write edges right after their records, and add the safe edge retry. Proof: planner tests for parent-before-child order and determinism, and a Small run.
+5. **Record history.** Add update episodes that follow each module's status order. Proof: generator tests for status order and expected final state; observed automation results in the Small run after slice 6.
+6. **Planned rejections.** Add rejection episodes, the manifest section and the no-change read-back. Proof: a Small run with all cases matching.
+7. **Standard run.** Reset, populate and verify Standard once.
+
+Live runs happen at three fixed points, because each needs a guarded reset that the operator confirms: a Small run after the episode planner, a Small run after planned rejections, then Standard. The first reset also clears the partial Standard data. Other slices use generator and planner tests only.
+
+Backend files keep the 500-line limit. `sample_people.py`, `sample_scenario.py` and `sample_client.py` are near it, so the planner, executor, text vocabulary and rejection logic go into new modules.
+
+### Decisions
+
+- Work sessions: a user does two to six episodes in a row, with business journeys running through the sessions.
+- Group access: Inventory, Purchasing and Finance members get write access to all modules in their department.
+- Identity e-mail domain: `@harbor-ops.example` replaces `@harbor.example.test`, with natural local parts such as `carlo.reyes@harbor-ops.example`.
+- Record history: about 40% of records receive one to three updates. This adds about 16,000 Standard writes. Standard is expected to take 75 to 100 minutes.
+
+## Proposed: run sizes and organization packs
+
+Status: **proposed, not implemented.** Decided with the user on 2026-09-30.
+
+### Run sizes
+
+Each run populates one organization pack. The operator runs one pack, checks it in the app, resets the sample data with the guarded reset, and runs the next pack.
+
+| Profile | Records | Use |
+| --- | --- | --- |
+| Standard | 5,000 to 7,000 per pack, across all its departments and modules | The normal run for each organization |
+| Small | About one fifth of Standard | A quick check while a pack is being built |
+| Large | Four times Standard | Occasional scale check; opt-in |
+
+Each pack sets its own module counts so that its Standard run falls in the 5,000 to 7,000 range. Each run manifest records its organization pack and exact module counts, and `verify` uses the recorded counts, so a later change to a pack does not break the verification of an older run. The 20,000-record Harbor run from 2026-09-30 is a Large-size run under the old definition.
+
+### Organization packs
+
+OpenSlate serves any organization, so sample data is not limited to a business. A pack is one complete organization: its departments, modules, fields, relationships and automations; its people, groups and access; the vocabulary and copy for records, Board posts, events and OpenView; status paths for record history; its named scenario; and its country, locale, currency and time zone. A run uses one pack (`--organization <key>`), because one installation holds one organization. Changing packs needs a guarded reset.
+
+| Pack | Organization |
+| --- | --- |
+| harbor | Harbor Operations Group: distribution and field service (current data) |
+| school | A school: admissions, classes, enrolments, attendance, grades and fees |
+| clinic | A clinic: patients, appointments, visits, prescriptions and billing |
+| nonprofit | A nonprofit: donors, donations, programs, volunteers and grants |
+| local-government | A local government office: permits, requests, inspections and payments |
+
+[sample-organization-packs.md](sample-organization-packs.md) gives the research-based design for each pack: departments, modules and counts, chains, named scenario, refusals, trade phrases and country. It also proposes `fmcg-distributor` and `manufacturer` packs.
+
+Design rules:
+
+- A pack is data in `backend/operations/sample_packs/<key>/`, not a set of code hooks. The engine reads every count from the pack; no test pins a Harbor count unless it belongs to the Harbor pack.
+- Planned rejections derive their actors and targets from the pack's access table and fields: a read-only member, a member without a department, a guest, a one-to-one relationship, and Select and Number fields in a writable module.
+- Every pack has one named scenario: a parent amount that a child record settles in part (for example a school fee and a partial payment). Board links and verification read it from the pack.
+- Harbor's purchasing and receipt reconciliation stays inside the Harbor pack.
+- Each pack's design must pass the Sandbox document validation offline before any live run.
+- The generated-data marker check blocks the words `sample`, `test`, `demo`, `dummy`, `fake`, `placeholder`, `lorem`, `ipsum`, `scenario` and `synthetic` (`tests/operations/test_sample_text.py`), except inside the pack's allowed trade phrases (`TRADE_PHRASES`). Schools and clinics use the word "test" for real work, so each pack lists its own phrases.
+
+Correct: `Grade 8 science unit test — Section B`. Wrong: `Test record for class 12`.
+
+### Order of work
+
+1. Extract Harbor into the pack interface with no change in output. A saved golden master of Harbor's dataset, sessions, history, Board steps, rejections and plan summary must stay identical.
+2. Change run sizes and record the pack and counts in the manifest. This changes Harbor's Standard output on purpose, so save a new golden master after this step and record why it changed.
+3. Build the School pack end to end, including a live Small run.
+4. Build the Clinic, Nonprofit, Local government, FMCG distributor and Manufacturer packs one at a time, each with a live Small run.
+
+### Product gaps found
+
+- The Manage workspace screen in `main` is a local example ("Settings here are examples"). It does not read or save the workspace through the API, so a pack's locale and time zone are set and checked through `PATCH`/`GET /api/workspace` only. Connecting the designed Manage page to the API is a separate, design-led frontend task.
+- The six Sandbox organization templates are all business types.
 
 ## Cleanup and acceptance
 
@@ -68,7 +330,7 @@ Reset is a separately confirmed operation, using the existing guarded `reset_app
 
 For ordinary department lifecycle purge, that department's Board and database content cascade with the department. Attached file bytes must first be purged through their existing confirmed flow; foreign Board references still block source deletion. Preserve failure reporting across Auth, application data, and Storage.
 
-Future implementation must prove representative operations through rendered controls and the real authenticated API: invitation states, group authorization, stale revisions, supported select/person values, Board content and reminders, scan-gated files, report snapshots, genuine audit attribution, session loss, interrupted population, and owned reset/rebuild. Preserve per-account cache isolation, drafts during background refresh, and current SSE/refresh behavior. Do not add polling or new write controls to make a demonstration appear complete.
+Implementation must prove representative operations through rendered controls and the real authenticated API: record create/edit and all relationship cardinalities, invitation states, group authorization, stale revisions, supported select/person values, Board content and reminders, report snapshots, genuine audit attribution, session loss, interrupted population, and owned reset/rebuild. Preserve per-account cache isolation, drafts during background refresh, and current SSE/refresh behavior. Add only the explicitly authorized record and relationship controls.
 
 Use focused meaningful tests followed by one stable work-unit batch, and the canonical pre-push gate for publication readiness. Preserve rerunnable procedures and run artifacts. Completion requires persisted, audited state and correctly rendered permitted results; configuration, screenshots, or a successful request alone do not prove the whole workflow.
 
