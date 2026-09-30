@@ -54,6 +54,17 @@ import {
 type AutomationSaveResult =
   { ok: true; rule: CommsAutomationRule } | { ok: false; error: string };
 
+/** Plain names for the fields a rule message can fill in. */
+const TEMPLATE_FIELD_LABELS = {
+  title: "record title",
+  status: "status",
+  assignee: "assignee",
+  recordId: "record ID",
+  channel: "channel",
+  message: "message",
+  event: "event",
+} as const;
+
 export function AutomationTools({
   opener,
   onClose,
@@ -96,7 +107,7 @@ export function AutomationTools({
   const sampleMessage = messages.find(
     (m) => m.conversation === draft.channelId,
   );
-  const fields = {
+  const fields: Record<keyof typeof TEMPLATE_FIELD_LABELS, string> = {
     title: record?.title ?? "",
     status: record?.status ?? "",
     assignee: record?.assignee ?? "",
@@ -299,7 +310,7 @@ export function AutomationTools({
   return (
     <ConfigurationFrame
       title="Automation"
-      description="Build rules, inspect events, and review the result. No background execution or external delivery occurs."
+      description="Post a message when a record changes. In this example, a rule posts only after you preview it and select Apply."
       opener={opener}
       onClose={onClose}
       dirty={dirty}
@@ -318,7 +329,7 @@ export function AutomationTools({
           </Alert>
         )}
         <Field>
-          <FieldLabel htmlFor="tools-automation-field-1">Saved rule</FieldLabel>
+          <FieldLabel htmlFor="tools-automation-field-1">Rule</FieldLabel>
           <NativeSelect
             id="tools-automation-field-1"
             className="w-full [&_select]:min-h-11"
@@ -333,7 +344,9 @@ export function AutomationTools({
               }
             }}
           >
-            <NativeSelectOption value="">New rule</NativeSelectOption>
+            <NativeSelectOption value="">
+              New rule (not saved)
+            </NativeSelectOption>
             {config.rules.map((r) => (
               <NativeSelectOption key={r.id} value={r.id}>
                 {r.name}
@@ -367,16 +380,18 @@ export function AutomationTools({
             Discard rule draft
           </Button>
         )}
-        <Button
-          variant="outline"
-          disabled={dirty}
-          onClick={() => {
-            setDraft({ ...draft, id: "", name: "New rule" });
-            setPreview(false);
-          }}
-        >
-          New rule
-        </Button>
+        {draft.id !== "" && (
+          <Button
+            variant="outline"
+            disabled={dirty}
+            onClick={() => {
+              setDraft({ ...draft, id: "", name: "New rule" });
+              setPreview(false);
+            }}
+          >
+            Start a new rule
+          </Button>
+        )}
         <Field>
           <FieldLabel htmlFor="tools-automation-field-2">Rule name</FieldLabel>
           <Input
@@ -451,9 +466,16 @@ export function AutomationTools({
           </FieldLabel>
           <Input
             id="tools-automation-field-6"
+            aria-describedby="tools-automation-field-6-hint"
             value={draft.filter}
             onChange={(e) => change({ filter: e.target.value })}
           />
+          <p
+            id="tools-automation-field-6-hint"
+            className="text-muted-foreground text-xs"
+          >
+            Optional. The rule runs only when the change includes this text.
+          </p>
         </Field>
         <Field>
           <FieldLabel htmlFor="tools-automation-field-7">
@@ -467,12 +489,11 @@ export function AutomationTools({
           />
         </Field>
         <p className="text-muted-foreground text-xs">
-          Template fields:{" "}
-          {
-            "{{title}}, {{status}}, {{assignee}}, {{recordId}}, {{channel}}, {{message}}, {{event}}"
-          }
+          Type a field in double braces and OpenComms fills it in when the rule
+          runs, for example {"{{title}}"} for the record title.
         </p>
         <div
+          role="group"
           className="flex flex-wrap gap-2"
           aria-label="Insert template field"
         >
@@ -485,7 +506,7 @@ export function AutomationTools({
                 change({ template: draft.template + ` {{${key}}}` })
               }
             >
-              Insert {key}
+              Insert {TEMPLATE_FIELD_LABELS[key as keyof typeof fields]}
             </Button>
           ))}
         </div>

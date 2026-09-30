@@ -185,6 +185,13 @@ test("archiving a channel asks first and can be undone", async ({ page }) => {
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeEnabled();
+  // Undo reports what it did, not the archive again.
+  await expect(
+    page.getByText("#workshop restored.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Undo", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("blocking a person asks first; unblocking does not", async ({ page }) => {
@@ -270,11 +277,11 @@ test("the OpenComms menu keeps everyday items up front and admin tools behind on
     "Workspace settings",
     "Moderation",
     "Scheduled messages",
-    "History",
-    "Retention",
+    "Settings history",
+    "Message retention",
     "Automation",
-    "Templates",
-    "Channel management",
+    "Channel templates",
+    "Bulk channel changes",
   ]);
   await tools.getByRole("menuitem", { name: "Moderation" }).click();
   await expect(page.getByRole("dialog", { name: "Moderation" })).toBeVisible();
@@ -306,4 +313,32 @@ test("a channel has one settings dialog, reached the same way from its row and i
   await expect(
     settings.getByLabel("Channel name", { exact: true }),
   ).toHaveValue("workshop");
+});
+
+test("two quick deletes each get their own Undo", async ({ page }) => {
+  await page.goto("/comms");
+  const message = page.getByRole("textbox", { name: "Message", exact: true });
+  for (const text of ["First quick delete", "Second quick delete"]) {
+    await message.fill(text);
+    await page
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
+  }
+  const article = (text: string) =>
+    page.getByRole("article").filter({ hasText: text });
+  for (const text of ["First quick delete", "Second quick delete"]) {
+    await article(text)
+      .getByRole("button", { name: "Message actions", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Delete message", exact: true })
+      .click();
+    await expect(article(text)).toHaveCount(0);
+  }
+  const undo = page.getByRole("button", { name: "Undo", exact: true });
+  await expect(undo).toHaveCount(2);
+  await undo.nth(0).click();
+  await undo.nth(0).click();
+  await expect(article("First quick delete")).toHaveCount(1);
+  await expect(article("Second quick delete")).toHaveCount(1);
 });

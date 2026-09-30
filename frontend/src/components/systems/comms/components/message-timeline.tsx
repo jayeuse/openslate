@@ -75,6 +75,14 @@ function MessageText({
       ),
     );
 }
+/** Plain names for the record details a linked record card can show. */
+const RECORD_CARD_LABELS: Record<string, string> = {
+  status: "Status",
+  assignee: "Assigned to",
+  customer: "Customer",
+  dueDate: "Due date",
+};
+
 export function MessageTimeline({
   visibleMessages,
   allMessages,
@@ -438,8 +446,8 @@ export function MessageTimeline({
                     >
                       <Card className="hover:bg-muted w-full">
                         <CardContent className="p-3">
-                          <span className="text-muted-foreground mb-1 block text-xs font-semibold tracking-wider uppercase">
-                            OpenView · linked record
+                          <span className="text-muted-foreground mb-1 block text-xs font-semibold">
+                            Linked record in OpenView
                           </span>
                           <span className="underline underline-offset-4">
                             {settings.recordCardFields.includes("title")
@@ -452,7 +460,7 @@ export function MessageTimeline({
                             .filter((field) => field !== "title")
                             .map((field) => (
                               <span className="mt-1 block text-xs" key={field}>
-                                {field}:{" "}
+                                {RECORD_CARD_LABELS[field] ?? field}:{" "}
                                 {String(
                                   records.find(
                                     (record) => record.id === message.recordId,
@@ -508,7 +516,7 @@ export function MessageTimeline({
                     >
                       <MessagesSquare className="size-3" />
                       {thread.replies.length} replies
-                      {thread.resolved ? " · Inactive" : ""}
+                      {thread.resolved ? " · Resolved" : ""}
                     </Button>
                   )}
                 </MessageContent>

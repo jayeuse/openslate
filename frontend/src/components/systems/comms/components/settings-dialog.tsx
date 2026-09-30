@@ -426,9 +426,9 @@ export function CommsSettingsDialog({
         { id: "shortcuts", label: "Shortcuts" },
       ]
     : [
-        SETTINGS_SECTIONS[0],
-        { id: "permissions", label: "Advanced Permissions" },
-        ...SETTINGS_SECTIONS.slice(1),
+        // Everyday behavior first; who may do what comes last.
+        ...SETTINGS_SECTIONS,
+        { id: "permissions", label: "Permissions" },
       ];
   const search = query.trim().toLowerCase();
   function fields(keys: CommsSettingKey[]) {
@@ -474,7 +474,11 @@ export function CommsSettingsDialog({
       description={
         personal
           ? "Make OpenComms comfortable for you. Shared rules still apply."
-          : "Configure conversation defaults, permissions, and channel behavior."
+          : target.kind === "workspace"
+            ? "Defaults for every category and channel. Categories and channels can change them unless you lock a setting."
+            : target.kind === "category"
+              ? "Defaults for the channels in this category. A channel can change them unless the workspace locks a setting."
+              : `Settings for #${channels.find((item) => item.id === target.id)?.name ?? "this channel"} only.`
       }
       opener={opener}
       dirty={dirty}
@@ -505,7 +509,7 @@ export function CommsSettingsDialog({
         </Action>
       }
     >
-      <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-end sm:px-6">
+      <div className="flex items-end gap-3 px-5 py-4 sm:px-6">
         <div className="min-w-0 flex-1">
           <TextField
             label="Search settings"

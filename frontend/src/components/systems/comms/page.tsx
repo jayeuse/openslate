@@ -203,6 +203,19 @@ type WorkspaceSetting =
   | "outbox"
   | "retention";
 
+/** How many removed messages wait in Moderation; the words are read out,
+ *  the number is shown. */
+function RecoverableBadge({ count }: { count: number }) {
+  return (
+    <Badge variant="warning" className="ml-auto">
+      <span aria-hidden="true">{count}</span>
+      <span className="sr-only">
+        {count} removed {count === 1 ? "message" : "messages"} to review
+      </span>
+    </Badge>
+  );
+}
+
 /** Everyday items first, in small groups; tools for administrators and
  *  moderators wait behind one Admin tools entry. */
 function CommsMenu({
@@ -249,11 +262,11 @@ function CommsMenu({
     { id: "workspace", label: "Workspace settings" },
     { id: "moderation", label: "Moderation" },
     { id: "outbox", label: "Scheduled messages" },
-    { id: "history", label: "History" },
-    { id: "retention", label: "Retention" },
+    { id: "history", label: "Settings history" },
+    { id: "retention", label: "Message retention" },
     { id: "automation", label: "Automation" },
-    { id: "templates", label: "Templates" },
-    { id: "management", label: "Channel management" },
+    { id: "templates", label: "Channel templates" },
+    { id: "management", label: "Bulk channel changes" },
   ] as const;
   const select = (id: WorkspaceSetting) => {
     if (trigger.current) onSelect(id, trigger.current);
@@ -307,13 +320,7 @@ function CommsMenu({
                 <DropdownMenuSubTrigger className="min-h-10">
                   <ShieldCheck aria-hidden="true" /> Admin tools
                   {recoverableCount > 0 && (
-                    <Badge
-                      variant="warning"
-                      className="ml-1"
-                      aria-label={`${recoverableCount} recoverable ${recoverableCount === 1 ? "message" : "messages"}`}
-                    >
-                      {recoverableCount}
-                    </Badge>
+                    <RecoverableBadge count={recoverableCount} />
                   )}
                 </DropdownMenuSubTrigger>
                 <DropdownMenuContent
@@ -329,6 +336,9 @@ function CommsMenu({
                         onClick={() => select(id)}
                       >
                         {label}
+                        {id === "moderation" && recoverableCount > 0 && (
+                          <RecoverableBadge count={recoverableCount} />
+                        )}
                       </DropdownMenuItem>
                     ))}
                   </DropdownMenuGroup>
@@ -737,7 +747,7 @@ export default function SampleComms() {
       metadata: (
         <>
           {item.replies.length} replies ·{" "}
-          {item.resolved ? "Inactive" : "Active"}
+          {item.resolved ? "Resolved" : "Active"}
         </>
       ),
     }),
@@ -1012,7 +1022,7 @@ export default function SampleComms() {
       description:
         "No one can post in an archived channel. Its messages stay readable, and you can restore it at any time.",
       confirmLabel: "Archive channel",
-      onConfirm: () => void toggleChannelArchive(channel.id),
+      onConfirm: () => void setChannelArchived(channel, true),
       opener,
     });
   }
@@ -1027,17 +1037,20 @@ export default function SampleComms() {
       opener,
     });
   }
-  async function toggleChannelArchive(channelId: string) {
-    const target = channels.find((item) => item.id === channelId);
+  /** Sets the archive state explicitly, so an Undo created before the
+   *  change always goes the right way and reports what it did. */
+  async function setChannelArchived(
+    target: Pick<Channel, "id" | "name">,
+    archived: boolean,
+  ) {
+    const channelId = target.id;
     try {
       await run(
         `channel:archive:${channelId}`,
         (draft) => {
           draft.update<Channel[]>("commsChannels", CHANNELS, (items) =>
             items.map((item) =>
-              item.id === channelId
-                ? { ...item, archived: !item.archived }
-                : item,
+              item.id === channelId ? { ...item, archived } : item,
             ),
           );
         },
@@ -1052,12 +1065,11 @@ export default function SampleComms() {
       );
       return;
     }
-    if (!target) return;
-    if (target.archived) reportCommsDone(`#${target.name} restored.`);
+    if (!archived) reportCommsDone(`#${target.name} restored.`);
     else
       reportCommsDone(`#${target.name} archived.`, {
         label: "Undo",
-        onClick: () => void toggleChannelArchive(channelId),
+        onClick: () => void setChannelArchived(target, false),
       });
   }
   async function ensureRecordThread(item: RecordThread) {
@@ -1594,8 +1606,9 @@ export default function SampleComms() {
                                               : "Archive channel",
                                             onSelect: (opener) =>
                                               item.archived
-                                                ? void toggleChannelArchive(
-                                                    item.id,
+                                                ? void setChannelArchived(
+                                                    item,
+                                                    false,
                                                   )
                                                 : confirmArchive(item, opener),
                                           },
@@ -1729,7 +1742,7 @@ export default function SampleComms() {
                                                       variant="secondary"
                                                       className="ml-auto shrink-0"
                                                     >
-                                                      Inactive
+                                                      Resolved
                                                     </Badge>
                                                   )}
                                                 </TooltipTrigger>
@@ -2006,7 +2019,7 @@ export default function SampleComms() {
                           className="bg-muted/30 border-b px-4 py-2 text-xs underline"
                           href={`/openview?record=${encodeURIComponent(settings.pinnedRecordId)}`}
                         >
-                          Pinned incident ·{" "}
+                          Pinned record ·{" "}
                           {records.find(
                             (record) => record.id === settings.pinnedRecordId,
                           )?.title ?? "View record"}
@@ -2320,7 +2333,9 @@ export default function SampleComms() {
                           Message {person.name}
                         </Action>
                       ))}
-                    <Action onClick={() => setDmOpen(false)}>Cancel</Action>
+                    <Action variant="outline" onClick={() => setDmOpen(false)}>
+                      Cancel
+                    </Action>
                   </div>
                 </DialogContent>
               </Dialog>

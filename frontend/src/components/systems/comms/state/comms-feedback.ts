@@ -2,8 +2,9 @@ import { toast } from "@/components/ui/toast";
 
 // OpenComms results people must see: errors stay until dismissed, and
 // confirmations close on their own. Several layers report the same failure
-// (an operation and the control that started it), so a message that is
-// already showing is not shown twice.
+// (an operation and the control that started it), so an error that is
+// already showing is not shown twice. Confirmations are never merged: each
+// one may carry its own Undo.
 const showing = new Set<string>();
 
 function show(
@@ -11,8 +12,11 @@ function show(
   type: "success" | "error",
   action?: { label: string; onClick: () => void },
 ) {
-  if (!title || showing.has(title)) return;
-  showing.add(title);
+  if (!title) return;
+  if (type === "error") {
+    if (showing.has(title)) return;
+    showing.add(title);
+  }
   // Cleared when the notice starts closing, not when its exit animation
   // ends, so a repeat of the same result during that animation still shows.
   toast.add({ title, type, action, onClose: () => showing.delete(title) });

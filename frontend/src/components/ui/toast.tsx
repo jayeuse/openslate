@@ -20,7 +20,8 @@ export const toast = {
     const id: string = manager.add({
       ...options,
       priority: options.type === "error" ? "high" : "low",
-      timeout: options.type === "error" ? 0 : 6000,
+      // An action (Undo) needs time to reach by keyboard.
+      timeout: options.type === "error" ? 0 : action ? 12000 : 6000,
       actionProps: action && {
         children: action.label,
         onClick: () => {
@@ -52,7 +53,10 @@ function ToastList() {
             <Toast.Root
               key={item.id}
               toast={item}
-              className="border-border bg-card text-card-foreground relative rounded-[var(--radius)] border p-4 shadow-lg transition-opacity duration-150 data-ending-style:opacity-0 data-limited:hidden data-starting-style:opacity-0 motion-reduce:transition-none"
+              className={cn(
+                "border-border bg-card text-card-foreground relative rounded-[var(--radius)] border p-4 shadow-lg transition-opacity duration-150 data-ending-style:opacity-0 data-limited:hidden data-starting-style:opacity-0 motion-reduce:transition-none",
+                item.type === "error" && "border-danger-rule bg-danger-tint",
+              )}
             >
               <Toast.Content className="flex items-start gap-3">
                 <Icon
@@ -65,6 +69,11 @@ function ToastList() {
                   <Toast.Title className="text-sm font-medium" />
                   <Toast.Description className="text-muted-foreground text-sm" />
                 </div>
+                {item.actionProps && (
+                  <span className="sr-only">
+                    Press F6 to reach this notice.
+                  </span>
+                )}
                 {item.actionProps && (
                   <Toast.Action className="text-action-text hover:bg-muted focus-visible:outline-ring -my-1 min-h-8 shrink-0 rounded-[var(--radius)] px-2.5 text-sm font-semibold outline-none focus-visible:outline-2" />
                 )}

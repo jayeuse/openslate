@@ -406,8 +406,10 @@ export function ManagementTools({
   }
   return (
     <ConfigurationFrame
-      title={view === "templates" ? "Channel templates" : "Channel management"}
-      description="Apply selected configuration fields without copying conversations or changing membership implicitly."
+      title={
+        view === "templates" ? "Channel templates" : "Bulk channel changes"
+      }
+      description="Copy chosen settings to several channels at once. Messages and members stay as they are."
       opener={opener}
       onClose={onClose}
       dirty={edited}

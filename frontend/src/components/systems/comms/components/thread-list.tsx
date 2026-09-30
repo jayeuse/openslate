@@ -54,7 +54,7 @@ export function CommsThreadList({
         }}
       >
         <ToggleGroupItem value="active">Active</ToggleGroupItem>
-        <ToggleGroupItem value="inactive">Inactive</ToggleGroupItem>
+        <ToggleGroupItem value="inactive">Resolved</ToggleGroupItem>
       </ToggleGroup>
       <div className="flex flex-col gap-1">
         {visibleItems.map((item) => (

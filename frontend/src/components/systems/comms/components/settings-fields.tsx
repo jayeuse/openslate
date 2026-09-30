@@ -74,7 +74,7 @@ export const SETTINGS_SECTIONS: {
   },
   {
     id: "files",
-    label: "Files & Records",
+    label: "Files and records",
     description: "Choose permitted attachments and record card information.",
     keys: [
       "allowedFileTypes",
@@ -88,9 +88,9 @@ export const SETTINGS_SECTIONS: {
   },
   {
     id: "moderation",
-    label: "Moderation & History",
+    label: "Posting and history",
     description:
-      "Set channel restrictions and history policies. Retention is previewed, never automatically purged.",
+      "Lock the channel, limit who can post, and set how long messages are kept. In this example, nothing is deleted automatically.",
     keys: [
       "locked",
       "restrictedPersonIds",
@@ -141,7 +141,7 @@ export const SETTINGS_LABELS: Record<CommsSettingKey, string> = {
   retentionDays: "Retention period (days)",
   allowExport: "Allow history export",
   systemMessages: "Allow system messages",
-  pinnedRecordId: "Pinned incident record",
+  pinnedRecordId: "Pinned record",
 };
 const hints: Partial<Record<CommsSettingKey, string>> = {
   mode: "Announcements reserve new messages for managers. Thread-first channels guide replies into threads.",
@@ -163,12 +163,11 @@ const hints: Partial<Record<CommsSettingKey, string>> = {
   recordCardFields: "Choose which details appear on linked record cards.",
   retentionDays:
     "0 keeps all history. Saving never deletes messages; use the retention preview to inspect affected content.",
-  pinnedRecordId:
-    "Keep an incident record within reach of everyone in this channel.",
+  pinnedRecordId: "Keep one record within reach of everyone in this channel.",
   restrictionUntil:
     "Leave empty for no expiry. Applies to the selected restricted people.",
   ownerId:
-    "Eli retains protected OpenComms owner access independently of this assignment.",
+    "Eli owns OpenComms, so Eli always has every permission here. Channel locks and message limits still apply.",
   keywords: "Separate words or phrases with commas.",
 };
 const choices: Partial<Record<CommsSettingKey, [string, string][]>> = {
