@@ -323,6 +323,7 @@ def _validate_phase_actor_access(dataset: SampleDataset, actions: tuple[PhaseAct
                 board_status[action.target_key] = "active"
         elif kind in {
             "promote_user",
+            "demote_user",
             "remove_group_member",
             "add_group_member",
             "replace_group_access",
@@ -347,6 +348,10 @@ def _validate_phase_actor_access(dataset: SampleDataset, actions: tuple[PhaseAct
             assert removed == groups[action.target_key]
             groups[action.target_key].difference_update(removed)
             people[action.target_key] = replace(target, role="admin", groups=())
+        elif kind == "demote_user":
+            target = people[action.target_key]
+            assert target.role == "admin" and not groups[action.target_key]
+            people[action.target_key] = replace(target, role=str(action.values["role"]))
         elif kind == "remove_group_member":
             group_key = str(action.values["source_group_key"])
             assert group_key in groups[action.target_key]

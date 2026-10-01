@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, cast
 
+from app.systems.sandbox.designs.schemas import SandboxDocument
 from operations.sample_packs.phase_types import DesignPhaseSpec, PhaseAction
 from operations.sample_phase_planning import _document_version
 
@@ -32,6 +33,8 @@ def phase_expected_projection(actions: tuple[PhaseAction, ...]) -> dict[str, obj
                 for group in removed_groups:
                     if isinstance(group, str):
                         removals.add((group, action.target_key))
+        elif action.kind == "demote_user":
+            people.setdefault(action.target_key, {})["role"] = str(values["role"])
         elif action.kind == "remove_group_member":
             removals.add((str(values["source_group_key"]), action.target_key))
         elif action.kind == "add_group_member":
@@ -99,6 +102,10 @@ def phase_expected_projection(actions: tuple[PhaseAction, ...]) -> dict[str, obj
             if action.kind == "sandbox_restore_publish":
                 design["final_version_key"] = values["version_key"]
 
+    # A membership removed and later restored (or added and later removed) has no net change.
+    unchanged = additions & removals
+    additions -= unchanged
+    removals -= unchanged
     return {
         "people": people,
         "membership_additions": sorted(additions),
@@ -141,6 +148,13 @@ def _design_spec(action: PhaseAction) -> DesignPhaseSpec:
     )
 
 
+def _normalized(document: dict[str, object]) -> dict[str, object]:
+    """The design as the server stores it: schema defaults filled, empty values dropped."""
+    return SandboxDocument.model_validate(document).model_dump(
+        by_alias=True, mode="json", exclude_none=True
+    )
+
+
 def phase_version_documents(
     dataset: SampleDataset, actions: tuple[PhaseAction, ...]
 ) -> dict[str, dict[str, object]]:
@@ -160,9 +174,12 @@ def phase_version_documents(
             raise ValueError("Recorded Sandbox actions disagree on the new module ID")
 
     values = edit.values
-    edited = _document_version(dataset, spec, plan_values=values, include_new_module=False)
-    opened = _document_version(dataset, spec, plan_values=values)
-    closed = _document_version(dataset, spec, plan_values=values, closed=True)
+    # Normalize like the generated design, so server-filled defaults match on readback.
+    edited = _normalized(
+        _document_version(dataset, spec, plan_values=values, include_new_module=False)
+    )
+    opened = _normalized(_document_version(dataset, spec, plan_values=values))
+    closed = _normalized(_document_version(dataset, spec, plan_values=values, closed=True))
     return {
         "initial_checkpoint": copy.deepcopy(dataset.document),
         "published": copy.deepcopy(dataset.document),

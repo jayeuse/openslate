@@ -13,6 +13,7 @@ type PhaseJsonValue = PhaseJsonScalar | list[PhaseJsonValue] | dict[str, PhaseJs
 PhaseActionKind = Literal[
     "refuse_role_change",
     "promote_user",
+    "demote_user",
     "remove_group_member",
     "add_group_member",
     "replace_group_access",

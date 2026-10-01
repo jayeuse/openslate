@@ -146,12 +146,13 @@ def _access_action(
     if kind in {
         "refuse_role_change",
         "promote_user",
+        "demote_user",
         "disable_user",
         "restore_disabled_user",
     }:
         user_id = _mapped_id(context, "user", action.target_key, step="update_user")
         path = f"/api/users/{user_id}"
-        if kind in {"refuse_role_change", "promote_user"}:
+        if kind in {"refuse_role_change", "promote_user", "demote_user"}:
             body = {"role": action.values["role"]}
         else:
             body = {"status": action.values["status"]}
@@ -374,6 +375,7 @@ def execute_route_phase_action(
     if action.kind in {
         "refuse_role_change",
         "promote_user",
+        "demote_user",
         "remove_group_member",
         "add_group_member",
         "replace_group_access",

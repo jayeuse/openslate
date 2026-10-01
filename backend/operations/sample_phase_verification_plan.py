@@ -143,7 +143,13 @@ def _rules(
     user_id = _person_id(manifest, mappings, action.target_key)
     user_path = f"/api/users/{user_id or ''}"
     kind = action.kind
-    if kind in {"promote_user", "refuse_role_change", "disable_user", "restore_disabled_user"}:
+    if kind in {
+        "promote_user",
+        "demote_user",
+        "refuse_role_change",
+        "disable_user",
+        "restore_disabled_user",
+    }:
         refusal = kind == "refuse_role_change"
         related = (
             ("groups", "group_members")

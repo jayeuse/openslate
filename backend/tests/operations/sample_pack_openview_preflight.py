@@ -288,6 +288,7 @@ def validate_phase_request_payloads(
         if action.kind in {
             "refuse_role_change",
             "promote_user",
+            "demote_user",
             "disable_user",
             "restore_disabled_user",
         }:

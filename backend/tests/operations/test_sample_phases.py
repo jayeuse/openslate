@@ -113,12 +113,18 @@ def test_phase_projection_and_version_documents_match_planned_end_state(pack_key
         "design",
     }
     promoted = next(action for action in actions if action.kind == "promote_user")
-    assert projection["people"][promoted.target_key]["role"] == "admin"
-    assert set(promoted.values["removed_group_keys"]) == {
-        group
-        for group, person in projection["membership_removals"]
-        if person == promoted.target_key
-    }
+    demoted = next(action for action in actions if action.kind == "demote_user")
+    assert demoted.target_key == promoted.target_key
+    # The acting administrator returns to member and rejoins every team they left.
+    assert projection["people"][promoted.target_key]["role"] == "member"
+    assert set(demoted.values["restored_group_keys"]) == set(promoted.values["removed_group_keys"])
+    assert all(
+        person != promoted.target_key
+        for _group, person in (
+            *projection["membership_removals"],
+            *projection["membership_additions"],
+        )
+    )
     disabled = next(action for action in actions if action.kind == "restore_disabled_user")
     assert projection["people"][disabled.target_key]["status"] == "active"
     assert len(projection["ended_sessions"]) == 1

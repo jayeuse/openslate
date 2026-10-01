@@ -222,16 +222,40 @@ def plan_phases(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             expected_end_state={"current_session_active": False},
         )
     )
+    # The cover ends: the acting administrator returns to member and rejoins their teams,
+    # so the run leaves only the preserved administrator and the guarded reset can clear it.
+    actions.append(
+        _make_action(
+            key="admin:demote_user",
+            phase="admin",
+            kind="demote_user",
+            actor_key=admin,
+            target_key=promoted.key,
+            values={
+                "role": promoted.role,
+                "restored_group_keys": cast(PhaseJsonValue, removed_group_keys),
+            },
+            expected_end_state={"role": promoted.role},
+        )
+    )
+    for group_key in removed_group_keys:
+        actions.append(
+            _make_action(
+                key=f"admin:restore_group_member:{group_key}",
+                phase="admin",
+                kind="add_group_member",
+                actor_key=admin,
+                target_key=promoted.key,
+                values={"source_group_key": group_key, "destination_group_key": group_key},
+                expected_end_state={"group_key": group_key, "member": True},
+            )
+        )
 
     final_people = []
     for person in pack.actors.people:
-        role = "admin" if person.key == promoted.key else person.role
+        role = person.role
         status = "active" if person.key == leaver.key else person.status
-        groups = (
-            tuple(group for group in person.groups if group not in removed_group_keys)
-            if person.key == promoted.key
-            else person.groups
-        )
+        groups = person.groups
         if person.key == moved.key:
             groups = tuple(group for group in groups if group != move_spec.source_group_key) + (
                 move_spec.destination_group_key,
