@@ -4006,3 +4006,153 @@ test("Views show authorized labels while filters keep stable choice and eligible
   ).toBeAttached();
   await captureOpenViewReview(page, "views-select-person-labels");
 });
+
+async function installRecordCommands(page: Page) {
+  const calls: {
+    method: string;
+    path: string;
+    ifMatch?: string;
+    body?: Record<string, unknown>;
+  }[] = [];
+  let staleNextSave = false;
+  await page.route("**/api/records**", async (route: Route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (/\/api\/records\/(query|grouped-query|window-query)$/.test(path))
+      return route.fallback();
+    const body = request.postData()
+      ? (request.postDataJSON() as Record<string, unknown>)
+      : undefined;
+    calls.push({
+      method: request.method(),
+      path,
+      ifMatch: request.headers()["if-match"],
+      body,
+    });
+    const stored = record(recordOneId, "Centrifugal pump 04", "In service");
+    if (request.method() === "PATCH" && staleNextSave) {
+      staleNextSave = false;
+      return route.fulfill({
+        status: 412,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Record changed" }),
+      });
+    }
+    if (request.method() === "DELETE")
+      return route.fulfill({ status: 204, body: "" });
+    if (request.method() === "POST" && path === "/api/records")
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...stored,
+          id: recordTwoId,
+          data: (body?.data as Record<string, unknown>) ?? {},
+          display_values: {},
+        }),
+      });
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...stored,
+        updated_at:
+          request.method() === "GET"
+            ? stored.updated_at
+            : "2026-09-24T00:00:00Z",
+      }),
+    });
+  });
+  return {
+    calls,
+    staleNextSave: () => {
+      staleNextSave = true;
+    },
+  };
+}
+
+test("record details save every active value with the revision the user opened", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  const commands = await installRecordCommands(page);
+  await page.goto(
+    `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
+  );
+  const details = page.getByRole("dialog", { name: "Record details" });
+  await expect(
+    details.getByRole("heading", { name: "Centrifugal pump 04" }),
+  ).toBeVisible();
+
+  await details.getByRole("button", { name: "Edit record" }).click();
+  await details.getByLabel("Serial number").fill("SN-NEW");
+  commands.staleNextSave();
+  await details.getByRole("button", { name: "Save changes" }).click();
+  await expect(
+    details.getByText("Someone saved this record after you opened it"),
+  ).toBeVisible();
+  const stale = commands.calls.find((call) => call.method === "PATCH");
+  expect(stale?.ifMatch).toBe('"2026-09-23T00:00:00Z"');
+  // A save replaces every active value, so unchanged values travel too.
+  expect(stale?.body?.data).toMatchObject({
+    [nameFieldId]: "Centrifugal pump 04",
+    [serialFieldId]: "SN-NEW",
+    [statusFieldId]: inServiceChoiceId,
+  });
+  await expect(details.getByLabel("Serial number")).toHaveValue("SN-NEW");
+
+  await details.getByRole("button", { name: "Load latest values" }).click();
+  await expect(details.getByLabel("Serial number")).toHaveValue("S");
+  await details.getByLabel("Serial number").fill("SN-AGAIN");
+  await details.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Record saved.")).toBeVisible();
+  await expect(
+    details.getByRole("button", { name: "Edit record" }),
+  ).toBeVisible();
+  expect(
+    commands.calls.filter((call) => call.method === "PATCH").at(-1)?.body?.data,
+  ).toMatchObject({ [serialFieldId]: "SN-AGAIN" });
+});
+
+test("record details delete only after confirmation", async ({ page }) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  const commands = await installRecordCommands(page);
+  await page.goto(
+    `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
+  );
+  const details = page.getByRole("dialog", { name: "Record details" });
+  await details.getByRole("button", { name: "Delete record" }).click();
+  const confirm = page.getByRole("alertdialog", {
+    name: "Delete this record?",
+  });
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  expect(commands.calls.some((call) => call.method === "DELETE")).toBe(false);
+
+  await details.getByRole("button", { name: "Delete record" }).click();
+  await confirm.getByRole("button", { name: "Delete record" }).click();
+  await expect(page.getByText(/^Record deleted\./)).toBeVisible();
+  expect(commands.calls.find((call) => call.method === "DELETE")?.path).toBe(
+    `/api/records/${recordOneId}`,
+  );
+});
+
+test("New record checks required values, then opens the created record", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  const commands = await installRecordCommands(page);
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await page.getByRole("button", { name: "New record" }).click();
+  const create = page.getByRole("dialog", { name: "New record" });
+  await create.getByRole("button", { name: /^Create / }).click();
+  await expect(create.getByText("Enter a value.")).toBeVisible();
+  expect(commands.calls.some((call) => call.method === "POST")).toBe(false);
+
+  await create.getByLabel("Equipment name").fill("Booster pump 09");
+  await create.getByRole("button", { name: /^Create / }).click();
+  await expect(page).toHaveURL(new RegExp(`record=${recordTwoId}`));
+  const created = commands.calls.find((call) => call.method === "POST");
+  expect(created?.body).toMatchObject({
+    module_id: moduleId,
+    data: { [nameFieldId]: "Booster pump 09" },
+  });
+});

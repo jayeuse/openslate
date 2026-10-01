@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -143,6 +143,22 @@ def _lock_active_module(db: Session, module_id: UUID) -> Module:
     if module.is_deleted is True:
         raise _conflict("Module is not active")
     return module
+
+
+def _require_current_revision(record: Record, if_match: str | None) -> None:
+    """An If-Match token is the ``updated_at`` the caller last read; no token skips the check."""
+
+    if if_match is None:
+        return
+    token = if_match.strip().removeprefix("W/").strip('"')
+    try:
+        revision = datetime.fromisoformat(token)
+    except ValueError:
+        revision = None
+    if revision is None or revision.tzinfo is None or revision != record.updated_at:
+        raise HTTPException(
+            status_code=status.HTTP_412_PRECONDITION_FAILED, detail="Record changed"
+        )
 
 
 def _lock_record(db: Session, record: Record) -> Record:
@@ -286,12 +302,17 @@ def create_record(
     return displayed_record(record, FieldDisplayResolver(db, record.module_id, fields))
 
 
-@router.patch("/{record_id}", response_model=RecordResponse)
+@router.patch(
+    "/{record_id}",
+    response_model=RecordResponse,
+    responses={412: {"description": "If-Match does not match the record's updated_at"}},
+)
 def update_record(
     record_id: UUID,
     payload: RecordUpdate,
     user: RecordWriteUser,
     db: Annotated[Session, Depends(get_db)],
+    if_match: Annotated[str | None, Header()] = None,
 ) -> RecordResponse:
     _require_patch(payload)
     record = _record(db, user, record_id, AccessLevel.WRITE)
@@ -304,6 +325,7 @@ def update_record(
     record = _lock_record(db, record)
     if record.is_deleted:
         raise _conflict("Record is deleted")
+    _require_current_revision(record, if_match)
     if payload.data is not None:
         previous = dict(record.data)
         try:

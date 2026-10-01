@@ -16,3 +16,18 @@ export function openViewRecordFieldValue(
   if (field.type === "select") return "Unavailable option";
   return raw;
 }
+
+/** A short name for a record: its title field's value, or its ID. */
+export function openViewRecordTitle(
+  record: Pick<OpenViewRecord, "id" | "data" | "displayValues">,
+  titleFieldId: string | null | undefined,
+): string {
+  if (titleFieldId) {
+    const label = record.displayValues[titleFieldId];
+    if (typeof label === "string" && label.trim()) return label;
+    const raw = record.data[titleFieldId];
+    if (typeof raw === "string" && raw.trim()) return raw;
+    if (typeof raw === "number" && Number.isFinite(raw)) return String(raw);
+  }
+  return `Record ${record.id.slice(0, 8)}`;
+}

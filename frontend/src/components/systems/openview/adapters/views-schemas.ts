@@ -518,6 +518,7 @@ export {
   queryDefinitionSchema,
   recordListSchema,
   recordQuerySchema,
+  recordSchema,
   restoreSchema,
   savedViewCreateSchema,
   savedViewListRequestSchema,

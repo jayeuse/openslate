@@ -8,10 +8,15 @@ import type {
   OpenViewQueryFieldType,
   OpenViewRecord,
 } from "../adapters/views-api";
+import type { OpenViewDataSource } from "../adapters/views-api";
 import type { OpenViewWindowQueryRequest } from "../adapters/window-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
+import { RecordDetailsControls } from "./record-details-controls";
+import { RecordHistoryPanel } from "./record-history-panel";
+import { RecordLinksPanel } from "./record-links-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Empty,
   EmptyDescription,
@@ -51,8 +56,22 @@ export type RecordInspectionContext = RecordInspectionPage & {
   definition: OpenViewQueryDefinition;
 };
 
+/** What the signed-in user may do with the record, and what it needs. */
+export type RecordControls = {
+  moduleId: string;
+  departmentId: string;
+  /** Every active field of the data source, for editing and history. */
+  editableFields: readonly OpenViewDataSourceField[];
+  dataSources: readonly OpenViewDataSource[];
+  canWrite: boolean;
+  canReadHistory: boolean;
+  onChanged: (message: string) => void;
+  onEditingChange: (editing: boolean) => void;
+};
+
 type LiveRecordInspectorProps = {
   actions: ReactNode;
+  controls?: RecordControls;
   record: OpenViewRecord | null;
   recordLoading: boolean;
   recordError: string;
@@ -86,6 +105,7 @@ export function LiveRecordInspector({
   fields,
   primaryFieldId,
   onRetryRecord,
+  controls,
 }: LiveRecordInspectorProps) {
   const primaryField =
     fields.find((field) => field.id === primaryFieldId) ?? fields[0];
@@ -94,6 +114,34 @@ export function LiveRecordInspector({
       ? readableValue(openViewRecordFieldValue(record, primaryField))
       : `Record ${record.id.slice(0, 8)}`
     : "";
+
+  const details = record ? (
+    fields.length > 0 ? (
+      <dl className="divide-y">
+        {fields.map((field) => (
+          <div
+            key={field.id}
+            className="grid min-w-0 gap-1 py-3 sm:grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] sm:gap-4"
+          >
+            <dt className="text-muted-foreground text-sm">{field.name}</dt>
+            <dd className="min-w-0 text-sm wrap-anywhere">
+              {readableValue(openViewRecordFieldValue(record, field))}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    ) : (
+      <Empty className="py-6">
+        <EmptyHeader>
+          <EmptyTitle>No readable fields in this view</EmptyTitle>
+          <EmptyDescription>
+            This view does not include any active fields to show for this
+            record.
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
+  ) : null;
 
   return (
     <section aria-label="Record details content" className="min-w-0">
@@ -113,36 +161,63 @@ export function LiveRecordInspector({
             <div className="min-w-0">
               <h2 className="text-xl font-semibold wrap-anywhere">{title}</h2>
             </div>
-            <Badge variant={record.isDeleted ? "destructive" : "secondary"}>
-              {record.isDeleted ? "Deleted" : "Read-only"}
-            </Badge>
+            {record.isDeleted ? (
+              <Badge variant="destructive">Deleted</Badge>
+            ) : controls?.canWrite ? null : (
+              <Badge variant="secondary">Read-only</Badge>
+            )}
           </div>
-          {fields.length > 0 ? (
-            <dl className="divide-y">
-              {fields.map((field) => (
-                <div
-                  key={field.id}
-                  className="grid min-w-0 gap-1 py-3 sm:grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] sm:gap-4"
+          {controls ? (
+            <Tabs defaultValue="details" className="min-w-0 pt-4">
+              <TabsList aria-label="Record sections" className="max-w-full">
+                <TabsTrigger value="details" className="min-h-11">
+                  Details
+                </TabsTrigger>
+                <TabsTrigger value="links" className="min-h-11">
+                  Linked records
+                </TabsTrigger>
+                {controls.canReadHistory ? (
+                  <TabsTrigger value="history" className="min-h-11">
+                    History
+                  </TabsTrigger>
+                ) : null}
+              </TabsList>
+              <TabsContent value="details" className="mt-0" keepMounted>
+                <RecordDetailsControls
+                  key={record.id}
+                  record={record}
+                  moduleId={controls.moduleId}
+                  fields={controls.editableFields}
+                  canWrite={controls.canWrite}
+                  onChanged={controls.onChanged}
+                  onEditingChange={controls.onEditingChange}
                 >
-                  <dt className="text-muted-foreground text-sm">
-                    {field.name}
-                  </dt>
-                  <dd className="min-w-0 text-sm wrap-anywhere">
-                    {readableValue(openViewRecordFieldValue(record, field))}
-                  </dd>
-                </div>
-              ))}
-            </dl>
+                  {details}
+                </RecordDetailsControls>
+              </TabsContent>
+              <TabsContent value="links" className="mt-0">
+                <RecordLinksPanel
+                  key={record.id}
+                  record={record}
+                  dataSources={controls.dataSources}
+                  canWrite={controls.canWrite}
+                  onChanged={controls.onChanged}
+                />
+              </TabsContent>
+              {controls.canReadHistory ? (
+                <TabsContent value="history" className="mt-0">
+                  <RecordHistoryPanel
+                    recordId={record.id}
+                    moduleId={controls.moduleId}
+                    departmentId={controls.departmentId}
+                    fields={controls.editableFields}
+                    version={`${record.updatedAt}:${String(record.isDeleted)}`}
+                  />
+                </TabsContent>
+              ) : null}
+            </Tabs>
           ) : (
-            <Empty className="py-6">
-              <EmptyHeader>
-                <EmptyTitle>No readable fields in this view</EmptyTitle>
-                <EmptyDescription>
-                  This view does not include any active fields to show for this
-                  record.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
+            details
           )}
           <p className="text-muted-foreground border-t pt-3 text-sm">
             Updated{" "}
