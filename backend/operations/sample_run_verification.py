@@ -20,6 +20,8 @@ from operations.sample_packs.interface import OrganizationPack
 from operations.sample_packs.registry import default_pack, get_pack
 from operations.sample_packs.types import SampleProfile
 from operations.sample_people import _people
+from operations.sample_phase_expectations import final_people_pack, read_phase_plan
+from operations.sample_phase_verification import verify_phases
 from operations.sample_rejections import verify_rejections
 from operations.sample_scenario import build_dataset
 from operations.sample_verification import (
@@ -85,6 +87,7 @@ def read_run_manifest(directory: Path, expected_admin_id: str) -> dict[str, Any]
     ):
         raise SampleVerificationError("Run manifest is incomplete or invalid")
     _manifest_plan(value)
+    read_phase_plan(value)
     return value
 
 
@@ -134,7 +137,7 @@ def _people_issues(
     expected = manifest["people"]
     issues: list[str] = []
     expected_ids = {str(person.get("user_id")) for person in expected.values()}
-    specs = _people(organization or default_pack())
+    specs = _people(final_people_pack(organization or default_pack(), read_phase_plan(manifest)))
     if len(expected) != len(specs) or len(expected_ids) != len(specs):
         issues.append("identity manifest does not cover the pack's unique people")
     if set(actual) != expected_ids | {admin_id}:
@@ -263,9 +266,15 @@ def verify_sample_data(
                 dataset=dataset,
                 mappings=manifest["mappings"],
                 people=manifest["people"],
+                phase_actions=read_phase_plan(manifest),
             )
             observed.update(configuration_counts)
             issues.extend(configuration_issues)
+            phase_counts, phase_issues = verify_phases(
+                client, dataset=dataset, manifest=manifest, admin_id=expected_admin_id
+            )
+            observed.update(phase_counts)
+            issues.extend(phase_issues)
             content = verify_content(
                 client,
                 run_manifest={"expected": manifest["content_counts"]},

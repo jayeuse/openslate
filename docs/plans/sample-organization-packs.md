@@ -328,9 +328,10 @@ Decided with the user on 2026-09-30. Each pack sets its locale and time zone thr
 Decided with the user on 2026-09-30. All six new packs are built, one at a time; each gets a live Small run, a check in the app and a guarded reset before the next pack starts.
 
 1. School.
-2. Clinic.
-3. Nonprofit.
-4. Local government.
-5. FMCG distributor.
-6. Manufacturer.
-7. The Harbor field-service revision, with a new golden master.
+2. Harden the shared engine and add admin/reorganization phases for Harbor and School. The plan chooses actors and targets from each pack's phase data. It preserves the 24-module operational distribution and adds one empty module for the close/reopen flow. Only a newly planned project Board is purged. Offline checks and independent review precede live acceptance for both packs.
+3. Clinic, after Harbor and School pass those phases live.
+4. Nonprofit.
+5. Local government.
+6. FMCG distributor.
+7. Manufacturer.
+8. The Harbor field-service revision, with a new golden master.

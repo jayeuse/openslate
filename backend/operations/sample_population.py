@@ -371,6 +371,9 @@ def populate_sample_data(
 ) -> SamplePopulationReport:
     """Create a private run, populate through user APIs, then prove the readback."""
     dataset = build_dataset(profile, seed, anchor_date, organization=organization)
+    from operations.sample_phase_expectations import phase_plan_summary
+
+    phases = phase_plan_summary(dataset)
     run_id = uuid4().hex
     directory = create_private_run_directory(run_root, run_id)
     manifest: dict[str, Any] = {
@@ -379,9 +382,12 @@ def populate_sample_data(
         "span": dataset.organization.identity.span,
         "sampling_scope": dataset.organization.identity.sampling_scope,
         "module_counts": dict(dataset.module_counts),
+        **phases,
+        "phase_results": [],
         "planned_counts": {
             "records": len(dataset.records),
             "edges": len(dataset.edges),
+            "phase_actions": phases["phase_counts"]["total"],
             **dataset.organization.content.supporting_counts,
         },
         "run_id": run_id,
@@ -400,6 +406,7 @@ def populate_sample_data(
         "mutation_evidence": [],
         "observed": {},
         "stage": "preflight",
+        "failed_step": None,
         "failure": None,
     }
     _write_manifest(directory, manifest)
@@ -423,6 +430,7 @@ def populate_sample_data(
         manifest["observed"] = dict(observed)
         manifest["status"] = "populated"
         manifest["stage"] = "verification"
+        manifest.pop("step", None)
         manifest["finished_at"] = datetime.now(UTC).isoformat()
         _write_manifest(directory, manifest)
         verification = verify_sample_data(
@@ -436,9 +444,11 @@ def populate_sample_data(
         manifest["observed"].update(verification.observed)
         if verification.status != "complete":
             manifest["status"] = "incomplete"
+            manifest["failed_step"] = "verification"
             manifest["failure"] = {
                 "status": "incomplete",
                 "stage": "verification",
+                "step": "verification",
                 "error_type": "SampleVerificationError",
                 "message": "API readback found mismatches; reconcile before rebuilding.",
             }
@@ -451,10 +461,14 @@ def populate_sample_data(
         _write_manifest(directory, manifest)
         return SamplePopulationReport("complete", directory, (), manifest["observed"])
     except BaseException as error:
-        stage = str(manifest.get("stage", "unknown"))
+        stage_value = manifest.get("stage")
+        stage = stage_value if isinstance(stage_value, str) else "unknown"
+        step_value = manifest.get("step")
+        failed_step = step_value if isinstance(step_value, str) and step_value else stage
         manifest["status"] = "populated" if stage in {"verification", "complete"} else "incomplete"
         manifest["finished_at"] = datetime.now(UTC).isoformat()
-        manifest["failure"] = failure_report(stage, error)
+        manifest["failed_step"] = failed_step
+        manifest["failure"] = failure_report(stage, error, step=failed_step)
         try:
             from operations.sample_population_workflow import _journal_mappings
 

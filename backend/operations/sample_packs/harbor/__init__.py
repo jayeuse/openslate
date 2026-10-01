@@ -20,6 +20,7 @@ from operations.sample_packs.harbor import (
     history,
     links,
     people,
+    phase_data,
     rejections,
     text,
     trigger_rules,
@@ -240,6 +241,7 @@ PACK = OrganizationPack(
         },
         data=content_data.content_spec(),
     ),
+    phases=phase_data.PHASES,
 )
 
 __all__ = ["ContentSpec", "PACK", "TRIGGER_KEYS"]

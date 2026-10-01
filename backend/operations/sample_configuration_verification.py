@@ -6,9 +6,12 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
+from app.systems.sandbox.designs.service import canonical_document
 from operations.sample_blueprint import SampleDataset
 from operations.sample_client import SampleClient, SampleClientError
+from operations.sample_packs.phase_types import PhaseAction
 from operations.sample_people import _people
+from operations.sample_phase_expectations import final_configuration_dataset
 from operations.sample_verification import SampleVerificationError, list_all_rows
 
 _FIELD_TYPES = {
@@ -137,9 +140,9 @@ def _structure_issues(
     field_map = mappings.get("fields", {})
     relationship_map = mappings.get("relationships", {})
     expected_counts = (
-        len(dataset.organization.catalog.departments),
-        len(dataset.organization.catalog.modules),
-        len(dataset.organization.catalog.relationships),
+        len(dataset.department_ids),
+        len(dataset.module_ids),
+        len(dataset.relationship_ids),
     )
     if (len(departments), len(modules), len(relationships)) != expected_counts:
         issues.append("generated Sandbox structure differs from the organization pack")
@@ -254,6 +257,8 @@ def _sandbox_issues(
     client: SampleClient,
     dataset: SampleDataset,
     mappings: Mapping[str, Mapping[str, str]],
+    version_documents: Mapping[str, dict[str, object]],
+    latest_version_key: str,
 ) -> tuple[dict[str, int], list[str]]:
     issues: list[str] = []
     workspace = _read_object(client, "/api/workspace")
@@ -271,7 +276,7 @@ def _sandbox_issues(
         mode="json", by_alias=True
     )
     versions = mappings.get("sandbox_versions", {})
-    published = versions.get("published")
+    published = versions.get(latest_version_key)
     latest = current.get("latestPublishedVersion")
     if current.get("document") != expected_document:
         issues.append("current Sandbox design or rules differ from the generated document")
@@ -281,26 +286,43 @@ def _sandbox_issues(
         or not published
         or current.get("hasUnpublishedChanges") is not False
         or not current.get("contentHash")
+        or (
+            version_documents
+            and current.get("contentHash")
+            != canonical_document(SandboxDocument.model_validate(dataset.document))[1]
+        )
         or current.get("publishedHash") != current.get("contentHash")
         or current.get("issues") != []
     ):
         issues.append("the current Sandbox design is not the expected published version")
     live_versions = list_all_rows(client, "/api/sandbox/versions")
-    checkpoint = versions.get("initial_checkpoint")
+    expected_snapshots = dict(version_documents) or {
+        "initial_checkpoint": dataset.document,
+        "published": dataset.document,
+    }
+    expected_kinds = {
+        versions.get(key): "checkpoint" if key.endswith("checkpoint") else "published"
+        for key in expected_snapshots
+    }
     if (
-        set(versions) != {"initial_checkpoint", "published"}
-        or not checkpoint
+        set(versions) != set(expected_snapshots)
+        or any(not versions.get(key) for key in expected_snapshots)
         or not _ids_match(live_versions, versions)
-        or {row.get("id"): row.get("kind") for row in live_versions}
-        != {checkpoint: "checkpoint", published: "published"}
+        or {row.get("id"): row.get("kind") for row in live_versions} != expected_kinds
     ):
         issues.append("Sandbox checkpoint or publication history differs")
     else:
-        for version_id in (checkpoint, published):
+        for key, document in expected_snapshots.items():
+            version_id = versions[key]
             detail = _read_object(client, f"/api/sandbox/versions/{version_id}")
+            parsed = SandboxDocument.model_validate(document)
+            snapshot = parsed.model_dump(mode="json", by_alias=True)
+            expected_hash = (
+                canonical_document(parsed)[1] if version_documents else current.get("contentHash")
+            )
             if (
-                detail.get("document") != expected_document
-                or detail.get("contentHash") != current.get("contentHash")
+                detail.get("document") != snapshot
+                or detail.get("contentHash") != expected_hash
                 or detail.get("isDeleted") is not False
             ):
                 issues.append("a Sandbox version does not preserve the generated design")
@@ -346,13 +368,17 @@ def verify_configuration(
     dataset: SampleDataset,
     mappings: Mapping[str, Mapping[str, str]],
     people: Mapping[str, Mapping[str, Any]],
+    phase_actions: tuple[PhaseAction, ...] = (),
 ) -> tuple[dict[str, int], list[str]]:
     """Compare every authored foundational setting with current authenticated API reads."""
     observed: dict[str, int] = {}
     issues: list[str] = []
+    dataset, version_documents, latest_version_key = final_configuration_dataset(
+        dataset, phase_actions
+    )
     checks: tuple[Callable[[], tuple[dict[str, int], list[str]]], ...] = (
         lambda: _group_issues(client, dataset, mappings, people),
-        lambda: _sandbox_issues(client, dataset, mappings),
+        lambda: _sandbox_issues(client, dataset, mappings, version_documents, latest_version_key),
         lambda: _structure_issues(client, dataset, mappings),
     )
     for check in checks:

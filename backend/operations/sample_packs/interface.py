@@ -8,6 +8,7 @@ from datetime import date
 from typing import TYPE_CHECKING, Any
 
 from operations.sample_packs.content_types import ContentSpec
+from operations.sample_packs.phase_types import PackPhaseData
 from operations.sample_packs.types import (
     FieldSpec,
     JsonValue,
@@ -170,3 +171,4 @@ class OrganizationPack:
     blueprint: PackBlueprint
     text: PackText
     content: PackContent
+    phases: PackPhaseData | None = None

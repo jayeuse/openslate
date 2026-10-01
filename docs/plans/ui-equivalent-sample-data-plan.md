@@ -162,7 +162,7 @@ A populated instance reads like a working organization, not a generated dataset:
 - Planned rejections happen and are recorded, for example a guest who tries to create a record.
 - Record text uses the terms of each business area. No value marks itself as generated.
 
-Audit timestamps show the real run window. Business dates inside records keep their spread over the past year and the next quarter. The run stays controlled: seed 42 and the anchor date give the same actors, order, values and planned rejections every time. Only server IDs, passwords and timestamps change.
+Audit timestamps show the real run window. Business dates inside records keep their spread over the past year and the next quarter. A run draws a fresh seed unless the operator sets `--seed`. The CLI prints that seed and the manifest records it. The recorded seed and anchor date reproduce the actors, order, values and refusals. Golden masters keep seed 42. Server IDs, passwords and timestamps remain new for each run.
 
 ### Current source facts that shape the design
 
@@ -316,7 +316,19 @@ Correct: `Grade 8 science unit test — Section B`. Wrong: `Test record for clas
 1. Extract Harbor into the pack interface with no change in output. A saved golden master of Harbor's dataset, sessions, history, Board steps, rejections and plan summary must stay identical.
 2. Change run sizes and record the pack and counts in the manifest. This changes Harbor's Standard output on purpose, so save a new golden master after this step and record why it changed.
 3. Build the School pack end to end, including a live Small run.
-4. Build the Clinic, Nonprofit, Local government, FMCG distributor and Manufacturer packs one at a time, each with a live Small run.
+4. Add server-rule preflight, recorded random seeds, multi-seed offline checks, and the end-of-run admin and reorganization phases to Harbor and School. Pass offline review before any live run. Both packs must pass live before Clinic starts.
+5. Build the Clinic, Nonprofit, Local government, FMCG distributor and Manufacturer packs one at a time, each with a live Small run. Large stays offline.
+
+### End-of-run admin and reorganization contract
+
+The phase plan records each actor, target, request expectation and final state. It uses a separate seeded generator, so the existing records, links, sessions, history and content stay identical. The manifest stores the plan before the first write. All original content and refusals finish before the new phases start.
+
+1. Admin promotes one member, moves another between groups, changes group access, disables and re-enables a leaver, and ends a separate person's completed run session. A member's role-change attempt must fail without an application audit row.
+2. Reorganization archives and restores a saved view, Dashboard, report and project Board. A non-manager's Board archive attempt must fail. The plan creates one extra project Board, archives it, previews purge and purges it through the confirmed UI API flow. Its earlier audits must remain.
+3. Sandbox adds an optional text field, renames a module and adds a Select option, then publishes. It adds an empty module and publishes, closes that module through the draft and publishes, then reopens it and publishes. It restores the earlier open version into the draft and publishes it. It never closes a populated module. The final design has the original 24 operational modules plus this empty module.
+4. Readback derives final roles, memberships, grants, restored items and published documents from the recorded plan. It checks every primary application audit and related row against the actor and request. Session revocation has no application audit: it checks one server-authored security event against the actor, target person and exact session request. Original records and links keep their existing exact checks. No failed write is retried by this phase executor.
+
+Offline admission uses the server's schemas and validators across 20 fixed seeds per pack. Golden masters stay at seed 42 and add only phase hashes and the changed summary. A stop records the safe operator message and stage/action/substep, without response bodies or credentials. Board purge requires the operator's enabled instance setting; this work does not change that setting. Live runs, guarded resets and API process changes require separate user authorization.
 
 ### Product gaps found
 

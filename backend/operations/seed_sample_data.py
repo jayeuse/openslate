@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import secrets
 import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -48,6 +49,7 @@ from operations.reset_application_data import (
 from operations.reset_auth import ResetAuth
 from operations.sample_blueprint import SampleDataset
 from operations.sample_episodes import plan_sessions
+from operations.sample_failures import safe_operator_message
 from operations.sample_history import plan_history
 from operations.sample_packs.registry import default_pack, get_pack, pack_keys
 from operations.sample_scenario import build_dataset
@@ -70,7 +72,10 @@ def _anchor_date(value: str) -> date:
 
 def build_plan_summary(dataset: SampleDataset) -> dict[str, Any]:
     """Return the deterministic catalogue counts shown before population."""
+    from operations.sample_phase_expectations import phase_plan_summary
+
     return {
+        **phase_plan_summary(dataset),
         "profile": dataset.profile,
         "seed": dataset.seed,
         "anchor_date": dataset.anchor_date.isoformat(),
@@ -337,6 +342,8 @@ def _print_plan(dataset: SampleDataset, preflight: Mapping[str, Any], mailpit_ur
     print(f"record_relationship_edges={summary['relationship_edges']}")
     print(f"work_sessions={summary['session_count']}")
     print(f"planned_rejections={summary['planned_rejections']}")
+    print(f"lifecycle_and_admin_actions={summary['phase_counts']['total']}")
+    print(f"lifecycle_and_admin_refusals={summary['phase_counts']['refusals']}")
     print("writes_by_person:")
     for key, count in summary["writes_by_person"].items():
         print(f"  {key}={count}")
@@ -369,7 +376,7 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument(
             "--organization", choices=pack_keys(), default=default_pack().identity.key
         )
-        command.add_argument("--seed", type=int, default=42)
+        command.add_argument("--seed", type=int, default=None)
         command.add_argument("--anchor-date", type=_anchor_date, default=None)
         if name == "populate":
             command.add_argument("--run-root", type=Path, required=True)
@@ -383,6 +390,8 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command in {"plan", "populate"} and args.seed is None:
+            args.seed = secrets.randbits(64)
         if args.command in {"plan", "populate"} and args.anchor_date is None:
             args.anchor_date = _today_for_organization(args.organization)
         report, api_url, mailpit_url = _local_preflight()
@@ -455,11 +464,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (ConfigurationError, InstanceTargetError, ResetError, SampleOperationError) as error:
         print(f"{args.command} failed: {error}", file=sys.stderr)
         return 2
-    except (Exception, KeyboardInterrupt):
+    except KeyboardInterrupt:
         print(
             f"{args.command} stopped; inspect the private run journal before any further writes",
             file=sys.stderr,
         )
+        return 2
+    except Exception as error:
+        message = safe_operator_message(error)
+        journal_hint = "inspect the private run journal before any further writes"
+        if message is None:
+            print(f"{args.command} stopped; {journal_hint}", file=sys.stderr)
+        else:
+            print(
+                f"{args.command} stopped: {message}; {journal_hint}",
+                file=sys.stderr,
+            )
         return 2
 
 

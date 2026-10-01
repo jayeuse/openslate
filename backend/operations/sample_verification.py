@@ -329,17 +329,23 @@ def count_mismatches(
     }
 
 
-def failure_report(stage: str, error: BaseException) -> dict[str, str]:
+def failure_report(
+    stage: str,
+    error: BaseException,
+    *,
+    step: str | None = None,
+) -> dict[str, str]:
+    from operations.sample_failures import safe_operator_message, safe_request_metadata
+
     report = {
         "status": "incomplete",
         "stage": stage,
+        "step": step or stage,
         "error_type": type(error).__name__,
-        "message": "The operation stopped; reconcile server state before rebuilding.",
+        "message": safe_operator_message(error)
+        or "The operation stopped; reconcile server state before rebuilding.",
     }
-    for key in ("attempt_id", "request_id", "status_code"):
-        value = getattr(error, key, None)
-        if isinstance(value, (str, int)) and str(value):
-            report[key] = str(value)
+    report.update(safe_request_metadata(error))
     return report
 
 

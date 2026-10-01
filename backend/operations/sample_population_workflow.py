@@ -16,6 +16,7 @@ from operations.sample_client import SampleClient
 from operations.sample_content import assert_empty_content, finish_content, prepare_content
 from operations.sample_episodes import plan_sessions
 from operations.sample_people import populate_people
+from operations.sample_phase_population import run_population_phases
 from operations.sample_population import (
     SamplePopulationError,
     _api,
@@ -277,6 +278,20 @@ def run_population(
                 **counts,
             }
         )
+        phase_counts = run_population_phases(
+            dataset,
+            manifest,
+            clients=clients,
+            user_ids={
+                "admin": expected_admin_id,
+                **{key: row["user_id"] for key, row in people.items()},
+            },
+            group_ids=people_result.groups,
+            admin_password=admin_password,
+            save=lambda: _write_manifest(run_directory, manifest),
+            mappings=lambda: _journal_mappings(journal),
+        )
+        manifest["observed"].update(phase_counts)
         return cast(dict[str, int], manifest["observed"])
     finally:
         for client in clients.values():

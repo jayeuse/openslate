@@ -27,6 +27,7 @@ from operations.sample_packs.school import (
     history,
     links,
     people,
+    phase_data,
     rejections,
     text,
     trigger_rules,
@@ -192,4 +193,5 @@ PACK = OrganizationPack(
         },
         data=content_data.content_spec(),
     ),
+    phases=phase_data.PHASES,
 )
