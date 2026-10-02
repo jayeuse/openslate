@@ -4,8 +4,32 @@ import { createContext, useContext, type ReactNode } from "react";
 import { clearAccessDraftStorageExcept } from "../../access/state/draft-journal-storage";
 
 const VerifiedWorkspaceIdentityContext = createContext<string | null>(null);
+const WorkspaceSignOutContext = createContext<(() => Promise<void>) | null>(
+  null,
+);
 const WORKSPACE_SNAPSHOT_KEY = "openslate.sample.v1";
 const sessionClearListeners = new Map<string, Set<() => void>>();
+
+export function WorkspaceSignOutProvider({
+  complete,
+  children,
+}: {
+  complete: () => Promise<void>;
+  children: ReactNode;
+}) {
+  return (
+    <WorkspaceSignOutContext.Provider value={complete}>
+      {children}
+    </WorkspaceSignOutContext.Provider>
+  );
+}
+
+export function useWorkspaceSignOut(): () => Promise<void> {
+  const complete = useContext(WorkspaceSignOutContext);
+  if (!complete)
+    throw new Error("Sign-out completion requires the workspace shell");
+  return complete;
+}
 
 export function VerifiedWorkspaceIdentityProvider({
   userId,
@@ -47,20 +71,35 @@ export function registerWorkspaceSessionClear(
 
 export function clearVerifiedWorkspaceSessionSnapshot(
   userId: string | null,
-): Promise<void> {
-  // An account change or lost session must not leave another account's Access
-  // form values in this tab, even when a reload lost the in-memory user ID.
-  clearAccessDraftStorageExcept(null);
-  if (userId === null) return Promise.resolve();
-  try {
-    sessionStorage.removeItem(workspaceSessionSnapshotStorageKey(userId));
-  } catch {
-    // Session cleanup remains available when browser storage is unavailable.
-  }
-  for (const clear of sessionClearListeners.get(userId) ?? []) clear();
-  return import("../../comms/state/draft-text")
-    .then(({ clearCommsDraftTextStore }) => clearCommsDraftTextStore(userId))
-    .catch(() => undefined);
+): Promise<boolean> {
+  // Capture mounted stores before the shell conceals/unmounts the workspace.
+  // Defer cleanup so it can latch Signed out before any cleanup runs.
+  const listeners =
+    userId === null ? [] : [...(sessionClearListeners.get(userId) ?? [])];
+  return Promise.resolve().then(async () => {
+    let cleared = clearAccessDraftStorageExcept(null);
+    if (userId === null) return cleared;
+    try {
+      sessionStorage.removeItem(workspaceSessionSnapshotStorageKey(userId));
+    } catch {
+      cleared = false;
+    }
+    for (const clear of listeners) {
+      try {
+        clear();
+      } catch {
+        cleared = false;
+      }
+    }
+    try {
+      const { clearCommsDraftTextStore } =
+        await import("../../comms/state/draft-text");
+      if (!clearCommsDraftTextStore(userId)) cleared = false;
+    } catch {
+      cleared = false;
+    }
+    return cleared;
+  });
 }
 
 export function clearAccessDraftsForAccountChange(): boolean {

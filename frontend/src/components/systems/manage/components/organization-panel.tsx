@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ArrowUpRight, Compass, UsersRound, Workflow } from "lucide-react";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -10,7 +11,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
+import { LoadingRegion } from "@/components/ui/loading-region";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   SettingSelect,
   SettingInput,
@@ -18,12 +27,23 @@ import {
   type SettingsPanelForm,
 } from "./panel-ui";
 import { OrganizationLook } from "./organization-look";
+import {
+  organizationLocaleTags,
+  organizationLocaleLabel,
+  workspaceSettingsFormFields,
+  type ManageWorkspaceProfile,
+} from "../adapters/workspace-api";
 
 type OrganizationPanelProps = {
   form: SettingsPanelForm;
   panelClass: string;
   regionalDate: string;
   regionalCurrency: string;
+  workspace: ManageWorkspaceProfile | undefined;
+  workspaceLoading: boolean;
+  workspaceLoadFailed: boolean;
+  onRetryWorkspace: () => void;
+  staleRevision: boolean;
 };
 
 export function OrganizationPanel({
@@ -31,16 +51,60 @@ export function OrganizationPanel({
   panelClass,
   regionalDate,
   regionalCurrency,
+  workspace,
+  workspaceLoading,
+  workspaceLoadFailed,
+  onRetryWorkspace,
+  staleRevision,
 }: OrganizationPanelProps) {
   const { dirty, saveSection, current, changeSetting, errors, clearDraft } =
     form;
-  const organizationName = current.name.trim() || "Unnamed organization";
+  const organizationName = workspace
+    ? current.name.trim() || "Unnamed organization"
+    : "Organization details unavailable";
+  const localeOptions: string[] = [...organizationLocaleTags];
+  if (current.locale && !localeOptions.includes(current.locale))
+    localeOptions.push(current.locale);
+  const timezoneOptions = ["Asia/Manila", "UTC", "Asia/Singapore"];
+  if (current.timezone && !timezoneOptions.includes(current.timezone))
+    timezoneOptions.push(current.timezone);
+  const workspaceFields = workspace
+    ? workspaceSettingsFormFields(workspace)
+    : null;
 
   return (
     <section
       className="grid min-w-0 gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)] lg:gap-10 xl:gap-12"
       aria-label="Organization settings"
     >
+      {workspaceLoadFailed ? (
+        <Alert role="alert" variant="warning" className="lg:col-span-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p>The organization settings could not be loaded.</p>
+              {workspace ? (
+                <p className="text-muted-foreground text-sm">
+                  Your last loaded settings are still shown.
+                </p>
+              ) : null}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={onRetryWorkspace}
+            >
+              Retry organization settings
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
+      {staleRevision ? (
+        <Alert role="status" variant="warning" className="lg:col-span-2">
+          Workspace settings changed. The latest values are loaded. Review your
+          changes and save again.
+        </Alert>
+      ) : null}
       <form
         className="min-w-0 space-y-7"
         onSubmit={(event) => {
@@ -56,14 +120,25 @@ export function OrganizationPanel({
             Choose the name and bundled mark your team recognizes.
           </p>
           <FieldGroup className="grid min-w-0 gap-4 sm:grid-cols-2">
-            <SettingInput
-              id="organization-name"
-              label="Organization name"
-              required
-              value={current.name}
-              onChange={(value) => changeSetting("organization", "name", value)}
-              error={errors.name ?? null}
-            />
+            {workspaceFields ? (
+              <SettingInput
+                id="organization-name"
+                label="Organization name"
+                required
+                maxLength={200}
+                value={current.name}
+                onChange={(value) =>
+                  changeSetting("organization", "name", value)
+                }
+                error={errors.name ?? null}
+              />
+            ) : (
+              <WorkspaceSettingsPlaceholder
+                id="organization-name"
+                label="Organization name"
+                loading={workspaceLoading}
+              />
+            )}
             <SettingSelect
               id="organization-logo"
               label="Organization mark"
@@ -83,26 +158,48 @@ export function OrganizationPanel({
             Choose how dates, times, and amounts appear.
           </p>
           <FieldGroup className="grid min-w-0 gap-4 sm:grid-cols-2">
-            <SettingSelect
-              id="locale"
-              label="Locale"
-              value={current.locale}
-              error={errors.locale}
-              options={["English (Philippines)", "Filipino", "English (US)"]}
-              onChange={(value) =>
-                changeSetting("organization", "locale", value)
-              }
-            />
-            <SettingSelect
-              id="timezone"
-              label="Timezone"
-              value={current.timezone}
-              error={errors.timezone}
-              options={["Asia/Manila", "UTC", "Asia/Singapore"]}
-              onChange={(value) =>
-                changeSetting("organization", "timezone", value)
-              }
-            />
+            {workspaceFields ? (
+              <SettingSelect
+                id="locale"
+                label="Locale"
+                value={current.locale}
+                error={errors.locale}
+                options={localeOptions}
+                optionLabels={Object.fromEntries(
+                  localeOptions.map((tag) => [
+                    tag,
+                    organizationLocaleLabel(tag),
+                  ]),
+                )}
+                onChange={(value) =>
+                  changeSetting("organization", "locale", value)
+                }
+              />
+            ) : (
+              <WorkspaceSettingsPlaceholder
+                id="locale"
+                label="Locale"
+                loading={workspaceLoading}
+              />
+            )}
+            {workspaceFields ? (
+              <SettingSelect
+                id="timezone"
+                label="Timezone"
+                value={current.timezone}
+                error={errors.timezone}
+                options={timezoneOptions}
+                onChange={(value) =>
+                  changeSetting("organization", "timezone", value)
+                }
+              />
+            ) : (
+              <WorkspaceSettingsPlaceholder
+                id="timezone"
+                label="Timezone"
+                loading={workspaceLoading}
+              />
+            )}
             <SettingSelect
               id="currency"
               label="Currency"
@@ -149,6 +246,7 @@ export function OrganizationPanel({
           dirty={dirty}
           onDiscard={() => clearDraft("organization")}
           onSave={() => saveSection("organization")}
+          saveLabel={staleRevision ? "Save again" : "Save settings"}
         />
       </form>
 
@@ -180,10 +278,14 @@ export function OrganizationPanel({
               </div>
               <div className="max-w-full min-w-0 space-y-1">
                 <h3 className="text-xl font-semibold tracking-tight break-words sm:text-2xl">
-                  {organizationName}
+                  {workspace
+                    ? organizationName
+                    : "Workspace details unavailable"}
                 </h3>
                 <p className="text-muted-foreground text-sm break-words">
-                  {current.locale} · {current.timezone}
+                  {workspace
+                    ? `${organizationLocaleLabel(current.locale)} · ${current.timezone}`
+                    : "Load the organization settings to preview them here."}
                 </p>
               </div>
             </div>
@@ -192,7 +294,7 @@ export function OrganizationPanel({
               <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)] sm:items-baseline sm:gap-4">
                 <dt className="text-muted-foreground text-sm">Date and time</dt>
                 <dd className="min-w-0 text-sm font-medium break-words sm:text-right">
-                  {regionalDate}
+                  {workspace ? regionalDate : "Unavailable"}
                 </dd>
               </div>
               <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)] sm:items-baseline sm:gap-4">
@@ -256,5 +358,39 @@ export function OrganizationPanel({
 
       <OrganizationLook />
     </section>
+  );
+}
+
+function WorkspaceSettingsPlaceholder({
+  id,
+  label,
+  loading,
+}: {
+  id: string;
+  label: string;
+  loading: boolean;
+}) {
+  return (
+    <LoadingRegion
+      loading={loading}
+      label={`Loading ${label.toLowerCase()}…`}
+      skeleton={
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-11 w-full" />
+        </div>
+      }
+    >
+      <Field>
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <p
+          id={id}
+          className="text-muted-foreground flex min-h-11 items-center text-sm"
+          role="status"
+        >
+          Unavailable
+        </p>
+      </Field>
+    </LoadingRegion>
   );
 }

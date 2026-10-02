@@ -1,6 +1,7 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { ApiError } from "../../src/lib/api";
 import type {
   BoardManagementBoard,
   BoardPurgePreview,
@@ -74,6 +75,81 @@ const purgePreview: BoardPurgePreview = {
   expires_at: "2026-09-25T00:00:00Z",
   confirmation_name: boardId,
 };
+
+function purgeRow(entityType: string, entityId: string) {
+  return {
+    entity_type: entityType,
+    entity_id: entityId,
+    is_deleted: true,
+    deleted_at: "2026-09-24T00:00:00Z",
+    updated_at: "2026-09-24T00:00:00Z",
+    state_fingerprint: "synthetic-state",
+  };
+}
+
+async function installArchivedBoard(page: Page) {
+  const archived = {
+    id: boardId,
+    scope: "project",
+    department_id: null,
+    name: board.name,
+    description: board.description,
+    status: "archived",
+    revision: board.revision,
+    level: "manage",
+    created_at: board.createdAt,
+    updated_at: board.updatedAt,
+  };
+  await page.route("**/api/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/auth/session")
+      return route.fulfill({
+        json: { authenticated: true, user_id: actorId, setup_required: false },
+      });
+    if (path === "/api/auth/me")
+      return route.fulfill({
+        json: { id: actorId, role: "admin", access: [] },
+      });
+    if (path === "/api/workspace")
+      return route.fulfill({ json: { today: "2026-09-25" } });
+    if (path === "/api/boards")
+      return route.fulfill({
+        json: {
+          items: [archived],
+          pagination: {
+            limit: 25,
+            offset: 0,
+            count: 1,
+            total: 1,
+            has_more: false,
+          },
+        },
+      });
+    if (path === `/api/boards/${boardId}`)
+      return route.fulfill({ json: archived });
+    if (path === `/api/boards/${boardId}/my-access`)
+      return route.fulfill({
+        json: { level: "manage", read: true, write: true, manage: true },
+      });
+    if (path === `/api/boards/${boardId}/groups`)
+      return route.fulfill({
+        json: { board_id: boardId, revision: board.revision, groups: [] },
+      });
+    return route.fulfill({
+      json: {
+        items: [],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 0,
+          total: 0,
+          has_more: false,
+        },
+        board_revision: board.revision,
+      },
+    });
+  });
+}
 
 test("a new Board is a project Board with only a name and description", () => {
   const html = markup({ ...baseView, mode: "create", board: null });
@@ -281,14 +357,178 @@ test("archived project Board offers restore without editable metadata", () => {
   expect(html).not.toContain("Save changes");
 });
 
-test("archived Board exposes the guarded permanent-delete review using its exact UUID", () => {
+test("archived Board permanent-deletion controls are hidden from non-admins", () => {
   const html = renderToStaticMarkup(
     createElement(ServerBoardManagementDisplay, {
       view: { ...baseView, board: { ...board, status: "archived" } },
       purgePreview,
-    }),
+      isAdmin: false,
+    } as Parameters<typeof ServerBoardManagementDisplay>[0]),
   );
-  expect(html).toContain("Permanently delete Board");
-  expect(html).toContain(boardId);
-  expect(html).toContain("password");
+  expect(html).not.toContain("Permanent deletion");
+  expect(html).not.toContain("Permanently delete Board");
+  expect(html).toContain("Restore Board");
+});
+
+test("Board purge preserves safe lifecycle messages when the server returns their actual status", async () => {
+  const management =
+    (await import("../../src/components/systems/boards/components/server-backed-board-management")) as unknown as {
+      boardPurgeFailureMessage: (
+        error: unknown,
+        stage: "preview" | "execute",
+      ) => string;
+    };
+  expect(typeof management.boardPurgeFailureMessage).toBe("function");
+  expect(
+    management.boardPurgeFailureMessage(
+      new ApiError(
+        403,
+        "Permanent Board deletion is disabled",
+        undefined,
+        "purge_disabled",
+      ),
+      "preview",
+    ),
+  ).toBe("Permanent Board deletion is disabled");
+  expect(
+    management.boardPurgeFailureMessage(
+      new ApiError(
+        422,
+        "The Board ID confirmation did not match",
+        undefined,
+        "confirmation_name_mismatch",
+      ),
+      "execute",
+    ),
+  ).toBe("The Board ID confirmation did not match");
+});
+
+test("Board purge explains its impact and keeps stale challenges recoverable without losing access", async ({
+  page,
+}) => {
+  await installArchivedBoard(page);
+  let previews = 0;
+  let deletions = 0;
+  const preview: BoardPurgePreview = {
+    ...purgePreview,
+    impact: {
+      ...purgePreview.impact,
+      rows: [
+        purgeRow("boards", boardId),
+        purgeRow("board_posts", actorId),
+        purgeRow("board_posts", departmentId),
+      ],
+      external_impacts: [
+        {
+          edge_id: actorId,
+          field_id: actorId,
+          external_record_id: departmentId,
+          external_module_id: departmentId,
+          external_module_name: "Dispatch records",
+          external_department_id: departmentId,
+          external_department_name: "Operations",
+        },
+      ],
+    },
+  };
+  await page.route(`**/api/boards/${boardId}/purge**`, (route) => {
+    if (route.request().url().endsWith("/preview")) {
+      previews += 1;
+      return route.fulfill({
+        json:
+          previews < 3
+            ? preview
+            : {
+                ...preview,
+                impact: {
+                  ...preview.impact,
+                  blockers: [
+                    {
+                      code: "purge_file_dependency",
+                      entity_type: "files",
+                      entity_id: actorId,
+                      detail:
+                        "Purge the attached file before deleting this Board.",
+                      conflicting_entity_type: null,
+                      conflicting_entity_id: null,
+                      field_id: null,
+                      field_name: null,
+                      module_id: null,
+                      module_name: null,
+                      department_id: null,
+                      department_name: null,
+                    },
+                  ],
+                },
+              },
+      });
+    }
+    deletions += 1;
+    return route.fulfill({
+      status: deletions === 1 ? 404 : 403,
+      json: {
+        detail: {
+          code:
+            deletions === 1
+              ? "challenge_not_found"
+              : "challenge_binding_mismatch",
+          message: "Untrusted internal challenge detail",
+        },
+      },
+    });
+  });
+  await page.goto(`/boards?board=${boardId}&section=overview&status=archived`);
+  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+    .click();
+  const manage = page.getByRole("dialog", { name: "Manage Board" });
+  const begin = manage.getByRole("button", {
+    name: "Permanently delete Board",
+    exact: true,
+  });
+  await begin.click();
+  await expect(
+    manage.getByText("This permanently removes 1 Board and 2 posts."),
+  ).toBeVisible();
+  await expect(manage.getByText(boardId, { exact: true })).toBeVisible();
+  await expect(manage.getByLabel("Administrator password")).toBeVisible();
+  await expect(manage.getByText(/Dispatch records.*Operations/)).toBeVisible();
+  const confirm = manage.getByRole("button", {
+    name: "Confirm permanent deletion",
+    exact: true,
+  });
+  const destructiveColor = await confirm.evaluate((element) => {
+    const sample = document.createElement("span");
+    sample.style.color = "var(--destructive)";
+    document.body.append(sample);
+    const expected = getComputedStyle(sample).color;
+    sample.remove();
+    return { expected, actual: getComputedStyle(element).backgroundColor };
+  });
+  expect(destructiveColor.actual).toBe(destructiveColor.expected);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await manage.getByLabel("Type the Board ID").fill(boardId);
+    await manage
+      .getByLabel("Administrator password")
+      .fill("synthetic-test-passphrase");
+    await confirm.click();
+    await expect(
+      manage.getByText("The review is unavailable. Request a new review."),
+    ).toBeVisible();
+    await expect(
+      manage.getByRole("button", { name: "Restore Board" }),
+    ).toBeVisible();
+    await manage
+      .getByRole("button", { name: "Review again", exact: true })
+      .click();
+    if (attempt === 0)
+      await expect(manage.getByLabel("Administrator password")).toHaveValue("");
+  }
+  await expect(manage.getByRole("alert")).toContainText(
+    "Purge the attached file before deleting this Board.",
+  );
+  await expect(manage.getByLabel("Administrator password")).toHaveCount(0);
+  await expect(confirm).toHaveCount(0);
+  expect(deletions).toBe(2);
 });

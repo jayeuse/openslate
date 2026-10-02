@@ -33,16 +33,67 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
     admin_id, member_id, session_id = uuid4(), uuid4(), uuid4()
     admin_provider_id, member_provider_id = uuid4(), uuid4()
     department_id, group_id = uuid4(), uuid4()
+    module_id, title_field_id, file_id = uuid4(), uuid4(), uuid4()
+    dashboard_id, widget_id = uuid4(), uuid4()
+    board_id, project_board_id, record_id = uuid4(), uuid4(), uuid4()
+    event_id, post_id = uuid4(), uuid4()
+    report_id, run_id, work_id = uuid4(), uuid4(), uuid4()
     admin_email = f"reset-admin-{admin_id}@example.test"
+    auth.list_account_ids.return_value = (member_provider_id,)
 
     def cleanup() -> None:
         _guard_integration_database(runtime_url)
         _guard_integration_database(owner_url)
         with connect(database_url) as database:
             with database.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE public.workspace_profiles SET logo_file_id = NULL "
+                    "WHERE logo_file_id = %s",
+                    (file_id,),
+                )
+                for table, column, owned_id in (
+                    ("in_app_notifications", "work_id", work_id),
+                    ("scheduled_work", "id", work_id),
+                    ("report_run_eligible_users", "run_id", run_id),
+                    ("report_run_rows", "run_id", run_id),
+                    ("report_runs", "id", run_id),
+                    ("report_schedules", "report_id", report_id),
+                    ("reports", "id", report_id),
+                    ("board_event_reminders", "event_id", event_id),
+                    ("board_post_revisions", "post_id", post_id),
+                    ("board_posts", "id", post_id),
+                    ("board_events", "id", event_id),
+                    ("dashboard_widgets", "dashboard_id", dashboard_id),
+                    ("dashboards", "id", dashboard_id),
+                    ("records", "id", record_id),
+                ):
+                    cursor.execute(f"DELETE FROM public.{table} WHERE {column} = %s", (owned_id,))
                 for table in ("board_groups", "group_access", "group_members"):
                     cursor.execute(f"DELETE FROM public.{table} WHERE group_id = %s", (group_id,))
+                cursor.execute(
+                    "DELETE FROM public.boards WHERE id IN (%s, %s)",
+                    (board_id, project_board_id),
+                )
+                cursor.execute(
+                    "UPDATE public.modules SET title_field_id = NULL WHERE id = %s", (module_id,)
+                )
+                cursor.execute("DELETE FROM public.fields WHERE id = %s", (title_field_id,))
+                cursor.execute("DELETE FROM public.modules WHERE id = %s", (module_id,))
+                cursor.execute("DELETE FROM public.departments WHERE id = %s", (department_id,))
+                cursor.execute("DELETE FROM public.files WHERE id = %s", (file_id,))
                 cursor.execute("DELETE FROM public.groups WHERE id = %s", (group_id,))
+                cursor.execute(
+                    "DELETE FROM public.identity_sessions WHERE user_id IN (%s, %s)",
+                    (admin_id, member_id),
+                )
+                cursor.execute(
+                    "DELETE FROM public.lifecycle_rate_limit_buckets WHERE actor_id IN (%s, %s)",
+                    (admin_id, member_id),
+                )
+                cursor.execute(
+                    "DELETE FROM public.identity_rate_limit_buckets WHERE fingerprint IN (%s, %s)",
+                    ("1" * 64, "2" * 64),
+                )
                 cursor.execute(
                     "DELETE FROM public.users WHERE id IN (%s, %s)", (admin_id, member_id)
                 )
@@ -95,7 +146,6 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "(%s, %s, 1, now(), now() + interval '1 minute')",
                 (uuid4(), admin_id, uuid4(), member_id),
             )
-            module_id = uuid4()
             cursor.execute(
                 "INSERT INTO public.departments (id, department_name) VALUES (%s, %s)",
                 (department_id, f"reset-{admin_id}"),
@@ -117,7 +167,6 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "INSERT INTO public.modules (id, department_id, module_name) VALUES (%s, %s, %s)",
                 (module_id, department_id, f"reset-module-{module_id.hex[:12]}"),
             )
-            title_field_id = uuid4()
             cursor.execute(
                 "INSERT INTO public.fields (id, module_id, name, type, required, position) "
                 "VALUES (%s, %s, 'Title', 'text', true, 0)",
@@ -127,7 +176,6 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "UPDATE public.modules SET title_field_id = %s WHERE id = %s",
                 (title_field_id, module_id),
             )
-            file_id = uuid4()
             cursor.execute(
                 "INSERT INTO public.files "
                 "(id, purpose, creator_id, filename, expected_size, object_key, state) "
@@ -138,7 +186,6 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             plan_before_dashboard = reset.build_reset_plan(
                 database, admin_email, storage_object_keys=storage.list_object_keys()
             )
-            dashboard_id, widget_id = uuid4(), uuid4()
             cursor.execute(
                 "INSERT INTO public.dashboards (id, department_id, name) VALUES (%s, %s, %s)",
                 (dashboard_id, department_id, f"reset-dashboard-{dashboard_id.hex[:12]}"),
@@ -149,7 +196,6 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "VALUES (%s, %s, 0, 'chart', '{}'::jsonb)",
                 (widget_id, dashboard_id),
             )
-            board_id, project_board_id, record_id = uuid4(), uuid4(), uuid4()
             cursor.execute(
                 "INSERT INTO public.boards (id, scope, department_id, name) "
                 "VALUES (%s, 'department', %s, %s), (%s, 'project', NULL, %s)",
@@ -160,7 +206,6 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "VALUES (%s, %s, %s, 'write')",
                 (uuid4(), project_board_id, group_id),
             )
-            event_id = uuid4()
             cursor.execute(
                 "INSERT INTO public.board_events(id,board_id,author_id,title,all_day,"
                 "start_date,end_date,timezone_name) VALUES "
@@ -172,7 +217,6 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "VALUES (%s, %s, %s, '1d')",
                 (uuid4(), board_id, event_id),
             )
-            post_id = uuid4()
             cursor.execute(
                 "INSERT INTO public.board_posts "
                 "(id, board_id, author_id, title, body, status) "
@@ -200,7 +244,6 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "INSERT INTO public.records (id, module_id) VALUES (%s, %s)",
                 (record_id, module_id),
             )
-            report_id, run_id = uuid4(), uuid4()
             cursor.execute(
                 "INSERT INTO public.reports (id, module_id, name, recipe) "
                 "VALUES (%s, %s, %s, '{}'::jsonb)",
@@ -229,7 +272,6 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "INSERT INTO public.report_run_eligible_users (run_id, user_id) VALUES (%s, %s)",
                 (run_id, member_id),
             )
-            work_id = uuid4()
             cursor.execute(
                 "INSERT INTO public.scheduled_work "
                 "(id, kind, report_id, scheduled_for, next_attempt_at, state, "
@@ -268,6 +310,7 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
         assert plan.counts["fields"] == 1
         assert plan.counts["modules"] == 1
         assert plan.impact_digest != plan_before_dashboard.impact_digest
+        auth.list_account_ids.side_effect = ((member_provider_id,), ())
         execution.apply_reset(
             database,
             plan,

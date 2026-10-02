@@ -11,20 +11,14 @@ import {
   INITIAL_RECORDS,
   type SampleRecord,
 } from "../../shared/data/sample-data";
-import {
-  type RecordThread,
-  type SampleNotification,
-} from "../../comms/domain/model";
+import { type SampleNotification } from "../../comms/domain/model";
 import { normalizeCommsConfiguration } from "../../comms/domain/configuration";
-import { stageRecordDiscussion } from "../../comms/state/runtime";
 import { previewCommsNotification } from "../../comms/domain/notification-policy";
 import {
   INITIAL_PLATFORM_ACCOUNT,
   INITIAL_PLATFORM_PREFERENCES,
-  INITIAL_PLATFORM_SESSIONS,
   type PlatformAccount,
   type PlatformNotificationPreferences,
-  type PlatformSession,
   type PlatformImportRow,
 } from "../domain/model";
 import {
@@ -35,7 +29,6 @@ import {
 export {
   INITIAL_PLATFORM_ACCOUNT,
   INITIAL_PLATFORM_PREFERENCES,
-  INITIAL_PLATFORM_SESSIONS,
   PLATFORM_FILES,
 } from "../domain/model";
 export type {
@@ -43,7 +36,6 @@ export type {
   PlatformFile,
   PlatformImportRow,
   PlatformNotificationPreferences,
-  PlatformSession,
 } from "../domain/model";
 export {
   completePlatformExport,
@@ -92,30 +84,6 @@ export function usePlatformCommands() {
         ),
       ),
     [commands, runtime],
-  );
-  const updateRecordAssignee = useCallback(
-    (recordId: string, assignee: string) =>
-      run<PlatformCommandResult<SampleRecord>>(
-        `platform:record:assign:${recordId}`,
-        (draft) => {
-          const records = draft.read<SampleRecord[]>(
-            "records",
-            INITIAL_RECORDS,
-          );
-          const current = records.find((record) => record.id === recordId);
-          if (!current)
-            return reject(draft, "This record is no longer available.");
-          if (!assignee.trim())
-            return reject(draft, "Choose an assignee before saving.");
-          const next = { ...current, assignee: assignee.trim() };
-          draft.update<SampleRecord[]>("records", INITIAL_RECORDS, (items) =>
-            items.map((item) => (item.id === recordId ? next : item)),
-          );
-          return accepted(next);
-        },
-        ["records"],
-      ),
-    [run],
   );
   const markAllNotificationsRead = useCallback(
     () =>
@@ -242,46 +210,6 @@ export function usePlatformCommands() {
       ),
     [run],
   );
-  const toggleFollow = useCallback(
-    (recordId: string) =>
-      run<PlatformCommandResult<boolean>>(
-        `platform:follow:${recordId}`,
-        (draft) => {
-          const records = draft.read<SampleRecord[]>(
-            "records",
-            INITIAL_RECORDS,
-          );
-          if (!records.some((record) => record.id === recordId))
-            return reject(draft, "This record is no longer available.");
-          const current = draft.read<string[]>("platformFollowedRecords", []);
-          const following = !current.includes(recordId);
-          draft.update<string[]>("platformFollowedRecords", [], (items) =>
-            following
-              ? [...items, recordId]
-              : items.filter((item) => item !== recordId),
-          );
-          return accepted(following);
-        },
-        ["records", "platformFollowedRecords"],
-      ),
-    [run],
-  );
-  const startRecordDiscussion = useCallback(
-    (recordId: string) =>
-      run<PlatformCommandResult<RecordThread>>(
-        `platform:record-discussion:${recordId}`,
-        (draft) => {
-          const record = draft
-            .read<SampleRecord[]>("records", INITIAL_RECORDS)
-            .find((item) => item.id === recordId);
-          if (!record)
-            return reject(draft, "This record is no longer available.");
-          return accepted(stageRecordDiscussion(draft, record));
-        },
-        ["records", "commsRecordThreads"],
-      ),
-    [run],
-  );
   const importRecords = useCallback(
     (rows: readonly PlatformImportRow[]) =>
       run<PlatformCommandResult<SampleRecord[]>>(
@@ -325,44 +253,15 @@ export function usePlatformCommands() {
       ),
     [run],
   );
-  const endSession = useCallback(
-    (sessionId: string) =>
-      run<PlatformCommandResult<string>>(
-        `platform:session:end:${sessionId}`,
-        (draft) => {
-          const current = draft.read<PlatformSession[]>(
-            "platformSessions",
-            INITIAL_PLATFORM_SESSIONS,
-          );
-          const session = current.find((item) => item.id === sessionId);
-          if (!session)
-            return reject(draft, "This session is no longer available.");
-          if (session.current)
-            return reject(draft, "The current session cannot be ended here.");
-          draft.update<PlatformSession[]>(
-            "platformSessions",
-            INITIAL_PLATFORM_SESSIONS,
-            (items) => items.filter((item) => item.id !== sessionId),
-          );
-          return accepted(sessionId);
-        },
-        ["platformSessions"],
-      ),
-    [run],
-  );
   return {
     run,
     loadRecordsForExport,
-    updateRecordAssignee,
     markAllNotificationsRead,
     toggleNotification,
     simulateRecordUpdate,
     updateNotificationPreferences,
-    toggleFollow,
-    startRecordDiscussion,
     importRecords,
     updateAccount,
-    endSession,
     isPending: commands.isPending,
     pendingKeys: commands.pendingKeys,
   };

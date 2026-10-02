@@ -116,6 +116,7 @@ export function AppPage({ children }: AppPageProps) {
   const [draftCleanupFailed, setDraftCleanupFailed] = useState(false);
   const [verifiedUserId, setVerifiedUserId] = useState<string | null>(null);
   const verifiedUserIdRef = useRef<string | null>(null);
+  const signOutAccepted = useRef(false);
   const [retryVersion, setRetryVersion] = useState(0);
   const mounted = useRef(false);
   const curtain = useRef<HTMLDialogElement | null>(null);
@@ -137,7 +138,7 @@ export function AppPage({ children }: AppPageProps) {
 
   useEffect(() => {
     function concealWorkspace() {
-      if (!mounted.current) return;
+      if (!mounted.current || signOutAccepted.current) return;
       // A tab's cookie identity can change elsewhere. Invalidate an in-flight
       // result and cover even body-level portals before the next browser paint.
       supersedeSessionCheck(queue.current);
@@ -158,7 +159,8 @@ export function AppPage({ children }: AppPageProps) {
     }
 
     function recheckOnReturn() {
-      if (document.visibilityState !== "visible") return;
+      if (signOutAccepted.current || document.visibilityState !== "visible")
+        return;
       concealWorkspace();
       setRetryVersion((version) => version + 1);
     }
@@ -192,6 +194,7 @@ export function AppPage({ children }: AppPageProps) {
   }, [checking, verifiedUserId]);
 
   useEffect(() => {
+    if (signOutAccepted.current) return;
     const current = queue.current;
     current.queued = {
       pathname,
@@ -307,6 +310,17 @@ export function AppPage({ children }: AppPageProps) {
     setRetryVersion((version) => version + 1);
   }
 
+  function acceptSignOut() {
+    if (signOutAccepted.current) return;
+    // The server has accepted sign-out. The shell owns cleanup/recovery now;
+    // focus checks and responses started earlier must not replace that screen.
+    signOutAccepted.current = true;
+    supersedeSessionCheck(queue.current);
+    curtain.current?.close();
+    setChecking(false);
+    setUnavailable(false);
+  }
+
   if (verifiedUserId === null || forceFallback) {
     return (
       <main className="bg-background text-foreground grid min-h-screen place-items-center">
@@ -327,7 +341,12 @@ export function AppPage({ children }: AppPageProps) {
           userId={verifiedUserId}
         >
           <AppQueryProvider>
-            <AppShell verifiedUserId={verifiedUserId}>{children}</AppShell>
+            <AppShell
+              verifiedUserId={verifiedUserId}
+              onSignOutAccepted={acceptSignOut}
+            >
+              {children}
+            </AppShell>
           </AppQueryProvider>
           {unavailable && !checking && (
             <div

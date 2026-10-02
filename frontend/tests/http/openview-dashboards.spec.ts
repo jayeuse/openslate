@@ -953,6 +953,15 @@ async function tabTo(
   const key = `${allControlsKey}${direction === "forward" ? "Tab" : "Shift+Tab"}`;
   for (let step = 0; step < 100; step += 1) {
     await page.keyboard.press(key);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          Boolean(
+            document.activeElement?.hasAttribute("data-base-ui-focus-guard"),
+          ),
+        ),
+      )
+      .toBe(false);
     if (await target.evaluate((element) => element === document.activeElement))
       return;
   }
@@ -961,19 +970,26 @@ async function tabTo(
 
 async function expectVisibleKeyboardFocus(target: Locator) {
   await expect(target).toBeFocused();
-  const focusStyle = await target.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      keyboardFocus: element.matches(":focus-visible"),
-      outlineWidth: Number.parseFloat(style.outlineWidth),
-      outlineStyle: style.outlineStyle,
-      outlineColor: style.outlineColor,
-    };
-  });
-  expect(focusStyle.keyboardFocus).toBe(true);
-  expect(focusStyle.outlineWidth).toBeGreaterThan(0);
-  expect(focusStyle.outlineStyle).not.toBe("none");
-  expect(focusStyle.outlineColor).not.toBe("rgba(0, 0, 0, 0)");
+  await expect
+    .poll(() =>
+      target.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          focused: element === document.activeElement,
+          keyboardFocus: element.matches(":focus-visible"),
+          outlineHasWidth: Number.parseFloat(style.outlineWidth) > 0,
+          outlineIsDrawn: style.outlineStyle !== "none",
+          outlineHasColor: style.outlineColor !== "rgba(0, 0, 0, 0)",
+        };
+      }),
+    )
+    .toEqual({
+      focused: true,
+      keyboardFocus: true,
+      outlineHasWidth: true,
+      outlineIsDrawn: true,
+      outlineHasColor: true,
+    });
 }
 
 async function expectDashboardMainToFit(page: Page) {
@@ -1080,9 +1096,25 @@ test("department Dashboard supports mobile keyboard-only controls and survives r
   await expectVisibleKeyboardFocus(doneSettings);
   await page.keyboard.press("Enter");
   await expect(newDashboardDialog).toBeHidden();
+  await expect(
+    page.getByRole("dialog", {
+      name: "New Dashboard",
+      includeHidden: true,
+    }),
+  ).toHaveCount(0);
+  await expect(newDashboard).toBeFocused();
 
-  const addDialog = await openAddWidgetDialog(page);
+  const addWidget = page.getByRole("button", {
+    name: "Add widget",
+    exact: true,
+  });
+  await tabTo(page, addWidget);
+  await expectVisibleKeyboardFocus(addWidget);
+  await page.keyboard.press("Enter");
+  const addDialog = page.getByRole("dialog", { name: "Add widget" });
+  await expect(addDialog).toBeVisible();
   const moduleSelect = addDialog.getByLabel("Data source");
+  await expect(moduleSelect).toBeFocused();
   await tabTo(page, moduleSelect);
   await expectVisibleKeyboardFocus(moduleSelect);
   await expect(moduleSelect).toContainText("Equipment");

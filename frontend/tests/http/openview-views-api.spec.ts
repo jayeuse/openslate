@@ -190,6 +190,8 @@ async function installViewsApi(
     initialPresentation?: Partial<SavedView["presentation"]>;
     disableInitialSearch?: boolean;
     recordName?: string;
+    viewerRole?: "admin" | "member";
+    deletedRecord?: boolean;
     cardFieldsNotInColumns?: boolean;
     additionalViews?: SavedView[];
     deepViewBeyondBound?: boolean;
@@ -301,7 +303,20 @@ async function installViewsApi(
   await page.route("**/api/auth/me", async (route) =>
     route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ id: userId, role: "admin", access: [] }),
+      body: JSON.stringify({
+        id: userId,
+        role: options.viewerRole ?? "admin",
+        access:
+          options.viewerRole === "member"
+            ? [
+                {
+                  department_id: departmentId,
+                  module_id: moduleId,
+                  level: "write",
+                },
+              ]
+            : [],
+      }),
     }),
   );
   let nextPatchBarrier: {
@@ -756,12 +771,19 @@ async function installViewsApi(
       barrier.signalStarted();
       await barrier.wait;
     }
+    const firstRecord = record(
+      recordOneId,
+      options.recordName ?? "Centrifugal pump 04",
+      "In service",
+    );
     const regularRows = [
-      record(
-        recordOneId,
-        options.recordName ?? "Centrifugal pump 04",
-        "In service",
-      ),
+      options.deletedRecord
+        ? {
+            ...firstRecord,
+            deleted_at: "2026-09-24T00:00:00Z",
+            is_deleted: true,
+          }
+        : firstRecord,
       record(recordTwoId, "Cooling panel 02", "Inspection due"),
       ...Array.from({ length: 28 }, (_, index) =>
         record(
@@ -2130,13 +2152,14 @@ for (const layout of ["calendar", "timeline"] as const) {
 
     await page.getByLabel("Window starts").fill("2026-09-01");
     await page.getByLabel("Window ends").fill("2026-09-30");
-    await expect.poll(() => api.windowQueryRequests.at(-1)?.mode).toBe(layout);
-    expect(api.windowQueryRequests.at(-1)).toMatchObject({
-      mode: layout,
-      scope: "window",
-      from_date: "2026-09-01",
-      to_date: "2026-09-30",
-    });
+    await expect
+      .poll(() => api.windowQueryRequests.at(-1))
+      .toMatchObject({
+        mode: layout,
+        scope: "window",
+        from_date: "2026-09-01",
+        to_date: "2026-09-30",
+      });
     expect(api.groupedQueryRequests).toHaveLength(0);
     expect(api.saved().presentation.group_by_field_id).toBe(statusFieldId);
   });
@@ -4133,6 +4156,278 @@ test("record details delete only after confirmation", async ({ page }) => {
   expect(commands.calls.find((call) => call.method === "DELETE")?.path).toBe(
     `/api/records/${recordOneId}`,
   );
+});
+
+test("an administrator can preview and confirm deleted-record purging with a fresh password for each attempt", async ({
+  page,
+}) => {
+  await installViewsApi(page, {
+    disableInitialSearch: true,
+    deletedRecord: true,
+  });
+  await installRecordCommands(page);
+  const recordPurgeCalls: {
+    method: string;
+    path: string;
+    body?: Record<string, unknown>;
+  }[] = [];
+  const impact = {
+    target_type: "record",
+    target_id: recordOneId,
+    operation: "purge",
+    actor_id: userId,
+    rows: [
+      {
+        entity_type: "records",
+        entity_id: recordOneId,
+        is_deleted: true,
+        deleted_at: "2026-09-24T00:00:00Z",
+        updated_at: "2026-09-24T00:00:00Z",
+        state_fingerprint: "record-state",
+        byte_count: null,
+      },
+      ...[
+        "00000000-0000-4000-8000-000000000081",
+        "00000000-0000-4000-8000-000000000082",
+      ].map((entity_id) => ({
+        entity_type: "record_trigger_events",
+        entity_id,
+        is_deleted: false,
+        deleted_at: null,
+        updated_at: "2026-09-24T00:00:00Z",
+        state_fingerprint: "trigger-event-state",
+      })),
+      {
+        entity_type: "record_trigger_runs",
+        entity_id: "00000000-0000-4000-8000-000000000083",
+        is_deleted: false,
+        deleted_at: null,
+        updated_at: "2026-09-24T00:00:00Z",
+        state_fingerprint: "trigger-run-state",
+      },
+      ...[
+        "00000000-0000-4000-8000-000000000071",
+        "00000000-0000-4000-8000-000000000072",
+      ].map((entity_id) => ({
+        entity_type: "relationship_edges",
+        entity_id,
+        is_deleted: true,
+        deleted_at: "2026-09-24T00:00:00Z",
+        updated_at: "2026-09-24T00:00:00Z",
+        state_fingerprint: "link-state",
+        byte_count: null,
+      })),
+    ],
+    external_impacts: [
+      {
+        edge_id: "00000000-0000-4000-8000-000000000071",
+        field_id: "00000000-0000-4000-8000-000000000073",
+        external_record_id: "00000000-0000-4000-8000-000000000074",
+        external_module_id: "00000000-0000-4000-8000-000000000075",
+        external_module_name: "Work orders",
+        external_department_id: "00000000-0000-4000-8000-000000000076",
+        external_department_name: "Maintenance",
+      },
+    ],
+    key_strips: [],
+    blockers: [],
+    impact_digest: "b".repeat(64),
+  };
+  const preview = {
+    impact,
+    token: "synthetic-record-challenge",
+    expires_at: "2026-09-25T00:00:00Z",
+    confirmation_name: recordOneId,
+  };
+  let rejectNextPurge = true;
+  await page.route("**/api/records/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (
+      path !== `/api/records/${recordOneId}/purge/preview` &&
+      path !== `/api/records/${recordOneId}/purge`
+    )
+      return route.fallback();
+    const body = request.postData()
+      ? (request.postDataJSON() as Record<string, unknown>)
+      : undefined;
+    recordPurgeCalls.push({ method: request.method(), path, body });
+    if (path.endsWith("/purge/preview"))
+      return route.fulfill({ json: preview });
+    if (rejectNextPurge) {
+      rejectNextPurge = false;
+      return route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({
+          detail: {
+            code: "invalid_credentials",
+            message: "Sensitive provider response",
+          },
+        }),
+      });
+    }
+    return route.fulfill({
+      json: { impact, operation_id: null },
+    });
+  });
+
+  await page.goto(
+    `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
+  );
+  const details = page.getByRole("dialog", { name: "Record details" });
+  await expect(
+    details.getByRole("button", { name: "Restore record" }),
+  ).toBeVisible();
+  await expect(
+    details.getByRole("button", { name: "Permanently delete" }),
+  ).toBeVisible();
+
+  await details.getByRole("button", { name: "Permanently delete" }).click();
+  const impactSummary = details
+    .getByRole("status")
+    .filter({ hasText: "permanently removes" });
+  await expect(impactSummary).toContainText("1 record");
+  await expect(impactSummary).toContainText("2 links");
+  await expect(impactSummary).toContainText("3 automation history entries");
+  await expect(details.getByText(/Work orders.*Maintenance/)).toBeVisible();
+  await details.getByLabel("Type the record ID").fill(recordOneId);
+  await details
+    .getByLabel("Administrator password")
+    .fill("synthetic-test-passphrase");
+  await details
+    .getByRole("button", { name: "Confirm permanent deletion" })
+    .click();
+  await expect(details.getByRole("alert")).toHaveText(
+    "Administrator verification failed. Confirm your password and access, then request a new review.",
+  );
+
+  await details
+    .getByRole("button", { name: "Review again", exact: true })
+    .click();
+  await expect(details.getByLabel("Administrator password")).toHaveValue("");
+  await details.getByLabel("Type the record ID").fill(recordOneId);
+  await details
+    .getByLabel("Administrator password")
+    .fill("synthetic-test-passphrase");
+  await details
+    .getByRole("button", { name: "Confirm permanent deletion" })
+    .click();
+  await expect(page.getByText("Record permanently deleted.")).toBeVisible();
+  expect(recordPurgeCalls.map(({ method, path }) => [method, path])).toEqual([
+    ["POST", `/api/records/${recordOneId}/purge/preview`],
+    ["POST", `/api/records/${recordOneId}/purge`],
+    ["POST", `/api/records/${recordOneId}/purge/preview`],
+    ["POST", `/api/records/${recordOneId}/purge`],
+  ]);
+  expect(recordPurgeCalls[1]?.body).toEqual({
+    token: preview.token,
+    confirmation_name: recordOneId,
+    password: "synthetic-test-passphrase",
+  });
+  expect(recordPurgeCalls[3]?.body).toEqual({
+    token: preview.token,
+    confirmation_name: recordOneId,
+    password: "synthetic-test-passphrase",
+  });
+});
+
+test("a blocked record purge lists the dependency and hides password confirmation", async ({
+  page,
+}) => {
+  await installViewsApi(page, {
+    disableInitialSearch: true,
+    deletedRecord: true,
+  });
+  await installRecordCommands(page);
+  let deletions = 0;
+  await page.route(`**/api/records/${recordOneId}/purge**`, (route) => {
+    if (!route.request().url().endsWith("/preview")) {
+      deletions += 1;
+      return route.fulfill({ status: 500 });
+    }
+    return route.fulfill({
+      json: {
+        token: "blocked-record-challenge",
+        expires_at: "2026-09-25T00:00:00Z",
+        confirmation_name: recordOneId,
+        impact: {
+          target_type: "record",
+          target_id: recordOneId,
+          operation: "purge",
+          actor_id: userId,
+          rows: [
+            {
+              entity_type: "records",
+              entity_id: recordOneId,
+              is_deleted: true,
+              deleted_at: "2026-09-24T00:00:00Z",
+              updated_at: "2026-09-24T00:00:00Z",
+              state_fingerprint: "record-state",
+            },
+          ],
+          external_impacts: [],
+          key_strips: [],
+          impact_digest: "b".repeat(64),
+          blockers: [
+            {
+              code: "purge_board_dependency",
+              entity_type: "board_record_links",
+              entity_id: viewId,
+              detail: "Remove the Board link before deleting this record.",
+              conflicting_entity_type: null,
+              conflicting_entity_id: null,
+              field_id: null,
+              field_name: null,
+              module_id: null,
+              module_name: null,
+              department_id: null,
+              department_name: null,
+            },
+          ],
+        },
+      },
+    });
+  });
+  await page.goto(
+    `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
+  );
+  const details = page.getByRole("dialog", { name: "Record details" });
+  await details
+    .getByRole("button", { name: "Permanently delete", exact: true })
+    .click();
+  await expect(details.getByRole("alert")).toContainText(
+    "Remove the Board link before deleting this record.",
+  );
+  await expect(
+    details.getByText("This permanently removes 1 record."),
+  ).toBeVisible();
+  await expect(details.getByLabel("Administrator password")).toHaveCount(0);
+  await expect(
+    details.getByRole("button", { name: "Confirm permanent deletion" }),
+  ).toHaveCount(0);
+  expect(deletions).toBe(0);
+});
+
+test("members with write access can restore a deleted record but cannot see permanent deletion", async ({
+  page,
+}) => {
+  await installViewsApi(page, {
+    disableInitialSearch: true,
+    deletedRecord: true,
+    viewerRole: "member",
+  });
+  await installRecordCommands(page);
+  await page.goto(
+    `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
+  );
+  const details = page.getByRole("dialog", { name: "Record details" });
+  await expect(
+    details.getByRole("button", { name: "Restore record" }),
+  ).toBeVisible();
+  await expect(
+    details.getByRole("button", { name: "Permanently delete" }),
+  ).toHaveCount(0);
 });
 
 test("New record checks required values, then opens the created record", async ({

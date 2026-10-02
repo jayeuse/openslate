@@ -61,6 +61,26 @@ test("logout with a failed draft cleanup stays on a recovery screen", async ({
   page,
 }) => {
   await mockSession(page, () => userA);
+  let logoutAccepted = false;
+  let logoutRequests = 0;
+  let endedSessionChecks = 0;
+  await page.route("**/api/auth/logout", async (route) => {
+    logoutRequests += 1;
+    logoutAccepted = true;
+    await route.fulfill({ status: 204 });
+  });
+  await page.route("**/api/auth/session", async (route) => {
+    if (logoutAccepted) endedSessionChecks += 1;
+    await route.fulfill({
+      json: logoutAccepted
+        ? { authenticated: false }
+        : {
+            authenticated: true,
+            user_id: userA,
+            setup_required: false,
+          },
+    });
+  });
   await page.goto("/manage");
   await expect(
     page.getByRole("navigation", { name: "Main navigation" }),
@@ -89,6 +109,18 @@ test("logout with a failed draft cleanup stays on a recovery screen", async ({
   await expect(
     page.getByRole("navigation", { name: "Main navigation" }),
   ).toHaveCount(0);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(
+    page.getByRole("heading", { name: "Signed out", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Retry clearing drafts" }),
+  ).toBeVisible();
+  expect(endedSessionChecks).toBe(0);
   expect(
     await page.evaluate((key) => sessionStorage.getItem(key), draftA),
   ).toBe("A draft");
@@ -100,6 +132,7 @@ test("logout with a failed draft cleanup stays on a recovery screen", async ({
   });
   await page.getByRole("button", { name: "Retry clearing drafts" }).click();
   await expect(page).toHaveURL(/\/login$/);
+  expect(logoutRequests).toBe(1);
   expect(
     await page.evaluate((key) => sessionStorage.getItem(key), draftA),
   ).toBeNull();

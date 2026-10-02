@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 import {
+  clearVerifiedWorkspaceSessionSnapshot,
+  registerWorkspaceSessionClear,
+} from "../../../src/components/systems/shared/runtime/workspace-identity";
+import {
   clearCommsDraftTextStore,
   commsDraftTextKey,
   COMMS_DRAFT_TEXT_PREFIX,
@@ -23,6 +27,58 @@ function memoryStorage() {
     },
   };
 }
+
+// A registered in-memory cleanup listener cannot be made to throw through a
+// supported UI action; exercise that boundary without injecting browser modules.
+test("a failed workspace cleanup listener reports failure and still clears other listeners and Comms drafts", async () => {
+  const memory = memoryStorage();
+  const storage = {
+    ...memory,
+    get length() {
+      return memory.data.size;
+    },
+    key(index: number) {
+      return [...memory.data.keys()][index] ?? null;
+    },
+  };
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const originalStorage = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "sessionStorage",
+  );
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { sessionStorage: storage },
+  });
+  Object.defineProperty(globalThis, "sessionStorage", {
+    configurable: true,
+    value: storage,
+  });
+  const userId = "listener-cleanup-owner";
+  const key = commsDraftTextKey(ownedCommsDraftTextId(userId, "composer"));
+  storage.setItem(key, "Owned draft");
+  let otherListenerCleared = false;
+  const unregisterFailure = registerWorkspaceSessionClear(userId, () => {
+    throw new Error("Owned listener failure");
+  });
+  const unregisterOther = registerWorkspaceSessionClear(userId, () => {
+    otherListenerCleared = true;
+  });
+  try {
+    expect(await clearVerifiedWorkspaceSessionSnapshot(userId)).toBe(false);
+    expect(otherListenerCleared).toBe(true);
+    expect(storage.getItem(key)).toBeNull();
+  } finally {
+    unregisterFailure();
+    unregisterOther();
+    if (originalWindow)
+      Object.defineProperty(globalThis, "window", originalWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+    if (originalStorage)
+      Object.defineProperty(globalThis, "sessionStorage", originalStorage);
+    else Reflect.deleteProperty(globalThis, "sessionStorage");
+  }
+});
 
 test("draft subscribers receive a new snapshot when text changes", () => {
   const storage = memoryStorage();

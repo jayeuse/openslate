@@ -79,25 +79,30 @@ def _commit_revocation(db: Session) -> None:
         ) from error
 
 
-@auth_router.get("/sessions")
+@auth_router.get("/sessions", response_model=list[AdminSessionResponse])
 def list_sessions(
     identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
     db: Annotated[Session, Depends(get_db)],
-) -> list[dict[str, object]]:
+) -> list[AdminSessionResponse]:
     identity = _require_completed_identity(identity)
     sessions = db.scalars(
-        select(IdentitySession).where(
-            IdentitySession.user_id == identity.user.id, IdentitySession.revoked_at.is_(None)
+        select(IdentitySession)
+        .where(
+            IdentitySession.user_id == identity.user.id,
+            IdentitySession.revoked_at.is_(None),
+            IdentitySession.expires_at > utc_now(),
         )
+        .order_by(IdentitySession.refreshed_at.desc(), IdentitySession.id)
     ).all()
     return [
-        {
-            "id": item.id,
-            "created_at": item.created_at,
-            "refreshed_at": item.refreshed_at,
-            "expires_at": item.expires_at,
-            "current": item.id == identity.session_id,
-        }
+        AdminSessionResponse(
+            id=item.id,
+            created_at=item.created_at,
+            refreshed_at=item.refreshed_at,
+            expires_at=item.expires_at,
+            user_agent=item.user_agent,
+            current=item.id == identity.session_id,
+        )
         for item in sessions
     ]
 

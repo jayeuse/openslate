@@ -1,4 +1,5 @@
 "use client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -38,6 +39,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { SampleDataNote } from "@/components/sample-data-note";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import { ApiError } from "@/lib/api";
 import ManageAudit from "./components/audit";
 import {
   decodeManageSettings,
@@ -61,6 +63,18 @@ import {
   type PreviewState,
 } from "./components/manage-dialogs";
 import { OrganizationPanel } from "./components/organization-panel";
+import {
+  afterManageWorkspaceChange,
+  manageWorkspaceOptions,
+} from "./adapters/manage-queries";
+import {
+  isStaleWorkspaceRevision,
+  organizationLocaleTag,
+  workspaceSettingsFormFields,
+  workspaceSettingsPatch,
+  updateManageWorkspace,
+  type WorkspaceSettingsFormDraft,
+} from "./adapters/workspace-api";
 import { SecurityPanel, SecurityPolicyForm } from "./components/security-panel";
 import { BackupPanel, SnapshotScheduleForm } from "./components/backup-panel";
 import { UpdatesPanel } from "./components/updates-panel";
@@ -73,6 +87,39 @@ type ViewTab =
   "Organization" | "Security" | "Audit" | "Backup" | "Updates & licensing";
 
 type Snapshot = ManageSnapshot;
+
+const SAMPLE_ORGANIZATION_FIELDS = [
+  "logo",
+  "currency",
+  "week",
+  "hours",
+] as const;
+
+function sampleOrganizationDraftIsDirty(
+  settings: ManageSettings,
+  draft: Partial<ManageSettings> | undefined,
+): boolean {
+  return SAMPLE_ORGANIZATION_FIELDS.some(
+    (key) => draft?.[key] !== undefined && draft[key] !== settings[key],
+  );
+}
+
+function organizationErrors(
+  sampleErrors: Partial<Record<keyof ManageSettings, string>>,
+  nameDraft: string | undefined,
+  workspaceReady: boolean,
+): Partial<Record<keyof ManageSettings, string>> {
+  const errors = { ...sampleErrors };
+  delete errors.name;
+  delete errors.locale;
+  delete errors.timezone;
+  if (workspaceReady && nameDraft !== undefined) {
+    if (!nameDraft.trim()) errors.name = "Enter an organization name.";
+    else if (nameDraft.length > 200)
+      errors.name = "Use 200 characters or fewer.";
+  }
+  return errors;
+}
 
 const manageTabs: readonly ViewTab[] = [
   "Organization",
@@ -119,6 +166,7 @@ function ManageContent() {
   const router = useRouter();
   const requestedTab = manageTabFromQuery(searchParams.get("view"));
   const manage = useManageController();
+  const queryClient = useQueryClient();
   const activeUsers = manage.people.filter((person) => person.active).length;
   const {
     settings,
@@ -126,10 +174,20 @@ function ManageContent() {
     sessions,
     history,
     storageUnavailable,
-    hasDrafts: allDraftsDirty,
+    hasDrafts: manageHasDrafts,
   } = manage;
   const seatLimit = settings.tier === "Business" ? 100 : 25;
   const tab = requestedTab;
+  const [workspaceDraft, setWorkspaceDraft] =
+    useState<WorkspaceSettingsFormDraft>({});
+  const [workspaceStale, setWorkspaceStale] = useState(false);
+  const [workspaceRefreshRequired, setWorkspaceRefreshRequired] =
+    useState(false);
+  const [workspaceSavePending, setWorkspaceSavePending] = useState(false);
+  const workspaceQuery = useQuery({
+    ...manageWorkspaceOptions(),
+    enabled: tab === "Organization",
+  });
   const [notice, setNotice] = useState("");
   const [navigationNotice, setNavigationNotice] = useState("");
   const [error, setError] = useState("");
@@ -163,6 +221,12 @@ function ManageContent() {
         : recoveryView
           ? "Sessions and snapshots"
           : "Settings";
+  const liveSourceStatus =
+    tab === "Organization"
+      ? "Name, locale and timezone save to the organization. Mark, currency, week start and business hours are examples; their changes last until this tab closes."
+      : tab === "Audit"
+        ? "Audit entries are loaded from your organization."
+        : null;
   const pageDescription =
     tab === "Organization"
       ? "Make this workspace feel like your organization."
@@ -173,22 +237,46 @@ function ManageContent() {
           : "Review sessions and keep a copy of your workspace settings.";
 
   const section = sectionForTab(tab);
+  const workspacePatch = workspaceQuery.data
+    ? workspaceSettingsPatch(workspaceQuery.data, workspaceDraft)
+    : null;
+  const workspaceDraftDirty = workspacePatch !== null;
+  const sampleOrganizationDirty = sampleOrganizationDraftIsDirty(
+    settings,
+    manage.drafts.organization,
+  );
+  const allDraftsDirty = manageHasDrafts || workspaceDraftDirty;
   const currentFor = (view: ViewTab): ManageSettings => {
     const currentSection = sectionForTab(view);
     return currentSection ? manage.getDraft(currentSection) : settings;
   };
-  const current = currentFor(tab);
+  const sampleCurrent = currentFor(tab);
+  const workspaceFields = workspaceQuery.data
+    ? workspaceSettingsFormFields(workspaceQuery.data)
+    : null;
+  const current =
+    tab === "Organization" && workspaceFields
+      ? { ...sampleCurrent, ...workspaceFields, ...workspaceDraft }
+      : sampleCurrent;
   const previewSettings = decodeManageSettings(current);
-  const dirty = section ? manage.dirty(section) : false;
-  const errors = section ? manage.errors(section) : {};
+  const dirty =
+    tab === "Organization"
+      ? sampleOrganizationDirty || workspaceDraftDirty
+      : section
+        ? manage.dirty(section)
+        : false;
+  const sectionErrors = section ? manage.errors(section) : {};
+  const errors =
+    tab === "Organization"
+      ? organizationErrors(
+          sectionErrors,
+          workspaceDraft.name,
+          workspaceQuery.data !== undefined,
+        )
+      : sectionErrors;
   const updateAvailable = manage.updateAvailable;
   const remoteSessions = sessions.filter((session) => !session.current);
-  const localeCode =
-    current.locale === "Filipino"
-      ? "fil-PH"
-      : current.locale === "English (US)"
-        ? "en-US"
-        : "en-PH";
+  const localeCode = organizationLocaleTag(current.locale);
   const regionalDate = new Intl.DateTimeFormat(localeCode, {
     dateStyle: "medium",
     timeStyle: "short",
@@ -201,7 +289,7 @@ function ManageContent() {
   const retention = manage.retentionPreview();
 
   useWorkspaceNavigationGuard(() => {
-    if (manage.pending) {
+    if (manage.pending || workspaceSavePending) {
       setNavigationNotice(
         "Finish the current change before leaving this page.",
       );
@@ -216,19 +304,49 @@ function ManageContent() {
     key: keyof ManageSettings,
     value: string,
   ) {
+    if (
+      target === "organization" &&
+      (key === "name" || key === "locale" || key === "timezone")
+    ) {
+      const saved = workspaceQuery.data
+        ? workspaceSettingsFormFields(workspaceQuery.data)
+        : null;
+      setWorkspaceDraft((currentDraft) => {
+        const next = { ...currentDraft, [key]: value };
+        const unchanged = saved
+          ? key === "name"
+            ? value.trim() === saved.name
+            : value === saved[key]
+          : false;
+        if (unchanged) delete next[key];
+        return next;
+      });
+      setNotice("");
+      setError("");
+      return;
+    }
     manage.change(target, key, value);
     setNotice("");
     setError("");
   }
 
   function clearDraft(target: ManageSection) {
-    if (manage.pending) return;
+    if (manage.pending || workspaceSavePending) return;
     manage.discard(target);
+    if (target === "organization") {
+      setWorkspaceDraft({});
+      setWorkspaceStale(false);
+      setWorkspaceRefreshRequired(false);
+    }
     setError("");
     setNotice("Unsaved changes discarded.");
   }
 
   async function saveSection(target: ManageSection) {
+    if (target === "organization") {
+      await saveOrganization();
+      return;
+    }
     const result = await manage.save(target);
     if (!result.ok) {
       setError(result.message);
@@ -239,6 +357,106 @@ function ManageContent() {
       storageUnavailable
         ? "Settings updated in memory only. Browser storage is unavailable."
         : result.message,
+    );
+  }
+
+  async function retryWorkspace() {
+    const result = await workspaceQuery.refetch();
+    if (result.isError || !result.data) {
+      setError("The organization settings could not be loaded. Try again.");
+      return;
+    }
+    setError("");
+    if (workspaceRefreshRequired) {
+      setWorkspaceRefreshRequired(false);
+      setWorkspaceStale(true);
+    }
+  }
+
+  async function saveOrganization() {
+    if (manage.pending || workspaceSavePending) return;
+    if (
+      workspaceDraft.name !== undefined &&
+      (!workspaceDraft.name.trim() || workspaceDraft.name.length > 200)
+    )
+      return;
+
+    const sampleErrors = manage.errors("organization");
+    delete sampleErrors.name;
+    delete sampleErrors.locale;
+    delete sampleErrors.timezone;
+    const sampleError = Object.values(sampleErrors)[0];
+    if (sampleOrganizationDirty && sampleError) {
+      setError(sampleError);
+      return;
+    }
+
+    if (workspaceDraftDirty && !workspaceQuery.data) {
+      setError(
+        "The organization settings could not be loaded. Retry before saving.",
+      );
+      return;
+    }
+
+    const patch = workspaceQuery.data
+      ? workspaceSettingsPatch(workspaceQuery.data, workspaceDraft)
+      : null;
+    setNotice("");
+    setError("");
+    if (patch) {
+      setWorkspaceSavePending(true);
+      try {
+        const saved = await updateManageWorkspace(patch);
+        afterManageWorkspaceChange(queryClient, saved);
+        setWorkspaceDraft({});
+        setWorkspaceStale(false);
+        setWorkspaceRefreshRequired(false);
+        setNotice("Name, locale and timezone saved.");
+      } catch (caught) {
+        if (isStaleWorkspaceRevision(caught)) {
+          setWorkspaceRefreshRequired(true);
+          const refreshed = await workspaceQuery.refetch();
+          if (refreshed.isError || !refreshed.data) {
+            setError(
+              "Workspace settings changed, but the latest values could not be loaded. Retry before saving again.",
+            );
+          } else {
+            setWorkspaceRefreshRequired(false);
+            setWorkspaceStale(true);
+            setError("");
+          }
+          return;
+        }
+        setError(
+          caught instanceof ApiError && caught.status === 403
+            ? "Only administrators can change these settings. Reload the page to check your access."
+            : "The settings could not be saved. Try again.",
+        );
+        return;
+      } finally {
+        setWorkspaceSavePending(false);
+      }
+    } else if (Object.keys(workspaceDraft).length > 0) {
+      setWorkspaceDraft({});
+      setWorkspaceStale(false);
+    }
+
+    if (sampleOrganizationDirty) {
+      const result = await manage.save("organization");
+      if (!result.ok) {
+        setError(
+          `Example fields could not be saved. Your example edits are still pending. ${result.message}`,
+        );
+        return;
+      }
+    }
+    setError("");
+    setNotice(
+      patch || workspaceDraftDirty
+        ? "Name, locale and timezone saved."
+        : storageUnavailable
+          ? "Settings updated in memory only. Browser storage is unavailable."
+          : "Settings saved. No live policy was changed.",
     );
   }
 
@@ -271,6 +489,11 @@ function ManageContent() {
           const result = await manage.restoreSnapshot(snapshot.id, {
             discardDrafts: allDraftsDirty,
           });
+          if (result.ok) {
+            setWorkspaceDraft({});
+            setWorkspaceStale(false);
+            setWorkspaceRefreshRequired(false);
+          }
           setError(result.ok ? "" : result.message);
           setNotice(result.ok ? result.message : "");
 
@@ -296,6 +519,11 @@ function ManageContent() {
         ),
         action: async () => {
           const result = await manage.reset({ discardDrafts: allDraftsDirty });
+          if (result.ok) {
+            setWorkspaceDraft({});
+            setWorkspaceStale(false);
+            setWorkspaceRefreshRequired(false);
+          }
           setError(result.ok ? "" : result.message);
           setNotice(result.ok ? result.message : "");
 
@@ -474,8 +702,13 @@ function ManageContent() {
         <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
           {pageDescription}
         </p>
-        <SampleDataNote className="mt-3">
-          {sampleSubject} here are examples.
+        <SampleDataNote
+          ariaLabel={liveSourceStatus ? "Organization data" : undefined}
+          className="mt-3"
+          sourceLabel={liveSourceStatus ? "Organization" : undefined}
+          suffix={liveSourceStatus ? "" : undefined}
+        >
+          {liveSourceStatus ?? `${sampleSubject} here are examples.`}
         </SampleDataNote>
       </div>
       <div className="flex shrink-0 items-center gap-2">
@@ -513,11 +746,11 @@ function ManageContent() {
   return (
     <div className="min-w-0 space-y-6">
       <fieldset
-        disabled={manage.pending}
-        aria-busy={manage.pending}
+        disabled={manage.pending || workspaceSavePending}
+        aria-busy={manage.pending || workspaceSavePending}
         className="min-w-0 space-y-6"
       >
-        {manage.pending ? (
+        {manage.pending || workspaceSavePending ? (
           <p role="status" className="text-muted-foreground text-sm">
             Saving changes…
           </p>
@@ -580,6 +813,11 @@ function ManageContent() {
               panelClass={panelClass}
               regionalDate={regionalDate}
               regionalCurrency={regionalCurrency}
+              workspace={workspaceQuery.data}
+              workspaceLoading={workspaceQuery.isPending}
+              workspaceLoadFailed={workspaceQuery.isError}
+              onRetryWorkspace={retryWorkspace}
+              staleRevision={workspaceStale}
             />
           ) : null}
 
@@ -712,10 +950,7 @@ function ManageContent() {
           ) : null}
 
           {tab === "Audit" ? (
-            <ManageAudit
-              entries={manage.collections.activity}
-              renderHeader={renderPageHeader}
-            />
+            <ManageAudit renderHeader={renderPageHeader} />
           ) : null}
 
           {tab === "Updates & licensing" ? (

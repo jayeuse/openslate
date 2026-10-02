@@ -50,7 +50,7 @@ const safeCodes: Record<string, { status: number; message: string }> = {
     message: "Board dependencies changed; get a new review",
   },
   purge_disabled: {
-    status: 409,
+    status: 403,
     message: "Permanent Board deletion is disabled",
   },
   purge_requires_closed: {
@@ -58,7 +58,7 @@ const safeCodes: Record<string, { status: number; message: string }> = {
     message: "Archive the Board before deletion",
   },
   confirmation_name_mismatch: {
-    status: 409,
+    status: 422,
     message: "The Board ID confirmation did not match",
   },
   challenge_expired: {
@@ -66,11 +66,11 @@ const safeCodes: Record<string, { status: number; message: string }> = {
     message: "The review expired; get a new review",
   },
   challenge_not_found: {
-    status: 409,
+    status: 404,
     message: "The review is unavailable; get a new review",
   },
   challenge_binding_mismatch: {
-    status: 409,
+    status: 403,
     message: "The review is unavailable; get a new review",
   },
   challenge_exhausted: {

@@ -15,7 +15,6 @@ import ImportExport from "./components/import-export";
 import Account from "./components/account";
 import Files from "./components/files";
 import Notifications from "./components/notifications";
-import Records from "./components/records";
 import Search, { type PlatformSearchGroup } from "./components/search";
 import { usePlatformCommands } from "./adapters/runtime";
 import {
@@ -30,7 +29,6 @@ const PLATFORM_SECTIONS = {
   "import-export": "Import & export",
   account: "Account & presence",
   files: "File library",
-  records: "Record actions",
 } as const;
 
 type PlatformSection =
@@ -99,27 +97,15 @@ export default function SamplePlatform() {
     messages,
     notifications,
     preferences,
-    followed,
-    recordThreads,
     account,
-    sessions,
     files,
   } = workspace;
   const platformCommands = usePlatformCommands();
   const [query, setQuery] = useState("");
   const [fileQuery, setFileQuery] = useState("");
   const fileId = searchParams.get("file") ?? "";
-  const [recordId, setRecordId] = useState(workspace.records[0]?.id ?? "");
   const [notice, setNotice] = useState("");
-  const selectedRecord =
-    records.find((record) => record.id === recordId) ?? records[0] ?? null;
-  const selectedRecordId = selectedRecord?.id ?? "";
-  const [assigneeDrafts, setAssigneeDrafts] = useState<Record<string, string>>(
-    {},
-  );
-  const [assigneeErrors, setAssigneeErrors] = useState<Record<string, string>>(
-    {},
-  );
+  const selectedRecord = records[0] ?? null;
   const file = files.find((item) => item.id === fileId);
   const searchGroups: PlatformSearchGroup[] = [
     {
@@ -163,30 +149,13 @@ export default function SamplePlatform() {
     return { type: group.type, complete, page };
   });
   const pendingRecordId = selectedRecord?.id ?? "";
-  const pendingAssignment = pendingRecordId
-    ? platformCommands.isPending(`platform:record:assign:${pendingRecordId}`)
-    : false;
   const pendingSimulation = pendingRecordId
     ? platformCommands.isPending(
         `platform:notification:simulate:${pendingRecordId}`,
       )
     : false;
-  const pendingDiscussion = pendingRecordId
-    ? platformCommands.isPending(
-        `platform:record-discussion:${pendingRecordId}`,
-      )
-    : false;
-  const pendingFollow = pendingRecordId
-    ? platformCommands.isPending(`platform:follow:${pendingRecordId}`)
-    : false;
   const isNavigationPending = () => platformCommands.isPending();
   const navigationPending = isNavigationPending();
-  const assignmentValue = selectedRecord
-    ? (assigneeDrafts[selectedRecord.id] ?? selectedRecord.assignee)
-    : "";
-  const assignmentError = selectedRecord
-    ? assigneeErrors[selectedRecord.id]
-    : undefined;
   const navigate = useCallback(
     (
       nextTab: PlatformSection,
@@ -241,30 +210,6 @@ export default function SamplePlatform() {
       document.removeEventListener("click", click);
     };
   }, [platformCommands.isPending]);
-  useEffect(() => {
-    if (isNavigationPending() || recordId === selectedRecordId) return;
-    setRecordId(selectedRecordId);
-  }, [recordId, selectedRecordId, platformCommands.isPending]);
-  useEffect(() => {
-    if (!selectedRecord) return;
-    const draft = assigneeDrafts[selectedRecord.id];
-    if (draft === undefined || draft !== selectedRecord.assignee) return;
-    setAssigneeDrafts((current) => {
-      if (current[selectedRecord.id] !== draft) return current;
-      const next = { ...current };
-      delete next[selectedRecord.id];
-      return next;
-    });
-    setAssigneeErrors((current) => {
-      if (!(selectedRecord.id in current)) return current;
-      const next = { ...current };
-      delete next[selectedRecord.id];
-      return next;
-    });
-  }, [selectedRecord, assigneeDrafts]);
-  const hasRecordDiscussion = selectedRecord
-    ? recordThreads.some((item) => item.recordId === selectedRecord.id)
-    : false;
   function commandError(error: unknown, fallback: string): string {
     return sampleOperationMessage(error, fallback);
   }
@@ -319,78 +264,6 @@ export default function SamplePlatform() {
           commandError(error, "This notification could not be updated."),
         ),
       );
-  }
-  async function assignRecord(recordId: string, assignee: string) {
-    const record = records.find((item) => item.id === recordId);
-    if (!record) return;
-    setAssigneeDrafts((current) => ({ ...current, [recordId]: assignee }));
-    setAssigneeErrors((current) => {
-      if (!(recordId in current)) return current;
-      const next = { ...current };
-      delete next[recordId];
-      return next;
-    });
-    try {
-      const result = await platformCommands.updateRecordAssignee(
-        recordId,
-        assignee,
-      );
-      if (result.ok) {
-        setNotice("Record assignment updated.");
-        return;
-      }
-      setAssigneeErrors((current) => ({
-        ...current,
-        [recordId]: result.error,
-      }));
-      setNotice(result.error);
-    } catch (error) {
-      const message = commandError(error, "The record could not be updated.");
-      setAssigneeErrors((current) => ({ ...current, [recordId]: message }));
-      setNotice(message);
-    }
-  }
-  function retryRecordAssignment() {
-    if (!selectedRecord) return;
-    const assignee = assigneeDrafts[selectedRecord.id];
-    if (assignee === undefined) return;
-    void assignRecord(selectedRecord.id, assignee);
-  }
-  function selectRecord(recordId: string) {
-    if (isNavigationPending()) return;
-    setRecordId(recordId);
-  }
-  function assignRecordWhenNavigationIdle(recordId: string, assignee: string) {
-    if (isNavigationPending()) return;
-    void assignRecord(recordId, assignee);
-  }
-  async function startRecordDiscussion() {
-    if (!selectedRecord) return;
-    try {
-      const result = await platformCommands.startRecordDiscussion(
-        selectedRecord.id,
-      );
-      setNotice(
-        result.ok ? "Record discussion ready in OpenComms." : result.error,
-      );
-    } catch (error) {
-      setNotice(commandError(error, "The discussion could not be started."));
-    }
-  }
-  async function toggleRecordFollow() {
-    if (!selectedRecord) return;
-    try {
-      const result = await platformCommands.toggleFollow(selectedRecord.id);
-      setNotice(
-        result.ok
-          ? result.value
-            ? "Following this record."
-            : "Record follow removed."
-          : result.error,
-      );
-    } catch (error) {
-      setNotice(commandError(error, "The record follow could not be updated."));
-    }
   }
   if (
     platformResource.status === "loading" &&
@@ -453,8 +326,19 @@ export default function SamplePlatform() {
         description="Search, notifications, files, and your account."
       />
       {tab !== "Notifications" ? (
-        <SampleDataNote className="-mt-4">
-          Records, files, and people here are examples.
+        <SampleDataNote
+          className="-mt-4"
+          sourceLabel={tab === "Account & presence" ? "Account" : undefined}
+          ariaLabel={tab === "Account & presence" ? "Account data" : undefined}
+          suffix={
+            tab === "Account & presence"
+              ? "Example changes last until you close this tab."
+              : undefined
+          }
+        >
+          {tab === "Account & presence"
+            ? "Password and device sessions are your real account. Preferences and team presence are examples."
+            : "Records, files, and people here are examples."}
         </SampleDataNote>
       ) : null}
       {notice && (
@@ -473,9 +357,7 @@ export default function SamplePlatform() {
       ) : tab === "Account & presence" ? (
         <Account
           preferences={account}
-          sessions={sessions}
           onAccountChange={platformCommands.updateAccount}
-          onEndSession={platformCommands.endSession}
           pending={platformCommands.isPending}
         />
       ) : tab === "Search" ? (
@@ -517,27 +399,7 @@ export default function SamplePlatform() {
           }
           onCloseDetails={() => navigate("File library", { fileId: "" })}
         />
-      ) : (
-        <Records
-          records={records}
-          people={people}
-          selectedRecord={selectedRecord}
-          followed={followed}
-          assignmentValue={assignmentValue}
-          assignmentError={assignmentError}
-          navigationPending={navigationPending}
-          pendingAssignment={pendingAssignment}
-          pendingDiscussion={pendingDiscussion}
-          pendingFollow={pendingFollow}
-          hasRecordDiscussion={hasRecordDiscussion}
-          isNavigationPending={isNavigationPending}
-          onSelectRecord={selectRecord}
-          onAssignRecord={assignRecordWhenNavigationIdle}
-          onRetryAssignment={retryRecordAssignment}
-          onStartDiscussion={() => void startRecordDiscussion()}
-          onToggleFollow={() => void toggleRecordFollow()}
-        />
-      )}
+      ) : null}
     </div>
   );
 }

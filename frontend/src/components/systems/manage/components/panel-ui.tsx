@@ -95,6 +95,7 @@ export function SettingInput({
   error,
   required = false,
   placeholder,
+  maxLength,
 }: {
   id: string;
   label: string;
@@ -104,6 +105,7 @@ export function SettingInput({
   error?: string | null;
   required?: boolean;
   placeholder?: string;
+  maxLength?: number;
 }) {
   const descriptionId = description ? `${id}-description` : undefined;
   const errorId = error ? `${id}-error` : undefined;
@@ -116,6 +118,7 @@ export function SettingInput({
         id={id}
         value={value}
         required={required}
+        maxLength={maxLength}
         placeholder={placeholder}
         aria-invalid={Boolean(error)}
         aria-describedby={describedBy || undefined}
@@ -136,10 +139,12 @@ export function SettingActions({
   dirty,
   onDiscard,
   onSave,
+  saveLabel = "Save settings",
 }: {
   dirty: boolean;
   onDiscard: () => void;
   onSave: () => void;
+  saveLabel?: string;
 }) {
   return (
     <CardFooter className="flex flex-wrap justify-end gap-2 px-0 pt-4">
@@ -163,7 +168,7 @@ export function SettingActions({
         onClick={onSave}
         disabled={!dirty}
       >
-        Save settings
+        {saveLabel}
       </Button>
     </CardFooter>
   );

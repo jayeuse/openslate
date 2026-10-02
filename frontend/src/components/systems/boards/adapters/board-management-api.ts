@@ -1,13 +1,21 @@
-import { z } from "zod";
 import { ApiContractError, type ApiRequestInit } from "@/lib/api";
+import {
+  assertLifecyclePurgePreviewFor,
+  assertLifecyclePurgeResultFor,
+  lifecyclePurgeInputSchema,
+  lifecyclePurgePreviewSchema,
+  lifecyclePurgeResultSchema,
+} from "@/lib/lifecycle";
+import type {
+  LifecyclePurgeInput,
+  LifecyclePurgePreview,
+  LifecyclePurgeResult,
+} from "@/lib/lifecycle";
 import { queryString, safeBoardJson } from "./board-management-requests";
 import {
   uuidSchema,
   boardSchema,
   boardListSchema,
-  boardPurgePreviewSchema,
-  boardPurgeResultSchema,
-  boardPurgeInputSchema,
   boardGroupsSchema,
   boardGroupsInputSchema,
   boardListOptionsSchema,
@@ -18,17 +26,18 @@ import {
 import type {
   BoardManagementBoard,
   BoardManagementPage,
-  BoardPurgePreview,
   BoardListOptions,
   BoardCreateInput,
   BoardUpdateInput,
   BoardGroups,
   BoardGroupsInput,
 } from "./board-management-schemas";
+export type BoardPurgePreview = LifecyclePurgePreview;
+export type BoardPurgeInput = LifecyclePurgeInput;
+export type BoardPurgeResult = LifecyclePurgeResult;
 export type {
   BoardManagementBoard,
   BoardManagementPage,
-  BoardPurgePreview,
   BoardListOptions,
   BoardCreateInput,
   BoardUpdateInput,
@@ -140,27 +149,24 @@ export async function previewBoardPurge(
   const boardId = uuidSchema.parse(rawBoardId);
   const preview = await safeBoardJson(
     `/boards/${encodeURIComponent(boardId)}/purge/preview`,
-    boardPurgePreviewSchema,
+    lifecyclePurgePreviewSchema,
     { method: "POST" },
   );
-  if (
-    preview.confirmation_name !== boardId ||
-    preview.impact.target_id !== boardId
-  )
-    throw new ApiContractError();
+  assertLifecyclePurgePreviewFor(preview, "board", boardId);
+  if (preview.confirmation_name !== boardId) throw new ApiContractError();
   return preview;
 }
 
 export async function purgeBoard(
   rawBoardId: string,
-  rawInput: z.input<typeof boardPurgeInputSchema>,
-): Promise<z.output<typeof boardPurgeResultSchema>> {
+  rawInput: BoardPurgeInput,
+): Promise<BoardPurgeResult> {
   const boardId = uuidSchema.parse(rawBoardId);
-  const input = boardPurgeInputSchema.parse(rawInput);
+  const input = lifecyclePurgeInputSchema.parse(rawInput);
   if (input.confirmationName !== boardId) throw new ApiContractError();
   const result = await safeBoardJson(
     `/boards/${encodeURIComponent(boardId)}/purge`,
-    boardPurgeResultSchema,
+    lifecyclePurgeResultSchema,
     {
       method: "POST",
       body: JSON.stringify({
@@ -170,11 +176,7 @@ export async function purgeBoard(
       }),
     },
   );
-  if (
-    result.impact.target_id !== boardId ||
-    result.impact.operation !== "purge"
-  )
-    throw new ApiContractError();
+  assertLifecyclePurgeResultFor(result, "board", boardId);
   return result;
 }
 

@@ -366,15 +366,23 @@ export function useCommsDraftText(
 }
 
 /** Clear one account's dedicated draft values during logout/reset. */
-export function clearCommsDraftTextStore(userId?: string): void {
+export function clearCommsDraftTextStore(userId?: string): boolean {
+  let cleared = true;
   const ownedIdPrefix = userId === undefined ? null : `${userId}:`;
   for (const [id, entry] of entries) {
     if (ownedIdPrefix !== null && !id.startsWith(ownedIdPrefix)) continue;
-    entry.reset();
-    entries.delete(id);
+    try {
+      entry.reset();
+      if (entry.getSnapshot().storageUnavailable) cleared = false;
+      else entries.delete(id);
+    } catch {
+      cleared = false;
+    }
   }
   const storage = browserSessionStorage();
+  if (!storage && typeof window !== "undefined") cleared = false;
   if (storage?.key && storage.length !== undefined) {
+    const keys: string[] = [];
     try {
       const ownedStoragePrefix =
         userId === undefined
@@ -382,13 +390,17 @@ export function clearCommsDraftTextStore(userId?: string): void {
           : `${COMMS_DRAFT_TEXT_PREFIX}${encodeURIComponent(ownedIdPrefix!)}`;
       for (let index = 0; index < storage.length; index++) {
         const key = storage.key(index);
-        if (key?.startsWith(ownedStoragePrefix)) {
-          storage.removeItem(key);
-          index -= 1;
-        }
+        if (key?.startsWith(ownedStoragePrefix)) keys.push(key);
       }
     } catch {
-      // The provider's storage warning remains the recovery path.
+      cleared = false;
+    }
+    for (const key of keys) {
+      try {
+        storage.removeItem(key);
+      } catch {
+        cleared = false;
+      }
     }
   }
   if (userId === undefined) {
@@ -398,6 +410,7 @@ export function clearCommsDraftTextStore(userId?: string): void {
     for (const id of knownComposerIds)
       if (id.startsWith(ownedIdPrefix!)) knownComposerIds.delete(id);
   }
+  return cleared;
 }
 
 /** @internal Test seam for the keyed store's non-React behavior. */

@@ -33,6 +33,7 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
     auth = Mock()
     admin_id, member_id, guest_id, session_id = uuid4(), uuid4(), uuid4(), uuid4()
     admin_provider_id, member_provider_id, guest_provider_id = uuid4(), uuid4(), uuid4()
+    provider_account_ids = tuple(sorted((member_provider_id, guest_provider_id), key=str))
     department_id, file_id = uuid4(), uuid4()
     group_id, membership_id, access_id = uuid4(), uuid4(), uuid4()
     admin_email = f"reset-admin-{admin_id}@example.test"
@@ -191,6 +192,7 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
             injected_failure.setattr(
                 execution, "_reset_sandbox_workspace", fail_after_access_deletes
             )
+            auth.list_account_ids.side_effect = (provider_account_ids, ())
             with pytest.raises(reset.ResetError, match="Provider accounts.*profiles were retained"):
                 execution.apply_reset(
                     database,
@@ -211,6 +213,8 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
             assert cursor.fetchone() == (1,)
         assert reset_planning._read_workspace(database) == plan.workspace_snapshot
         assert storage.list_object_keys() == plan.storage_object_keys
+        # Restart the mocked provider fixture for the independent successful attempt.
+        auth.list_account_ids.side_effect = (provider_account_ids, ())
         execution.apply_reset(
             database,
             plan,
@@ -272,8 +276,4 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
             assert cursor.fetchone() == (0,)
     assert storage.list_object_keys() == ()
     auth.require_present.assert_called_with(admin_provider_id)
-    auth.delete_and_verify_missing.assert_called_with(
-        (guest_provider_id, member_provider_id)
-        if str(guest_id) < str(member_id)
-        else (member_provider_id, guest_provider_id)
-    )
+    auth.delete_and_verify_missing.assert_called_with(provider_account_ids)

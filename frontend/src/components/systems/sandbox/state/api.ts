@@ -678,16 +678,6 @@ export function restoreSandboxVersion(
   });
 }
 
-export function rollbackSandboxVersion(
-  request: RevisionRequest & { versionId: string },
-): Promise<SandboxDocumentResponse> {
-  return documentRequest(`${versionPath(request.versionId)}/rollbacks`, {
-    method: "POST",
-    body: jsonBody({ expectedRevision: request.expectedRevision }),
-    signal: request.signal,
-  });
-}
-
 export function importSandboxBundle(
   request: RevisionRequest & { bundle: SandboxDocumentV4 },
 ): Promise<SandboxDocumentResponse> {

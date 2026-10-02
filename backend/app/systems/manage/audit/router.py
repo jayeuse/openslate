@@ -20,7 +20,9 @@ from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit import listeners as _listeners  # noqa: F401
 from app.systems.manage.audit.models import AuditAction, AuditLog, SecurityEvent
 from app.systems.manage.audit.schemas import (
+    AuditLogActorOption,
     AuditLogListResponse,
+    AuditLogOptionsResponse,
     AuditLogResponse,
     SecurityEventIngestRequest,
     SecurityEventListResponse,
@@ -29,7 +31,9 @@ from app.systems.manage.audit.schemas import (
 from app.systems.manage.audit.service import (
     AuditLogSortField,
     SecurityEventSortField,
+    active_actor_names,
     append_security_event,
+    list_audit_log_options,
     list_audit_logs,
     list_security_events,
 )
@@ -41,6 +45,28 @@ internal_security_events_router = APIRouter(
 )
 AdminUser = Annotated[User, Depends(require_admin)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def _require_audit_list_visibility(
+    user: User,
+    db: Session,
+    department_id: UUID | None,
+) -> None:
+    if user.role != UserRole.ADMIN.value and (
+        department_id is None
+        or effective_levels(db, user).department_level(department_id) != AccessLevel.MANAGE
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+
+def _audit_log_response(log: AuditLog, actor_names: dict[UUID, str]) -> AuditLogResponse:
+    actor_name = actor_names.get(log.performed_by) if log.performed_by is not None else None
+    return AuditLogResponse.model_validate(log).model_copy(update={"actor_name": actor_name})
+
+
+def _audit_log_responses(db: Session, logs: list[AuditLog]) -> list[AuditLogResponse]:
+    actor_names = active_actor_names(db, (log.performed_by for log in logs))
+    return [_audit_log_response(log, actor_names) for log in logs]
 
 
 class AuditLogListRequest(StandardListRequest[AuditLogSortField]):
@@ -65,11 +91,7 @@ def get_audit_logs(
     created_after: datetime | None = None,
     created_before: datetime | None = None,
 ) -> AuditLogListResponse:
-    if user.role != UserRole.ADMIN.value and (
-        department_id is None
-        or effective_levels(db, user).department_level(department_id) != AccessLevel.MANAGE
-    ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    _require_audit_list_visibility(user, db, department_id)
     result = list_audit_logs(
         db,
         params,
@@ -83,8 +105,30 @@ def get_audit_logs(
         created_before=created_before,
     )
     return AuditLogListResponse.model_validate(
-        {"items": result.items, "pagination": result.pagination},
+        {"items": _audit_log_responses(db, result.items), "pagination": result.pagination},
         from_attributes=True,
+    )
+
+
+@router.get("/options", response_model=AuditLogOptionsResponse)
+def get_audit_log_options(
+    user: CurrentUser,
+    db: Annotated[Session, Depends(get_db)],
+    department_id: UUID | None = None,
+) -> AuditLogOptionsResponse:
+    _require_audit_list_visibility(user, db, department_id)
+    entity_types, actor_options = list_audit_log_options(db, department_id=department_id)
+    actor_names = active_actor_names(db, (performed_by for performed_by, _ in actor_options))
+    return AuditLogOptionsResponse(
+        entity_types=entity_types,
+        actors=[
+            AuditLogActorOption(
+                performed_by=performed_by,
+                actor_label=actor_label,
+                actor_name=actor_names.get(performed_by),
+            )
+            for performed_by, actor_label in actor_options
+        ],
     )
 
 
@@ -112,7 +156,7 @@ def export_audit_logs(
         created_after=created_after,
         created_before=created_before,
     )
-    return [AuditLogResponse.model_validate(log) for log in result.items[: params.limit]]
+    return _audit_log_responses(db, result.items[: params.limit])
 
 
 @router.get("/{audit_log_id}", response_model=AuditLogResponse)
@@ -124,7 +168,7 @@ def get_audit_log(
     log = db.get(AuditLog, audit_log_id)
     if log is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audit log not found")
-    return AuditLogResponse.model_validate(log)
+    return _audit_log_responses(db, [log])[0]
 
 
 class SecurityEventListRequest(StandardListRequest[SecurityEventSortField]):
@@ -188,7 +232,8 @@ def ingest_security_event(
     provided_key = server_key or ""
     if not expected_key or not secrets.compare_digest(provided_key, expected_key):
         log_event(
-            "security_event_ingestion_failed", level=logging.WARNING,
+            "security_event_ingestion_failed",
+            level=logging.WARNING,
             reason_code="ingestion_rejected",
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid server key")
@@ -198,8 +243,10 @@ def ingest_security_event(
         db.commit()
     except SQLAlchemyError:
         log_event(
-            "security_event_ingestion_failed", level=logging.ERROR,
-            operation_id=payload.operation_id, reason_code="persistence_failed",
+            "security_event_ingestion_failed",
+            level=logging.ERROR,
+            operation_id=payload.operation_id,
+            reason_code="persistence_failed",
         )
         db.rollback()
         raise HTTPException(status_code=503, detail="Security event storage unavailable") from None

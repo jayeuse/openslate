@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 from app.core.base_model import utc_now
 from app.systems.access.policy.models import GroupAccess
@@ -16,7 +17,10 @@ from app.systems.boards.models import Board, BoardGroup, BoardWidget
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
-from app.systems.manage.audit.context import set_audit_actor
+from app.systems.manage.audit.context import get_audit_context, set_audit_actor
+from app.systems.manage.audit.models import SecurityEventOutcome
+from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+from app.systems.manage.audit.service import append_security_event
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
 from app.systems.openview.views.models import SavedView
@@ -174,6 +178,59 @@ def _delete_department_board_children(db: Session, plan: LifecyclePlan) -> None:
         db.flush()
 
 
+def _delete_record_trigger_history(db: Session, plan: LifecyclePlan) -> None:
+    """Delete only validated owned completed history, in RESTRICT-FK order."""
+
+    if plan.target_type is not LifecycleTargetType.RECORD:
+        return
+    for run_id in plan.scope_ids.get("record_trigger_runs", ()):
+        run = db.get(RecordTriggerRun, run_id)
+        if run is None:
+            raise LifecycleUnavailable("Lifecycle operation row is no longer available")
+        db.delete(run)
+    db.flush()
+    events: list[RecordTriggerEvent] = []
+    for event_id in plan.scope_ids.get("record_trigger_events", ()):
+        event = db.get(RecordTriggerEvent, event_id)
+        if event is None:
+            raise LifecycleUnavailable("Lifecycle operation row is no longer available")
+        events.append(event)
+    for child in sorted(
+        (event for event in events if event.root_event_id is not None),
+        key=lambda event: (-event.depth, event.id),
+    ):
+        db.delete(child)
+        db.flush()
+    for root in (event for event in events if event.root_event_id is None):
+        db.delete(root)
+    db.flush()
+
+
+def _record_purge_security_event(db: Session, plan: LifecyclePlan) -> None:
+    context = get_audit_context(db)
+    event_count = len(plan.scope_ids.get("record_trigger_events", ()))
+    run_count = len(plan.scope_ids.get("record_trigger_runs", ()))
+    append_security_event(
+        db,
+        SecurityEventIngestRequest(
+            event_type="lifecycle.record_purge",
+            outcome=SecurityEventOutcome.SUCCESS,
+            source="lifecycle",
+            actor_id=plan.actor_id,
+            subject_id=plan.target_id,
+            operation_id=context.request_id or uuid7(),
+            request_id=context.request_id,
+            request_method=context.request_method,
+            request_path=context.request_path,
+            metadata={
+                "trigger_event_rows_removed": event_count,
+                "trigger_run_rows_removed": run_count,
+                "trigger_history_rows_removed": event_count + run_count,
+            },
+        ),
+    )
+
+
 def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
     """Physically remove a validated plan in dependency-safe audited phases."""
 
@@ -214,6 +271,7 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
             db.flush()
 
     _delete_department_board_children(db, plan)
+    _delete_record_trigger_history(db, plan)
 
     for entity_type in (
         "group_access",
@@ -252,6 +310,8 @@ def _execute(db: Session, plan: LifecyclePlan) -> LifecycleImpactResponse:
     try:
         if plan.operation is LifecycleOperation.PURGE:
             _purge_instances(db, current)
+            if current.target_type is LifecycleTargetType.RECORD:
+                _record_purge_security_event(db, current)
         else:
             timestamp = utc_now()
             instances = _transition_instances(db, current)

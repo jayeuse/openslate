@@ -308,11 +308,14 @@ def test_session_and_session_management_routes_distinguish_setup_and_current_ses
 ) -> None:
     db = Mock(spec=Session)
     user = _user()
+    created_at = datetime.now(UTC)
     current = IdentitySession(
         id=uuid7(),
         user_id=user.id,
         refresh_token_digest="digest",
         csrf_token_digest="csrf",
+        created_at=created_at,
+        refreshed_at=created_at,
         expires_at=datetime.now(UTC) + timedelta(days=1),
     )
     other = IdentitySession(
@@ -320,6 +323,8 @@ def test_session_and_session_management_routes_distinguish_setup_and_current_ses
         user_id=user.id,
         refresh_token_digest="digest",
         csrf_token_digest="csrf",
+        created_at=created_at,
+        refreshed_at=created_at,
         expires_at=datetime.now(UTC) + timedelta(days=1),
     )
     identity = CurrentIdentity(user, current.id, True, False)
@@ -335,7 +340,7 @@ def test_session_and_session_management_routes_distinguish_setup_and_current_ses
     assert auth_router.session_status(_request(method="GET", origin=None), db)["user_id"] == user.id
     db.scalars.return_value.all.return_value = [current, other]
     sessions = sessions_router.list_sessions(identity, db)
-    assert [item["current"] for item in sessions] == [True, False]
+    assert [item.current for item in sessions] == [True, False]
     response = Response()
     monkeypatch.setattr(auth_router, "revoke_session", Mock(return_value=True))
     assert auth_router.revoke_one_session(current.id, identity, response, db) is response

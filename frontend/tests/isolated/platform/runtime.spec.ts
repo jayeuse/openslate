@@ -71,7 +71,6 @@ test("Platform resource snapshot reads cross-feature owners through one loader",
   const calls: string[] = [];
   const values: Record<string, unknown> = {
     records,
-    platformFollowedRecords: ["record-current"],
     platformNotificationPreferences: {
       threads: false,
       records: true,
@@ -84,7 +83,6 @@ test("Platform resource snapshot reads cross-feature owners through one loader",
   });
 
   expect(snapshot.records).toEqual(records);
-  expect(snapshot.followed).toEqual(["record-current"]);
   expect(snapshot.preferences.threads).toBe(false);
   expect(calls).toEqual(
     expect.arrayContaining([
@@ -94,10 +92,7 @@ test("Platform resource snapshot reads cross-feature owners through one loader",
       "comms-configuration",
       "platformNotifications",
       "platformNotificationPreferences",
-      "platformFollowedRecords",
-      "commsRecordThreads",
       "platformAccount",
-      "platformSessions",
     ]),
   );
 });

@@ -1,6 +1,6 @@
 import { expect, test } from "./helpers/test";
 
-test("Platform preserves search-to-file navigation and record changes across sections and reload", async ({
+test("Platform preserves search-to-file navigation across sections and reload", async ({
   page,
 }) => {
   await page.route("**/api/auth/session", (route) =>
@@ -28,33 +28,8 @@ test("Platform preserves search-to-file navigation and record changes across sec
     .getByRole("button", { name: "Close details", exact: true })
     .click();
   await expect(page).not.toHaveURL(/file=/);
-  await page.getByRole("link", { name: "Record actions", exact: true }).click();
-  const assignee = page.getByRole("combobox", {
-    name: "Assign record to",
-    exact: true,
-  });
-  await assignee.selectOption("Unassigned");
-  await expect(page.getByRole("status")).toHaveText(
-    "Record assignment updated.",
-  );
-  await page
-    .getByRole("button", { name: "Follow record", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Unfollow record", exact: true }),
-  ).toBeEnabled();
-  await page
-    .getByRole("button", { name: "Start chat about record", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Record discussion ready", exact: true }),
-  ).toBeEnabled();
   await page.reload();
-  await expect(assignee).toHaveValue("Unassigned");
   await expect(
-    page.getByRole("button", { name: "Unfollow record", exact: true }),
-  ).toBeEnabled();
-  await expect(
-    page.getByRole("button", { name: "Record discussion ready", exact: true }),
-  ).toBeEnabled();
+    page.getByRole("searchbox", { name: "Search files by name" }),
+  ).toBeVisible();
 });

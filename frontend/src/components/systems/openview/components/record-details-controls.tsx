@@ -1,7 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+import { useQuery } from "@tanstack/react-query";
 import { getApiFieldErrors } from "@/lib/api";
+import { lifecycleErrorMessage } from "@/lib/lifecycle";
+import { LifecyclePurgeReview } from "@/components/systems/shared/lifecycle-purge-review";
+import { authMeOptions } from "../adapters/openview-queries";
 import type {
   OpenViewDataSourceField,
   OpenViewRecord,
@@ -10,9 +21,12 @@ import {
   deleteOpenViewRecord,
   getOpenViewRecord,
   isStaleRecordSave,
+  previewRecordPurge,
+  purgeRecord,
   restoreOpenViewRecord,
   updateOpenViewRecord,
 } from "../adapters/records-api";
+import type { LifecyclePurgePreview } from "@/lib/lifecycle";
 import {
   encodeRecordForm,
   initialFormValues,
@@ -90,6 +104,9 @@ export function RecordDetailsControls({
   const [editing, setEditing] = useState<Editing | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
+  const id = useId();
+  const identity = useQuery(authMeOptions());
+  const isAdmin = identity.data?.role === "admin";
   const isEditing = editing !== null;
   useEffect(() => {
     onEditingChange?.(isEditing);
@@ -101,10 +118,23 @@ export function RecordDetailsControls({
     );
   const focusEditButton = () => focusSoon(() => editButtonRef.current);
   const [pending, setPending] = useState<
-    "open" | "save" | "delete" | "restore" | "reload" | null
+    | "open"
+    | "save"
+    | "delete"
+    | "restore"
+    | "reload"
+    | "purge-preview"
+    | "purge"
+    | null
   >(null);
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [purgePreview, setPurgePreview] =
+    useState<LifecyclePurgePreview | null>(null);
+  const [purgeConfirmationName, setPurgeConfirmationName] = useState("");
+  const [purgePassword, setPurgePassword] = useState("");
+  const [purgeReviewAgain, setPurgeReviewAgain] = useState(false);
+  const busy = pending !== null;
 
   const startEditing = async (reload = false) => {
     setPending(reload ? "reload" : "open");
@@ -209,7 +239,73 @@ export function RecordDetailsControls({
     }
   };
 
-  const busy = pending !== null;
+  const clearPurgeReview = () => {
+    setPurgePreview(null);
+    setPurgeConfirmationName("");
+    setPurgePassword("");
+    setPurgeReviewAgain(false);
+  };
+
+  const beginPurgeReview = async () => {
+    if (!isAdmin || !record.isDeleted || busy) return;
+    setPending("purge-preview");
+    setError("");
+    clearPurgeReview();
+    try {
+      const preview = await previewRecordPurge(record.id);
+      setPurgePreview(preview);
+      setPurgeReviewAgain(preview.impact.blockers.length > 0);
+    } catch (caught) {
+      setError(
+        lifecycleErrorMessage(
+          caught,
+          "A permanent-deletion review could not be prepared. Try again.",
+        ),
+      );
+      setPurgeReviewAgain(true);
+    } finally {
+      setPending(null);
+      setPurgePassword("");
+    }
+  };
+
+  const confirmPurge = async () => {
+    if (
+      !isAdmin ||
+      !record.isDeleted ||
+      !purgePreview ||
+      purgePreview.impact.blockers.length > 0 ||
+      purgeConfirmationName !== purgePreview.confirmation_name ||
+      purgePassword.length === 0 ||
+      busy
+    )
+      return;
+    const password = purgePassword;
+    setPending("purge");
+    setError("");
+    try {
+      await purgeRecord(record.id, {
+        token: purgePreview.token,
+        confirmationName: purgePreview.confirmation_name,
+        password,
+      });
+      clearPurgeReview();
+      onChanged("Record permanently deleted.");
+    } catch (caught) {
+      setError(
+        lifecycleErrorMessage(
+          caught,
+          "The record was not permanently deleted. Request a new review and try again.",
+        ),
+      );
+      clearPurgeReview();
+      setPurgeReviewAgain(true);
+    } finally {
+      setPurgePassword("");
+      setPending(null);
+    }
+  };
+
   const editable = canWrite && !record.isDeleted;
 
   return (
@@ -296,30 +392,30 @@ export function RecordDetailsControls({
         </form>
       ) : (
         <>
-          {canWrite ? (
+          {editable ? (
             <div className="flex flex-wrap gap-2">
-              {editable ? (
-                <>
-                  <Button
-                    ref={editButtonRef}
-                    type="button"
-                    className="min-h-11"
-                    disabled={busy}
-                    onClick={() => void startEditing()}
-                  >
-                    {pending === "open" ? "Opening…" : "Edit record"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="text-destructive min-h-11"
-                    disabled={busy}
-                    onClick={() => setConfirmDelete(true)}
-                  >
-                    Delete record
-                  </Button>
-                </>
-              ) : (
+              <Button
+                ref={editButtonRef}
+                type="button"
+                className="min-h-11"
+                disabled={busy}
+                onClick={() => void startEditing()}
+              >
+                {pending === "open" ? "Opening…" : "Edit record"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="text-destructive min-h-11"
+                disabled={busy}
+                onClick={() => setConfirmDelete(true)}
+              >
+                Delete record
+              </Button>
+            </div>
+          ) : record.isDeleted && (canWrite || isAdmin) ? (
+            <div className="flex flex-wrap gap-2">
+              {canWrite ? (
                 <Button
                   type="button"
                   className="min-h-11"
@@ -328,6 +424,107 @@ export function RecordDetailsControls({
                 >
                   {pending === "restore" ? "Restoring…" : "Restore record"}
                 </Button>
+              ) : null}
+              {isAdmin ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="text-destructive min-h-11"
+                  disabled={busy}
+                  onClick={() => void beginPurgeReview()}
+                >
+                  {pending === "purge-preview"
+                    ? "Preparing review…"
+                    : purgeReviewAgain
+                      ? "Review again"
+                      : "Permanently delete"}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          {isAdmin && record.isDeleted && purgePreview ? (
+            <div className="border-border space-y-4 rounded-lg border p-4">
+              <LifecyclePurgeReview impact={purgePreview.impact} />
+              {purgePreview.impact.blockers.length > 0 ? null : (
+                <form
+                  className="space-y-4"
+                  onSubmit={(event: FormEvent<HTMLFormElement>) => {
+                    event.preventDefault();
+                    void confirmPurge();
+                  }}
+                >
+                  <p className="text-sm" role="status">
+                    Type the exact record ID and enter your administrator
+                    password to continue.
+                  </p>
+                  <p className="text-sm">
+                    Record ID: <code className="break-all">{record.id}</code>
+                  </p>
+                  <div className="space-y-2">
+                    <label
+                      htmlFor={`${id}-purge-confirmation`}
+                      className="text-sm font-medium"
+                    >
+                      Type the record ID
+                    </label>
+                    <input
+                      id={`${id}-purge-confirmation`}
+                      value={purgeConfirmationName}
+                      autoComplete="off"
+                      disabled={busy}
+                      className="border-input bg-card text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50"
+                      onChange={(event) =>
+                        setPurgeConfirmationName(event.target.value)
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label
+                      htmlFor={`${id}-purge-password`}
+                      className="text-sm font-medium"
+                    >
+                      Administrator password
+                    </label>
+                    <input
+                      id={`${id}-purge-password`}
+                      type="password"
+                      value={purgePassword}
+                      autoComplete="current-password"
+                      disabled={busy}
+                      className="border-input bg-card text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50"
+                      onChange={(event) => setPurgePassword(event.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="submit"
+                      variant="destructive"
+                      className="min-h-11"
+                      disabled={
+                        busy ||
+                        purgeConfirmationName !==
+                          purgePreview.confirmation_name ||
+                        purgePassword.length === 0
+                      }
+                    >
+                      {pending === "purge"
+                        ? "Deleting…"
+                        : "Confirm permanent deletion"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      disabled={busy}
+                      onClick={() => {
+                        clearPurgeReview();
+                        setError("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
               )}
             </div>
           ) : null}

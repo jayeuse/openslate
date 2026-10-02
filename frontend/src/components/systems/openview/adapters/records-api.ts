@@ -1,5 +1,16 @@
 import { z } from "zod";
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiContractError, ApiError, apiFetch } from "@/lib/api";
+import {
+  assertLifecyclePurgePreviewFor,
+  assertLifecyclePurgeResultFor,
+  lifecyclePurgeInputSchema,
+  lifecyclePurgePreviewSchema,
+  lifecyclePurgeResultSchema,
+} from "@/lib/lifecycle";
+import type {
+  LifecyclePurgeInput,
+  LifecyclePurgePreview,
+} from "@/lib/lifecycle";
 import { openViewReadFetch } from "./openview-access";
 import { serializeOpenViewQueryDefinition } from "./views-serialization";
 import {
@@ -130,6 +141,44 @@ export function restoreOpenViewRecord(
   return apiFetch(`${recordPath(recordId)}/restore`, recordSchema, {
     method: "POST",
   });
+}
+
+export async function previewRecordPurge(
+  rawRecordId: string,
+): Promise<LifecyclePurgePreview> {
+  const recordId = uuidSchema.parse(rawRecordId);
+  const preview = await apiFetch(
+    `${recordPath(recordId)}/purge/preview`,
+    lifecyclePurgePreviewSchema,
+    { method: "POST", cache: "no-store" },
+  );
+  assertLifecyclePurgePreviewFor(preview, "record", recordId);
+  if (preview.confirmation_name !== recordId) throw new ApiContractError();
+  return preview;
+}
+
+export async function purgeRecord(
+  rawRecordId: string,
+  rawInput: LifecyclePurgeInput,
+): Promise<z.output<typeof lifecyclePurgeResultSchema>> {
+  const recordId = uuidSchema.parse(rawRecordId);
+  const input = lifecyclePurgeInputSchema.parse(rawInput);
+  if (input.confirmationName !== recordId) throw new ApiContractError();
+  const result = await apiFetch(
+    `${recordPath(recordId)}/purge`,
+    lifecyclePurgeResultSchema,
+    {
+      method: "POST",
+      cache: "no-store",
+      body: JSON.stringify({
+        token: input.token,
+        confirmation_name: input.confirmationName,
+        password: input.password,
+      }),
+    },
+  );
+  assertLifecyclePurgeResultFor(result, "record", recordId);
+  return result;
 }
 
 /** Whether a save was refused because someone else changed the record. */

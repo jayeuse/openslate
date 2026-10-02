@@ -35,6 +35,7 @@ def test_audit_listing_filters_pagination_detail_and_bounded_export() -> None:
     database.scalars.return_value.all.return_value = [log, log]
     database.scalar.return_value = 3
     database.get.return_value = log
+    database.execute.return_value.all.return_value = []
     params = AuditLogListRequest(
         limit=1,
         offset=2,
@@ -60,6 +61,7 @@ def test_audit_listing_filters_pagination_detail_and_bounded_export() -> None:
     assert result.pagination.total == 3
     assert result.pagination.offset == 2
     assert result.pagination.has_more is False
+    assert result.items[0].actor_name is None
     sql = str(database.scalars.call_args.args[0].compile(dialect=postgresql.dialect()))
     for column in ("action", "entity_type", "entity_id", "performed_by", "request_id"):
         assert f"audit_logs.{column} =" in sql
@@ -71,8 +73,10 @@ def test_audit_listing_filters_pagination_detail_and_bounded_export() -> None:
     detail = get_audit_log(log.id, Mock(), database)
     assert detail.before == log.before and detail.after == log.after
     assert detail.actor_label == log.actor_label and detail.note == log.note
+    assert detail.actor_name is None
     exported = export_audit_logs(Mock(), database, AuditLogExportRequest(limit=1))
     assert len(exported) == 1 and exported[0].id == log.id
+    assert exported[0].actor_name is None
     with pytest.raises(ValueError):
         AuditLogExportRequest(limit=101)
     database.get.return_value = None

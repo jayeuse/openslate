@@ -1,6 +1,7 @@
 """Real Supabase Auth and runtime-role HTTP journeys on the disposable stack."""
 
 import os
+from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
 from unittest.mock import Mock
 from uuid import UUID, uuid4
@@ -10,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 import app.common.dependencies.auth as auth_dependencies
 import app.systems.access.auth.router as auth_router
@@ -127,6 +129,88 @@ def test_browser_session_requires_binding_and_supports_refresh_csrf_and_revocati
             session = db.get(IdentitySession, UUID(active[0]["id"]))
             assert session is not None and session.revoked_at is not None
             assert session.provider_signout_pending_at is not None
+    finally:
+        client.close()
+
+
+def test_own_session_inventory_returns_active_sessions_newest_first_with_user_agents(
+    provider_account,
+) -> None:
+    email, password, provider_id, local_id, owner = provider_account
+    with Session(owner) as db:
+        user = db.get(User, local_id)
+        assert user is not None
+        user.supabase_user_id = provider_id
+        db.commit()
+
+    settings = get_settings()
+    client = TestClient(create_app(), base_url=settings.public_origin)
+    client.headers["Origin"] = settings.public_origin
+    client.headers["User-Agent"] = "OpenSlate test browser/1.0"
+    try:
+        login = client.post("/api/auth/login", json={"email": email, "password": password})
+        assert login.status_code == 200
+        initial = client.get("/api/auth/sessions")
+        assert initial.status_code == 200
+        current_rows = [item for item in initial.json() if item["current"]]
+        assert len(current_rows) == 1
+        current_id = UUID(current_rows[0]["id"])
+
+        now = datetime.now(UTC)
+        with Session(owner) as db:
+            current = db.get(IdentitySession, current_id)
+            assert current is not None
+            current.refreshed_at = now - timedelta(minutes=5)
+
+            newest = IdentitySession(
+                user_id=local_id,
+                refresh_token_digest=uuid7().hex * 2,
+                csrf_token_digest=uuid7().hex * 2,
+                refreshed_at=now - timedelta(minutes=1),
+                expires_at=now + timedelta(days=1),
+                user_agent="Newest active browser/2.0",
+            )
+            oldest = IdentitySession(
+                user_id=local_id,
+                refresh_token_digest=uuid7().hex * 2,
+                csrf_token_digest=uuid7().hex * 2,
+                refreshed_at=now - timedelta(days=1),
+                expires_at=now + timedelta(days=1),
+                user_agent="Old active browser/3.0",
+            )
+            expired = IdentitySession(
+                user_id=local_id,
+                refresh_token_digest=uuid7().hex * 2,
+                csrf_token_digest=uuid7().hex * 2,
+                refreshed_at=now + timedelta(minutes=1),
+                expires_at=now - timedelta(seconds=1),
+                user_agent="Expired browser/4.0",
+            )
+            db.add_all([newest, oldest, expired])
+            db.flush()
+            newest_id = newest.id
+            oldest_id = oldest.id
+            expected_ids = [newest.id, current_id, oldest.id]
+            expired_id = expired.id
+            db.commit()
+
+        response = client.get("/api/auth/sessions")
+        assert response.status_code == 200
+        sessions = response.json()
+        assert [UUID(item["id"]) for item in sessions] == expected_ids
+        assert expired_id not in {UUID(item["id"]) for item in sessions}
+        assert {item["id"]: item["user_agent"] for item in sessions} == {
+            str(newest_id): "Newest active browser/2.0",
+            str(current_id): "OpenSlate test browser/1.0",
+            str(oldest_id): "Old active browser/3.0",
+        }
+
+        openapi = create_app().openapi()
+        response_schema = openapi["paths"]["/api/auth/sessions"]["get"]["responses"]["200"]
+        item_schema = response_schema["content"]["application/json"]["schema"]["items"]
+        assert "$ref" in item_schema
+        component = item_schema["$ref"].rsplit("/", maxsplit=1)[-1]
+        assert "user_agent" in openapi["components"]["schemas"][component]["properties"]
     finally:
         client.close()
 

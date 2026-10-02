@@ -14,7 +14,6 @@ export type PlatformAccount = {
   language: string;
   theme: string;
   presence: string;
-  passwordChanged: boolean;
   signedOut: boolean;
 };
 
@@ -22,20 +21,8 @@ export const INITIAL_PLATFORM_ACCOUNT: PlatformAccount = {
   language: "English",
   theme: "Light",
   presence: "Available",
-  passwordChanged: false,
   signedOut: false,
 };
-
-export type PlatformSession = {
-  id: string;
-  device: string;
-  current: boolean;
-};
-
-export const INITIAL_PLATFORM_SESSIONS: PlatformSession[] = [
-  { id: "sample-current", device: "This browser", current: true },
-  { id: "sample-tablet", device: "Workshop tablet", current: false },
-];
 
 export const PLATFORM_FILES = [
   {
