@@ -121,6 +121,7 @@ export type LifecycleExternalImpact = {
   edge_id: string;
   field_id: string;
   external_record_id: string;
+  external_record_label: string;
   external_module_id: string;
   external_module_name: string;
   external_module_label?: string;

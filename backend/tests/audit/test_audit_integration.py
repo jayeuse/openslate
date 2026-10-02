@@ -1,3 +1,5 @@
+import csv
+import io
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -281,7 +283,7 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
             detail = client.get(f"/api/audit-logs/{rows[0].id}")
             exported = client.get(
                 "/api/audit-logs/export",
-                params={"entity_id": str(entity_id), "limit": 100},
+                params={"entity_id": str(entity_id)},
             )
         finally:
             event.remove(engine, "before_cursor_execute", capture_statement)
@@ -295,10 +297,9 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
         assert listed_item["actor_label"] == "Audit marker"
 
     assert detail.json()["actor_name"] == f"Display Name {token}"
-    exported_by_id = {item["id"]: item for item in exported.json()}
-    assert {log_id: item["actor_name"] for log_id, item in exported_by_id.items()} == {
-        str(row.id): expected_name for row, (_, expected_name) in zip(rows, actors, strict=True)
-    }
+    assert [item["User"] for item in csv.DictReader(io.StringIO(exported.text))] == [
+        name or "Unknown person" for _, name in reversed(actors)
+    ]
 
     lowered_statements = [statement.casefold() for statement in statements]
     actor_queries = [query for query in lowered_statements if "from users" in query]

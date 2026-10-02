@@ -155,17 +155,18 @@ Each pack must author a valid Sandbox document and a nonempty vector set that ca
 
 Source: `backend/operations/sample_control_sandbox.py::plan_sandbox_controls`, `sample_control_sandbox_execution.py`, and `backend/operations/sample_blueprint.py::_build_test_vectors`.
 
-### Audit review
+### Audit review and export
 
-The single `audit_review` action uses ordinary API mutations from the run to produce genuine audit entries. It selects a real list item and follows its ID to detail; options come from the server.
+The two read-only audit actions use the first published module in the supplied pack's catalog and its ordinary API-generated history. The module key/name are existing authored facts; the live module ID comes from the run mapping. Both filter with the UI-supported `entity_type=modules` and `search=<module name>`, then assert each selected entry's owned module ID and exact `target_label`. No new pack field or audit row is required.
 
-| Read | Pack must supply | Correct example | Wrong example |
+| Operation | Pack must supply | Correct example | Wrong example |
 | --- | --- | --- | --- |
-| `GET /api/audit-logs` — list | At least one preceding API mutation attributed to a real run actor. | Select an entry written by a member or administrator performing the sample work. | Insert an audit row directly or fabricate a request ID. |
-| `GET /api/audit-logs/options` — filter options | Ordinary run history from which the server can derive available actors and entity types. | Use the response generated from the real audit table. | Hard-code person or entity options in the pack. |
-| `GET /api/audit-logs/{entry_id}` — detail | A valid entry ID returned by the just-read list. | Read detail for the selected server entry. | Construct a made-up audit ID or use a pack-only logical key. |
+| `audit_review` — list, options and selected detail | A published catalog module with its mapped ID/name and at least one preceding ordinary API mutation. | Read the filtered module history, confirm the list's module ID/label, derive options from the server, and follow a listed entry ID to detail with the same ID/label. | Select an unrelated latest entry, accept a raw UUID or missing label, invent an audit ID, or hard-code options. |
+| `audit_export` — preview and `GET /api/audit-logs/export` | The same natural module history, an administrator, and at most 10,000 filtered rows. | Read the first 10 rows and total under a pinned `created_before` horizon, then download the whole filtered server CSV without `limit`/`offset`; require its count header, parsed row count and preview total to agree, and check owned target labels/content. | Export only the visible page, create a CSV locally, drop the filters/horizon, silently accept truncation, or export all School Standard history without narrowing it. |
 
-Source: `backend/operations/sample_control_actions.py::execute_control_action`.
+Preview and ordinary lists retain the shared pagination shape and `created_at` descending sort. Export checks `text/csv;charset=utf-8`, the `openslate-audit.csv` attachment, `no-store`, `X-Audit-Export-Count`, and the seven columns Date/User/Entity/Action/Target/Before/After through an actual CSV parser. Multiline snapshot cells are preserved; selected preview dates, actors, actions and module-name snapshot content must agree with the downloaded rows, including the server's actor-name trimming and formula-cell escaping. A preview above the cap stops before download, and an unsuccessful or malformed response stops the action. Filtering module history bounds the workload independently of the pack's record count.
+
+Source: `backend/operations/sample_control_actions.py::plan_controls` and `execute_control_action`.
 
 ## Additional read-controls lane
 

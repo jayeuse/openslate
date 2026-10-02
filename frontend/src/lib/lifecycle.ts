@@ -56,6 +56,7 @@ const lifecycleExternalImpactSchema = z
     edge_id: uuidSchema,
     field_id: uuidSchema,
     external_record_id: uuidSchema,
+    external_record_label: z.string().min(1),
     external_module_id: uuidSchema,
     external_module_name: z.string().min(1).max(150),
     external_module_label: z.string().max(150).optional(),

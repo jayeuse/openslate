@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -154,6 +155,54 @@ def test_control_verifier_checks_request_and_all_final_families(
         "verify_sandbox_controls",
     }
     assert all(counts[f"family_{index}"] == 1 for index in range(5))
+
+
+@pytest.mark.parametrize(
+    ("operation", "tamper"),
+    (
+        ("audit_export", None),
+        ("audit_export", "exported"),
+        ("audit_export", "target_label"),
+        ("audit_export", "read_checks"),
+        ("audit_export", "row_count"),
+        ("audit_review", "target_label"),
+    ),
+)
+def test_audit_control_results_require_their_label_and_readback_outcome(
+    tmp_path: Path, monkeypatch, operation: str, tamper: str | None
+) -> None:
+    dataset = build_dataset("small", seed=83, anchor_date=date(2026, 10, 2))
+    module = dataset.organization.catalog.modules[0]
+    end_state = {
+        "exported" if operation == "audit_export" else "reviewed": True,
+        "target_label": module.name,
+        "read_checks": 2 if operation == "audit_export" else 3,
+    }
+    action = replace(
+        _action(
+            kind="audit_controls",
+            operation=operation,
+            status=200,
+            key=f"control:{operation}",
+            target_key=module.key,
+            values={"expected_label": module.name},
+        ),
+        expected_end_state=end_state,
+    )
+    _patch_plan_and_final_verifiers(monkeypatch, action)
+    manifest = _manifest(action, [])
+    result = manifest["control_results"][0]
+    result.update(end_state)
+    if operation == "audit_export":
+        result["row_count"] = 12
+    else:
+        result["audit_id"] = str(uuid4())
+    if tamper == "read_checks" or tamper == "row_count":
+        result[tamper] = True
+    elif tamper is not None:
+        result.pop(tamper)
+    _counts, issues = _verify(tmp_path, manifest, dataset)
+    assert bool(issues) is (tamper is not None)
 
 
 @pytest.mark.parametrize("tamper", ("plan", "result"))

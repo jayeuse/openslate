@@ -117,12 +117,24 @@ def _result_rows(
             issues.append("A sample control action did not complete")
             return None
         if action.kind == "audit_controls":
+            operation = action.values.get("operation")
             if (
-                result.get("read_checks") != 3
-                or _canonical_uuid(result.get("audit_id")) is None
+                operation not in {"audit_review", "audit_export"}
+                or any(
+                    not _same_json_value(result.get(key), value)
+                    for key, value in action.expected_end_state.items()
+                )
                 or result.get("request_evidence") != []
+                or (operation == "audit_review" and _canonical_uuid(result.get("audit_id")) is None)
+                or (
+                    operation == "audit_export"
+                    and (
+                        type(result.get("row_count")) is not int
+                        or not 1 <= result["row_count"] <= 10_000
+                    )
+                )
             ):
-                issues.append("Audit review readback evidence is incomplete")
+                issues.append("Audit control readback evidence is incomplete")
                 return None
     return rows
 

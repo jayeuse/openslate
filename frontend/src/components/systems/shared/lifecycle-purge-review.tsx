@@ -80,9 +80,7 @@ export function LifecyclePurgeReview({ impact }: LifecyclePurgeReviewProps) {
                 key={`${external.edge_id}-${external.external_record_id}`}
                 className="break-words"
               >
-                Link to record{" "}
-                <code className="break-all">{external.external_record_id}</code>{" "}
-                in{" "}
+                Link to {external.external_record_label} in{" "}
                 {external.external_module_label ||
                   external.external_module_name}{" "}
                 (

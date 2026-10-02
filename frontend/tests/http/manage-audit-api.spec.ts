@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import { expect, test, type Route } from "./helpers/test";
+import { mockMfa } from "./helpers/mfa";
 
 const ACTOR_ID = "00000000-0000-4000-8000-000000000201";
 const NULL_LABEL_ACTOR_ID = "00000000-0000-4000-8000-000000000202";
@@ -22,7 +23,70 @@ type AuditLogFixture = {
   actor_label: string | null;
   actor_name: string | null;
   note: string | null;
+  target_label?: string;
 };
+
+const CSV_HEADER =
+  '"Date","User","Entity","Action","Target","Before","After"\r\n';
+
+function wireAuditLog(log: AuditLogFixture) {
+  const snapshot = [
+    log.after?.name,
+    log.after?.title,
+    log.before?.name,
+    log.before?.title,
+  ].find(
+    (value): value is string =>
+      typeof value === "string" && Boolean(value.trim()),
+  );
+  return {
+    ...log,
+    target_label:
+      log.target_label ??
+      snapshot ??
+      `${humanize(log.entity_type)} · name unavailable`,
+  };
+}
+
+function humanize(value: string): string {
+  return value
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function fixtureCsv(logs: AuditLogFixture[]): string {
+  function quote(value: string) {
+    const neutral = /^\s*[=+\-@]/.test(value) ? `'${value}` : value;
+    return `"${neutral.replaceAll('"', '""')}"`;
+  }
+  function values(
+    value: Record<string, unknown> | null,
+    empty: string,
+  ): string {
+    if (!value || !Object.keys(value).length) return empty;
+    return Object.entries(value)
+      .map(
+        ([key, item]) =>
+          `${humanize(key)}: ${typeof item === "object" ? JSON.stringify(item) : String(item)}`,
+      )
+      .join("\n");
+  }
+  const rows = logs.map((log) =>
+    [
+      log.created_at,
+      log.actor_name?.trim() || "Unknown person",
+      humanize(log.entity_type),
+      humanize(log.action),
+      wireAuditLog(log).target_label,
+      values(log.before, "No previous values recorded."),
+      values(log.after, "No updated values recorded."),
+    ]
+      .map(quote)
+      .join(","),
+  );
+  return [CSV_HEADER.slice(0, -2), ...rows].join("\r\n");
+}
 
 function fixtureId(value: number): string {
   return `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
@@ -64,20 +128,32 @@ function matchesDate(value: string, bound: string | null): boolean {
 function createAuditRoute(logs: AuditLogFixture[]) {
   const requests: URL[] = [];
   const details: URL[] = [];
+  const exports: URL[] = [];
+  const exportBodies: string[] = [];
   let listDenied = false;
+  let listUnavailable = false;
   let detailDenied = false;
 
   return {
     requests,
     details,
+    exports,
+    exportBodies,
     denyList() {
       listDenied = true;
     },
     allowList() {
       listDenied = false;
+      listUnavailable = false;
+    },
+    failList() {
+      listUnavailable = true;
     },
     denyDetails() {
       detailDenied = true;
+    },
+    allowDetails() {
+      detailDenied = false;
     },
     async handle(route: Route) {
       const url = new URL(route.request().url());
@@ -123,7 +199,10 @@ function createAuditRoute(logs: AuditLogFixture[]) {
         });
         return;
       }
-      if (url.pathname !== "/api/audit-logs") {
+      if (
+        url.pathname !== "/api/audit-logs" &&
+        url.pathname !== "/api/audit-logs/export"
+      ) {
         details.push(url);
         if (detailDenied) {
           await route.fulfill({
@@ -137,16 +216,19 @@ function createAuditRoute(logs: AuditLogFixture[]) {
         );
         await route.fulfill({
           status: selected ? 200 : 404,
-          json: selected ? selected : { detail: "Audit log not found" },
+          json: selected
+            ? wireAuditLog(selected)
+            : { detail: "Audit log not found" },
         });
         return;
       }
 
-      requests.push(url);
-      if (listDenied) {
+      const exporting = url.pathname === "/api/audit-logs/export";
+      (exporting ? exports : requests).push(url);
+      if (listDenied || listUnavailable) {
         await route.fulfill({
-          status: 403,
-          json: { detail: "Forbidden" },
+          status: listDenied ? 403 : 503,
+          json: { detail: listDenied ? "Forbidden" : "Unavailable" },
         });
         return;
       }
@@ -194,12 +276,40 @@ function createAuditRoute(logs: AuditLogFixture[]) {
           sortOrder * left.created_at.localeCompare(right.created_at),
       );
 
+      if (exporting) {
+        if (filtered.length > 10_000) {
+          await route.fulfill({
+            status: 409,
+            json: {
+              detail: {
+                code: "audit_export_limit",
+                message:
+                  "Audit exports support up to 10,000 entries. Narrow your filters and try again.",
+              },
+            },
+          });
+          return;
+        }
+        const csv = fixtureCsv(filtered);
+        exportBodies.push(csv);
+        await route.fulfill({
+          body: csv,
+          headers: {
+            "Content-Type": "text/csv;charset=utf-8",
+            "Content-Disposition": 'attachment; filename="openslate-audit.csv"',
+            "Cache-Control": "no-store",
+            "X-Audit-Export-Count": String(filtered.length),
+          },
+        });
+        return;
+      }
+
       const limit = Number(params.get("limit") ?? 20);
       const offset = Number(params.get("offset") ?? 0);
       const items = filtered.slice(offset, offset + limit);
       await route.fulfill({
         json: {
-          items,
+          items: items.map(wireAuditLog),
           pagination: {
             limit,
             offset,
@@ -417,15 +527,21 @@ test("Audit paging is server-backed and detail reads the selected audit ID", asy
   ).toBeVisible();
 });
 
-test("Audit export downloads every filtered server page and blocks a failed stale preparation until Retry succeeds", async ({
+test("Audit export downloads server CSV beyond one page and blocks a failed stale preview until Retry succeeds", async ({
   page,
 }, testInfo) => {
   await page.clock.install({ time: new Date("2026-10-01T09:00:00Z") });
   const logs = makeAuditLogs(123);
+  logs[0]!.target_label = "  =SUM(1,2)";
+  logs[0]!.actor_name = 'Export person, "quoted"';
   const api = createAuditRoute(logs);
   let retryResponseGate = Promise.resolve();
   await page.route("**/api/audit-logs**", async (route) => {
-    if (new URL(route.request().url()).searchParams.get("limit") === "100")
+    const url = new URL(route.request().url());
+    if (
+      url.pathname === "/api/audit-logs" &&
+      url.searchParams.has("created_before")
+    )
       await retryResponseGate;
     await api.handle(route);
   });
@@ -460,18 +576,10 @@ test("Audit export downloads every filtered server page and blocks a failed stal
   await expect(preview.getByLabel("CSV preview")).not.toContainText(
     logs[122]!.entity_id!,
   );
-  await expect
-    .poll(
-      () =>
-        api.requests.filter((url) => url.searchParams.get("limit") === "100")
-          .length,
-    )
-    .toBe(2);
   expect(
-    api.requests
-      .filter((url) => url.searchParams.get("limit") === "100")
-      .map((url) => url.searchParams.get("offset")),
-  ).toEqual(["0", "100"]);
+    api.requests.every((url) => Number(url.searchParams.get("limit")) <= 10),
+  ).toBe(true);
+  expect(api.exports).toHaveLength(0);
 
   const downloadStarted = page.waitForEvent("download");
   await preview
@@ -483,16 +591,26 @@ test("Audit export downloads every filtered server page and blocks a failed stal
   await download.saveAs(csvPath);
   const csv = await readFile(csvPath, "utf8");
   expect(csv.trimEnd().split(/\r?\n/)).toHaveLength(124);
+  expect(csv).toBe(api.exportBodies[0]);
+  expect(csv).toContain('"Export person, ""quoted"""');
+  expect(csv).toContain('"\'  =SUM(1,2)"');
+  expect(api.exports).toHaveLength(1);
+  const exported = api.exports[0]!.searchParams;
+  expect(exported.get("created_after")).toBe("2026-08-31T16:00:00.000Z");
+  expect(exported.get("created_before")).toBe("2026-09-12T15:59:59.999Z");
+  expect(exported.get("sort_order")).toBe("desc");
+  expect(exported.has("limit")).toBe(false);
+  expect(exported.has("offset")).toBe(false);
 
   await expect(preview).not.toBeVisible();
-  api.denyList();
+  api.failList();
   // Reopening the same export after its cache goes stale refetches while
   // retaining the successful preparation; no query internals are injected.
   await page.clock.setSystemTime(new Date("2026-10-01T09:01:00Z"));
   await page.getByRole("button", { name: "Export audit preview" }).click();
   const preparationError = preview.getByRole("alert");
   await expect(preparationError).toContainText(
-    "Could not load every filtered audit entry. Try again.",
+    "Audit export preview could not be loaded. Try again.",
   );
   const downloadCsv = preview.getByRole("button", {
     name: "Download CSV",
@@ -512,7 +630,7 @@ test("Audit export downloads every filtered server page and blocks a failed stal
       const url = new URL(request.url());
       return (
         url.pathname === "/api/audit-logs" &&
-        url.searchParams.get("limit") === "100" &&
+        url.searchParams.get("limit") === "10" &&
         url.searchParams.get("offset") === "0"
       );
     });
@@ -535,13 +653,14 @@ test("Audit export downloads every filtered server page and blocks a failed stal
     const recoveredCsv = await readFile(recoveredCsvPath, "utf8");
     expect(recoveredCsv.trimEnd().split(/\r?\n/)).toHaveLength(124);
     expect(recoveredCsv).toContain("retry succeeded");
+    expect(recoveredCsv).toBe(api.exportBodies[1]);
     expect(downloads).toBe(2);
   } finally {
     releaseRetry?.();
   }
 });
 
-test("Audit list and detail expose denied states and recover after access returns", async ({
+test("Audit unscoped reads and export hide cached data on refusal until explicit fresh Retry", async ({
   page,
 }) => {
   const logs = makeAuditLogs();
@@ -568,12 +687,402 @@ test("Audit list and detail expose denied states and recover after access return
       exact: true,
     })
     .click();
-  const details = page.getByRole("dialog");
+  await expect(listDenied).toBeVisible();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
   await expect(
-    details.getByRole("alert").filter({
-      hasText: "You do not have permission to view this audit entry.",
-    }),
+    page.getByRole("table", { name: "Activity history table" }),
+  ).not.toBeVisible();
+  api.allowDetails();
+  await listDenied.getByRole("button", { name: "Retry" }).click();
+  await expect(
+    page.getByRole("table", { name: "Activity history table" }),
   ).toBeVisible();
+
+  await page.getByRole("button", { name: "Export audit preview" }).click();
+  const preview = page.getByRole("dialog", {
+    name: "Audit export preview",
+    exact: true,
+  });
+  await expect(
+    preview.getByRole("button", { name: "Download CSV", exact: true }),
+  ).toBeEnabled();
+  api.denyList();
+  let downloads = 0;
+  page.on("download", () => {
+    downloads += 1;
+  });
+  await preview
+    .getByRole("button", { name: "Download CSV", exact: true })
+    .click();
+  await expect(listDenied).toBeVisible();
+  await expect(preview).not.toBeVisible();
+  await expect(
+    page.getByRole("table", { name: "Activity history table" }),
+  ).not.toBeVisible();
+  await page
+    .getByRole("combobox", { name: "Sort activity" })
+    .selectOption("oldest");
+  await expect(listDenied).toBeVisible();
+  await expect(
+    page.getByRole("table", { name: "Activity history table" }),
+  ).not.toBeVisible();
+  expect(downloads).toBe(0);
+  api.allowList();
+  await page.getByRole("link", { name: "Organization", exact: true }).click();
+  await expect(page).toHaveURL(/view=organization/);
+  await expect(
+    page.getByRole("heading", { name: "Organization", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Audit", exact: true }).click();
+  await expect(page).toHaveURL(/view=audit/);
+  await expect(listDenied).toBeVisible();
+  await expect(
+    page.getByRole("table", { name: "Activity history table" }),
+  ).not.toBeVisible();
+  await page
+    .getByRole("combobox", { name: "Sort activity" })
+    .selectOption("oldest");
+  await listDenied.getByRole("button", { name: "Retry" }).click();
+  await expect(
+    page.getByRole("table", { name: "Activity history table" }),
+  ).toBeVisible();
+  expect(api.requests.at(-1)?.searchParams.get("sort_order")).toBe("asc");
+});
+
+for (const code of ["mfa_required", "ip_not_allowed"] as const) {
+  test(`Audit coded export refusal ${code} delegates to the existing session gate and resumes without an admin latch`, async ({
+    page,
+  }) => {
+    const state = await mockMfa(page, { verified: true, aal2: true });
+    const api = createAuditRoute(makeAuditLogs());
+    let blocked = true;
+    let sessionChecks = 0;
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/auth/session")
+        sessionChecks += 1;
+    });
+    await page.route("**/api/audit-logs**", async (route) => {
+      if (
+        new URL(route.request().url()).pathname === "/api/audit-logs/export" &&
+        blocked
+      ) {
+        await route.fulfill({
+          status: 403,
+          json: {
+            detail: {
+              code,
+              message:
+                code === "mfa_required"
+                  ? "Complete multi-factor authentication to continue"
+                  : "Access from this address is not allowed",
+            },
+          },
+        });
+        return;
+      }
+      await api.handle(route);
+    });
+    await page.goto("/manage?view=audit");
+    const table = page.getByRole("table", { name: "Activity history table" });
+    await expect(table).toBeVisible();
+    await page.getByRole("button", { name: "Export audit preview" }).click();
+    const preview = page.getByRole("dialog", {
+      name: "Audit export preview",
+      exact: true,
+    });
+    await expect(
+      preview.getByRole("button", { name: "Download CSV", exact: true }),
+    ).toBeEnabled();
+    const before = sessionChecks;
+    if (code === "mfa_required")
+      state.actors.get(state.userId)!.assurance = "aal1";
+    else state.networkDenied = true;
+    await preview
+      .getByRole("button", { name: "Download CSV", exact: true })
+      .click();
+    const curtain = page.getByRole("dialog", {
+      name: "Session verification",
+      exact: true,
+    });
+    await expect(curtain).toBeVisible();
+    if (code === "mfa_required")
+      await expect(
+        curtain.getByRole("heading", {
+          name: "Complete multi-factor authentication",
+          exact: true,
+        }),
+      ).toBeVisible();
+    else
+      await expect(
+        curtain
+          .getByRole("alert")
+          .filter({ hasText: "address is not allowed" }),
+      ).toBeVisible();
+    await expect(table).not.toBeVisible();
+    await expect(preview).not.toBeVisible();
+    expect(sessionChecks).toBeGreaterThan(before);
+    blocked = false;
+    state.actors.get(state.userId)!.assurance = "aal2";
+    state.networkDenied = false;
+    await curtain
+      .getByRole("button", {
+        name: code === "mfa_required" ? "Retry session check" : "Retry",
+        exact: true,
+      })
+      .click();
+    await expect(curtain).not.toBeVisible();
+    await expect(table).toBeVisible();
+    await expect(
+      page.getByText("Only administrators can view audit history.", {
+        exact: true,
+      }),
+    ).not.toBeVisible();
+    expect(state.calls.filter((call) => call.method === "POST")).toHaveLength(
+      0,
+    );
+    await page.getByRole("button", { name: "Export audit preview" }).click();
+    await expect(
+      preview.getByRole("button", { name: "Download CSV", exact: true }),
+    ).toBeEnabled();
+    const downloaded = page.waitForEvent("download");
+    await preview
+      .getByRole("button", { name: "Download CSV", exact: true })
+      .click();
+    expect((await downloaded).suggestedFilename()).toBe("openslate-audit.csv");
+  });
+}
+
+test("Audit CSV failure retains its pinned preview and Retry refuses malformed or oversized responses", async ({
+  page,
+}, testInfo) => {
+  await page.clock.install({ time: new Date("2026-10-01T09:00:00Z") });
+  const api = createAuditRoute(makeAuditLogs(12));
+  let failure: "unavailable" | "media" | "count" | "cap" | null = "unavailable";
+  const downloads: string[] = [];
+  const requests: URL[] = [];
+  page.on("download", (download) =>
+    downloads.push(download.suggestedFilename()),
+  );
+  await page.route("**/api/audit-logs**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/audit-logs/export") {
+      requests.push(url);
+      if (failure === "unavailable")
+        return route.fulfill({
+          status: 503,
+          json: { detail: "Private upstream diagnostic" },
+        });
+      if (failure === "cap")
+        return route.fulfill({
+          status: 409,
+          json: {
+            detail: {
+              code: "audit_export_limit",
+              message:
+                "Audit exports support up to 10,000 entries. Narrow your filters and try again.",
+            },
+          },
+        });
+      if (failure)
+        return route.fulfill({
+          body: CSV_HEADER,
+          headers: {
+            "Content-Type":
+              failure === "media" ? "text/html" : "text/csv;charset=utf-8",
+            "Content-Disposition": 'attachment; filename="openslate-audit.csv"',
+            "Cache-Control": "no-store",
+            "X-Audit-Export-Count": "10001",
+          },
+        });
+    }
+    await api.handle(route);
+  });
+  await page.goto("/manage?view=audit");
+  await expect(
+    page.getByRole("table", { name: "Activity history table" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Export audit preview" }).click();
+  const preview = page.getByRole("dialog", {
+    name: "Audit export preview",
+    exact: true,
+  });
+  await expect(
+    preview.getByRole("button", { name: "Download CSV", exact: true }),
+  ).toBeEnabled();
+  await preview
+    .getByRole("button", { name: "Download CSV", exact: true })
+    .click();
+  const alert = preview.getByRole("alert");
+  await expect(alert).toContainText(
+    "Audit CSV could not be downloaded. Try again.",
+  );
+  await expect(preview.getByLabel("CSV preview")).toContainText("Mara Santos");
+  await expect(preview).not.toContainText("Private upstream diagnostic");
+  const cutoff = requests[0]!.searchParams.get("created_before");
+  await page.clock.setSystemTime(new Date("2026-10-01T09:05:00Z"));
+  for (const next of ["media", "count", "cap"] as const) {
+    failure = next;
+    await alert.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(alert).toContainText(
+      next === "cap"
+        ? "Audit exports support up to 10,000 entries. Narrow your filters and try again."
+        : "Audit CSV could not be downloaded. Try again.",
+    );
+    expect(downloads).toHaveLength(0);
+  }
+  failure = null;
+  const downloaded = page.waitForEvent("download");
+  await alert.getByRole("button", { name: "Retry", exact: true }).click();
+  const download = await downloaded;
+  const path = testInfo.outputPath("audit-retried.csv");
+  await download.saveAs(path);
+  expect(await readFile(path, "utf8")).toBe(api.exportBodies[0]);
+  expect(downloads).toEqual(["openslate-audit.csv"]);
+  expect(requests).toHaveLength(5);
+  expect(
+    requests.every((url) => url.searchParams.get("created_before") === cutoff),
+  ).toBe(true);
+  await expect(preview).not.toBeVisible();
+});
+
+test("Audit Close, Escape, route leave and session concealment suppress pending CSV downloads", async ({
+  page,
+}) => {
+  const api = createAuditRoute(makeAuditLogs());
+  let hold: {
+    response: Promise<void>;
+    release: () => void;
+    handled: Promise<void>;
+    finish: () => void;
+  } | null = null;
+  let started = 0;
+  let downloads = 0;
+  page.on("download", () => {
+    downloads += 1;
+  });
+  await page.route("**/api/audit-logs**", async (route) => {
+    if (
+      new URL(route.request().url()).pathname === "/api/audit-logs/export" &&
+      hold
+    ) {
+      const captured = hold;
+      started += 1;
+      await captured.response;
+      try {
+        await api.handle(route);
+      } finally {
+        captured.finish();
+      }
+      return;
+    }
+    await api.handle(route);
+  });
+  for (const method of ["Close", "Escape", "leave", "blur"] as const) {
+    await page.goto("/manage?view=organization");
+    await expect(
+      page.getByRole("heading", { name: "Organization", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: "Audit", exact: true }).click();
+    await expect(page).toHaveURL(/view=audit/);
+    await expect(
+      page.getByRole("table", { name: "Activity history table" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Export audit preview" }).click();
+    const preview = page.getByRole("dialog", {
+      name: "Audit export preview",
+      exact: true,
+    });
+    await expect(
+      preview.getByRole("button", { name: "Download CSV", exact: true }),
+    ).toBeEnabled();
+    let release!: () => void;
+    let finish!: () => void;
+    hold = {
+      response: new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+      release: () => release(),
+      handled: new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+      finish: () => finish(),
+    };
+    const barrier = hold;
+    const before = started;
+    try {
+      await preview
+        .getByRole("button", { name: "Download CSV", exact: true })
+        .click();
+      await expect.poll(() => started).toBe(before + 1);
+      await expect(
+        preview.getByRole("button", { name: "Download CSV", exact: true }),
+      ).toBeDisabled();
+      if (method === "Close")
+        await preview
+          .getByRole("button", { name: "Close preview", exact: true })
+          .click();
+      if (method === "Escape") await page.keyboard.press("Escape");
+      if (method === "blur") {
+        await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+        await expect(
+          page.getByRole("dialog", {
+            name: "Session verification",
+            exact: true,
+          }),
+        ).toBeVisible();
+      }
+      if (method === "leave") {
+        await page.goBack();
+        await expect(page).toHaveURL(/view=organization/);
+        await expect(
+          page.getByRole("heading", { name: "Organization", exact: true }),
+        ).toBeVisible();
+      }
+      await expect(preview).not.toBeVisible();
+      barrier.release();
+      await barrier.handled;
+      if (method === "blur") {
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await expect(
+          page.getByRole("dialog", {
+            name: "Session verification",
+            exact: true,
+          }),
+        ).not.toBeVisible();
+        await expect(preview).toBeVisible();
+        await expect(
+          preview.getByRole("button", { name: "Download CSV", exact: true }),
+        ).toBeEnabled();
+        await preview
+          .getByRole("button", { name: "Close preview", exact: true })
+          .click();
+      }
+      expect(downloads).toBe(0);
+      await expect(
+        page.getByText(/Downloaded \d+ filtered audit/),
+      ).not.toBeVisible();
+    } finally {
+      barrier.release();
+      hold = null;
+    }
+  }
+  await page.getByRole("link", { name: "Audit", exact: true }).click();
+  await expect(page).toHaveURL(/view=audit/);
+  await page.getByRole("button", { name: "Export audit preview" }).click();
+  const preview = page.getByRole("dialog", {
+    name: "Audit export preview",
+    exact: true,
+  });
+  await expect(
+    preview.getByRole("button", { name: "Download CSV", exact: true }),
+  ).toBeEnabled();
+  const downloaded = page.waitForEvent("download");
+  await preview
+    .getByRole("button", { name: "Download CSV", exact: true })
+    .click();
+  await downloaded;
+  await expect(preview).not.toBeVisible();
+  expect(downloads).toBe(1);
 });
 
 test("Audit shows server actor names, meaningful targets and workspace-local date and time", async ({
@@ -597,7 +1106,7 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
         })
       : route.fulfill({ status: 503, json: { detail: "Unavailable" } }),
   );
-  const logs = makeAuditLogs(3);
+  const logs = makeAuditLogs(4);
   logs[1]!.actor_label = "Historical person label";
   logs[1]!.actor_name = null;
   logs[2]!.performed_by = UNKNOWN_ACTOR_ID;
@@ -610,6 +1119,9 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
   logs[1]!.actor_label = "Historical person label";
   logs[1]!.before = { name: "Closed team" };
   logs[1]!.after = null;
+  logs[2]!.after = { data: { title_field: "[REDACTED]" } };
+  logs[2]!.target_label = "Record · name unavailable";
+  logs[3]!.target_label = "Authorized current person";
   const api = createAuditRoute(logs);
   await page.route("**/api/audit-logs**", async (route) => {
     if (
@@ -618,10 +1130,11 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
     ) {
       await route.fulfill({
         json: {
-          ...logs[0],
+          ...wireAuditLog(logs[0]!),
           actor_name: "Fresh detail name",
           created_at: "2026-09-12T13:45:00Z",
           after: { title: "Fresh detail title" },
+          target_label: "Fresh detail title",
         },
       });
       return;
@@ -652,7 +1165,10 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
   ).toBeVisible();
   await expect(table.getByText("Closed team", { exact: true })).toBeVisible();
   await expect(
-    table.getByText("Record · name not recorded", { exact: true }),
+    table.getByText("Record · name unavailable", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    table.getByText("Authorized current person", { exact: true }),
   ).toBeVisible();
   await expect(table).not.toContainText(logs[2]!.entity_id!);
   await page.getByRole("button", { name: "More filters" }).click();
@@ -688,13 +1204,13 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
   await detail.getByRole("button", { name: "Close detail" }).click();
   await page
     .getByRole("button", {
-      name: "View audit Record · name not recorded",
+      name: "View audit Record · name unavailable",
       exact: true,
     })
     .click();
   await expect(
     page.getByRole("heading", {
-      name: "Audit entry detail · Record · name not recorded",
+      name: "Audit entry detail · Record · name unavailable",
       exact: true,
     }),
   ).toBeVisible();
@@ -812,13 +1328,13 @@ test("Audit export uses the last settled search while a newer search is debounci
   await expect
     .poll(() =>
       api.requests
-        .find((url) => url.searchParams.get("limit") === "100")
+        .find((url) => url.searchParams.get("created_before"))
         ?.searchParams.get("search"),
     )
     .toBe("delete");
 });
 
-test("Audit export pins the opening horizon through retry and subsequent pages", async ({
+test("Audit export pins the opening horizon through preview retry and server CSV download", async ({
   page,
 }, testInfo) => {
   await page.clock.install({ time: new Date("2026-10-01T09:00:00Z") });
@@ -831,13 +1347,13 @@ test("Audit export pins the opening horizon through retry and subsequent pages",
   const exportRequests: URL[] = [];
   await page.route("**/api/audit-logs**", async (route) => {
     const url = new URL(route.request().url());
-    if (url.searchParams.get("limit") === "100") {
+    if (url.searchParams.get("created_before") === "2026-10-01T09:00:00.000Z") {
       exportRequests.push(url);
       if (failExport) {
         await route.fulfill({ status: 503, json: { detail: "Unavailable" } });
         return;
       }
-      if (url.searchParams.get("offset") === "100" && !addedConcurrentEntry) {
+      if (url.pathname === "/api/audit-logs/export" && !addedConcurrentEntry) {
         addedConcurrentEntry = true;
         logs.push({
           ...logs[0]!,
@@ -875,13 +1391,6 @@ test("Audit export pins the opening horizon through retry and subsequent pages",
   await expect(
     preview.getByRole("button", { name: "Download CSV", exact: true }),
   ).toBeEnabled();
-  expect(
-    exportRequests.map((url) => url.searchParams.get("created_before")),
-  ).toEqual([
-    "2026-10-01T09:00:00.000Z",
-    "2026-10-01T09:00:00.000Z",
-    "2026-10-01T09:00:00.000Z",
-  ]);
   await expect(preview).toContainText("102 filtered entries");
   const downloaded = page.waitForEvent("download");
   await preview
@@ -894,11 +1403,23 @@ test("Audit export pins the opening horizon through retry and subsequent pages",
   expect(csv.trimEnd().split(/\r?\n/)).toHaveLength(103);
   expect(csv).toContain("Export person");
   expect(csv).not.toContain("Concurrent future entry");
+  expect(
+    exportRequests.filter((url) => url.pathname === "/api/audit-logs/export"),
+  ).toHaveLength(1);
+  expect(
+    exportRequests.every(
+      (url) =>
+        url.searchParams.get("created_before") === "2026-10-01T09:00:00.000Z",
+    ),
+  ).toBe(true);
+  expect(
+    api.requests.every((url) => Number(url.searchParams.get("limit")) <= 10),
+  ).toBe(true);
 });
 
-test("Audit export refuses more than 10000 rows with guidance to narrow filters", async ({
+test("Audit export refuses more than 10000 rows and exports the header after filters narrow to zero", async ({
   page,
-}) => {
+}, testInfo) => {
   const api = createAuditRoute(makeAuditLogs(10001));
   await page.route("**/api/audit-logs**", (route) => api.handle(route));
   await page.goto("/manage?view=audit");
@@ -917,6 +1438,39 @@ test("Audit export refuses more than 10000 rows with guidance to narrow filters"
     preview.getByRole("button", { name: "Download CSV", exact: true }),
   ).toBeDisabled();
   expect(
-    api.requests.filter((url) => url.searchParams.get("limit") === "100"),
-  ).toHaveLength(1);
+    api.requests.every((url) => Number(url.searchParams.get("limit")) <= 10),
+  ).toBe(true);
+  expect(api.exports).toHaveLength(0);
+  await preview
+    .getByRole("button", { name: "Close preview", exact: true })
+    .click();
+  await page
+    .getByRole("searchbox", { name: "Search activity", exact: true })
+    .fill("no matching activity");
+  await expect(
+    page.getByText("No audit entries match these filters", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Export audit preview" }).click();
+  await expect(preview).toContainText("0 filtered entries");
+  await expect(
+    preview.getByRole("button", { name: "Download CSV", exact: true }),
+  ).toBeEnabled();
+  const downloaded = page.waitForEvent("download", { timeout: 5000 });
+  await preview
+    .getByRole("button", { name: "Download CSV", exact: true })
+    .click();
+  const download = await downloaded;
+  const path = testInfo.outputPath("audit-empty.csv");
+  await download.saveAs(path);
+  expect(await readFile(path, "utf8")).toBe(
+    '"Date","User","Entity","Action","Target","Before","After"',
+  );
+  expect(api.exports).toHaveLength(1);
+  expect(api.exports[0]!.searchParams.get("search")).toBe(
+    "no matching activity",
+  );
+  await expect(preview).not.toBeVisible();
+  await expect(
+    page.getByText("Downloaded 0 filtered audit entries.", { exact: true }),
+  ).toBeVisible();
 });

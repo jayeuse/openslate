@@ -423,6 +423,7 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
           edge_id: actorId,
           field_id: actorId,
           external_record_id: departmentId,
+          external_record_label: "Dispatch handoff 24",
           external_module_id: departmentId,
           external_module_name: "Dispatch records",
           external_department_id: departmentId,
@@ -494,6 +495,9 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
   await expect(manage.getByText(boardId, { exact: true })).toBeVisible();
   await expect(manage.getByLabel("Administrator password")).toBeVisible();
   await expect(manage.getByText(/Dispatch records.*Operations/)).toBeVisible();
+  await expect(
+    manage.getByText(/Dispatch handoff 24.*Dispatch records.*Operations/),
+  ).toBeVisible();
   const confirm = manage.getByRole("button", {
     name: "Confirm permanent deletion",
     exact: true,

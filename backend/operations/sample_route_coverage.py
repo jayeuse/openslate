@@ -43,6 +43,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("GET", "/api/access/groups/{group_id}"),
         ("GET", "/api/access/member-candidates"),
         ("GET", "/api/audit-logs"),
+        ("GET", "/api/audit-logs/export"),
         ("GET", "/api/audit-logs/options"),
         ("GET", "/api/audit-logs/{audit_log_id}"),
         ("GET", "/api/auth/me"),

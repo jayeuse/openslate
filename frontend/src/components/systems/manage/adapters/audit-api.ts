@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch } from "@/lib/api";
+import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
 
 const auditActionSchema = z.enum(["create", "update", "delete"]);
 
@@ -19,6 +19,7 @@ const auditLogSchema = z.object({
   request_path: z.string().nullable(),
   actor_label: z.string().nullable(),
   actor_name: z.string().nullable(),
+  target_label: z.string().min(1),
   note: z.string().nullable(),
 });
 
@@ -70,7 +71,9 @@ export type ManageAuditListRequest = {
   offset: number;
 };
 
-export function manageAuditListPath(request: ManageAuditListRequest): string {
+function auditFilterParams(
+  request: Omit<ManageAuditListRequest, "limit" | "offset">,
+): URLSearchParams {
   const params = new URLSearchParams();
   if (request.action) params.set("action", request.action);
   if (request.entityType) params.set("entity_type", request.entityType);
@@ -82,6 +85,11 @@ export function manageAuditListPath(request: ManageAuditListRequest): string {
   if (search) params.set("search", search);
   params.set("sort_by", "created_at");
   params.set("sort_order", request.sortOrder);
+  return params;
+}
+
+export function manageAuditListPath(request: ManageAuditListRequest): string {
+  const params = auditFilterParams(request);
   params.set("limit", String(request.limit));
   params.set("offset", String(request.offset));
   return `/audit-logs?${params.toString()}`;
@@ -116,24 +124,78 @@ export function getManageAuditOptions(
   });
 }
 
-export async function listAllManageAuditLogs(
+export async function getManageAuditExportPreview(
   request: Omit<ManageAuditListRequest, "limit" | "offset">,
   signal?: AbortSignal,
-): Promise<ManageAuditLog[]> {
-  const items: ManageAuditLog[] = [];
-  let offset = 0;
-  while (true) {
-    const page = await listManageAuditLogs(
-      { ...request, limit: 100, offset },
-      signal,
-    );
-    if (
-      page.pagination.total > 10_000 ||
-      items.length + page.items.length > 10_000
-    )
+): Promise<ManageAuditListResponse> {
+  const page = await listManageAuditLogs(
+    { ...request, limit: 10, offset: 0 },
+    signal,
+  );
+  if (page.pagination.total > 10_000) throw new AuditExportLimitError();
+  return page;
+}
+
+export type ManageAuditCsv = { blob: Blob; filename: string; count: number };
+
+const CSV_HEADER =
+  '"Date","User","Entity","Action","Target","Before","After"\r\n';
+const exportCountSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d*)$/)
+  .transform(Number)
+  .pipe(z.number().int().nonnegative().max(10_000));
+
+export async function downloadManageAuditCsv(
+  request: Omit<ManageAuditListRequest, "limit" | "offset">,
+  signal?: AbortSignal,
+): Promise<ManageAuditCsv> {
+  const response = await apiRequest(
+    `/audit-logs/export?${auditFilterParams(request)}`,
+    { cache: "no-store", signal },
+  );
+  if (!response.ok) {
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    const detail = z
+      .object({ detail: z.object({ code: z.string() }) })
+      .safeParse(body);
+    const code = detail.success ? detail.data.detail.code : undefined;
+    if (response.status === 409 && code === "audit_export_limit")
       throw new AuditExportLimitError();
-    items.push(...page.items);
-    if (!page.pagination.has_more || page.items.length === 0) return items;
-    offset += page.items.length;
+    throw new ApiError(
+      response.status,
+      "Request could not be completed",
+      undefined,
+      code,
+    );
   }
+  const count = exportCountSchema.safeParse(
+    response.headers.get("X-Audit-Export-Count"),
+  );
+  if (
+    response.headers.get("Content-Type")?.replaceAll(" ", "").toLowerCase() !==
+      "text/csv;charset=utf-8" ||
+    response.headers.get("Content-Disposition") !==
+      'attachment; filename="openslate-audit.csv"' ||
+    response.headers.get("Cache-Control") !== "no-store" ||
+    !count.success
+  )
+    throw new ApiContractError();
+  const bytes = await response.arrayBuffer();
+  const header = count.data === 0 ? CSV_HEADER.slice(0, -2) : CSV_HEADER;
+  if (
+    new TextDecoder().decode(bytes.slice(0, header.length)) !== header ||
+    (count.data === 0 && bytes.byteLength !== header.length)
+  )
+    throw new ApiContractError();
+  return {
+    blob: new Blob([bytes], { type: "text/csv;charset=utf-8" }),
+    filename: "openslate-audit.csv",
+    count: count.data,
+  };
 }

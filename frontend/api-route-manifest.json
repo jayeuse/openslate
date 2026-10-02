@@ -535,6 +535,18 @@
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
+    "function": "downloadManageAuditCsv",
+    "method": "GET",
+    "path": "/api/audit-logs/export"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
+    "function": "getManageAuditExportPreview",
+    "method": "GET",
+    "path": "/api/audit-logs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
     "function": "getManageAuditLog",
     "method": "GET",
     "path": "/api/audit-logs/{param}"
@@ -544,12 +556,6 @@
     "function": "getManageAuditOptions",
     "method": "GET",
     "path": "/api/audit-logs/options"
-  },
-  {
-    "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
-    "function": "listAllManageAuditLogs",
-    "method": "GET",
-    "path": "/api/audit-logs"
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",

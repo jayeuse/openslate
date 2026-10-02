@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -20,6 +20,7 @@ from app.systems.sandbox.relationships.schemas import (
 )
 from app.systems.sandbox.relationships.service import (
     RelationshipConflict,
+    RelationshipUnavailable,
     assign_relationship,
     create_relationship,
     list_relationships,
@@ -157,8 +158,9 @@ def test_assignment_commits_delete_and_create_audits_same_request(
     assert created.after is not None and created.after["target_record_id"] == str(new_target.id)
 
 
+@pytest.mark.parametrize("failure_point", ["commit", "flush-conflict", "flush-unavailable"])
 def test_assignment_rollback_removes_replacement_and_audit_mutations(
-    integration_db: AuditSession, owned_ids: set[UUID]
+    integration_db: AuditSession, owned_ids: set[UUID], failure_point: str
 ) -> None:
     field, _, target_module, sources, targets, original = _seed_committed_graph(
         owned_ids, with_edge=True
@@ -173,12 +175,36 @@ def test_assignment_rollback_removes_replacement_and_audit_mutations(
     request_id = uuid7()
     _set_request(integration_db, request_id)
 
-    def flush_then_fail() -> None:
-        integration_db.flush()
-        raise IntegrityError("forced integration rollback", {}, RuntimeError("forced"))
+    original_flush = integration_db.flush
+    error_type = OperationalError if failure_point == "flush-unavailable" else IntegrityError
+    expected_error = (
+        RelationshipUnavailable if failure_point == "flush-unavailable" else RelationshipConflict
+    )
 
-    with patch.object(integration_db, "commit", side_effect=flush_then_fail):
-        with pytest.raises(RelationshipConflict, match="Unable to assign"):
+    def flush_then_fail() -> None:
+        original_flush()
+        raise error_type("forced integration rollback", {}, RuntimeError("forced"))
+
+    def flush_replacement_then_fail(objects=None) -> None:
+        replacement_pending = any(
+            isinstance(instance, RelationshipEdge) for instance in integration_db.new
+        )
+        original_flush(objects)
+        if replacement_pending:
+            raise error_type("forced integration rollback", {}, RuntimeError("forced"))
+
+    operation, fault = (
+        ("commit", flush_then_fail)
+        if failure_point == "commit"
+        else ("flush", flush_replacement_then_fail)
+    )
+    with patch.object(integration_db, operation, side_effect=fault):
+        with pytest.raises(
+            expected_error,
+            match="temporarily unavailable"
+            if failure_point == "flush-unavailable"
+            else "Unable to assign",
+        ):
             assign_relationship(integration_db, field.id, sources[0].id, new_target.id)
 
     integration_db.expire_all()

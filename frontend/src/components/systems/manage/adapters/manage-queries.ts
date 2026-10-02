@@ -9,7 +9,7 @@ import {
 import {
   getManageAuditLog,
   getManageAuditOptions,
-  listAllManageAuditLogs,
+  getManageAuditExportPreview,
   listManageAuditLogs,
   type ManageAuditListRequest,
 } from "./audit-api";
@@ -20,6 +20,22 @@ import {
   type ManageSessionsRequest,
 } from "./security-api";
 
+// Keep an audit refusal through section remounts for this verified account.
+// Query clients are replaced at the account boundary and are never persisted.
+const auditDeniedClients = new WeakSet<QueryClient>();
+
+export function isManageAuditDenied(client: QueryClient): boolean {
+  return auditDeniedClients.has(client);
+}
+
+export function setManageAuditDenied(
+  client: QueryClient,
+  denied: boolean,
+): void {
+  if (denied) auditDeniedClients.add(client);
+  else auditDeniedClients.delete(client);
+}
+
 export const manageKeys = {
   all: ["manage"] as const,
   workspace: () => ["manage", "workspace"] as const,
@@ -28,6 +44,7 @@ export const manageKeys = {
   sessionList: (request: ManageSessionsRequest) =>
     ["manage", "sessions", request] as const,
   auditLists: () => ["manage", "audit-logs", "list"] as const,
+  audit: () => ["manage", "audit-logs"] as const,
   auditList: (request: ManageAuditListRequest) =>
     ["manage", "audit-logs", "list", request] as const,
   auditOptions: () => ["manage", "audit-logs", "options"] as const,
@@ -103,7 +120,7 @@ export const manageAuditExportOptions = (
 ) =>
   queryOptions({
     queryKey: manageKeys.auditExport(request),
-    queryFn: ({ signal }) => listAllManageAuditLogs(request, signal),
+    queryFn: ({ signal }) => getManageAuditExportPreview(request, signal),
   });
 
 /** Use from Manage navigation intent to prefill the account-scoped list cache. */

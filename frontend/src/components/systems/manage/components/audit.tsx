@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { Temporal } from "@js-temporal/polyfill";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -56,9 +56,11 @@ import {
   TABLE_PAGE_SIZE_OPTIONS,
 } from "@/components/ui/table-pagination";
 import { ApiError } from "@/lib/api";
+import { requestSessionRecheck } from "@/lib/auth-api";
 import { serializeCsv } from "@/lib/csv";
 import {
   AuditExportLimitError,
+  downloadManageAuditCsv,
   type ManageAuditAction,
   type ManageAuditLog,
   type ManageAuditListRequest,
@@ -69,8 +71,12 @@ import {
   manageAuditListOptions,
   manageAuditOptionsOptions,
   manageWorkspaceOptions,
+  manageKeys,
+  isManageAuditDenied,
+  setManageAuditDenied,
 } from "../adapters/manage-queries";
 import { initialActivityFilters } from "./audit-data";
+import { useWorkspaceInteractionSuspended } from "../../shared/runtime/workspace-identity";
 import type { ActivityFilters, ActivityOrder } from "./audit-data";
 
 export {
@@ -108,16 +114,6 @@ function displayActor(log: Pick<ManageAuditLog, "actor_name">): string {
   return log.actor_name?.trim() || "Unknown person";
 }
 
-function auditTarget(log: ManageAuditLog): string {
-  for (const values of [log.after, log.before]) {
-    for (const key of ["name", "title"]) {
-      const label = values?.[key];
-      if (typeof label === "string" && label.trim()) return label.trim();
-    }
-  }
-  return `${formatEntityType(log.entity_type)} · name not recorded`;
-}
-
 function formatEntityType(value: string): string {
   return value
     .split("_")
@@ -152,7 +148,7 @@ function auditEntryFromLog(log: ManageAuditLog): ManageAuditEntry {
     date: log.created_at,
     entity: formatEntityType(log.entity_type),
     action: log.action[0]!.toUpperCase() + log.action.slice(1),
-    target: auditTarget(log),
+    target: log.target_label,
     before: formatAuditValues(log.before, "No previous values recorded."),
     after: formatAuditValues(log.after, "No updated values recorded."),
   };
@@ -180,14 +176,11 @@ function auditCsv(entries: readonly ManageAuditEntry[]): string {
   return serializeCsv([header, ...rows]);
 }
 
-function downloadActivityCsv(entries: readonly ManageAuditEntry[]): void {
-  const blob = new Blob([auditCsv(entries)], {
-    type: "text/csv;charset=utf-8",
-  });
+function downloadActivityCsv(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = "openslate-audit.csv";
+  anchor.download = filename;
   anchor.hidden = true;
   document.body.append(anchor);
   try {
@@ -275,6 +268,14 @@ function listErrorMessage(error: unknown): string {
   return "Audit history could not be loaded. Try again.";
 }
 
+function isAdmissionRefusal(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    (error.code === "mfa_required" || error.code === "ip_not_allowed")
+  );
+}
+
 function detailErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 403)
     return "You do not have permission to view this audit entry.";
@@ -288,6 +289,15 @@ function entityTypeLabel(value: string): string {
 }
 
 export default function ManageAudit({ renderHeader }: ManageAuditProps) {
+  const queryClient = useQueryClient();
+  const workspaceSuspended = useWorkspaceInteractionSuspended();
+  const [auditDenied, setAuditDenied] = useState(() =>
+    isManageAuditDenied(queryClient),
+  );
+  const [downloadPending, setDownloadPending] = useState(false);
+  const [downloadError, setDownloadError] = useState<unknown>(null);
+  const downloadController = useRef<AbortController | null>(null);
+  const auditPurge = useRef<Promise<void> | null>(null);
   const [filters, setFilters] = useState<ActivityFilters>(
     initialActivityFilters,
   );
@@ -310,8 +320,14 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
     pageIndex * pageSize,
     workspaceQuery.data?.timezone,
   );
-  const listQuery = useQuery(manageAuditListOptions(listRequest));
-  const optionsQuery = useQuery(manageAuditOptionsOptions());
+  const listQuery = useQuery({
+    ...manageAuditListOptions(listRequest),
+    enabled: !auditDenied && !workspaceSuspended,
+  });
+  const optionsQuery = useQuery({
+    ...manageAuditOptionsOptions(),
+    enabled: !auditDenied && !workspaceSuspended,
+  });
   const activityDateFormatter = workspaceQuery.data
     ? new Intl.DateTimeFormat(workspaceQuery.data.locale, {
         dateStyle: "medium",
@@ -326,18 +342,44 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
       : "Date format unavailable");
   const exportQuery = useQuery({
     ...manageAuditExportOptions(exportRequest ?? { sortOrder: "desc" }),
-    enabled: exportOpen && exportRequest !== null,
+    enabled:
+      exportOpen &&
+      exportRequest !== null &&
+      !auditDenied &&
+      !workspaceSuspended,
   });
-  const detailQuery = useQuery(manageAuditDetailOptions(selected?.id ?? ""));
-  const logs = listQuery.data?.items ?? [];
+  const detailQuery = useQuery({
+    ...manageAuditDetailOptions(selected?.id ?? ""),
+    enabled: Boolean(selected) && !auditDenied && !workspaceSuspended,
+  });
+  const auditErrors = [
+    listQuery.error,
+    optionsQuery.error,
+    exportQuery.error,
+    detailQuery.error,
+    downloadError,
+  ];
+  const admissionRefused = auditErrors.some(isAdmissionRefusal);
+  const auditRefused =
+    auditDenied ||
+    auditErrors.some(
+      (error) =>
+        error instanceof ApiError &&
+        error.status === 403 &&
+        !isAdmissionRefusal(error),
+    );
+  const auditConcealed = auditRefused || admissionRefused || workspaceSuspended;
+  const logs = auditConcealed ? [] : (listQuery.data?.items ?? []);
   const entries = logs.map(auditEntryFromLog);
-  const actors = optionsQuery.data?.actors ?? [];
+  const actors = auditConcealed ? [] : (optionsQuery.data?.actors ?? []);
   const actorOptions = actors.map((actor) => ({
     id: actor.performed_by,
     label: actor.actor_name ?? actor.actor_label ?? "Unknown person",
   }));
-  const entityTypes = optionsQuery.data?.entity_types ?? [];
-  const total = listQuery.data?.pagination.total ?? 0;
+  const entityTypes = auditConcealed
+    ? []
+    : (optionsQuery.data?.entity_types ?? []);
+  const total = auditConcealed ? 0 : (listQuery.data?.pagination.total ?? 0);
   const serverOffset =
     listQuery.data?.pagination.offset ?? pageIndex * pageSize;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -346,11 +388,16 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
     : pageIndex;
   const firstVisible = entries.length === 0 ? 0 : serverOffset + 1;
   const lastVisible = Math.min(serverOffset + entries.length, total);
-  const exportEntries = exportQuery.data?.map(auditEntryFromLog) ?? [];
-  const exportCount = exportQuery.data?.length ?? total;
-  const selectedDetail = detailQuery.data
-    ? auditEntryFromLog(detailQuery.data)
-    : null;
+  const exportEntries = auditConcealed
+    ? []
+    : (exportQuery.data?.items.map(auditEntryFromLog) ?? []);
+  const exportCount = auditConcealed
+    ? 0
+    : (exportQuery.data?.pagination.total ?? total);
+  const selectedDetail =
+    !auditConcealed && detailQuery.data
+      ? auditEntryFromLog(detailQuery.data)
+      : null;
   const actionOptions: readonly { value: ManageAuditAction; label: string }[] =
     [
       { value: "create", label: "Create" },
@@ -367,8 +414,46 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
     Boolean(exportQuery.data) &&
     exportQuery.isSuccess &&
     !exportQuery.isFetching &&
+    !downloadPending &&
+    !auditConcealed &&
     !dateRangeError &&
     !dateTimezoneUnavailable;
+  useEffect(
+    () => () => {
+      downloadController.current?.abort();
+      downloadController.current = null;
+    },
+    [],
+  );
+  useEffect(() => {
+    if (!workspaceSuspended) return;
+    downloadController.current?.abort();
+    downloadController.current = null;
+    setDownloadPending(false);
+  }, [workspaceSuspended]);
+  useEffect(() => {
+    if (!auditRefused && !admissionRefused) return;
+    if (auditRefused) {
+      setManageAuditDenied(queryClient, true);
+      setAuditDenied(true);
+    }
+    setSelected(null);
+    setExportOpen(false);
+    downloadController.current?.abort();
+    downloadController.current = null;
+    setDownloadPending(false);
+    setNotice("");
+    auditPurge.current = queryClient
+      .cancelQueries({ queryKey: manageKeys.audit() })
+      .then(() => {
+        queryClient.removeQueries({ queryKey: manageKeys.audit() });
+      });
+    if (admissionRefused) {
+      // AppPage conceals synchronously; dispatch after this React effect.
+      queueMicrotask(requestSessionRecheck);
+      setDownloadError(null);
+    }
+  }, [auditRefused, admissionRefused, queryClient]);
   useEffect(() => {
     if (filters.query === appliedSearch) return;
     const timer = setTimeout(() => {
@@ -433,7 +518,8 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
   }
 
   function openExport() {
-    if (dateRangeError || dateTimezoneUnavailable) return;
+    if (dateRangeError || dateTimezoneUnavailable || auditConcealed) return;
+    setDownloadError(null);
     const request = auditFiltersFromRequest(
       auditRequestFromFilters(
         { ...filters, query: appliedSearch },
@@ -453,13 +539,71 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
     setExportOpen(true);
   }
 
-  function downloadFilteredCsv() {
-    if (!canDownloadExport) return;
-    downloadActivityCsv(exportEntries);
+  function closeExport() {
+    downloadController.current?.abort();
+    downloadController.current = null;
+    setDownloadPending(false);
+    setDownloadError(null);
     setExportOpen(false);
-    setNotice(
-      `Downloaded ${exportEntries.length} filtered audit ${exportEntries.length === 1 ? "entry" : "entries"}.`,
-    );
+  }
+
+  async function retryAudit() {
+    if (admissionRefused || workspaceSuspended) {
+      requestSessionRecheck();
+      return;
+    }
+    if (!auditRefused) {
+      await listQuery.refetch();
+      return;
+    }
+    await auditPurge.current;
+    try {
+      await queryClient.fetchQuery({
+        ...manageAuditListOptions(listRequest),
+        staleTime: 0,
+      });
+      setManageAuditDenied(queryClient, false);
+      setDownloadError(null);
+      setAuditDenied(false);
+    } catch {
+      /* The refusal remains until a fresh read is accepted. */
+    }
+  }
+
+  async function downloadFilteredCsv() {
+    if (!canDownloadExport || !exportRequest || downloadController.current)
+      return;
+    const controller = new AbortController();
+    downloadController.current = controller;
+    setDownloadPending(true);
+    setDownloadError(null);
+    try {
+      const csv = await downloadManageAuditCsv(
+        exportRequest,
+        controller.signal,
+      );
+      if (
+        controller.signal.aborted ||
+        downloadController.current !== controller
+      )
+        return;
+      downloadActivityCsv(csv.blob, csv.filename);
+      setExportOpen(false);
+      setNotice(
+        `Downloaded ${csv.count} filtered audit ${csv.count === 1 ? "entry" : "entries"}.`,
+      );
+    } catch (error) {
+      if (
+        !controller.signal.aborted &&
+        downloadController.current === controller
+      )
+        setDownloadError(error);
+    } finally {
+      if (downloadController.current === controller) {
+        downloadController.current = null;
+        setDownloadPending(false);
+      }
+    }
   }
 
   const columns: DataTableColumn<ManageAuditEntry>[] = [
@@ -556,7 +700,7 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
           aria-label="Export audit preview"
           className="min-h-11 gap-2 px-4"
           onClick={openExport}
-          disabled={Boolean(dateRangeError)}
+          disabled={Boolean(dateRangeError) || auditConcealed}
         >
           <Download data-icon="inline-start" /> Export
         </Button>,
@@ -574,7 +718,9 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
         onSortChange={(value) => updateFilter("order", value)}
         activeFilterCount={activeFilterLabels.length}
         filtersClassName="xl:grid-cols-5"
-        filtersDisabled={optionsQuery.isPending || optionsQuery.isError}
+        filtersDisabled={
+          optionsQuery.isPending || optionsQuery.isError || auditConcealed
+        }
       >
         <Field>
           <FieldLabel htmlFor="audit-user">Person</FieldLabel>
@@ -687,7 +833,7 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
         </div>
       </AccessSearchToolbar>
 
-      {optionsQuery.isError ? (
+      {optionsQuery.isError && !auditConcealed ? (
         <Alert role="alert" variant="destructive">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p>
@@ -730,14 +876,17 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
 
       <Card aria-label="Activity history" className="w-full min-w-0">
         <CardContent className="p-0">
-          {listQuery.isError ? (
+          {listQuery.isError || auditConcealed ? (
             <Alert className="m-4" role="alert" variant="destructive">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p>{listErrorMessage(listQuery.error)}</p>
-                <Button
-                  variant="outline"
-                  onClick={() => void listQuery.refetch()}
-                >
+                <p>
+                  {auditRefused
+                    ? "Only administrators can view audit history."
+                    : auditConcealed
+                      ? "Verifying session access…"
+                      : listErrorMessage(listQuery.error)}
+                </p>
+                <Button variant="outline" onClick={() => void retryAudit()}>
                   Retry
                 </Button>
               </div>
@@ -847,7 +996,7 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
             </LoadingRegion>
           )}
         </CardContent>
-        {!listQuery.isError ? (
+        {!listQuery.isError && !auditConcealed ? (
           <CardFooter className="bg-card flex flex-wrap items-center justify-between gap-3 border-t p-3">
             <p
               className="text-muted-foreground text-sm tabular-nums"
@@ -907,7 +1056,7 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
       </p>
 
       <Dialog
-        open={selected !== null}
+        open={selected !== null && !auditConcealed}
         onOpenChange={(open) => {
           if (!open) setSelected(null);
         }}
@@ -997,9 +1146,9 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
       </Dialog>
 
       <Dialog
-        open={exportOpen}
+        open={exportOpen && !auditConcealed}
         onOpenChange={(open) => {
-          if (!open) setExportOpen(false);
+          if (!open) closeExport();
         }}
       >
         <DialogContent
@@ -1013,13 +1162,31 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
               the download includes every filtered entry across all pages.
             </DialogDescription>
           </DialogHeader>
+          {downloadError ? (
+            <Alert role="alert" variant="destructive">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p>
+                  {downloadError instanceof AuditExportLimitError
+                    ? downloadError.message
+                    : "Audit CSV could not be downloaded. Try again."}
+                </p>
+                <Button
+                  variant="outline"
+                  disabled={downloadPending}
+                  onClick={() => void downloadFilteredCsv()}
+                >
+                  Retry
+                </Button>
+              </div>
+            </Alert>
+          ) : null}
           {exportQuery.isError ? (
             <Alert role="alert" variant="destructive">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p>
                   {exportQuery.error instanceof AuditExportLimitError
                     ? exportQuery.error.message
-                    : "Could not load every filtered audit entry. Try again."}
+                    : "Audit export preview could not be loaded. Try again."}
                 </p>
                 <Button
                   variant="outline"
@@ -1055,17 +1222,23 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
               entries. The CSV download includes all {exportCount} entries.
             </p>
           ) : null}
+          {downloadPending ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              Downloading audit CSV…
+            </p>
+          ) : null}
           <DialogFooter>
             <Button
               variant="outline"
               className="min-h-11"
-              onClick={() => setExportOpen(false)}
+              onClick={closeExport}
             >
               Close preview
             </Button>
             <Button
               className="min-h-11"
-              onClick={downloadFilteredCsv}
+              onClick={() => void downloadFilteredCsv()}
+              aria-busy={downloadPending}
               disabled={!canDownloadExport}
             >
               <Download data-icon="inline-start" /> Download CSV

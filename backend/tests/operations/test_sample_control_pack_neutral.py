@@ -34,6 +34,16 @@ def test_small_control_planning_uses_supplied_data_even_with_an_unknown_pack_key
         "manage_controls",
     } <= {action.kind for action in actions}, "Every control family must be planned offline"
     assert len({action.key for action in actions}) == len(actions)
+    audit = [action for action in actions if action.kind == "audit_controls"]
+    assert [action.values["operation"] for action in audit] == ["audit_review", "audit_export"]
+    modules = {module.key: module for module in dataset.organization.catalog.modules}
+    assert len({action.target_key for action in audit}) == 1
+    assert all(
+        action.actor_key == "admin"
+        and action.target_key in modules
+        and action.values["expected_label"] == modules[action.target_key].name
+        for action in audit
+    )
     manage = [action for action in actions if action.kind == "manage_controls"]
     assert {action.values["operation"] for action in manage} == {
         "review_admin_sessions",

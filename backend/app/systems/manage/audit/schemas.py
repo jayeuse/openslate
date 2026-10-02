@@ -77,6 +77,7 @@ class AuditLogResponse(BaseModel):
     action: AuditAction
     entity_type: str
     entity_id: UUID | None
+    target_label: str = Field(min_length=1)
     department_id: UUID | None
     before: dict[str, object] | None
     after: dict[str, object] | None

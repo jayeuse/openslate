@@ -4223,6 +4223,7 @@ test("an administrator can preview and confirm deleted-record purging with a fre
         edge_id: "00000000-0000-4000-8000-000000000071",
         field_id: "00000000-0000-4000-8000-000000000073",
         external_record_id: "00000000-0000-4000-8000-000000000074",
+        external_record_label: "Pump seal replacement",
         external_module_id: "00000000-0000-4000-8000-000000000075",
         external_module_name: "Work orders",
         external_department_id: "00000000-0000-4000-8000-000000000076",
@@ -4291,6 +4292,29 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await expect(impactSummary).toContainText("2 links");
   await expect(impactSummary).toContainText("3 automation history entries");
   await expect(details.getByText(/Work orders.*Maintenance/)).toBeVisible();
+  await expect(
+    details.getByText(/Pump seal replacement.*Work orders.*Maintenance/),
+  ).toBeVisible();
+  await expect(
+    details.getByText(impact.external_impacts[0].external_record_id, {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await details.getByLabel("Type the record ID").fill(recordOneId);
+  await details
+    .getByLabel("Administrator password")
+    .fill("synthetic-test-passphrase");
+  await details.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(details.getByText("Links to other records")).toHaveCount(0);
+  expect(recordPurgeCalls.map(({ path }) => path)).toEqual([
+    `/api/records/${recordOneId}/purge/preview`,
+  ]);
+  await details.getByRole("button", { name: "Permanently delete" }).click();
+  await expect(
+    details.getByText(/Pump seal replacement.*Work orders.*Maintenance/),
+  ).toBeVisible();
+  await expect(details.getByLabel("Type the record ID")).toHaveValue("");
+  await expect(details.getByLabel("Administrator password")).toHaveValue("");
   await details.getByLabel("Type the record ID").fill(recordOneId);
   await details
     .getByLabel("Administrator password")
@@ -4316,16 +4340,17 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await expect(page.getByText("Record permanently deleted.")).toBeVisible();
   expect(recordPurgeCalls.map(({ method, path }) => [method, path])).toEqual([
     ["POST", `/api/records/${recordOneId}/purge/preview`],
+    ["POST", `/api/records/${recordOneId}/purge/preview`],
     ["POST", `/api/records/${recordOneId}/purge`],
     ["POST", `/api/records/${recordOneId}/purge/preview`],
     ["POST", `/api/records/${recordOneId}/purge`],
   ]);
-  expect(recordPurgeCalls[1]?.body).toEqual({
+  expect(recordPurgeCalls[2]?.body).toEqual({
     token: preview.token,
     confirmation_name: recordOneId,
     password: "synthetic-test-passphrase",
   });
-  expect(recordPurgeCalls[3]?.body).toEqual({
+  expect(recordPurgeCalls[4]?.body).toEqual({
     token: preview.token,
     confirmation_name: recordOneId,
     password: "synthetic-test-passphrase",

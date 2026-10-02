@@ -35,6 +35,7 @@ from app.systems.sandbox.lifecycle.schemas import (
     LifecycleTargetType,
 )
 from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.display import record_title
 from app.systems.sandbox.records.models import Record
 
 
@@ -260,8 +261,9 @@ def plan_lifecycle(
     )
     structural_record_ids = {record.id for record in scope.records}
     impacts: list[LifecycleExternalImpact] = []
+    external_record_labels: dict[UUID, str] = {}
     for edge, edge_state in zip(scope.edges, edge_states, strict=True):
-        if not edge_state.available:
+        if resolved_operation is not LifecycleOperation.PURGE and not edge_state.available:
             continue
         field = fields_by_id.get(edge.field_id)
         source = records_by_id.get(edge.source_record_id)
@@ -295,11 +297,16 @@ def plan_lifecycle(
             external_department = departments_by_id.get(external_module.department_id)
             if external_department is None:
                 continue
+            if external_record.id not in external_record_labels:
+                external_record_labels[external_record.id] = record_title(
+                    db, external_record, external_module
+                )
             impacts.append(
                 LifecycleExternalImpact(
                     edge_id=edge.id,
                     field_id=edge.field_id,
                     external_record_id=external_record.id,
+                    external_record_label=external_record_labels[external_record.id],
                     external_module_id=external_module.id,
                     external_module_name=external_module.module_name,
                     external_department_id=external_department.id,
