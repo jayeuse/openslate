@@ -150,6 +150,7 @@ def apply_reset(
     *,
     execute: bool = False,
     stdin_is_tty: bool = False,
+    noninteractive_development: bool = False,
     confirmation: str | None = None,
     storage: Any | None = None,
     auth: Any | None = None,
@@ -159,7 +160,7 @@ def apply_reset(
     """Apply one freshly confirmed plan, or do nothing for the default dry run."""
     if not execute:
         return
-    if not stdin_is_tty:
+    if not stdin_is_tty and not noninteractive_development:
         raise ResetError("Execute mode requires a TTY")
     if confirmation != plan.impact_digest:
         raise ResetError("An exact impact-digest confirmation is required")

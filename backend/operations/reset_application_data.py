@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Mapping, Sequence
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from psycopg import connect
@@ -114,6 +116,20 @@ def _validate_postconditions(connection: Any, plan: ResetPlan) -> None:
     )
 
 
+def _require_development_confirmation(values: Mapping[str, str]) -> None:
+    if values.get("ENVIRONMENT", "").strip().casefold() != "development":
+        raise ResetError("Noninteractive reset is available only with ENVIRONMENT=development")
+    for name in ("MIGRATION_DATABASE_URL", "SUPABASE_URL"):
+        try:
+            host = urlsplit(values.get(name, "")).hostname
+            if host != "localhost" and (host is None or not ip_address(host).is_loopback):
+                raise ValueError
+        except ValueError:
+            raise ResetError(
+                "Noninteractive reset requires loopback database and Auth URLs"
+            ) from None
+
+
 def apply_reset(
     connection: Any,
     plan: ResetPlan,
@@ -125,8 +141,17 @@ def apply_reset(
     auth: Any | None = None,
     backend_host: str | None = None,
     backend_port: str | None = None,
+    noninteractive_environment: Mapping[str, str] | None = None,
 ) -> None:
-    if execute and stdin_is_tty and confirmation == plan.impact_digest:
+    if noninteractive_environment is not None:
+        if not execute:
+            raise ResetError("Noninteractive confirmation requires --execute")
+        _require_development_confirmation(noninteractive_environment)
+    if (
+        execute
+        and (stdin_is_tty or noninteractive_environment is not None)
+        and confirmation == plan.impact_digest
+    ):
         if backend_host is None or backend_port is None:
             raise ResetError("BACKEND_BIND_HOST and BACKEND_PORT are required for execute mode")
         require_api_stopped(backend_host, backend_port)
@@ -135,6 +160,7 @@ def apply_reset(
         plan,
         execute=execute,
         stdin_is_tty=stdin_is_tty,
+        noninteractive_development=noninteractive_environment is not None,
         confirmation=confirmation,
         storage=storage,
         auth=auth,
@@ -147,6 +173,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--execute", action="store_true", help="execute the displayed local reset plan"
+    )
+    parser.add_argument(
+        "--confirm-digest",
+        metavar="DIGEST",
+        help="confirm a fresh preview digest without a TTY in local development only",
     )
     return parser
 
@@ -170,13 +201,18 @@ def _print_plan(plan: ResetPlan) -> None:
         print(f"  {table_name}={plan.counts[table_name]}")
     print(f"impact_digest={plan.impact_digest}")
     print("To execute, use --execute and enter this impact digest exactly when prompted.")
+    print("Development only: use --execute --confirm-digest <impact_digest> without a TTY.")
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
     connection: Any = None
     try:
+        if args.confirm_digest is not None and not args.execute:
+            raise ResetError("--confirm-digest requires --execute")
         values = environment_inputs(DOTENV_PATH)
+        if args.confirm_digest is not None:
+            _require_development_confirmation(values)
         environment = values.get("ENVIRONMENT", "").strip().casefold()
         if environment not in {"development", "dev", "local", "test"}:
             raise ResetError(
@@ -219,19 +255,24 @@ def main(argv: Sequence[str] | None = None) -> None:
         connection.rollback()
         _print_plan(plan)
         if args.execute:
-            if not sys.stdin.isatty():
-                raise ResetError("Execute mode requires a TTY")
-            confirmation = input("Enter the impact digest exactly as shown to execute: ")
+            stdin_is_tty = sys.stdin.isatty()
+            if args.confirm_digest is None:
+                if not stdin_is_tty:
+                    raise ResetError("Execute mode requires a TTY")
+                confirmation = input("Enter the impact digest exactly as shown to execute: ")
+            else:
+                confirmation = args.confirm_digest
             apply_reset(
                 connection,
                 plan,
                 execute=True,
-                stdin_is_tty=True,
+                stdin_is_tty=stdin_is_tty,
                 confirmation=confirmation,
                 storage=storage,
                 auth=auth,
                 backend_host=backend_host,
                 backend_port=backend_port,
+                noninteractive_environment=values if args.confirm_digest is not None else None,
             )
             print(
                 "Application data reset completed; the administrator account was preserved "
