@@ -16,11 +16,20 @@ def _browser_cookie_secure() -> bool:
     )
 
 
+def set_browser_access(response: Response, access: str) -> None:
+    response.set_cookie(
+        "openslate_access",
+        access,
+        httponly=True,
+        secure=_browser_cookie_secure(),
+        samesite="lax",
+        path="/",
+    )
+
+
 def set_browser_session(response: Response, access: str, refresh: str | None, csrf: str) -> None:
     secure = _browser_cookie_secure()
-    response.set_cookie(
-        "openslate_access", access, httponly=True, secure=secure, samesite="lax", path="/"
-    )
+    set_browser_access(response, access)
     if refresh is None:
         response.delete_cookie("openslate_refresh", path="/api/auth", secure=secure)
     else:

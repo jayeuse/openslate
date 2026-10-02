@@ -34,3 +34,26 @@ class AdminSessionResponse(BaseModel):
 
 class AdminSessionListResponse(StandardListResponse[AdminSessionResponse]):
     pass
+
+
+class AdminSessionCollectionSortField(StrEnum):
+    REFRESHED_AT = "refreshed_at"
+    PERSON_NAME = "person_name"
+
+
+class AdminSessionCollectionRequest(StandardListRequest[AdminSessionCollectionSortField]):
+    sort_by: AdminSessionCollectionSortField = AdminSessionCollectionSortField.REFRESHED_AT
+    sort_order: SortOrder = SortOrder.DESC
+    status: Literal["all", "current", "remote"] = "all"
+    device: Literal["all", "Desktop", "Mobile", "Tablet", "Unknown"] = "all"
+
+
+class AdminSessionCollectionItem(AdminSessionResponse):
+    user_id: UUID
+    person_name: str
+    device: Literal["Desktop", "Mobile", "Tablet", "Unknown"]
+    browser: str
+
+
+class AdminSessionCollectionResponse(StandardListResponse[AdminSessionCollectionItem]):
+    pass

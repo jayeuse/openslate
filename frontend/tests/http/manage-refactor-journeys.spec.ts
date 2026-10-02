@@ -12,6 +12,10 @@ type WorkspaceProfile = {
   logo_file_id: string | null;
   timezone: string;
   locale: string;
+  mark: string;
+  currency: string;
+  week_start: "monday" | "sunday";
+  business_hours: string;
   invitation_expiry_days: number;
   guest_duration_days: number;
   revision: number;
@@ -31,6 +35,10 @@ const initialWorkspace: WorkspaceProfile = {
   logo_file_id: null,
   timezone: "Asia/Manila",
   locale: "en-PH",
+  mark: "RS",
+  currency: "PHP",
+  week_start: "monday",
+  business_hours: "09:00–18:00",
   invitation_expiry_days: 7,
   guest_duration_days: 30,
   revision: 4,
@@ -62,6 +70,13 @@ function installWorkspaceRoute(
     if (!isRecord(payload) || typeof payload.revision !== "number")
       throw new Error("Workspace PATCH must include a revision");
     patches.push(payload);
+    if (payload.revision !== current.revision) {
+      await route.fulfill({
+        status: 409,
+        json: { detail: { code: "stale_revision" } },
+      });
+      return;
+    }
     current = {
       ...current,
       display_name:
@@ -74,6 +89,20 @@ function installWorkspaceRoute(
         typeof payload.timezone === "string"
           ? payload.timezone
           : current.timezone,
+      mark:
+        typeof payload.mark === "string" ? payload.mark.trim() : current.mark,
+      currency:
+        typeof payload.currency === "string"
+          ? payload.currency.trim().toUpperCase()
+          : current.currency,
+      week_start:
+        payload.week_start === "monday" || payload.week_start === "sunday"
+          ? payload.week_start
+          : current.week_start,
+      business_hours:
+        typeof payload.business_hours === "string"
+          ? payload.business_hours.trim()
+          : current.business_hours,
       revision: current.revision + 1,
     };
     await route.fulfill({ json: current });
@@ -94,12 +123,16 @@ test.beforeEach(async ({ page }) => {
   installWorkspaceRoute(page);
 });
 
-test("Manage organization reads and patches only the server-backed workspace fields", async ({
+test("Manage organization loads and saves all seven workspace fields", async ({
   page,
 }) => {
   const workspace = installWorkspaceRoute(page, {
     ...initialWorkspace,
     display_name: "Harbor workspace",
+    mark: "",
+    currency: "SGD",
+    week_start: "sunday",
+    business_hours: "08:00–17:00",
   });
   await page.goto("/manage?view=organization");
 
@@ -112,11 +145,30 @@ test("Manage organization reads and patches only the server-backed workspace fie
     name: "Timezone",
     exact: true,
   });
+  const mark = page.getByRole("combobox", {
+    name: "Organization mark",
+    exact: true,
+  });
+  const currency = page.getByRole("combobox", {
+    name: "Currency",
+    exact: true,
+  });
+  const week = page.getByRole("combobox", {
+    name: "Week starts on",
+    exact: true,
+  });
+  const hours = page.getByRole("textbox", {
+    name: "Business hours",
+    exact: true,
+  });
+  await expect(mark).toHaveValue("");
+  await expect(mark.locator("option:checked")).toHaveText("No mark");
+  await expect(currency).toHaveValue("SGD");
+  await expect(week).toHaveValue("Sunday");
+  await expect(hours).toHaveValue("08:00–17:00");
   await expect(
     page.getByRole("note", { name: "Organization data", exact: true }),
-  ).toHaveText(
-    "Organization Name, locale and timezone save to the organization. Mark, currency, week start and business hours are examples; their changes last until this tab closes.",
-  );
+  ).not.toContainText("are examples");
   await expect(name).toHaveValue("Harbor workspace");
   await expect(locale).toHaveValue("en-PH");
   await expect(locale.locator("option:checked")).toHaveText(
@@ -127,9 +179,10 @@ test("Manage organization reads and patches only the server-backed workspace fie
   await name.fill("Harbor operations");
   await locale.selectOption("Filipino");
   await timezone.selectOption("UTC");
-  await page
-    .getByRole("combobox", { name: "Currency", exact: true })
-    .selectOption("USD");
+  await mark.selectOption("Compass");
+  await currency.selectOption("USD");
+  await week.selectOption("Monday");
+  await hours.fill("10:00–19:00");
   await page.getByRole("button", { name: "Save settings" }).click();
 
   await expect(name).toHaveValue("Harbor operations");
@@ -142,6 +195,10 @@ test("Manage organization reads and patches only the server-backed workspace fie
       display_name: "Harbor operations",
       locale: "fil-PH",
       timezone: "UTC",
+      mark: "Compass",
+      currency: "USD",
+      week_start: "monday",
+      business_hours: "10:00–19:00",
     },
   ]);
   await page.reload();
@@ -149,7 +206,28 @@ test("Manage organization reads and patches only the server-backed workspace fie
   await expect(
     page.getByRole("combobox", { name: "Currency", exact: true }),
   ).toHaveValue("USD");
-  expect(workspace.read().locale).toBe("fil-PH");
+  await expect(mark).toHaveValue("Compass");
+  await expect(week).toHaveValue("Monday");
+  await expect(hours).toHaveValue("10:00–19:00");
+  expect(workspace.read()).toMatchObject({
+    display_name: "Harbor operations",
+    locale: "fil-PH",
+    timezone: "UTC",
+    mark: "Compass",
+    currency: "USD",
+    week_start: "monday",
+    business_hours: "10:00–19:00",
+  });
+  await mark.selectOption({ label: "No mark" });
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await expect(
+    page.getByRole("button", { name: "Discard changes", exact: true }),
+  ).toBeDisabled();
+  expect(workspace.patches[1]).toEqual({ revision: 5, mark: "" });
+  await page.reload();
+  await expect(mark).toHaveValue("");
+  await expect(mark.locator("option:checked")).toHaveText("No mark");
+  expect(workspace.read().mark).toBe("");
 });
 
 test("Manage organization refreshes a stale revision, keeps the draft, then shows a 403 without clearing it", async ({
@@ -271,7 +349,78 @@ test("Manage organization shows readable locale names and sends locale tags", as
   await expect(locale.locator("option:checked")).toHaveText("English (US)");
 });
 
-test("Manage organization reports server success separately when saving example fields fails", async ({
+test("Manage organization keeps all its draft fields after a failed save", async ({
+  page,
+}) => {
+  const workspace = installWorkspaceRoute(page);
+  let failNextPatch = true;
+  await page.route("**/api/workspace", async (route) => {
+    if (route.request().method() === "PATCH" && failNextPatch) {
+      failNextPatch = false;
+      await route.fulfill({
+        status: 503,
+        json: { detail: { code: "workspace_unavailable" } },
+      });
+    } else await route.fallback();
+  });
+  await page.goto("/manage?view=organization");
+  const name = page.getByRole("textbox", {
+    name: "Organization name",
+    exact: true,
+  });
+  const mark = page.getByRole("combobox", {
+    name: "Organization mark",
+    exact: true,
+  });
+  const currency = page.getByRole("combobox", {
+    name: "Currency",
+    exact: true,
+  });
+  const week = page.getByRole("combobox", {
+    name: "Week starts on",
+    exact: true,
+  });
+  const hours = page.getByRole("textbox", {
+    name: "Business hours",
+    exact: true,
+  });
+  await expect(name).toHaveValue("Riverside Services");
+  await name.fill("Pending workspace");
+  await mark.selectOption("Compass");
+  await currency.selectOption("USD");
+  await week.selectOption("Sunday");
+  await hours.fill("10:00–19:00");
+  await page
+    .getByRole("button", { name: "Save settings", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "The settings could not be saved. Try again." }),
+  ).toBeVisible();
+  await expect(name).toHaveValue("Pending workspace");
+  await expect(mark).toHaveValue("Compass");
+  await expect(currency).toHaveValue("USD");
+  await expect(week).toHaveValue("Sunday");
+  await expect(hours).toHaveValue("10:00–19:00");
+  expect(workspace.patches).toEqual([]);
+  expect(workspace.read()).toEqual(initialWorkspace);
+  await page
+    .getByRole("button", { name: "Save settings", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Discard changes", exact: true }),
+  ).toBeDisabled();
+  expect(workspace.read()).toMatchObject({
+    display_name: "Pending workspace",
+    mark: "Compass",
+    currency: "USD",
+    week_start: "sunday",
+    business_hours: "10:00–19:00",
+  });
+});
+
+test("Manage preserves section drafts without saving on leave or discard, validates saves, and retains accepted settings after reload", async ({
   page,
 }) => {
   const workspace = installWorkspaceRoute(page);
@@ -280,89 +429,50 @@ test("Manage organization reports server success separately when saving example 
     name: "Organization name",
     exact: true,
   });
+  await expect(name).toBeVisible();
+  const original = await name.inputValue();
+  await name.fill("Refactor journey workspace");
   const currency = page.getByRole("combobox", {
     name: "Currency",
     exact: true,
   });
-  await expect(name).toHaveValue("Riverside Services");
-  await name.fill("Server name saved once");
-  await currency.selectOption("USD");
-  // A real browser dependency fails only while publishing proposed sample
-  // settings. The runtime handles the failure; no controller hook is exposed.
-  await page.evaluate(() => {
-    const clone = window.structuredClone;
-    window.structuredClone = (value, options) => {
-      if (
-        value &&
-        typeof value === "object" &&
-        "currency" in value &&
-        value.currency === "USD" &&
-        "name" in value
-      ) {
-        window.structuredClone = clone;
-        throw new DOMException(
-          "Synthetic sample save unavailable",
-          "DataCloneError",
-        );
-      }
-      return clone(value, options);
-    };
-  });
-  await page
-    .getByRole("button", { name: "Save settings", exact: true })
-    .click();
-  await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "Name, locale and timezone saved." }),
-  ).toBeVisible();
-  await expect(
-    page
-      .getByRole("alert")
-      .filter({ hasText: "Example fields could not be saved." }),
-  ).toContainText(
-    "Example fields could not be saved. Your example edits are still pending.",
-  );
-  await expect(name).toHaveValue("Server name saved once");
-  await expect(currency).toHaveValue("USD");
-  await expect(
-    page.getByRole("button", { name: "Save settings", exact: true }),
-  ).toBeEnabled();
-  expect(workspace.patches).toEqual([
-    { revision: 4, display_name: "Server name saved once" },
-  ]);
-  await page
-    .getByRole("button", { name: "Save settings", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Discard changes", exact: true }),
-  ).toBeDisabled();
-  expect(workspace.patches).toHaveLength(1);
-  await page.reload();
-  await expect(name).toHaveValue("Server name saved once");
-  await expect(currency).toHaveValue("USD");
-});
-
-test("Manage preserves section drafts, validates saves, and retains accepted settings after reload", async ({
-  page,
-}) => {
-  await page.goto("/manage?view=organization");
-  const name = page.getByRole("textbox", {
-    name: "Organization name",
+  const mark = page.getByRole("combobox", {
+    name: "Organization mark",
     exact: true,
   });
-  await expect(name).toBeVisible();
-  const original = await name.inputValue();
-  await name.fill("Refactor journey workspace");
+  const week = page.getByRole("combobox", {
+    name: "Week starts on",
+    exact: true,
+  });
+  const hours = page.getByRole("textbox", {
+    name: "Business hours",
+    exact: true,
+  });
+  await currency.selectOption("USD");
+  await mark.selectOption("Compass");
+  await week.selectOption("Sunday");
+  await hours.fill("10:00–19:00");
   await page
     .getByRole("link", { name: "Security & recovery", exact: true })
     .click();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
   await expect(name).toHaveValue("Refactor journey workspace");
+  await expect(currency).toHaveValue("USD");
+  await expect(mark).toHaveValue("Compass");
+  await expect(week).toHaveValue("Sunday");
+  await expect(hours).toHaveValue("10:00–19:00");
+  expect(workspace.patches).toEqual([]);
+  expect(workspace.read()).toEqual(initialWorkspace);
   await page
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
   await expect(name).toHaveValue(original);
+  await expect(currency).toHaveValue("PHP");
+  await expect(mark).toHaveValue("RS");
+  await expect(week).toHaveValue("Monday");
+  await expect(hours).toHaveValue("09:00–18:00");
+  expect(workspace.patches).toEqual([]);
+  expect(workspace.read()).toEqual(initialWorkspace);
   await name.fill(" ");
   await page
     .getByRole("button", { name: "Save settings", exact: true })

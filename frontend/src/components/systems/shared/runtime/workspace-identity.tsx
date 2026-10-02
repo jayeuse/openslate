@@ -4,6 +4,7 @@ import { createContext, useContext, type ReactNode } from "react";
 import { clearAccessDraftStorageExcept } from "../../access/state/draft-journal-storage";
 
 const VerifiedWorkspaceIdentityContext = createContext<string | null>(null);
+const WorkspaceInteractionSuspendedContext = createContext(false);
 const WorkspaceSignOutContext = createContext<(() => Promise<void>) | null>(
   null,
 );
@@ -34,15 +35,23 @@ export function useWorkspaceSignOut(): () => Promise<void> {
 export function VerifiedWorkspaceIdentityProvider({
   userId,
   children,
+  suspended = false,
 }: {
   userId: string | null;
   children: ReactNode;
+  suspended?: boolean;
 }) {
   return (
     <VerifiedWorkspaceIdentityContext.Provider value={userId}>
-      {children}
+      <WorkspaceInteractionSuspendedContext.Provider value={suspended}>
+        {children}
+      </WorkspaceInteractionSuspendedContext.Provider>
     </VerifiedWorkspaceIdentityContext.Provider>
   );
+}
+
+export function useWorkspaceInteractionSuspended(): boolean {
+  return useContext(WorkspaceInteractionSuspendedContext);
 }
 
 export function useVerifiedWorkspaceUserId(): string {

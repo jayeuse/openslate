@@ -9,19 +9,19 @@
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "deleteAccessGroup",
     "method": "DELETE",
-    "path": "/api/access/groups/{group_id}"
+    "path": "/api/access/groups/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "deleteAccessUser",
     "method": "DELETE",
-    "path": "/api/users/{user_id}"
+    "path": "/api/users/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "getAccessGroup",
     "method": "GET",
-    "path": "/api/access/groups/{group_id}"
+    "path": "/api/access/groups/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
@@ -33,13 +33,13 @@
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "getAccessUser",
     "method": "GET",
-    "path": "/api/users/{user_id}"
+    "path": "/api/users/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "getAccessUserAccess",
     "method": "GET",
-    "path": "/api/users/{user_id}/access"
+    "path": "/api/users/{param}/access"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
@@ -81,55 +81,55 @@
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "listAccessUserSessions",
     "method": "GET",
-    "path": "/api/users/{user_id}/sessions"
+    "path": "/api/users/{param}/sessions"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "replaceAccessGroupAccess",
     "method": "PUT",
-    "path": "/api/access/groups/{group_id}/access"
+    "path": "/api/access/groups/{param}/access"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "replaceAccessGroupMembers",
     "method": "PUT",
-    "path": "/api/access/groups/{group_id}/members"
+    "path": "/api/access/groups/{param}/members"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "resendAccessInvitation",
     "method": "POST",
-    "path": "/api/auth/invitations/{user_id}/resend"
+    "path": "/api/auth/invitations/{param}/resend"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "restoreAccessUser",
     "method": "POST",
-    "path": "/api/users/{user_id}/restore"
+    "path": "/api/users/{param}/restore"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "revokeAccessInvitation",
     "method": "DELETE",
-    "path": "/api/auth/invitations/{user_id}"
+    "path": "/api/auth/invitations/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "revokeAccessUserSession",
     "method": "DELETE",
-    "path": "/api/users/{user_id}/sessions/{session_id}"
+    "path": "/api/users/{param}/sessions/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "revokeAccessUserSessions",
     "method": "DELETE",
-    "path": "/api/users/{user_id}/sessions"
+    "path": "/api/users/{param}/sessions"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "updateAccessGroup",
     "method": "PATCH",
-    "path": "/api/access/groups/{group_id}"
+    "path": "/api/access/groups/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
@@ -141,13 +141,13 @@
     "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "updateAccessUser",
     "method": "PATCH",
-    "path": "/api/users/{user_id}"
+    "path": "/api/users/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-configuration-api.ts",
     "function": "downloadBoardConfiguration",
     "method": "GET",
-    "path": "/api/boards/{board_id}/configuration"
+    "path": "/api/boards/{param}/configuration"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-configuration-api.ts",
@@ -159,133 +159,133 @@
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
     "function": "archiveBoardEvent",
     "method": "POST",
-    "path": "/api/boards/{board_id}/events/{event_id}/archive"
+    "path": "/api/boards/{param}/events/{param}/archive"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
     "function": "createBoardEvent",
     "method": "POST",
-    "path": "/api/boards/{board_id}/events"
+    "path": "/api/boards/{param}/events"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
     "function": "deleteBoardEvent",
     "method": "DELETE",
-    "path": "/api/boards/{board_id}/events/{event_id}"
+    "path": "/api/boards/{param}/events/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
     "function": "listBoardEventOccurrences",
     "method": "GET",
-    "path": "/api/boards/{board_id}/events/occurrences"
+    "path": "/api/boards/{param}/events/occurrences"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
     "function": "listBoardEvents",
     "method": "GET",
-    "path": "/api/boards/{board_id}/events"
+    "path": "/api/boards/{param}/events"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
     "function": "listMyBoardEvents",
     "method": "GET",
-    "path": "/api/boards/{board_id}/events/mine"
+    "path": "/api/boards/{param}/events/mine"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
     "function": "readBoardEvent",
     "method": "GET",
-    "path": "/api/boards/{board_id}/events/{event_id}"
+    "path": "/api/boards/{param}/events/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
     "function": "restoreBoardEvent",
     "method": "POST",
-    "path": "/api/boards/{board_id}/events/{event_id}/restore"
+    "path": "/api/boards/{param}/events/{param}/restore"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
     "function": "updateBoardEvent",
     "method": "PATCH",
-    "path": "/api/boards/{board_id}/events/{event_id}"
+    "path": "/api/boards/{param}/events/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "attachBoardFile",
     "method": "POST",
-    "path": "/api/boards/{board_id}/events/{event_id}/attachments"
+    "path": "/api/boards/{param}/events/{param}/attachments"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "attachBoardFile",
     "method": "POST",
-    "path": "/api/boards/{board_id}/posts/{post_id}/attachments"
+    "path": "/api/boards/{param}/posts/{param}/attachments"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "detachBoardFile",
     "method": "DELETE",
-    "path": "/api/boards/{board_id}/events/{event_id}/attachments/{file_id}"
+    "path": "/api/boards/{param}/events/{param}/attachments/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "detachBoardFile",
     "method": "DELETE",
-    "path": "/api/boards/{board_id}/posts/{post_id}/attachments/{file_id}"
+    "path": "/api/boards/{param}/posts/{param}/attachments/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "downloadBoardAttachment",
     "method": "GET",
-    "path": "/api/boards/{board_id}/events/{event_id}/attachments/{file_id}/content"
+    "path": "/api/boards/{param}/events/{param}/attachments/{param}/content"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "downloadBoardAttachment",
     "method": "GET",
-    "path": "/api/boards/{board_id}/posts/{post_id}/attachments/{file_id}/content"
+    "path": "/api/boards/{param}/posts/{param}/attachments/{param}/content"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "listBoardAttachments",
     "method": "GET",
-    "path": "/api/boards/{board_id}/events/{event_id}/attachments"
+    "path": "/api/boards/{param}/events/{param}/attachments"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "listBoardAttachments",
     "method": "GET",
-    "path": "/api/boards/{board_id}/posts/{post_id}/attachments"
+    "path": "/api/boards/{param}/posts/{param}/attachments"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "readBoardFile",
     "method": "GET",
-    "path": "/api/boards/{board_id}/files/{file_id}"
+    "path": "/api/boards/{param}/files/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "reserveBoardFile",
     "method": "POST",
-    "path": "/api/boards/{board_id}/files"
+    "path": "/api/boards/{param}/files"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "scanBoardFile",
     "method": "POST",
-    "path": "/api/boards/{board_id}/files/{file_id}/scan"
+    "path": "/api/boards/{param}/files/{param}/scan"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "uploadBoardFile",
     "method": "PUT",
-    "path": "/api/boards/{board_id}/files/{file_id}/content"
+    "path": "/api/boards/{param}/files/{param}/content"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
     "function": "archiveBoard",
     "method": "POST",
-    "path": "/api/boards/{board_id}/archive"
+    "path": "/api/boards/{param}/archive"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
@@ -297,7 +297,7 @@
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
     "function": "duplicateBoardStructure",
     "method": "POST",
-    "path": "/api/boards/{board_id}/duplicate"
+    "path": "/api/boards/{param}/duplicate"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
@@ -309,223 +309,223 @@
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
     "function": "previewBoardPurge",
     "method": "POST",
-    "path": "/api/boards/{board_id}/purge/preview"
+    "path": "/api/boards/{param}/purge/preview"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
     "function": "purgeBoard",
     "method": "POST",
-    "path": "/api/boards/{board_id}/purge"
+    "path": "/api/boards/{param}/purge"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
     "function": "readBoard",
     "method": "GET",
-    "path": "/api/boards/{board_id}"
+    "path": "/api/boards/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
     "function": "readBoardGroups",
     "method": "GET",
-    "path": "/api/boards/{board_id}/groups"
+    "path": "/api/boards/{param}/groups"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
     "function": "replaceBoardGroups",
     "method": "PUT",
-    "path": "/api/boards/{board_id}/groups"
+    "path": "/api/boards/{param}/groups"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
     "function": "restoreBoard",
     "method": "POST",
-    "path": "/api/boards/{board_id}/restore"
+    "path": "/api/boards/{param}/restore"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
     "function": "updateBoard",
     "method": "PATCH",
-    "path": "/api/boards/{board_id}"
+    "path": "/api/boards/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-post-author-api.ts",
     "function": "listBoardPostAuthors",
     "method": "GET",
-    "path": "/api/boards/{board_id}/post-authors"
+    "path": "/api/boards/{param}/post-authors"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-post-manage-state-api.ts",
     "function": "getBoardPostManageState",
     "method": "GET",
-    "path": "/api/boards/{board_id}/posts/{post_id}/manage-state"
+    "path": "/api/boards/{param}/posts/{param}/manage-state"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
     "function": "archiveBoardPost",
     "method": "POST",
-    "path": "/api/boards/{board_id}/posts/{post_id}/archive"
+    "path": "/api/boards/{param}/posts/{param}/archive"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
     "function": "createBoardPost",
     "method": "POST",
-    "path": "/api/boards/{board_id}/posts"
+    "path": "/api/boards/{param}/posts"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
     "function": "deleteBoardPost",
     "method": "DELETE",
-    "path": "/api/boards/{board_id}/posts/{post_id}"
+    "path": "/api/boards/{param}/posts/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
     "function": "listBoardPostRevisions",
     "method": "GET",
-    "path": "/api/boards/{board_id}/posts/{post_id}/revisions"
+    "path": "/api/boards/{param}/posts/{param}/revisions"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
     "function": "listBoardPosts",
     "method": "GET",
-    "path": "/api/boards/{board_id}/posts"
+    "path": "/api/boards/{param}/posts"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
     "function": "publishBoardPost",
     "method": "POST",
-    "path": "/api/boards/{board_id}/posts/{post_id}/publish"
+    "path": "/api/boards/{param}/posts/{param}/publish"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
     "function": "readBoardPost",
     "method": "GET",
-    "path": "/api/boards/{board_id}/posts/{post_id}"
+    "path": "/api/boards/{param}/posts/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
     "function": "readBoardPostRevision",
     "method": "GET",
-    "path": "/api/boards/{board_id}/posts/{post_id}/revisions/{revision_id}"
+    "path": "/api/boards/{param}/posts/{param}/revisions/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
     "function": "restoreBoardPost",
     "method": "POST",
-    "path": "/api/boards/{board_id}/posts/{post_id}/restore"
+    "path": "/api/boards/{param}/posts/{param}/restore"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
     "function": "scheduleBoardPost",
     "method": "POST",
-    "path": "/api/boards/{board_id}/posts/{post_id}/schedule"
+    "path": "/api/boards/{param}/posts/{param}/schedule"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
     "function": "unpublishBoardPost",
     "method": "POST",
-    "path": "/api/boards/{board_id}/posts/{post_id}/unpublish"
+    "path": "/api/boards/{param}/posts/{param}/unpublish"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
     "function": "updateBoardPost",
     "method": "PATCH",
-    "path": "/api/boards/{board_id}/posts/{post_id}"
+    "path": "/api/boards/{param}/posts/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
     "function": "addBoardRecordLink",
     "method": "POST",
-    "path": "/api/boards/{board_id}/events/{event_id}/record-links"
+    "path": "/api/boards/{param}/events/{param}/record-links"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
     "function": "addBoardRecordLink",
     "method": "POST",
-    "path": "/api/boards/{board_id}/posts/{post_id}/record-links"
+    "path": "/api/boards/{param}/posts/{param}/record-links"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
     "function": "listBoardRecordLinks",
     "method": "GET",
-    "path": "/api/boards/{board_id}/events/{event_id}/record-links"
+    "path": "/api/boards/{param}/events/{param}/record-links"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
     "function": "listBoardRecordLinks",
     "method": "GET",
-    "path": "/api/boards/{board_id}/posts/{post_id}/record-links"
+    "path": "/api/boards/{param}/posts/{param}/record-links"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
     "function": "removeBoardRecordLink",
     "method": "DELETE",
-    "path": "/api/boards/{board_id}/events/{event_id}/record-links/{link_id}"
+    "path": "/api/boards/{param}/events/{param}/record-links/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
     "function": "removeBoardRecordLink",
     "method": "DELETE",
-    "path": "/api/boards/{board_id}/posts/{post_id}/record-links/{link_id}"
+    "path": "/api/boards/{param}/posts/{param}/record-links/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-tools-api.ts",
     "function": "getBoardAccessPreview",
     "method": "GET",
-    "path": "/api/boards/{board_id}/access-preview"
+    "path": "/api/boards/{param}/access-preview"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-tools-api.ts",
     "function": "getMyBoardAccess",
     "method": "GET",
-    "path": "/api/boards/{board_id}/my-access"
+    "path": "/api/boards/{param}/my-access"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-tools-api.ts",
     "function": "listBoardActivity",
     "method": "GET",
-    "path": "/api/boards/{board_id}/activity"
+    "path": "/api/boards/{param}/activity"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-tools-api.ts",
     "function": "listBoardPreviewUsers",
     "method": "GET",
-    "path": "/api/boards/{board_id}/preview-users"
+    "path": "/api/boards/{param}/preview-users"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
     "function": "createBoardWidget",
     "method": "POST",
-    "path": "/api/boards/{board_id}/widgets"
+    "path": "/api/boards/{param}/widgets"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
     "function": "deleteBoardWidget",
     "method": "DELETE",
-    "path": "/api/boards/{board_id}/widgets/{widget_id}"
+    "path": "/api/boards/{param}/widgets/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
     "function": "duplicateBoardWidget",
     "method": "POST",
-    "path": "/api/boards/{board_id}/widgets/{widget_id}/duplicate"
+    "path": "/api/boards/{param}/widgets/{param}/duplicate"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
     "function": "listBoardWidgets",
     "method": "GET",
-    "path": "/api/boards/{board_id}/widgets"
+    "path": "/api/boards/{param}/widgets"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
     "function": "reorderBoardWidgets",
     "method": "PUT",
-    "path": "/api/boards/{board_id}/widgets/order"
+    "path": "/api/boards/{param}/widgets/order"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
     "function": "updateBoardWidget",
     "method": "PATCH",
-    "path": "/api/boards/{board_id}/widgets/{widget_id}"
+    "path": "/api/boards/{param}/widgets/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-workspace-date-api.ts",
@@ -537,7 +537,7 @@
     "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
     "function": "getManageAuditLog",
     "method": "GET",
-    "path": "/api/audit-logs/{audit_log_id}"
+    "path": "/api/audit-logs/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
@@ -556,6 +556,36 @@
     "function": "listManageAuditLogs",
     "method": "GET",
     "path": "/api/audit-logs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
+    "function": "endAllManageRemoteSessions",
+    "method": "DELETE",
+    "path": "/api/auth/admin-sessions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
+    "function": "endManageSession",
+    "method": "DELETE",
+    "path": "/api/users/{param}/sessions/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
+    "function": "getManageSecurityPolicy",
+    "method": "GET",
+    "path": "/api/workspace/security"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
+    "function": "listManageSessions",
+    "method": "GET",
+    "path": "/api/auth/admin-sessions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
+    "function": "updateManageSecurityPolicy",
+    "method": "PATCH",
+    "path": "/api/workspace/security"
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
@@ -591,7 +621,7 @@
     "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
     "function": "archiveOpenViewDashboard",
     "method": "DELETE",
-    "path": "/api/dashboards/{dashboard_id}"
+    "path": "/api/dashboards/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
@@ -603,7 +633,7 @@
     "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
     "function": "getOpenViewDashboard",
     "method": "GET",
-    "path": "/api/dashboards/{dashboard_id}"
+    "path": "/api/dashboards/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
@@ -615,13 +645,13 @@
     "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
     "function": "restoreOpenViewDashboard",
     "method": "POST",
-    "path": "/api/dashboards/{dashboard_id}/restore"
+    "path": "/api/dashboards/{param}/restore"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
     "function": "updateOpenViewDashboard",
     "method": "PATCH",
-    "path": "/api/dashboards/{dashboard_id}"
+    "path": "/api/dashboards/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/departments-api.ts",
@@ -639,7 +669,7 @@
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
     "function": "assignOpenViewRecordLink",
     "method": "PUT",
-    "path": "/api/relationships/fields/{field_id}/sources/{source_record_id}"
+    "path": "/api/relationships/fields/{param}/sources/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
@@ -651,13 +681,13 @@
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
     "function": "deleteOpenViewRecord",
     "method": "DELETE",
-    "path": "/api/records/{record_id}"
+    "path": "/api/records/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
     "function": "getOpenViewRecord",
     "method": "GET",
-    "path": "/api/records/{record_id}"
+    "path": "/api/records/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
@@ -693,19 +723,19 @@
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
     "function": "previewRecordPurge",
     "method": "POST",
-    "path": "/api/records/{record_id}/purge/preview"
+    "path": "/api/records/{param}/purge/preview"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
     "function": "purgeRecord",
     "method": "POST",
-    "path": "/api/records/{record_id}/purge"
+    "path": "/api/records/{param}/purge"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
     "function": "restoreOpenViewRecord",
     "method": "POST",
-    "path": "/api/records/{record_id}/restore"
+    "path": "/api/records/{param}/restore"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
@@ -717,13 +747,13 @@
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
     "function": "unlinkOpenViewRecords",
     "method": "DELETE",
-    "path": "/api/relationships/{relationship_id}"
+    "path": "/api/relationships/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
     "function": "updateOpenViewRecord",
     "method": "PATCH",
-    "path": "/api/records/{record_id}"
+    "path": "/api/records/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/report-notification-api.ts",
@@ -735,31 +765,31 @@
     "adapter": "frontend/src/components/systems/openview/adapters/report-notification-api.ts",
     "function": "markOpenViewReportNotificationRead",
     "method": "POST",
-    "path": "/api/notifications/{notification_id}/read"
+    "path": "/api/notifications/{param}/read"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/report-schedule-api.ts",
     "function": "createOpenViewReportSchedule",
     "method": "POST",
-    "path": "/api/reports/{report_id}/schedule"
+    "path": "/api/reports/{param}/schedule"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/report-schedule-api.ts",
     "function": "getOpenViewReportSchedule",
     "method": "GET",
-    "path": "/api/reports/{report_id}/schedule"
+    "path": "/api/reports/{param}/schedule"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/report-schedule-api.ts",
     "function": "updateOpenViewReportSchedule",
     "method": "PATCH",
-    "path": "/api/reports/{report_id}/schedule"
+    "path": "/api/reports/{param}/schedule"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
     "function": "archiveOpenViewReport",
     "method": "DELETE",
-    "path": "/api/reports/{report_id}"
+    "path": "/api/reports/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
@@ -771,31 +801,31 @@
     "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
     "function": "createOpenViewReportRun",
     "method": "POST",
-    "path": "/api/reports/{report_id}/runs"
+    "path": "/api/reports/{param}/runs"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
     "function": "downloadOpenViewReportRunCsv",
     "method": "GET",
-    "path": "/api/reports/{report_id}/runs/{run_id}/csv"
+    "path": "/api/reports/{param}/runs/{param}/csv"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
     "function": "getOpenViewReport",
     "method": "GET",
-    "path": "/api/reports/{report_id}"
+    "path": "/api/reports/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
     "function": "getOpenViewReportRun",
     "method": "GET",
-    "path": "/api/reports/{report_id}/runs/{run_id}"
+    "path": "/api/reports/{param}/runs/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
     "function": "listOpenViewReportRuns",
     "method": "GET",
-    "path": "/api/reports/{report_id}/runs"
+    "path": "/api/reports/{param}/runs"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
@@ -813,19 +843,19 @@
     "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
     "function": "restoreOpenViewReport",
     "method": "POST",
-    "path": "/api/reports/{report_id}/restore"
+    "path": "/api/reports/{param}/restore"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
     "function": "updateOpenViewReport",
     "method": "PATCH",
-    "path": "/api/reports/{report_id}"
+    "path": "/api/reports/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
     "function": "archiveOpenViewSavedView",
     "method": "DELETE",
-    "path": "/api/views/{view_id}"
+    "path": "/api/views/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
@@ -837,19 +867,19 @@
     "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
     "function": "getOpenViewSavedView",
     "method": "GET",
-    "path": "/api/views/{view_id}"
+    "path": "/api/views/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
     "function": "listOpenViewAssignableUsers",
     "method": "GET",
-    "path": "/api/modules/{module_id}/assignable-users"
+    "path": "/api/modules/{param}/assignable-users"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
     "function": "listOpenViewDataSourceFields",
     "method": "GET",
-    "path": "/api/views/data-sources/{module_id}/fields"
+    "path": "/api/views/data-sources/{param}/fields"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
@@ -873,13 +903,13 @@
     "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
     "function": "restoreOpenViewSavedView",
     "method": "POST",
-    "path": "/api/views/{view_id}/restore"
+    "path": "/api/views/{param}/restore"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
     "function": "updateOpenViewSavedView",
     "method": "PATCH",
-    "path": "/api/views/{view_id}"
+    "path": "/api/views/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/window-api.ts",
@@ -897,7 +927,7 @@
     "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",
     "function": "endAccountSession",
     "method": "DELETE",
-    "path": "/api/auth/sessions/{session_id}"
+    "path": "/api/auth/sessions/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",
@@ -939,7 +969,7 @@
     "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
     "function": "deleteSandboxVersion",
     "method": "DELETE",
-    "path": "/api/sandbox/versions/{version_id}"
+    "path": "/api/sandbox/versions/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
@@ -951,13 +981,13 @@
     "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
     "function": "getSandboxTest",
     "method": "GET",
-    "path": "/api/sandbox/tests/{run_id}"
+    "path": "/api/sandbox/tests/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
     "function": "getSandboxVersion",
     "method": "GET",
-    "path": "/api/sandbox/versions/{version_id}"
+    "path": "/api/sandbox/versions/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
@@ -1011,13 +1041,13 @@
     "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
     "function": "restoreSandboxVersion",
     "method": "POST",
-    "path": "/api/sandbox/versions/{version_id}/restorations"
+    "path": "/api/sandbox/versions/{param}/restorations"
   },
   {
     "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
     "function": "updateSandboxVersion",
     "method": "PATCH",
-    "path": "/api/sandbox/versions/{version_id}"
+    "path": "/api/sandbox/versions/{param}"
   },
   {
     "adapter": "frontend/src/lib/api.ts",
@@ -1072,5 +1102,35 @@
     "function": "signOut",
     "method": "POST",
     "path": "/api/auth/logout"
+  },
+  {
+    "adapter": "frontend/src/lib/mfa-api.ts",
+    "function": "cancelMfaEnrollment",
+    "method": "DELETE",
+    "path": "/api/auth/mfa/factors/{param}"
+  },
+  {
+    "adapter": "frontend/src/lib/mfa-api.ts",
+    "function": "enrollMfa",
+    "method": "POST",
+    "path": "/api/auth/mfa/factors"
+  },
+  {
+    "adapter": "frontend/src/lib/mfa-api.ts",
+    "function": "getMfaStatus",
+    "method": "GET",
+    "path": "/api/auth/mfa"
+  },
+  {
+    "adapter": "frontend/src/lib/mfa-api.ts",
+    "function": "removeMfa",
+    "method": "DELETE",
+    "path": "/api/auth/mfa/factors/{param}"
+  },
+  {
+    "adapter": "frontend/src/lib/mfa-api.ts",
+    "function": "verifyMfa",
+    "method": "POST",
+    "path": "/api/auth/mfa/factors/{param}/verification"
   }
 ]

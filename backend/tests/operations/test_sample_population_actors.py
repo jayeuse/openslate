@@ -56,7 +56,18 @@ def _isolated_workflow(tmp_path, monkeypatch, missing=None):
         for key, person in people.items()
     }
     result = SamplePeopleResult(users=users, actors=credentials, groups={})
-    state = {"logins": [], "clients": {}, "content_reached": False}
+    state = {
+        "logins": [],
+        "clients": {},
+        "content_reached": False,
+        "workspace": {
+            "revision": 1,
+            "currency": "PHP",
+            "mark": "RS",
+            "week_start": "monday",
+            "business_hours": "09:00–18:00",
+        },
+    }
     emails = {person.email: _id(key) for key, person in people.items()}
     admin_email = "administrator@northside.example"
     emails[admin_email] = _id("admin")
@@ -83,7 +94,15 @@ def _isolated_workflow(tmp_path, monkeypatch, missing=None):
                     200, json={"id": emails[email], "email": email, "status": "active"}
                 )
             if request.url.path == "/api/workspace" and request.method == "PATCH":
-                return httpx.Response(200, json=json.loads(request.content))
+                from app.systems.manage.workspace.schemas import WorkspaceUpdate
+
+                body = json.loads(request.content)
+                WorkspaceUpdate.model_validate(body)
+                assert body["revision"] == state["workspace"]["revision"]
+                state["workspace"].update({**body, "revision": body["revision"] + 1})
+                return httpx.Response(200, json=state["workspace"])
+            if request.url.path == "/api/workspace" and request.method == "GET":
+                return httpx.Response(200, json=state["workspace"])
             pytest.fail(f"Unexpected isolated request {request.method} {request.url.path}")
 
         return SampleClient(*args, **kwargs, transport=httpx.MockTransport(handler))
@@ -154,6 +173,9 @@ def test_population_retains_and_logs_in_content_only_active_members(tmp_path, mo
     assert active <= state["clients"].keys()
     assert people[MANAGER].email in state["logins"]
     assert manifest["actor_ids"][MANAGER] == _id(MANAGER)
+    assert {
+        key: state["workspace"][key] for key in ("currency", "mark", "week_start", "business_hours")
+    } == {"currency": "GBP", "mark": "WDS", "week_start": "monday", "business_hours": "09:00–18:00"}
 
 
 @pytest.mark.parametrize("missing", ("writer", "manager"))

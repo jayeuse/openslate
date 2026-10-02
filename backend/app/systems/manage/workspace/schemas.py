@@ -1,10 +1,11 @@
 import re
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from babel.core import Locale, UnknownLocaleError
+from babel.numbers import is_currency
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from app.common.normalization import normalize_email
@@ -37,6 +38,10 @@ class WorkspaceUpdate(_WorkspaceRequest):
     logo_file_id: UUID | None = None
     timezone: str | None = Field(default=None, max_length=64)
     locale: str | None = Field(default=None, max_length=35)
+    mark: str | None = Field(default=None, max_length=32)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    week_start: Literal["monday", "sunday"] | None = None
+    business_hours: str | None = Field(default=None, max_length=200)
     invitation_expiry_days: int | None = Field(default=None, ge=1, le=365)
     guest_duration_days: int | None = Field(default=None, ge=1, le=365)
 
@@ -54,6 +59,23 @@ class WorkspaceUpdate(_WorkspaceRequest):
     @classmethod
     def trim_text(cls, value: Any) -> Any:
         return _trim_optional(value)
+
+    @field_validator("mark", "business_hours", mode="before")
+    @classmethod
+    def trim_organization_text(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def normalize_currency(cls, value: Any) -> Any:
+        return value.strip().upper() if isinstance(value, str) else value
+
+    @field_validator("currency")
+    @classmethod
+    def validate_currency(cls, value: str | None) -> str | None:
+        if value is not None and not is_currency(value):
+            raise ValueError("Currency must be a supported ISO 4217 code")
+        return value
 
     @field_validator("display_name")
     @classmethod
@@ -103,7 +125,14 @@ class WorkspaceUpdate(_WorkspaceRequest):
         for field in {"timezone", "locale"} & self.model_fields_set:
             if getattr(self, field) is None:
                 raise ValueError(f"{field.capitalize()} must not be blank")
-        for field in {"invitation_expiry_days", "guest_duration_days"} & self.model_fields_set:
+        for field in {
+            "invitation_expiry_days",
+            "guest_duration_days",
+            "mark",
+            "currency",
+            "week_start",
+            "business_hours",
+        } & self.model_fields_set:
             if getattr(self, field) is None:
                 raise ValueError(f"{field} must not be null")
         if "display_name" in self.model_fields_set and self.display_name is None:
@@ -122,6 +151,10 @@ class WorkspaceResponse(BaseModel):
     logo_file_id: UUID | None
     timezone: str
     locale: str
+    mark: str
+    currency: str
+    week_start: Literal["monday", "sunday"]
+    business_hours: str
     invitation_expiry_days: int
     guest_duration_days: int
     revision: int

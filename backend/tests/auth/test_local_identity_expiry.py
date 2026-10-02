@@ -16,6 +16,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_login import login_with_provider
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 
 
 def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
@@ -131,7 +132,90 @@ def test_expired_user_cannot_complete_provider_email_actions(monkeypatch, kind):
     )
     error = InvitationError if kind == "invite" else ActionTokenInvalid
     with pytest.raises(error):
-        action(db, "a" * 56, "replacement password", client)
+        action(db, "a" * 56, "Replacement password", client)
     client.update_password.assert_not_called()
     db.commit.assert_not_called()
-    client.sign_out.assert_called_once_with("provider-access", scope="global")
+    client.sign_out.assert_called_once_with(
+        "provider-access", scope="global" if kind == "invite" else "local"
+    )
+
+
+@pytest.mark.parametrize("minutes", [15, 30, 60, 480])
+def test_admission_uses_workspace_session_timeout(monkeypatch, minutes):
+    now, user, _session, _claims, client = _subject(monkeypatch, expired=False)
+    policy = WorkspaceProfile(session_timeout_minutes=minutes)
+    monkeypatch.setattr(
+        provider_sessions, "load_workspace_policy", lambda _db: policy, raising=False
+    )
+    db = Mock(spec=Session)
+    db.scalar.return_value = user
+    db.execute.return_value.scalar_one.return_value = True
+
+    provider_sessions.admit_provider_session(
+        db, client.password_grant.return_value, client, now=now
+    )
+
+    admitted = db.add.call_args.args[0]
+    assert admitted.expires_at == now + timedelta(minutes=minutes)
+    assert admitted.refreshed_at == now
+
+
+@pytest.mark.parametrize("cached", [True, False])
+def test_successful_refresh_renews_workspace_timeout_on_both_paths(monkeypatch, cached):
+    now, user, session, claims, client = _subject(monkeypatch, expired=False)
+    policy = WorkspaceProfile(session_timeout_minutes=30)
+    monkeypatch.setattr(
+        provider_sessions, "load_workspace_policy", lambda _db: policy, raising=False
+    )
+    session.refreshed_at = now - timedelta(minutes=5)
+    session.expires_at = now + timedelta(minutes=1)
+    db = Mock(spec=Session)
+    db.scalar.side_effect = [session, session, user]
+    db.execute.return_value.scalar_one.return_value = True
+    if not cached:
+        from app.core.integrations.supabase_auth import InvalidProviderToken
+
+        client.verify_access_token.side_effect = [InvalidProviderToken("expired"), claims]
+        client.refresh.return_value = client.password_grant.return_value
+
+    issued = provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
+
+    assert issued.session_id == session.id
+    assert session.refreshed_at == now
+    assert session.expires_at == now + timedelta(minutes=30)
+    db.commit.assert_called_once()
+    assert client.refresh.call_count == (0 if cached else 1)
+
+
+def test_expired_workspace_session_cannot_be_revived(monkeypatch):
+    now, _user, session, _claims, client = _subject(monkeypatch, expired=False)
+    session.expires_at = now
+    session.refreshed_at = now - timedelta(minutes=30)
+    db = Mock(spec=Session)
+    db.scalar.return_value = session
+
+    with pytest.raises(InvalidCredentials):
+        provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
+
+    assert session.expires_at == now
+    assert session.refreshed_at == now - timedelta(minutes=30)
+    client.refresh.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_failed_provider_refresh_never_extends_workspace_expiry(monkeypatch):
+    from app.core.integrations.supabase_auth import InvalidProviderToken, SupabaseAuthUnavailable
+
+    now, _user, session, _claims, client = _subject(monkeypatch, expired=False)
+    session.refreshed_at = now - timedelta(minutes=5)
+    session.expires_at = now + timedelta(minutes=1)
+    db = Mock(spec=Session)
+    db.scalar.return_value = session
+    client.verify_access_token.side_effect = InvalidProviderToken("expired")
+    client.refresh.side_effect = SupabaseAuthUnavailable("unavailable")
+
+    with pytest.raises(SupabaseAuthUnavailable):
+        provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
+
+    assert session.refreshed_at == now - timedelta(minutes=5)
+    assert session.expires_at == now + timedelta(minutes=1)

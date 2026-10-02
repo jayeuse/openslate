@@ -36,9 +36,17 @@ def test_every_frontend_operation_exists_and_has_simulated_run_coverage() -> Non
     }
     covered = {(method, _shape(path)) for method, path in SEEDER_ROUTES}
     deferred = {(method, _shape(path)) for method, path in DEFERRED_ROUTES}
+    interactive_routes = getattr(coverage, "INTERACTIVE_ACCEPTANCE_ROUTES", {})
+    assert set(interactive_routes) == {
+        ("POST", "/api/auth/mfa/factors"),
+        ("POST", "/api/auth/mfa/factors/{factor_id}/verification"),
+        ("DELETE", "/api/auth/mfa/factors/{factor_id}"),
+    }
+    interactive = {(method, _shape(path)) for method, path in interactive_routes}
     assert not (frontend - registered), f"UI routes absent from OpenAPI: {frontend - registered}"
     assert not (covered & deferred), "A deferred operation must not claim run coverage"
-    uncovered = frontend - covered - deferred
+    assert not (interactive & (covered | deferred))
+    uncovered = frontend - covered - deferred - interactive
     assert not uncovered, f"UI routes without simulated run coverage: {sorted(uncovered)}"
     assert set(DEFERRED_ROUTES.values()) <= {"files", "notifications", "comms"}
 
@@ -119,4 +127,5 @@ def test_route_coverage_reconciles_the_cookie_free_invitation_journal(tmp_path: 
 
     assert counts["ui_routes_covered"] == len(coverage.SEEDER_ROUTES)
     assert counts["ui_routes_uncovered"] == 0
+    assert counts["ui_routes_interactive"] == 3
     assert issues == []

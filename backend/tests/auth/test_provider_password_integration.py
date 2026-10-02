@@ -83,6 +83,14 @@ def test_password_change_retains_current_and_revokes_other_provider_sessions(pro
 
         csrf = current.cookies.get("openslate_csrf")
         assert csrf is not None, "Browser login must provide its CSRF token"
+        weak = current.post(
+            "/api/auth/password/change",
+            json={"current_password": old_password, "password": "no uppercase password"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert weak.status_code == 422
+        assert weak.json()["detail"]["code"] == "password_policy_violation"
+        assert _owned_session_states(owner, local_user_id) == before_wrong_password
         new_password = token_urlsafe(32)
         wrong_password = token_urlsafe(32)
         denied = current.post(

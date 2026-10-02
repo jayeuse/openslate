@@ -25,6 +25,7 @@ from app.systems.access.users.acceptance import accept_verified_invitation
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import User, UserStatus
+from app.systems.manage.workspace.security_policy import load_workspace_policy, validate_password
 
 
 def _verified_action(
@@ -40,11 +41,13 @@ def _verified_action(
     return tokens, user
 
 
-def _sign_out_verified_action(client: SupabaseAuthClient, access_token: str) -> None:
+def _sign_out_verified_action(
+    client: SupabaseAuthClient, access_token: str, *, scope: str = "global"
+) -> None:
     # No application session is ever admitted for an email action. Failure to
     # close this provider-only session does not grant application access.
     try:
-        client.sign_out(access_token, scope="global")
+        client.sign_out(access_token, scope=scope)
     except (InvalidProviderCredentials, SupabaseAuthUnavailable):
         pass
 
@@ -54,12 +57,12 @@ def complete_recovery(
 ) -> None:
     """Change a bound active user's provider password without issuing an app session."""
 
+    validate_password(load_workspace_policy(db), password)
     tokens, provider_user = _verified_action(client, token_hash, "recovery")
+    password_updated = False
     try:
         local = db.scalar(
-            select(User)
-            .where(User.supabase_user_id == provider_user.id)
-            .with_for_update(of=User)
+            select(User).where(User.supabase_user_id == provider_user.id).with_for_update(of=User)
         )
         if (
             local is None
@@ -69,13 +72,16 @@ def complete_recovery(
             or not is_established_user(local)
         ):
             raise ActionTokenInvalid("Recovery token is invalid")
-        revoke_user_sessions(db, local.id, except_session_id=None)
-        db.commit()
         updated = client.update_password(tokens.access_token, password)
         if updated.id != provider_user.id:
             raise ActionTokenInvalid("Recovery token is invalid")
+        password_updated = True
+        revoke_user_sessions(db, local.id, except_session_id=None)
+        db.commit()
     finally:
-        _sign_out_verified_action(client, tokens.access_token)
+        _sign_out_verified_action(
+            client, tokens.access_token, scope="global" if password_updated else "local"
+        )
 
 
 def complete_invitation(
@@ -83,15 +89,14 @@ def complete_invitation(
 ) -> None:
     """Activate only the local pending profile explicitly bound to this invite."""
 
+    validate_password(load_workspace_policy(db), password)
     try:
         tokens, provider_user = _verified_action(client, token_hash, "invite")
     except ActionTokenInvalid as error:
         raise InvitationError("Invitation token is invalid") from error
     try:
         local = db.scalar(
-            select(User)
-            .where(User.supabase_user_id == provider_user.id)
-            .with_for_update(of=User)
+            select(User).where(User.supabase_user_id == provider_user.id).with_for_update(of=User)
         )
         if (
             local is None
@@ -131,6 +136,7 @@ def change_password(
 ) -> None:
     """Verify the current provider password and retain only this app session."""
 
+    validate_password(load_workspace_policy(db), new_password)
     timestamp = utc_now()
     fingerprint = None
     bucket = None
@@ -178,13 +184,13 @@ def change_password(
                 rate_limits.record_attempt(db, fingerprint, bucket, timestamp)
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
+        changed = client.update_password(current_access_token, new_password)
+        if changed.id != temporary.user_id:
+            raise InvalidCredentials("Invalid credentials")
         revoke_user_sessions(db, user.id, except_session_id=current_session_id)
         if bucket is not None:
             db.delete(bucket)
         db.commit()
-        changed = client.update_password(current_access_token, new_password)
-        if changed.id != temporary.user_id:
-            raise InvalidCredentials("Invalid credentials")
     finally:
         try:
             client.sign_out(temporary.access_token, scope="local")

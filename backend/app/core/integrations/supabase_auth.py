@@ -40,6 +40,7 @@ class ProviderAccessIdentity:
     session_id: UUID
     issued_at: datetime
     expires_at: datetime
+    assurance_level: str = "aal1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,12 +52,20 @@ class ProviderTokens:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderFactor:
+    id: UUID
+    factor_type: str
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderUser:
     id: UUID
     banned_until: datetime | None
     email: str | None = None
     app_metadata: dict[str, Any] = field(default_factory=dict)
     email_confirmed_at: datetime | None = None
+    factors: tuple[ProviderFactor, ...] = ()
 
     def is_eligible(self, *, now: datetime | None = None) -> bool:
         return self.banned_until is None or self.banned_until <= (now or datetime.now(UTC))
@@ -214,6 +223,35 @@ class SupabaseAuthClient:
         if response.status_code not in {200, 204}:
             raise SupabaseAuthUnavailable("Supabase Auth is unavailable")
 
+    def admin_list_factors(self, user_id: UUID) -> list[UUID]:
+        response = self._request("GET", f"admin/users/{user_id}/factors", admin=True)
+        if response.status_code != 200:
+            raise SupabaseAuthUnavailable("Supabase factor list is unavailable")
+        try:
+            data = response.json()
+            if not isinstance(data, list):
+                raise ValueError("Expected factor array")
+            factor_ids: list[UUID] = []
+            for factor in data:
+                if not isinstance(factor, dict):
+                    raise ValueError("Expected factor object")
+                factor_id = UUID(_required_string(factor, "id"))
+                if factor_id in factor_ids:
+                    raise ValueError("Duplicate factor")
+                factor_ids.append(factor_id)
+            return factor_ids
+        except (KeyError, TypeError, ValueError) as error:
+            raise SupabaseAuthUnavailable("Supabase Auth returned invalid factors") from error
+
+    def admin_delete_factor(self, user_id: UUID, factor_id: UUID) -> None:
+        response = self._request("DELETE", f"admin/users/{user_id}/factors/{factor_id}", admin=True)
+        try:
+            deleted_id = UUID(_required_string(_json_response(response), "id"))
+            if deleted_id != factor_id:
+                raise ValueError("Factor deletion does not match")
+        except (KeyError, TypeError, ValueError) as error:
+            raise SupabaseAuthUnavailable("Supabase Auth returned an invalid factor") from error
+
     def sign_out(self, access_token: str, *, scope: str = "local") -> None:
         if scope not in {"local", "global"}:
             raise ValueError("Unsupported sign-out scope")
@@ -239,7 +277,7 @@ class SupabaseAuthClient:
                 issuer=self._issuer,
                 audience=self._audience,
                 options={
-                    "require": ["sub", "session_id", "iss", "aud", "iat", "exp"],
+                    "require": ["sub", "session_id", "iss", "aud", "iat", "exp", "aal"],
                 },
                 leeway=0,
             )
@@ -249,11 +287,15 @@ class SupabaseAuthClient:
             expiry = _numeric_date(claims, "exp")
             if expiry <= issued:
                 raise InvalidProviderToken("Invalid access token")
+            assurance = _required_string(claims, "aal")
+            if assurance not in {"aal1", "aal2"}:
+                raise InvalidProviderToken("Invalid access token")
             return ProviderAccessIdentity(
                 user_id=UUID(_required_string(claims, "sub")),
                 session_id=UUID(_required_string(claims, "session_id")),
                 issued_at=issued,
                 expires_at=expiry,
+                assurance_level=assurance,
             )
         except (InvalidTokenError, KeyError, TypeError, ValueError) as error:
             raise InvalidProviderToken("Invalid access token") from error
@@ -359,6 +401,23 @@ def _numeric_date(data: dict[str, Any], key: str) -> datetime:
     return datetime.fromtimestamp(value, UTC)
 
 
+def _provider_factors(raw: object) -> tuple[ProviderFactor, ...]:
+    if not isinstance(raw, list):
+        raise ValueError("Invalid provider factors")
+    factors: list[ProviderFactor] = []
+    ids: set[UUID] = set()
+    for value in raw:
+        if not isinstance(value, dict):
+            raise ValueError("Invalid provider factor")
+        factor_id = UUID(_required_string(value, "id"))
+        status = _required_string(value, "status")
+        if factor_id in ids or status not in {"unverified", "verified"}:
+            raise ValueError("Invalid provider factor state")
+        ids.add(factor_id)
+        factors.append(ProviderFactor(factor_id, _required_string(value, "factor_type"), status))
+    return tuple(factors)
+
+
 def _provider_user(data: dict[str, Any]) -> ProviderUser:
     nested = data.get("user")
     user = nested if isinstance(nested, dict) else data
@@ -393,6 +452,7 @@ def _provider_user(data: dict[str, Any]) -> ProviderUser:
             email=email,
             app_metadata=metadata or {},
             email_confirmed_at=email_confirmed_at,
+            factors=_provider_factors(user.get("factors", [])),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise SupabaseAuthUnavailable("Supabase Auth returned an invalid user") from error

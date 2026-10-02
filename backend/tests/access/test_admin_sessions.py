@@ -14,10 +14,11 @@ from uuid6 import uuid7
 from app.common.dependencies.auth import CurrentIdentity, get_current_identity
 from app.common.listing import ListQueryResult, PaginationMetadata
 from app.core.database import get_db
+from app.systems.access.auth.aggregate_router import router
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_session, revoke_user_sessions
 from app.systems.access.users.models import User, UserRole, UserStatus
-from app.systems.access.users.sessions_router import router
+from app.systems.manage.workspace.models import WorkspaceProfile
 
 
 def _admin_identity() -> tuple[User, CurrentIdentity]:
@@ -285,7 +286,10 @@ def test_revoke_user_sessions_returns_only_the_number_of_newly_changed_sessions(
     assert preserved.revoked_at is None
 
 
-def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(monkeypatch) -> None:
+@pytest.mark.parametrize("stale_admin", (False, True))
+def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(
+    monkeypatch, stale_admin: bool
+) -> None:
     from app.common.dependencies import auth as auth_dependencies
     from app.systems.access.users import sessions_router
 
@@ -293,13 +297,19 @@ def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(monkey
     target_id = uuid7()
     member = _target_user(admin.id)
     db = Mock(spec=Session)
-    db.scalar.side_effect = [member]
-    application = _application(db, CurrentIdentity(member, identity.session_id, False, False))
+    db.scalar.return_value = member
+    cached_actor = admin if stale_admin else member
+    application = _application(db, CurrentIdentity(cached_actor, identity.session_id, False, False))
 
     with TestClient(application, raise_server_exceptions=False) as client:
         denied = client.get(f"/api/users/{target_id}/sessions")
+        collection_denied = client.get("/api/auth/admin-sessions")
+        bulk_denied = client.delete("/api/auth/admin-sessions")
 
     assert denied.status_code == 403
+    assert collection_denied.status_code == 403
+    assert bulk_denied.status_code == 403
+    db.commit.assert_not_called()
     application.dependency_overrides.clear()
 
     session = _session(admin.id, refreshed_at=datetime.now(UTC))
@@ -314,7 +324,10 @@ def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(monkey
     provider = Mock()
     monkeypatch.setattr(auth_dependencies, "get_supabase_auth_client", lambda: provider)
     monkeypatch.setattr(
-        auth_dependencies, "resolve_provider_session", lambda *_args: (admin, session)
+        auth_dependencies, "resolve_provider_session", lambda *_args, **_kwargs: (admin, session)
+    )
+    monkeypatch.setattr(
+        auth_dependencies, "load_workspace_policy", lambda _db: WorkspaceProfile(ip_allow_list=[])
     )
     monkeypatch.setattr(sessions_router, "require_fresh_exact_admin", lambda *_args: admin)
     monkeypatch.setattr(sessions_router, "load_user", lambda *_args: _target_user(target_id))
@@ -328,8 +341,14 @@ def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(monkey
             headers={"Origin": "http://frontend.test"},
             cookies={"openslate_access": "access-token"},
         )
+        bulk_csrf_denied = client.delete(
+            "/api/auth/admin-sessions",
+            headers={"Origin": "http://frontend.test"},
+            cookies={"openslate_access": "access-token"},
+        )
 
     assert csrf_denied.status_code == 401
+    assert bulk_csrf_denied.status_code == 401
     application.dependency_overrides.clear()
 
 
@@ -339,6 +358,8 @@ def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(monkey
         ("get", ""),
         ("delete", ""),
         ("delete", "/session"),
+        ("get", "admin"),
+        ("delete", "admin"),
     ],
 )
 def test_setup_only_admin_cannot_manage_another_users_sessions(
@@ -368,7 +389,9 @@ def test_setup_only_admin_cannot_manage_another_users_sessions(
     monkeypatch.setattr(sessions_router, "revoke_user_sessions", Mock(return_value=0))
     application = _application(db, identity)
     path = f"/api/users/{target_id}/sessions"
-    if path_suffix:
+    if path_suffix == "admin":
+        path = "/api/auth/admin-sessions"
+    elif path_suffix:
         path += f"/{uuid7()}"
 
     with TestClient(application, raise_server_exceptions=False) as client:
@@ -378,4 +401,63 @@ def test_setup_only_admin_cannot_manage_another_users_sessions(
     fresh_admin.assert_not_called()
     load_target.assert_not_called()
     db.commit.assert_not_called()
+    application.dependency_overrides.clear()
+
+
+def test_admin_session_collection_returns_paged_public_person_and_client_metadata(
+    monkeypatch,
+) -> None:
+    from app.systems.access.users import sessions_router
+
+    admin, identity = _admin_identity()
+    timestamp = datetime.now(UTC)
+    session = _session(admin.id, refreshed_at=timestamp, user_agent="Firefox/1.0 Linux")
+    identity = CurrentIdentity(admin, session.id, False, False)
+    db = Mock(spec=Session)
+    db.scalar.return_value = admin
+    db.execute.return_value.mappings.return_value.all.return_value = [
+        {
+            "session_id": session.id,
+            "person_name": "Session Administrator",
+            "device": "Desktop",
+            "browser": "Firefox",
+        }
+    ]
+    monkeypatch.setattr(
+        sessions_router,
+        "execute_standard_list",
+        Mock(
+            return_value=ListQueryResult(
+                items=[session],
+                pagination=PaginationMetadata(limit=1, offset=0, count=1, total=1, has_more=False),
+            )
+        ),
+    )
+    application = _application(db, identity)
+
+    with TestClient(application, raise_server_exceptions=False) as client:
+        response = client.get("/api/auth/admin-sessions?limit=1&offset=0")
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item == {
+        "id": str(session.id),
+        "user_id": str(admin.id),
+        "person_name": "Session Administrator",
+        "user_agent": "Firefox/1.0 Linux",
+        "device": "Desktop",
+        "browser": "Firefox",
+        "created_at": session.created_at.isoformat().replace("+00:00", "Z"),
+        "refreshed_at": session.refreshed_at.isoformat().replace("+00:00", "Z"),
+        "expires_at": session.expires_at.isoformat().replace("+00:00", "Z"),
+        "current": True,
+    }
+    assert response.json()["pagination"] == {
+        "limit": 1,
+        "offset": 0,
+        "count": 1,
+        "total": 1,
+        "has_more": False,
+    }
+    assert response.headers["cache-control"] == "no-store"
     application.dependency_overrides.clear()

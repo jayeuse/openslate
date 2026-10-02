@@ -23,6 +23,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("DELETE", "/api/access/groups/{group_id}"),
         ("DELETE", "/api/auth/invitations/{user_id}"),
         ("DELETE", "/api/auth/sessions/{session_id}"),
+        ("DELETE", "/api/auth/admin-sessions"),
         ("DELETE", "/api/boards/{board_id}/events/{event_id}"),
         ("DELETE", "/api/boards/{board_id}/events/{event_id}/record-links/{link_id}"),
         ("DELETE", "/api/boards/{board_id}/posts/{post_id}"),
@@ -45,6 +46,8 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("GET", "/api/audit-logs/options"),
         ("GET", "/api/audit-logs/{audit_log_id}"),
         ("GET", "/api/auth/me"),
+        ("GET", "/api/auth/admin-sessions"),
+        ("GET", "/api/auth/mfa"),
         ("GET", "/api/auth/session"),
         ("GET", "/api/auth/sessions"),
         ("GET", "/api/boards"),
@@ -100,6 +103,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("GET", "/api/views/data-sources/{module_id}/fields"),
         ("GET", "/api/views/{view_id}"),
         ("GET", "/api/workspace"),
+        ("GET", "/api/workspace/security"),
         ("PATCH", "/api/access/groups/{group_id}"),
         ("PATCH", "/api/boards/{board_id}"),
         ("PATCH", "/api/boards/{board_id}/events/{event_id}"),
@@ -113,6 +117,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("PATCH", "/api/users/{user_id}"),
         ("PATCH", "/api/views/{view_id}"),
         ("PATCH", "/api/workspace"),
+        ("PATCH", "/api/workspace/security"),
         ("POST", "/api/access/groups"),
         ("POST", "/api/auth/invitations"),
         ("POST", "/api/auth/invitations/complete"),
@@ -179,6 +184,21 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
 )
 
 # Exact operations only; a category is never a prefix wildcard.
+INTERACTIVE_ACCEPTANCE_ROUTES: dict[Route, str] = {
+    (
+        "POST",
+        "/api/auth/mfa/factors",
+    ): "Real authenticator enrollment requires provider acceptance outside packs (Phase B8).",
+    (
+        "POST",
+        "/api/auth/mfa/factors/{factor_id}/verification",
+    ): "Real authenticator verification requires provider acceptance outside packs (Phase B8).",
+    (
+        "DELETE",
+        "/api/auth/mfa/factors/{factor_id}",
+    ): "Provider factor removal is covered by the same interactive acceptance journey (Phase B8).",
+}
+
 DEFERRED_ROUTES: dict[Route, str] = {
     ("DELETE", "/api/boards/{board_id}/events/{event_id}/attachments/{file_id}"): "files",
     ("DELETE", "/api/boards/{board_id}/posts/{post_id}/attachments/{file_id}"): "files",
@@ -200,7 +220,8 @@ DEFERRED_ROUTES: dict[Route, str] = {
 @lru_cache(maxsize=1)
 def _patterns() -> tuple[tuple[str, str, re.Pattern[str]], ...]:
     routes = sorted(
-        SEEDER_ROUTES | DEFERRED_ROUTES.keys(), key=lambda row: (row[1].count("{"), row)
+        SEEDER_ROUTES | DEFERRED_ROUTES.keys() | INTERACTIVE_ACCEPTANCE_ROUTES.keys(),
+        key=lambda row: (row[1].count("{"), row),
     )
     return tuple(
         (
@@ -270,6 +291,7 @@ def read_route_evidence(journal: Path) -> dict[str, Any]:
                     route is not None
                     and route not in SEEDER_ROUTES
                     and route not in DEFERRED_ROUTES
+                    and route not in INTERACTIVE_ACCEPTANCE_ROUTES
                 ):
                     raise ValueError("The route journal claims an unknown operation")
                 started[attempt] = route
@@ -283,7 +305,9 @@ def read_route_evidence(journal: Path) -> dict[str, Any]:
                 and 200 <= status < 300
                 and row.get("outcome") in {None, "resync_received"}
             ):
-                if (route := started[attempt]) is not None:
+                if (
+                    route := started[attempt]
+                ) is not None and route not in INTERACTIVE_ACCEPTANCE_ROUTES:
                     covered[route] += 1
             elif type(status) is int and status >= 500:
                 code = row.get("failure_code", "other")
@@ -306,6 +330,10 @@ def read_route_evidence(journal: Path) -> dict[str, Any]:
             for (method, path), reason in sorted(DEFERRED_ROUTES.items())
         ],
         "failures_5xx": dict(sorted(failures.items())),
+        "interactive_acceptance": [
+            {"method": method, "path": path, "reason": reason}
+            for (method, path), reason in sorted(INTERACTIVE_ACCEPTANCE_ROUTES.items())
+        ],
     }
 
 
@@ -334,6 +362,10 @@ def verify_route_coverage(directory: Path) -> tuple[dict[str, int], list[str]]:
         ],
         "uncovered": [{"method": method, "path": path} for method, path in sorted(missing)],
         "failures_5xx": dict(sorted(failures.items())),
+        "interactive_acceptance": [
+            {"method": method, "path": path, "reason": reason}
+            for (method, path), reason in sorted(INTERACTIVE_ACCEPTANCE_ROUTES.items())
+        ],
     }
     try:
         append_event(directory / "route-coverage.jsonl", report)
@@ -343,6 +375,7 @@ def verify_route_coverage(directory: Path) -> tuple[dict[str, int], list[str]]:
         {
             "ui_routes_covered": len(SEEDER_ROUTES) - len(missing),
             "ui_routes_deferred": len(DEFERRED_ROUTES),
+            "ui_routes_interactive": len(INTERACTIVE_ACCEPTANCE_ROUTES),
             "ui_routes_uncovered": len(missing),
             "http_5xx": sum(failures.values()),
         },

@@ -262,15 +262,10 @@ def _sandbox_issues(
 ) -> tuple[dict[str, int], list[str]]:
     issues: list[str] = []
     workspace = _read_object(client, "/api/workspace")
-    if any(
-        workspace.get(key) != value
-        for key, value in (
-            ("display_name", dataset.organization.identity.workspace_name),
-            ("locale", dataset.organization.identity.locale),
-            ("timezone", dataset.organization.identity.timezone),
-        )
-    ):
-        issues.append("Workspace name, locale or timezone differs from the organization pack")
+    from operations.sample_control_manage import organization_settings
+
+    if any(workspace.get(key) != value for key, value in organization_settings(dataset).items()):
+        issues.append("Workspace organization settings differ from the organization pack")
     current = _read_object(client, "/api/sandbox/document")
     expected_document = SandboxDocument.model_validate(dataset.document).model_dump(
         mode="json", by_alias=True

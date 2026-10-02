@@ -37,6 +37,47 @@ def test_workspace_migration_seeds_neutral_singleton(integration_owner_db: Sessi
     assert profile.revision == 1
 
 
+def test_workspace_migration_preserves_designed_settings_defaults(
+    integration_owner_db: Session,
+) -> None:
+    profile = _profile(integration_owner_db)
+
+    assert profile.currency == "PHP"
+    assert profile.week_start == "monday"
+    assert profile.business_hours == "09:00–18:00"
+    assert profile.mark == "RS"
+    assert profile.session_timeout_minutes == 60
+    assert profile.password_min_length == 12
+    assert profile.password_require_mixed_case is True
+    assert profile.password_require_number is False
+    assert profile.mfa_policy == "optional"
+    assert profile.ip_allow_list == []
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("currency", "php"),
+        ("week_start", "friday"),
+        ("business_hours", " padded "),
+        ("mark", " padded "),
+        ("session_timeout_minutes", 20),
+        ("password_min_length", 11),
+        ("password_min_length", 129),
+        ("mfa_policy", "required"),
+        ("ip_allow_list", {}),
+    ],
+)
+def test_workspace_settings_reject_invalid_persisted_values(
+    integration_owner_db: Session, field: str, value: object
+) -> None:
+    profile = _profile(integration_owner_db)
+    setattr(profile, field, value)
+
+    with pytest.raises(IntegrityError):
+        integration_owner_db.flush()
+
+
 def test_workspace_singleton_constraint_rejects_second_profile(
     integration_owner_db: Session,
 ) -> None:

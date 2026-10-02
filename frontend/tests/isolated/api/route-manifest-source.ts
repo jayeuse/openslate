@@ -209,7 +209,8 @@ function isAdapterSource(file: string): boolean {
   return (
     (file.startsWith("frontend/src/components/systems/") &&
       (file.includes("/adapters/") || file.endsWith("/state/api.ts"))) ||
-    file === "frontend/src/lib/auth-api.ts"
+    file === "frontend/src/lib/auth-api.ts" ||
+    file === "frontend/src/lib/mfa-api.ts"
   );
 }
 

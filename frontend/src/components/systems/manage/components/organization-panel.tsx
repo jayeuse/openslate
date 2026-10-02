@@ -68,6 +68,11 @@ export function OrganizationPanel({
   const timezoneOptions = ["Asia/Manila", "UTC", "Asia/Singapore"];
   if (current.timezone && !timezoneOptions.includes(current.timezone))
     timezoneOptions.push(current.timezone);
+  const markOptions = ["", "RS", "R", "Compass"];
+  if (!markOptions.includes(current.logo)) markOptions.push(current.logo);
+  const currencyOptions = ["PHP", "USD", "SGD"];
+  if (current.currency && !currencyOptions.includes(current.currency))
+    currencyOptions.push(current.currency);
   const workspaceFields = workspace
     ? workspaceSettingsFormFields(workspace)
     : null;
@@ -139,14 +144,25 @@ export function OrganizationPanel({
                 loading={workspaceLoading}
               />
             )}
-            <SettingSelect
-              id="organization-logo"
-              label="Organization mark"
-              value={current.logo}
-              error={errors.logo}
-              options={["RS", "R", "Compass"]}
-              onChange={(value) => changeSetting("organization", "logo", value)}
-            />
+            {workspaceFields ? (
+              <SettingSelect
+                id="organization-logo"
+                label="Organization mark"
+                value={current.logo}
+                error={errors.logo}
+                options={markOptions}
+                optionLabels={{ "": "No mark" }}
+                onChange={(value) =>
+                  changeSetting("organization", "logo", value)
+                }
+              />
+            ) : (
+              <WorkspaceSettingsPlaceholder
+                id="organization-logo"
+                label="Organization mark"
+                loading={workspaceLoading}
+              />
+            )}
           </FieldGroup>
         </FieldSet>
 
@@ -200,24 +216,42 @@ export function OrganizationPanel({
                 loading={workspaceLoading}
               />
             )}
-            <SettingSelect
-              id="currency"
-              label="Currency"
-              value={current.currency}
-              error={errors.currency}
-              options={["PHP", "USD", "SGD"]}
-              onChange={(value) =>
-                changeSetting("organization", "currency", value)
-              }
-            />
-            <SettingSelect
-              id="week-start"
-              label="Week starts on"
-              value={current.week}
-              error={errors.week}
-              options={["Monday", "Sunday"]}
-              onChange={(value) => changeSetting("organization", "week", value)}
-            />
+            {workspaceFields ? (
+              <SettingSelect
+                id="currency"
+                label="Currency"
+                value={current.currency}
+                error={errors.currency}
+                options={currencyOptions}
+                onChange={(value) =>
+                  changeSetting("organization", "currency", value)
+                }
+              />
+            ) : (
+              <WorkspaceSettingsPlaceholder
+                id="currency"
+                label="Currency"
+                loading={workspaceLoading}
+              />
+            )}
+            {workspaceFields ? (
+              <SettingSelect
+                id="week-start"
+                label="Week starts on"
+                value={current.week}
+                error={errors.week}
+                options={["Monday", "Sunday"]}
+                onChange={(value) =>
+                  changeSetting("organization", "week", value)
+                }
+              />
+            ) : (
+              <WorkspaceSettingsPlaceholder
+                id="week-start"
+                label="Week starts on"
+                loading={workspaceLoading}
+              />
+            )}
           </FieldGroup>
         </FieldSet>
 
@@ -229,16 +263,25 @@ export function OrganizationPanel({
             Set a shared reference for your working day.
           </p>
           <div className="max-w-sm">
-            <SettingInput
-              id="business-hours"
-              label="Business hours"
-              value={current.hours}
-              onChange={(value) =>
-                changeSetting("organization", "hours", value)
-              }
-              description="Use 24-hour time and a dash, for example 09:00–18:00."
-              error={errors.hours ?? null}
-            />
+            {workspaceFields ? (
+              <SettingInput
+                id="business-hours"
+                label="Business hours"
+                value={current.hours}
+                maxLength={200}
+                onChange={(value) =>
+                  changeSetting("organization", "hours", value)
+                }
+                description="Use 24-hour time and a dash, for example 09:00–18:00."
+                error={errors.hours ?? null}
+              />
+            ) : (
+              <WorkspaceSettingsPlaceholder
+                id="business-hours"
+                label="Business hours"
+                loading={workspaceLoading}
+              />
+            )}
           </div>
         </FieldSet>
 
@@ -302,13 +345,15 @@ export function OrganizationPanel({
                   Currency format
                 </dt>
                 <dd className="min-w-0 text-sm font-medium break-words sm:text-right">
-                  {regionalCurrency}
+                  {workspace ? regionalCurrency : "Unavailable"}
                 </dd>
               </div>
               <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)] sm:items-baseline sm:gap-4">
                 <dt className="text-muted-foreground text-sm">Working week</dt>
                 <dd className="min-w-0 text-sm font-medium break-words sm:text-right">
-                  {current.week} · {current.hours}
+                  {workspace
+                    ? `${current.week} · ${current.hours}`
+                    : "Unavailable"}
                 </dd>
               </div>
             </dl>

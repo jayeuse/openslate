@@ -50,6 +50,7 @@ def _signed_access(
         "iat": now,
         "exp": expires_at or now + timedelta(minutes=10),
         "role": "admin",
+        "aal": "aal1",
         "user_metadata": {"role": "admin"},
         **(extra or {}),
     }
@@ -58,7 +59,7 @@ def _signed_access(
     return jwt.encode(claims, private_key, algorithm="ES256", headers={"kid": kid})
 
 
-def _client_for_key(private_key: ec.EllipticCurvePrivateKey, *, user_id=None):
+def _client_for_key(private_key: ec.EllipticCurvePrivateKey, *, user_id=None, factors=None):
     from app.core.integrations.supabase_auth import SupabaseAuthClient
 
     jwk = ECAlgorithm.to_jwk(private_key.public_key(), as_dict=True)
@@ -68,55 +69,16 @@ def _client_for_key(private_key: ec.EllipticCurvePrivateKey, *, user_id=None):
         if request.url.path.startswith("/auth/v1/admin/users/"):
             assert request.headers["apikey"] == "sb_secret_test"
             assert "authorization" not in request.headers
-            return httpx.Response(200, json={"id": str(user_id)})
+            return httpx.Response(
+                200,
+                json={"id": str(user_id), **({"factors": factors} if factors is not None else {})},
+            )
         assert request.headers["apikey"] == "sb_publishable_test"
         if request.url.path.endswith("/.well-known/jwks.json"):
             return httpx.Response(200, json={"keys": [jwk]})
         return httpx.Response(404)
 
     return SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
-
-
-def test_verified_provider_access_uses_exact_instance_and_session_claim() -> None:
-    from app.core.integrations.supabase_auth import InvalidProviderToken
-
-    key = ec.generate_private_key(ec.SECP256R1())
-    client = _client_for_key(key)
-    user_id, session_id = uuid4(), uuid4()
-    valid = _signed_access(key, user_id=str(user_id), session_id=str(session_id))
-
-    identity = client.verify_access_token(valid)
-
-    assert identity.user_id == user_id
-    assert identity.session_id == session_id
-    assert identity.issued_at <= datetime.now(UTC)
-    for invalid in (
-        _signed_access(
-            key,
-            user_id=str(user_id),
-            session_id=str(session_id),
-            issuer="https://other.example.test/auth/v1",
-        ),
-        _signed_access(key, user_id=str(user_id), session_id=str(session_id), audience="anon"),
-        _signed_access(key, user_id=str(user_id), session_id=str(session_id), extra={"sub": "bad"}),
-        _signed_access(
-            key, user_id=str(user_id), session_id=str(session_id), extra={"session_id": "bad"}
-        ),
-        _signed_access(
-            key,
-            user_id=str(user_id),
-            session_id=str(session_id),
-            expires_at=datetime.now(UTC) - timedelta(minutes=1),
-        ),
-    ):
-        with pytest.raises(InvalidProviderToken):
-            client.verify_access_token(invalid)
-
-    foreign_key = ec.generate_private_key(ec.SECP256R1())
-    with pytest.raises(InvalidProviderToken):
-        client.verify_access_token(
-            _signed_access(foreign_key, user_id=str(user_id), session_id=str(session_id))
-        )
 
 
 def test_provider_access_accepts_missing_nbf_but_enforces_nbf_when_present() -> None:

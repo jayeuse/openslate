@@ -56,7 +56,8 @@ def _template(method: str, path: str, routes: frozenset[tuple[str, str]]) -> set
 def test_openview_executor_sends_every_declared_route_with_server_request_shapes(
     tmp_path, monkeypatch: pytest.MonkeyPatch, pack_key: str, schedule_id: str | None
 ) -> None:
-    monkeypatch.setattr("operations.sample_control_openview_mutations.time.sleep", lambda _: None)
+    waits: list[float] = []
+    monkeypatch.setattr("operations.sample_control_openview_mutations.time.sleep", waits.append)
     from operations.sample_control_openview import (
         CONTROL_ROUTES,
         execute_openview_control,
@@ -70,6 +71,7 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
     records: dict[str, dict[str, object]] = {}
     seen: list[tuple[str, str]] = []
     counter = 0
+    delete_attempts = 0
     pack = dataset.organization
     department_key = str(
         next(
@@ -85,16 +87,9 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
             if action.values.get("operation") == "view_patch"
         )
     )
-    view_target = next(
-        action.target_key for action in actions if action.values.get("operation") == "view_patch"
-    )
-    dashboard_target = next(
-        action.target_key
-        for action in actions
-        if action.values.get("operation") == "dashboard_patch"
-    )
-    report_target = next(
-        action.target_key for action in actions if action.values.get("operation") == "report_patch"
+    targets = {action.values["operation"]: action.target_key for action in actions}
+    view_target, dashboard_target, report_target = (
+        targets[f"{resource}_patch"] for resource in ("view", "dashboard", "report")
     )
     live_modules = {module.key: _uuid(f"module:{module.key}") for module in pack.catalog.modules}
     live_fields = {
@@ -177,11 +172,14 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
 
     def response(status: int, body: object | None = None) -> httpx.Response:
         nonlocal counter
-        headers = {"X-Request-ID": _uuid(f"request:{counter}")} if status in {200, 201, 204} else {}
+        headers = {"X-Request-ID": _uuid(f"request:{counter}")}
         counter += 1
         if status == 204:
             return httpx.Response(status, headers=headers)
         return httpx.Response(status, headers=headers, json=body)
+
+    def pagination(limit, offset=0):
+        return {"limit": limit, "offset": offset, "count": 0, "total": 0, "has_more": False}
 
     def record_response(record_id: str) -> dict[str, object]:
         row = records[record_id]
@@ -198,6 +196,7 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
         }
 
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal delete_attempts
         if request.url.path == "/api/auth/login":
             return httpx.Response(
                 200,
@@ -221,13 +220,7 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
                         "items": [],
                         "pagination": None,
                         "groups": [],
-                        "group_pagination": {
-                            "limit": body["group_limit"],
-                            "offset": body["group_offset"],
-                            "count": 0,
-                            "total": 0,
-                            "has_more": False,
-                        },
+                        "group_pagination": pagination(body["group_limit"], body["group_offset"]),
                         "selected_group": None,
                     },
                 )
@@ -237,13 +230,7 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
                     200,
                     {
                         "items": [],
-                        "pagination": {
-                            "limit": query.limit,
-                            "offset": query.offset,
-                            "count": 0,
-                            "total": 0,
-                            "has_more": False,
-                        },
+                        "pagination": pagination(query.limit, query.offset),
                         "timezone": pack.identity.timezone,
                     },
                 )
@@ -255,13 +242,7 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
                     200,
                     {
                         "items": [],
-                        "pagination": {
-                            "limit": 12,
-                            "offset": 0,
-                            "count": 0,
-                            "total": 0,
-                            "has_more": False,
-                        },
+                        "pagination": pagination(12),
                     },
                 )
             else:
@@ -270,26 +251,14 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
                     200,
                     {
                         "items": [],
-                        "pagination": {
-                            "limit": query.limit,
-                            "offset": query.offset,
-                            "count": 0,
-                            "total": 0,
-                            "has_more": False,
-                        },
+                        "pagination": pagination(query.limit, query.offset),
                     },
                 )
             return response(
                 200,
                 {
                     "items": [],
-                    "pagination": {
-                        "limit": 12,
-                        "offset": 0,
-                        "count": 0,
-                        "total": 0,
-                        "has_more": False,
-                    },
+                    "pagination": pagination(12),
                 },
             )
         if method == "POST" and path == "/api/records":
@@ -383,30 +352,33 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
             payload = RelationshipCreate.model_validate(json.loads(request.content))
             relationship_id = _uuid(f"relationship:{counter}")
             records[relationship_id] = {
+                "id": relationship_id,
                 "field_id": str(payload.field_id),
                 "source_record_id": str(payload.source_record_id),
                 "target_record_id": str(payload.target_record_id),
+                "created_at": "2026-10-01T00:00:00Z",
+                "updated_at": "2026-10-01T00:00:00Z",
+                "deleted_at": None,
                 "is_deleted": False,
+                "performed_by": _uuid("user:admin"),
+                "visibility": "available",
+                "hidden_reasons": [],
             }
-            return response(
-                201,
-                {
-                    "id": relationship_id,
-                    "field_id": str(payload.field_id),
-                    "source_record_id": str(payload.source_record_id),
-                    "target_record_id": str(payload.target_record_id),
-                    "created_at": "2026-10-01T00:00:00Z",
-                    "updated_at": "2026-10-01T00:00:00Z",
-                    "deleted_at": None,
-                    "is_deleted": False,
-                    "performed_by": _uuid("user:admin"),
-                    "visibility": "available",
-                    "hidden_reasons": [],
-                },
-            )
-        if path.startswith("/api/relationships/") and method == "DELETE":
-            records[path.rsplit("/", 1)[1]]["is_deleted"] = True
-            return response(204)
+            return response(201, records[relationship_id])
+        if path.startswith("/api/relationships/"):
+            relationship_id = path.rsplit("/", 1)[1]
+            edge = records[relationship_id]
+            if method == "GET":
+                return response(200, edge)
+            if method == "DELETE":
+                delete_attempts += 1
+                if delete_attempts == 1:
+                    return response(
+                        503, {"detail": "Relationship operation is temporarily unavailable"}
+                    )
+                edge["is_deleted"] = True
+                edge["deleted_at"] = "2026-10-01T00:01:00Z"
+                return response(204)
         for resource in ("view", "dashboard", "report", "schedule"):
             resource_path = {
                 "view": "/api/views/",
@@ -498,3 +470,22 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
     assert len(results) == len(actions)
     assert all(result["outcome"] == "completed" for result in results)
     assert not records
+    journal = [
+        json.loads(line)
+        for path in tmp_path.glob("*.jsonl")
+        for line in path.read_text().splitlines()
+    ]
+    completed = [row for row in journal if row["event"] == "request_finished"]
+    journey = [method for method, path in seen if path.startswith("/api/relationships/")]
+    assert journey == ["DELETE", "GET", "DELETE", "GET"]
+    assert [row["status_code"] for row in completed if row["status_code"] == 503] == [503]
+    assert [row.get("failure_code") for row in completed if row["status_code"] == 503] == [
+        "relationship_busy"
+    ]
+    assert waits.count(0.3) == 1
+    assert [
+        row["status_code"]
+        for result in results
+        for row in result["request_evidence"]
+        if row["step"] == "delete_control_relationship"
+    ] == [204]

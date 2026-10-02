@@ -12,13 +12,27 @@ import {
   keepAccessDraftsForVerifiedWorkspaceUser,
   VerifiedWorkspaceIdentityProvider,
 } from "@/components/systems/shared/runtime/workspace-identity";
-import { getSessionStatus } from "@/lib/auth-api";
+import {
+  getSessionStatus,
+  requestSessionRecheck,
+  sessionRecheckEvent,
+  signOut,
+} from "@/lib/auth-api";
+import { ApiError } from "@/lib/api";
+import { getMfaStatus, type MfaStatus } from "@/lib/mfa-api";
+import {
+  MfaFlowContext,
+  MfaPresentation,
+  MfaCleanupNotice,
+  useMfaController,
+} from "@/components/mfa-flow";
 
 type AppPageProps = {
   children: ReactNode;
 };
 
-type SessionCheck = "valid" | "setup" | "invalid" | "unavailable";
+type SessionCheck =
+  "valid" | "setup" | "invalid" | "unavailable" | "mfa" | "network";
 
 type CheckQueue = {
   active: boolean;
@@ -42,10 +56,14 @@ function SessionVerificationMessage({
   draftCleanupFailed,
   unavailable,
   onRetry,
+  onSignOut,
+  signOutError,
 }: {
   draftCleanupFailed: boolean;
   unavailable: boolean;
   onRetry: () => void;
+  onSignOut?: () => void;
+  signOutError?: boolean;
 }) {
   return (
     <div className="max-w-sm px-6 text-center">
@@ -72,6 +90,19 @@ function SessionVerificationMessage({
       >
         {unavailable ? "Retry" : "Retry session check"}
       </button>
+      {onSignOut && (
+        <button
+          className="mt-5 ml-3 min-h-11 rounded-md border px-4 text-sm"
+          onClick={onSignOut}
+        >
+          Sign out
+        </button>
+      )}
+      {signOutError && (
+        <p className="mt-3 text-sm" role="alert">
+          Sign-out could not finish. Try again.
+        </p>
+      )}
     </div>
   );
 }
@@ -113,6 +144,9 @@ export function AppPage({ children }: AppPageProps) {
   const [checking, setChecking] = useState(true);
   const [forceFallback, setForceFallback] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const [mfaRequired, setMfaRequired] = useState(false);
+  const [networkDenied, setNetworkDenied] = useState(false);
+  const [signOutError, setSignOutError] = useState(false);
   const [draftCleanupFailed, setDraftCleanupFailed] = useState(false);
   const [verifiedUserId, setVerifiedUserId] = useState<string | null>(null);
   const verifiedUserIdRef = useRef<string | null>(null);
@@ -120,6 +154,7 @@ export function AppPage({ children }: AppPageProps) {
   const [retryVersion, setRetryVersion] = useState(0);
   const mounted = useRef(false);
   const curtain = useRef<HTMLDialogElement | null>(null);
+  const protectedWorkspace = useRef<HTMLDivElement | null>(null);
   const queue = useRef<CheckQueue>({
     active: false,
     queued: null,
@@ -127,6 +162,8 @@ export function AppPage({ children }: AppPageProps) {
     requestId: 0,
     controller: null,
   });
+  const mfa = useMfaController(requestSessionRecheck, finishFactorRemoval);
+  const { bind: bindMfa, hide: hideMfa, clear: clearMfa } = mfa;
 
   useEffect(() => {
     mounted.current = true;
@@ -142,6 +179,7 @@ export function AppPage({ children }: AppPageProps) {
       // A tab's cookie identity can change elsewhere. Invalidate an in-flight
       // result and cover even body-level portals before the next browser paint.
       supersedeSessionCheck(queue.current);
+      hideMfa();
       try {
         if (curtain.current && !curtain.current.open)
           curtain.current.showModal();
@@ -168,7 +206,7 @@ export function AppPage({ children }: AppPageProps) {
     function concealMountedWorkspace() {
       // The first session request has no protected tree to conceal. Let it
       // finish while backgrounded; a later focus will supersede and recheck.
-      if (!curtain.current) return;
+      if (!curtain.current && !mfaRequired) return;
       concealWorkspace();
     }
 
@@ -179,19 +217,30 @@ export function AppPage({ children }: AppPageProps) {
 
     window.addEventListener("blur", concealMountedWorkspace);
     window.addEventListener("focus", recheckOnReturn);
+    window.addEventListener(sessionRecheckEvent, recheckOnReturn);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       window.removeEventListener("blur", concealMountedWorkspace);
       window.removeEventListener("focus", recheckOnReturn);
+      window.removeEventListener(sessionRecheckEvent, recheckOnReturn);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, []);
+  }, [hideMfa, mfaRequired]);
 
   useEffect(() => {
     // Commit a newly verified identity (and its keyed workspace) before the
     // old account's privacy curtain is dismissed.
     if (!checking && curtain.current?.open) curtain.current.close();
   }, [checking, verifiedUserId]);
+
+  useEffect(() => {
+    // Modal cleanup may remove attributes it added before revalidation.
+    // Reassert the gate after child dialog effects release their modal scope.
+    if (checking) {
+      protectedWorkspace.current?.setAttribute("aria-hidden", "true");
+      curtain.current?.removeAttribute("aria-hidden");
+    }
+  }, [checking, mfaRequired, mfa.mode]);
 
   useEffect(() => {
     if (signOutAccepted.current) return;
@@ -212,6 +261,7 @@ export function AppPage({ children }: AppPageProps) {
         current.controller = controller;
         let result: SessionCheck = "unavailable";
         let responseUserId: string | null = null;
+        let mfaStatus: MfaStatus | null = null;
         try {
           const body = await getSessionStatus(controller.signal);
           if (
@@ -222,14 +272,31 @@ export function AppPage({ children }: AppPageProps) {
             return;
           result = classifySessionResponse({ ok: true, status: 200 }, body);
           responseUserId = sessionUserId(body);
-        } catch {
+        } catch (caught) {
           if (
             !mounted.current ||
             current.requestId !== requestId ||
             current.controller !== controller
           )
             return;
-          result = "unavailable";
+          if (
+            caught instanceof ApiError &&
+            caught.status === 403 &&
+            caught.code === "mfa_required"
+          ) {
+            try {
+              mfaStatus = await getMfaStatus(controller.signal);
+              result = "mfa";
+            } catch {
+              result = "mfa";
+            }
+          } else
+            result =
+              caught instanceof ApiError &&
+              caught.status === 403 &&
+              caught.code === "ip_not_allowed"
+                ? "network"
+                : "unavailable";
         } finally {
           if (current.controller === controller) current.controller = null;
         }
@@ -239,6 +306,7 @@ export function AppPage({ children }: AppPageProps) {
         // the loop will immediately process the newest queued request.
         if (current.nextVersion > requested.version) continue;
         if (result === "invalid") {
+          clearMfa();
           if (!clearAccessDraftsForAccountChange()) {
             current.queued = null;
             setVerifiedUserId(null);
@@ -255,6 +323,7 @@ export function AppPage({ children }: AppPageProps) {
           return;
         }
         if (result === "setup") {
+          clearMfa();
           if (!clearAccessDraftsForAccountChange()) {
             current.queued = null;
             setVerifiedUserId(null);
@@ -290,25 +359,158 @@ export function AppPage({ children }: AppPageProps) {
           if (previousUserId !== null && previousUserId !== responseUserId)
             void clearVerifiedWorkspaceSessionSnapshot(previousUserId);
           verifiedUserIdRef.current = responseUserId;
+          bindMfa(responseUserId, "workspace");
+          setMfaRequired(false);
+          setNetworkDenied(false);
           setVerifiedUserId(responseUserId);
           setDraftCleanupFailed(false);
           setForceFallback(false);
           setUnavailable(false);
           setChecking(false);
+        } else if (result === "mfa" && mfaStatus !== null) {
+          try {
+            if (curtain.current && !curtain.current.open)
+              curtain.current.showModal();
+          } catch {
+            setForceFallback(true);
+          }
+          bindMfa(mfaStatus.user_id, "gate", mfaStatus);
+          setMfaRequired(true);
+          setNetworkDenied(false);
+          setUnavailable(false);
+          setChecking(true);
+        } else if (result === "mfa") {
+          try {
+            if (curtain.current && !curtain.current.open)
+              curtain.current.showModal();
+          } catch {
+            setForceFallback(true);
+          }
+          hideMfa();
+          setMfaRequired(true);
+          setNetworkDenied(false);
+          setUnavailable(true);
+          setChecking(true);
+        } else if (result === "network") {
+          try {
+            if (curtain.current && !curtain.current.open)
+              curtain.current.showModal();
+          } catch {
+            setForceFallback(true);
+          }
+          hideMfa();
+          setMfaRequired(false);
+          setNetworkDenied(true);
+          setUnavailable(false);
+          setChecking(true);
         } else {
+          hideMfa();
           setUnavailable(true);
         }
       }
       current.active = false;
     })();
-  }, [pathname, retryVersion, router]);
+  }, [pathname, retryVersion, router, bindMfa, clearMfa, hideMfa]);
 
   function retrySessionCheck() {
+    hideMfa();
     supersedeSessionCheck(queue.current);
     setUnavailable(false);
     setDraftCleanupFailed(false);
     setRetryVersion((version) => version + 1);
   }
+
+  function finishFactorRemoval() {
+    supersedeSessionCheck(queue.current);
+    clearMfa();
+    setMfaRequired(false);
+    setNetworkDenied(false);
+    if (!clearAccessDraftsForAccountChange()) {
+      setVerifiedUserId(null);
+      setChecking(true);
+      setDraftCleanupFailed(true);
+      return;
+    }
+    signOutAccepted.current = true;
+    void clearVerifiedWorkspaceSessionSnapshot(verifiedUserIdRef.current);
+    verifiedUserIdRef.current = null;
+    setVerifiedUserId(null);
+    setChecking(true);
+    router.replace("/login");
+  }
+
+  async function signOutFromGate() {
+    setSignOutError(false);
+    try {
+      await signOut();
+      finishFactorRemoval();
+    } catch {
+      setSignOutError(true);
+    }
+  }
+
+  const verification =
+    mfaRequired && mfa.mode === "gate" ? (
+      <section
+        className="w-full max-w-lg px-6 py-8"
+        aria-label="Multi-factor authentication"
+      >
+        <h2 className="text-xl font-semibold">
+          Complete multi-factor authentication
+        </h2>
+        <p className="text-muted-foreground mt-2 text-sm">
+          Verify this account before continuing to your workspace.
+        </p>
+        <MfaPresentation flow={mfa} gate />
+        <button
+          className="min-h-11 rounded-md border px-4 text-sm"
+          onClick={retrySessionCheck}
+        >
+          Retry session check
+        </button>
+        <button
+          className="mt-4 min-h-11 rounded-md border px-4 text-sm"
+          onClick={() => void signOutFromGate()}
+        >
+          Sign out
+        </button>
+        {signOutError && (
+          <p role="alert">Sign-out could not finish. Try again.</p>
+        )}
+      </section>
+    ) : networkDenied ? (
+      <div className="max-w-sm px-6 text-center">
+        <p role="alert">
+          Access from this address is not allowed. Use an allowed network, or
+          contact your administrator.
+        </p>
+        <div className="mt-5 flex flex-wrap justify-center gap-3">
+          <button
+            className="min-h-11 rounded-md border px-4 text-sm"
+            onClick={retrySessionCheck}
+          >
+            Retry
+          </button>
+          <button
+            className="min-h-11 rounded-md border px-4 text-sm"
+            onClick={() => void signOutFromGate()}
+          >
+            Sign out
+          </button>
+        </div>
+        {signOutError && (
+          <p role="alert">Sign-out could not finish. Try again.</p>
+        )}
+      </div>
+    ) : (
+      <SessionVerificationMessage
+        draftCleanupFailed={draftCleanupFailed}
+        unavailable={unavailable}
+        onRetry={retrySessionCheck}
+        onSignOut={mfaRequired ? () => void signOutFromGate() : undefined}
+        signOutError={signOutError}
+      />
+    );
 
   function acceptSignOut() {
     if (signOutAccepted.current) return;
@@ -324,21 +526,24 @@ export function AppPage({ children }: AppPageProps) {
   if (verifiedUserId === null || forceFallback) {
     return (
       <main className="bg-background text-foreground grid min-h-screen place-items-center">
-        <SessionVerificationMessage
-          draftCleanupFailed={draftCleanupFailed}
-          unavailable={unavailable}
-          onRetry={retrySessionCheck}
-        />
+        {verification}
+        <MfaCleanupNotice flow={mfa} />
       </main>
     );
   }
 
   return (
-    <>
-      <div aria-hidden={checking} className="contents" inert={checking}>
+    <MfaFlowContext.Provider value={mfa}>
+      <div
+        aria-hidden={checking}
+        className="contents"
+        inert={checking}
+        ref={protectedWorkspace}
+      >
         <VerifiedWorkspaceIdentityProvider
           key={verifiedUserId}
           userId={verifiedUserId}
+          suspended={checking}
         >
           <AppQueryProvider>
             <AppShell
@@ -367,18 +572,13 @@ export function AppPage({ children }: AppPageProps) {
       </div>
       <dialog
         aria-label="Session verification"
-        className="bg-background text-foreground backdrop:bg-background fixed inset-0 m-0 h-screen max-h-none w-screen max-w-none border-0 p-0"
+        className="bg-background text-foreground backdrop:bg-background fixed inset-0 m-0 h-screen max-h-none w-screen max-w-none overflow-y-auto border-0 p-0"
         onCancel={(event) => event.preventDefault()}
         ref={curtain}
       >
-        <div className="grid h-full place-items-center">
-          <SessionVerificationMessage
-            draftCleanupFailed={draftCleanupFailed}
-            unavailable={unavailable}
-            onRetry={retrySessionCheck}
-          />
-        </div>
+        <div className="grid min-h-full place-items-center">{verification}</div>
       </dialog>
-    </>
+      <MfaCleanupNotice flow={mfa} />
+    </MfaFlowContext.Provider>
   );
 }

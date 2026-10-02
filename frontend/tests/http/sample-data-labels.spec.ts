@@ -17,7 +17,7 @@ const surfaces = [
   { path: "/comms", says: "Conversations here are examples.", temporary: true },
   {
     path: "/manage?view=organization",
-    says: "Name, locale and timezone save to the organization. Mark, currency, week start and business hours are examples; their changes last until this tab closes.",
+    says: "Settings save to the organization.",
     temporary: false,
   },
   {

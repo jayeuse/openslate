@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import {
   Suspense,
+  useEffect,
   useRef,
   useState,
   type FormEvent,
@@ -40,6 +41,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SampleDataNote } from "@/components/sample-data-note";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import { ApiError } from "@/lib/api";
+import { requestSessionRecheck } from "@/lib/auth-api";
+import { useMfaFlow } from "@/components/mfa-flow";
 import ManageAudit from "./components/audit";
 import {
   decodeManageSettings,
@@ -51,7 +54,6 @@ import {
   type ManageSettings,
   type ManageSnapshot,
 } from "./state/state";
-import type { ManageSession } from "./state/sessions";
 import { SettingsChanges } from "./components/panel-ui";
 import {
   ManageMfaDialog,
@@ -65,7 +67,12 @@ import {
 import { OrganizationPanel } from "./components/organization-panel";
 import {
   afterManageWorkspaceChange,
+  afterManageSecurityChange,
+  afterManageSessionsChange,
   manageWorkspaceOptions,
+  manageKeys,
+  manageSecurityOptions,
+  manageSessionsOptions,
 } from "./adapters/manage-queries";
 import {
   isStaleWorkspaceRevision,
@@ -75,6 +82,16 @@ import {
   updateManageWorkspace,
   type WorkspaceSettingsFormDraft,
 } from "./adapters/workspace-api";
+import {
+  defaultManageSessionsRequest,
+  endAllManageRemoteSessions,
+  endManageSession,
+  securitySettingsFormFields,
+  securitySettingsPatch,
+  updateManageSecurityPolicy,
+  type ManageAdminSession,
+  type SecuritySettingsFormDraft,
+} from "./adapters/security-api";
 import { SecurityPanel, SecurityPolicyForm } from "./components/security-panel";
 import { BackupPanel, SnapshotScheduleForm } from "./components/backup-panel";
 import { UpdatesPanel } from "./components/updates-panel";
@@ -88,36 +105,21 @@ type ViewTab =
 
 type Snapshot = ManageSnapshot;
 
-const SAMPLE_ORGANIZATION_FIELDS = [
-  "logo",
-  "currency",
-  "week",
-  "hours",
-] as const;
-
-function sampleOrganizationDraftIsDirty(
-  settings: ManageSettings,
-  draft: Partial<ManageSettings> | undefined,
-): boolean {
-  return SAMPLE_ORGANIZATION_FIELDS.some(
-    (key) => draft?.[key] !== undefined && draft[key] !== settings[key],
-  );
-}
-
 function organizationErrors(
-  sampleErrors: Partial<Record<keyof ManageSettings, string>>,
-  nameDraft: string | undefined,
+  draft: WorkspaceSettingsFormDraft,
   workspaceReady: boolean,
 ): Partial<Record<keyof ManageSettings, string>> {
-  const errors = { ...sampleErrors };
-  delete errors.name;
-  delete errors.locale;
-  delete errors.timezone;
-  if (workspaceReady && nameDraft !== undefined) {
-    if (!nameDraft.trim()) errors.name = "Enter an organization name.";
-    else if (nameDraft.length > 200)
+  const errors: Partial<Record<keyof ManageSettings, string>> = {};
+  if (!workspaceReady) return errors;
+  if (draft.name !== undefined) {
+    if (!draft.name.trim()) errors.name = "Enter an organization name.";
+    else if (draft.name.length > 200)
       errors.name = "Use 200 characters or fewer.";
   }
+  if (draft.logo !== undefined && draft.logo.trim().length > 32)
+    errors.logo = "Use 32 characters or fewer.";
+  if (draft.hours !== undefined && draft.hours.trim().length > 200)
+    errors.hours = "Use 200 characters or fewer.";
   return errors;
 }
 
@@ -168,14 +170,7 @@ function ManageContent() {
   const manage = useManageController();
   const queryClient = useQueryClient();
   const activeUsers = manage.people.filter((person) => person.active).length;
-  const {
-    settings,
-    snapshots: backups,
-    sessions,
-    history,
-    storageUnavailable,
-    hasDrafts: manageHasDrafts,
-  } = manage;
+  const { settings, snapshots: backups, history, storageUnavailable } = manage;
   const seatLimit = settings.tier === "Business" ? 100 : 25;
   const tab = requestedTab;
   const [workspaceDraft, setWorkspaceDraft] =
@@ -188,14 +183,71 @@ function ManageContent() {
     ...manageWorkspaceOptions(),
     enabled: tab === "Organization",
   });
+  const [securityDraft, setSecurityDraft] = useState<SecuritySettingsFormDraft>(
+    {},
+  );
+  const [securityStale, setSecurityStale] = useState(false);
+  const [securityRefreshRequired, setSecurityRefreshRequired] = useState(false);
+  const [securitySavePending, setSecuritySavePending] = useState(false);
+  const [sessionEndPending, setSessionEndPending] = useState(false);
+  const [sessionsReadDenied, setSessionsReadDenied] = useState(false);
+  const [policyReadDenied, setPolicyReadDenied] = useState(false);
+  const [sessionRequest, setSessionRequest] = useState(
+    defaultManageSessionsRequest,
+  );
+  const securityQuery = useQuery({
+    ...manageSecurityOptions(),
+    enabled: (tab === "Security" || tab === "Backup") && !policyReadDenied,
+  });
+  const sessionsQuery = useQuery({
+    ...manageSessionsOptions(sessionRequest),
+    enabled: (tab === "Security" || tab === "Backup") && !sessionsReadDenied,
+  });
+  const currentPolicyReadDenied =
+    securityQuery.error instanceof ApiError &&
+    securityQuery.error.status === 403;
+  if (currentPolicyReadDenied && !policyReadDenied) setPolicyReadDenied(true);
+  const securityDenied = policyReadDenied || currentPolicyReadDenied;
+  const currentSessionReadDenied =
+    sessionsQuery.error instanceof ApiError &&
+    sessionsQuery.error.status === 403;
+  // A cached filter revisit cannot clear a server refusal. Only Retry's fresh
+  // successful read can admit the session collection again for this account.
+  if (currentSessionReadDenied && !sessionsReadDenied)
+    setSessionsReadDenied(true);
+  const sessionsDenied = sessionsReadDenied || currentSessionReadDenied;
+  useEffect(() => {
+    const refusedKeys = [
+      ...(sessionsReadDenied ? [manageKeys.sessions()] : []),
+      ...(policyReadDenied ? [manageKeys.security()] : []),
+    ];
+    for (const queryKey of refusedKeys) {
+      void queryClient.cancelQueries({ queryKey }).then(() => {
+        queryClient.removeQueries({ queryKey });
+      });
+    }
+  }, [sessionsReadDenied, policyReadDenied, queryClient]);
+  const securityFields =
+    securityQuery.data && !securityDenied
+      ? securitySettingsFormFields(securityQuery.data)
+      : null;
+  const securityPatch = securityQuery.data
+    ? securitySettingsPatch(securityQuery.data, securityDraft)
+    : null;
+  const securityDirty =
+    securityPatch !== null ||
+    (!securityQuery.data && Object.keys(securityDraft).length > 0);
+  const livePending =
+    workspaceSavePending || securitySavePending || sessionEndPending;
   const [notice, setNotice] = useState("");
   const [navigationNotice, setNavigationNotice] = useState("");
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [draftAcknowledged, setDraftAcknowledged] = useState(false);
   const [preview, setPreview] = useState<PreviewState | null>(null);
-  const [mfaStep, setMfaStep] = useState(0);
-  const [mfaOpen, setMfaOpen] = useState(false);
+  const mfa = useMfaFlow();
+  const cancelMfa = mfa.cancel;
+  useEffect(() => () => cancelMfa(), [cancelMfa]);
   const [showChangelog, setShowChangelog] = useState(false);
   const [dummyKey, setDummyKey] = useState("SAMPLE-TEAM-2026");
   const [policyOpen, setPolicyOpen] = useState(false);
@@ -211,6 +263,9 @@ function ManageContent() {
   const mfaOpener = useRef<HTMLButtonElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const optionsOpener = useRef<HTMLButtonElement | null>(null);
+  const sessionConfirmationRefused =
+    sessionsDenied && confirm?.origin === "admin-sessions";
+  if (sessionConfirmationRefused) setConfirm(null);
   const recoveryView = tab === "Security" || tab === "Backup";
   const pageTitle = recoveryView ? "Security & recovery" : tab;
   const sampleSubject =
@@ -223,10 +278,12 @@ function ManageContent() {
           : "Settings";
   const liveSourceStatus =
     tab === "Organization"
-      ? "Name, locale and timezone save to the organization. Mark, currency, week start and business hours are examples; their changes last until this tab closes."
+      ? "Settings save to the organization."
       : tab === "Audit"
         ? "Audit entries are loaded from your organization."
-        : null;
+        : recoveryView
+          ? "Account policy and sessions are loaded from your organization. Snapshots use browser preview data."
+          : null;
   const pageDescription =
     tab === "Organization"
       ? "Make this workspace feel like your organization."
@@ -241,11 +298,8 @@ function ManageContent() {
     ? workspaceSettingsPatch(workspaceQuery.data, workspaceDraft)
     : null;
   const workspaceDraftDirty = workspacePatch !== null;
-  const sampleOrganizationDirty = sampleOrganizationDraftIsDirty(
-    settings,
-    manage.drafts.organization,
-  );
-  const allDraftsDirty = manageHasDrafts || workspaceDraftDirty;
+  const allDraftsDirty =
+    securityDirty || manage.dirty("backup") || workspaceDraftDirty;
   const currentFor = (view: ViewTab): ManageSettings => {
     const currentSection = sectionForTab(view);
     return currentSection ? manage.getDraft(currentSection) : settings;
@@ -258,24 +312,22 @@ function ManageContent() {
     tab === "Organization" && workspaceFields
       ? { ...sampleCurrent, ...workspaceFields, ...workspaceDraft }
       : sampleCurrent;
-  const previewSettings = decodeManageSettings(current);
+  const previewSettings =
+    tab === "Organization" && workspaceFields
+      ? current
+      : decodeManageSettings(current);
   const dirty =
     tab === "Organization"
-      ? sampleOrganizationDirty || workspaceDraftDirty
+      ? workspaceDraftDirty
       : section
         ? manage.dirty(section)
         : false;
   const sectionErrors = section ? manage.errors(section) : {};
   const errors =
     tab === "Organization"
-      ? organizationErrors(
-          sectionErrors,
-          workspaceDraft.name,
-          workspaceQuery.data !== undefined,
-        )
+      ? organizationErrors(workspaceDraft, workspaceQuery.data !== undefined)
       : sectionErrors;
   const updateAvailable = manage.updateAvailable;
-  const remoteSessions = sessions.filter((session) => !session.current);
   const localeCode = organizationLocaleTag(current.locale);
   const regionalDate = new Intl.DateTimeFormat(localeCode, {
     dateStyle: "medium",
@@ -289,7 +341,7 @@ function ManageContent() {
   const retention = manage.retentionPreview();
 
   useWorkspaceNavigationGuard(() => {
-    if (manage.pending || workspaceSavePending) {
+    if (manage.pending || livePending) {
       setNavigationNotice(
         "Finish the current change before leaving this page.",
       );
@@ -306,7 +358,13 @@ function ManageContent() {
   ) {
     if (
       target === "organization" &&
-      (key === "name" || key === "locale" || key === "timezone")
+      (key === "name" ||
+        key === "locale" ||
+        key === "timezone" ||
+        key === "logo" ||
+        key === "currency" ||
+        key === "week" ||
+        key === "hours")
     ) {
       const saved = workspaceQuery.data
         ? workspaceSettingsFormFields(workspaceQuery.data)
@@ -314,11 +372,27 @@ function ManageContent() {
       setWorkspaceDraft((currentDraft) => {
         const next = { ...currentDraft, [key]: value };
         const unchanged = saved
-          ? key === "name"
-            ? value.trim() === saved.name
+          ? key === "name" || key === "logo" || key === "hours"
+            ? value.trim() === saved[key]
             : value === saved[key]
           : false;
         if (unchanged) delete next[key];
+        return next;
+      });
+      setNotice("");
+      setError("");
+      return;
+    }
+    if (
+      target === "security" &&
+      (key === "password" ||
+        key === "timeout" ||
+        key === "mfa" ||
+        key === "ips")
+    ) {
+      setSecurityDraft((draft) => {
+        const next = { ...draft, [key]: value };
+        if (securityFields && value === securityFields[key]) delete next[key];
         return next;
       });
       setNotice("");
@@ -331,8 +405,12 @@ function ManageContent() {
   }
 
   function clearDraft(target: ManageSection) {
-    if (manage.pending || workspaceSavePending) return;
-    manage.discard(target);
+    if (manage.pending || livePending) return;
+    if (target === "security") {
+      setSecurityDraft({});
+      setSecurityStale(false);
+      setSecurityRefreshRequired(false);
+    } else manage.discard(target);
     if (target === "organization") {
       setWorkspaceDraft({});
       setWorkspaceStale(false);
@@ -345,6 +423,10 @@ function ManageContent() {
   async function saveSection(target: ManageSection) {
     if (target === "organization") {
       await saveOrganization();
+      return;
+    }
+    if (target === "security") {
+      await saveSecurity();
       return;
     }
     const result = await manage.save(target);
@@ -374,24 +456,16 @@ function ManageContent() {
   }
 
   async function saveOrganization() {
-    if (manage.pending || workspaceSavePending) return;
-    if (
-      workspaceDraft.name !== undefined &&
-      (!workspaceDraft.name.trim() || workspaceDraft.name.length > 200)
-    )
-      return;
-
-    const sampleErrors = manage.errors("organization");
-    delete sampleErrors.name;
-    delete sampleErrors.locale;
-    delete sampleErrors.timezone;
-    const sampleError = Object.values(sampleErrors)[0];
-    if (sampleOrganizationDirty && sampleError) {
-      setError(sampleError);
+    if (manage.pending || livePending) return;
+    const validationError = Object.values(
+      organizationErrors(workspaceDraft, workspaceQuery.data !== undefined),
+    )[0];
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
-    if (workspaceDraftDirty && !workspaceQuery.data) {
+    if (!workspaceQuery.data) {
       setError(
         "The organization settings could not be loaded. Retry before saving.",
       );
@@ -411,7 +485,7 @@ function ManageContent() {
         setWorkspaceDraft({});
         setWorkspaceStale(false);
         setWorkspaceRefreshRequired(false);
-        setNotice("Name, locale and timezone saved.");
+        setNotice("Organization settings saved.");
       } catch (caught) {
         if (isStaleWorkspaceRevision(caught)) {
           setWorkspaceRefreshRequired(true);
@@ -441,23 +515,71 @@ function ManageContent() {
       setWorkspaceStale(false);
     }
 
-    if (sampleOrganizationDirty) {
-      const result = await manage.save("organization");
-      if (!result.ok) {
-        setError(
-          `Example fields could not be saved. Your example edits are still pending. ${result.message}`,
-        );
-        return;
-      }
+    setError("");
+    setNotice("Organization settings saved.");
+  }
+
+  async function retrySecurity() {
+    const result = await securityQuery.refetch();
+    if (!result.isError && result.data) {
+      setPolicyReadDenied(false);
+      setSecurityRefreshRequired(false);
+      setError("");
+    }
+  }
+
+  async function retrySessions() {
+    const result = await sessionsQuery.refetch();
+    if (!result.isError && result.data) setSessionsReadDenied(false);
+  }
+
+  async function saveSecurity() {
+    if (manage.pending || livePending) return;
+    if (!securityQuery.data || securityDenied || securityRefreshRequired) {
+      setError("Account policy could not be loaded. Retry before saving.");
+      return;
+    }
+    const patch = securitySettingsPatch(securityQuery.data, securityDraft);
+    if (!patch) {
+      setSecurityDraft({});
+      return;
     }
     setError("");
-    setNotice(
-      patch || workspaceDraftDirty
-        ? "Name, locale and timezone saved."
-        : storageUnavailable
-          ? "Settings updated in memory only. Browser storage is unavailable."
-          : "Settings saved. No live policy was changed.",
-    );
+    setNotice("");
+    setSecuritySavePending(true);
+    try {
+      const saved = await updateManageSecurityPolicy(patch);
+      afterManageSecurityChange(queryClient, saved);
+      setSecurityDraft({});
+      setSecurityStale(false);
+      setSecurityRefreshRequired(false);
+      setNotice("Account policy saved.");
+      requestSessionRecheck();
+    } catch (caught) {
+      if (isStaleWorkspaceRevision(caught)) {
+        setSecurityStale(true);
+        setSecurityRefreshRequired(true);
+        const refreshed = await securityQuery.refetch();
+        if (!refreshed.isError && refreshed.data)
+          setSecurityRefreshRequired(false);
+        else
+          setError(
+            "The latest policy could not be loaded. Retry before saving again.",
+          );
+      } else {
+        setError(
+          caught instanceof ApiError && caught.code === "ip_lockout"
+            ? "The IP allow list would block your current address. Include your current address before saving."
+            : caught instanceof ApiError && caught.status === 422
+              ? "Check the policy values and IP addresses. Your changes are still here."
+              : caught instanceof ApiError && caught.status === 403
+                ? "Only administrators can change account policy. Reload the page to check your access."
+                : "The policy could not be saved. Try again.",
+        );
+      }
+    } finally {
+      setSecuritySavePending(false);
+    }
   }
 
   function requestConfirm(next: ConfirmState, event?: MouseEvent<HTMLElement>) {
@@ -481,21 +603,20 @@ function ManageContent() {
     requestConfirm(
       {
         title: "Restore configuration",
-        description: `Restore the saved Manage settings from ${snapshot.name}? This replaces committed organization, policy, backup, update and license settings only.`,
+        description: `Restore preview settings from ${snapshot.name}? This does not change persisted organization or account policy.`,
         confirmLabel: "Confirm restore",
-        requiresDraftAck: allDraftsDirty,
+        requiresDraftAck: manage.dirty("backup"),
         body: <SettingsChanges differences={differences} />,
         action: async () => {
           const result = await manage.restoreSnapshot(snapshot.id, {
-            discardDrafts: allDraftsDirty,
+            discardDrafts: manage.dirty("backup"),
           });
-          if (result.ok) {
-            setWorkspaceDraft({});
-            setWorkspaceStale(false);
-            setWorkspaceRefreshRequired(false);
-          }
           setError(result.ok ? "" : result.message);
-          setNotice(result.ok ? result.message : "");
+          setNotice(
+            result.ok
+              ? "Preview settings restored. Organization and account policy are unchanged."
+              : "",
+          );
 
           return result.ok;
         },
@@ -509,7 +630,7 @@ function ManageContent() {
       {
         title: "Reset Manage configuration",
         description:
-          "Restore organization, security, backup, update and license settings to the bundled defaults. People, sessions, snapshots, activity and other pages remain unchanged.",
+          "Restore browser preview settings to bundled defaults and discard unsaved Manage drafts. Persisted organization and account policy are unchanged.",
         confirmLabel: "Reset Manage configuration",
         requiresDraftAck: allDraftsDirty,
         body: (
@@ -518,14 +639,23 @@ function ManageContent() {
           />
         ),
         action: async () => {
-          const result = await manage.reset({ discardDrafts: allDraftsDirty });
+          const result = await manage.reset({
+            discardDrafts: allDraftsDirty,
+          });
           if (result.ok) {
             setWorkspaceDraft({});
             setWorkspaceStale(false);
             setWorkspaceRefreshRequired(false);
+            setSecurityDraft({});
+            setSecurityStale(false);
+            setSecurityRefreshRequired(false);
           }
           setError(result.ok ? "" : result.message);
-          setNotice(result.ok ? result.message : "");
+          setNotice(
+            result.ok
+              ? "Preview settings restored. Organization and account policy are unchanged."
+              : "",
+          );
 
           return result.ok;
         },
@@ -534,19 +664,45 @@ function ManageContent() {
     );
   }
 
-  function endSession(session: ManageSession, event: MouseEvent<HTMLElement>) {
+  async function runSessionEnd(action: () => Promise<null>, all: boolean) {
+    if (manage.pending || livePending) return false;
+    setSessionEndPending(true);
+    setError("");
+    setNotice("");
+    try {
+      await action();
+      await afterManageSessionsChange(queryClient);
+      setSessionRequest((request) => ({ ...request, offset: 0 }));
+      setNotice(
+        all
+          ? "Remote sessions ended. Your current session stays active."
+          : "Session ended.",
+      );
+      return true;
+    } catch {
+      setError(
+        all
+          ? "Remote sessions could not be ended. Try again."
+          : "The session could not be ended. Try again.",
+      );
+      return false;
+    } finally {
+      setSessionEndPending(false);
+    }
+  }
+
+  function endSession(
+    session: ManageAdminSession,
+    event: MouseEvent<HTMLElement>,
+  ) {
+    if (session.current) return;
     requestConfirm(
       {
+        origin: "admin-sessions",
         title: "End session",
-        description: `${session.personName}'s ${session.device} ${session.browser} session in ${session.location} will be removed from this session list. Your current session stays active.`,
+        description: `${session.person_name}'s ${session.device} ${session.browser} session will be signed out. Your current session stays active.`,
         confirmLabel: "Confirm end session",
-        action: async () => {
-          const result = await manage.revokeSession(session.id);
-          setError(result.ok ? "" : result.message);
-          setNotice(result.ok ? result.message : "");
-
-          return result.ok;
-        },
+        action: () => runSessionEnd(() => endManageSession(session), false),
       },
       event,
     );
@@ -555,25 +711,20 @@ function ManageContent() {
   function endAllRemoteSessions(event: MouseEvent<HTMLElement>) {
     requestConfirm(
       {
+        origin: "admin-sessions",
         title: "End all remote sessions",
-        description: `End ${remoteSessions.length} remote sessions? The current session remains active and no account will be signed out.`,
+        description:
+          "End all other active sessions across the organization? Your current session stays active.",
         confirmLabel: "Confirm end all remote sessions",
-        action: async () => {
-          const result = await manage.revokeAllSessions();
-          setError(result.ok ? "" : result.message);
-          setNotice(result.ok ? result.message : "");
-
-          return result.ok;
-        },
+        action: () => runSessionEnd(endAllManageRemoteSessions, true),
       },
       event,
     );
   }
 
   function openMfa(event?: MouseEvent<HTMLButtonElement>) {
-    setMfaStep(0);
     mfaOpener.current = event?.currentTarget ?? null;
-    setMfaOpen(true);
+    mfa.openManage();
   }
 
   function startUpdate() {
@@ -746,11 +897,11 @@ function ManageContent() {
   return (
     <div className="min-w-0 space-y-6">
       <fieldset
-        disabled={manage.pending || workspaceSavePending}
-        aria-busy={manage.pending || workspaceSavePending}
+        disabled={manage.pending || livePending}
+        aria-busy={manage.pending || livePending}
         className="min-w-0 space-y-6"
       >
-        {manage.pending || workspaceSavePending ? (
+        {manage.pending || livePending ? (
           <p role="status" className="text-muted-foreground text-sm">
             Saving changes…
           </p>
@@ -827,8 +978,9 @@ function ManageContent() {
               className="min-w-0 space-y-5"
             >
               <Alert role="note">
-                Preview workspace · Policies and sessions are simulated.
-                Snapshots contain saved Manage settings only.
+                Account policy and sessions are live. Snapshots are browser
+                previews and do not restore persisted organization or account
+                policy.
               </Alert>
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="bg-card flex flex-wrap items-center gap-4 rounded-lg border p-5">
@@ -841,15 +993,16 @@ function ManageContent() {
                       <h2 data-slot="section-title" className="font-semibold">
                         Account policy
                       </h2>
-                      {manage.dirty("security") ? (
+                      {securityDirty ? (
                         <Badge variant="warning">Unsaved changes</Badge>
                       ) : null}
                     </div>
                     <p className="text-muted-foreground mt-1 text-sm">
-                      {settings.mfa === "Optional"
-                        ? "Optional two-factor"
-                        : settings.mfa}{" "}
-                      · {settings.timeout} timeout
+                      {securityFields
+                        ? `${securityFields.mfa === "Optional" ? "Optional two-factor" : securityFields.mfa} · ${securityFields.timeout} timeout`
+                        : securityQuery.isPending && !securityDenied
+                          ? "Loading policy…"
+                          : "Account policy unavailable"}
                     </p>
                   </div>
                   <Button
@@ -902,7 +1055,7 @@ function ManageContent() {
               <Tabs
                 value={tab === "Backup" ? "snapshots" : "sessions"}
                 onValueChange={(value) => {
-                  if (!manage.pending)
+                  if (!manage.pending && !livePending)
                     router.push(
                       `/manage?view=${value === "snapshots" ? "backup" : "security"}`,
                       { scroll: false },
@@ -911,7 +1064,12 @@ function ManageContent() {
               >
                 <TabsList aria-label="Security and recovery views">
                   <TabsTrigger value="sessions" className="min-h-11 gap-2 px-4">
-                    Sessions <Badge variant="outline">{sessions.length}</Badge>
+                    Sessions{" "}
+                    <Badge variant="outline">
+                      {sessionsDenied
+                        ? "—"
+                        : (sessionsQuery.data?.pagination.total ?? "—")}
+                    </Badge>
                   </TabsTrigger>
                   <TabsTrigger
                     value="snapshots"
@@ -922,7 +1080,24 @@ function ManageContent() {
                 </TabsList>
                 <TabsContent value="sessions" keepMounted className="min-w-0">
                   <SecurityPanel
-                    sessions={manage.collections.sessions}
+                    sessions={
+                      sessionsDenied || sessionsQuery.isError
+                        ? {
+                            status: "error",
+                            message: sessionsDenied
+                              ? "Only administrators can review sessions."
+                              : "Sessions could not be loaded.",
+                            page: sessionsDenied
+                              ? undefined
+                              : sessionsQuery.data,
+                          }
+                        : sessionsQuery.isPending
+                          ? { status: "loading" }
+                          : { status: "ready", page: sessionsQuery.data }
+                    }
+                    request={sessionRequest}
+                    onRequestChange={setSessionRequest}
+                    onRetry={() => void retrySessions()}
                     actions={{ endAllRemoteSessions, endSession }}
                   />
                 </TabsContent>
@@ -995,7 +1170,7 @@ function ManageContent() {
       <Dialog
         open={policyOpen}
         onOpenChange={setPolicyOpen}
-        dismissible={!manage.pending}
+        dismissible={!manage.pending && !livePending}
       >
         <DialogContent
           className="max-w-3xl"
@@ -1008,20 +1183,20 @@ function ManageContent() {
                 variant="ghost"
                 size="icon"
                 aria-label="Close account policy"
-                disabled={manage.pending}
+                disabled={manage.pending || livePending}
                 onClick={() => setPolicyOpen(false)}
               >
                 <X aria-hidden="true" />
               </Button>
             </div>
             <DialogDescription>
-              Set account protection preferences. These preview settings are not
-              enforced. Closing keeps your unsaved changes.
+              Set the account policy enforced by your organization. Closing
+              keeps your unsaved changes.
             </DialogDescription>
           </DialogHeader>
           <fieldset
-            disabled={manage.pending}
-            aria-busy={manage.pending}
+            disabled={manage.pending || livePending}
+            aria-busy={manage.pending || livePending}
             className="min-w-0 space-y-4"
           >
             {error ? (
@@ -1029,21 +1204,50 @@ function ManageContent() {
                 {error}
               </Alert>
             ) : null}
-            <SecurityPolicyForm
-              form={{
-                dirty: manage.dirty("security"),
-                current: manage.getDraft("security"),
-                errors: manage.errors("security"),
-                saveSection,
-                clearDraft,
-                changeSetting,
-              }}
-              onPreviewMfa={() => {
-                setPolicyOpen(false);
-                openMfa();
-                mfaOpener.current = policyOpener.current;
-              }}
-            />
+            {securityStale ? (
+              <Alert role="note" variant="warning">
+                Policy changed since you opened it. Your draft is kept; review
+                the latest values before saving again.
+              </Alert>
+            ) : null}
+            {securityQuery.isPending && !securityDenied ? (
+              <p role="status">Loading account policy…</p>
+            ) : null}
+            {securityDenied ||
+            securityQuery.isError ||
+            securityRefreshRequired ? (
+              <Alert role="alert" variant="destructive">
+                <p>
+                  {securityDenied
+                    ? "Only administrators can review account policy."
+                    : "Account policy could not be loaded."}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void retrySecurity()}
+                >
+                  Retry account policy
+                </Button>
+              </Alert>
+            ) : null}
+            {securityFields ? (
+              <SecurityPolicyForm
+                form={{
+                  dirty: securityDirty,
+                  current: { ...settings, ...securityFields, ...securityDraft },
+                  errors: {},
+                  saveSection,
+                  clearDraft,
+                  changeSetting,
+                }}
+                onPreviewMfa={() => {
+                  setPolicyOpen(false);
+                  openMfa();
+                  mfaOpener.current = policyOpener.current;
+                }}
+              />
+            ) : null}
             <DialogFooter>
               <Button variant="outline" onClick={() => setPolicyOpen(false)}>
                 Close
@@ -1116,14 +1320,7 @@ function ManageContent() {
           </fieldset>
         </DialogContent>
       </Dialog>
-      <ManageMfaDialog
-        open={mfaOpen}
-        step={mfaStep}
-        opener={mfaOpener}
-        onOpenChange={setMfaOpen}
-        onBack={() => setMfaStep((step) => step - 1)}
-        onNext={() => setMfaStep((step) => step + 1)}
-      />
+      <ManageMfaDialog opener={mfaOpener} />
       <ManageSnapshotRenameDialog
         open={renameTarget !== null}
         pending={manage.pending}
@@ -1143,8 +1340,8 @@ function ManageContent() {
       />
       <ManagePreviewDialog preview={preview} onClose={() => setPreview(null)} />
       <ManageConfirmationDialog
-        confirm={confirm}
-        pending={manage.pending}
+        confirm={sessionConfirmationRefused ? null : confirm}
+        pending={manage.pending || livePending}
         error={error}
         draftAcknowledged={draftAcknowledged}
         confirmOpener={confirmOpener}

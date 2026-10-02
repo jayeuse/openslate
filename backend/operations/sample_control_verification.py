@@ -26,6 +26,7 @@ def _canonical_uuid(value: object) -> str | None:
 _CONTROL_KINDS = frozenset(
     {
         "account_controls",
+        "manage_controls",
         "read_controls",
         "board_controls",
         "openview_controls",

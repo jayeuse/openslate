@@ -85,21 +85,27 @@ def run_population(
         manifest["stage"] = "workspace"
         _write_manifest(run_directory, manifest)
         workspace = baseline["workspace"]
+        from operations.sample_control_manage import organization_settings
+
+        settings = organization_settings(dataset)
         updated = _api(
             admin,
             "PATCH",
             "/api/workspace",
             body={
                 "revision": workspace["revision"],
-                "display_name": dataset.organization.identity.workspace_name,
-                "locale": dataset.organization.identity.locale,
-                "timezone": dataset.organization.identity.timezone,
+                **settings,
             },
         )
+        persisted = _api(admin, "GET", "/api/workspace")
         if (
-            updated.get("display_name") != dataset.organization.identity.workspace_name
-            or updated.get("locale") != dataset.organization.identity.locale
-            or updated.get("timezone") != dataset.organization.identity.timezone
+            any(
+                updated.get(key) != value or persisted.get(key) != value
+                for key, value in settings.items()
+            )
+            or type(updated.get("revision")) is not int
+            or updated["revision"] != workspace["revision"] + 1
+            or persisted.get("revision") != updated["revision"]
         ):
             raise SamplePopulationError("Workspace settings readback did not match the sample")
 

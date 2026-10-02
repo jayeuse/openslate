@@ -26,6 +26,7 @@ from app.systems.access.policy.configuration_router import router as access_poli
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess
 from app.systems.access.users.account_operations import router as account_operations_router
 from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.sessions_router import auth_router as collection_sessions_router
 from app.systems.access.users.sessions_router import router as admin_sessions_router
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditLog, SecurityEventOutcome
@@ -124,6 +125,7 @@ def world(integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch) -> Ite
     app = FastAPI()
     app.include_router(account_operations_router, prefix="/api")
     app.include_router(admin_sessions_router, prefix="/api")
+    app.include_router(collection_sessions_router, prefix="/api")
     app.include_router(access_policy_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: actor[0]

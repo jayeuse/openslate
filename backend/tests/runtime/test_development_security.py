@@ -1,10 +1,13 @@
+from ipaddress import ip_address, ip_network
 from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 import app.common.dependencies.auth as auth_dependencies
 import app.main as main
@@ -184,3 +187,102 @@ def test_loopback_development_omits_uvicorn_concurrency_limit(
     entrypoint.main([])
 
     assert run.call_args.kwargs["limit_concurrency"] is None
+
+
+@pytest.mark.parametrize(
+    ("environment", "bind_host", "subnet", "expected"),
+    [
+        ("development", "127.0.0.1", None, ["127.0.0.1", "::1"]),
+        ("development", "::1", "172.31.248.0/28", ["127.0.0.1", "::1"]),
+        ("development", "0.0.0.0", "172.31.248.0/28", []),
+        ("test", "127.0.0.1", "172.31.248.0/28", []),
+        ("production", "0.0.0.0", "172.31.248.0/28", ["172.31.248.0/28"]),
+        ("production", "0.0.0.0", None, []),
+    ],
+)
+def test_entrypoint_explicitly_bounds_forwarded_peer_trust(
+    monkeypatch: pytest.MonkeyPatch,
+    environment: str,
+    bind_host: str,
+    subnet: str | None,
+    expected: list[str],
+) -> None:
+    settings = Settings(
+        **settings_values(
+            environment=environment,
+            backend_bind_host=bind_host,
+            public_origin="https://app.example.test",
+            web_assets_root="/tmp/openslate-static",
+            open_slate_app_private_subnet=subnet,
+        ),
+        _env_file=None,
+    )
+    run = Mock()
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "*")
+    monkeypatch.setattr(entrypoint, "get_settings", lambda: settings)
+    monkeypatch.setattr(entrypoint.uvicorn, "run", run)
+
+    entrypoint.main([])
+
+    assert run.call_args.kwargs["forwarded_allow_ips"] == expected
+
+
+@pytest.mark.parametrize(
+    "subnet",
+    ["*", "0.0.0.0/0", "8.8.8.0/24", "127.0.0.0/8", "172.31.248.1/28", "172.31.248.0"],
+)
+def test_proxy_subnet_rejects_wildcard_public_and_non_network_values(subnet: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**settings_values(open_slate_app_private_subnet=subnet), _env_file=None)
+
+
+@pytest.mark.parametrize("subnet", ["172.31.248.0/28", "fd00:1234::/64"])
+def test_proxy_subnet_is_a_typed_private_network(subnet: str) -> None:
+    settings = Settings(**settings_values(open_slate_app_private_subnet=subnet), _env_file=None)
+
+    assert settings.open_slate_app_private_subnet == ip_network(subnet)
+
+
+@pytest.mark.parametrize(
+    ("peer", "forwarded", "expected"),
+    [
+        ("10.0.0.10", "203.0.113.20", "10.0.0.10"),
+        ("127.0.0.1", "203.0.113.20", "127.0.0.1"),
+        ("172.31.248.2", "203.0.113.20", "203.0.113.20"),
+        ("172.31.248.2", "203.0.113.20, 198.51.100.4", "198.51.100.4"),
+    ],
+)
+def test_real_proxy_middleware_only_resolves_headers_from_the_configured_peer(
+    peer: str, forwarded: str, expected: str
+) -> None:
+    app = FastAPI()
+
+    @app.get("/")
+    def resolved_client(request: Request) -> dict[str, str | None]:
+        return {"client": request.client.host if request.client else None}
+
+    proxy = ProxyHeadersMiddleware(app, trusted_hosts=["172.31.248.0/28"])
+    response = TestClient(proxy, client=(peer, 50000)).get(
+        "/", headers={"X-Forwarded-For": forwarded}
+    )
+
+    assert response.json() == {"client": expected}
+
+
+@pytest.mark.parametrize("forwarded", ["not-an-ip", "203.0.113.20, not-an-ip", "*"])
+def test_real_proxy_middleware_does_not_turn_malformed_input_into_a_valid_ip(
+    forwarded: str,
+) -> None:
+    app = FastAPI()
+
+    @app.get("/")
+    def resolved_client(request: Request) -> dict[str, str | None]:
+        return {"client": request.client.host if request.client else None}
+
+    proxy = ProxyHeadersMiddleware(app, trusted_hosts=["172.31.248.0/28"])
+    response = TestClient(proxy, client=("172.31.248.2", 50000)).get(
+        "/", headers={"X-Forwarded-For": forwarded}
+    )
+
+    with pytest.raises(ValueError):
+        ip_address(response.json()["client"])

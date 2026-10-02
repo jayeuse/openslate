@@ -21,6 +21,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample_control_access import plan_access_controls
     from operations.sample_control_account import plan_account_controls
     from operations.sample_control_boards import plan_board_controls
+    from operations.sample_control_manage import plan_manage_controls
     from operations.sample_control_openview import plan_openview_controls
     from operations.sample_control_read_reviews import plan_read_reviews
     from operations.sample_control_reads import plan_read_controls
@@ -45,6 +46,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         *plan_sandbox_controls(dataset),
         audit,
         *plan_read_reviews(dataset),
+        *plan_manage_controls(dataset),
         *plan_read_controls(dataset),
     )
 
@@ -107,6 +109,7 @@ def execute_control_action(
     from operations.sample_control_access import execute_access_control
     from operations.sample_control_account import execute_account_control
     from operations.sample_control_boards import execute_board_control
+    from operations.sample_control_manage import execute_manage_control
     from operations.sample_control_openview import execute_openview_control
     from operations.sample_control_read_reviews import execute_read_review
     from operations.sample_control_reads import execute_read_control
@@ -115,6 +118,7 @@ def execute_control_action(
     handlers = {
         "access_controls": execute_access_control,
         "account_controls": execute_account_control,
+        "manage_controls": execute_manage_control,
         "board_controls": execute_board_control,
         "openview_controls": execute_openview_control,
         "sandbox_controls": execute_sandbox_control,

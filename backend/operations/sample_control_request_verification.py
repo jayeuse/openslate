@@ -185,7 +185,45 @@ def verify_request_evidence(
         return
     operation = action.values.get("operation")
     target_id: str | None = None
-    if action.kind == "read_controls":
+    manage_steps: dict[str, tuple[str, str, str, int]] = {}
+    if action.kind == "manage_controls":
+        from operations.sample_control_manage import manage_request_contract, plan_manage_controls
+
+        manage_steps = manage_request_contract(action, dataset)
+        if (
+            action not in plan_manage_controls(dataset)
+            or any(
+                type(result.get(key)) is not type(value) or result.get(key) != value
+                for key, value in action.expected_end_state.items()
+            )
+            or [row.get("step") if isinstance(row, Mapping) else None for row in evidence_rows]
+            != list(manage_steps)
+            or any(
+                not isinstance(row, Mapping)
+                or set(row)
+                != {
+                    "step",
+                    "actor_key",
+                    "actor_id",
+                    "method",
+                    "path",
+                    "expected_status",
+                    "status_code",
+                    "request_id",
+                }
+                or (
+                    row.get("actor_key"),
+                    row.get("method"),
+                    row.get("path"),
+                    row.get("expected_status"),
+                )
+                != manage_steps[row["step"]]
+                for row in evidence_rows
+            )
+        ):
+            issues.append("Manage control evidence or end state differs from its route contract")
+            return
+    elif action.kind == "read_controls":
         expected_checks = _REVIEW_READ_CHECKS.get(operation) if isinstance(operation, str) else None
         if operation == _REVOKE_USER_SESSIONS:
             expected_checks = 2
@@ -279,7 +317,13 @@ def verify_request_evidence(
         if not isinstance(step, str):
             expected_actor_key, expected_actor_id = action.actor_key, None
         else:
-            expected_actor_key = "admin" if step in admin_steps else action.actor_key
+            expected_actor_key = (
+                manage_steps[step][0]
+                if action.kind == "manage_controls"
+                else "admin"
+                if step in admin_steps
+                else action.actor_key
+            )
             actor_id_value = (
                 admin_id if expected_actor_key == "admin" else actors.get(expected_actor_key)
             )

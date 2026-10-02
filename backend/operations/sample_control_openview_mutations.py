@@ -9,6 +9,7 @@ from typing import Any
 
 from operations.sample_activity import build_record_payload
 from operations.sample_blueprint import SampleDataset
+from operations.sample_client import SampleWriteOutcomeUnknown
 from operations.sample_packs.phase_types import PhaseAction
 from operations.sample_phase_actions import (
     PhaseExecutionContext,
@@ -41,35 +42,6 @@ def _automation_pending(impact: object) -> bool:
     )
 
 
-def _record_payload(
-    dataset: SampleDataset,
-    context: PhaseExecutionContext,
-    module_key: str,
-    name: str,
-    logical_id: str,
-) -> dict[str, Any]:
-    template = next((row for row in dataset.records if row.module_key == module_key), None)
-    name_document_id = dataset.field_ids.get(module_key, {}).get("name")
-    if template is None or name_document_id is None:
-        raise SamplePhaseActionError("Control record source is unavailable", step="create_record")
-    data = dict(template.data)
-    data[name_document_id] = name
-    temporary = replace(template, logical_id=logical_id, data=data)
-    field_ids = {
-        document_id: _mapped_id(
-            context, "fields", f"{module_key}:{field_key}", step="create_record"
-        )
-        for field_key, document_id in dataset.field_ids[module_key].items()
-    }
-    module_id = _mapped_id(context, "modules", module_key, step="create_record")
-    return build_record_payload(
-        temporary,
-        module_id=module_id,
-        api_field_ids=field_ids,
-        actor_ids=context.user_ids,
-    )
-
-
 def _create_control_record(
     action: PhaseAction,
     dataset: SampleDataset,
@@ -84,7 +56,26 @@ def _create_control_record(
     step: str,
     on_substep: PhaseSubstep | None,
 ) -> tuple[str, dict[str, Any]]:
-    payload = _record_payload(dataset, context, module_key, name, logical_id)
+    template = next((row for row in dataset.records if row.module_key == module_key), None)
+    name_document_id = dataset.field_ids.get(module_key, {}).get("name")
+    if template is None or name_document_id is None:
+        raise SamplePhaseActionError("Control record source is unavailable", step="create_record")
+    data = dict(template.data)
+    data[name_document_id] = name
+    temporary = replace(template, logical_id=logical_id, data=data)
+    field_ids = {
+        document_id: _mapped_id(
+            context, "fields", f"{module_key}:{field_key}", step="create_record"
+        )
+        for field_key, document_id in dataset.field_ids[module_key].items()
+    }
+    module_id = _mapped_id(context, "modules", module_key, step="create_record")
+    payload = build_record_payload(
+        temporary,
+        module_id=module_id,
+        api_field_ids=field_ids,
+        actor_ids=context.user_ids,
+    )
     response = _request(
         action,
         context,
@@ -362,31 +353,24 @@ def _relationship_delete_control(
         or not isinstance(relation_key, str)
     ):
         raise SamplePhaseActionError("Invalid relationship control target", step=action.key)
-    source_id, _ = _create_control_record(
-        action,
-        dataset,
-        context,
-        evidence,
-        mappings,
-        actor_key=_ADMIN,
-        module_key=source_module,
-        logical_id="control:relationship_source",
-        name=source_name,
-        step="create_relationship_source",
-        on_substep=on_substep,
-    )
-    target_id, _ = _create_control_record(
-        action,
-        dataset,
-        context,
-        evidence,
-        mappings,
-        actor_key=_ADMIN,
-        module_key=target_module,
-        logical_id="control:relationship_target",
-        name=target_name,
-        step="create_relationship_target",
-        on_substep=on_substep,
+    source_id, target_id = (
+        _create_control_record(
+            action,
+            dataset,
+            context,
+            evidence,
+            mappings,
+            actor_key=_ADMIN,
+            module_key=module_key,
+            logical_id=f"control:relationship_{side}",
+            name=name,
+            step=f"create_relationship_{side}",
+            on_substep=on_substep,
+        )[0]
+        for side, module_key, name in (
+            ("source", source_module, source_name),
+            ("target", target_module, target_name),
+        )
     )
     field_id = _mapped_id(
         context, "relationships", relation_key, step="create_control_relationship"
@@ -432,17 +416,46 @@ def _relationship_delete_control(
         relationship_id,
         mappings,
     )
-    _request(
-        action,
-        context,
-        evidence,
-        actor_key=action.actor_key,
-        method="DELETE",
-        path=f"/api/relationships/{relationship_id}",
-        step="delete_control_relationship",
-        expected=204,
-        on_substep=on_substep,
-    )
+    for attempt in range(3):
+        failure = None
+        try:
+            _request(
+                action,
+                context,
+                evidence,
+                actor_key=action.actor_key,
+                method="DELETE",
+                path=f"/api/relationships/{relationship_id}",
+                step="delete_control_relationship",
+                expected=204,
+                on_substep=on_substep,
+            )
+        except SampleWriteOutcomeUnknown as error:
+            if error.status_code != 503 or error.failure_code != "relationship_busy":
+                raise
+            failure = error
+        readback = _client(context, action.actor_key, step="read_relationship").request(
+            "GET", f"/api/relationships/{relationship_id}"
+        )
+        if readback.status_code == 404:
+            break
+        current = _read_json(readback, step="read_relationship")
+        if (
+            readback.status_code != 200
+            or type(current.get("is_deleted")) is not bool
+            or any(
+                current.get(key) != relationship.get(key)
+                for key in ("id", "field_id", "source_record_id", "target_record_id")
+            )
+        ):
+            raise SamplePhaseActionError("Link readback invalid", step="read_relationship")
+        if current["is_deleted"] is True:
+            break
+        if failure is None:
+            raise SamplePhaseActionError("Deleted link remains", step="delete_control_relationship")
+        if attempt == 2:
+            raise failure
+        time.sleep(0.3)
     for record_id, step in (
         (source_id, "delete_relationship_source"),
         (target_id, "delete_relationship_target"),

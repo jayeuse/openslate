@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 from uuid import uuid4
@@ -275,3 +276,62 @@ def test_bulk_session_control_fails_when_post_readback_is_not_empty(tmp_path: Pa
 
     assert error.value.step == "list_user_sessions_after"
     assert seen_methods == ["GET", "DELETE", "GET"]
+
+
+@pytest.mark.parametrize(
+    "problem",
+    (
+        "missing_credential",
+        "credential_identity",
+        "bulk_unknown",
+        "reauth_denied",
+        "mfa_identity",
+        "policy_not_saved",
+        "pagination",
+        "remaining_page",
+    ),
+)
+def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, problem):
+    from operations.sample_client import SampleClientError
+    from operations.sample_control_actions import execute_control_action
+    from tests.operations.test_sample_control_read_reviews import _manage_run
+
+    dataset, actions, context, state = _manage_run(tmp_path, "harbor", problem)
+    if problem == "credential_identity":
+        from operations.sample_people import SampleActorCredential
+
+        credentials = context.private_values["credentials"]
+        key, other = list(credentials)[:2]
+        original = credentials[key]
+        credentials[key] = SampleActorCredential(
+            original.user_id, credentials[other].email, original.password
+        )
+    operation = (
+        "review_mfa_status"
+        if problem == "mfa_identity"
+        else "update_workspace_security"
+        if problem == "policy_not_saved"
+        else "review_admin_sessions"
+        if problem == "pagination"
+        else "revoke_admin_sessions"
+    )
+    action = next(a for a in actions if a.values["operation"] == operation)
+    try:
+        with pytest.raises((SamplePhaseActionError, SampleClientError)):
+            execute_control_action(action, dataset, context)
+        deletes = [row for row in state["seen"] if row == ("DELETE", "/api/auth/admin-sessions")]
+        assert len(deletes) == (problem in {"bulk_unknown", "reauth_denied", "remaining_page"})
+        if problem == "remaining_page":
+            assert len(state["logins"]) == len(context.clients)
+        if problem == "bulk_unknown":
+            journal = [
+                json.loads(line) for line in (tmp_path / "manage.jsonl").read_text().splitlines()
+            ]
+            assert [
+                row["status_code"]
+                for row in journal
+                if row["event"] == "request_finished" and row["status_code"] >= 500
+            ] == [503]
+    finally:
+        for client in context.clients.values():
+            client.close()

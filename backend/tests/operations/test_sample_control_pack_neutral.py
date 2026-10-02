@@ -31,8 +31,22 @@ def test_small_control_planning_uses_supplied_data_even_with_an_unknown_pack_key
         "account_controls",
         "audit_controls",
         "read_controls",
+        "manage_controls",
     } <= {action.kind for action in actions}, "Every control family must be planned offline"
     assert len({action.key for action in actions}) == len(actions)
+    manage = [action for action in actions if action.kind == "manage_controls"]
+    assert {action.values["operation"] for action in manage} == {
+        "review_admin_sessions",
+        "revoke_admin_sessions",
+        "review_workspace_security",
+        "update_workspace_security",
+        "review_mfa_status",
+    }
+    bulk = next(
+        action for action in manage if action.values["operation"] == "revoke_admin_sessions"
+    )
+    assert actions[-2] == bulk
+    assert actions[-1].values["operation"] == "revoke_user_sessions"
     actors = {person.key for person in dataset.organization.actors.people} | {"admin"}
     assert all(action.actor_key in actors for action in actions)
     assert read_phase_plan({"phase_plan": [asdict(action) for action in actions]}) == actions

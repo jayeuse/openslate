@@ -312,6 +312,10 @@ def _configuration_fixture() -> tuple[dict[str, Any], dict[str, Any], dict[str, 
             "display_name": "Harbor Operations Group",
             "locale": "en-US",
             "timezone": "Asia/Manila",
+            "currency": "PHP",
+            "mark": "HOG",
+            "week_start": "monday",
+            "business_hours": "09:00–18:00",
             "revision": 2,
         },
         "/api/sandbox/document": {
@@ -356,6 +360,7 @@ def _configuration_fixture() -> tuple[dict[str, Any], dict[str, Any], dict[str, 
         "group_member",
         "group_access",
         "workspace",
+        "organization_fields",
         "sandbox_document",
         "field_config",
         "relationship_target",
@@ -387,6 +392,8 @@ def test_verifier_requires_exact_foundation_readback(
         group["access"][0]["level"] = "read"
     elif changed == "workspace":
         payloads["/api/workspace"]["timezone"] = "UTC"
+    elif changed == "organization_fields":
+        payloads["/api/workspace"]["currency"] = "USD"
     elif changed == "sandbox_document":
         payloads["/api/sandbox/document"]["document"] = {
             **payloads["/api/sandbox/document"]["document"],

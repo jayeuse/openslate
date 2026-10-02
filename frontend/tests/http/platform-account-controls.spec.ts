@@ -14,6 +14,10 @@ const workspaceSettings = {
   display_name: "OpenSlate test workspace",
   locale: "en-GB",
   timezone: "Europe/London",
+  mark: "RS",
+  currency: "PHP",
+  week_start: "monday",
+  business_hours: "09:00–18:00",
   revision: 1,
 };
 const cleanupKeys = [

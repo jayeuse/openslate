@@ -1,10 +1,10 @@
 # Sample-pack contract for UI control runs
 
-This document records the organization data each sample pack must provide so the generic runner can exercise the Phase 1 controls through the same authenticated APIs as the UI. Harbor and School are the only packs in scope through Phase 7. New packs start after Phase 7, one at a time, using Harbor and School as references.
+This document records the organization data each sample pack must provide so the generic runner can exercise the controls completed through Phase B using the same authenticated APIs as the UI. Harbor and School are the only packs in scope through Phase G. New packs start after Phase G, one at a time, using Harbor and School as references.
 
-The contract follows the current action composition in `backend/operations/sample_control_actions.py::plan_controls`. The action planners are `sample_control_account.py::plan_account_controls`, `sample_control_boards.py::plan_board_controls`, `sample_control_openview.py::plan_openview_controls`, `sample_control_access.py::plan_access_controls`, `sample_control_sandbox.py::plan_sandbox_controls`, `sample_control_read_reviews.py::plan_read_reviews`, and `sample_control_reads.py::plan_read_controls`. Audit review is planned and executed in `sample_control_actions.py`.
+The contract follows the current action composition in `backend/operations/sample_control_actions.py::plan_controls`. The action planners are `sample_control_account.py::plan_account_controls`, `sample_control_boards.py::plan_board_controls`, `sample_control_openview.py::plan_openview_controls`, `sample_control_access.py::plan_access_controls`, `sample_control_sandbox.py::plan_sandbox_controls`, `sample_control_read_reviews.py::plan_read_reviews`, `sample_control_manage.py::plan_manage_controls`, and `sample_control_reads.py::plan_read_controls`. Audit review is planned and executed in `sample_control_actions.py`.
 
-Phase 1 runs seed realistic organization data and check API stability: each control sends the frontend's request shape, receives its expected status, and leaves the required end state. Per-control audit entity, count, action, and attribution assertions are outside this phase; the existing Phase 0 record and relationship audit checks remain. Repeated record purge reviews are allowed while automation finishes. Invitation completion coverage comes from the existing invitation flow's journal. Live Phase 1 acceptance uses Harbor Small and School Small; School Standard is deferred to Phase 7.
+Sample runs seed realistic organization data and check API stability: each control sends the frontend's request shape, receives its expected status, and leaves the required end state. Per-control audit entity, count, action, and attribution assertions are outside this scope; the existing Phase 0 record and relationship audit checks remain. Repeated record purge reviews are allowed while automation finishes. Invitation completion coverage comes from the existing invitation flow's journal. Each phase's live acceptance uses Harbor Small and School Small; School Standard is required in Phase G.
 
 ## Rules for every pack
 
@@ -14,9 +14,9 @@ Phase 1 runs seed realistic organization data and check API stability: each cont
 - Do not add fixed credentials, recovery tokens, provider secrets, or real personal data to a pack. Runtime-generated credentials and mailbox tokens stay in the private run context.
 - For every phase that adds actions, the offline pack-neutral test must plan Harbor and School at Small size and prove the planner consumes pack data without checking Harbor/School keys or embedding pack-specific module/department keys.
 
-## Phase 1 controls already composed in `plan_controls`
+## Controls composed through Phase B in `plan_controls`
 
-The current composition has 63 actions: one Account action that exercises nine route-level controls, 27 Board actions across 25 operation names, 14 OpenView actions, seven Access actions, seven Sandbox actions, one Audit review, five read-only reviews, and a final bulk session revocation. Entries below name every operation; repeated operations are called out explicitly.
+The current composition has 68 actions: one Account action that exercises nine route-level controls, 27 Board actions across 25 operation names, 14 OpenView actions, seven Access actions, seven Sandbox actions, one Audit review, five read-only reviews, five Manage actions, and a final per-user session revocation. Entries below name every operation; repeated operations are called out explicitly.
 
 ### Account security
 
@@ -35,6 +35,29 @@ All nine controls use one active, non-admin pack member with a generated, privat
 | `GET /api/events` — verify authenticated event stream | The active member's authenticated SSE session so session invalidation can be observed. | Open the stream as the primary member and verify the expected resynchronization. | Open an unauthenticated stream or use another person's session. |
 
 The account planner is in `backend/operations/sample_control_account.py::plan_account_controls`; the run sequence and private credential/mailbox handling are in `execute_account_control`.
+
+### Manage Organization and Security
+
+The existing initial Organization PATCH is extended rather than adding another action. Identity facts supply the name, locale, timezone and currency symbol. The runner derives the mark from name initials and maps the supported symbols to ISO currency (`₱` → `PHP`, `£` → `GBP`); an unknown symbol refuses execution. Monday and `09:00–18:00` are the settled workspace defaults, not separately researched pack facts. Both the PATCH response and a persisted GET must match all seven fields; final configuration verification reads them again.
+
+| Action or existing stage | Pack must supply | Correct example | Wrong example |
+| --- | --- | --- | --- |
+| Existing `PATCH /api/workspace` — Organization | Authored workspace name, locale, timezone and supported currency symbol; freshly read shared revision. | Derive `HOG`/`PHP` or `WDS`/`GBP` from the corresponding identity facts, submit Monday/default hours, and confirm persisted GET. | Select currency by pack key, invent a USD fallback, reuse a stale revision, or verify only the PATCH echo. |
+| `review_workspace_security` — `GET /api/workspace/security` | An authenticated exact administrator and readable policy. | Read the direct policy object with its shared revision, supported timeout/password choice, Optional MFA and empty IP list. | Mix security fields into general WorkspaceResponse or use a non-admin actor. |
+| `update_workspace_security` — `PATCH /api/workspace/security` | A safe Optional/empty-IP baseline and a current shared revision. | Select the supported 20-character passphrase tuple and 30-minute timeout (60 when already 30), verify persisted GET, then restore the original safe policy with the fresh revision and verify again. | Save Required MFA or a restrictive CIDR during pack execution, send an unsupported password tuple, or restore with the old revision. |
+| `review_mfa_status` — `GET /api/auth/mfa` | The same active non-admin member used by Account controls, with no enrolled factors under Optional policy. | Confirm that actor's `user_id`, signed `aal1`, `required=false` and empty factors. | Read another person's status or treat an enrolled/required factor as a noninteractive sample state. |
+| `review_admin_sessions` — `GET /api/auth/admin-sessions` | A current administrator plus authenticated pack members. | Send the UI's standard pagination/search/sort/status/device query, then a member-name remote/Unknown-device filter sorted by person name; validate shared page metadata and real row identities. | Use a raw array, invent location data, filter only the visible page, or fabricate person/session IDs. |
+| `revoke_admin_sessions` — `DELETE /api/auth/admin-sessions` | Every primary active member client has an in-memory credential bound to its mapped ID before revocation. | Preserve only the exact current admin session, prove all primary cookies unauthenticated, then log every primary member back in through the actual API and verify `/auth/me` before later phases. | Revoke only one chosen member, preserve other actors in the fake, skip reauthentication, or put credentials in the manifest/journal. |
+
+Global revocation runs immediately before the existing final per-user revocation. Reauthentication preserves all later phase actors; the subsequent per-user action still leaves its excluded, completed-work target revoked. Disposable rejection handles are outside the mapped primary actor roster and are never selected by later phase actions. Writes retain their actual status/request ID and exact actor identity; ambiguous writes stop without replay. These actions add no per-control audit accounting.
+
+The route guard keeps these exact authenticator-dependent routes in `INTERACTIVE_ACCEPTANCE_ROUTES` under the Phase B8 exception:
+
+- `POST /api/auth/mfa/factors` — real authenticator enrollment.
+- `POST /api/auth/mfa/factors/{factor_id}/verification` — real authenticator verification.
+- `DELETE /api/auth/mfa/factors/{factor_id}` — factor removal in the same provider acceptance journey.
+
+Real-provider interactive acceptance owns those three routes. Their count and reasons are reported separately; sample journals cannot claim executed pack coverage for them. There is no blanket MFA-prefix exemption. MFA status and workspace policy read/update remain required executable routes. Phase G's permanent deferred scope remains files, notifications, Comms, language and licensing activation.
 
 ### Boards
 

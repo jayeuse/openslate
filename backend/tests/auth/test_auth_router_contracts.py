@@ -342,17 +342,59 @@ def test_session_and_session_management_routes_distinguish_setup_and_current_ses
     sessions = sessions_router.list_sessions(identity, db)
     assert [item.current for item in sessions] == [True, False]
     response = Response()
-    monkeypatch.setattr(auth_router, "revoke_session", Mock(return_value=True))
-    assert auth_router.revoke_one_session(current.id, identity, response, db) is response
+    monkeypatch.setattr(sessions_router, "append_security_event", Mock())
+    monkeypatch.setattr(sessions_router, "revoke_session", Mock(return_value=True))
+    assert sessions_router.revoke_one_session(current.id, identity, response, db) is response
     assert response.status_code == 204
     assert any('openslate_access=""' in item for item in response.headers.getlist("set-cookie"))
-    monkeypatch.setattr(auth_router, "revoke_user_sessions", Mock())
-    assert auth_router.revoke_other_sessions(identity, Response(), db).status_code == 204
+    monkeypatch.setattr(sessions_router, "revoke_user_sessions", Mock(return_value=1))
+    assert sessions_router.revoke_other_sessions(identity, Response(), db).status_code == 204
 
     setup_identity = CurrentIdentity(user, current.id, True, True)
     with pytest.raises(HTTPException) as setup_denied:
         sessions_router.list_sessions(setup_identity, db)
     assert setup_denied.value.status_code == 401
+
+
+@pytest.mark.parametrize("end_others", (False, True))
+def test_self_session_end_records_one_redacted_event_only_when_state_changes(
+    monkeypatch: pytest.MonkeyPatch, end_others: bool
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.common.dependencies.auth import get_current_identity
+    from app.core.database import get_db
+    from app.systems.access.auth.aggregate_router import router
+
+    db = Mock(spec=Session)
+    user = _user()
+    timestamp = datetime.now(UTC)
+    current = IdentitySession(id=uuid7(), user_id=user.id, revoked_at=None)
+    other = IdentitySession(id=uuid7(), user_id=user.id, revoked_at=None)
+    db.get.return_value = other
+    db.scalars.return_value = [current, other]
+    record_event = Mock()
+    monkeypatch.setattr(sessions_router, "append_security_event", record_event)
+    identity = CurrentIdentity(user, current.id, False, False)
+    application = FastAPI()
+    application.include_router(router, prefix="/api")
+    application.dependency_overrides[get_db] = lambda: db
+    application.dependency_overrides[get_current_identity] = lambda: identity
+    path = "/api/auth/sessions/revoke-others" if end_others else f"/api/auth/sessions/{other.id}"
+    with TestClient(application, raise_server_exceptions=False) as client:
+        first = client.request("POST" if end_others else "DELETE", path)
+        second = client.request("POST" if end_others else "DELETE", path)
+    assert first.status_code == second.status_code == 204
+    assert current.revoked_at is None
+    assert other.revoked_at is not None and other.revoked_at >= timestamp
+    record_event.assert_called_once()
+    event = record_event.call_args.args[1]
+    assert event.event_type == "identity.session_revocation"
+    assert event.actor_id == event.subject_id == user.id
+    assert event.labels == {"scope": "others" if end_others else "one"}
+    assert event.metadata == {}
+    application.dependency_overrides.clear()
 
 
 def test_change_password_maps_safe_provider_errors_and_preserves_current_session(

@@ -13,10 +13,20 @@ import {
   listManageAuditLogs,
   type ManageAuditListRequest,
 } from "./audit-api";
+import {
+  getManageSecurityPolicy,
+  listManageSessions,
+  type ManageSecurityPolicy,
+  type ManageSessionsRequest,
+} from "./security-api";
 
 export const manageKeys = {
   all: ["manage"] as const,
   workspace: () => ["manage", "workspace"] as const,
+  security: () => ["manage", "security"] as const,
+  sessions: () => ["manage", "sessions"] as const,
+  sessionList: (request: ManageSessionsRequest) =>
+    ["manage", "sessions", request] as const,
   auditLists: () => ["manage", "audit-logs", "list"] as const,
   auditList: (request: ManageAuditListRequest) =>
     ["manage", "audit-logs", "list", request] as const,
@@ -37,6 +47,31 @@ export function afterManageWorkspaceChange(
   workspace: ManageWorkspaceProfile,
 ): void {
   client.setQueryData(manageKeys.workspace(), workspace);
+  void client.invalidateQueries({ queryKey: manageKeys.security() });
+}
+
+export const manageSecurityOptions = () =>
+  queryOptions({
+    queryKey: manageKeys.security(),
+    queryFn: ({ signal }) => getManageSecurityPolicy(signal),
+  });
+
+export const manageSessionsOptions = (request: ManageSessionsRequest) =>
+  queryOptions({
+    queryKey: manageKeys.sessionList(request),
+    queryFn: ({ signal }) => listManageSessions(request, signal),
+  });
+
+export function afterManageSecurityChange(
+  client: QueryClient,
+  policy: ManageSecurityPolicy,
+): void {
+  client.setQueryData(manageKeys.security(), policy);
+  void client.invalidateQueries({ queryKey: manageKeys.workspace() });
+}
+
+export function afterManageSessionsChange(client: QueryClient): Promise<void> {
+  return client.invalidateQueries({ queryKey: manageKeys.sessions() });
 }
 
 /** Use from Manage navigation intent to fill the same account-scoped cache. */

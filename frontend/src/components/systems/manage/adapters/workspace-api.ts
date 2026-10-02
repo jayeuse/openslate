@@ -7,6 +7,10 @@ const workspaceProfileSchema = z.object({
   display_name: z.string().min(1).max(200),
   locale: z.string().min(1).max(35),
   timezone: z.string().min(1).max(64),
+  mark: z.string().max(32),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  week_start: z.enum(["monday", "sunday"]),
+  business_hours: z.string().max(200),
   revision: z.number().int().positive(),
 });
 
@@ -16,6 +20,14 @@ const workspaceSettingsPatchSchema = z
     display_name: z.string().trim().min(1).max(200).optional(),
     locale: z.string().trim().min(1).max(35).optional(),
     timezone: z.string().trim().min(1).max(64).optional(),
+    mark: z.string().trim().max(32).optional(),
+    currency: z
+      .string()
+      .trim()
+      .regex(/^[A-Z]{3}$/)
+      .optional(),
+    week_start: z.enum(["monday", "sunday"]).optional(),
+    business_hours: z.string().trim().max(200).optional(),
   })
   .refine((fields) =>
     Object.entries(fields).some(
@@ -32,6 +44,10 @@ export type WorkspaceSettingsFormFields = {
   name: string;
   locale: string;
   timezone: string;
+  logo: string;
+  currency: string;
+  week: "Monday" | "Sunday";
+  hours: string;
 };
 export type WorkspaceSettingsFormDraft = Partial<WorkspaceSettingsFormFields>;
 
@@ -75,6 +91,10 @@ export function workspaceSettingsFormFields(
     name: workspace.display_name,
     locale: workspace.locale,
     timezone: workspace.timezone,
+    logo: workspace.mark,
+    currency: workspace.currency,
+    week: workspace.week_start === "monday" ? "Monday" : "Sunday",
+    hours: workspace.business_hours,
   };
 }
 
@@ -83,12 +103,7 @@ export function workspaceSettingsPatch(
   draft: WorkspaceSettingsFormDraft,
 ): ManageWorkspaceSettingsPatch | null {
   const fields = workspaceSettingsFormFields(workspace);
-  const patch: {
-    revision: number;
-    display_name?: string;
-    locale?: string;
-    timezone?: string;
-  } = { revision: workspace.revision };
+  const patch: ManageWorkspaceSettingsPatch = { revision: workspace.revision };
 
   if (draft.name !== undefined && draft.name.trim() !== fields.name)
     patch.display_name = draft.name.trim();
@@ -98,6 +113,14 @@ export function workspaceSettingsPatch(
   }
   if (draft.timezone !== undefined && draft.timezone !== fields.timezone)
     patch.timezone = draft.timezone;
+  if (draft.logo !== undefined && draft.logo.trim() !== fields.logo)
+    patch.mark = draft.logo.trim();
+  if (draft.currency !== undefined && draft.currency !== fields.currency)
+    patch.currency = draft.currency;
+  if (draft.week !== undefined && draft.week !== fields.week)
+    patch.week_start = draft.week === "Monday" ? "monday" : "sunday";
+  if (draft.hours !== undefined && draft.hours.trim() !== fields.hours)
+    patch.business_hours = draft.hours.trim();
 
   if (Object.keys(patch).length === 1) return null;
   return patch;

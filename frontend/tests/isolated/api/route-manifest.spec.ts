@@ -275,6 +275,21 @@ export function readRecords(path: string) {
   expect(outsideAdapter.diagnostics.join("\n")).toContain(
     "unowned request call",
   );
+  const libraryRequest = `export function getMfaStatus() { return apiFetch("/auth/mfa", schema); }`;
+  const mfaAdapter = discoverRoutesInSources([
+    { file: "frontend/src/lib/mfa-api.ts", source: libraryRequest },
+  ]);
+  expect(mfaAdapter.diagnostics).toEqual([]);
+  expect(mfaAdapter.routes.map((route) => [route.method, route.path])).toEqual([
+    ["GET", "/api/auth/mfa"],
+  ]);
+  const unrelatedLibrary = discoverRoutesInSources([
+    { file: "frontend/src/lib/unrelated-api.ts", source: libraryRequest },
+  ]);
+  expect(unrelatedLibrary.routes).toEqual([]);
+  expect(unrelatedLibrary.diagnostics.join("\n")).toContain(
+    "unowned request call",
+  );
 });
 
 test("manifest entries are valid and cover every frontend API route owner", () => {
