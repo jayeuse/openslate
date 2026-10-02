@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { ApiError } from "@/lib/api";
 import type { OpenViewDataSource, OpenViewRecord } from "../adapters/views-api";
 import {
   assignOpenViewRecordLink,
@@ -32,8 +33,31 @@ const linkKeys = {
     ["openview", "record-controls", "link-fields", moduleId] as const,
   links: (recordId: string) =>
     ["openview", "record-controls", "links", recordId] as const,
+  // Keep uncertain writes through tab unmounts in this account's QueryClient.
+  writeCheck: (recordId: string) =>
+    ["openview", "record-controls", "link-write-check", recordId] as const,
   record: (recordId: string) =>
     ["openview", "record-controls", "record", recordId] as const,
+};
+
+type RelationshipWriteCheck = {
+  id: string;
+  state: "writing" | "unknown" | "retry";
+  operation: "link" | "unlink";
+  fieldId: string;
+  sourceRecordId: string;
+  targetRecordId: string;
+  relationshipId: string | null;
+  search: string;
+};
+
+type RelationshipLinkState = {
+  writeCheck: RelationshipWriteCheck | null;
+  setWriteCheck: (next: RelationshipWriteCheck | null) => void;
+  getWriteCheck: () => RelationshipWriteCheck | null;
+  readLinks: () => Promise<OpenViewRelationship[]>;
+  storeLinks: (next: OpenViewRelationship[]) => void;
+  invalidateLinks: () => void;
 };
 
 type RecordLinksPanelProps = {
@@ -45,6 +69,34 @@ type RecordLinksPanelProps = {
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function isBusyRelationship(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 503 &&
+    (error.code === "relationship_busy" ||
+      error.details === "Relationship operation is temporarily unavailable")
+  );
+}
+
+function hasUnresolvedWrite(check: RelationshipWriteCheck | null): boolean {
+  return check?.state === "writing" || check?.state === "unknown";
+}
+
+function containsRelationship(
+  links: readonly OpenViewRelationship[],
+  expected: Pick<
+    RelationshipWriteCheck,
+    "fieldId" | "sourceRecordId" | "targetRecordId"
+  >,
+): boolean {
+  return links.some(
+    (link) =>
+      link.fieldId === expected.fieldId &&
+      link.sourceRecordId === expected.sourceRecordId &&
+      link.targetRecordId === expected.targetRecordId,
+  );
 }
 
 function LinkedRecordName({
@@ -93,6 +145,7 @@ function LinkPicker({
   record,
   linkedIds,
   dataSources,
+  linkState,
   onLinked,
   onCancel,
 }: {
@@ -100,16 +153,29 @@ function LinkPicker({
   record: OpenViewRecord;
   linkedIds: ReadonlySet<string>;
   dataSources: readonly OpenViewDataSource[];
+  linkState: RelationshipLinkState;
   onLinked: (message: string) => void;
   onCancel: () => void;
 }) {
-  const [search, setSearch] = useState("");
-  const [submitted, setSubmitted] = useState<string | null>(null);
+  const initialCheck =
+    linkState.writeCheck?.operation === "link" &&
+    linkState.writeCheck.fieldId === field.id
+      ? linkState.writeCheck
+      : null;
+  const [search, setSearch] = useState(initialCheck?.search ?? "");
+  const [submitted, setSubmitted] = useState<string | null>(
+    initialCheck?.search ?? null,
+  );
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const mounted = useRef(true);
   const searchId = `link-search-${field.id}`;
   useEffect(() => {
+    mounted.current = true;
     document.getElementById(searchId)?.focus();
+    return () => {
+      mounted.current = false;
+    };
   }, [searchId]);
   const targetFields = useQuery(fieldsFirstPageOptions(field.targetModuleId));
   const target = dataSources.find((item) => item.id === field.targetModuleId);
@@ -160,7 +226,60 @@ function LinkPicker({
       }),
   });
 
+  const reconcileLink = async (check: RelationshipWriteCheck) => {
+    try {
+      const refreshed = await linkState.readLinks();
+      if (linkState.getWriteCheck()?.id !== check.id) return;
+      linkState.storeLinks(refreshed);
+      if (containsRelationship(refreshed, check)) {
+        linkState.setWriteCheck(null);
+        if (mounted.current) {
+          setError("");
+          onLinked(`Linked in ${field.name}.`);
+        }
+        return;
+      }
+      linkState.setWriteCheck({ ...check, state: "retry" });
+    } catch {
+      // Keep the unknown result guarded until an authoritative read succeeds.
+    }
+  };
+
+  const checkAgain = async () => {
+    const check = linkState.getWriteCheck();
+    if (
+      !check ||
+      check.operation !== "link" ||
+      check.fieldId !== field.id ||
+      check.state !== "unknown" ||
+      pendingId !== null
+    )
+      return;
+    const nextCheck = { ...check, id: crypto.randomUUID() };
+    linkState.setWriteCheck(nextCheck);
+    setPendingId(nextCheck.targetRecordId);
+    setError("");
+    try {
+      await reconcileLink(nextCheck);
+    } finally {
+      setPendingId(null);
+    }
+  };
+
   const choose = async (targetRecordId: string) => {
+    const unresolved = linkState.getWriteCheck();
+    if (pendingId !== null || hasUnresolvedWrite(unresolved)) return;
+    const check: RelationshipWriteCheck = {
+      id: crypto.randomUUID(),
+      state: "writing",
+      operation: "link",
+      fieldId: field.id,
+      sourceRecordId: record.id,
+      targetRecordId,
+      relationshipId: null,
+      search,
+    };
+    linkState.setWriteCheck(check);
     setPendingId(targetRecordId);
     setError("");
     try {
@@ -176,18 +295,48 @@ function LinkPicker({
           sourceRecordId: record.id,
           targetRecordId,
         });
-      onLinked(`Linked in ${field.name}.`);
+      linkState.setWriteCheck(null);
+      linkState.invalidateLinks();
+      if (mounted.current) onLinked(`Linked in ${field.name}.`);
     } catch (caught) {
+      if (isBusyRelationship(caught)) {
+        const uncertain = { ...check, state: "unknown" as const };
+        linkState.setWriteCheck(uncertain);
+        await reconcileLink(uncertain);
+        return;
+      }
+      linkState.setWriteCheck(null);
       const message = errorMessage(caught, "The link could not be saved.");
-      setError(
-        /already has a relationship source/i.test(message)
-          ? "That record is already linked from another record in this field. Remove that link first."
-          : message,
-      );
+      if (mounted.current)
+        setError(
+          /already has a relationship source/i.test(message)
+            ? "That record is already linked from another record in this field. Remove that link first."
+            : message,
+        );
     } finally {
       setPendingId(null);
     }
   };
+
+  const currentCheck = linkState.writeCheck;
+  const unresolvedCheck = hasUnresolvedWrite(currentCheck);
+  const retryTargetId =
+    currentCheck?.state === "retry" &&
+    currentCheck.operation === "link" &&
+    currentCheck.fieldId === field.id
+      ? currentCheck.targetRecordId
+      : null;
+  const resolutionNotice =
+    currentCheck?.state === "unknown" &&
+    currentCheck.operation === "link" &&
+    currentCheck.fieldId === field.id
+      ? pendingId === null
+        ? "We couldn’t confirm whether the link was saved. Check again before retrying."
+        : ""
+      : retryTargetId
+        ? "The link was not saved. Try again."
+        : "";
+  const visibleError = error || resolutionNotice;
 
   const rows = (results.data?.items ?? []).filter(
     (row) =>
@@ -211,14 +360,26 @@ function LinkPicker({
             className="min-h-11"
             value={search}
             maxLength={240}
-            onChange={(event) => setSearch(event.target.value)}
+            disabled={unresolvedCheck}
+            onChange={(event) => {
+              const next = event.target.value;
+              setSearch(next);
+              const check = linkState.getWriteCheck();
+              if (
+                check?.state === "retry" &&
+                check.operation === "link" &&
+                check.fieldId === field.id &&
+                check.search !== next
+              )
+                linkState.setWriteCheck(null);
+            }}
           />
         </Field>
         <Button
           type="submit"
           variant="outline"
           className="min-h-11"
-          disabled={!targetFields.isSuccess}
+          disabled={!targetFields.isSuccess || unresolvedCheck}
         >
           Search
         </Button>
@@ -227,6 +388,7 @@ function LinkPicker({
           variant="ghost"
           className="min-h-11"
           onClick={onCancel}
+          disabled={unresolvedCheck}
         >
           Cancel
         </Button>
@@ -236,9 +398,40 @@ function LinkPicker({
           The linked data source is not available to you.
         </p>
       ) : null}
-      {error ? (
-        <p role="alert" className="text-destructive text-sm">
-          {error}
+      {visibleError ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <p role="alert" className="text-destructive text-sm">
+            {visibleError}
+          </p>
+          {currentCheck?.state === "unknown" &&
+          currentCheck.operation === "link" &&
+          currentCheck.fieldId === field.id &&
+          pendingId === null ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              disabled={pendingId !== null}
+              onClick={() => void checkAgain()}
+            >
+              Check again
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {currentCheck?.operation === "link" &&
+      currentCheck.fieldId === field.id &&
+      currentCheck.state === "writing" ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          Saving this link…
+        </p>
+      ) : null}
+      {currentCheck?.operation === "link" &&
+      currentCheck.fieldId === field.id &&
+      currentCheck.state === "unknown" &&
+      pendingId !== null ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          Checking whether the link was saved…
         </p>
       ) : null}
       {submitted === null ? null : results.isPending ||
@@ -273,11 +466,21 @@ function LinkPicker({
                   type="button"
                   variant="outline"
                   className="min-h-11 shrink-0"
-                  aria-label={`Link ${title}`}
-                  disabled={pendingId !== null}
+                  aria-label={
+                    pendingId === row.id && currentCheck?.state === "unknown"
+                      ? `Checking whether ${title} was saved`
+                      : `${retryTargetId === row.id ? "Try again to link" : "Link"} ${title}`
+                  }
+                  disabled={pendingId !== null || unresolvedCheck}
                   onClick={() => void choose(row.id)}
                 >
-                  {pendingId === row.id ? "Linking…" : "Link"}
+                  {pendingId === row.id && currentCheck?.state === "unknown"
+                    ? "Checking…"
+                    : pendingId === row.id
+                      ? "Linking…"
+                      : retryTargetId === row.id
+                        ? "Try again"
+                        : "Link"}
                 </Button>
               </li>
             );
@@ -294,6 +497,7 @@ function FieldLinks({
   links,
   dataSources,
   canChange,
+  linkState,
   onChanged,
 }: {
   field: OpenViewRelationshipField;
@@ -301,32 +505,135 @@ function FieldLinks({
   links: readonly OpenViewRelationship[];
   dataSources: readonly OpenViewDataSource[];
   canChange: boolean;
+  linkState: RelationshipLinkState;
   onChanged: (message: string) => void;
 }) {
-  const [picking, setPicking] = useState(false);
+  const fieldCheck =
+    linkState.writeCheck?.fieldId === field.id ? linkState.writeCheck : null;
+  const [picking, setPicking] = useState(fieldCheck?.operation === "link");
   const addRef = useRef<HTMLButtonElement>(null);
+  const focusAddOnClose = useRef(false);
   const namePrefix = useId();
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (picking || !focusAddOnClose.current) return;
+    focusAddOnClose.current = false;
+    // Restore focus before the dialog recovers from the removed Cancel button.
+    addRef.current?.focus();
+  }, [picking]);
   const closePicker = () => {
+    const check = linkState.getWriteCheck();
+    if (hasUnresolvedWrite(check)) return;
+    if (
+      check?.state === "retry" &&
+      check.operation === "link" &&
+      check.fieldId === field.id
+    )
+      linkState.setWriteCheck(null);
+    focusAddOnClose.current = true;
     setPicking(false);
-    requestAnimationFrame(() => addRef.current?.focus());
   };
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const targetModuleId = field.targetModuleId;
   const full = !field.multipleTargets && links.length > 0;
 
-  const unlink = async (link: OpenViewRelationship) => {
-    setPendingId(link.id);
+  const reconcileUnlink = async (check: RelationshipWriteCheck) => {
+    try {
+      const refreshed = await linkState.readLinks();
+      if (linkState.getWriteCheck()?.id !== check.id) return;
+      linkState.storeLinks(refreshed);
+      const stillPresent = refreshed.some(
+        (link) => link.id === check.relationshipId,
+      );
+      if (!stillPresent) {
+        linkState.setWriteCheck(null);
+        if (mounted.current) {
+          setError("");
+          onChanged(`Link removed from ${field.name}.`);
+        }
+        return;
+      }
+      linkState.setWriteCheck({ ...check, state: "retry" });
+    } catch {
+      // Keep the unknown result guarded until an authoritative read succeeds.
+    }
+  };
+
+  const checkUnlinkAgain = async () => {
+    const check = linkState.getWriteCheck();
+    if (
+      !check ||
+      check.operation !== "unlink" ||
+      check.fieldId !== field.id ||
+      check.state !== "unknown" ||
+      check.relationshipId === null ||
+      pendingId !== null
+    )
+      return;
+    const nextCheck = { ...check, id: crypto.randomUUID() };
+    linkState.setWriteCheck(nextCheck);
+    setPendingId(nextCheck.relationshipId);
     setError("");
     try {
-      await unlinkOpenViewRecords(link.id);
-      onChanged(`Link removed from ${field.name}.`);
-    } catch (caught) {
-      setError(errorMessage(caught, "The link could not be removed."));
+      await reconcileUnlink(nextCheck);
     } finally {
       setPendingId(null);
     }
   };
+
+  const unlink = async (link: OpenViewRelationship) => {
+    const unresolved = linkState.getWriteCheck();
+    if (pendingId !== null || hasUnresolvedWrite(unresolved)) return;
+    const check: RelationshipWriteCheck = {
+      id: crypto.randomUUID(),
+      state: "writing",
+      operation: "unlink",
+      fieldId: field.id,
+      sourceRecordId: link.sourceRecordId,
+      targetRecordId: link.targetRecordId,
+      relationshipId: link.id,
+      search: "",
+    };
+    linkState.setWriteCheck(check);
+    setPendingId(link.id);
+    setError("");
+    try {
+      await unlinkOpenViewRecords(link.id);
+      linkState.setWriteCheck(null);
+      linkState.invalidateLinks();
+      if (mounted.current) onChanged(`Link removed from ${field.name}.`);
+    } catch (caught) {
+      if (isBusyRelationship(caught)) {
+        const uncertain = { ...check, state: "unknown" as const };
+        linkState.setWriteCheck(uncertain);
+        await reconcileUnlink(uncertain);
+      } else {
+        linkState.setWriteCheck(null);
+        if (mounted.current)
+          setError(errorMessage(caught, "The link could not be removed."));
+      }
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  const allWritesBlocked = hasUnresolvedWrite(linkState.writeCheck);
+  const resolutionNotice =
+    fieldCheck?.state === "unknown" && fieldCheck.operation === "unlink"
+      ? pendingId === null
+        ? "We couldn’t confirm whether the link was removed. Check again before retrying."
+        : ""
+      : fieldCheck?.state === "retry" && fieldCheck.operation === "unlink"
+        ? "The link is still present. Try again."
+        : "";
+  const visibleError = error || resolutionNotice;
 
   return (
     <section className="flex min-w-0 flex-col gap-2 py-3">
@@ -339,6 +646,7 @@ function FieldLinks({
             variant="outline"
             className="min-h-11"
             onClick={() => setPicking(true)}
+            disabled={allWritesBlocked}
           >
             {full ? "Replace link" : "Add link"}
           </Button>
@@ -364,19 +672,54 @@ function FieldLinks({
                   variant="ghost"
                   className="min-h-11 shrink-0"
                   aria-describedby={`${namePrefix}-${link.id}`}
-                  disabled={pendingId !== null}
+                  disabled={pendingId !== null || allWritesBlocked}
                   onClick={() => void unlink(link)}
                 >
-                  {pendingId === link.id ? "Removing…" : "Remove link"}
+                  {pendingId === link.id && fieldCheck?.state === "unknown"
+                    ? "Checking…"
+                    : pendingId === link.id
+                      ? "Removing…"
+                      : fieldCheck?.state === "retry" &&
+                          fieldCheck.operation === "unlink" &&
+                          fieldCheck.relationshipId === link.id
+                        ? "Try again"
+                        : "Remove link"}
                 </Button>
               ) : null}
             </li>
           ))}
         </ul>
       )}
-      {error ? (
-        <p role="alert" className="text-destructive text-sm">
-          {error}
+      {visibleError ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <p role="alert" className="text-destructive text-sm">
+            {visibleError}
+          </p>
+          {fieldCheck?.state === "unknown" &&
+          fieldCheck.operation === "unlink" &&
+          pendingId === null ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              disabled={pendingId !== null}
+              onClick={() => void checkUnlinkAgain()}
+            >
+              Check again
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {fieldCheck?.operation === "unlink" && fieldCheck.state === "writing" ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          Removing this link…
+        </p>
+      ) : null}
+      {fieldCheck?.operation === "unlink" &&
+      fieldCheck.state === "unknown" &&
+      pendingId !== null ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          Checking whether the link was removed…
         </p>
       ) : null}
       {picking && targetModuleId ? (
@@ -385,6 +728,7 @@ function FieldLinks({
           record={record}
           linkedIds={new Set(links.map((link) => link.targetRecordId))}
           dataSources={dataSources}
+          linkState={linkState}
           onCancel={closePicker}
           onLinked={(message) => {
             closePicker();
@@ -414,6 +758,35 @@ export function RecordLinksPanel({
     queryFn: () => listOpenViewRecordLinks(record.id),
     retry: false,
   });
+  const writeCheckKey = linkKeys.writeCheck(record.id);
+  const writeCheckQuery = useQuery<RelationshipWriteCheck | null>({
+    queryKey: writeCheckKey,
+    queryFn: async () => null,
+    enabled: false,
+    initialData: null,
+    gcTime: Infinity,
+  });
+  useEffect(() => {
+    const queryKey = linkKeys.writeCheck(record.id);
+    return () => {
+      if (client.getQueryData<RelationshipWriteCheck | null>(queryKey) === null)
+        client.removeQueries({ queryKey, exact: true });
+    };
+  }, [client, record.id]);
+  const linkState: RelationshipLinkState = {
+    writeCheck: writeCheckQuery.data,
+    setWriteCheck: (next) => client.setQueryData(writeCheckKey, next),
+    getWriteCheck: () =>
+      client.getQueryData<RelationshipWriteCheck | null>(writeCheckKey) ?? null,
+    readLinks: () => listOpenViewRecordLinks(record.id),
+    storeLinks: (next) => client.setQueryData(linkKeys.links(record.id), next),
+    invalidateLinks: () => {
+      void client.invalidateQueries({
+        queryKey: linkKeys.links(record.id),
+        refetchType: "none",
+      });
+    },
+  };
   const changed = (message: string) => {
     void client.invalidateQueries({ queryKey: linkKeys.links(record.id) });
     onChanged(message);
@@ -475,6 +848,7 @@ export function RecordLinksPanel({
             links={outgoing.filter((link) => link.fieldId === field.id)}
             dataSources={dataSources}
             canChange={canChange}
+            linkState={linkState}
             onChanged={changed}
           />
         ))}

@@ -4,17 +4,28 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Iterator
+from dataclasses import asdict
 from datetime import date
 from functools import cache
 
 import pytest
 
+from operations.sample_packs.registry import get_pack
+from operations.sample_packs.types import SampleProfile
 from operations.sample_scenario import SampleDataset, build_dataset
 from operations.sample_vocabulary import TRADE_PHRASES
 
 ANCHOR = date(2026, 9, 30)
 MARKERS = re.compile(
     r"\b(sample|samples|test|tests|demo|dummy|fake|placeholder|lorem|ipsum|scenario|synthetic)\b",
+    re.IGNORECASE,
+)
+RUN_MARKERS = re.compile(
+    r"\bseed(?:\s+number)?\s*[:#-]?\s*\d+\b"
+    r"|\breview copy\s+\d+-\d+\b"
+    r"|\s[0-9a-f]{12,}\b"
+    r"|\bmetadata verification\b",
     re.IGNORECASE,
 )
 # Only the reserved domain is exempt; local parts and URL paths are still scanned.
@@ -94,6 +105,63 @@ def test_no_generated_value_marks_itself_as_generated() -> None:
         }
     )
     assert offenders == []
+
+
+def _strings(value: object) -> Iterator[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _strings(item)
+
+
+@pytest.mark.parametrize("pack_key", ("harbor", "school"))
+@pytest.mark.parametrize("profile", ("small", "standard"))
+def test_every_control_plan_string_uses_natural_organization_content(
+    pack_key: str, profile: SampleProfile
+) -> None:
+    from operations.sample_control_actions import plan_controls
+
+    dataset = build_dataset(profile, seed=42, anchor_date=ANCHOR, organization=get_pack(pack_key))
+    texts = list(_strings([asdict(action) for action in plan_controls(dataset)]))
+    assert texts
+    offenders = sorted(
+        {
+            text
+            for text in texts
+            if MARKERS.search(_without_allowed(text)) or RUN_MARKERS.search(text) or "·" in text
+        }
+    )
+    assert offenders == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "Checkpoint seed 42",
+        "Year 8 Pine — review copy 7938092987921336317-1",
+        "Sales Review 000000000000002a",
+        "Temporary checkpoint; removed after metadata verification.",
+    ),
+)
+def test_control_scan_rejects_run_machinery_labels(text: str) -> None:
+    assert RUN_MARKERS.search(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "Year 8 Pine — Autumn term",
+        "September 2026 structure review",
+        "Confirm the order for 24 replacement batteries.",
+        "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8",
+    ),
+)
+def test_control_scan_preserves_business_numbers_and_technical_ids(text: str) -> None:
+    assert not RUN_MARKERS.search(text)
 
 
 def test_allowed_trade_phrases_are_real_uses_of_marker_words() -> None:

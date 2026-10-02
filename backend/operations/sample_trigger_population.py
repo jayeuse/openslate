@@ -9,7 +9,7 @@ from uuid import UUID
 
 from operations.sample_blueprint import SampleDataset, SampleRecord
 from operations.sample_client import SampleClient
-from operations.sample_population import SamplePopulationError, _api, _api_id
+from operations.sample_population import SamplePopulationError, _api, _api_id, _record_if_match
 from operations.sample_verification import SampleVerificationError, list_all_rows
 
 
@@ -88,7 +88,9 @@ def exercise_record_triggers(
             action_reset = {"field_id": action_field_id, "value": False}
         data[changed_field_id] = changed_value
         path = f"/api/records/{record_id}"
-        response = actor.request("PATCH", path, json_body={"data": data})
+        response = actor.request(
+            "PATCH", path, json_body={"data": data}, headers=_record_if_match(current)
+        )
         if response.status_code != 200:
             raise SamplePopulationError(f"PATCH {path} returned HTTP {response.status_code}")
         updated = _response_object(response, "Record update")

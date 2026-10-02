@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -18,6 +20,75 @@ from operations.sample_trigger_population import (
     _wait_trigger,
     validate_record_trigger_candidates,
 )
+
+
+def test_trigger_record_edit_uses_the_read_revision_like_the_frontend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from operations import sample_trigger_population as workflow
+
+    dataset = build_dataset("small", 42, date(2026, 9, 30))
+    blueprint = dataset.organization.blueprint
+    key = blueprint.patch_trigger_keys[0]
+    dataset = replace(
+        dataset,
+        organization=replace(
+            dataset.organization,
+            blueprint=replace(
+                blueprint,
+                record_created_trigger_keys=(),
+                patch_trigger_keys=(key,),
+                schedule_trigger_keys=(),
+            ),
+        ),
+    )
+    logical_id, changed_field, _ = workflow._trigger_mutation(dataset, key)
+    sample = next(row for row in dataset.records if row.logical_id == logical_id)
+    record_id, actor_id = str(uuid4()), str(uuid4())
+    revision = "2026-10-02T02:15:30.987654Z"
+    data = dict(sample.data)
+    data[changed_field] = None
+    current = {
+        "id": record_id,
+        "module_id": dataset.module_ids[sample.module_key],
+        "updated_at": revision,
+        "data": data,
+    }
+    edits: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            return httpx.Response(200, headers={"Set-Cookie": "openslate_csrf=fixture; Path=/"})
+        if request.method == "GET":
+            return httpx.Response(200, json=current)
+        assert request.method == "PATCH"
+        assert request.headers.get("If-Match") == f'"{revision}"'
+        edits.append(request)
+        return httpx.Response(200, json=current, headers={"X-Request-ID": str(uuid4())})
+
+    monkeypatch.setattr(workflow, "_wait_trigger", lambda *args, **kwargs: {"trigger_key": key})
+    with SampleClient(
+        "https://api.example.test",
+        "https://workspace.example.test",
+        tmp_path / "requests.jsonl",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        client.login("operator@example.test", "fixture-password-only")
+        _, mutations = workflow.exercise_record_triggers(
+            client,
+            dataset,
+            {logical_id: current},
+            {sample.module_key: {"id": current["module_id"]}},
+            {
+                f"{module}:{field}": field_id
+                for module, fields in dataset.field_ids.items()
+                for field, field_id in fields.items()
+            },
+            {sample.creator_key: actor_id},
+            {sample.creator_key: client},
+        )
+    assert len(edits) == 1
+    assert mutations[0]["actor_id"] == actor_id
 
 
 @pytest.mark.parametrize("organization", pack_keys())

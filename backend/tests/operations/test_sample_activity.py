@@ -167,12 +167,16 @@ def test_a_history_step_updates_the_whole_record_or_skips_when_already_done(
         "name": "Keep me",
     }
     patches: list[dict[str, object]] = []
+    revision = "2026-10-02T02:15:30.123456Z"
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/auth/login":
             return _login()
         if request.method == "GET":
-            return httpx.Response(200, json={"id": record_id, "data": dict(current)})
+            return httpx.Response(
+                200, json={"id": record_id, "data": dict(current), "updated_at": revision}
+            )
+        assert request.headers.get("If-Match") == f'"{revision}"'
         patches.append(json.loads(request.content))
         return httpx.Response(200, json={"id": record_id, "data": {}})
 

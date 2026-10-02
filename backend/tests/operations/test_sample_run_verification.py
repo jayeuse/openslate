@@ -361,6 +361,8 @@ def _configuration_fixture() -> tuple[dict[str, Any], dict[str, Any], dict[str, 
         "relationship_target",
         "publication",
         "test_history",
+        "control_plan",
+        "route_coverage",
     ),
 )
 def test_verifier_requires_exact_foundation_readback(
@@ -402,6 +404,11 @@ def test_verifier_requires_exact_foundation_readback(
         payloads["/api/sandbox/document"]["latestPublishedVersion"] = None
     elif changed == "test_history":
         payloads["/api/sandbox/tests"].pop()
+    elif changed == "control_plan":
+        manifest["control_plan"] = []
+        manifest["control_results"] = []
+    elif changed == "route_coverage":
+        manifest["control_plan"] = []
 
     class FakeClient:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -466,6 +473,11 @@ def test_verifier_requires_exact_foundation_readback(
     monkeypatch.setattr(verifier, "_verify_triggers", lambda *_args, **_kwargs: ({}, []))
     monkeypatch.setattr(verifier, "verify_history", lambda *_args, **_kwargs: ({}, []))
     monkeypatch.setattr(verifier, "verify_rejections", lambda *_args, **_kwargs: ({}, []))
+    if changed == "route_coverage":
+        monkeypatch.setattr(
+            verifier, "verify_controls", lambda *_args, **_kwargs: ({}, []), raising=False
+        )
+        monkeypatch.setattr(verifier, "configuration_mappings", lambda *_args: manifest["mappings"])
     result = verify_sample_data(
         api_url="https://api.example.test",
         origin="https://ui.example.test",

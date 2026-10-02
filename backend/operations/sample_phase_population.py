@@ -22,11 +22,19 @@ def run_population_phases(
     admin_password: str,
     save: Callable[[], None],
     mappings: Callable[[], dict[str, dict[str, str]]],
+    private_values: Mapping[str, Any] | None = None,
 ) -> dict[str, int]:
     """Execute only recorded actions after all ordinary activity has finished."""
-    actions = read_phase_plan(manifest)
+    controls = read_phase_plan({"phase_plan": manifest.get("control_plan", [])})
+    phases = read_phase_plan(manifest)
+    actions = controls + phases
     if not actions:
-        return {"phase_actions_executed": 0, "phase_requests_recorded": 0}
+        return {
+            "phase_actions_executed": 0,
+            "phase_requests_recorded": 0,
+            "control_actions_executed": 0,
+            "control_requests_recorded": 0,
+        }
     initial = mappings()
     context = PhaseExecutionContext(
         clients=clients,
@@ -37,12 +45,17 @@ def run_population_phases(
         field_ids=initial.get("fields", {}),
         mappings=initial,
         admin_password=admin_password,
+        private_values=dict(private_values or {}),
     )
     results = manifest.setdefault("phase_results", [])
-    if results:
+    control_results = manifest.setdefault("control_results", [])
+    control_keys = {action.key for action in controls}
+    if control_keys & {action.key for action in phases}:
+        raise SamplePopulationError("Control and phase action keys must be distinct")
+    if results or control_results:
         raise SamplePopulationError("Phase actions cannot resume without reconciliation")
     for action in actions:
-        manifest["stage"] = action.phase
+        manifest["stage"] = "controls" if action.key in control_keys else action.phase
         manifest["step"] = action.key
         save()
 
@@ -52,12 +65,16 @@ def run_population_phases(
             save()
 
         result = execute_phase_action(action, dataset, context, on_substep=substep)
-        results.append(result)
+        (control_results if action.key in control_keys else results).append(result)
         manifest["mappings"] = mappings()
         save()
     return {
         "phase_actions_executed": len(results),
         "phase_requests_recorded": sum(
             len(result.get("request_evidence", [])) for result in results
+        ),
+        "control_actions_executed": len(control_results),
+        "control_requests_recorded": sum(
+            len(result.get("request_evidence", [])) for result in control_results
         ),
     }

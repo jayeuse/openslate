@@ -290,6 +290,12 @@ def run_population(
             admin_password=admin_password,
             save=lambda: _write_manifest(run_directory, manifest),
             mappings=lambda: _journal_mappings(journal),
+            private_values={
+                "credentials": people_result.actors,
+                "new_client": new_client,
+                "mailpit_url": mailpit_url,
+                "origin": origin,
+            },
         )
         manifest["observed"].update(phase_counts)
         return cast(dict[str, int], manifest["observed"])

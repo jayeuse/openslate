@@ -12,7 +12,7 @@ from operations.sample_catalog import JsonValue
 from operations.sample_client import SampleClient, SampleWriteOutcomeUnknown
 from operations.sample_episodes import SampleSession
 from operations.sample_history import RecordHistory, plan_history
-from operations.sample_population import SamplePopulationError, _api, _api_id
+from operations.sample_population import SamplePopulationError, _api, _api_id, _record_if_match
 from operations.sample_rejections import RejectionContext, run_rejection
 from operations.sample_trigger_population import (
     _matches_conditions,
@@ -208,7 +208,13 @@ def _apply_step(client: SampleClient, record_id: str, changes: Mapping[str, Any]
         raise SamplePopulationError("Record readback failed before a history update")
     if all(data.get(field) == value for field, value in changes.items()):
         return False  # An automation, or a colleague, already made this change.
-    _api(client, "PATCH", f"/api/records/{record_id}", body={"data": {**data, **changes}})
+    _api(
+        client,
+        "PATCH",
+        f"/api/records/{record_id}",
+        body={"data": {**data, **changes}},
+        headers=_record_if_match(current),
+    )
     return True
 
 

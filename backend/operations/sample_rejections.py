@@ -16,7 +16,7 @@ from operations.sample_client import SampleClient
 from operations.sample_packs import default_pack
 from operations.sample_packs.interface import OrganizationPack
 from operations.sample_packs.types import RejectionCase
-from operations.sample_population import SamplePopulationError
+from operations.sample_population import SamplePopulationError, _record_if_match
 from operations.sample_verification import list_all_rows
 
 
@@ -154,7 +154,10 @@ def _request(context: RejectionContext, case: RejectionCase) -> httpx.Response:
         record_id = records[logical_id]
         current = client.request("GET", f"/api/records/{record_id}").json()
         return client.request(
-            "PATCH", f"/api/records/{record_id}", json_body={"data": current["data"]}
+            "PATCH",
+            f"/api/records/{record_id}",
+            json_body={"data": current["data"]},
+            headers=_record_if_match(current),
         )
 
     if operation in {"create-relationship", "replace-relationship"}:

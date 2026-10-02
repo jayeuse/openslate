@@ -6,18 +6,19 @@ import base64
 import binascii
 import json
 import math
-import os
 import re
-import stat
 import time
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import httpx
+
+from operations.sample_client_events import check_event_stream
+from operations.sample_journal import append_event
+from operations.sample_route_coverage import route_template
 
 _SAFE_METHODS = frozenset({"GET"})
 _ALLOWED_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
@@ -26,6 +27,7 @@ _SESSION_HEADERS = frozenset({"authorization", "cookie", "origin", "x-csrf-token
 _LOGIN_PATH = "/api/auth/login"
 _REFRESH_PATH = "/api/auth/refresh"
 _INVITATION_PATH = "/api/auth/invitations/complete"
+_RECOVERY_PATH = "/api/auth/recovery/complete"
 _MAX_GET_RATE_LIMIT_RETRIES = 1
 _MAX_RETRY_AFTER_SECONDS = 2.0
 _ROLLED_BACK_RECORD_RETRY_DELAYS = (0.1, 0.3)
@@ -217,6 +219,17 @@ class SampleClient:
             allow_unauthorized=True,
         )
 
+    def complete_recovery(self, token_hash: str, password: str) -> httpx.Response:
+        return self._request(
+            "POST",
+            _RECOVERY_PATH,
+            json_body={"token_hash": token_hash, "password": password},
+            allow_unauthorized=True,
+        )
+
+    def check_event_stream(self) -> dict[str, object]:
+        return check_event_stream(self._client, self._origin, self._append_event)
+
     def request(
         self,
         method: str,
@@ -281,9 +294,9 @@ class SampleClient:
                 "Cookie-session authentication and origin headers are managed by the client"
             )
         request_headers["Origin"] = self._origin
-        if path == _INVITATION_PATH and self._client.cookies:
-            raise SampleAuthenticationError("Invitation completion requires a cookie-free client")
-        if is_write and path not in {_LOGIN_PATH, _INVITATION_PATH}:
+        if path in {_INVITATION_PATH, _RECOVERY_PATH} and self._client.cookies:
+            raise SampleAuthenticationError("Action completion requires a cookie-free client")
+        if is_write and path not in {_LOGIN_PATH, _INVITATION_PATH, _RECOVERY_PATH}:
             csrf = self._csrf_cookie()
             if not csrf:
                 raise SampleAuthenticationError(
@@ -296,7 +309,12 @@ class SampleClient:
         while True:
             attempt_id = str(uuid4())
             self._append_event(
-                {"event": "request_started", "attempt_id": attempt_id, "method": normalized_method}
+                {
+                    "event": "request_started",
+                    "attempt_id": attempt_id,
+                    "method": normalized_method,
+                    "route_template": route_template(normalized_method, path),
+                }
             )
             try:
                 response = self._client.request(
@@ -441,28 +459,8 @@ class SampleClient:
             raise
 
     def _append_event(self, values: Mapping[str, object]) -> None:
-        entry = {
-            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            **values,
-        }
-        encoded = (json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n").encode()
         try:
-            self._journal_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
-            descriptor = os.open(self._journal_path, flags, 0o600)
-            try:
-                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                    raise OSError("journal is not a regular file")
-                os.fchmod(descriptor, 0o600)
-                remaining = memoryview(encoded)
-                while remaining:
-                    written = os.write(descriptor, remaining)
-                    if written <= 0:
-                        raise OSError("short journal write")
-                    remaining = remaining[written:]
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
+            append_event(self._journal_path, values)
         except OSError:
             raise SampleClientError("Unable to append to the private sample journal") from None
 

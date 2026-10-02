@@ -77,3 +77,49 @@ def test_school_hidden_read_expectation_matches_the_real_record_endpoint(key, mo
         router.get_record(uuid4(), SimpleNamespace(id=uuid4()), database)
     assert refusal.value.status_code == case.expected_status
     assert refusal.value.detail == case.expected_detail
+
+
+def test_refused_record_edit_still_sends_the_frontend_revision_header(tmp_path):
+    revision = "2026-09-30T09:15:00Z"
+
+    def handler(request):
+        if request.url.path == "/api/auth/login":
+            return httpx.Response(200, headers={"Set-Cookie": "openslate_csrf=c; Path=/"})
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": {}, "updated_at": revision})
+        assert request.headers.get("If-Match") == f'"{revision}"'
+        return httpx.Response(
+            403,
+            json={"detail": "Insufficient access"},
+            headers={"X-Request-ID": "00000000-0000-4000-8000-00000000d002"},
+        )
+
+    with SampleClient(
+        "https://api.example.test",
+        "https://ui.example.test",
+        tmp_path / "requests.jsonl",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        client.login("teacher@example.test", "synthetic-password")
+        context = RejectionContext(
+            dataset=build_dataset("small", 17, date(2026, 9, 30), organization=_TINY_PACK),
+            admin=client,
+            clients={"teacher": client},
+            new_client=lambda: client,
+            roster_path=tmp_path / "unused.json",
+            mappings=lambda: {"record": {"requests:000001": "read-only-record"}},
+            build_payload=lambda _key: {},
+            field_map=lambda _module: {},
+            results=[],
+        )
+        case = RejectionCase(
+            "read_only_edit",
+            "teacher",
+            ("requests:000001",),
+            403,
+            "Insufficient access",
+            operation="edit-record",
+            target_record_id="requests:000001",
+        )
+        run_rejection(context, case)
+        assert context.results[0]["outcome"] == "matched"

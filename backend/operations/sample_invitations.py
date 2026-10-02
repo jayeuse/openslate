@@ -12,7 +12,7 @@ import stat
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -222,6 +222,17 @@ class InvitationMailbox:
         return ids
 
     def invitation_token(self, baseline_ids: set[str], recipient: str) -> str:
+        return self._action_token(baseline_ids, recipient, "invite")
+
+    def recovery_token(self, baseline_ids: set[str], recipient: str) -> str:
+        return self._action_token(baseline_ids, recipient, "recovery")
+
+    def _action_token(
+        self,
+        baseline_ids: set[str],
+        recipient: str,
+        kind: Literal["invite", "recovery"],
+    ) -> str:
         deadline = time.monotonic() + _WAIT_SECONDS
         while True:
             tokens: set[str] = set()
@@ -233,17 +244,15 @@ class InvitationMailbox:
                     or not self._recipient_matches(summary, recipient)
                 ):
                     continue
-                token = self._email_token(message_id)
+                token = self._email_token(message_id, kind)
                 if token:
                     tokens.add(token)
             if len(tokens) == 1:
                 return next(iter(tokens))
             if len(tokens) > 1:
-                raise SampleInvitationError("Multiple new invitation links matched one recipient")
+                raise SampleInvitationError("Multiple new email actions matched one recipient")
             if time.monotonic() >= deadline:
-                raise SampleInvitationError(
-                    "No new matching invitation email arrived before timeout"
-                )
+                raise SampleInvitationError("No new matching email action arrived before timeout")
             time.sleep(0.25)
 
     def _messages(self) -> list[Mapping[str, Any]]:
@@ -293,7 +302,7 @@ class InvitationMailbox:
             for address in addresses
         )
 
-    def _email_token(self, message_id: str) -> str | None:
+    def _email_token(self, message_id: str, kind: Literal["invite", "recovery"]) -> str | None:
         try:
             response = self.client.get(f"/api/v1/message/{message_id}")
             response.raise_for_status()
@@ -310,7 +319,8 @@ class InvitationMailbox:
                 link_origin = _origin(f"{link.scheme}://{link.netloc}")
             except SampleInvitationError:
                 continue
-            if link_origin != self.origin or link.path != "/auth/setup" or link.query:
+            expected_path = "/auth/setup" if kind == "invite" else "/auth/recovery"
+            if link_origin != self.origin or link.path != expected_path or link.query:
                 continue
             try:
                 fields = parse_qs(link.fragment, strict_parsing=True, keep_blank_values=True)
@@ -319,7 +329,7 @@ class InvitationMailbox:
             token_values = fields.get("token_hash", [])
             if (
                 set(fields) == {"token_hash", "type"}
-                and fields.get("type") == ["invite"]
+                and fields.get("type") == [kind]
                 and len(token_values) == 1
                 and _TOKEN_HASH.fullmatch(token_values[0])
             ):

@@ -15,6 +15,7 @@ from typing import Any, cast
 from operations.sample_client import SampleClient
 from operations.sample_configuration_verification import verify_configuration
 from operations.sample_content import verify_content
+from operations.sample_control_verification import configuration_mappings, verify_controls
 from operations.sample_history_verification import verify_history
 from operations.sample_packs.interface import OrganizationPack
 from operations.sample_packs.registry import default_pack, get_pack
@@ -23,6 +24,7 @@ from operations.sample_people import _people
 from operations.sample_phase_expectations import final_people_pack, read_phase_plan
 from operations.sample_phase_verification import verify_phases
 from operations.sample_rejections import verify_rejections
+from operations.sample_route_coverage import verify_route_coverage
 from operations.sample_scenario import build_dataset
 from operations.sample_verification import (
     SampleVerificationError,
@@ -261,10 +263,21 @@ def verify_sample_data(
             )
             observed.update(people_counts)
             issues.extend(people_issues)
+            configuration_maps = manifest["mappings"]
+            if "control_plan" in manifest:
+                control_counts, control_issues = verify_controls(
+                    client, dataset, manifest, expected_admin_id
+                )
+                observed.update(control_counts)
+                issues.extend(control_issues)
+                try:
+                    configuration_maps = configuration_mappings(manifest, dataset)
+                except SampleVerificationError:
+                    issues.append("Restored Sandbox Test mappings are missing or ambiguous")
             configuration_counts, configuration_issues = verify_configuration(
                 client,
                 dataset=dataset,
-                mappings=manifest["mappings"],
+                mappings=configuration_maps,
                 people=manifest["people"],
                 phase_actions=read_phase_plan(manifest),
             )
@@ -291,6 +304,10 @@ def verify_sample_data(
             issues.extend(trigger_issues)
         finally:
             client.request("POST", "/api/auth/logout")
+    if "control_plan" in manifest:
+        route_counts, route_issues = verify_route_coverage(run_directory)
+        observed.update(route_counts)
+        issues.extend(route_issues)
     return SampleVerificationReport(
         "incomplete" if issues else "complete",
         run_directory,

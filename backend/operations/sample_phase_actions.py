@@ -283,6 +283,10 @@ def execute_phase_action(
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
     """Execute exactly one planned action; unknown writes propagate without replay."""
+    if action.kind.endswith("_controls"):
+        from operations.sample_control_actions import execute_control_action
+
+        return execute_control_action(action, dataset, context, on_substep=on_substep)
     if action.kind.startswith("sandbox_"):
         from operations.sample_phase_design import execute_design_phase_action
 

@@ -237,10 +237,22 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
         )
 
     frontend_paths = tuple(path for path in functional if path.startswith(_FRONTEND_PREFIX))
-    backend_paths = tuple(
+    frontend_route_paths = tuple(
         path
-        for path in functional
-        if path.startswith((_BACKEND_PREFIX, _BACKEND_RUNTIME_PREFIX))
+        for path in frontend_paths
+        if path
+        in {
+            "frontend/api-route-manifest.json",
+            "frontend/src/lib/api.ts",
+            "frontend/src/lib/auth-api.ts",
+        }
+        or (
+            path.startswith("frontend/src/")
+            and ("/adapters/" in path or path.endswith("/state/api.ts"))
+        )
+    )
+    backend_paths = tuple(
+        path for path in functional if path.startswith((_BACKEND_PREFIX, _BACKEND_RUNTIME_PREFIX))
     )
     server_image_paths = tuple(
         path
@@ -250,7 +262,7 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
     tooling_paths = tuple(path for path in functional if path.startswith(_TOOLING_PREFIXES))
     broad = bool(tooling_paths)
     frontend_run = broad or bool(frontend_paths)
-    backend_run = broad or bool(backend_paths)
+    backend_run = broad or bool(backend_paths) or bool(frontend_route_paths)
     server_image_run = (
         broad or bool(frontend_paths) or bool(backend_paths) or bool(server_image_paths)
     )
@@ -267,6 +279,11 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
         if backend_paths
         else f"Shared CI/tooling paths changed: {_path_list(tooling_paths)}"
         if broad
+        else (
+            "Frontend API contracts changed; run test_frontend_route_coverage.py: "
+            f"{_path_list(frontend_route_paths)}"
+        )
+        if frontend_route_paths
         else "No backend paths changed"
     )
     server_image_reason = (

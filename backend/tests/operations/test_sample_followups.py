@@ -142,7 +142,11 @@ def test_a_followup_waits_for_the_flag_and_stops_if_it_does_not_arrive(
                 assert parent_id and rows[parent_id]["data"][flag] is True
                 followups.append(body)
             record_id = str(uuid4())
-            rows[record_id] = {"id": record_id, **body}
+            rows[record_id] = {
+                "id": record_id,
+                "updated_at": "2026-09-30T00:00:00Z",
+                **body,
+            }
             if parent_id is None:
                 parent_id = record_id
             return httpx.Response(201, json=rows[record_id])
@@ -150,6 +154,7 @@ def test_a_followup_waits_for_the_flag_and_stops_if_it_does_not_arrive(
             record_id = request.url.path.rsplit("/", 1)[1]
             if request.method == "PATCH":
                 rows[record_id]["data"] = body["data"]
+                rows[record_id]["updated_at"] = "2026-09-30T00:00:01Z"
             elif record_id == parent_id and rows[record_id]["data"][counter] == 5:
                 polls += 1
                 if delivers_flag and polls >= 2:

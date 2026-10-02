@@ -131,11 +131,15 @@ def final_configuration_dataset(
 
 def phase_plan_summary(dataset: SampleDataset) -> dict[str, Any]:
     """Expose every deterministic phase target before any run writes."""
+    from operations.sample_control_actions import plan_controls
     from operations.sample_phases import phase_action_to_manifest, plan_phases
 
     actions = plan_phases(dataset)
     counts = Counter(action.phase for action in actions)
+    controls = plan_controls(dataset)
     return {
+        "control_plan": [phase_action_to_manifest(action) for action in controls],
+        "control_counts": {"total": len(controls)},
         "phase_plan": [phase_action_to_manifest(action) for action in actions],
         "phase_counts": {
             "admin": counts["admin"],

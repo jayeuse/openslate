@@ -172,6 +172,13 @@ def _api(
     return payload
 
 
+def _record_if_match(row: Mapping[str, Any]) -> dict[str, str]:
+    revision = row.get("updated_at")
+    if not isinstance(revision, str) or not revision:
+        raise SamplePopulationError("Record revision is unavailable before the edit")
+    return {"If-Match": f'"{revision}"'}
+
+
 def _api_id(row: Mapping[str, Any], label: str = "ID") -> str:
     value = row.get("id")
     try:

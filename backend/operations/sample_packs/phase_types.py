@@ -11,6 +11,13 @@ type PhaseJsonScalar = str | int | float | bool | None
 type PhaseJsonValue = PhaseJsonScalar | list[PhaseJsonValue] | dict[str, PhaseJsonValue]
 
 PhaseActionKind = Literal[
+    "openview_controls",
+    "board_controls",
+    "access_controls",
+    "sandbox_controls",
+    "account_controls",
+    "audit_controls",
+    "read_controls",
     "refuse_role_change",
     "promote_user",
     "demote_user",

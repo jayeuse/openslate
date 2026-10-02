@@ -6,12 +6,61 @@ from datetime import date
 import pytest
 
 from operations import sample_phase_population as workflow
+from operations.sample_packs.phase_types import PhaseAction
 from operations.sample_packs.registry import get_pack
 from operations.sample_phase_actions import SamplePhaseActionError
 from operations.sample_phases import phase_action_to_manifest, plan_phases
 from operations.sample_scenario import build_dataset
 from operations.sample_verification import failure_report
 from operations.seed_sample_data import build_plan_summary
+
+
+def test_control_journeys_run_before_admin_phases_and_save_separate_evidence(monkeypatch):
+    dataset = build_dataset("small", 42, date(2026, 9, 30))
+    control = PhaseAction(
+        key="control:records_query",
+        phase="reorganization",
+        kind="openview_controls",
+        actor_key="admin",
+        target_key="control:query",
+        values={"operation": "records_query"},
+        expected_status=200,
+        expected_detail=None,
+        expected_end_state={},
+    )
+    phase = plan_phases(dataset)[0]
+    manifest = {
+        "control_plan": [phase_action_to_manifest(control)],
+        "control_results": [],
+        "phase_plan": [phase_action_to_manifest(phase)],
+        "phase_results": [],
+    }
+    executed, snapshots = [], []
+
+    def execute(action, actual_dataset, context, *, on_substep):
+        assert actual_dataset is dataset
+        on_substep("readback")
+        assert snapshots[-1]["step"] == f"{action.key}:readback"
+        executed.append(action.key)
+        return {"action_key": action.key, "request_evidence": []}
+
+    monkeypatch.setattr(workflow, "execute_phase_action", execute)
+    observed = workflow.run_population_phases(
+        dataset,
+        manifest,
+        clients={},
+        user_ids={},
+        group_ids={},
+        admin_password="fixture-memory-only",
+        save=lambda: snapshots.append(copy.deepcopy(manifest)),
+        mappings=lambda: {},
+    )
+    assert executed == [control.key, phase.key]
+    assert [row["action_key"] for row in manifest["control_results"]] == [control.key]
+    assert [row["action_key"] for row in manifest["phase_results"]] == [phase.key]
+    assert observed["control_actions_executed"] == 1
+    assert observed["phase_actions_executed"] == 1
+    assert "fixture-memory-only" not in str(snapshots)
 
 
 @pytest.mark.parametrize("fail_second", (False, True))
