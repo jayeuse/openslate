@@ -12,6 +12,11 @@ from app.systems.boards.department_boards import COMPANY_BOARD_NAME
 from app.systems.sandbox.designs.defaults import empty_document
 from app.systems.sandbox.designs.schemas import DOCUMENT_SCHEMA_VERSION
 from app.systems.sandbox.designs.service import canonical_document
+from operations.reset_backups import (
+    delete_unclaimed_backup_queue,
+    require_no_unresolved_backup,
+    validate_backup_preservation,
+)
 from operations.reset_models import (
     _COUNT_STATEMENTS,
     _LOCK_APPLICATION_STATEMENT,
@@ -142,6 +147,7 @@ def _validate_postconditions(
 
     if _read_alembic_head(connection) != plan.alembic_head:
         raise ResetError("The database migration head changed")
+    validate_backup_preservation(connection, plan.backup_snapshot, plan.preserved_admin_id)
 
 
 def apply_reset(
@@ -187,6 +193,7 @@ def apply_reset(
         )
         if not reset_lock_held:
             raise ResetError("Another application reset is running")
+        require_no_unresolved_backup(connection, plan.backup_snapshot.installation_id)
         scanner_lock_held = (
             _single_value(
                 connection, "SELECT pg_try_advisory_lock(%s)", (_SCANNER_LEADER_LOCK_KEY,)
@@ -229,6 +236,7 @@ def apply_reset(
         _execute(connection, "SET LOCAL lock_timeout = '5s'")
         _execute(connection, "SET LOCAL statement_timeout = '30s'")
         _execute(connection, _LOCK_APPLICATION_STATEMENT)
+        require_no_unresolved_backup(connection, plan.backup_snapshot.installation_id)
 
         locked_plan = (build_plan_fn or build_reset_plan)(
             connection,
@@ -260,6 +268,7 @@ def apply_reset(
             _execute(connection, f"DELETE FROM public.{table_name}")
         _reset_sandbox_workspace(connection)
         _reset_company_board(connection)
+        delete_unclaimed_backup_queue(connection, locked_plan.backup_snapshot.installation_id)
         _execute(
             connection,
             "DELETE FROM public.users WHERE role = 'guest' AND id <> %s",

@@ -21,6 +21,7 @@ from app.core.config.instance import (
     assert_database_url,
     test_manifest_authorizes_process,
 )
+from operations.reset_backups import read_backup_snapshot
 from operations.reset_models import (
     _ALEMBIC_HEAD_STATEMENT,
     _COUNT_STATEMENTS,
@@ -288,6 +289,7 @@ def _impact_digest(plan: ResetPlan) -> str:
         "workspace": stable_snapshot_payload(plan.workspace_snapshot),
         "storage_object_keys": list(plan.storage_object_keys),
         "alembic_head": plan.alembic_head,
+        "backup_snapshot": stable_snapshot_payload(plan.backup_snapshot),
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
@@ -306,6 +308,7 @@ def build_reset_plan(
     try:
         email = _normalize_email(sample_email)
         _read_public_table_names(connection)
+        backup_snapshot = read_backup_snapshot(connection)
         alembic_head = _read_alembic_head(connection)
         rows = _fetchall(
             connection,
@@ -376,6 +379,7 @@ def build_reset_plan(
             workspace_snapshot=workspace,
             storage_object_keys=storage_object_keys,
             alembic_head=alembic_head,
+            backup_snapshot=backup_snapshot,
             provider_account_ids=provider_account_ids,
         )
         return replace(plan, impact_digest=_impact_digest(plan))

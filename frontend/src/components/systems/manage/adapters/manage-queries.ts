@@ -19,6 +19,13 @@ import {
   type ManageSecurityPolicy,
   type ManageSessionsRequest,
 } from "./security-api";
+import {
+  getManageBackupStatus,
+  getManageVersion,
+  listManageBackups,
+  type ManageBackupsRequest,
+  type ManageBackupStatus,
+} from "./backup-api";
 
 // Keep an audit refusal through section remounts for this verified account.
 // Query clients are replaced at the account boundary and are never persisted.
@@ -51,7 +58,41 @@ export const manageKeys = {
   auditDetail: (id: string) => ["manage", "audit-logs", "detail", id] as const,
   auditExport: (request: Omit<ManageAuditListRequest, "limit" | "offset">) =>
     ["manage", "audit-logs", "export", request] as const,
+  maintenance: () => ["manage", "maintenance"] as const,
+  backupStatus: () => ["manage", "maintenance", "backup-status"] as const,
+  backups: () => ["manage", "maintenance", "backups"] as const,
+  backupList: (request: ManageBackupsRequest) =>
+    ["manage", "maintenance", "backups", request] as const,
+  version: () => ["manage", "maintenance", "version"] as const,
 };
+
+export const manageBackupStatusOptions = () =>
+  queryOptions({
+    queryKey: manageKeys.backupStatus(),
+    queryFn: ({ signal }) => getManageBackupStatus(signal),
+  });
+export const manageBackupListOptions = (request: ManageBackupsRequest) =>
+  queryOptions({
+    queryKey: manageKeys.backupList(request),
+    queryFn: ({ signal }) => listManageBackups(request, signal),
+  });
+export const manageVersionOptions = () =>
+  queryOptions({
+    queryKey: manageKeys.version(),
+    queryFn: ({ signal }) => getManageVersion(signal),
+  });
+export function afterManageBackupPolicyChange(
+  client: QueryClient,
+  status: ManageBackupStatus,
+) {
+  client.setQueryData(manageKeys.backupStatus(), status);
+}
+export function afterManageBackupQueue(client: QueryClient) {
+  return Promise.all([
+    client.invalidateQueries({ queryKey: manageKeys.backupStatus() }),
+    client.invalidateQueries({ queryKey: manageKeys.backups() }),
+  ]);
+}
 
 export const manageWorkspaceOptions = () =>
   queryOptions({

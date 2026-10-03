@@ -15,7 +15,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type FormEvent,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -47,22 +46,16 @@ import ManageAudit from "./components/audit";
 import {
   decodeManageSettings,
   diffManageSettings,
-  downloadManageSnapshot,
   initialManageSettings,
   useManageController,
   type ManageSection,
   type ManageSettings,
-  type ManageSnapshot,
 } from "./state/state";
 import { SettingsChanges } from "./components/panel-ui";
 import {
   ManageMfaDialog,
-  ManagePreviewDialog,
-  ManageSnapshotCompareDialog,
-  ManageSnapshotRenameDialog,
   ManageConfirmationDialog,
   type ConfirmState,
-  type PreviewState,
 } from "./components/manage-dialogs";
 import { OrganizationPanel } from "./components/organization-panel";
 import {
@@ -93,17 +86,18 @@ import {
   type SecuritySettingsFormDraft,
 } from "./adapters/security-api";
 import { SecurityPanel, SecurityPolicyForm } from "./components/security-panel";
-import { BackupPanel, SnapshotScheduleForm } from "./components/backup-panel";
-import { UpdatesPanel } from "./components/updates-panel";
 import {
-  LicensingPanel,
-  LicenseTierComparison,
-} from "./components/licensing-panel";
+  BackupPanel,
+  BackupRunnerStatus,
+  SnapshotScheduleForm,
+} from "./components/backup-panel";
+import { useManageMaintenance } from "./state/controller";
+import { backupScheduleLabels } from "./adapters/backup-api";
+import { UpdatesPanel } from "./components/updates-panel";
+import { LicensingPanel } from "./components/licensing-panel";
 
 type ViewTab =
   "Organization" | "Security" | "Audit" | "Backup" | "Updates & licensing";
-
-type Snapshot = ManageSnapshot;
 
 function organizationErrors(
   draft: WorkspaceSettingsFormDraft,
@@ -169,9 +163,12 @@ function ManageContent() {
   const requestedTab = manageTabFromQuery(searchParams.get("view"));
   const manage = useManageController();
   const queryClient = useQueryClient();
-  const activeUsers = manage.people.filter((person) => person.active).length;
-  const { settings, snapshots: backups, history, storageUnavailable } = manage;
-  const seatLimit = settings.tier === "Business" ? 100 : 25;
+  const { settings, storageUnavailable } = manage;
+  const maintenance = useManageMaintenance({
+    recoveryActive: requestedTab === "Security" || requestedTab === "Backup",
+    historyActive: requestedTab === "Backup",
+    versionActive: requestedTab === "Updates & licensing",
+  });
   const tab = requestedTab;
   const [workspaceDraft, setWorkspaceDraft] =
     useState<WorkspaceSettingsFormDraft>({});
@@ -238,28 +235,23 @@ function ManageContent() {
     securityPatch !== null ||
     (!securityQuery.data && Object.keys(securityDraft).length > 0);
   const livePending =
-    workspaceSavePending || securitySavePending || sessionEndPending;
+    workspaceSavePending ||
+    securitySavePending ||
+    sessionEndPending ||
+    maintenance.pending;
   const [notice, setNotice] = useState("");
   const [navigationNotice, setNavigationNotice] = useState("");
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [draftAcknowledged, setDraftAcknowledged] = useState(false);
-  const [preview, setPreview] = useState<PreviewState | null>(null);
   const mfa = useMfaFlow();
   const cancelMfa = mfa.cancel;
   useEffect(() => () => cancelMfa(), [cancelMfa]);
-  const [showChangelog, setShowChangelog] = useState(false);
-  const [dummyKey, setDummyKey] = useState("SAMPLE-TEAM-2026");
   const [policyOpen, setPolicyOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const policyOpener = useRef<HTMLButtonElement | null>(null);
   const scheduleOpener = useRef<HTMLButtonElement | null>(null);
-  const [renameTarget, setRenameTarget] = useState<Snapshot | null>(null);
-  const [renameValue, setRenameValue] = useState("");
-  const [renameError, setRenameError] = useState("");
-  const [compareTarget, setCompareTarget] = useState<Snapshot | null>(null);
   const confirmOpener = useRef<HTMLElement | null>(null);
-  const renameOpener = useRef<HTMLElement | null>(null);
   const mfaOpener = useRef<HTMLButtonElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const optionsOpener = useRef<HTMLButtonElement | null>(null);
@@ -282,16 +274,16 @@ function ManageContent() {
       : tab === "Audit"
         ? "Audit entries are loaded from your organization."
         : recoveryView
-          ? "Account policy and sessions are loaded from your organization. Snapshots use browser preview data."
-          : null;
+          ? "Account policy, sessions, backup policy, and backup history are loaded from your server."
+          : "The running version and host runner release observations are loaded from your server. No license is required.";
   const pageDescription =
     tab === "Organization"
       ? "Make this workspace feel like your organization."
       : tab === "Audit"
         ? "See who changed what, then inspect the details."
         : tab === "Updates & licensing"
-          ? "Your workspace version and plan, together in one place."
-          : "Review sessions and keep a copy of your workspace settings.";
+          ? "Your running version and license status, together in one place."
+          : "Review sessions and manage backup requests.";
 
   const section = sectionForTab(tab);
   const workspacePatch = workspaceQuery.data
@@ -299,7 +291,7 @@ function ManageContent() {
     : null;
   const workspaceDraftDirty = workspacePatch !== null;
   const allDraftsDirty =
-    securityDirty || manage.dirty("backup") || workspaceDraftDirty;
+    securityDirty || maintenance.dirty || workspaceDraftDirty;
   const currentFor = (view: ViewTab): ManageSettings => {
     const currentSection = sectionForTab(view);
     return currentSection ? manage.getDraft(currentSection) : settings;
@@ -327,7 +319,6 @@ function ManageContent() {
     tab === "Organization"
       ? organizationErrors(workspaceDraft, workspaceQuery.data !== undefined)
       : sectionErrors;
-  const updateAvailable = manage.updateAvailable;
   const localeCode = organizationLocaleTag(current.locale);
   const regionalDate = new Intl.DateTimeFormat(localeCode, {
     dateStyle: "medium",
@@ -338,7 +329,6 @@ function ManageContent() {
     style: "currency",
     currency: previewSettings.currency,
   }).format(12500);
-  const retention = manage.retentionPreview();
 
   useWorkspaceNavigationGuard(() => {
     if (manage.pending || livePending) {
@@ -410,7 +400,8 @@ function ManageContent() {
       setSecurityDraft({});
       setSecurityStale(false);
       setSecurityRefreshRequired(false);
-    } else manage.discard(target);
+    } else if (target === "backup") maintenance.discardDraft();
+    else manage.discard(target);
     if (target === "organization") {
       setWorkspaceDraft({});
       setWorkspaceStale(false);
@@ -427,6 +418,10 @@ function ManageContent() {
     }
     if (target === "security") {
       await saveSecurity();
+      return;
+    }
+    if (target === "backup") {
+      await maintenance.savePolicy();
       return;
     }
     const result = await manage.save(target);
@@ -589,42 +584,6 @@ function ManageContent() {
     setConfirm(next);
   }
 
-  async function addSnapshot(name: string) {
-    const result = await manage.createSnapshot(
-      name.trim() || "Manual snapshot",
-    );
-    setError(result.ok ? "" : result.message);
-    setNotice(result.ok ? result.message : "");
-    return result.ok;
-  }
-
-  function requestRestore(snapshot: Snapshot, event: MouseEvent<HTMLElement>) {
-    const differences = manage.snapshotDiff(snapshot.id);
-    requestConfirm(
-      {
-        title: "Restore configuration",
-        description: `Restore preview settings from ${snapshot.name}? This does not change persisted organization or account policy.`,
-        confirmLabel: "Confirm restore",
-        requiresDraftAck: manage.dirty("backup"),
-        body: <SettingsChanges differences={differences} />,
-        action: async () => {
-          const result = await manage.restoreSnapshot(snapshot.id, {
-            discardDrafts: manage.dirty("backup"),
-          });
-          setError(result.ok ? "" : result.message);
-          setNotice(
-            result.ok
-              ? "Preview settings restored. Organization and account policy are unchanged."
-              : "",
-          );
-
-          return result.ok;
-        },
-      },
-      event,
-    );
-  }
-
   function requestReset(event: MouseEvent<HTMLElement>) {
     requestConfirm(
       {
@@ -646,6 +605,7 @@ function ManageContent() {
             setWorkspaceDraft({});
             setWorkspaceStale(false);
             setWorkspaceRefreshRequired(false);
+            maintenance.discardDraft();
             setSecurityDraft({});
             setSecurityStale(false);
             setSecurityRefreshRequired(false);
@@ -727,98 +687,14 @@ function ManageContent() {
     mfa.openManage();
   }
 
-  function startUpdate() {
-    requestConfirm({
-      title: "Apply update",
-      description: `Update version ${settings.version} to 1.5.0? This updates the visible version and keeps a rollback point. No software is installed.`,
-      confirmLabel: "Confirm update",
-      action: async () => {
-        const result = await manage.applyUpdate();
-        setError(result.ok ? "" : result.message);
-        setNotice(result.ok ? result.message : "");
-
-        return result.ok;
-      },
-    });
-  }
-
-  function rollbackUpdate(event: MouseEvent<HTMLElement>) {
-    requestConfirm(
-      {
-        title: "Roll back update",
-        description: `Return the version to ${settings.previous}? This only changes the displayed version.`,
-        confirmLabel: "Confirm rollback",
-        action: async () => {
-          const result = await manage.rollbackUpdate();
-          setError(result.ok ? "" : result.message);
-          setNotice(result.ok ? result.message : "");
-
-          return result.ok;
-        },
-      },
-      event,
-    );
-  }
-
-  function activateLicense(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    requestConfirm({
-      title: "Activate license",
-      description: `Activate the bundled ${dummyKey.includes("BUSINESS") ? "Business" : "Team"} license? No payment or license service will be contacted.`,
-      confirmLabel: "Confirm activation",
-      action: async () => {
-        const result = await manage.activateLicense(dummyKey);
-        setError(result.ok ? "" : result.message);
-        setNotice(result.ok ? result.message : "");
-
-        return result.ok;
-      },
-    });
-  }
-
-  function renewLicense(event: MouseEvent<HTMLElement>) {
-    requestConfirm(
-      {
-        title: "Renew license",
-        description:
-          "Extend the displayed expiration date by one year. No purchase or payment will occur.",
-        confirmLabel: "Confirm renewal",
-        action: async () => {
-          const result = await manage.renewLicense();
-          setError(result.ok ? "" : result.message);
-          setNotice(result.ok ? result.message : "");
-
-          return result.ok;
-        },
-      },
-      event,
-    );
-  }
-
-  function downloadSnapshot(snapshot: Snapshot) {
-    downloadManageSnapshot(snapshot);
-    setNotice(`Downloaded ${snapshot.name}.`);
-  }
-
-  async function submitSnapshotRename(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!renameTarget || !renameValue.trim() || manage.pending) return;
-    const result = await manage.renameSnapshot(
-      renameTarget.id,
-      renameValue.trim(),
-    );
-    if (!result.ok) {
-      setRenameError(result.message);
-      return;
-    }
-    setRenameTarget(null);
-    setNotice(result.message);
-  }
-
   const panelClass =
     "min-w-0 w-full rounded-[var(--radius)] border-border bg-card";
 
-  if (manage.resource.status !== "ready")
+  if (
+    manage.resource.status !== "ready" &&
+    tab !== "Backup" &&
+    tab !== "Updates & licensing"
+  )
     return (
       <section className="space-y-4">
         <h1 data-slot="page-title" className="text-2xl font-semibold">
@@ -854,9 +730,21 @@ function ManageContent() {
           {pageDescription}
         </p>
         <SampleDataNote
-          ariaLabel={liveSourceStatus ? "Organization data" : undefined}
+          ariaLabel={
+            tab === "Backup" || tab === "Updates & licensing"
+              ? "Server data"
+              : liveSourceStatus
+                ? "Organization data"
+                : undefined
+          }
           className="mt-3"
-          sourceLabel={liveSourceStatus ? "Organization" : undefined}
+          sourceLabel={
+            tab === "Backup" || tab === "Updates & licensing"
+              ? "Server"
+              : liveSourceStatus
+                ? "Organization"
+                : undefined
+          }
           suffix={liveSourceStatus ? "" : undefined}
         >
           {liveSourceStatus ?? `${sampleSubject} here are examples.`}
@@ -918,7 +806,9 @@ function ManageContent() {
         ) : null}
         {tab !== "Audit" ? renderPageHeader() : null}
 
-        {storageUnavailable ? (
+        {storageUnavailable &&
+        tab !== "Backup" &&
+        tab !== "Updates & licensing" ? (
           <Alert role="note" variant="warning">
             Browser storage is unavailable. Your latest changes exist in memory
             only and may be lost on reload.
@@ -931,14 +821,14 @@ function ManageContent() {
               {navigationNotice}
             </Alert>
           ) : null}
-          {notice ? (
+          {notice || (recoveryView && maintenance.notice) ? (
             <Alert
               role="status"
               variant="success"
               className="flex items-center gap-2"
             >
               <CheckCircle2 aria-hidden="true" />
-              {notice}
+              {notice || maintenance.notice}
             </Alert>
           ) : null}
           {error ? (
@@ -978,9 +868,8 @@ function ManageContent() {
               className="min-w-0 space-y-5"
             >
               <Alert role="note">
-                Account policy and sessions are live. Snapshots are browser
-                previews and do not restore persisted organization or account
-                policy.
+                Backup requests are queued for a configured host runner. Restore
+                and software updates are offline server-operator procedures.
               </Alert>
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="bg-card flex flex-wrap items-center gap-4 rounded-lg border p-5">
@@ -1025,19 +914,38 @@ function ManageContent() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 data-slot="section-title" className="font-semibold">
-                        Snapshot schedule
+                        Backup schedule
                       </h2>
-                      {manage.dirty("backup") ? (
+                      {maintenance.dirty ? (
                         <Badge variant="warning">Unsaved changes</Badge>
                       ) : null}
                     </div>
                     <p className="text-muted-foreground mt-1 text-sm">
-                      {settings.schedule} · Keep{" "}
-                      {settings.retention.toLowerCase()}
+                      {maintenance.acceptedStatus
+                        ? `${backupScheduleLabels[maintenance.acceptedStatus.policy.schedule]} · Keep ${maintenance.acceptedStatus.policy.retention_days} days`
+                        : maintenance.status.isPending &&
+                            !maintenance.policyRefused
+                          ? "Loading backup policy…"
+                          : "Backup policy unavailable"}
                     </p>
-                    <p className="text-muted-foreground text-xs">
-                      Simulated schedule
-                    </p>
+                    {maintenance.acceptedStatus ? (
+                      <BackupRunnerStatus status={maintenance.acceptedStatus} />
+                    ) : maintenance.status.isError ||
+                      maintenance.policyRefused ? (
+                      <Alert role="alert" variant="destructive">
+                        <p>
+                          {maintenance.policyRefused
+                            ? "Only administrators can review backup policy."
+                            : "Backup policy could not be loaded."}
+                        </p>
+                        <Button
+                          variant="outline"
+                          onClick={() => void maintenance.retryPolicy()}
+                        >
+                          Retry backup policy
+                        </Button>
+                      </Alert>
+                    ) : null}
                   </div>
                   <Button
                     ref={scheduleOpener}
@@ -1075,7 +983,10 @@ function ManageContent() {
                     value="snapshots"
                     className="min-h-11 gap-2 px-4"
                   >
-                    Snapshots <Badge variant="outline">{backups.length}</Badge>
+                    Backups{" "}
+                    <Badge variant="outline">
+                      {maintenance.acceptedHistory?.pagination.total ?? "—"}
+                    </Badge>
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="sessions" keepMounted className="min-w-0">
@@ -1102,23 +1013,7 @@ function ManageContent() {
                   />
                 </TabsContent>
                 <TabsContent value="snapshots" keepMounted className="min-w-0">
-                  <BackupPanel
-                    snapshots={manage.collections.snapshots}
-                    actions={{
-                      addSnapshot,
-                      requestRestore,
-                      setCompareTarget,
-                      downloadSnapshot,
-                      renameOpener,
-                      setRenameTarget,
-                      setRenameError,
-                      setRenameValue,
-                      requestConfirm,
-                      manage,
-                      setError,
-                      setNotice,
-                    }}
-                  />
+                  <BackupPanel maintenance={maintenance} />
                 </TabsContent>
               </Tabs>
             </section>
@@ -1131,37 +1026,13 @@ function ManageContent() {
           {tab === "Updates & licensing" ? (
             <div className="min-w-0 space-y-5">
               <Alert role="note">
-                Preview environment. Version and license changes here are
-                simulated.
+                This page reads the running server version and recorded release
+                observations. Updates are applied by your server operator. No
+                license is required.
               </Alert>
               <div className="bg-card grid min-w-0 divide-y overflow-hidden rounded-lg border xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] xl:divide-x xl:divide-y-0">
-                <UpdatesPanel
-                  settings={settings}
-                  actions={{
-                    manage,
-                    setError,
-                    setNotice,
-                    startUpdate,
-                    setShowChangelog,
-                    rollbackUpdate,
-                  }}
-                  updateAvailable={updateAvailable}
-                  showChangelog={showChangelog}
-                  history={history}
-                />
-                <LicensingPanel
-                  settings={settings}
-                  activeUsers={activeUsers}
-                  seatLimit={seatLimit}
-                  actions={{ renewLicense }}
-                  licenseForm={{ activateLicense, dummyKey, setDummyKey }}
-                />
-              </div>
-              <div className="bg-card rounded-lg border">
-                <LicenseTierComparison
-                  settings={settings}
-                  setPreview={setPreview}
-                />
+                <UpdatesPanel maintenance={maintenance} />
+                <LicensingPanel />
               </div>
             </div>
           ) : null}
@@ -1259,7 +1130,7 @@ function ManageContent() {
       <Dialog
         open={scheduleOpen}
         onOpenChange={setScheduleOpen}
-        dismissible={!manage.pending}
+        dismissible={!maintenance.pending}
       >
         <DialogContent
           className="max-w-3xl"
@@ -1267,51 +1138,28 @@ function ManageContent() {
         >
           <DialogHeader className="mb-5">
             <div className="flex items-center justify-between gap-3">
-              <DialogTitle>Snapshot schedule</DialogTitle>
+              <DialogTitle>Backup schedule</DialogTitle>
               <Button
                 variant="ghost"
                 size="icon"
-                aria-label="Close snapshot schedule"
-                disabled={manage.pending}
+                aria-label="Close backup schedule"
+                disabled={maintenance.pending}
                 onClick={() => setScheduleOpen(false)}
               >
                 <X aria-hidden="true" />
               </Button>
             </div>
             <DialogDescription>
-              Save schedule and retention preferences. No background job runs;
-              snapshots contain saved Manage settings only.
+              Save the server’s schedule and retention policy. Your server
+              operator configures the host runner.
             </DialogDescription>
           </DialogHeader>
           <fieldset
-            disabled={manage.pending}
-            aria-busy={manage.pending}
+            disabled={maintenance.pending}
+            aria-busy={maintenance.pending}
             className="min-w-0 space-y-4"
           >
-            {error ? (
-              <Alert role="alert" variant="destructive">
-                {error}
-              </Alert>
-            ) : null}
-            <SnapshotScheduleForm
-              form={{
-                dirty: manage.dirty("backup"),
-                current: manage.getDraft("backup"),
-                errors: manage.errors("backup"),
-                saveSection,
-                clearDraft,
-                changeSetting,
-              }}
-              settings={settings}
-              retention={retention}
-              actions={{
-                addSnapshot,
-                setPreview: (next) => {
-                  setScheduleOpen(false);
-                  setPreview(next);
-                },
-              }}
-            />
+            <SnapshotScheduleForm maintenance={maintenance} />
             <DialogFooter>
               <Button variant="outline" onClick={() => setScheduleOpen(false)}>
                 Close
@@ -1321,24 +1169,6 @@ function ManageContent() {
         </DialogContent>
       </Dialog>
       <ManageMfaDialog opener={mfaOpener} />
-      <ManageSnapshotRenameDialog
-        open={renameTarget !== null}
-        pending={manage.pending}
-        value={renameValue}
-        error={renameError}
-        opener={renameOpener}
-        headingRef={headingRef}
-        onValueChange={setRenameValue}
-        onErrorClear={() => setRenameError("")}
-        onCancel={() => setRenameTarget(null)}
-        onSubmit={submitSnapshotRename}
-      />
-      <ManageSnapshotCompareDialog
-        target={compareTarget}
-        differences={compareTarget ? manage.snapshotDiff(compareTarget.id) : []}
-        onClose={() => setCompareTarget(null)}
-      />
-      <ManagePreviewDialog preview={preview} onClose={() => setPreview(null)} />
       <ManageConfirmationDialog
         confirm={sessionConfirmationRefused ? null : confirm}
         pending={manage.pending || livePending}

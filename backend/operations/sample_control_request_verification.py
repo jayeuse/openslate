@@ -193,12 +193,25 @@ def verify_request_evidence(
         return
     target_id: str | None = None
     manage_steps: dict[str, tuple[str, str, str, int]] = {}
-    if action.kind == "manage_controls":
-        from operations.sample_control_manage import manage_request_contract, plan_manage_controls
+    if action.kind in {"manage_controls", "backup_controls"}:
+        if action.kind == "manage_controls":
+            from operations.sample_control_manage import (
+                manage_request_contract,
+                plan_manage_controls,
+            )
 
-        manage_steps = manage_request_contract(action, dataset)
+            expected_actions = plan_manage_controls(dataset)
+            manage_steps = manage_request_contract(action, dataset)
+        else:
+            from operations.sample_control_backups import (
+                backup_request_contract,
+                plan_backup_controls,
+            )
+
+            expected_actions = plan_backup_controls(dataset)
+            manage_steps = backup_request_contract(action)
         if (
-            action not in plan_manage_controls(dataset)
+            action not in expected_actions
             or any(
                 type(result.get(key)) is not type(value) or result.get(key) != value
                 for key, value in action.expected_end_state.items()
@@ -228,7 +241,9 @@ def verify_request_evidence(
                 for row in evidence_rows
             )
         ):
-            issues.append("Manage control evidence or end state differs from its route contract")
+            issues.append(
+                "Manage or backup control evidence or end state differs from its route contract"
+            )
             return
     elif action.kind == "read_controls":
         expected_checks = _REVIEW_READ_CHECKS.get(operation) if isinstance(operation, str) else None
@@ -296,13 +311,20 @@ def verify_request_evidence(
         if (
             not isinstance(method, str)
             or method != method.upper()
-            or method not in {"POST", "PUT", "PATCH", "DELETE"}
+            or method
+            not in (
+                {"GET", "POST", "PATCH"}
+                if action.kind == "backup_controls"
+                else {"POST", "PUT", "PATCH", "DELETE"}
+            )
             or not isinstance(path, str)
             or not path.startswith("/api/")
             or template is None
             or (method, template) not in SEEDER_ROUTES
         ):
-            issues.append("A sample control request route is unknown or not a write route")
+            issues.append(
+                "A sample control request route is unknown or outside its allowed methods"
+            )
             valid = False
         if (
             type(expected_status) is not int
@@ -326,7 +348,7 @@ def verify_request_evidence(
         else:
             expected_actor_key = (
                 manage_steps[step][0]
-                if action.kind == "manage_controls"
+                if action.kind in {"manage_controls", "backup_controls"}
                 else "admin"
                 if step in admin_steps
                 else action.actor_key

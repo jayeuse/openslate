@@ -1,6 +1,7 @@
-import { readFile } from "node:fs/promises";
 import { expect, test } from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
+import { backupRun, mockManageBackups } from "./helpers/manage-backups";
+import { sendOpenViewEvent } from "./helpers/openview-event-source";
 import {
   concealMfaTestCredentials,
   deferredMfaResponse,
@@ -400,7 +401,7 @@ test("Security and recovery keeps policy drafts and protects the current session
     .getByLabel("Session timeout", { exact: true })
     .selectOption("30 minutes");
   await policy.getByRole("button", { name: "Close", exact: true }).click();
-  await page.getByRole("tab", { name: /Snapshots/ }).click();
+  await page.getByRole("tab", { name: /Backups/ }).click();
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
   await expect(
     policy.getByLabel("Session timeout", { exact: true }),
@@ -811,20 +812,14 @@ test("Rejected session ending keeps the row and permits retry", async ({
   await expect(end).toHaveCount(0);
 });
 
-test("Snapshots preserve persisted policy and keep preview recovery utilities", async ({
+test("Back up now queues real history, cancels without writes, and preserves policy drafts", async ({
   page,
-}, testInfo) => {
-  const state = await mockManageSecurity(page);
+}) => {
+  const security = await mockManageSecurity(page);
+  const backup = await mockManageBackups(page);
   await page.goto("/manage?view=backup");
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Security & recovery" }),
-  ).toBeVisible();
-  await expect(page.getByRole("tab", { name: /Snapshots/ })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
   const table = page.getByRole("table", {
-    name: "Configuration snapshots",
+    name: "Backup history",
     exact: true,
   });
   await expect(table.locator("tbody tr")).toHaveCount(4);
@@ -837,20 +832,26 @@ test("Snapshots preserve persisted policy and keep preview recovery utilities", 
     .getByLabel("Session timeout", { exact: true })
     .selectOption("30 minutes");
   await policy.getByRole("button", { name: "Close", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Create snapshot", exact: true })
-    .click();
-  const create = page.getByRole("dialog", {
-    name: "Create snapshot",
-    exact: true,
-  });
-  await create
-    .getByLabel("Snapshot name", { exact: true })
+
+  const opener = page.getByRole("button", { name: "Back up now", exact: true });
+  await opener.click();
+  const dialog = page.getByRole("dialog", { name: "Back up now", exact: true });
+  await dialog
+    .getByLabel("Backup name", { exact: true })
+    .fill("Cancelled backup");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(opener).toBeFocused();
+  expect(backup.queueRequests).toEqual([]);
+
+  await opener.click();
+  await dialog
+    .getByLabel("Backup name", { exact: true })
     .fill("Working recovery point");
-  await create
-    .getByRole("button", { name: "Create snapshot", exact: true })
+  await dialog
+    .getByRole("button", { name: "Back up now", exact: true })
     .click();
-  await expect(create).toBeHidden();
+  await expect(dialog).toBeHidden();
   await page
     .getByRole("button", {
       name: "Inspect Working recovery point",
@@ -858,19 +859,304 @@ test("Snapshots preserve persisted policy and keep preview recovery utilities", 
     })
     .click();
   const inspector = page.getByRole("region", {
-    name: "Selected snapshot",
+    name: "Selected backup",
     exact: true,
   });
+  await expect(inspector.getByText("Queued", { exact: true })).toBeVisible();
+  await expect(inspector).toContainText("Not verified");
   await expect(
-    inspector.getByText("60 minutes", { exact: true }),
-  ).toBeVisible();
-  await inspector
-    .getByRole("button", { name: "Compare with current", exact: true })
-    .click();
-  const comparison = page.getByRole("dialog", { name: /Compare/ });
-  await expect(comparison).toContainText("No saved settings will change.");
-  await page.keyboard.press("Escape");
+    inspector.getByRole("link", { name: "Restore procedure" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/jayeuse/openslate/blob/main/infra/supabase/RESTORE.md",
+  );
+  await expect(
+    page.getByRole("button", {
+      name: /Restore snapshot|Compare with current|Snapshot actions|Simulate scheduled backup/,
+    }),
+  ).toHaveCount(0);
+  expect(backup.queueRequests).toHaveLength(1);
+  expect(backup.queueRequests[0]?.name).toBe("Working recovery point");
+  expect(backup.queueRequests[0]?.key).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+  expect(backup.runs[0]).toMatchObject({
+    name: "Working recovery point",
+    state: "queued",
+    snapshot_id: null,
+    verified_at: null,
+  });
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  await expect(
+    policy.getByLabel("Session timeout", { exact: true }),
+  ).toHaveValue("30 minutes");
+  expect(security.writes).toEqual([]);
+  expect(security.policy.session_timeout_minutes).toBe(60);
+  await policy.getByRole("button", { name: "Close", exact: true }).click();
+  await page.reload();
+  await expect(
+    page.getByRole("button", {
+      name: "Inspect Working recovery point",
+      exact: true,
+    }),
+  ).toBeVisible();
+});
+
+test("Backup schedule saves revisioned real policy and keeps cancelled drafts without simulation", async ({
+  page,
+}) => {
+  await mockManageSecurity(page);
+  const backup = await mockManageBackups(page);
+  await page.goto("/manage?view=security");
+  await page
+    .getByRole("button", { name: "Edit schedule", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Backup schedule",
+    exact: true,
+  });
+  const schedule = dialog.getByLabel("Backup schedule", { exact: true });
+  const retention = dialog.getByLabel("Retention period", { exact: true });
+  await expect(schedule).toHaveValue("disabled");
+  await schedule.selectOption("weekly");
+  await retention.selectOption("90");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  expect(backup.patches).toEqual([]);
+  await page
+    .getByRole("button", { name: "Edit schedule", exact: true })
+    .click();
+  await expect(schedule).toHaveValue("weekly");
+  await dialog
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(schedule).toHaveValue("disabled");
+  await expect(retention).toHaveValue("30");
+  await schedule.selectOption("weekly");
+  await retention.selectOption("90");
+  await dialog
+    .getByRole("button", { name: "Save settings", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("button", { name: "Discard changes", exact: true }),
+  ).toBeDisabled();
+  expect(backup.patches).toEqual([
+    { revision: 1, schedule: "weekly", retention_days: 90 },
+  ]);
+  await schedule.selectOption("daily");
+  backup.policy.timezone = "UTC";
+  await sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" });
+  await expect(dialog).toContainText("UTC");
+  await expect(schedule).toHaveValue("daily");
+  await expect(
+    dialog.getByRole("button", { name: "Save settings", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    dialog.getByRole("button", { name: "Review latest policy", exact: true }),
+  ).toHaveCount(0);
+  await dialog
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(dialog).toContainText("UTC");
+  await expect(dialog).toContainText(
+    "Saving this policy does not install a host runner",
+  );
+  await expect(
+    dialog.getByRole("button", {
+      name: /Simulate|Preview retention candidates/,
+    }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Edit schedule", exact: true })
+    .click();
+  await expect(schedule).toHaveValue("weekly");
+  await expect(retention).toHaveValue("90");
+});
+
+test("Backup server paging and filters clear selection without slicing the returned page", async ({
+  page,
+}) => {
+  await mockManageSecurity(page);
+  const backup = await mockManageBackups(page);
+  backup.runs = backup.runs.map((run, index) => ({
+    ...run,
+    installation: index === 1 ? "previous" : "current",
+    state: "queued",
+    started_at: null,
+    finished_at: null,
+    reconciled_at: null,
+    snapshot_id: null,
+    manifest_sha256: null,
+    verified_at: null,
+  }));
+  await page.goto("/manage?view=backup");
+  const table = page.getByRole("table", {
+    name: "Backup history",
+    exact: true,
+  });
+  const inspector = page.getByRole("region", {
+    name: "Selected backup",
+    exact: true,
+  });
+  await page.getByRole("button", { name: "More filters" }).click();
+  await page.getByLabel("Status", { exact: true }).selectOption("queued");
+  await page.getByRole("button", { name: "More filters" }).click();
+  await page
+    .getByRole("button", { name: "Inspect Backup 1", exact: true })
+    .click();
+  await expect(inspector).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Backup pages" })
+    .getByRole("button", { name: "Go to next page" })
+    .click();
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  await expect(
+    page.getByRole("button", { name: "Inspect Backup 6", exact: true }),
+  ).toBeVisible();
+  await expect(inspector).toHaveCount(0);
+  expect(backup.historyReads.at(-1)?.get("offset")).toBe("4");
+  backup.runs = backup.runs.map((run, index) =>
+    index < 2 ? run : backupRun(index + 1),
+  );
+  await sendOpenViewEvent(page, "invalidate", { entity: "backup_runs" });
+  await expect(
+    page.getByText("Showing 1–2 of 2", { exact: true }),
+  ).toBeVisible();
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  await expect(
+    page.getByRole("button", { name: "Inspect Backup 1", exact: true }),
+  ).toBeVisible();
+  await expect(inspector).toHaveCount(0);
+  expect(backup.historyReads.at(-1)?.get("offset")).toBe("0");
+  expect(backup.historyReads.at(-1)?.get("limit")).toBe("4");
+  expect(backup.historyReads.at(-1)?.get("state")).toBe("queued");
+  expect(backup.runs).toHaveLength(6);
+  await page.getByRole("button", { name: "More filters" }).click();
+  await page.getByLabel("Status", { exact: true }).selectOption("all");
+  await page.getByRole("button", { name: "More filters" }).click();
+  await page
+    .getByRole("searchbox", { name: "Search backups" })
+    .fill("Backup 6");
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  expect(backup.historyReads.at(-1)?.get("offset")).toBe("0");
+  await page.getByRole("searchbox", { name: "Search backups" }).fill("");
+  await page
+    .getByRole("tabpanel", { name: /Backups/ })
+    .getByLabel("Rows per page")
+    .selectOption("10");
+  await expect(table.locator("tbody tr")).toHaveCount(6);
+  await page
+    .getByRole("button", { name: "Inspect Backup 2", exact: true })
+    .click();
+  await expect(inspector).toContainText("Previous installation");
+  await page.getByLabel("Sort backups").selectOption("name");
+  await expect(inspector).toHaveCount(0);
+  await page.getByRole("button", { name: "More filters" }).click();
+  await page
+    .getByLabel("Installation", { exact: true })
+    .selectOption("previous");
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  expect(backup.historyReads.at(-1)?.get("installation")).toBe("previous");
+  expect(backup.historyReads.at(-1)?.get("deleted")).toBe("exclude");
+  expect(backup.historyReads.at(-1)?.has("schedule")).toBe(false);
+});
+
+test("Backup failure and denial never expose sample policy or cached history as accepted reads", async ({
+  page,
+}) => {
+  await mockManageSecurity(page);
+  const backup = await mockManageBackups(page);
+  backup.statusReadStatus = 503;
+  backup.historyReadStatus = 503;
+  await page.goto("/manage?view=backup");
+  await expect(
+    page.getByText("Backup policy could not be loaded.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Backup history could not be loaded.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Back up now", exact: true }),
+  ).toBeDisabled();
+  backup.statusReadStatus = 200;
+  backup.historyReadStatus = 200;
+  await page
+    .getByRole("button", { name: "Retry backup policy", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Retry backup history", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Inspect Backup 1", exact: true }),
+  ).toBeVisible();
+  backup.historyReadStatus = 403;
+  await sendOpenViewEvent(page, "invalidate", { entity: "backup_runs" });
+  await expect(
+    page.getByText("Only administrators can review backups.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Inspect Backup 1", exact: true }),
+  ).toHaveCount(0);
+  backup.historyReadStatus = 200;
+  await page
+    .getByRole("button", { name: "Retry backup history", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Inspect Backup 1", exact: true }),
+  ).toBeVisible();
+  backup.malformedStatus = true;
+  await sendOpenViewEvent(page, "invalidate", { entity: "backup_policies" });
+  await expect(
+    page.getByText("Backup policy could not be loaded.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Back up now", exact: true }),
+  ).toBeDisabled();
+  expect(backup.patches).toEqual([]);
+  expect(backup.queueRequests).toEqual([]);
+});
+
+test("Backup conflict retains a draft and queue retry reuses the accepted request after an uncertain outcome", async ({
+  page,
+}) => {
+  await mockManageSecurity(page);
+  const backup = await mockManageBackups(page);
+  await page.goto("/manage?view=backup");
+  await page
+    .getByRole("button", { name: "Edit schedule", exact: true })
+    .click();
+  const policy = page.getByRole("dialog", {
+    name: "Backup schedule",
+    exact: true,
+  });
+  await policy
+    .getByLabel("Backup schedule", { exact: true })
+    .selectOption("daily");
+  backup.policy.revision = 2;
+  backup.policy.schedule = "weekly";
+  backup.policy.retention_days = 90;
+  await sendOpenViewEvent(page, "invalidate", { entity: "backup_policies" });
+  await expect(policy).toContainText(
+    "Backup policy changed. Your draft is still here",
+  );
+  await expect(
+    policy.getByLabel("Backup schedule", { exact: true }),
+  ).toHaveValue("daily");
+  await expect(
+    policy.getByLabel("Retention period", { exact: true }),
+  ).toHaveValue("30");
+  await expect(
+    policy.getByRole("button", { name: "Save settings", exact: true }),
+  ).toBeDisabled();
+  expect(backup.patches).toEqual([]);
+  await policy
+    .getByRole("button", { name: "Review latest policy", exact: true })
+    .click();
+  await expect(
+    policy.getByLabel("Retention period", { exact: true }),
+  ).toHaveValue("90");
+  await expect(
+    policy.getByLabel("Backup schedule", { exact: true }),
+  ).toHaveValue("daily");
   await policy
     .getByRole("button", { name: "Save settings", exact: true })
     .click();
@@ -878,224 +1164,116 @@ test("Snapshots preserve persisted policy and keep preview recovery utilities", 
     policy.getByRole("button", { name: "Discard changes", exact: true }),
   ).toBeDisabled();
   await policy
-    .getByLabel("Session timeout", { exact: true })
-    .selectOption("15 minutes");
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
-  await inspector
-    .getByRole("button", { name: "Restore snapshot", exact: true })
+    .getByLabel("Retention period", { exact: true })
+    .selectOption("7");
+  backup.policy.revision = 4;
+  await policy
+    .getByRole("button", { name: "Save settings", exact: true })
     .click();
-  const restore = page.getByRole("alertdialog", {
-    name: "Restore configuration",
-    exact: true,
-  });
-  const confirmRestore = restore.getByRole("button", {
-    name: "Confirm restore",
-    exact: true,
-  });
-  await expect(confirmRestore).toBeEnabled();
-  await expect(restore).toContainText(
-    "does not change persisted organization or account policy",
+  await expect(policy).toContainText(
+    "Backup policy changed. Your draft is still here",
   );
-  await restore.getByRole("button", { name: "Cancel", exact: true }).click();
-  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
   await expect(
-    policy.getByLabel("Session timeout", { exact: true }),
-  ).toHaveValue("15 minutes");
+    policy.getByLabel("Retention period", { exact: true }),
+  ).toHaveValue("7");
+  await expect(
+    policy.getByRole("button", { name: "Save settings", exact: true }),
+  ).toBeDisabled();
+  await policy
+    .getByRole("button", { name: "Review latest policy", exact: true })
+    .click();
+  await policy
+    .getByRole("button", { name: "Save settings", exact: true })
+    .click();
+  await expect(
+    policy.getByRole("button", { name: "Discard changes", exact: true }),
+  ).toBeDisabled();
+  expect(backup.patches).toEqual([
+    { revision: 2, schedule: "daily" },
+    { revision: 3, retention_days: 7 },
+    { revision: 4, retention_days: 7 },
+  ]);
   await policy.getByRole("button", { name: "Close", exact: true }).click();
-  await inspector
-    .getByRole("button", { name: "Restore snapshot", exact: true })
-    .click();
-  const writesBeforeRestore = state.writes.length;
-  await confirmRestore.click();
-  await expect(restore).toBeHidden();
-  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
-  await expect(
-    policy.getByLabel("Session timeout", { exact: true }),
-  ).toHaveValue("15 minutes");
-  expect(state.policy.session_timeout_minutes).toBe(30);
-  expect(state.writes).toHaveLength(writesBeforeRestore);
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
-
-  await inspector
-    .getByRole("button", { name: "Snapshot actions", exact: true })
-    .click();
-  const downloadPromise = page.waitForEvent("download");
-  await page
-    .getByRole("menuitem", { name: "Download JSON", exact: true })
-    .click();
-  const download = await downloadPromise;
-  const downloadedPath = testInfo.outputPath("manage-snapshot.json");
-  await download.saveAs(downloadedPath);
-  const downloaded = JSON.parse(await readFile(downloadedPath, "utf8"));
-  expect(downloaded.format).toBe("openslate.manage.sample");
-  expect(downloaded.snapshot.settings.timeout).toBe("60 minutes");
-  await inspector
-    .getByRole("button", { name: "Snapshot actions", exact: true })
-    .click();
-  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
-  const deletion = page.getByRole("alertdialog", { name: /Delete/ });
-  await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(inspector).toContainText("Working recovery point");
-  await inspector
-    .getByRole("button", { name: "Snapshot actions", exact: true })
-    .click();
-  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
-  await deletion
-    .getByRole("button", { name: "Delete Working recovery point", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", {
-      name: "Inspect Working recovery point",
-      exact: true,
-    }),
-  ).toHaveCount(0);
-  await expect(inspector).toHaveCount(0);
+  backup.queueFailureAfterCommit = true;
+  await page.getByRole("button", { name: "Back up now", exact: true }).click();
+  const queue = page.getByRole("dialog", { name: "Back up now", exact: true });
+  await queue
+    .getByLabel("Backup name", { exact: true })
+    .fill("One recovery point");
+  await queue.getByRole("button", { name: "Back up now", exact: true }).click();
+  await expect(queue).toContainText("could not be confirmed");
+  await expect(queue.getByLabel("Backup name", { exact: true })).toHaveValue(
+    "One recovery point",
+  );
+  await queue.getByRole("button", { name: "Back up now", exact: true }).click();
+  await expect(queue).toBeHidden();
+  expect(backup.queueRequests).toHaveLength(2);
+  expect(backup.queueRequests[0]?.key).toBe(backup.queueRequests[1]?.key);
+  expect(
+    backup.runs.filter((run) => run.name === "One recovery point"),
+  ).toHaveLength(1);
 });
 
-test("Schedule settings retain disabled simulation and non-destructive retention preview", async ({
+test("Backup pending submission blocks duplicate and route leave, then events refresh truthful recovery state", async ({
   page,
 }) => {
-  await page.goto("/manage?view=security");
-  await page
-    .getByRole("button", { name: "Edit schedule", exact: true })
-    .click();
-  const schedule = page.getByRole("dialog", {
-    name: "Snapshot schedule",
+  await mockManageSecurity(page);
+  const backup = await mockManageBackups(page);
+  let release!: () => void;
+  backup.holdWrite = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.goto("/manage?view=backup");
+  await page.getByRole("button", { name: "Back up now", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Back up now", exact: true });
+  await dialog.getByLabel("Backup name", { exact: true }).fill("Held request");
+  const submit = dialog.getByRole("button", {
+    name: "Back up now",
     exact: true,
   });
-  await schedule
-    .getByLabel("Backup schedule", { exact: true })
-    .selectOption("Disabled");
-  await schedule
-    .getByRole("button", { name: "Save settings", exact: true })
-    .click();
+  await submit.click();
   await expect(
-    schedule.getByRole("button", {
-      name: "Simulate scheduled backup",
-      exact: true,
-    }),
+    dialog.getByRole("button", { name: "Queueing…", exact: true }),
   ).toBeDisabled();
-  await schedule
-    .getByLabel("Backup schedule", { exact: true })
-    .selectOption("Daily at 02:00");
-  await expect(
-    schedule.getByRole("button", {
-      name: "Simulate scheduled backup",
-      exact: true,
-    }),
-  ).toBeDisabled();
-  await schedule
-    .getByRole("button", { name: "Save settings", exact: true })
-    .click();
-  await schedule
-    .getByRole("button", { name: "Simulate scheduled backup", exact: true })
-    .click();
-  await schedule
-    .getByRole("button", { name: "Preview retention candidates", exact: true })
-    .click();
-  const preview = page.getByRole("dialog", {
-    name: "Retention preview",
-    exact: true,
-  });
-  await expect(preview).toContainText("never deletes snapshots automatically");
   await page.keyboard.press("Escape");
-  await expect(preview).toBeHidden();
-  await page.getByRole("tab", { name: /Snapshots/ }).click();
-  await expect(
-    page.getByRole("button", { name: /Inspect Scheduled snapshot ·/ }).first(),
-  ).toBeVisible();
-});
-
-test("Changing snapshot browsing controls closes the selected snapshot", async ({
-  page,
-}) => {
-  await page.goto("/manage?view=backup");
-  const inspector = page.getByRole("region", {
-    name: "Selected snapshot",
-    exact: true,
+  await expect(dialog).toBeVisible();
+  // The modal makes navigation inert; invoke the existing link to prove its
+  // pending guard also rejects a navigation request behind that modal.
+  await page.evaluate(() => {
+    document
+      .querySelector<HTMLAnchorElement>('a[href="/manage?view=organization"]')
+      ?.click();
   });
-  const selectFirstSnapshot = async () => {
-    await page
-      .getByRole("button", { name: "Inspect Scheduled snapshot", exact: true })
-      .click();
-    await expect(inspector).toBeVisible();
+  await expect(page).toHaveURL(/view=backup/);
+  expect(backup.queueRequests).toHaveLength(1);
+  release();
+  await expect(dialog).toBeHidden();
+  backup.runs[0] = {
+    ...backup.runs[0]!,
+    state: "failed",
+    started_at: "2026-10-08T12:01:00Z",
+    finished_at: "2026-10-08T12:04:00Z",
+    failure_code: "restart_failed",
+    snapshot_id: "b".repeat(64),
+    manifest_sha256: "b".repeat(64),
+    verified_at: "2026-10-08T12:03:00Z",
   };
-
-  await selectFirstSnapshot();
-  await page.getByRole("searchbox", { name: "Search snapshots" }).fill("setup");
-  await expect(inspector).toHaveCount(0);
-  await page.getByRole("searchbox", { name: "Search snapshots" }).fill("");
-
-  await selectFirstSnapshot();
-  await page.getByLabel("Sort snapshots").selectOption("name");
-  await expect(inspector).toHaveCount(0);
-  await page.getByLabel("Sort snapshots").selectOption("newest");
-
-  await selectFirstSnapshot();
-  await page.getByRole("button", { name: "More filters" }).click();
-  await page.getByLabel("Saved schedule").selectOption("disabled");
-  await expect(inspector).toHaveCount(0);
-  await page.getByLabel("Saved schedule").selectOption("all");
-
-  await selectFirstSnapshot();
-  const rowsPerPage = page
-    .getByRole("tabpanel", { name: "Snapshots" })
-    .getByLabel("Rows per page");
-  await rowsPerPage.selectOption("10");
-  await expect(inspector).toHaveCount(0);
-  await rowsPerPage.selectOption("4");
-
-  await selectFirstSnapshot();
-  await page
-    .getByRole("navigation", { name: "Snapshot pages" })
-    .getByRole("button", { name: "Go to next page" })
-    .click();
-  await expect(inspector).toHaveCount(0);
-});
-
-test("Renaming a snapshot keeps its saved schedule and schedule filter membership", async ({
-  page,
-}) => {
-  await page.goto("/manage?view=backup");
-  const table = page.getByRole("table", {
-    name: "Configuration snapshots",
-    exact: true,
-  });
+  backup.runner.state = "recovery_required";
+  await sendOpenViewEvent(page, "invalidate", { entity: "backup_runs" });
   await expect(
-    table.getByRole("columnheader", { name: "Saved schedule" }),
+    page.getByText("Operator recovery required", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "More filters" }).click();
-  await page.getByLabel("Saved schedule").selectOption("enabled");
   await page
-    .getByRole("button", { name: "Inspect Scheduled snapshot", exact: true })
+    .getByRole("button", { name: "Inspect Held request", exact: true })
     .click();
   const inspector = page.getByRole("region", {
-    name: "Selected snapshot",
+    name: "Selected backup",
     exact: true,
   });
-  await expect(
-    inspector.getByText("Daily at 02:00", { exact: true }),
-  ).toBeVisible();
-  await inspector.getByRole("button", { name: "Snapshot actions" }).click();
-  await page.getByRole("menuitem", { name: "Rename" }).click();
-  const rename = page.getByRole("dialog", { name: "Rename snapshot" });
-  await rename
-    .getByRole("textbox", { name: "Snapshot name" })
-    .fill("Daily checkpoint");
-  await rename.getByRole("button", { name: "Rename snapshot" }).click();
-  await expect(rename).toBeHidden();
-  await expect(
-    page.getByRole("button", { name: "Inspect Daily checkpoint", exact: true }),
-  ).toBeVisible();
-  await expect(
-    inspector.getByText("Daily at 02:00", { exact: true }),
-  ).toBeVisible();
-  await page.getByLabel("Saved schedule").selectOption("disabled");
-  await expect(
-    page.getByRole("button", { name: "Inspect Daily checkpoint", exact: true }),
-  ).toHaveCount(0);
-  await page.getByLabel("Saved schedule").selectOption("enabled");
-  await expect(
-    page.getByRole("button", { name: "Inspect Daily checkpoint", exact: true }),
-  ).toBeVisible();
+  await expect(inspector).toContainText("Verified");
+  await expect(inspector).toContainText("Not reconciled");
+  await expect(inspector).toContainText("Services did not restart");
+  await expect(inspector.getByText("Completed", { exact: true })).toHaveCount(
+    0,
+  );
 });

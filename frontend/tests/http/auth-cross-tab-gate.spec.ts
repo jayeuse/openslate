@@ -1,5 +1,6 @@
 import { expect, test } from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
+import { mockManageBackups } from "./helpers/manage-backups";
 import {
   concealMfaTestCredentials,
   deferredMfaResponse,
@@ -17,25 +18,18 @@ test("MFA gate stays accessible over an unrelated dialog and restores its same-a
   page,
 }) => {
   const policy = await mockManageSecurity(page);
+  const backups = await mockManageBackups(page);
   const state = await mockMfa(page, { verified: true, aal2: true });
   await page.goto("/manage?view=security");
-  await page.getByRole("tab", { name: /Snapshots/ }).click();
-  await page
-    .getByRole("button", { name: "Inspect Scheduled snapshot", exact: true })
-    .click();
-  const inspector = page.getByRole("region", {
-    name: "Selected snapshot",
-    exact: true,
-  });
-  await inspector.getByRole("button", { name: "Snapshot actions" }).click();
-  await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
+  await page.getByRole("tab", { name: /Backups/ }).click();
+  await page.getByRole("button", { name: "Back up now", exact: true }).click();
   const dialog = page.getByRole("dialog", {
-    name: "Rename snapshot",
+    name: "Back up now",
     exact: true,
   });
   await dialog
-    .getByRole("textbox", { name: "Snapshot name" })
-    .fill("Unsubmitted rename");
+    .getByRole("textbox", { name: "Backup name" })
+    .fill("Unsubmitted backup request");
   state.actors.get(mfaUserA)!.assurance = "aal1";
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   const gate = page.getByRole("dialog", {
@@ -49,9 +43,11 @@ test("MFA gate stays accessible over an unrelated dialog and restores its same-a
   await gate.getByRole("button", { name: "Verify code", exact: true }).click();
   await expect(gate).toBeHidden();
   await expect(
-    dialog.getByRole("textbox", { name: "Snapshot name" }),
-  ).toHaveValue("Unsubmitted rename");
+    dialog.getByRole("textbox", { name: "Backup name" }),
+  ).toHaveValue("Unsubmitted backup request");
   expect(policy.writes).toEqual([]);
+  expect(backups.queueRequests).toEqual([]);
+  expect(backups.patches).toEqual([]);
   await page.keyboard.press("Escape");
 });
 

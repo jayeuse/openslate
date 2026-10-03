@@ -12,6 +12,14 @@ from app.core.config.instance import InstanceTarget, InstanceTargetError
 from operations import reset_application_data as reset
 from operations import reset_execution as execution
 from operations import reset_planning
+from operations.reset_models import BackupSnapshot
+
+
+@pytest.fixture(autouse=True)
+def isolated_backup_claim_guard(monkeypatch):
+    # Original Auth/Storage ordering cases have no backup rows; dedicated cases use the real helper.
+    monkeypatch.setattr(execution, "require_no_unresolved_backup", lambda *_args: None)
+    monkeypatch.setattr(execution, "delete_unclaimed_backup_queue", lambda *_args: None)
 
 
 def _plan() -> SimpleNamespace:
@@ -33,6 +41,7 @@ def _plan() -> SimpleNamespace:
         ),
         storage_object_keys=("objects/aa/object",),
         alembic_head="head",
+        backup_snapshot=BackupSnapshot("openslate-fixture", ()),
     )
 
 
@@ -184,21 +193,23 @@ def test_provider_accounts_are_deleted_before_application_profiles(monkeypatch) 
     auth.require_present.side_effect = lambda _: events.append("admin_checked")
     auth.delete_and_verify_missing.side_effect = lambda _: events.append("provider_deleted")
     monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
-    monkeypatch.setattr(
-        execution, "_execute", lambda _, statement, *args: events.append(statement)
-    )
+    monkeypatch.setattr(execution, "_execute", lambda _, statement, *args: events.append(statement))
     monkeypatch.setattr(execution, "_single_value", lambda *_: True)
     monkeypatch.setattr(execution, "_validate_postconditions", lambda *_args, **_kwargs: None)
 
     execution.apply_reset(
-        database, plan, execute=True, stdin_is_tty=True, confirmation=plan.impact_digest,
-        storage=storage, auth=auth, build_plan_fn=lambda *_, **__: plan,
+        database,
+        plan,
+        execute=True,
+        stdin_is_tty=True,
+        confirmation=plan.impact_digest,
+        storage=storage,
+        auth=auth,
+        build_plan_fn=lambda *_, **__: plan,
     )
 
     auth.require_present.assert_called_once_with(plan.preserved_admin_provider_id)
-    auth.delete_and_verify_missing.assert_called_once_with(
-        plan.provider_account_ids
-    )
+    auth.delete_and_verify_missing.assert_called_once_with(plan.provider_account_ids)
     assert events.index("provider_deleted") < events.index(
         "DELETE FROM public.users WHERE id <> %s"
     )
@@ -213,15 +224,22 @@ def test_changed_auth_inventory_refuses_reset_before_any_provider_deletion(monke
     changed.impact_digest = "changed"
     database = Mock()
     storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
-    auth = Mock(list_account_ids=Mock(return_value=tuple(sorted(
-        (*plan.provider_account_ids, uuid4()), key=str
-    ))))
+    auth = Mock(
+        list_account_ids=Mock(
+            return_value=tuple(sorted((*plan.provider_account_ids, uuid4()), key=str))
+        )
+    )
     monkeypatch.setattr(execution, "_single_value", lambda *_: True)
 
     with pytest.raises(reset.ResetError, match="reset plan changed"):
         execution.apply_reset(
-            database, plan, execute=True, stdin_is_tty=True,
-            confirmation=plan.impact_digest, storage=storage, auth=auth,
+            database,
+            plan,
+            execute=True,
+            stdin_is_tty=True,
+            confirmation=plan.impact_digest,
+            storage=storage,
+            auth=auth,
             build_plan_fn=lambda *_, **kwargs: (
                 changed if kwargs["provider_account_ids"] != plan.provider_account_ids else plan
             ),
@@ -246,8 +264,13 @@ def test_provider_failure_keeps_application_profiles_for_safe_retry(monkeypatch)
 
     with pytest.raises(reset.ResetError, match="Provider account cleanup is incomplete"):
         execution.apply_reset(
-            database, plan, execute=True, stdin_is_tty=True,
-            confirmation=plan.impact_digest, storage=storage, auth=auth,
+            database,
+            plan,
+            execute=True,
+            stdin_is_tty=True,
+            confirmation=plan.impact_digest,
+            storage=storage,
+            auth=auth,
             build_plan_fn=lambda *_, **__: plan,
         )
 
@@ -271,8 +294,13 @@ def test_database_failure_after_provider_cleanup_reports_partial_reset(monkeypat
 
     with pytest.raises(reset.ResetError, match="Provider accounts.*profiles were retained"):
         execution.apply_reset(
-            database, plan, execute=True, stdin_is_tty=True,
-            confirmation=plan.impact_digest, storage=storage, auth=auth,
+            database,
+            plan,
+            execute=True,
+            stdin_is_tty=True,
+            confirmation=plan.impact_digest,
+            storage=storage,
+            auth=auth,
             build_plan_fn=lambda *_, **__: plan,
         )
 
@@ -298,8 +326,13 @@ def test_plan_drift_after_auth_cleanup_keeps_profiles_and_reports_partial(monkey
 
     with pytest.raises(reset.ResetError, match="Provider accounts.*profiles were retained"):
         execution.apply_reset(
-            database, plan, execute=True, stdin_is_tty=True,
-            confirmation=plan.impact_digest, storage=storage, auth=auth,
+            database,
+            plan,
+            execute=True,
+            stdin_is_tty=True,
+            confirmation=plan.impact_digest,
+            storage=storage,
+            auth=auth,
             build_plan_fn=lambda *_, **__: next(plans),
         )
 
@@ -320,8 +353,13 @@ def test_ambiguous_database_commit_does_not_claim_profiles_were_retained(monkeyp
 
     with pytest.raises(reset.ResetError, match="database commit outcome is uncertain"):
         execution.apply_reset(
-            database, plan, execute=True, stdin_is_tty=True,
-            confirmation=plan.impact_digest, storage=storage, auth=auth,
+            database,
+            plan,
+            execute=True,
+            stdin_is_tty=True,
+            confirmation=plan.impact_digest,
+            storage=storage,
+            auth=auth,
             build_plan_fn=lambda *_, **__: plan,
         )
 
@@ -362,7 +400,8 @@ def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
     )
     monkeypatch.setattr(reset, "assert_provider_instance", Mock())
     monkeypatch.setattr(
-        reset, "build_reset_plan",
+        reset,
+        "build_reset_plan",
         lambda *_args, **_kwargs: SimpleNamespace(
             preserved_admin_provider_id=uuid4(), sample_email="admin@example.test"
         ),

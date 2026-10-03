@@ -1,6 +1,6 @@
 "use client";
 
-import type { FormEvent, ReactNode, RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import { MfaPresentation, useMfaFlow } from "@/components/mfa-flow";
 
 import { Alert } from "@/components/ui/alert";
@@ -18,14 +18,10 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import type { ManageSnapshot, ManageSnapshotDiff } from "../state/model";
-import { SettingsChanges } from "./panel-ui";
+import { Field, FieldLabel } from "@/components/ui/field";
 
 export type ConfirmState = {
   origin?: "admin-sessions";
@@ -35,12 +31,6 @@ export type ConfirmState = {
   requiresDraftAck?: boolean;
   body?: ReactNode;
   action: () => Promise<boolean>;
-};
-
-export type PreviewState = {
-  title: string;
-  description?: string;
-  body?: ReactNode;
 };
 
 type ManageConfirmationDialogProps = {
@@ -170,173 +160,6 @@ export function ManageMfaDialog({ opener }: ManageMfaDialogProps) {
           </DialogDescription>
         </DialogHeader>
         <MfaPresentation flow={flow} />
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-type ManageSnapshotRenameDialogProps = {
-  open: boolean;
-  pending: boolean;
-  value: string;
-  error: string;
-  opener: RefObject<HTMLElement | null>;
-  headingRef: RefObject<HTMLHeadingElement | null>;
-  onValueChange: (value: string) => void;
-  onErrorClear: () => void;
-  onCancel: () => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-};
-
-export function ManageSnapshotRenameDialog({
-  open,
-  pending,
-  value,
-  error,
-  opener,
-  headingRef,
-  onValueChange,
-  onErrorClear,
-  onCancel,
-  onSubmit,
-}: ManageSnapshotRenameDialogProps) {
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(isOpen) => {
-        if (!isOpen && !pending) onCancel();
-      }}
-    >
-      <DialogContent
-        finalFocus={() =>
-          opener.current?.isConnected ? opener.current : headingRef.current
-        }
-      >
-        <DialogHeader>
-          <DialogTitle>Rename snapshot</DialogTitle>
-          <DialogDescription>
-            Give this configuration snapshot a recognizable name.
-          </DialogDescription>
-        </DialogHeader>
-        <form className="flex flex-col gap-4" onSubmit={onSubmit}>
-          <Field data-invalid={Boolean(error)}>
-            <FieldLabel htmlFor="rename-snapshot">Snapshot name</FieldLabel>
-            <Input
-              id="rename-snapshot"
-              disabled={pending}
-              value={value}
-              onChange={(event) => {
-                onValueChange(event.target.value);
-                onErrorClear();
-              }}
-              aria-invalid={Boolean(error)}
-              aria-describedby={error ? "rename-snapshot-error" : undefined}
-              className="min-h-11"
-              autoFocus
-            />
-            <FieldError id="rename-snapshot-error">{error}</FieldError>
-          </Field>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              disabled={pending}
-              onClick={onCancel}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              className="min-h-11"
-              disabled={pending || !value.trim()}
-            >
-              {pending ? "Renaming…" : "Rename snapshot"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-type ManageSnapshotCompareDialogProps = {
-  target: ManageSnapshot | null;
-  differences: ManageSnapshotDiff[];
-  onClose: () => void;
-};
-
-export function ManageSnapshotCompareDialog({
-  target,
-  differences,
-  onClose,
-}: ManageSnapshotCompareDialogProps) {
-  return (
-    <Dialog
-      open={target !== null}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Compare snapshot</DialogTitle>
-          <DialogDescription>
-            {target?.name} · saved Manage settings only
-          </DialogDescription>
-        </DialogHeader>
-        {target ? <SettingsChanges differences={differences} /> : null}
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={onClose}
-          >
-            Close comparison
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-type ManagePreviewDialogProps = {
-  preview: PreviewState | null;
-  onClose: () => void;
-};
-
-export function ManagePreviewDialog({
-  preview,
-  onClose,
-}: ManagePreviewDialogProps) {
-  return (
-    <Dialog
-      open={preview !== null}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{preview?.title ?? "Details"}</DialogTitle>
-          <DialogDescription>
-            {preview?.description ?? "Details"}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="max-h-[55dvh] overflow-y-auto py-2">
-          {preview?.body}
-        </div>
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={onClose}
-          >
-            Close
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

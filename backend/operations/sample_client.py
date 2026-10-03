@@ -36,6 +36,9 @@ _SAFE_MAPPING_VALUE = re.compile(r"[A-Za-z0-9_:-]{1,160}\Z")
 # The API rotates an access token only when it has 30 seconds or less left, so
 # an earlier refresh returns the same token and cannot extend the session.
 _REFRESH_WITHIN_SECONDS = 20.0
+# The browser sets no request timeout; a publication can run longer than the default.
+_PUBLICATION_PATH = "/api/sandbox/publications"
+_PUBLICATION_TIMEOUT_SECONDS = 120.0
 
 
 class SampleClientError(RuntimeError):
@@ -326,6 +329,11 @@ class SampleClient:
                     data=data,
                     files=files,
                     content=content,
+                    timeout=(
+                        _PUBLICATION_TIMEOUT_SECONDS
+                        if path == _PUBLICATION_PATH
+                        else httpx.USE_CLIENT_DEFAULT
+                    ),
                 )
             except httpx.HTTPError:
                 self._finish_without_response(attempt_id, normalized_method, is_write)

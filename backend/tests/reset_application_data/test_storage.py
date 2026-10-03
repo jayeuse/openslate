@@ -96,6 +96,8 @@ def development_reset_cli(monkeypatch, tmp_path):
         execution, "_execute", lambda _connection, statement, *_args: statements.append(statement)
     )
     monkeypatch.setattr(execution, "_single_value", lambda *_: True)
+    monkeypatch.setattr(execution, "require_no_unresolved_backup", lambda *_args: None)
+    monkeypatch.setattr(execution, "delete_unclaimed_backup_queue", lambda *_args: None)
     monkeypatch.setattr(execution, "_validate_postconditions", lambda *_a, **_k: None)
     return SimpleNamespace(
         plan=plan,

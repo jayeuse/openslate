@@ -1,28 +1,11 @@
 "use client";
 
-import {
-  useImperativeHandle,
-  useId,
-  useRef,
-  useState,
-  type Dispatch,
-  type FormEvent,
-  type MouseEvent,
-  type RefObject,
-  type SetStateAction,
-} from "react";
-import {
-  Clock3,
-  Download,
-  FileSearch,
-  HardDrive,
-  MoreHorizontal,
-  RotateCcw,
-  Trash2,
-  X,
-} from "lucide-react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { FileSearch, HardDrive, X } from "lucide-react";
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CardFooter } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -32,20 +15,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   NativeSelect,
@@ -53,399 +29,341 @@ import {
 } from "@/components/ui/native-select";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { PaginationControls } from "@/components/ui/pagination-controls";
-import { Separator } from "@/components/ui/separator";
 import { AccessSearchToolbar } from "../../access/components/access-search-toolbar";
-import type { CompleteCollection } from "../../shared/helpers/sample-collections";
 import {
-  manageSettingLabels,
-  type ManageSettings,
-  type ManageSnapshot,
-} from "../state/state";
-import { type useManageController } from "../state/state";
-import {
-  SettingActions,
-  SettingSelect,
-  type SettingsPanelForm,
-} from "./panel-ui";
-import type { ConfirmState, PreviewState } from "./manage-dialogs";
+  backupNameError,
+  backupScheduleLabels,
+  backupStateLabels,
+  failureLabel,
+  restoreProcedureUrl,
+  type ManageBackupRun,
+  type ManageBackupsRequest,
+} from "../adapters/backup-api";
+import type { useManageMaintenance } from "../state/controller";
+import { SettingSelect } from "./panel-ui";
 
-type SavedScheduleFilter = "all" | "enabled" | "disabled";
-type SnapshotOrder = "newest" | "oldest" | "name";
-
-const SNAPSHOT_PAGE_SIZES = [4, 10, 25] as const;
-const SAVED_SCHEDULE_FILTERS: readonly {
-  value: SavedScheduleFilter;
-  label: string;
-}[] = [
-  { value: "all", label: "All schedules" },
-  { value: "enabled", label: "Enabled schedules" },
-  { value: "disabled", label: "Disabled schedules" },
-];
-const SNAPSHOT_SORT_OPTIONS: readonly {
-  value: SnapshotOrder;
-  label: string;
-}[] = [
+type Maintenance = ReturnType<typeof useManageMaintenance>;
+const PAGE_SIZES = [4, 10, 25] as const;
+const SORT_OPTIONS = [
   { value: "newest", label: "Newest first" },
   { value: "oldest", label: "Oldest first" },
   { value: "name", label: "Name" },
-];
-const MANAGE_SETTING_ORDER = [
-  "name",
-  "logo",
-  "locale",
-  "timezone",
-  "currency",
-  "week",
-  "hours",
-  "password",
-  "timeout",
-  "mfa",
-  "ips",
-  "schedule",
-  "retention",
-  "version",
-  "previous",
-  "tier",
-  "expiry",
-] as const satisfies readonly (keyof ManageSettings)[];
-const SNAPSHOT_PRIMARY_SETTINGS: readonly (keyof ManageSettings)[] = [
-  "password",
-  "timeout",
-  "mfa",
-  "schedule",
-  "retention",
-];
-const SNAPSHOT_ADDITIONAL_SETTINGS = MANAGE_SETTING_ORDER.filter(
-  (key) => !SNAPSHOT_PRIMARY_SETTINGS.includes(key),
-);
+] as const;
 
-type BackupPanelActions = {
-  addSnapshot: (name: string) => Promise<boolean>;
-  requestRestore: (
-    snapshot: ManageSnapshot,
-    event: MouseEvent<HTMLElement>,
-  ) => void;
-  setCompareTarget: Dispatch<SetStateAction<ManageSnapshot | null>>;
-  downloadSnapshot: (snapshot: ManageSnapshot) => void;
-  renameOpener: RefObject<HTMLElement | null>;
-  setRenameTarget: Dispatch<SetStateAction<ManageSnapshot | null>>;
-  setRenameError: Dispatch<SetStateAction<string>>;
-  setRenameValue: Dispatch<SetStateAction<string>>;
-  requestConfirm: (next: ConfirmState, event?: MouseEvent<HTMLElement>) => void;
-  manage: Pick<ReturnType<typeof useManageController>, "deleteSnapshot">;
-  setError: Dispatch<SetStateAction<string>>;
-  setNotice: Dispatch<SetStateAction<string>>;
-};
-
-type BackupPanelProps = {
-  snapshots: CompleteCollection<ManageSnapshot>;
-  actions: BackupPanelActions;
-};
-
-type SnapshotScheduleFormProps = {
-  form: SettingsPanelForm;
-  settings: ManageSettings;
-  retention: {
-    days: number;
-    candidates: ManageSnapshot[];
-    count: number;
-    schedule: string;
-    timezone: string;
-  };
-  actions: {
-    addSnapshot: (name: string) => Promise<boolean>;
-    setPreview: Dispatch<SetStateAction<PreviewState | null>>;
-  };
-};
-
-function parseSnapshotDate(value: string): Date | null {
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed : null;
-}
-
-function formatSnapshotDate(value: string): string {
-  const parsed = parseSnapshotDate(value);
-  return parsed
-    ? new Intl.DateTimeFormat(undefined, {
+export function formatBackupTime(value: string | null): string {
+  return value === null
+    ? "Not recorded"
+    : new Intl.DateTimeFormat(undefined, {
         dateStyle: "medium",
         timeStyle: "short",
-      }).format(parsed)
-    : value;
+      }).format(new Date(value));
 }
 
-function snapshotSettingRows(
-  snapshot: ManageSnapshot,
-  keys: readonly (keyof ManageSettings)[],
-) {
-  return keys.map((key) => (
-    <div
-      key={key}
-      className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-3 px-3 py-2.5 text-sm"
-    >
-      <dt className="text-muted-foreground min-w-0 break-words">
-        {manageSettingLabels[key]}
-      </dt>
-      <dd className="min-w-0 text-right break-words">
-        {snapshot.settings[key] || "Not set"}
-      </dd>
+export function BackupRunnerStatus({
+  status,
+}: {
+  status: NonNullable<Maintenance["acceptedStatus"]>;
+}) {
+  const labels = {
+    unknown: "Host runner status unknown",
+    available: "Host runner available",
+    stale: "Host runner observation is stale",
+    recovery_required: "Operator recovery required",
+    adoption_required: "Operator adoption required",
+  } as const;
+  return (
+    <div className="text-muted-foreground min-w-0 space-y-1 text-sm">
+      <p className="font-medium">{labels[status.runner.state]}</p>
+      <p>
+        {status.runner.last_seen_at
+          ? `Last observed: ${formatBackupTime(status.runner.last_seen_at)}`
+          : "No host runner observation has been recorded."}
+      </p>
+      <p>
+        {status.queued_count} queued ·{" "}
+        {status.active_run
+          ? `${status.active_run.name}: ${backupStateLabels[status.active_run.state]}`
+          : "No active backup"}
+      </p>
+      {status.runner.state === "recovery_required" ||
+      status.runner.state === "adoption_required" ? (
+        <p>
+          A server operator must resolve this state before the host runner can
+          proceed. Requests only enter the queue.
+        </p>
+      ) : null}
     </div>
-  ));
+  );
 }
 
-function sortSnapshots(
-  source: readonly ManageSnapshot[],
-  order: SnapshotOrder,
-): ManageSnapshot[] {
-  return [...source].sort((left, right) => {
-    if (order === "name") {
-      return (
-        left.name.localeCompare(right.name) || left.id.localeCompare(right.id)
-      );
-    }
-
-    const leftDate = parseSnapshotDate(left.date)?.getTime() ?? null;
-    const rightDate = parseSnapshotDate(right.date)?.getTime() ?? null;
-    if (leftDate === null && rightDate !== null) return 1;
-    if (rightDate === null && leftDate !== null) return -1;
-    if (leftDate !== null && rightDate !== null && leftDate !== rightDate)
-      return order === "newest" ? rightDate - leftDate : leftDate - rightDate;
-
-    return (
-      left.name.localeCompare(right.name) || left.id.localeCompare(right.id)
-    );
-  });
-}
-
-export function BackupPanel({ snapshots, actions }: BackupPanelProps) {
+export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
   const id = useId();
-  const snapshotActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const [query, setQuery] = useState("");
-  const [order, setOrder] = useState<SnapshotOrder>("newest");
-  const [scheduleFilter, setScheduleFilter] =
-    useState<SavedScheduleFilter>("all");
-  const [pageIndex, setPageIndex] = useState(0);
-  const [pageSize, setPageSize] = useState<number>(SNAPSHOT_PAGE_SIZES[0]);
-  const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(
-    () => sortSnapshots(snapshots.items, "newest")[0]?.id ?? null,
+  const [selectedId, setSelectedId] = useState<string | null | undefined>(
+    undefined,
   );
   const [createOpen, setCreateOpen] = useState(false);
-  const [createName, setCreateName] = useState("Manual snapshot");
-  const [creating, setCreating] = useState(false);
-  const creatingRef = useRef(false);
-
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const filteredSnapshots = snapshots.items.filter((snapshot) => {
-    const matchesQuery = snapshot.name
-      .toLocaleLowerCase()
-      .includes(normalizedQuery);
-    const matchesSchedule =
-      scheduleFilter === "all" ||
-      (scheduleFilter === "disabled") ===
-        (snapshot.settings.schedule === "Disabled");
-    return matchesQuery && matchesSchedule;
-  });
-  const orderedSnapshots = sortSnapshots(filteredSnapshots, order);
-  const total = orderedSnapshots.length;
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const safePageIndex = Math.min(pageIndex, pageCount - 1);
-  const pageOffset = safePageIndex * pageSize;
-  const visibleSnapshots = orderedSnapshots.slice(
-    pageOffset,
-    pageOffset + pageSize,
-  );
-  const selectedSnapshot =
-    visibleSnapshots.find((snapshot) => snapshot.id === selectedSnapshotId) ??
-    null;
-  useImperativeHandle<HTMLElement | null, HTMLButtonElement | null>(
-    actions.renameOpener,
-    () => snapshotActionsTriggerRef.current,
-    [actions.renameOpener, selectedSnapshot?.id],
-  );
-  const firstVisible = total === 0 ? 0 : pageOffset + 1;
-  const lastVisible = Math.min(pageOffset + visibleSnapshots.length, total);
-
-  function updateQuery(value: string) {
-    setQuery(value);
-    setPageIndex(0);
-    setSelectedSnapshotId(null);
+  const [createName, setCreateName] = useState("Manual backup");
+  const [nameError, setNameError] = useState<string | null>(null);
+  const createOpener = useRef<HTMLButtonElement | null>(null);
+  const { acceptedHistory: page, request, setRequest } = maintenance;
+  useEffect(() => {
+    if (
+      !page ||
+      page.pagination.offset !== request.offset ||
+      page.pagination.limit !== request.limit ||
+      request.offset === 0 ||
+      request.offset < page.pagination.total
+    )
+      return;
+    const offset =
+      page.pagination.total > 0
+        ? Math.floor((page.pagination.total - 1) / request.limit) *
+          request.limit
+        : 0;
+    setSelectedId(null);
+    setRequest((value) => (value === request ? { ...value, offset } : value));
+  }, [page, request, setRequest]);
+  const runs = page?.items ?? [];
+  const selected =
+    runs.find((run) => run.id === selectedId) ??
+    (selectedId === undefined ? runs[0] : undefined);
+  const total = page?.pagination.total ?? 0;
+  const first = runs.length ? request.offset + 1 : 0;
+  const last = runs.length ? request.offset + runs.length : 0;
+  const order =
+    request.sort_by === "name"
+      ? "name"
+      : request.sort_order === "asc"
+        ? "oldest"
+        : "newest";
+  function changeRequest(next: Partial<ManageBackupsRequest>) {
+    maintenance.setRequest((value) => ({ ...value, offset: 0, ...next }));
+    setSelectedId(null);
   }
-
-  function updateScheduleFilter(value: SavedScheduleFilter) {
-    setScheduleFilter(value);
-    setPageIndex(0);
-    setSelectedSnapshotId(null);
-  }
-
-  async function createSnapshot(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (creatingRef.current) return;
-    const name = createName.trim() || "Manual snapshot";
-
-    creatingRef.current = true;
-    setCreating(true);
-    try {
-      const created = await actions.addSnapshot(name);
-      if (!created) return;
-      setSelectedSnapshotId(null);
-      setCreateName("Manual snapshot");
+    const invalid = backupNameError(createName);
+    setNameError(invalid);
+    if (invalid || maintenance.pending) return;
+    if (await maintenance.queueBackup(createName)) {
       setCreateOpen(false);
-    } finally {
-      creatingRef.current = false;
-      setCreating(false);
+      setSelectedId(null);
+      setCreateName("Manual backup");
     }
   }
-
-  const columns: DataTableColumn<ManageSnapshot>[] = [
+  const statusBadge = (run: ManageBackupRun) => (
+    <Badge
+      variant={
+        run.state === "succeeded"
+          ? "success"
+          : run.state === "failed" || run.state === "interrupted"
+            ? "warning"
+            : "secondary"
+      }
+    >
+      {backupStateLabels[run.state]}
+    </Badge>
+  );
+  const inspectButton = (run: ManageBackupRun) => (
+    <Button
+      type="button"
+      variant="ghost"
+      aria-label={`Inspect ${run.name}`}
+      aria-pressed={run.id === selected?.id}
+      className="h-auto min-h-11 min-w-0 justify-start px-2 py-1 text-left font-medium whitespace-normal"
+      onClick={() => setSelectedId(run.id)}
+    >
+      <span className="break-words">{run.name}</span>
+    </Button>
+  );
+  const columns: DataTableColumn<ManageBackupRun>[] = [
     {
-      id: "snapshot",
-      header: "Snapshot",
+      id: "backup",
+      header: "Backup",
       cell: ({ row }) => (
         <div className="flex min-w-0 flex-col gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            aria-label={`Inspect ${row.original.name}`}
-            aria-pressed={row.original.id === selectedSnapshot?.id}
-            className="h-auto min-h-11 min-w-0 justify-start px-2 py-1 text-left font-medium whitespace-normal"
-            onClick={() => setSelectedSnapshotId(row.original.id)}
-          >
-            <span className="break-words">{row.original.name}</span>
-          </Button>
+          {inspectButton(row.original)}
           <span className="text-muted-foreground px-2 text-xs">
-            Manage settings only
+            {row.original.installation === "previous"
+              ? "Previous installation"
+              : "Current installation"}{" "}
+            ·{" "}
+            {row.original.provenance === "manual"
+              ? "Manual request"
+              : "Scheduled request"}
           </span>
         </div>
       ),
     },
     {
-      id: "created",
-      header: "Created",
-      cell: ({ row }) => {
-        const parsed = parseSnapshotDate(row.original.date);
-        return (
-          <time
-            className="text-muted-foreground tabular-nums"
-            dateTime={parsed?.toISOString()}
-          >
-            {formatSnapshotDate(row.original.date)}
-          </time>
-        );
-      },
-    },
-    {
-      id: "saved-schedule",
-      header: "Saved schedule",
+      id: "requested",
+      header: "Requested",
       cell: ({ row }) => (
-        <Badge
-          variant={
-            row.original.settings.schedule === "Disabled"
-              ? "outline"
-              : "secondary"
-          }
+        <time
+          className="text-muted-foreground tabular-nums"
+          dateTime={row.original.requested_at}
         >
-          {row.original.settings.schedule}
-        </Badge>
+          {formatBackupTime(row.original.requested_at)}
+        </time>
       ),
     },
+    {
+      id: "state",
+      header: "Status",
+      cell: ({ row }) => statusBadge(row.original),
+    },
   ];
-
   return (
     <section
-      aria-labelledby={`${id}-snapshots-heading`}
+      aria-labelledby={`${id}-backups-heading`}
       className="flex min-w-0 flex-col gap-3"
     >
       <div
-        className={`grid min-w-0 gap-3 ${
-          selectedSnapshot
-            ? "lg:grid-cols-[minmax(0,1fr)_minmax(18rem,25rem)]"
-            : "grid-cols-1"
-        }`}
+        className={`grid min-w-0 gap-3 ${selected ? "lg:grid-cols-[minmax(0,1fr)_minmax(18rem,25rem)]" : "grid-cols-1"}`}
       >
         <section
-          aria-labelledby={`${id}-snapshots-heading`}
+          aria-labelledby={`${id}-backups-heading`}
           className="bg-card min-w-0 overflow-hidden rounded-lg border"
         >
           <header className="flex flex-wrap items-start justify-between gap-3 border-b p-4">
             <div className="min-w-0">
               <h2
                 data-slot="section-title"
-                id={`${id}-snapshots-heading`}
+                id={`${id}-backups-heading`}
                 className="text-lg font-semibold"
               >
-                Configuration snapshots
+                Backup history
               </h2>
               <p className="text-muted-foreground mt-1 text-sm">
-                Select a snapshot to inspect its saved Manage settings.
+                Inspect requests and verified backup results. Back up now queues
+                work for the server operator’s host runner.
               </p>
             </div>
             <Button
+              ref={createOpener}
               type="button"
               className="min-h-11 shrink-0 gap-2"
-              onClick={() => setCreateOpen(true)}
+              disabled={!maintenance.acceptedStatus}
+              onClick={() => {
+                maintenance.clearCommandMessage();
+                setNameError(null);
+                setCreateOpen(true);
+              }}
             >
-              <HardDrive data-icon="inline-start" /> Create snapshot
+              <HardDrive data-icon="inline-start" /> Back up now
             </Button>
           </header>
-
           <div className="flex min-w-0 flex-col gap-3 p-3">
             <AccessSearchToolbar
-              searchLabel="Search snapshots"
-              placeholder="Search by snapshot name..."
-              query={query}
-              onQueryChange={updateQuery}
-              sortLabel="Sort snapshots"
+              searchLabel="Search backups"
+              placeholder="Search backup history..."
+              query={request.search}
+              onQueryChange={(search) => changeRequest({ search })}
+              sortLabel="Sort backups"
               sort={order}
-              sortOptions={SNAPSHOT_SORT_OPTIONS}
-              onSortChange={(value) => {
-                setOrder(value);
-                setPageIndex(0);
-                setSelectedSnapshotId(null);
-              }}
-              activeFilterCount={scheduleFilter === "all" ? 0 : 1}
+              sortOptions={SORT_OPTIONS}
+              onSortChange={(value) =>
+                changeRequest({
+                  sort_by: value === "name" ? "name" : "requested_at",
+                  sort_order:
+                    value === "oldest" || value === "name" ? "asc" : "desc",
+                })
+              }
+              activeFilterCount={
+                [
+                  request.state,
+                  request.provenance,
+                  request.installation,
+                ].filter((value) => value !== "all").length
+              }
             >
-              <Field>
-                <FieldLabel htmlFor={`${id}-snapshot-schedule`}>
-                  Saved schedule
-                </FieldLabel>
-                <NativeSelect
-                  id={`${id}-snapshot-schedule`}
-                  className="w-full [&_select]:min-h-11"
-                  value={scheduleFilter}
-                  onChange={(event) => {
-                    const option = SAVED_SCHEDULE_FILTERS.find(
-                      (item) => item.value === event.currentTarget.value,
-                    );
-                    if (option) updateScheduleFilter(option.value);
-                  }}
-                >
-                  {SAVED_SCHEDULE_FILTERS.map((option) => (
-                    <NativeSelectOption key={option.value} value={option.value}>
-                      {option.label}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </Field>
+              {(
+                [
+                  [
+                    "state",
+                    "Status",
+                    [
+                      "all",
+                      "queued",
+                      "running",
+                      "succeeded",
+                      "failed",
+                      "interrupted",
+                    ],
+                  ],
+                  [
+                    "provenance",
+                    "Request source",
+                    ["all", "manual", "scheduled"],
+                  ],
+                  [
+                    "installation",
+                    "Installation",
+                    ["all", "current", "previous"],
+                  ],
+                ] as const
+              ).map(([key, label, options]) => (
+                <Field key={key}>
+                  <FieldLabel htmlFor={`${id}-${key}`}>{label}</FieldLabel>
+                  <NativeSelect
+                    id={`${id}-${key}`}
+                    className="w-full [&_select]:min-h-11"
+                    value={request[key]}
+                    onChange={(event) => {
+                      const value = options.find(
+                        (option) => option === event.currentTarget.value,
+                      );
+                      if (value) changeRequest({ [key]: value });
+                    }}
+                  >
+                    {options.map((value) => (
+                      <NativeSelectOption key={value} value={value}>
+                        {value === "all"
+                          ? "All"
+                          : value === "succeeded"
+                            ? "Completed"
+                            : `${value[0].toUpperCase()}${value.slice(1)}`}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </Field>
+              ))}
             </AccessSearchToolbar>
-
-            {total === 0 ? (
+            {maintenance.historyRefused || maintenance.history.isError ? (
+              <Alert role="alert" variant="destructive">
+                <p>
+                  {maintenance.historyRefused
+                    ? "Only administrators can review backups."
+                    : "Backup history could not be loaded."}
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => void maintenance.retryHistory()}
+                >
+                  Retry backup history
+                </Button>
+              </Alert>
+            ) : maintenance.history.isPending ? (
+              <p role="status">Loading backup history…</p>
+            ) : runs.length === 0 ? (
               <Empty>
                 <EmptyHeader>
                   <EmptyMedia variant="icon">
-                    {snapshots.items.length === 0 ? (
-                      <HardDrive aria-hidden="true" />
-                    ) : (
-                      <FileSearch aria-hidden="true" />
-                    )}
+                    <FileSearch aria-hidden="true" />
                   </EmptyMedia>
                   <EmptyTitle>
-                    {snapshots.items.length === 0
-                      ? "No configuration snapshots yet"
-                      : "No snapshots match these filters"}
+                    {request.search ||
+                    request.state !== "all" ||
+                    request.provenance !== "all" ||
+                    request.installation !== "all"
+                      ? "No backups match these filters"
+                      : total > 0
+                        ? "No backups on this page"
+                        : "No backup requests yet"}
                   </EmptyTitle>
                   <EmptyDescription>
-                    {snapshots.items.length === 0
-                      ? "Create a snapshot to keep a saved Manage configuration checkpoint."
-                      : "Try another name or saved schedule to find a snapshot."}
+                    Requests appear here after the server accepts them. A queued
+                    request has no verified snapshot yet.
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>
@@ -453,151 +371,111 @@ export function BackupPanel({ snapshots, actions }: BackupPanelProps) {
               <>
                 <div className="hidden min-w-0 lg:block">
                   <DataTable
-                    ariaLabel="Configuration snapshots"
+                    ariaLabel="Backup history"
                     cellClassName="px-3 py-3 whitespace-normal"
                     columns={columns}
-                    data={visibleSnapshots}
-                    getRowId={(snapshot) => snapshot.id}
-                    rowClassName={(snapshot) =>
-                      snapshot.id === selectedSnapshot?.id
-                        ? "bg-muted/70"
-                        : undefined
+                    data={runs}
+                    getRowId={(run) => run.id}
+                    rowClassName={(run) =>
+                      run.id === selected?.id ? "bg-muted/70" : undefined
                     }
-                    rowState={(snapshot) =>
-                      snapshot.id === selectedSnapshot?.id
-                        ? "selected"
-                        : undefined
+                    rowState={(run) =>
+                      run.id === selected?.id ? "selected" : undefined
                     }
                   />
                 </div>
-
                 <div className="divide-border divide-y rounded-lg border lg:hidden">
-                  {visibleSnapshots.map((snapshot) => {
-                    const parsed = parseSnapshotDate(snapshot.date);
-                    const selected = snapshot.id === selectedSnapshot?.id;
-                    return (
-                      <article
-                        key={snapshot.id}
-                        className={`flex min-w-0 flex-col gap-3 p-3 ${
-                          selected ? "bg-muted/70" : ""
-                        }`}
+                  {runs.map((run) => (
+                    <article
+                      key={run.id}
+                      className={`flex min-w-0 flex-col gap-3 p-3 ${run.id === selected?.id ? "bg-muted/70" : ""}`}
+                    >
+                      <div className="flex min-w-0 items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          {inspectButton(run)}
+                          <p className="text-muted-foreground px-2 text-xs">
+                            {run.installation === "previous"
+                              ? "Previous installation"
+                              : "Current installation"}
+                          </p>
+                        </div>
+                        {statusBadge(run)}
+                      </div>
+                      <time
+                        className="text-muted-foreground px-2 text-sm tabular-nums"
+                        dateTime={run.requested_at}
                       >
-                        <div className="flex min-w-0 items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              aria-label={`Inspect ${snapshot.name}`}
-                              aria-pressed={selected}
-                              className="h-auto min-h-11 min-w-0 justify-start px-2 py-1 text-left font-medium whitespace-normal"
-                              onClick={() => setSelectedSnapshotId(snapshot.id)}
-                            >
-                              <span className="break-words">
-                                {snapshot.name}
-                              </span>
-                            </Button>
-                            <p className="text-muted-foreground px-2 text-xs">
-                              Manage settings only
-                            </p>
-                          </div>
-                          <Badge
-                            className="shrink-0"
-                            variant={
-                              snapshot.settings.schedule === "Disabled"
-                                ? "outline"
-                                : "secondary"
-                            }
-                          >
-                            {snapshot.settings.schedule}
-                          </Badge>
-                        </div>
-                        <div className="text-muted-foreground flex min-w-0 flex-col gap-1 px-2 text-sm">
-                          <span className="text-xs font-medium">Created</span>
-                          <time
-                            className="break-words tabular-nums"
-                            dateTime={parsed?.toISOString()}
-                          >
-                            {formatSnapshotDate(snapshot.date)}
-                          </time>
-                        </div>
-                      </article>
-                    );
-                  })}
+                        {formatBackupTime(run.requested_at)}
+                      </time>
+                    </article>
+                  ))}
                 </div>
-
-                <footer className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-t pt-3">
-                  <p
-                    className="text-muted-foreground text-sm tabular-nums"
-                    role="status"
-                  >
-                    {`Showing ${firstVisible}–${lastVisible} of ${total}`}
-                  </p>
-                  <div className="flex min-w-0 flex-wrap items-center gap-3 sm:justify-end">
-                    <div className="flex items-center gap-2">
-                      <label
-                        htmlFor={`${id}-snapshot-page-size`}
-                        className="text-muted-foreground text-sm"
-                      >
-                        Rows per page
-                      </label>
-                      <NativeSelect
-                        id={`${id}-snapshot-page-size`}
-                        className="w-20 [&_select]:min-h-11"
-                        value={String(pageSize)}
-                        onChange={(event) => {
-                          const nextSize = SNAPSHOT_PAGE_SIZES.find(
-                            (size) =>
-                              String(size) === event.currentTarget.value,
-                          );
-                          if (nextSize === undefined) return;
-                          setPageSize(nextSize);
-                          setPageIndex(0);
-                          setSelectedSnapshotId(null);
-                        }}
-                      >
-                        {SNAPSHOT_PAGE_SIZES.map((size) => (
-                          <NativeSelectOption key={size} value={String(size)}>
-                            {size}
-                          </NativeSelectOption>
-                        ))}
-                      </NativeSelect>
-                    </div>
-                    {total > 0 ? (
-                      <PaginationControls
-                        ariaLabel="Snapshot pages"
-                        className="w-auto sm:justify-end"
-                        pageCount={pageCount}
-                        pageIndex={safePageIndex}
-                        onPageIndexChange={(nextIndex) => {
-                          setPageIndex(nextIndex);
-                          setSelectedSnapshotId(null);
-                        }}
-                      />
-                    ) : null}
-                  </div>
-                </footer>
               </>
             )}
+            {page ? (
+              <footer className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-t pt-3">
+                <p
+                  className="text-muted-foreground text-sm tabular-nums"
+                  role="status"
+                >{`Showing ${first}–${last} of ${total}`}</p>
+                <div className="flex min-w-0 flex-wrap items-center gap-3 sm:justify-end">
+                  <div className="flex items-center gap-2">
+                    <label
+                      htmlFor={`${id}-page-size`}
+                      className="text-muted-foreground text-sm"
+                    >
+                      Rows per page
+                    </label>
+                    <NativeSelect
+                      id={`${id}-page-size`}
+                      className="w-20 [&_select]:min-h-11"
+                      value={String(request.limit)}
+                      onChange={(event) => {
+                        const size = PAGE_SIZES.find(
+                          (value) =>
+                            String(value) === event.currentTarget.value,
+                        );
+                        if (size) changeRequest({ limit: size });
+                      }}
+                    >
+                      {PAGE_SIZES.map((size) => (
+                        <NativeSelectOption key={size} value={String(size)}>
+                          {size}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </div>
+                  {total > 0 ? (
+                    <PaginationControls
+                      ariaLabel="Backup pages"
+                      className="w-auto sm:justify-end"
+                      pageCount={Math.max(1, Math.ceil(total / request.limit))}
+                      pageIndex={Math.floor(request.offset / request.limit)}
+                      onPageIndexChange={(index) =>
+                        changeRequest({ offset: index * request.limit })
+                      }
+                    />
+                  ) : null}
+                </div>
+              </footer>
+            ) : null}
           </div>
         </section>
-
-        {selectedSnapshot ? (
+        {selected ? (
           <section
-            aria-label="Selected snapshot"
+            aria-label="Selected backup"
             className="bg-card min-w-0 overflow-hidden rounded-lg border"
           >
             <header className="flex flex-col gap-3 border-b p-4">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-muted-foreground text-sm">
-                  Selected snapshot
-                </p>
+                <p className="text-muted-foreground text-sm">Selected backup</p>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label="Close selected snapshot"
+                  aria-label="Close selected backup"
                   className="size-11 shrink-0"
-                  onClick={() => setSelectedSnapshotId(null)}
+                  onClick={() => setSelectedId(null)}
                 >
                   <X aria-hidden="true" />
                 </Button>
@@ -606,181 +484,141 @@ export function BackupPanel({ snapshots, actions }: BackupPanelProps) {
                 data-slot="section-title"
                 className="min-w-0 text-lg font-semibold break-words"
               >
-                {selectedSnapshot.name}
+                {selected.name}
               </h2>
-              <time
-                className="text-muted-foreground text-sm tabular-nums"
-                dateTime={parseSnapshotDate(
-                  selectedSnapshot.date,
-                )?.toISOString()}
-              >
-                {formatSnapshotDate(selectedSnapshot.date)}
-              </time>
+              {statusBadge(selected)}
               <p className="text-muted-foreground text-sm">
-                Scope: Manage settings only
+                {selected.installation === "previous"
+                  ? "Previous installation · Read-only history"
+                  : "Current installation"}
               </p>
             </header>
-
             <div className="flex min-w-0 flex-col gap-4 p-4">
-              <div className="flex min-w-0 items-center justify-between gap-3">
-                <h3 data-slot="section-title" className="font-semibold">
-                  Saved configuration
-                </h3>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        ref={snapshotActionsTriggerRef}
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        aria-label="Snapshot actions"
-                        className="size-11 shrink-0"
-                      />
-                    }
-                  >
-                    <MoreHorizontal aria-hidden="true" />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuItem
-                      onClick={() => actions.downloadSnapshot(selectedSnapshot)}
-                    >
-                      <Download aria-hidden="true" /> Download JSON
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        actions.setRenameTarget(selectedSnapshot);
-                        actions.setRenameError("");
-                        actions.setRenameValue(selectedSnapshot.name);
-                      }}
-                    >
-                      Rename
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      variant="destructive"
-                      onClick={(event) =>
-                        actions.requestConfirm(
-                          {
-                            title: "Delete snapshot",
-                            description: `Delete ${selectedSnapshot.name}? This removes only this configuration snapshot.`,
-                            confirmLabel: `Delete ${selectedSnapshot.name}`,
-                            action: async () => {
-                              const result =
-                                await actions.manage.deleteSnapshot(
-                                  selectedSnapshot.id,
-                                );
-                              actions.setError(result.ok ? "" : result.message);
-                              actions.setNotice(
-                                result.ok ? result.message : "",
-                              );
-                              if (result.ok) setSelectedSnapshotId(null);
-                              return result.ok;
-                            },
-                          },
-                          event,
-                        )
-                      }
-                    >
-                      <Trash2 aria-hidden="true" /> Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-
+              <h3 data-slot="section-title" className="font-semibold">
+                Backup details
+              </h3>
               <dl className="min-w-0 divide-y rounded-lg border">
-                {snapshotSettingRows(
-                  selectedSnapshot,
-                  SNAPSHOT_PRIMARY_SETTINGS,
-                )}
+                {[
+                  ["Requested", formatBackupTime(selected.requested_at)],
+                  [
+                    "Source",
+                    selected.provenance === "manual"
+                      ? "Manual request"
+                      : "Scheduled request",
+                  ],
+                  [
+                    "Schedule at request",
+                    backupScheduleLabels[selected.schedule],
+                  ],
+                  ["Retention at request", `${selected.retention_days} days`],
+                  ["Started", formatBackupTime(selected.started_at)],
+                  ["Finished", formatBackupTime(selected.finished_at)],
+                  ["Snapshot", selected.snapshot_id ?? "Not verified"],
+                  [
+                    "Verification",
+                    selected.verified_at
+                      ? `Verified · ${formatBackupTime(selected.verified_at)}`
+                      : "Not verified",
+                  ],
+                  [
+                    "Restart / reconciliation",
+                    selected.reconciled_at
+                      ? `Reconciled · ${formatBackupTime(selected.reconciled_at)}`
+                      : "Not reconciled",
+                  ],
+                  [
+                    "Failure",
+                    selected.failure_code
+                      ? failureLabel(selected.failure_code)
+                      : "None recorded",
+                  ],
+                  ["Confirmed expiry", formatBackupTime(selected.expired_at)],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-3 px-3 py-2.5 text-sm"
+                  >
+                    <dt className="text-muted-foreground min-w-0 break-words">
+                      {label}
+                    </dt>
+                    <dd className="min-w-0 text-right break-words">{value}</dd>
+                  </div>
+                ))}
               </dl>
-              <details className="min-w-0 rounded-lg border">
-                <summary className="min-h-11 cursor-pointer px-3 py-2.5 font-medium">
-                  More saved settings
-                </summary>
-                <dl className="min-w-0 divide-y border-t">
-                  {snapshotSettingRows(
-                    selectedSnapshot,
-                    SNAPSHOT_ADDITIONAL_SETTINGS,
-                  )}
-                </dl>
-              </details>
-
               <p className="text-muted-foreground text-sm">
-                Compare the saved settings before restoring.
+                Snapshot verification and service restart are separate facts.
+                Restore is performed offline by a server operator.
               </p>
-              <div className="grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11 min-w-0"
-                  onClick={() => actions.setCompareTarget(selectedSnapshot)}
-                >
-                  <FileSearch data-icon="inline-start" /> Compare with current
-                </Button>
-                <Button
-                  type="button"
-                  className="min-h-11 min-w-0"
-                  onClick={(event) =>
-                    actions.requestRestore(selectedSnapshot, event)
-                  }
-                >
-                  <RotateCcw data-icon="inline-start" /> Restore snapshot
-                </Button>
-              </div>
+              <Button asChild variant="outline" className="min-h-11 min-w-0">
+                <a href={restoreProcedureUrl} target="_blank" rel="noreferrer">
+                  Restore procedure
+                </a>
+              </Button>
+              <p className="text-muted-foreground text-xs">
+                Use the procedure included with this release. Repository access
+                may be required.
+              </p>
             </div>
           </section>
         ) : null}
       </div>
-
       <Dialog
         open={createOpen}
-        dismissible={!creating}
+        dismissible={!maintenance.pending}
         onOpenChange={(open) => {
-          if (!creatingRef.current) setCreateOpen(open);
+          if (!maintenance.pending) setCreateOpen(open);
         }}
       >
-        <DialogContent>
+        <DialogContent finalFocus={() => createOpener.current}>
           <DialogHeader>
-            <DialogTitle>Create snapshot</DialogTitle>
+            <DialogTitle>Back up now</DialogTitle>
             <DialogDescription>
-              Save the current Manage settings. Unsaved drafts are not included.
+              Queue a named backup request. This page does not stop services or
+              execute a backup; the configured host runner performs the offline
+              procedure.
             </DialogDescription>
           </DialogHeader>
-          <form className="mt-4 flex flex-col gap-4" onSubmit={createSnapshot}>
-            <fieldset disabled={creating} className="min-w-0">
-              <Field>
-                <FieldLabel htmlFor={`${id}-create-snapshot-name`}>
-                  Snapshot name
+          <form className="mt-4 flex flex-col gap-4" onSubmit={submit}>
+            <fieldset disabled={maintenance.pending} className="min-w-0">
+              <Field data-invalid={Boolean(nameError)}>
+                <FieldLabel htmlFor={`${id}-backup-name`}>
+                  Backup name
                 </FieldLabel>
                 <Input
-                  id={`${id}-create-snapshot-name`}
+                  id={`${id}-backup-name`}
                   value={createName}
-                  aria-describedby={`${id}-create-snapshot-description`}
-                  onChange={(event) => setCreateName(event.target.value)}
-                  placeholder="Manual snapshot"
+                  aria-invalid={Boolean(nameError)}
+                  aria-describedby={nameError ? `${id}-name-error` : undefined}
+                  onChange={(event) => {
+                    setCreateName(event.target.value);
+                    setNameError(null);
+                  }}
                   className="min-h-11"
                 />
-                <FieldDescription
-                  id={`${id}-create-snapshot-description`}
-                  className="sr-only"
-                >
-                  Give this saved Manage settings snapshot a name.
-                </FieldDescription>
+                <FieldError id={`${id}-name-error`}>{nameError}</FieldError>
               </Field>
             </fieldset>
+            {maintenance.error ? (
+              <Alert role="alert" variant="destructive">
+                {maintenance.error}
+              </Alert>
+            ) : null}
             <DialogFooter className="mt-0">
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-11"
-                disabled={creating}
+                disabled={maintenance.pending}
                 onClick={() => setCreateOpen(false)}
               >
                 Cancel
               </Button>
-              <Button type="submit" className="min-h-11" disabled={creating}>
-                {creating ? "Creating…" : "Create snapshot"}
+              <Button
+                type="submit"
+                className="min-h-11"
+                disabled={maintenance.pending}
+              >
+                {maintenance.pending ? "Queueing…" : "Back up now"}
               </Button>
             </DialogFooter>
           </form>
@@ -791,113 +629,125 @@ export function BackupPanel({ snapshots, actions }: BackupPanelProps) {
 }
 
 export function SnapshotScheduleForm({
-  form,
-  settings,
-  retention,
-  actions,
-}: SnapshotScheduleFormProps) {
+  maintenance,
+}: {
+  maintenance: Maintenance;
+}) {
   const id = useId();
-  const [simulating, setSimulating] = useState(false);
-  const simulatingRef = useRef(false);
-  const { dirty, saveSection, current, errors, changeSetting, clearDraft } =
-    form;
-
-  async function simulateScheduledBackup() {
-    if (simulatingRef.current || settings.schedule === "Disabled") return;
-    simulatingRef.current = true;
-    setSimulating(true);
-    try {
-      await actions.addSnapshot(
-        `Scheduled snapshot · ${new Date().toLocaleDateString()}`,
-      );
-    } finally {
-      simulatingRef.current = false;
-      setSimulating(false);
-    }
-  }
-
+  const status = maintenance.acceptedStatus;
+  if (!status)
+    return (
+      <Alert role="alert" variant="destructive">
+        <p>
+          {maintenance.policyRefused
+            ? "Only administrators can review backup policy."
+            : "Backup policy could not be loaded."}
+        </p>
+        <Button
+          variant="outline"
+          onClick={() => void maintenance.retryPolicy()}
+        >
+          Retry backup policy
+        </Button>
+      </Alert>
+    );
+  const current = {
+    ...(maintenance.draftPolicy ?? status.policy),
+    ...maintenance.draft,
+  };
   return (
     <form
       className="flex min-w-0 flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        void saveSection("backup");
+        void maintenance.savePolicy();
       }}
     >
-      <SettingSelect
-        id={`${id}-backup-schedule`}
-        label="Backup schedule"
-        value={current.schedule}
-        error={errors.schedule}
-        options={["Disabled", "Daily at 02:00", "Weekly on Sunday at 02:00"]}
-        onChange={(value) => changeSetting("backup", "schedule", value)}
-      />
-      <SettingSelect
-        id={`${id}-retention-period`}
-        label="Retention period"
-        value={current.retention}
-        error={errors.retention}
-        options={["7 days", "30 days", "90 days"]}
-        onChange={(value) => changeSetting("backup", "retention", value)}
-      />
-      <SettingActions
-        dirty={dirty}
-        onDiscard={() => clearDraft("backup")}
-        onSave={() => {
-          void saveSection("backup");
-        }}
-      />
-
-      <Separator className="my-1" />
-      <div className="flex min-w-0 flex-col items-start gap-3">
-        <div>
-          <p className="font-medium">Maintenance preview</p>
-          <p className="text-muted-foreground mt-1 text-sm">
-            {settings.schedule === "Disabled"
-              ? "The saved automatic-backup preference is disabled. No background job runs."
-              : `Saved schedule: ${settings.schedule} (${settings.timezone}). No background job runs.`}
+      {maintenance.stale ? (
+        <Alert role="status" variant="warning">
+          <p>
+            Backup policy changed. Your draft is still here. Review the latest
+            policy before saving again.
           </p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11"
-          disabled={settings.schedule === "Disabled" || simulating}
-          onClick={() => void simulateScheduledBackup()}
-        >
-          <Clock3 data-icon="inline-start" />
-          {simulating
-            ? "Creating scheduled snapshot…"
-            : "Simulate scheduled backup"}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          className="min-h-11 px-0"
-          onClick={() =>
-            actions.setPreview({
-              title: "Retention preview",
-              description:
-                "This preview uses saved retention settings. It never deletes snapshots automatically.",
-              body: (
-                <div className="flex flex-col gap-3">
-                  <p>
-                    {retention.candidates.length
-                      ? `${retention.candidates.length} snapshot(s) would be candidates after ${retention.days} days.`
-                      : `No snapshots are currently older than ${retention.days} days.`}
-                  </p>
-                  {retention.candidates.map((candidate) => (
-                    <Badge key={candidate.id} variant="outline">
-                      {candidate.name} · review manually
-                    </Badge>
-                  ))}
-                </div>
-              ),
-            })
-          }
-        >
-          Preview retention candidates
-        </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-2 min-h-11"
+            disabled={maintenance.pending}
+            onClick={() => void maintenance.reviewLatestPolicy()}
+          >
+            Review latest policy
+          </Button>
+        </Alert>
+      ) : null}
+      {maintenance.error ? (
+        <Alert role="alert" variant="destructive">
+          {maintenance.error}
+        </Alert>
+      ) : null}
+      <fieldset
+        disabled={maintenance.pending || !status.policy.adopted}
+        className="min-w-0 space-y-3"
+      >
+        <SettingSelect
+          id={`${id}-schedule`}
+          label="Backup schedule"
+          value={current.schedule}
+          options={["disabled", "daily", "weekly"]}
+          optionLabels={backupScheduleLabels}
+          onChange={(value) => {
+            if (value === "disabled" || value === "daily" || value === "weekly")
+              maintenance.changeDraft({ schedule: value });
+          }}
+        />
+        <SettingSelect
+          id={`${id}-retention`}
+          label="Retention period"
+          value={String(current.retention_days)}
+          options={["7", "30", "90"]}
+          optionLabels={{ "7": "7 days", "30": "30 days", "90": "90 days" }}
+          onChange={(value) => {
+            const days = Number(value);
+            if (days === 7 || days === 30 || days === 90)
+              maintenance.changeDraft({ retention_days: days });
+          }}
+        />
+        <CardFooter className="flex flex-wrap justify-end gap-2 px-0 pt-4">
+          {maintenance.dirty ? (
+            <Badge variant="warning">Unsaved changes</Badge>
+          ) : (
+            <Badge variant="outline">Saved</Badge>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            disabled={!maintenance.dirty}
+            onClick={maintenance.discardDraft}
+          >
+            Discard changes
+          </Button>
+          <Button
+            type="submit"
+            className="min-h-11"
+            disabled={!maintenance.dirty || maintenance.stale}
+          >
+            Save settings
+          </Button>
+        </CardFooter>
+      </fieldset>
+      <div className="text-muted-foreground min-w-0 space-y-2 border-t pt-3 text-sm">
+        <p>
+          {backupScheduleLabels[status.policy.schedule]} ·{" "}
+          {status.policy.timezone} · Keep {status.policy.retention_days} days
+        </p>
+        <p>Next due: {formatBackupTime(status.policy.next_due_at)}</p>
+        <p>
+          Saving this policy does not install a host runner. A server operator
+          configures the scheduler. Retention is applied only after a later
+          usable recovery point is verified.
+        </p>
+        <BackupRunnerStatus status={status} />
       </div>
     </form>
   );

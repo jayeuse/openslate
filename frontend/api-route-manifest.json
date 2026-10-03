@@ -564,6 +564,36 @@
     "path": "/api/audit-logs"
   },
   {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "getManageBackupStatus",
+    "method": "GET",
+    "path": "/api/backups/status"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "getManageVersion",
+    "method": "GET",
+    "path": "/api/version"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "listManageBackups",
+    "method": "GET",
+    "path": "/api/backups"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "queueManageBackup",
+    "method": "POST",
+    "path": "/api/backups"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "updateManageBackupPolicy",
+    "method": "PATCH",
+    "path": "/api/backups/status"
+  },
+  {
     "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
     "function": "endAllManageRemoteSessions",
     "method": "DELETE",

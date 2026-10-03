@@ -13,6 +13,7 @@ from psycopg import connect
 from operations import reset_application_data as reset
 from operations import reset_execution as execution
 from operations import reset_planning
+from operations.reset_backups import read_backup_snapshot, validate_backup_preservation
 from tests.conftest import _guard_integration_database
 
 
@@ -36,6 +37,7 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
     provider_account_ids = tuple(sorted((member_provider_id, guest_provider_id), key=str))
     department_id, file_id = uuid4(), uuid4()
     group_id, membership_id, access_id = uuid4(), uuid4(), uuid4()
+    backup_ids = tuple(uuid4() for _ in range(6))
     admin_email = f"reset-admin-{admin_id}@example.test"
 
     def cleanup() -> None:
@@ -43,6 +45,11 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
         _guard_integration_database(owner_url)
         with connect(database_url) as database:
             with database.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM public.backup_runs WHERE id = ANY(%s)", (list(backup_ids),)
+                )
+                cursor.execute("DELETE FROM public.backup_policies WHERE id = %s", (backup_ids[0],))
+                cursor.execute("DELETE FROM public.update_statuses WHERE id = %s", (backup_ids[1],))
                 cursor.execute(
                     "UPDATE public.workspace_profiles SET logo_file_id = NULL "
                     "WHERE logo_file_id = %s",
@@ -168,10 +175,106 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                 "UPDATE public.workspace_profiles SET invitation_expiry_days = 14, "
                 "guest_duration_days = 45"
             )
+            cursor.execute("SELECT current_setting('cluster_name', true)")
+            instance = cursor.fetchone()[0]
+            cursor.execute(
+                "INSERT INTO public.backup_policies (id, installation_id, timezone, schedule, "
+                "retention_days, revision, next_due_at, runner_last_seen_at, performed_by) "
+                "VALUES (%s, %s, 'Asia/Manila', 'weekly', 90, 3, now() + interval '1 week', "
+                "now(), %s)",
+                (backup_ids[0], instance, member_id),
+            )
+            cursor.execute(
+                "INSERT INTO public.update_statuses "
+                "(id, latest_version, release_url, observed_at, checked_at, performed_by) "
+                "VALUES (%s, '0.2.0', 'https://github.com/example/project/releases/tag/v0.2.0', "
+                "now(), now(), %s)",
+                (backup_ids[1], member_id),
+            )
+            for run_id, owner, state in (
+                (backup_ids[2], instance, "queued"),
+                (backup_ids[3], instance, "succeeded"),
+                (backup_ids[4], "previous-installation", "running"),
+                (backup_ids[5], "another-installation", "queued"),
+            ):
+                started = state != "queued"
+                complete = state == "succeeded"
+                cursor.execute(
+                    "INSERT INTO public.backup_runs (id, installation_id, name, provenance, "
+                    "requester_id, idempotency_hash, schedule, retention_days, requested_at, "
+                    "claim_id, claimed_schedule, claimed_retention_days, state, started_at, "
+                    "finished_at, reconciled_at, snapshot_id, manifest_sha256, verified_at, "
+                    "performed_by) VALUES (%s, %s, 'Reset backup', 'manual', %s, %s, 'weekly', 90, "
+                    "now() - interval '2 hours', %s, %s, %s, %s, "
+                    "CASE WHEN %s THEN now() - interval '1 hour' END, "
+                    "CASE WHEN %s THEN now() END, CASE WHEN %s THEN now() END, %s, %s, "
+                    "CASE WHEN %s THEN now() END, %s)",
+                    (
+                        run_id,
+                        owner,
+                        member_id,
+                        run_id.hex * 2,
+                        uuid4() if started else None,
+                        "weekly" if started else None,
+                        90 if started else None,
+                        state,
+                        started,
+                        complete,
+                        complete,
+                        "a" * 64 if complete else None,
+                        "b" * 64 if complete else None,
+                        complete,
+                        member_id,
+                    ),
+                )
         database.commit()
         plan = reset.build_reset_plan(
             database, admin_email, storage_object_keys=storage.list_object_keys()
         )
+        assert plan.backup_snapshot == read_backup_snapshot(database)
+        assert plan.counts["backup_runs"] == 4
+        # Commit an unresolved claim after preview, then prove both preview and the
+        # post-advisory-lock guard refuse before any provider deletion for all states.
+        for state in ("running", "failed", "interrupted"):
+            unresolved_id = uuid4()
+            with database.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO public.backup_runs (id, installation_id, name, provenance, "
+                    "idempotency_hash, schedule, retention_days, requested_at, claim_id, "
+                    "claimed_schedule, claimed_retention_days, state, started_at, finished_at, "
+                    "failure_code) VALUES (%s, %s, 'Unresolved reset blocker', 'manual', %s, "
+                    "'disabled', 30, now() - interval '2 hours', %s, 'disabled', 30, %s, "
+                    "now() - interval '1 hour', CASE WHEN %s <> 'running' THEN now() END, %s)",
+                    (
+                        unresolved_id,
+                        instance,
+                        unresolved_id.hex * 2,
+                        uuid4(),
+                        state,
+                        state,
+                        None if state == "running" else "restart_failed",
+                    ),
+                )
+            database.commit()
+            try:
+                with pytest.raises(reset.ResetError, match="reconciliation"):
+                    reset.build_reset_plan(database, admin_email)
+                with pytest.raises(reset.ResetError, match="reconciliation"):
+                    execution.apply_reset(
+                        database,
+                        plan,
+                        execute=True,
+                        stdin_is_tty=True,
+                        confirmation=plan.impact_digest,
+                        storage=storage,
+                        auth=auth,
+                    )
+                auth.delete_and_verify_missing.assert_not_called()
+            finally:
+                database.rollback()
+                with database.cursor() as cursor:
+                    cursor.execute("DELETE FROM public.backup_runs WHERE id = %s", (unresolved_id,))
+                database.commit()
         assert all(plan.counts[name] == 1 for name in ("groups", "group_members", "group_access"))
         assert (
             plan.workspace_snapshot.invitation_expiry_days,
@@ -212,6 +315,7 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
             cursor.execute("SELECT count(*) FROM public.files WHERE id = %s", (file_id,))
             assert cursor.fetchone() == (1,)
         assert reset_planning._read_workspace(database) == plan.workspace_snapshot
+        assert read_backup_snapshot(database) == plan.backup_snapshot
         assert storage.list_object_keys() == plan.storage_object_keys
         # Restart the mocked provider fixture for the independent successful attempt.
         auth.list_account_ids.side_effect = (provider_account_ids, ())
@@ -224,6 +328,10 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
             storage=storage,
             auth=auth,
         )
+        validate_backup_preservation(database, plan.backup_snapshot, admin_id)
+        with database.cursor() as cursor:
+            cursor.execute("SELECT id, requester_id, performed_by FROM public.backup_runs")
+            assert set(cursor.fetchall()) == {(value, None, None) for value in backup_ids[3:]}
         with database.cursor() as cursor:
             cursor.execute("SELECT id FROM public.users")
             assert cursor.fetchall() == [(admin_id,)]

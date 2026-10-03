@@ -62,6 +62,7 @@ from app.systems.boards.router import router as boards_router
 from app.systems.boards.widget_router import router as board_widgets_router
 from app.systems.manage.audit.router import internal_security_events_router, security_events_router
 from app.systems.manage.audit.router import router as audit_router
+from app.systems.manage.backups.router import router as backups_router
 from app.systems.manage.workspace.router import router as workspace_router
 from app.systems.manage.workspace.security_router import router as workspace_security_router
 from app.systems.openview.dashboards.router import router as dashboards_router
@@ -375,6 +376,7 @@ def create_app() -> FastAPI:
     app.include_router(search_router, prefix="/api")
     app.include_router(workspace_router, prefix="/api")
     app.include_router(workspace_security_router, prefix="/api")
+    app.include_router(backups_router, prefix="/api")
     app.include_router(files_router, prefix="/api")
     app.include_router(events_router, prefix="/api")
     app.include_router(file_lifecycle_router, prefix="/api")

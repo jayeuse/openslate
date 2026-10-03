@@ -1,5 +1,8 @@
 import { expect, test } from "./helpers/test";
 import type { Page } from "./helpers/test";
+import { mockManageBackups } from "./helpers/manage-backups";
+import { mockManageSecurity } from "./helpers/manage-security";
+import { sendOpenViewEvent } from "./helpers/openview-event-source";
 
 type WorkspaceProfile = {
   id: string;
@@ -531,80 +534,46 @@ test("Manage reset cancellation retains drafts and confirmation requires draft a
   await expect(name).toHaveValue(original);
 });
 
-test("Manage snapshot rename retains invalid input, restores focus on cancel, and persists an accepted name", async ({
+test("Backup request name validation and cancel restore focus without any local snapshot mutation", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockManageSecurity(page);
+  const backup = await mockManageBackups(page);
   await page.goto("/manage?view=backup");
-  await page
-    .getByRole("button", { name: "Inspect Scheduled snapshot", exact: true })
-    .click();
-  const opener = page.getByRole("button", {
-    name: "Snapshot actions",
-    exact: true,
-  });
+  const opener = page.getByRole("button", { name: "Back up now", exact: true });
   await opener.click();
-  await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
-  const dialog = page.getByRole("dialog", {
-    name: "Rename snapshot",
-    exact: true,
-  });
-  const name = dialog.getByRole("textbox", {
-    name: "Snapshot name",
-    exact: true,
-  });
+  const dialog = page.getByRole("dialog", { name: "Back up now", exact: true });
+  const name = dialog.getByLabel("Backup name", { exact: true });
   const submit = dialog.getByRole("button", {
-    name: "Rename snapshot",
+    name: "Back up now",
     exact: true,
   });
-  await name.fill("");
-  await expect(submit).toBeDisabled();
-  await name.fill("After workspace setup");
+  await name.fill(" ");
   await submit.click();
-  await expect(
-    dialog.getByText("A snapshot already uses this name.", { exact: true }),
-  ).toBeVisible();
-  await expect(name).toHaveValue("After workspace setup");
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(opener).toBeFocused();
-  await opener.click();
-  await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
-  await expect(name).toHaveValue("Scheduled snapshot");
-  await name.fill("Renamed journey snapshot");
-  await submit.click();
+  await expect(name).toHaveAttribute("aria-invalid", "true");
+  await expect(dialog).toContainText("Enter a backup name");
+  expect(backup.queueRequests).toEqual([]);
+  await name.fill("Preserved name");
+  await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
-  await expect(
-    page.getByRole("button", {
-      name: "Inspect Renamed journey snapshot",
-      exact: true,
-    }),
-  ).toBeVisible();
-  await page.reload();
-  await expect(
-    page.getByRole("button", {
-      name: "Inspect Renamed journey snapshot",
-      exact: true,
-    }),
-  ).toBeVisible();
+  await expect(opener).toBeFocused();
+  expect(backup.queueRequests).toEqual([]);
 });
 
-test("Updates and licensing share one destination without bypassing confirmations", async ({
+test("Updates and licensing share a real read-only destination and never simulate upgrades or licenses", async ({
   page,
 }) => {
+  const state = await mockManageBackups(page);
   const writes: string[] = [];
   page.on("request", (request) => {
     if (request.url().includes("/api/") && request.method() !== "GET")
-      writes.push(request.url());
+      writes.push(new URL(request.url()).pathname);
   });
   await page.goto("/manage?view=licensing");
   await expect(
     page.getByRole("heading", { level: 1, name: "Updates & licensing" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Updates & licensing", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
-  await expect(
-    page.getByRole("link", { name: "Licensing", exact: true }),
-  ).toHaveCount(0);
   const software = page.getByRole("region", {
     name: "Software version",
     exact: true,
@@ -613,59 +582,134 @@ test("Updates and licensing share one destination without bypassing confirmation
     name: "License & usage",
     exact: true,
   });
-  await expect(software).toBeVisible();
-  await expect(license).toBeVisible();
+  await expect(software.getByText("0.1.0", { exact: true })).toBeVisible();
+  await expect(software).toContainText("Release information unavailable");
+  await expect(software.getByText("Up to date", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(license).toContainText("No license required");
+  await expect(
+    license.getByText(
+      /Sample license|Activate license|Renew license|Team|Business/,
+    ),
+  ).toHaveCount(0);
+  await expect(
+    software.getByRole("button", {
+      name: /Review update|Roll back update|Confirm update/,
+    }),
+  ).toHaveCount(0);
   await software
     .getByRole("button", { name: "Check for updates", exact: true })
     .click();
-  await software
-    .getByRole("button", { name: "Review update", exact: true })
-    .click();
-  const confirmation = page.getByRole("alertdialog");
-  await expect(confirmation).toContainText("No software is installed.");
-  await confirmation
-    .getByRole("button", { name: "Cancel", exact: true })
-    .click();
-  await expect(software.getByText("1.4.2", { exact: true })).toBeVisible();
-  await software
-    .getByRole("button", { name: "Review update", exact: true })
-    .click();
-  await confirmation
-    .getByRole("button", { name: "Confirm update", exact: true })
-    .click();
-  await expect(confirmation).toBeHidden();
-  await expect(software.getByText("1.5.0", { exact: true })).toBeVisible();
-
-  await license.getByText("Activate license", { exact: true }).click();
-  await license
-    .getByRole("combobox", { name: "Bundled license key", exact: true })
-    .selectOption("SAMPLE-BUSINESS-2026");
-  await license.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(confirmation).toContainText(
-    "No payment or license service will be contacted.",
+  await expect(software).toContainText("Release information unavailable");
+  expect(state.versionReads).toBeGreaterThanOrEqual(2);
+  await expect(
+    software.getByRole("link", { name: "Update procedure", exact: true }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/jayeuse/openslate/blob/main/infra/supabase/README.md#operator-updates",
   );
-  await confirmation
-    .getByRole("button", { name: "Cancel", exact: true })
-    .click();
-  await expect(license.getByText("Team", { exact: true })).toBeVisible();
-  await license.getByRole("button", { name: "Continue", exact: true }).click();
-  await confirmation
-    .getByRole("button", { name: "Confirm activation", exact: true })
-    .click();
-  await expect(confirmation).toBeHidden();
-  await expect(license.getByText("Business", { exact: true })).toBeVisible();
-  await page.reload();
-  await expect(software.getByText("1.5.0", { exact: true })).toBeVisible();
-  await expect(license.getByText("Business", { exact: true })).toBeVisible();
+  state.version = {
+    current_version: "0.1.0",
+    status: "available",
+    latest_version: "0.2.0",
+    observed_at: "2026-10-08T04:00:00Z",
+    checked_at: "2026-10-08T04:00:00Z",
+    failure_code: null,
+    release_url: "https://github.com/jayeuse/openslate/releases/tag/v0.2.0",
+  };
   await software
-    .getByRole("button", { name: "Roll back update", exact: true })
+    .getByRole("button", { name: "Check for updates", exact: true })
     .click();
-  await confirmation
-    .getByRole("button", { name: "Confirm rollback", exact: true })
-    .click();
-  await expect(software.getByText("1.4.2", { exact: true })).toBeVisible();
+  await expect(software).toContainText("Version 0.2.0 is available");
+  await expect(
+    software.getByRole("link", { name: "Release notes", exact: true }),
+  ).toHaveAttribute("href", state.version.release_url!);
+  await page.reload();
+  await expect(software).toContainText("Version 0.2.0 is available");
   await page.goto("/manage?view=updates");
-  await expect(license.getByText("Business", { exact: true })).toBeVisible();
   await expect(software).toBeVisible();
+  await expect(license).toContainText("No license required");
   expect(writes).toEqual([]);
+});
+
+test("Recorded version loading, denial, stale and current observations remain honest on refresh", async ({
+  page,
+}) => {
+  const state = await mockManageBackups(page);
+  state.versionReadStatus = 503;
+  await page.goto("/manage?view=updates");
+  const software = page.getByRole("region", {
+    name: "Software version",
+    exact: true,
+  });
+  await expect(software).toContainText("Version status could not be loaded");
+  await expect(software.getByText("1.4.2", { exact: true })).toHaveCount(0);
+  state.versionReadStatus = 200;
+  await software
+    .getByRole("button", { name: "Check for updates", exact: true })
+    .click();
+  await expect(software.getByText("0.1.0", { exact: true })).toBeVisible();
+  state.version.status = "stale";
+  state.version.latest_version = "0.2.0";
+  state.version.observed_at = "2026-10-01T00:00:00Z";
+  await sendOpenViewEvent(page, "invalidate", { entity: "update_statuses" });
+  await expect(software).toContainText("Release information is stale");
+  await expect(software.getByText("Up to date", { exact: true })).toHaveCount(
+    0,
+  );
+  state.versionReadStatus = 403;
+  await software
+    .getByRole("button", { name: "Check for updates", exact: true })
+    .click();
+  await expect(software).toContainText(
+    "Only administrators can review version status",
+  );
+  await expect(software.getByText("0.1.0", { exact: true })).toHaveCount(0);
+  state.versionReadStatus = 200;
+  state.version.status = "current";
+  state.version.latest_version = "0.1.0";
+  state.version.failure_code = null;
+  state.version.observed_at = "2026-10-08T04:00:00Z";
+  await software
+    .getByRole("button", { name: "Check for updates", exact: true })
+    .click();
+  await expect(software.getByText("Up to date", { exact: true })).toBeVisible();
+  await expect(software).toContainText("Host runner observation");
+  state.version.current_version = "2.7.1-development";
+  state.version.status = "unknown";
+  state.version.latest_version = "2.7.1";
+  state.version.observed_at = "2026-10-08T04:00:00Z";
+  state.version.checked_at = "2026-10-08T04:01:00Z";
+  state.version.release_url =
+    "https://github.com/jayeuse/openslate/releases/tag/v2.7.1";
+  await software
+    .getByRole("button", { name: "Check for updates", exact: true })
+    .click();
+  await expect(
+    software.getByText("2.7.1-development", { exact: true }),
+  ).toBeVisible();
+  await expect(software).toContainText("Version comparison unavailable");
+  await expect(software).not.toContainText("No release observation recorded");
+  await expect(software.getByText("2.7.1", { exact: true })).toBeVisible();
+  await expect(
+    software.getByRole("link", { name: "Release notes", exact: true }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/jayeuse/openslate/releases/tag/v2.7.1",
+  );
+  await expect(software.getByText("Up to date", { exact: true })).toHaveCount(
+    0,
+  );
+  state.version.latest_version = null;
+  state.version.observed_at = null;
+  state.version.checked_at = null;
+  state.version.release_url = null;
+  await software
+    .getByRole("button", { name: "Check for updates", exact: true })
+    .click();
+  await expect(software).toContainText("No release observation recorded");
+  await expect(
+    software.getByText("2.7.1-development", { exact: true }),
+  ).toBeVisible();
 });

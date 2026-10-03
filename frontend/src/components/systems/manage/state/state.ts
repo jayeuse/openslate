@@ -24,4 +24,3 @@ export { decodeManageSettings, validateManageSection } from "./decode";
 export { diffManageSettings, executeManageCommand } from "./commands";
 export type { ManageCommand } from "./commands";
 export { executeManageRuntimeCommand, useManageController } from "./controller";
-export { downloadManageSnapshot } from "./downloads";

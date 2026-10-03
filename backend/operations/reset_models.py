@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 EXPECTED_DATABASE_USER = "openslate_owner"
 
 APPLICATION_TABLES = (
     "audit_logs",
+    "backup_policies",
+    "backup_runs",
     "board_attachments",
     "board_event_reminders",
     "board_events",
@@ -56,6 +58,7 @@ APPLICATION_TABLES = (
     "saved_views",
     "scheduled_work",
     "security_events",
+    "update_statuses",
     "users",
     "workspace_profiles",
 )
@@ -64,9 +67,12 @@ NON_PRESERVED_TABLES = tuple(
     for table in APPLICATION_TABLES
     if table
     not in {
+        "backup_policies",
+        "backup_runs",
         "boards",
         "sandbox_documents",
         "sandbox_versions",
+        "update_statuses",
         "users",
         "workspace_profiles",
     }
@@ -160,6 +166,7 @@ FROM public.users AS profile
 """
 _LOCK_APPLICATION_STATEMENT = """
 LOCK TABLE public.alembic_version, public.audit_logs,
+ public.backup_policies, public.backup_runs, public.update_statuses,
  public.board_attachments, public.board_event_reminders, public.board_events,
  public.board_groups, public.board_post_revision_attachments,
  public.board_post_revision_record_links,
@@ -187,6 +194,14 @@ LOCK TABLE public.alembic_version, public.audit_logs,
 
 class ResetError(RuntimeError):
     """A safe operational error raised by the local reset utility."""
+
+
+@dataclass(frozen=True)
+class BackupSnapshot:
+    """Whole-row metadata kept only in memory, never included in plan output."""
+
+    installation_id: str
+    rows: tuple[tuple[str, tuple[str, ...]], ...] = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -272,4 +287,5 @@ class ResetPlan:
     workspace_snapshot: WorkspaceSnapshot
     storage_object_keys: tuple[str, ...]
     alembic_head: str
+    backup_snapshot: BackupSnapshot
     provider_account_ids: tuple[UUID, ...] = ()

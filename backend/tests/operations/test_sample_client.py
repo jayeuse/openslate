@@ -114,6 +114,26 @@ def test_login_and_mutation_use_ui_cookie_csrf_origin_and_private_request_journa
     assert len(observed) == 2
 
 
+def test_publication_waits_longer_than_ordinary_requests(tmp_path: Path) -> None:
+    # A live run saw a 23.7 s publication succeed after the 20 s default gave up;
+    # the browser has no such limit, so a publish must not become "outcome unknown".
+    timeouts: dict[str, float] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            return _login_response()
+        timeouts[request.url.path] = request.extensions["timeout"]["read"]
+        return httpx.Response(201, json={}, headers={"X-Request-ID": REQUEST_ID})
+
+    with _client(tmp_path, httpx.MockTransport(handler)) as client:
+        client.login(EMAIL, PASSWORD)
+        client.request("POST", "/api/sandbox/publications", json_body={})
+        client.request("POST", "/api/records", json_body={})
+
+    assert timeouts["/api/records"] == 20.0
+    assert timeouts["/api/sandbox/publications"] >= 120.0
+
+
 def test_cookie_jars_are_isolated_and_missing_csrf_stops_before_a_write(tmp_path: Path) -> None:
     requests: list[httpx.Request] = []
 

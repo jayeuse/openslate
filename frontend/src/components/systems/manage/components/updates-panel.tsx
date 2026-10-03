@@ -1,45 +1,30 @@
 "use client";
 
-import { ArrowRight, CheckCircle2, RotateCcw, Search } from "lucide-react";
-import { type MouseEvent } from "react";
+import { Search } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { ManageSettings, useManageController } from "../state/state";
-
-type UpdatesPanelProps = {
-  settings: ManageSettings;
-  actions: {
-    manage: Pick<ReturnType<typeof useManageController>, "checkForUpdate">;
-    setError: import("react").Dispatch<import("react").SetStateAction<string>>;
-    setNotice: import("react").Dispatch<import("react").SetStateAction<string>>;
-    startUpdate: () => void;
-    setShowChangelog: import("react").Dispatch<
-      import("react").SetStateAction<boolean>
-    >;
-    rollbackUpdate: (event: MouseEvent<HTMLElement>) => void;
-  };
-  updateAvailable: boolean;
-  showChangelog: boolean;
-  history: string[];
-};
+import { failureLabel, updateProcedureUrl } from "../adapters/backup-api";
+import type { useManageMaintenance } from "../state/controller";
+import { formatBackupTime } from "./backup-panel";
 
 export function UpdatesPanel({
-  settings,
-  actions,
-  updateAvailable,
-  showChangelog,
-  history,
-}: UpdatesPanelProps) {
-  const {
-    manage,
-    setError,
-    setNotice,
-    startUpdate,
-    setShowChangelog,
-    rollbackUpdate,
-  } = actions;
-
+  maintenance,
+}: {
+  maintenance: ReturnType<typeof useManageMaintenance>;
+}) {
+  const version = maintenance.acceptedVersion;
+  const statusText = version
+    ? {
+        unknown: version.observed_at
+          ? "Version comparison unavailable"
+          : "No release observation recorded",
+        available: `Version ${version.latest_version} is available`,
+        current: "Up to date",
+        unavailable: "Release information unavailable",
+        stale: "Release information is stale",
+      }[version.status]
+    : null;
   return (
     <section className="min-w-0 p-6" aria-labelledby="manage-updates-heading">
       <div className="flex flex-col gap-5">
@@ -50,116 +35,111 @@ export function UpdatesPanel({
         >
           Software version
         </h2>
-
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary">Stable channel</Badge>
-          {settings.version === "1.5.0" ? (
+          {version?.status === "current" ? (
             <Badge variant="success">Up to date</Badge>
           ) : null}
         </div>
-
-        <div className="border-border border-b pb-5">
-          <p className="text-muted-foreground text-sm">Current version</p>
-          <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <p className="text-4xl font-semibold tabular-nums">
-              {settings.version}
-            </p>
-            <span className="text-muted-foreground text-sm">
-              Sample version
-            </span>
-          </div>
-        </div>
-
-        {updateAvailable && settings.version !== "1.5.0" ? (
-          <Alert variant="warning" role="status">
-            <p className="font-medium">Version 1.5.0 is available</p>
-            <p className="text-sm">
-              Preview the changes before applying this sample update.
-            </p>
-            <p className="mt-2 text-sm">
-              Refined navigation, improved report layouts, and clearer session
-              controls.
-            </p>
+        {maintenance.versionRefused || maintenance.version.isError ? (
+          <Alert role="alert" variant="destructive">
+            {maintenance.versionRefused
+              ? "Only administrators can review version status."
+              : "Version status could not be loaded. Try again."}
           </Alert>
+        ) : maintenance.version.isPending ? (
+          <p role="status">Loading version status…</p>
         ) : null}
-
+        {version ? (
+          <>
+            <div className="border-border border-b pb-5">
+              <p className="text-muted-foreground text-sm">Current version</p>
+              <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <p className="text-4xl font-semibold tabular-nums">
+                  {version.current_version}
+                </p>
+                <span className="text-muted-foreground text-sm">
+                  Running server
+                </span>
+              </div>
+            </div>
+            {version.status !== "current" ? (
+              <Alert
+                variant={version.status === "available" ? "warning" : "default"}
+                role="status"
+              >
+                <p className="font-medium">{statusText}</p>
+                {version.status === "stale" ||
+                version.status === "unavailable" ? (
+                  <p className="text-sm">
+                    The last observation does not establish whether this
+                    installation is current.
+                  </p>
+                ) : null}
+              </Alert>
+            ) : null}
+          </>
+        ) : null}
         <div className="flex flex-wrap items-center gap-3">
-          {updateAvailable && settings.version !== "1.5.0" ? (
-            <Button type="button" className="min-h-11" onClick={startUpdate}>
-              Review update <ArrowRight data-icon="inline-end" />
-            </Button>
-          ) : null}
           <Button
             type="button"
             variant="outline"
             className="min-h-11"
-            onClick={async () => {
-              const result = await manage.checkForUpdate();
-              if (!result.ok) {
-                setError(result.message);
-                return;
-              }
-              setError("");
-              setNotice(result.available ? "" : "Version is up to date.");
-            }}
+            disabled={maintenance.version.isFetching}
+            onClick={() => void maintenance.refreshVersion()}
           >
             <Search data-icon="inline-start" /> Check for updates
           </Button>
-          {settings.previous ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={rollbackUpdate}
-            >
-              <RotateCcw data-icon="inline-start" /> Roll back update
+          <Button asChild variant="outline" className="min-h-11">
+            <a href={updateProcedureUrl} target="_blank" rel="noreferrer">
+              Update procedure
+            </a>
+          </Button>
+          {version?.release_url ? (
+            <Button asChild variant="ghost" className="min-h-11">
+              <a href={version.release_url} target="_blank" rel="noreferrer">
+                Release notes
+              </a>
             </Button>
           ) : null}
         </div>
-
         <p className="text-muted-foreground text-sm">
-          No software is installed from this preview.
+          Check for updates refreshes the release status recorded by the host
+          runner. Software updates are applied by a server operator using the
+          procedure included with this release. Repository access may be
+          required.
         </p>
-
-        <div className="flex flex-col items-start gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            className="min-h-11 px-0 underline underline-offset-4"
-            onClick={() => setShowChangelog((value) => !value)}
-          >
-            {showChangelog ? "Hide changelog" : "View changelog"}
-          </Button>
-          {showChangelog ? (
-            <div className="w-full border-t pt-4">
-              <h3 data-slot="section-title" className="font-semibold">
-                1.5.0 release notes
-              </h3>
-              <ul className="text-muted-foreground mt-3 list-inside list-disc space-y-2 text-sm">
-                <li>Six-pillar workspace navigation</li>
-                <li>Mobile-friendly report inspectors</li>
-                <li>Improved session management clarity</li>
-              </ul>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="border-border border-t pt-5">
-          <h3 data-slot="section-title" className="font-semibold">
-            Release history
-          </h3>
-          <ol className="mt-3 flex flex-col gap-3">
-            {history.map((item, index) => (
-              <li key={`${item}-${index}`} className="flex gap-3 text-sm">
-                <CheckCircle2
-                  className="text-muted-foreground mt-0.5 size-4 shrink-0"
-                  aria-hidden="true"
-                />
-                <span>{item}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
+        {version ? (
+          <div className="border-border min-w-0 space-y-3 border-t pt-5">
+            <h3 data-slot="section-title" className="font-semibold">
+              Host runner observation
+            </h3>
+            <dl className="text-muted-foreground space-y-2 text-sm">
+              <div>
+                <dt>Last successful observation</dt>
+                <dd>{formatBackupTime(version.observed_at)}</dd>
+              </div>
+              <div>
+                <dt>Last check</dt>
+                <dd>{formatBackupTime(version.checked_at)}</dd>
+              </div>
+              {version.failure_code ? (
+                <div>
+                  <dt>Failure</dt>
+                  <dd className="break-words">
+                    {failureLabel(version.failure_code)}
+                  </dd>
+                </div>
+              ) : null}
+              {version.latest_version && version.status !== "available" ? (
+                <div>
+                  <dt>Last observed release</dt>
+                  <dd>{version.latest_version}</dd>
+                </div>
+              ) : null}
+            </dl>
+          </div>
+        ) : null}
       </div>
     </section>
   );

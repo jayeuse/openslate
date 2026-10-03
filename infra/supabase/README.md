@@ -83,6 +83,16 @@ Do not use an unrestricted production `up` for a fresh installation: container h
 
 The operator-only `DATABASE_BOOTSTRAP_URL` must use the pinned provider's `supabase_admin` login with `POSTGRES_PASSWORD`. The ordinary `postgres` login cannot grant schema access to Auth. Provisioning verifies the backend's effective Auth schema and column permissions before succeeding. Its SELECT-only `openslate_session_liveness` policy makes the two granted `auth.sessions` columns visible to `openslate_app` under provider RLS; it refuses a conflicting policy rather than overwriting it. Keep this superuser connection out of API, worker, frontend, and test-runtime environments; they use `openslate_runtime`.
 
+## Operator updates
+
+Manage Updates displays the running FastAPI version and the host runner's timestamped observation of the fixed stable GitHub release source. Check for updates refreshes the recorded status; it does not download or apply releases. The host checks at most once every six hours, including after failure. Missing/unavailable/malformed metadata does not prove the installation is current; failures retain the last successful observation, and old observations become stale. There is no configurable release URL/token or automatic upgrade mechanism.
+
+Apply updates through the installation operator procedure. Read the selected release's compatibility/migration instructions, verify its versioned server/scanner/Caddy images, and make a completed offline physical backup with retained configuration, marker and recovery material **before** upgrading. Keep ingress closed while stopping the application, preparing the matching checkout/environment and running the release's explicit schema admission/migration procedure through the owned provider network. Application containers do not migrate at startup.
+
+Restart the selected services in the documented order, inspect scanner definitions/manifest and any deliberately halted worker, verify installation/schema admission, authentication and `/api/ready`, then admit Caddy only after required readiness succeeds. Check the running version and public endpoint before ending the outage. Release observation does not prove deployment. Recovery uses the separate [offline backup and restore procedure](RESTORE.md); upgrades do not promise automatic rollback.
+
+The [bounded backup runner](RESTORE.md#run-the-installation-backup-policy) executes queued production requests and saved cadence/retention through a constrained release-image bridge. It installs no scheduler, mounts no Docker socket into application/operator containers and emits safe JSON. Its private journal and explicit recovery procedure handle interrupted backup/restart and uncertain acknowledgements.
+
 ## Production application overlay
 
 `compose.production.yaml` adds one unified FastAPI/static-frontend image as `api`, the same image running `python -m app.systems.platform.files.worker`, the repository's ClamAV image, and the repository's Caddy image. Build those three images from the repository root context and give them release-specific `OPENSLATE_SERVER_IMAGE`, `OPENSLATE_CLAMAV_IMAGE`, and `OPENSLATE_CADDY_IMAGE` tags. ClamAV currently uses its pinned Linux amd64 base; Windows Docker Desktop must run Linux containers, and this artifact does not certify ARM or native Windows containers.

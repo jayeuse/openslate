@@ -53,6 +53,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         return ()
     from operations.sample_control_access import plan_access_controls
     from operations.sample_control_account import plan_account_controls
+    from operations.sample_control_backups import plan_backup_controls
     from operations.sample_control_boards import plan_board_controls
     from operations.sample_control_manage import plan_manage_controls
     from operations.sample_control_openview import plan_openview_controls
@@ -83,6 +84,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         *platform[3:],
         *_audit_actions(dataset),
         *plan_read_reviews(dataset),
+        *plan_backup_controls(dataset),
         *plan_manage_controls(dataset),
         *plan_read_controls(dataset),
     )
@@ -286,6 +288,7 @@ def execute_control_action(
         return _execute_audit(action, dataset, context, on_substep)
     from operations.sample_control_access import execute_access_control
     from operations.sample_control_account import execute_account_control
+    from operations.sample_control_backups import execute_backup_control
     from operations.sample_control_boards import execute_board_control
     from operations.sample_control_manage import execute_manage_control
     from operations.sample_control_openview import execute_openview_control
@@ -298,6 +301,7 @@ def execute_control_action(
         "access_controls": execute_access_control,
         "account_controls": execute_account_control,
         "manage_controls": execute_manage_control,
+        "backup_controls": execute_backup_control,
         "platform_controls": execute_platform_control,
         "board_controls": execute_board_control,
         "openview_controls": execute_openview_control,
