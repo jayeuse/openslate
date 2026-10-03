@@ -6,9 +6,11 @@ import ast
 from dataclasses import asdict, replace
 from datetime import date
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
+from app.systems.sandbox.designs.schemas import SandboxBindingResponse
 from operations.sample_control_actions import plan_controls
 from operations.sample_packs.registry import get_pack
 from operations.sample_phase_expectations import read_phase_plan
@@ -34,6 +36,35 @@ def test_small_control_planning_uses_supplied_data_even_with_an_unknown_pack_key
         "manage_controls",
     } <= {action.kind for action in actions}, "Every control family must be planned offline"
     assert len({action.key for action in actions}) == len(actions)
+    lifecycle = [
+        action
+        for action in actions
+        if action.kind == "sandbox_controls"
+        and action.values["operation"]
+        in {
+            "prepare_lifecycle_bindings",
+            "close_field",
+            "reopen_field",
+            "purge_field",
+            "close_module",
+            "reopen_module",
+            "purge_module",
+            "close_department",
+            "reopen_department",
+            "purge_department",
+        }
+    ]
+    assert len(lifecycle) == 10
+    spec = dataset.organization.phases.design
+    assert all(
+        action.actor_key == "admin"
+        and action.values["module_name"] == spec.new_module_name
+        and action.values["field_name"] == spec.text_field_name
+        and action.values["department_name"]
+        == f"{dataset.organization.identity.workspace_name} structure review"
+        and action.values["department_sandbox_id"] not in dataset.department_ids.values()
+        for action in lifecycle
+    )
     audit = [action for action in actions if action.kind == "audit_controls"]
     assert [action.values["operation"] for action in audit] == ["audit_review", "audit_export"]
     modules = {module.key: module for module in dataset.organization.catalog.modules}
@@ -73,9 +104,12 @@ def test_generic_control_planners_contain_no_fixed_pack_module_or_department_key
     forbidden = set(REFERENCE_PACKS)
     forbidden.update(module.key for pack in packs for module in pack.catalog.modules)
     forbidden.update(key for pack in packs for key, _ in pack.catalog.departments)
+    # Required API binding kinds may coincide with catalog keys; only the
+    # actual backend schema defines this wire-vocabulary exception.
+    forbidden.difference_update(get_args(SandboxBindingResponse.model_fields["kind"].annotation))
     operations = Path(__file__).resolve().parents[2] / "operations"
     violations = []
-    for path in sorted(operations.glob("sample_control_*.py")):
+    for path in sorted(operations.glob("sample_*.py")):
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if (

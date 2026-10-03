@@ -54,6 +54,19 @@ DOCUMENT_SCHEMA_VERSION: Final = 4
 OLDER_FORMAT_MESSAGE: Final = "This design uses an older format and cannot be opened."
 
 
+class SandboxBindingResponse(StrictModel):
+    kind: Literal["department", "module", "field", "relationship", "trigger"]
+    sandbox_id: ID
+    parent_sandbox_id: ID | None
+    live_id: UUID
+    is_deleted: bool
+
+
+class SandboxBindingsResponse(StrictModel):
+    document_revision: int = Field(ge=1)
+    items: list[SandboxBindingResponse]
+
+
 class DepartmentDocument(StrictModel):
     id: ID
     name: Name

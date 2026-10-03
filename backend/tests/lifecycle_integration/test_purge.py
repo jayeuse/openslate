@@ -239,6 +239,13 @@ def test_record_purge_removes_only_incident_edges_and_preserves_other_rows(
     assert integration_db.get(type(unrelated_edge), unrelated_edge.id) is not None  # type: ignore[attr-defined]
     assert integration_db.get(type(external_unrelated_edge), external_unrelated_edge.id) is not None  # type: ignore[attr-defined]
 
+    field = lifecycle_graph["field_same"]
+    _close_rows(field)
+    integration_db.commit()
+    purge_lifecycle(integration_db, "field", field.id, None)  # type: ignore[attr-defined]
+    assert lifecycle_graph["field_external"].position == 0  # type: ignore[attr-defined]
+    assert lifecycle_graph["field_y"].position == 0  # type: ignore[attr-defined]
+
 
 def test_record_purge_preflights_record_trigger_history(
     integration_db: Session, lifecycle_graph: dict[str, object]
@@ -388,7 +395,7 @@ def test_field_purge_preflights_cross_module_trigger_references_including_closed
     assert integration_db.get(Field, referenced_field.id) is not None
 
 
-def test_department_purge_preflights_its_direct_sandbox_binding(
+def test_department_purge_removes_its_owned_structural_binding(
     integration_db: Session,
 ) -> None:
     department = Department(department_name=f"Bound department {uuid7()}")
@@ -407,14 +414,10 @@ def test_department_purge_preflights_its_direct_sandbox_binding(
         integration_db, LifecycleTargetType.DEPARTMENT, department.id, "purge", None
     )
 
-    assert [(blocker.entity_type, blocker.entity_id) for blocker in plan.blockers] == [
-        ("sandbox_bindings", binding.id)
-    ]
-    with pytest.raises(LifecyclePreflightError):
-        purge_lifecycle(
-            integration_db, LifecycleTargetType.DEPARTMENT, department.id, None, plan=plan
-        )
-    assert integration_db.get(Department, department.id) is not None
+    assert not plan.blockers
+    purge_lifecycle(integration_db, LifecycleTargetType.DEPARTMENT, department.id, None, plan=plan)
+    assert integration_db.get(SandboxBinding, binding.id) is None
+    assert integration_db.get(Department, department.id) is None
 
 
 def test_purge_plan_drift_aborts_without_deleting_rows(

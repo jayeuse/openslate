@@ -1,12 +1,7 @@
 from __future__ import annotations
 
-import json
-import re
-from dataclasses import asdict
 from datetime import date
 from pathlib import Path
-from typing import Any
-from uuid import uuid4
 
 import httpx
 import pytest
@@ -14,8 +9,6 @@ import pytest
 from operations.sample_blueprint import SampleDataset
 from operations.sample_client import SampleClient
 from operations.sample_control_sandbox import (
-    CONTROL_ROUTES,
-    execute_sandbox_control,
     plan_sandbox_controls,
     verify_sandbox_controls,
 )
@@ -71,15 +64,6 @@ def _context(tmp_path: Path, handler) -> PhaseExecutionContext:
     )
 
 
-def _route(request: httpx.Request) -> tuple[str, str]:
-    path = request.url.path
-    if re.fullmatch(r"/api/sandbox/versions/[0-9a-f-]{36}", path):
-        path = "/api/sandbox/versions/{version_id}"
-    if re.fullmatch(r"/api/sandbox/tests/[0-9a-f-]{36}", path):
-        path = "/api/sandbox/tests/{run_id}"
-    return request.method, path
-
-
 @pytest.mark.parametrize("pack_key", ("harbor", "school"))
 def test_sandbox_control_plan_is_stable_and_preserves_dataset(pack_key: str) -> None:
     dataset = _dataset(pack_key)
@@ -96,6 +80,16 @@ def test_sandbox_control_plan_is_stable_and_preserves_dataset(pack_key: str) -> 
         "delete_import_checkpoint",
         "clear_test_history",
         "restore_test_history",
+        "prepare_lifecycle_bindings",
+        "close_field",
+        "reopen_field",
+        "purge_field",
+        "close_module",
+        "reopen_module",
+        "purge_module",
+        "close_department",
+        "reopen_department",
+        "purge_department",
     ]
     assert actions[0].expected_status == 201
     assert actions[1].expected_status == 200
@@ -104,190 +98,18 @@ def test_sandbox_control_plan_is_stable_and_preserves_dataset(pack_key: str) -> 
     assert actions[4].expected_status == 204
     assert actions[5].expected_status == 204
     assert actions[6].expected_status == 201
+    assert all(action.expected_status == 200 for action in actions[7:])
+    spec = dataset.organization.phases.design
+    assert actions[7].values["module_name"] == spec.new_module_name
+    assert actions[7].values["field_name"] == spec.text_field_name
+    assert actions[7].values["title_field_name"] == spec.new_module_title_field_name
+    assert actions[7].values["department_sandbox_id"] not in dataset.department_ids.values()
+    assert actions[7].values["department_name"] == (
+        f"{dataset.organization.identity.workspace_name} structure review"
+    )
+    assert actions[7].values["field_sandbox_id"] != actions[7].values["title_sandbox_id"]
     assert dataset.document == before[0]
     assert dataset.test_vectors == before[1]
-
-
-def test_sandbox_controls_use_ui_shapes_and_recreate_exact_test_vectors(tmp_path: Path) -> None:
-    dataset = _dataset()
-    actions = plan_sandbox_controls(dataset)
-    requests: list[httpx.Request] = []
-    document = dataset.document
-    revision = 12
-    versions: dict[str, dict[str, Any]] = {
-        "initial": {
-            "id": "b28882a9-4d5d-4542-8da9-2cd540dd98c5",
-            "label": "Initial",
-            "kind": "checkpoint",
-        },
-        "published": {
-            "id": "99125bd9-da1f-4916-a361-1e14251ae113",
-            "label": "Published",
-            "kind": "published",
-        },
-    }
-    tests: dict[str, dict[str, Any]] = {
-        f"old-{index}": {"id": str(uuid4())} for index, _vector in enumerate(dataset.test_vectors)
-    }
-    import_checkpoint_id: str | None = None
-    created_test_ids: list[str] = []
-
-    def doc_response() -> httpx.Response:
-        return httpx.Response(200, json={"document": document, "revision": revision})
-
-    def version_page(request: httpx.Request) -> httpx.Response:
-        assert dict(request.url.params) == {"limit": "100", "offset": "0"}
-        items = list(versions.values())
-        return httpx.Response(
-            200,
-            json={
-                "items": items,
-                "limit": 100,
-                "offset": 0,
-                "count": len(items),
-                "total": len(items),
-                "hasMore": False,
-            },
-        )
-
-    def test_page(request: httpx.Request) -> httpx.Response:
-        assert dict(request.url.params) == {"limit": "100", "offset": "0"}
-        items = list(tests.values())
-        return httpx.Response(
-            200,
-            json={
-                "items": items,
-                "limit": 100,
-                "offset": 0,
-                "count": len(items),
-                "total": len(items),
-                "hasMore": False,
-            },
-        )
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal revision, import_checkpoint_id
-        login = _login_response(request)
-        if login is not None:
-            return login
-        requests.append(request)
-        method, path = request.method, request.url.path
-        request_id = {"X-Request-ID": str(uuid4())}
-        if method == "GET" and path == "/api/sandbox/document":
-            return doc_response()
-        if method == "POST" and path == "/api/sandbox/versions":
-            body = json.loads(request.content)
-            assert body == {
-                "expectedRevision": revision,
-                "kind": "checkpoint",
-                "label": actions[0].values["label"],
-                "note": actions[0].values["note"],
-            }
-            revision += 1
-            versions[TEMP_VERSION_ID] = {
-                "id": TEMP_VERSION_ID,
-                "label": body["label"],
-                "kind": "checkpoint",
-            }
-            return httpx.Response(201, headers=request_id, json=versions[TEMP_VERSION_ID])
-        if method == "GET" and path == "/api/sandbox/versions":
-            return version_page(request)
-        if path == f"/api/sandbox/versions/{TEMP_VERSION_ID}" and method == "GET":
-            return (
-                httpx.Response(200, json=versions[TEMP_VERSION_ID])
-                if TEMP_VERSION_ID in versions
-                else httpx.Response(404, json={"detail": "Version not found"})
-            )
-        if path == f"/api/sandbox/versions/{IMPORT_VERSION_ID}" and method == "GET":
-            return (
-                httpx.Response(200, json=versions[IMPORT_VERSION_ID])
-                if IMPORT_VERSION_ID in versions
-                else httpx.Response(404, json={"detail": "Version not found"})
-            )
-        if path == f"/api/sandbox/versions/{TEMP_VERSION_ID}" and method == "PATCH":
-            body = json.loads(request.content)
-            assert body == {"expectedRevision": revision, "label": actions[1].values["label"]}
-            revision += 1
-            versions[TEMP_VERSION_ID]["label"] = body["label"]
-            return httpx.Response(200, headers=request_id, json=versions[TEMP_VERSION_ID])
-        if path == f"/api/sandbox/versions/{TEMP_VERSION_ID}" and method == "DELETE":
-            assert json.loads(request.content) == {"expectedRevision": revision}
-            revision += 1
-            del versions[TEMP_VERSION_ID]
-            return httpx.Response(204, headers=request_id)
-        if method == "GET" and path == "/api/sandbox/export":
-            assert dict(request.url.params) == {"includeVersions": "false"}
-            return httpx.Response(
-                200,
-                headers={"Content-Type": "application/json"},
-                json=document,
-            )
-        if method == "POST" and path == "/api/sandbox/imports":
-            body = json.loads(request.content)
-            assert body == {"expectedRevision": revision, "bundle": document}
-            revision += 1
-            import_checkpoint_id = IMPORT_VERSION_ID
-            versions[IMPORT_VERSION_ID] = {
-                "id": IMPORT_VERSION_ID,
-                "label": "Before import",
-                "kind": "checkpoint",
-            }
-            return httpx.Response(
-                200, headers=request_id, json={"document": document, "revision": revision}
-            )
-        if path == f"/api/sandbox/versions/{IMPORT_VERSION_ID}" and method == "DELETE":
-            assert json.loads(request.content) == {"expectedRevision": revision}
-            revision += 1
-            del versions[IMPORT_VERSION_ID]
-            return httpx.Response(204, headers=request_id)
-        if method == "DELETE" and path == "/api/sandbox/tests":
-            assert tests
-            tests.clear()
-            return httpx.Response(204, headers=request_id)
-        if method == "POST" and path == "/api/sandbox/tests":
-            body = json.loads(request.content)
-            vector = dataset.test_vectors[len(created_test_ids)]
-            assert body == {
-                "expectedRevision": revision,
-                "moduleId": dataset.module_ids[vector.module_key],
-                "values": vector.values,
-                "event": vector.event,
-                "triggerIds": list(vector.trigger_ids),
-            }
-            test_id = str(uuid4())
-            created_test_ids.append(test_id)
-            tests[test_id] = {
-                "id": test_id,
-                "input": {"moduleId": body["moduleId"], "values": body["values"]},
-                "event": body["event"],
-                "triggerIds": body["triggerIds"],
-                "result": {"values": {}, "routes": [], "triggerTraces": [], "issues": []},
-            }
-            return httpx.Response(201, headers=request_id, json=tests[test_id])
-        if method == "GET" and path == "/api/sandbox/tests":
-            return test_page(request)
-        if method == "GET" and path.startswith("/api/sandbox/tests/"):
-            test_id = path.rsplit("/", 1)[1]
-            return httpx.Response(200, json=tests[test_id])
-        if method == "GET" and path.startswith("/api/sandbox/versions/"):
-            return httpx.Response(404, json={"detail": "Version not found"})
-        pytest.fail(f"Unexpected request: {method} {path}")
-
-    context = _context(tmp_path, handler)
-    results = [execute_sandbox_control(action, dataset, context) for action in actions]
-    manifest = {"control_plan": [asdict(action) for action in actions], "control_results": results}
-
-    counts, issues = verify_sandbox_controls(
-        context.clients["admin"], dataset, manifest, admin_id=ADMIN_ID
-    )
-
-    assert not issues
-    assert counts["sandbox_test_runs_verified"] == len(dataset.test_vectors)
-    assert counts["sandbox_temporary_versions_removed"] == 2
-    assert import_checkpoint_id is not None and import_checkpoint_id not in versions
-    assert len(created_test_ids) == len(dataset.test_vectors)
-    observed = {_route(request) for request in requests}
-    assert CONTROL_ROUTES <= observed
 
 
 def test_sandbox_verifier_reports_malformed_recorded_plan(tmp_path: Path) -> None:

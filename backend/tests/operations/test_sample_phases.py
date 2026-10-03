@@ -136,6 +136,7 @@ def test_phase_projection_and_version_documents_match_planned_end_state(pack_key
     assert set(documents) == {
         "initial_checkpoint",
         "published",
+        "control_lifecycle_published",
         "phase_design_edited",
         "phase_design_open",
         "phase_design_closed",

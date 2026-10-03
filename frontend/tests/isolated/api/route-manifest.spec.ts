@@ -290,6 +290,27 @@ export function readRecords(path: string) {
   expect(unrelatedLibrary.diagnostics.join("\n")).toContain(
     "unowned request call",
   );
+  const bindingRequest = `export function getSandboxBindings() { return apiFetch("/sandbox/bindings", schema); }`;
+  const lifecycleAdapter = discoverRoutesInSources([
+    {
+      file: "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+      source: bindingRequest,
+    },
+  ]);
+  expect(lifecycleAdapter.diagnostics).toEqual([]);
+  expect(
+    lifecycleAdapter.routes.map((route) => [route.method, route.path]),
+  ).toEqual([["GET", "/api/sandbox/bindings"]]);
+  const unrelatedStateAdapter = discoverRoutesInSources([
+    {
+      file: "frontend/src/components/systems/sandbox/state/unrelated-api.ts",
+      source: bindingRequest,
+    },
+  ]);
+  expect(unrelatedStateAdapter.routes).toEqual([]);
+  expect(unrelatedStateAdapter.diagnostics.join("\n")).toContain(
+    "unowned request call",
+  );
 });
 
 test("manifest entries are valid and cover every frontend API route owner", () => {

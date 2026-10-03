@@ -256,5 +256,37 @@ def test_final_design_readback_requires_reopened_module_and_preserved_history(tm
         )
     assert bool(issues) is (changed != "none"), issues
     if changed == "none":
-        assert observed["sandbox_versions_verified"] == 8
+        assert observed["sandbox_versions_verified"] == 9
         assert observed["modules_verified"] == 25
+
+
+def test_retained_lifecycle_snapshot_contains_disposable_structure_not_final_phase_ids():
+    _, _, dataset, actions = _phase_configuration_fixture()
+    documents = phase_version_documents(dataset, actions)
+    assert "control_lifecycle_published" in documents
+    initial_ids = {module["id"] for module in dataset.document["design"]["modules"]}
+    temporary = [
+        module
+        for module in documents["control_lifecycle_published"]["design"]["modules"]
+        if module["id"] not in initial_ids
+    ]
+    assert len(temporary) == 1
+    spec = dataset.organization.phases.design
+    assert temporary[0]["name"] == spec.new_module_name
+    assert {field["name"] for field in temporary[0]["fields"]} == {
+        spec.new_module_title_field_name,
+        spec.text_field_name,
+    }
+    final_ids = {module["id"] for module in documents["phase_design_restored"]["design"]["modules"]}
+    assert temporary[0]["id"] not in final_ids
+    initial_departments = {dept["id"] for dept in dataset.document["design"]["departments"]}
+    departments = [
+        dept
+        for dept in documents["control_lifecycle_published"]["design"]["departments"]
+        if dept["id"] not in initial_departments
+    ]
+    assert len(departments) == 1
+    assert departments[0]["name"] == (
+        f"{dataset.organization.identity.workspace_name} structure review"
+    )
+    assert temporary[0]["departmentId"] == departments[0]["id"]

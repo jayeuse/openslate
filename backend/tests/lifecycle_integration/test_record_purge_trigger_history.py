@@ -1,4 +1,4 @@
-"""Record-only ownership of completed trigger history through guarded PostgreSQL."""
+"""Record ownership of completed trigger history through guarded PostgreSQL."""
 
 import os
 from collections.abc import Generator
@@ -423,3 +423,44 @@ def test_worker_claim_lock_aborts_record_purge_without_removing_history(
                 )
         runtime.dispose()
         owner.dispose()
+
+
+@pytest.mark.parametrize("kind", ["department", "module"])
+@pytest.mark.parametrize("foreign_child", [False, True], ids=["owned-terminal", "foreign-child"])
+def test_structural_purge_history_ownership_follows_records_not_dependencies(
+    integration_db: Session, kind: str, foreign_child: bool
+) -> None:
+    db = integration_db
+    actor, external_module, _, definition = publish_trigger(db)
+    department = Department(department_name=f"History scope {uuid7()}", is_deleted=True)
+    db.add(department)
+    db.flush()
+    module = Module(department_id=department.id, module_name="History owner", is_deleted=True)
+    db.add(module)
+    db.flush()
+    owned = Record(module_id=module.id, data={}, is_deleted=True)
+    external = Record(module_id=external_module.id, data={})
+    db.add_all([owned, external])
+    db.flush()
+    root = _event(owned)
+    db.add(root)
+    db.flush()
+    run = RecordTriggerRun(event_id=root.id, trigger_id=definition.id, state="succeeded")
+    db.add(run)
+    child = _event(external, root=root) if foreign_child else _event(owned, root=root)
+    db.add(child)
+    db.commit()
+    target = department if kind == "department" else module
+    plan = plan_lifecycle(db, kind, target.id, "purge", actor.id)
+    if foreign_child:
+        assert child.id in {blocker.entity_id for blocker in plan.blockers}
+        assert db.get(Record, owned.id) is not None
+        assert db.get(RecordTriggerEvent, root.id) is not None
+        return
+    assert not plan.blockers
+    purge_lifecycle(db, kind, target.id, actor.id, plan=plan)
+    assert db.get(Record, owned.id) is None
+    assert all(db.get(RecordTriggerEvent, event_id) is None for event_id in (root.id, child.id))
+    assert db.get(RecordTriggerRun, run.id) is None
+    assert db.get(Record, external.id) is not None
+    assert db.get(RecordTrigger, definition.id) is not None

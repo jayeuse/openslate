@@ -12,10 +12,12 @@ from sqlalchemy.orm import Session
 from app.common.dependencies import require_admin
 from app.core.database import get_db
 from app.systems.access.users.models import User
+from app.systems.sandbox.designs.bindings import read_bindings
 from app.systems.sandbox.designs.schemas import (
     DocumentReplaceRequest,
     DocumentResponse,
     ImportRequest,
+    SandboxBindingsResponse,
     VersionCreateRequest,
     VersionDetailResponse,
     VersionListResponse,
@@ -48,6 +50,14 @@ Database = Annotated[Session, Depends(get_db)]
 @router.get("/document", response_model=DocumentResponse, operation_id="get_sandbox_document")
 def get_document(_actor: ReadActor, db: Database) -> DocumentResponse:
     return _run(db, lambda: read_document(db))
+
+
+@router.get(
+    "/bindings", response_model=SandboxBindingsResponse, operation_id="get_sandbox_bindings"
+)
+def get_bindings(_actor: ReadActor, db: Database, response: Response) -> SandboxBindingsResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return _run(db, lambda: read_bindings(db))
 
 
 @router.put("/document", response_model=DocumentResponse, operation_id="replace_sandbox_document")

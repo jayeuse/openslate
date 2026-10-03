@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Redo2, Undo2 } from "lucide-react";
-import { ApiError } from "@/lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiContractError, ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -77,6 +78,16 @@ import {
 import { TestWorkspace } from "./components/test-workspace";
 import { ReviewPublishDialog } from "./components/review-publish-dialog";
 import { SandboxHeaderActions } from "./components/sandbox-header-actions";
+import { SandboxLifecycleDialog } from "./components/lifecycle-dialog";
+import { sandboxBindingsOptions, sandboxKeys } from "./state/sandbox-queries";
+import {
+  confirmSandboxLifecycle,
+  getSandboxBindings,
+  type SandboxLifecycleBinding,
+  type SandboxLifecycleOperation,
+  type SandboxLifecycleRequest,
+} from "./state/lifecycle-api";
+import type { LifecyclePurgeInput } from "@/lib/lifecycle";
 
 const SANDBOX_SECTIONS = {
   build: "Build",
@@ -243,6 +254,16 @@ export default function SandboxPage() {
   const search = useSearchParams();
   const router = useRouter();
   const [session, setSession] = useState<SandboxDocumentSession | null>(null);
+  const queryClient = useQueryClient();
+  const bindingsQuery = useQuery(
+    sandboxBindingsOptions(session?.revision ?? 0),
+  );
+  const [lifecycleRequest, setLifecycleRequest] =
+    useState<SandboxLifecycleRequest | null>(null);
+  const [lifecycleRecovery, setLifecycleRecovery] = useState(false);
+  const [designerDraftDirty, setDesignerDraftDirty] = useState(false);
+  const lifecycleLock = useRef(false);
+  const commandPending = useRef(false);
   const [versions, setVersions] = useState<SandboxVersion[]>([]);
   const [testRuns, setTestRuns] = useState<SandboxTestRun[]>([]);
   const [triggerRuns, setTriggerRuns] = useState<SandboxTriggerRun[]>([]);
@@ -266,6 +287,20 @@ export default function SandboxPage() {
   const [publicationPending, setPublicationPending] = useState(false);
   const [testPending, setTestPending] = useState(false);
   const [sandboxGeneration, setSandboxGeneration] = useState(0);
+  const commandBusy = pending || lifecycleRequest !== null || lifecycleRecovery;
+  const bindingMismatch = Boolean(
+    session &&
+    bindingsQuery.data &&
+    bindingsQuery.data.document_revision !== session.revision,
+  );
+  const bindingsReady = Boolean(
+    session &&
+    bindingsQuery.data &&
+    !bindingsQuery.error &&
+    !bindingsQuery.isFetching &&
+    !bindingMismatch &&
+    !lifecycleRecovery,
+  );
   const skipNextLayoutInitialization = useRef(false);
   const section = sectionFromSearch(search.get("section"), search.get("rule"));
   const design = session?.history.present ?? initialDesign;
@@ -334,6 +369,7 @@ export default function SandboxPage() {
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError("");
+    void queryClient.invalidateQueries({ queryKey: sandboxKeys.bindings });
     try {
       const [document, versionItems, testPage] = await Promise.all([
         loadSandboxDocument(),
@@ -348,7 +384,7 @@ export default function SandboxPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [queryClient]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -365,12 +401,13 @@ export default function SandboxPage() {
         : "Build";
       if (
         !bypassPending &&
-        (pending ||
+        (commandBusy ||
           publicationPending ||
           testPending ||
           conflict !== null ||
           triggerDraft.dirty ||
-          triggerDraft.pending)
+          triggerDraft.pending ||
+          designerDraftDirty)
       )
         return;
       const href = sectionHref(next, new URLSearchParams(search.toString()));
@@ -381,7 +418,8 @@ export default function SandboxPage() {
       triggerDraft.dirty,
       triggerDraft.pending,
       conflict,
-      pending,
+      commandBusy,
+      designerDraftDirty,
       publicationPending,
       router,
       search,
@@ -391,17 +429,19 @@ export default function SandboxPage() {
   useWorkspaceNavigationGuard(
     useCallback(
       () =>
-        !pending &&
+        !commandBusy &&
         !publicationPending &&
         !testPending &&
         !conflict &&
         !triggerDraft.dirty &&
-        !triggerDraft.pending,
+        !triggerDraft.pending &&
+        !designerDraftDirty,
       [
         triggerDraft.dirty,
         triggerDraft.pending,
         conflict,
-        pending,
+        commandBusy,
+        designerDraftDirty,
         publicationPending,
         testPending,
       ],
@@ -409,12 +449,13 @@ export default function SandboxPage() {
   );
   useEffect(() => {
     if (
-      !pending &&
+      !commandBusy &&
       !publicationPending &&
       !testPending &&
       !conflict &&
       !triggerDraft.dirty &&
-      !triggerDraft.pending
+      !triggerDraft.pending &&
+      !designerDraftDirty
     )
       return;
     const guardBrowserExit = (event: BeforeUnloadEvent) => {
@@ -427,7 +468,8 @@ export default function SandboxPage() {
     triggerDraft.dirty,
     triggerDraft.pending,
     conflict,
-    pending,
+    commandBusy,
+    designerDraftDirty,
     publicationPending,
     testPending,
   ]);
@@ -437,6 +479,12 @@ export default function SandboxPage() {
       next: SandboxDocumentSession,
       document = proposedSandboxDocument(next),
     ): Promise<SandboxCommandResult<Design>> => {
+      if (commandPending.current || lifecycleLock.current)
+        return {
+          ok: false,
+          error: "Wait for the current Sandbox action to finish.",
+        };
+      commandPending.current = true;
       setSession(next);
       setPending(true);
       try {
@@ -468,6 +516,7 @@ export default function SandboxPage() {
         }
         return commandFailure(error);
       } finally {
+        commandPending.current = false;
         setPending(false);
       }
     },
@@ -485,7 +534,12 @@ export default function SandboxPage() {
   const change = useCallback(
     async (update: DesignUpdate): Promise<SandboxCommandResult<Design>> => {
       if (!session) return sandboxStillLoading();
-      if (pending)
+      if (
+        commandBusy ||
+        commandPending.current ||
+        lifecycleLock.current ||
+        conflict
+      )
         return {
           ok: false,
           error: "A Sandbox change is already being saved.",
@@ -499,25 +553,126 @@ export default function SandboxPage() {
         return { ok: true, value: session.history.present };
       return persist(updateSandboxDocumentSession(session, nextDesign));
     },
-    [pending, persist, session],
+    [commandBusy, conflict, persist, session],
   );
   const undo = useCallback(async () => {
-    if (!session || pending) return;
+    if (!session || commandBusy || conflict) return;
     return persist({
       ...session,
       history: undoSandboxCommand(session.history),
     });
-  }, [pending, persist, session]);
+  }, [commandBusy, conflict, persist, session]);
   const redo = useCallback(async () => {
-    if (!session || pending) return;
+    if (!session || commandBusy || conflict) return;
     return persist({
       ...session,
       history: redoSandboxCommand(session.history),
     });
-  }, [pending, persist, session]);
+  }, [commandBusy, conflict, persist, session]);
+
+  async function reloadLiveState() {
+    if (
+      pending ||
+      commandPending.current ||
+      lifecycleRequest ||
+      conflict ||
+      designerDraftDirty ||
+      triggerDraft.dirty ||
+      triggerDraft.pending
+    )
+      return;
+    commandPending.current = true;
+    setPending(true);
+    try {
+      await queryClient.cancelQueries({ queryKey: sandboxKeys.bindings });
+      const document = await loadSandboxDocument();
+      const bindings = await getSandboxBindings();
+      if (bindings.document_revision !== document.revision)
+        throw new ApiContractError();
+      queryClient.setQueryData(
+        sandboxKeys.bindingsRevision(document.revision),
+        bindings,
+      );
+      setSession(openSandboxDocumentSession(document));
+      setLifecycleRecovery(false);
+      lifecycleLock.current = false;
+    } catch {
+      setMessage(
+        "Live state could not be refreshed. Retry before changing this item.",
+      );
+    } finally {
+      commandPending.current = false;
+      setPending(false);
+    }
+  }
+
+  async function requestLifecycle(
+    binding: SandboxLifecycleBinding,
+    operation: SandboxLifecycleOperation,
+  ): Promise<SandboxCommandResult<Design>> {
+    if (
+      !session ||
+      !bindingsReady ||
+      lifecycleLock.current ||
+      commandPending.current ||
+      commandBusy ||
+      publicationPending ||
+      testPending ||
+      conflict ||
+      designerDraftDirty ||
+      triggerDraft.dirty ||
+      triggerDraft.pending
+    )
+      return {
+        ok: false,
+        error:
+          "Save or cancel your edits and wait for the current action before changing live state.",
+      };
+    lifecycleLock.current = true;
+    setLifecycleRequest({ binding, operation });
+    return { ok: true, value: session.history.present };
+  }
+  function cancelLifecycle() {
+    if (commandPending.current) return;
+    setLifecycleRequest(null);
+    lifecycleLock.current = false;
+  }
+  async function confirmLifecycle(input?: LifecyclePurgeInput) {
+    if (!lifecycleRequest || commandPending.current) return;
+    commandPending.current = true;
+    try {
+      await confirmSandboxLifecycle(lifecycleRequest, input);
+      if (lifecycleRequest.operation === "purge")
+        skipNextLayoutInitialization.current = true;
+      try {
+        await queryClient.cancelQueries({ queryKey: sandboxKeys.bindings });
+        const document = await loadSandboxDocument();
+        const bindings = await getSandboxBindings();
+        if (bindings.document_revision !== document.revision)
+          throw new ApiContractError();
+        queryClient.setQueryData(
+          sandboxKeys.bindingsRevision(document.revision),
+          bindings,
+        );
+        setSession(openSandboxDocumentSession(document));
+        setMessage(
+          "Live change confirmed. The current design has been refreshed.",
+        );
+        lifecycleLock.current = false;
+      } catch {
+        setLifecycleRecovery(true);
+        setMessage(
+          "The live change was confirmed. Reload live state before making another change.",
+        );
+      }
+      setLifecycleRequest(null);
+    } finally {
+      commandPending.current = false;
+    }
+  }
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
-      if (section !== "Build" || pending) return;
+      if (section !== "Build" || commandBusy || conflict) return;
       if (
         (!event.metaKey && !event.ctrlKey) ||
         !["z", "y"].includes(event.key.toLowerCase())
@@ -539,7 +694,7 @@ export default function SandboxPage() {
     }
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, [pending, redo, section, undo]);
+  }, [commandBusy, conflict, redo, section, undo]);
 
   const initializeLayout = useCallback(
     (layout: SandboxCanvasLayout) => {
@@ -687,7 +842,7 @@ export default function SandboxPage() {
 
   function selectIssue(issue: SandboxValidationIssue) {
     if (
-      pending ||
+      commandBusy ||
       publicationPending ||
       testPending ||
       conflict !== null ||
@@ -757,7 +912,7 @@ export default function SandboxPage() {
   return (
     <section
       data-sandbox-page
-      aria-busy={pending || publicationPending || testPending || undefined}
+      aria-busy={commandBusy || publicationPending || testPending || undefined}
       className={`space-y-5 ${section === "Build" ? "xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[640px] xl:flex-col xl:gap-5 xl:space-y-0" : ""}`}
     >
       {conflict ? (
@@ -784,6 +939,41 @@ export default function SandboxPage() {
           </Button>
         </Alert>
       ) : null}
+      {session &&
+      (bindingsQuery.error || bindingMismatch || lifecycleRecovery) ? (
+        <Alert
+          role="alert"
+          variant="warning"
+          className="flex flex-wrap items-center gap-2"
+        >
+          <span>
+            {lifecycleRecovery
+              ? "Live state needs to be reloaded after the confirmed change."
+              : bindingMismatch
+                ? "Live state and the shared draft changed. Reload before changing this item."
+                : "Live state could not be loaded. Retry before changing this item."}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={
+              pending ||
+              Boolean(conflict) ||
+              designerDraftDirty ||
+              triggerDraft.dirty ||
+              triggerDraft.pending
+            }
+            onClick={() => {
+              if (bindingMismatch || lifecycleRecovery) void reloadLiveState();
+              else void bindingsQuery.refetch();
+            }}
+          >
+            {bindingMismatch || lifecycleRecovery
+              ? "Reload live state"
+              : "Retry live state"}
+          </Button>
+        </Alert>
+      ) : null}
       <header className="xl:flex xl:flex-wrap xl:items-end xl:justify-between xl:gap-4">
         <div className="flex flex-col gap-3 xl:contents">
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
@@ -804,7 +994,13 @@ export default function SandboxPage() {
                   variant="outline"
                   aria-label="Undo"
                   className="max-xl:size-11 max-xl:p-0"
-                  disabled={loading || !session?.history.past.length || pending}
+                  disabled={
+                    loading ||
+                    !session?.history.past.length ||
+                    commandBusy ||
+                    Boolean(conflict) ||
+                    designerDraftDirty
+                  }
                   onClick={() => void undo()}
                 >
                   <Undo2 data-icon="inline-start" />
@@ -815,7 +1011,11 @@ export default function SandboxPage() {
                   aria-label="Redo"
                   className="max-xl:size-11 max-xl:p-0"
                   disabled={
-                    loading || !session?.history.future.length || pending
+                    loading ||
+                    !session?.history.future.length ||
+                    commandBusy ||
+                    Boolean(conflict) ||
+                    designerDraftDirty
                   }
                   onClick={() => void redo()}
                 >
@@ -827,11 +1027,12 @@ export default function SandboxPage() {
             <Button
               disabled={
                 loading ||
-                pending ||
+                commandBusy ||
                 testPending ||
                 !status.publishable ||
                 triggerDraft.dirty ||
-                triggerDraft.pending
+                triggerDraft.pending ||
+                designerDraftDirty
               }
               onClick={() => setReviewOpen(true)}
             >
@@ -840,7 +1041,10 @@ export default function SandboxPage() {
             <SandboxHeaderActions
               pending={
                 loading ||
-                pending ||
+                commandBusy ||
+                publicationPending ||
+                Boolean(conflict) ||
+                designerDraftDirty ||
                 testPending ||
                 triggerDraft.dirty ||
                 triggerDraft.pending
@@ -913,7 +1117,15 @@ export default function SandboxPage() {
             createRequest={null}
             onCreateRequestHandled={() => undefined}
             onStartFromTemplate={() => setTemplatesOpen(true)}
-            pending={pending}
+            pending={
+              commandBusy ||
+              publicationPending ||
+              testPending ||
+              Boolean(conflict)
+            }
+            bindings={bindingsReady ? bindingsQuery.data!.items : null}
+            onLifecycle={requestLifecycle}
+            onDraftStateChange={setDesignerDraftDirty}
           />
         ) : null}
         {section === "Triggers" && session ? (
@@ -1027,7 +1239,7 @@ export default function SandboxPage() {
               }
             }}
             notify={setMessage}
-            pending={pending}
+            pending={commandBusy}
           />
         ) : null}
         <footer className="border-border text-muted-foreground flex flex-wrap justify-between gap-2 border-t pt-3 text-xs">
@@ -1045,7 +1257,7 @@ export default function SandboxPage() {
             expectedRevision={session.revision}
             design={session.document.design}
             disabled={
-              pending ||
+              commandBusy ||
               Boolean(conflict) ||
               triggerDraft.dirty ||
               triggerDraft.pending
@@ -1081,6 +1293,11 @@ export default function SandboxPage() {
             }}
           />
         ) : null}
+        <SandboxLifecycleDialog
+          request={lifecycleRequest}
+          onCancel={cancelLifecycle}
+          onConfirm={confirmLifecycle}
+        />
       </LoadingRegion>
     </section>
   );

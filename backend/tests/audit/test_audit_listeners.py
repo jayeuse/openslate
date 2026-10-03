@@ -117,10 +117,12 @@ def test_record_create_snapshots_redact_current_dynamic_fields_in_one_query() ->
     logs = [entry for entry in session.added if isinstance(entry, AuditLog)]
     assert len(logs) == 2
     assert logs[0].after == {
+        "lifecycle_close_operation_id": REDACTED,
         "module_id": str(module_id),
         "data": {redacted_key: REDACTED, "clear": "visible"},
     }
     assert logs[1].after == {
+        "lifecycle_close_operation_id": REDACTED,
         "module_id": str(module_id),
         "data": {redacted_key: REDACTED},
     }

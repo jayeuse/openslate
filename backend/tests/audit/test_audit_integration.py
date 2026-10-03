@@ -81,7 +81,10 @@ def test_crud_changes_are_audited_with_minimal_snapshots(integration_db: Session
         AuditAction.UPDATE,
         AuditAction.DELETE,
     ]
-    assert rows[0].after == {"department_name": "Integration CRUD"}
+    assert rows[0].after == {
+        "department_name": "Integration CRUD",
+        "lifecycle_close_operation_id": REDACTED,
+    }
     assert rows[1].before == {"department_name": "Integration CRUD"}
     assert rows[1].after == {"department_name": "Integration CRUD Updated"}
     assert rows[2].before["is_deleted"] is False

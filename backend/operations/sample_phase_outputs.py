@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from operations.sample_packs.phase_types import DesignPhaseSpec, PhaseAction
@@ -180,9 +180,12 @@ def phase_version_documents(
     )
     opened = _normalized(_document_version(dataset, spec, plan_values=values))
     closed = _normalized(_document_version(dataset, spec, plan_values=values, closed=True))
+    from operations.sample_control_sandbox import VERSION_KEY, fixture_document
+
     return {
         "initial_checkpoint": copy.deepcopy(dataset.document),
         "published": copy.deepcopy(dataset.document),
+        VERSION_KEY: fixture_document(dataset),
         _required_string(edit, "edit_publish_version_key"): edited,
         _required_string(edit, "open_version_key"): opened,
         _required_string(close, "version_key"): closed,
@@ -190,3 +193,47 @@ def phase_version_documents(
         _required_string(restore, "checkpoint_version_key"): copy.deepcopy(opened),
         _required_string(restore, "version_key"): copy.deepcopy(opened),
     }
+
+
+def expected_lifecycle_document(
+    dataset: SampleDataset, operation: str, *, after: bool = False
+) -> dict[str, Any]:
+    from operations.sample_control_sandbox import OPERATIONS, fixture_document, fixture_values
+    from operations.sample_phase_design_common import _canonical_document
+
+    if operation == OPERATIONS[0]:
+        return (
+            fixture_document(dataset)
+            if after
+            else _canonical_document(dataset.document, step=operation)
+        )
+    document = fixture_document(dataset)
+    values = fixture_values(dataset)
+    design = document["design"]
+    module = next(row for row in design["modules"] if row["id"] == values["module_sandbox_id"])
+    department = next(
+        row for row in design["departments"] if row["id"] == values["department_sandbox_id"]
+    )
+    verb, kind = operation.split("_")
+    if kind != "field":
+        module["fields"] = [
+            row for row in module["fields"] if row["id"] != values["field_sandbox_id"]
+        ]
+    if kind == "department":
+        design["modules"].remove(module)
+        design["layout"].pop(module["id"])
+    target = (
+        department
+        if kind == "department"
+        else module
+        if kind == "module"
+        else next(row for row in module["fields"] if row["id"] == values["field_sandbox_id"])
+    )
+    target["closed"] = (verb == "close" and after) or (verb == "reopen" and not after)
+    if verb == "purge" and after:
+        if kind == "field":
+            module["fields"].remove(target)
+        else:
+            design[kind + "s"].remove(target)
+            design["layout"].pop(target["id"])
+    return document

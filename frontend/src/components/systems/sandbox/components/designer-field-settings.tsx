@@ -351,6 +351,11 @@ export function FieldSettings({
   titleFieldId,
   autoFocus = false,
   pending = false,
+  lifecycleClosed,
+  lifecycleDisabled = false,
+  onPurge,
+  draftId,
+  onDraftStateChange,
 }: {
   field: Field;
   index: number;
@@ -361,9 +366,23 @@ export function FieldSettings({
   titleFieldId: string | null;
   autoFocus?: boolean;
   pending?: boolean;
+  lifecycleClosed?: boolean;
+  lifecycleDisabled?: boolean;
+  onPurge?: () => Promise<SandboxCommandResult<unknown>>;
+  draftId: string;
+  onDraftStateChange: (id: string, dirty: boolean) => void;
 }) {
   const [draft, setDraft] = useState(() => draftForField(field));
-  const isRecordTitle = titleFieldId === field.id && !field.closed;
+  const closed = lifecycleClosed ?? field.closed;
+  const isRecordTitle = titleFieldId === field.id && !closed;
+  const dirty = JSON.stringify(draft) !== JSON.stringify(draftForField(field));
+  useEffect(() => {
+    onDraftStateChange(draftId, dirty);
+  }, [draftId, dirty, onDraftStateChange]);
+  useEffect(
+    () => () => onDraftStateChange(draftId, false),
+    [draftId, onDraftStateChange],
+  );
   const selectOptions = selectOptionsForDraft(field, draft);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -660,16 +679,34 @@ export function FieldSettings({
             <Button
               variant="outline"
               size="sm"
-              disabled={pending || isRecordTitle}
+              disabled={pending || lifecycleDisabled || isRecordTitle}
               onClick={async () => {
                 const result = await onLifecycle();
                 if (!result.ok) setError(result.error);
               }}
             >
-              {field.closed ? "Reopen" : "Close"} field
+              {closed ? "Reopen" : "Close"} field
             </Button>
+            {onPurge ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pending || lifecycleDisabled}
+                onClick={async () => {
+                  const result = await onPurge();
+                  if (!result.ok) setError(result.error);
+                }}
+              >
+                Permanently delete field
+              </Button>
+            ) : null}
           </ButtonGroup>
         </ButtonGroup>
+        {dirty && lifecycleDisabled ? (
+          <p className="text-muted-foreground text-xs">
+            Save or cancel your edits before changing live state.
+          </p>
+        ) : null}
       </fieldset>
     </FieldGroup>
   );

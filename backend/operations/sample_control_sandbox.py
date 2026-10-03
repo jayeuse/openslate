@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 from operations.sample_blueprint import SampleDataset
+from operations.sample_catalog import _doc_id
 from operations.sample_client import SampleClient
 from operations.sample_packs.phase_types import PhaseAction, PhaseActionKind, PhaseJsonValue
 from operations.sample_phase_actions import (
@@ -14,10 +16,35 @@ from operations.sample_phase_actions import (
     _mapped_id,
     _request_object,
 )
+from operations.sample_phase_design_common import _canonical_document
 
 CONTROL_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
         ("GET", "/api/sandbox/document"),
+        ("GET", "/api/sandbox/bindings"),
+        ("GET", "/api/departments/{department_id}"),
+        ("POST", "/api/departments/{department_id}/close/preview"),
+        ("POST", "/api/departments/{department_id}/close"),
+        ("POST", "/api/departments/{department_id}/reopen"),
+        ("POST", "/api/departments/{department_id}/purge/preview"),
+        ("POST", "/api/departments/{department_id}/purge"),
+        ("GET", "/api/modules/{module_id}"),
+        ("POST", "/api/modules/{module_id}/close/preview"),
+        ("POST", "/api/modules/{module_id}/close"),
+        ("POST", "/api/modules/{module_id}/reopen"),
+        ("POST", "/api/modules/{module_id}/purge/preview"),
+        ("POST", "/api/modules/{module_id}/purge"),
+        ("GET", "/api/fields/{field_id}"),
+        ("POST", "/api/fields/{field_id}/close/preview"),
+        ("POST", "/api/fields/{field_id}/close"),
+        ("POST", "/api/fields/{field_id}/reopen"),
+        ("POST", "/api/fields/{field_id}/purge/preview"),
+        ("POST", "/api/fields/{field_id}/purge"),
+        ("GET", "/api/boards"),
+        ("GET", "/api/boards/{board_id}"),
+        ("PUT", "/api/sandbox/document"),
+        ("POST", "/api/sandbox/publication-previews"),
+        ("POST", "/api/sandbox/publications"),
         ("GET", "/api/sandbox/versions"),
         ("POST", "/api/sandbox/versions"),
         ("GET", "/api/sandbox/versions/{version_id}"),
@@ -65,7 +92,7 @@ def plan_sandbox_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     workspace = dataset.organization.identity.workspace_name
     initial_label = f"{workspace} structure review"
     revised_label = f"{workspace} structure agreed"
-    return (
+    actions = (
         _make_action(
             key="controls:sandbox:create_checkpoint",
             kind="sandbox_controls",
@@ -136,6 +163,7 @@ def plan_sandbox_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             expected_end_state={"active_runs": len(dataset.test_vectors)},
         ),
     )
+    return actions + plan_lifecycle_controls(dataset)
 
 
 def _revision(body: Mapping[str, Any], *, step: str) -> int:
@@ -242,3 +270,111 @@ def verify_sandbox_controls(
     from operations.sample_control_sandbox_verification import verify_sandbox_controls as verify
 
     return verify(admin, dataset, manifest, admin_id=admin_id)
+
+
+VERSION_KEY = "control_lifecycle_published"
+OPERATIONS = (
+    "prepare_lifecycle_bindings",
+    "close_field",
+    "reopen_field",
+    "purge_field",
+    "close_module",
+    "reopen_module",
+    "purge_module",
+    "close_department",
+    "reopen_department",
+    "purge_department",
+)
+
+
+def fixture_values(dataset: SampleDataset) -> dict[str, PhaseJsonValue]:
+    phases = dataset.organization.phases
+    if phases is None:
+        raise ValueError("Lifecycle controls require authored design phase facts")
+    spec = phases.design
+    logical = f"control:{spec.new_module_key}"
+    return {
+        "module_sandbox_id": _doc_id(dataset.seed, "module", logical, dataset.organization),
+        "title_sandbox_id": _doc_id(
+            dataset.seed, "field", f"{logical}:title", dataset.organization
+        ),
+        "field_sandbox_id": _doc_id(
+            dataset.seed, "field", f"{logical}:notes", dataset.organization
+        ),
+        "department_sandbox_id": _doc_id(dataset.seed, "department", logical, dataset.organization),
+        "department_name": f"{dataset.organization.identity.workspace_name} structure review",
+        "module_name": spec.new_module_name,
+        "title_field_name": spec.new_module_title_field_name,
+        "field_name": spec.text_field_name,
+        "version_key": VERSION_KEY,
+    }
+
+
+def fixture_document(dataset: SampleDataset) -> dict[str, Any]:
+    values = fixture_values(dataset)
+    document = copy.deepcopy(dataset.document)
+    design = cast(dict[str, Any], document["design"])
+    module_id = cast(str, values["module_sandbox_id"])
+    department_id = cast(str, values["department_sandbox_id"])
+    design["departments"].append(
+        {"id": department_id, "name": values["department_name"], "closed": False}
+    )
+    design["modules"].append(
+        {
+            "id": module_id,
+            "departmentId": department_id,
+            "name": values["module_name"],
+            "closed": False,
+            "titleFieldId": values["title_sandbox_id"],
+            "fields": [
+                {
+                    "id": values[id_key],
+                    "name": values[name_key],
+                    "type": field_type,
+                    "required": False,
+                    "closed": False,
+                    "config": {"kind": config_kind},
+                }
+                for id_key, name_key, field_type, config_kind in (
+                    ("title_sandbox_id", "title_field_name", "Text", "text"),
+                    ("field_sandbox_id", "field_name", "Long text", "long-text"),
+                )
+            ],
+        }
+    )
+    box = {
+        "x": 0,
+        "y": max(box["y"] + box["height"] for box in design["layout"].values()) + 24,
+    }
+    design["layout"][department_id] = {**box, "width": 760, "height": 240}
+    design["layout"][module_id] = {
+        "x": box["x"] + 24,
+        "y": box["y"] + 64,
+        "width": 320,
+        "height": 152,
+    }
+    return _canonical_document(document, step="plan_lifecycle_fixture")
+
+
+def plan_lifecycle_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
+    values = fixture_values(dataset)
+    return tuple(
+        _make_action(
+            key=f"controls:sandbox:{operation}",
+            kind="sandbox_controls",
+            target_key="control_lifecycle_field"
+            if operation.endswith("_field")
+            else "control_lifecycle_department"
+            if operation.endswith("_department")
+            else "control_lifecycle_module",
+            operation=operation,
+            values=dict(values),
+            expected_status=200,
+            expected_end_state={"fixture_published": True, "bindings_verified": 4}
+            if operation == "prepare_lifecycle_bindings"
+            else {"purged": True, "document_synced": True}
+            if operation.startswith("purge_")
+            else {"is_deleted": operation.startswith("close_"), "document_synced": True},
+        )
+        for operation in OPERATIONS
+    )

@@ -143,10 +143,19 @@ export function assertLifecyclePurgePreviewFor(
   targetType: LifecycleTargetType,
   targetId: string,
 ): void {
+  assertLifecyclePreviewFor(preview, targetType, targetId, "purge");
+}
+
+export function assertLifecyclePreviewFor(
+  preview: LifecyclePurgePreview,
+  targetType: LifecycleTargetType,
+  targetId: string,
+  operation: "close" | "purge",
+): void {
   if (
     preview.impact.target_type !== targetType ||
     preview.impact.target_id !== targetId ||
-    preview.impact.operation !== "purge"
+    preview.impact.operation !== operation
   )
     throw new ApiContractError();
 }
@@ -156,10 +165,19 @@ export function assertLifecyclePurgeResultFor(
   targetType: LifecycleTargetType,
   targetId: string,
 ): void {
+  assertLifecycleResultFor(result, targetType, targetId, "purge");
+}
+
+export function assertLifecycleResultFor(
+  result: LifecyclePurgeResult,
+  targetType: LifecycleTargetType,
+  targetId: string,
+  operation: "close" | "purge" | "reopen",
+): void {
   if (
     result.impact.target_type !== targetType ||
     result.impact.target_id !== targetId ||
-    result.impact.operation !== "purge"
+    result.impact.operation !== operation
   )
     throw new ApiContractError();
 }
@@ -246,4 +264,22 @@ export function lifecycleErrorMessage(
   if (!(error instanceof ApiError) || !error.code) return fallback;
   const safe = safeLifecycleErrors[error.code];
   return safe?.status === error.status ? safe.message : fallback;
+}
+
+/** Structural targets confirm the server's name; Record and Board keep ID copy. */
+export function structuralLifecycleErrorMessage(
+  error: unknown,
+  operation: "close" | "purge" | "reopen",
+): string {
+  const fallback = `This ${operation === "purge" ? "permanent deletion" : operation} could not be confirmed. Request a new review and try again.`;
+  if (!(error instanceof ApiError)) return fallback;
+  if (error.code === "confirmation_name_mismatch" && error.status === 422)
+    return "The name confirmation did not match. Request a new review.";
+  if (error.code === "closed_ancestor" && error.status === 409)
+    return "Reopen the parent before reopening this item.";
+  if (error.code === "preflight_failed" && error.status === 409)
+    return `Dependencies prevent this ${operation === "purge" ? "permanent deletion" : operation}. Request a new review.`;
+  if (error.code === "temporarily_unavailable" && error.status === 503)
+    return "This change is temporarily unavailable. Try again later.";
+  return lifecycleErrorMessage(error, fallback);
 }

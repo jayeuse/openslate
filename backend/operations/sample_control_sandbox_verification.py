@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, cast
+from uuid import UUID
 
 from operations.sample_blueprint import SampleDataset
 from operations.sample_client import SampleClient
@@ -11,9 +12,14 @@ from operations.sample_control_sandbox import (
     _CHECKPOINT_KEY,
     _IMPORT_CHECKPOINT_KEY,
     _PAGE_SIZE,
+    OPERATIONS,
+    VERSION_KEY,
     _test_matches,
+    fixture_document,
+    plan_lifecycle_controls,
 )
 from operations.sample_packs.phase_types import PhaseAction
+from operations.sample_phase_actions import SamplePhaseActionError
 from operations.sample_phase_expectations import read_phase_plan
 from operations.sample_verification import SampleVerificationError
 
@@ -93,7 +99,6 @@ def verify_sandbox_controls(
     admin_id: str,
 ) -> tuple[dict[str, int], list[str]]:
     """Verify temporary versions were removed and every authored Test was restored."""
-    del admin_id
     issues: list[str] = []
     actions, results = _control_data(manifest, "sandbox_controls", issues)
     if any(
@@ -111,6 +116,7 @@ def verify_sandbox_controls(
         "clear_test_history",
         "restore_test_history",
     }
+    expected_operations.update(OPERATIONS)
     if set(operations) != expected_operations:
         issues.append("Sandbox control plan does not cover the required operations")
     if any(action.key not in results for action in actions):
@@ -187,7 +193,189 @@ def verify_sandbox_controls(
             else:
                 verified_tests += 1
 
+    lifecycle_counts, lifecycle_issues = _verify_lifecycle_controls(
+        admin, dataset, actions, results, manifest, admin_id, versions
+    )
+    issues.extend(lifecycle_issues)
     return {
         "sandbox_test_runs_verified": verified_tests,
         "sandbox_temporary_versions_removed": removed_versions,
+        **lifecycle_counts,
     }, issues
+
+
+def _verify_lifecycle_controls(
+    admin: SampleClient,
+    dataset: SampleDataset,
+    actions: list[PhaseAction],
+    results: dict[str, Mapping[str, Any]],
+    manifest: Mapping[str, Any],
+    admin_id: str,
+    versions: list[Mapping[str, Any]] | None,
+) -> tuple[dict[str, int], list[str]]:
+    from app.systems.sandbox.designs.schemas import SandboxDocument
+    from app.systems.sandbox.designs.service import canonical_document
+    from operations.sample_control_lifecycle import (
+        fixture_identities,
+        lifecycle_request_contract,
+        parse_bindings,
+    )
+
+    counts = {
+        "sandbox_lifecycle_targets_purged": 0,
+        "sandbox_lifecycle_boards_purged": 0,
+        "sandbox_lifecycle_versions_verified": 0,
+    }
+    issues: list[str] = []
+    expected = plan_lifecycle_controls(dataset)
+    if [
+        action
+        for action in actions
+        if action.values.get("operation") in {item.values["operation"] for item in expected}
+    ] != list(expected):
+        return counts, ["Sandbox lifecycle plan differs from its pack facts"]
+    setup = results.get(expected[0].key, {})
+    ids = _mapping_ids(setup, "sandbox_lifecycle")
+    version_id = _mapping_ids(setup, "sandbox_versions").get(VERSION_KEY)
+    try:
+        if (
+            set(ids) != {"department", "module", "title_field", "field", "board"}
+            or len(set(ids.values())) != 5
+            or not version_id
+            or len(setup.get("mappings", [])) != 6
+            or any(str(UUID(value)) != value for value in (*ids.values(), version_id))
+        ):
+            raise ValueError
+    except (ValueError, TypeError):
+        return counts, ["Sandbox lifecycle fixture mappings are missing or ambiguous"]
+    root = manifest.get("mappings", {})
+    if not isinstance(root, Mapping) or not isinstance(root.get("sandbox_versions"), Mapping):
+        return counts, ["Sandbox lifecycle run mappings are invalid"]
+    if (
+        root.get("sandbox_lifecycle") != ids
+        or root.get("sandbox_versions", {}).get(VERSION_KEY) != version_id
+    ):
+        issues.append("Sandbox lifecycle mappings differ from the run journal")
+    evidence_keys = {
+        "step",
+        "actor_key",
+        "actor_id",
+        "method",
+        "path",
+        "expected_status",
+        "status_code",
+        "request_id",
+    }
+    request_ids = set()
+    for action in expected:
+        row = results.get(action.key, {})
+        operation = cast(str, action.values["operation"])
+        target = "module" if operation == "prepare_lifecycle_bindings" else operation.split("_")[1]
+        descriptors = row.get("request_evidence")
+        contract = lifecycle_request_contract(operation, ids)
+        valid = (
+            row.get("target_id") == ids[target]
+            and all(
+                type(row.get(key)) is type(value) and row.get(key) == value
+                for key, value in action.expected_end_state.items()
+            )
+            and isinstance(descriptors, list)
+            and len(descriptors) == len(contract)
+        )
+        if valid and isinstance(descriptors, list):
+            for descriptor, (step, method, path, status) in zip(descriptors, contract, strict=True):
+                try:
+                    request_id = descriptor.get("request_id")
+                    if (
+                        set(descriptor) != evidence_keys
+                        or (
+                            descriptor.get("step"),
+                            descriptor.get("method"),
+                            descriptor.get("path"),
+                            descriptor.get("expected_status"),
+                            descriptor.get("status_code"),
+                            descriptor.get("actor_key"),
+                            descriptor.get("actor_id"),
+                        )
+                        != (step, method, path, status, status, "admin", admin_id)
+                        or type(descriptor.get("status_code")) is not int
+                        or type(descriptor.get("expected_status")) is not int
+                        or str(UUID(request_id)) != request_id
+                        or request_id in request_ids
+                    ):
+                        raise ValueError
+                    request_ids.add(request_id)
+                except (ValueError, TypeError, AttributeError):
+                    valid = False
+        if not valid:
+            issues.append("Sandbox lifecycle request evidence or end state differs from its plan")
+    try:
+        response = admin.request("GET", "/api/sandbox/document")
+        current = response.json()
+        if (
+            response.status_code != 200
+            or not isinstance(current, Mapping)
+            or type(current.get("revision")) is not int
+            or current["revision"] < 1
+        ):
+            raise ValueError
+        document = SandboxDocument.model_validate(current["document"]).model_dump(
+            mode="json", by_alias=True, exclude_none=True
+        )
+        bindings_response = admin.request("GET", "/api/sandbox/bindings")
+        if bindings_response.status_code != 200:
+            raise ValueError
+        bindings = parse_bindings(
+            bindings_response.content,
+            document,
+            current["revision"],
+            step="verify_lifecycle_bindings",
+        )
+        identities = fixture_identities(dataset)
+        present = {
+            item["id"] for item in document["design"]["departments"] + document["design"]["modules"]
+        }
+        present.update(
+            field["id"] for module in document["design"]["modules"] for field in module["fields"]
+        )
+        present.update(document["design"]["layout"])
+        for key, identity in identities.items():
+            if (
+                identity in bindings
+                or identity[2] in present
+                or any(row["live_id"] == ids[key] for row in bindings.values())
+                or admin.request("GET", f"/api/{identity[0]}s/{ids[key]}").status_code != 404
+            ):
+                issues.append(
+                    "A purged Sandbox lifecycle target remains in live data, bindings or draft"
+                )
+            else:
+                counts["sandbox_lifecycle_targets_purged"] += 1
+        if admin.request("GET", f"/api/boards/{ids['board']}").status_code != 404:
+            issues.append("A purged Sandbox lifecycle Department Board remains")
+        else:
+            counts["sandbox_lifecycle_boards_purged"] = 1
+        response = admin.request("GET", f"/api/sandbox/versions/{version_id}")
+        snapshot = response.json()
+        expected_snapshot, digest, _ = canonical_document(
+            SandboxDocument.model_validate(fixture_document(dataset))
+        )
+        if (
+            response.status_code != 200
+            or not isinstance(snapshot, Mapping)
+            or snapshot.get("id") != version_id
+            or snapshot.get("kind") != "published"
+            or snapshot.get("isDeleted") is not False
+            or snapshot.get("document") != expected_snapshot
+            or snapshot.get("contentHash") != digest
+            or versions is None
+            or not any(
+                row.get("id") == version_id and row.get("kind") == "published" for row in versions
+            )
+        ):
+            issues.append("Sandbox lifecycle fixture publication or immutable snapshot differs")
+        else:
+            counts["sandbox_lifecycle_versions_verified"] = 1
+    except (ValueError, TypeError, KeyError, SamplePhaseActionError):
+        issues.append("Sandbox lifecycle final readback was invalid or unavailable")
+    return counts, issues

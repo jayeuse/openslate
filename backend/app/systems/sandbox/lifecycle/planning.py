@@ -1,6 +1,5 @@
 """Lifecycle impact plan construction."""
 
-from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import select
@@ -9,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.lifecycle.batch_dependencies import load_purge_dependencies
+from app.systems.sandbox.lifecycle.design_sync import design_review_state, lifecycle_field_order
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleInvalidTarget,
     LifecycleUnsupportedOperation,
@@ -25,6 +25,7 @@ from app.systems.sandbox.lifecycle.planning_scope import (
 from app.systems.sandbox.lifecycle.planning_scope import (
     edge_state as lifecycle_edge_state,
 )
+from app.systems.sandbox.lifecycle.provenance import transition_rows
 from app.systems.sandbox.lifecycle.schemas import (
     LifecycleBlocker,
     LifecycleBlockerCode,
@@ -81,11 +82,9 @@ def plan_lifecycle(
     if resolved_operation is LifecycleOperation.PURGE:
         rows = tuple(row_state(entity_type, row) for entity_type, row in all_rows)
     else:
-        should_be_deleted = resolved_operation is LifecycleOperation.CLOSE
         rows = tuple(
             row_state(entity_type, row)
-            for entity_type, row in all_rows
-            if cast(Any, row).is_deleted is not should_be_deleted
+            for entity_type, row in transition_rows(scope, all_rows, target_id, resolved_operation)
         )
     transition_ids = {
         "departments": {row.entity_id for row in rows if row.entity_type == "departments"},
@@ -245,8 +244,13 @@ def plan_lifecycle(
                 )
             )
 
+    field_positions, position_states = lifecycle_field_order(
+        db, scope, resolved_target, resolved_operation
+    )
     if resolved_operation is LifecycleOperation.REOPEN:
-        blockers = reopen_blockers(db, scope, resolved_target, transition_ids)
+        blockers = reopen_blockers(
+            db, scope, resolved_target, transition_ids, field_positions=field_positions
+        )
     else:
         blockers = tuple(
             sorted(
@@ -321,6 +325,9 @@ def plan_lifecycle(
         )
     )
 
+    internal_state, binding_ids = design_review_state(db, scope, resolved_target)
+    if position_states:
+        internal_state = {"design": internal_state, "field_order": position_states}
     digest = canonical_lifecycle_digest(
         resolved_operation,
         resolved_target,
@@ -330,12 +337,17 @@ def plan_lifecycle(
         edge_states,
         key_strips,
         blockers,
+        internal_state=internal_state,
     )
     scope_ids = scope.ids
     scope_ids.update(dependency_ids)
+    scope_ids["sandbox_bindings"] = tuple(
+        sorted(set(binding_ids) | set(scope_ids.get("sandbox_bindings", ())))
+    )
     # Edge dependencies are locked as part of the transaction even when they
     # are outside the structural mutation scope (notably for Field plans).
     scope_ids["fields"] = tuple(sorted(set(scope_ids["fields"]) | set(fields_by_id)))
+    scope_ids["fields"] = tuple(sorted(set(scope_ids["fields"]) | set(field_positions)))
     scope_ids["records"] = tuple(sorted(set(scope_ids["records"]) | set(records_by_id)))
     scope_ids["modules"] = tuple(sorted(set(scope_ids["modules"]) | set(modules_by_id)))
     scope_ids["departments"] = tuple(sorted(set(scope_ids["departments"]) | set(departments_by_id)))
@@ -360,6 +372,7 @@ def plan_lifecycle(
         key_strips=tuple(key_strips),
         blockers=blockers,
         impact_digest=digest,
+        field_positions=field_positions,
     )
 
 

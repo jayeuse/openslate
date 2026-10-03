@@ -319,12 +319,7 @@ def _active_version_count(
     ]
     if mutable_only:
         criteria.append(SandboxVersion.kind.in_(("checkpoint", "imported")))
-    return int(
-        db.scalar(
-            select(func.count()).where(*criteria)
-        )
-        or 0
-    )
+    return int(db.scalar(select(func.count()).where(*criteria)) or 0)
 
 
 def _append_version(
@@ -372,7 +367,9 @@ def _append_version(
     return version
 
 
-def _store_document(row: SandboxDocumentRow, document: SandboxDocument, actor_id: UUID) -> None:
+def _store_document(
+    row: SandboxDocumentRow, document: SandboxDocument, actor_id: UUID | None
+) -> None:
     payload, content_hash, byte_count = canonical_document(document)
     row.document = payload
     row.content_hash = content_hash
@@ -381,7 +378,7 @@ def _store_document(row: SandboxDocumentRow, document: SandboxDocument, actor_id
     _advance_revision(row, actor_id)
 
 
-def _advance_revision(row: SandboxDocumentRow, actor_id: UUID) -> None:
+def _advance_revision(row: SandboxDocumentRow, actor_id: UUID | None) -> None:
     row.revision += 1
     row.performed_by = actor_id
 

@@ -25,6 +25,7 @@ from app.systems.sandbox.lifecycle.dashboard_dependencies import (
 from app.systems.sandbox.lifecycle.department_board_dependencies import (
     load_department_board_purge_dependencies,
 )
+from app.systems.sandbox.lifecycle.design_sync import binding_identity, owned_binding
 from app.systems.sandbox.lifecycle.planning_scope import LifecycleScope, row_state
 from app.systems.sandbox.lifecycle.report_dependencies import load_report_purge_dependencies
 from app.systems.sandbox.lifecycle.schemas import (
@@ -220,7 +221,7 @@ def load_purge_dependencies(
         else []
     )
     event_ids = [event.id for event in events]
-    if target is LifecycleTargetType.RECORD and event_ids:
+    if record_ids and event_ids:
         # A root cannot be removed while another record's history still references it.
         # Inventory and lock those dependants without expanding record ownership.
         events += list(
@@ -329,32 +330,34 @@ def load_purge_dependencies(
         for dependency in dependencies:
             state = row_state(entity_type, dependency)
             removable = False
-            if target is LifecycleTargetType.RECORD:
-                if isinstance(dependency, RecordTriggerEvent):
-                    state.state_fingerprint = fingerprint(
-                        {
-                            key: getattr(dependency, key)
-                            for key in (
-                                "record_id",
-                                "module_id",
-                                "state",
-                                "root_event_id",
-                                "depth",
-                                "scheduled_trigger_id",
-                                "attempt_count",
-                                "lease_expires_at",
-                            )
-                        }
-                    )
-                    removable = _owned_terminal_event(dependency, record_ids)
-                elif isinstance(dependency, RecordTriggerRun):
-                    state.state_fingerprint = fingerprint(
-                        {
-                            key: getattr(dependency, key)
-                            for key in ("event_id", "trigger_id", "state")
-                        }
-                    )
-                    removable = _owned_terminal_event(events_by_id[dependency.event_id], record_ids)
+            if isinstance(dependency, RecordTriggerEvent):
+                state.state_fingerprint = fingerprint(
+                    {
+                        key: getattr(dependency, key)
+                        for key in (
+                            "record_id",
+                            "module_id",
+                            "state",
+                            "root_event_id",
+                            "depth",
+                            "scheduled_trigger_id",
+                            "attempt_count",
+                            "lease_expires_at",
+                        )
+                    }
+                )
+                removable = _owned_terminal_event(dependency, record_ids)
+            elif isinstance(dependency, RecordTriggerRun):
+                state.state_fingerprint = fingerprint(
+                    {key: getattr(dependency, key) for key in ("event_id", "trigger_id", "state")}
+                )
+                event = events_by_id.get(dependency.event_id)
+                removable = event is not None and _owned_terminal_event(event, record_ids)
+            elif isinstance(dependency, SandboxBinding):
+                state.state_fingerprint = fingerprint(binding_identity(dependency))
+                removable = owned_binding(
+                    dependency, set(department_ids), set(module_ids), set(field_ids)
+                )
             rows.append(state)
             if removable:
                 continue

@@ -354,6 +354,7 @@ def delete_record(
     if record.is_deleted:
         raise _conflict("Record is already deleted")
     record.is_deleted = True
+    record.lifecycle_close_operation_id = None
     record.deleted_at = datetime.now(UTC)
     _commit(db, "Unable to delete record")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -378,6 +379,7 @@ def restore_record(
     # field set; create and update continue to validate against active fields.
     _validate_data(db, record.module_id, record.data, _module_fields(db, record.module_id))
     record.is_deleted = False
+    record.lifecycle_close_operation_id = None
     record.deleted_at = None
     _commit(db, "Unable to restore record")
     return displayed_record(

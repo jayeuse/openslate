@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -64,6 +64,7 @@ class LifecyclePlan:
     key_strips: tuple[LifecycleKeyStrip, ...]
     blockers: tuple[LifecycleBlocker, ...]
     impact_digest: str
+    field_positions: dict[UUID, int] = field(default_factory=dict)
 
     def response(self) -> LifecycleImpactResponse:
         return LifecycleImpactResponse(
@@ -92,10 +93,12 @@ def canonical_lifecycle_digest(
     edges: tuple[LifecycleEdgeState, ...] | list[LifecycleEdgeState] = (),
     key_strips: tuple[LifecycleKeyStrip, ...] | list[LifecycleKeyStrip] = (),
     blockers: tuple[LifecycleBlocker, ...] | list[LifecycleBlocker] = (),
+    *,
+    internal_state: object | None = None,
 ) -> str:
     """Hash the stable operation/root/actor and sorted current database state."""
 
-    payload = {
+    payload: dict[str, object] = {
         "operation": operation.value,
         "root": {"type": target_type.value, "id": str(root_id)},
         "actor": str(actor_id) if actor_id is not None else None,
@@ -122,6 +125,8 @@ def canonical_lifecycle_digest(
             )
         ],
     }
+    if internal_state is not None:
+        payload["internal_state"] = internal_state
     return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()
 
 
@@ -229,6 +234,10 @@ def _load_scope(
         records = (record_row,)
         if operation is LifecycleOperation.CLOSE:
             raise LifecycleRecordCloseError("Records cannot be closed by lifecycle operations")
+        if operation is LifecycleOperation.REOPEN and (
+            module_record.is_deleted or department_record.is_deleted
+        ):
+            raise LifecycleClosedAncestorError("Cannot reopen a record beneath a closed owner")
 
     field_ids = [field.id for field in fields]
     record_ids = [record.id for record in records]
@@ -278,6 +287,7 @@ def _row_state(entity_type: str, row: object) -> LifecycleRowState:
             "config",
             "relationship_target_module_id",
             "data",
+            "lifecycle_close_operation_id",
         )
         if hasattr(row, key)
     }

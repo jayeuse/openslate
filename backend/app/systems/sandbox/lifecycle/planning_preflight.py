@@ -21,6 +21,8 @@ def reopen_blockers(
     scope: LifecycleScope,
     _target_type: LifecycleTargetType,
     transition_ids: dict[str, set[UUID]],
+    *,
+    field_positions: dict[UUID, int] | None = None,
 ) -> tuple[LifecycleBlocker, ...]:
     """Return deterministic preflight blockers without changing ORM state."""
 
@@ -83,6 +85,20 @@ def reopen_blockers(
         if module_ids
         else []
     )
+    if field_positions:
+        # Transient projections keep preflight read-only while validating the
+        # exact final positions that execution will stage under the same locks.
+        all_module_fields = [
+            Field(
+                **{column.key: getattr(item, column.key) for column in Field.__table__.columns},
+            )
+            if item.id in field_positions
+            else item
+            for item in all_module_fields
+        ]
+        for item in all_module_fields:
+            if item.id in field_positions:
+                item.position = field_positions[item.id]
     all_module_records = (
         list(
             db.scalars(

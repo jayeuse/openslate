@@ -8,6 +8,7 @@ from operations.sample_blueprint import SampleDataset
 from operations.sample_control_sandbox import (
     _IMPORT_CHECKPOINT_KEY,
     _PAGE_SIZE,
+    OPERATIONS,
     _document,
     _revision,
     _test_matches,
@@ -402,6 +403,10 @@ def execute_sandbox_control(
     evidence: list[dict[str, object]] = []
     mappings: list[dict[str, str]] = []
     operation = action.values.get("operation")
+    from operations.sample_control_lifecycle import execute_lifecycle_control
+
+    if operation in OPERATIONS:
+        return execute_lifecycle_control(action, dataset, context, on_substep=on_substep)
     if operation in {
         "create_checkpoint",
         "update_checkpoint",

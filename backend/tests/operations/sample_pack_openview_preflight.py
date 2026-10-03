@@ -187,6 +187,7 @@ def _validate_phase_versions(
     assert set(versions) == {
         "initial_checkpoint",
         "published",
+        "control_lifecycle_published",
         "phase_design_edited",
         "phase_design_open",
         "phase_design_closed",

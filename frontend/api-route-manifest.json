@@ -1056,6 +1056,102 @@
     "path": "/api/sandbox/versions/{param}"
   },
   {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/departments/{param}/close"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/departments/{param}/purge"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/departments/{param}/reopen"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/fields/{param}/close"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/fields/{param}/purge"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/fields/{param}/reopen"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/modules/{param}/close"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/modules/{param}/purge"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/modules/{param}/reopen"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "getSandboxBindings",
+    "method": "GET",
+    "path": "/api/sandbox/bindings"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "previewSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/departments/{param}/close/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "previewSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/departments/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "previewSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/fields/{param}/close/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "previewSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/fields/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "previewSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/modules/{param}/close/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "previewSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/modules/{param}/purge/preview"
+  },
+  {
     "adapter": "frontend/src/lib/api.ts",
     "function": "hasAuthenticatedSession",
     "method": "GET",
