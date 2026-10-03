@@ -26,8 +26,19 @@ least 90% overall and at least 90% on changed executable lines, with coverage fo
 complete application source inventory. Do not lower thresholds or omit source files to
 accommodate a change.
 
+CI splits the backend suite into four parallel jobs. Each job runs `--backend-coverage-shard
+N/4` on its own disposable stack. A shard checks that its tests pass and that the source
+did not change, but it does not apply the coverage thresholds. The `coverage-gate` job
+combines the four coverage data files, sums the test counts, and then applies the same
+90% gates to the complete report. A missing shard, a skipped test, or a shard from a
+different source tree fails the gate. `pytest-split` balances the shards with
+`backend/tests/.test_durations`. Each CI run uploads fresh durations in the
+`backend-coverage` artifact; commit that file again when a shard takes much longer than
+the others. Local `prepush.py` keeps the single `--backend-coverage-only` run.
+
 The committed Auth/Storage reset acceptance has its own mandatory
-`--reset-acceptance-only` invocation after ordinary backend coverage in both gates.
+`--reset-acceptance-only` invocation in both gates. Local `prepush.py` runs it after
+ordinary backend coverage; CI runs it as a parallel job.
 This mode creates a new disposable stack and selects one fixed, noninteractive
 acceptance target. The target is outside ordinary pytest filename discovery because
 the reset CLI commits installation-wide cleanup. Public batch target validation and
@@ -46,7 +57,10 @@ outside the supported test boundary.
 ## Frontend and integrated checks
 
 The frontend CI workflow ([`frontend.yml`](../../.github/workflows/frontend.yml)) runs
-`npm run check`, `npm test`, and `npm run build`. Browser tests and targeted API route-
+`npm run check`, `npm run build`, and `npm test` as parallel jobs. The isolated project
+runs as one test job. The `http` project runs as four Playwright shards
+(`--project=http --shard=N/4`), and each shard starts its own dev server. The `verify` job
+keeps one required check for all of them. Browser tests and targeted API route-
 contract tests have their configured ownership and setup. FastAPI HTTP coverage remains
 the proof for static-site delivery, API/static path separation, cache policy, and
 response security headers; a static export is not browser-interaction evidence. The

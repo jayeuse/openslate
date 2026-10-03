@@ -362,6 +362,42 @@ def test_backend_coverage_does_not_require_an_unbuilt_static_export(
     assert ["npm", "run", "build", "--", "--webpack"] not in commands
 
 
+def test_backend_coverage_shard_passes_its_group_and_skips_the_frontend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commands: list[list[str]] = []
+    shards: list[tuple[int, int]] = []
+
+    def run(command: list[str], **_kwargs: object) -> MagicMock:
+        commands.append(command)
+        return MagicMock()
+
+    _stub_fullstack_prerequisites(monkeypatch, tmp_path, run)
+
+    def coverage(_run, _backend, _private, _environment, _run_id, shard) -> int:
+        shards.append(shard)
+        return 0
+
+    monkeypatch.setattr(runner, "run_backend_coverage", coverage)
+
+    assert runner.main(["--backend-coverage-shard", "2/4"]) == 0
+    assert shards == [(2, 4)]
+    assert ["npm", "run", "build", "--", "--webpack"] not in commands
+
+
+@pytest.mark.parametrize("shard", ["0/4", "5/4", "two/4", "2"])
+def test_runner_rejects_invalid_coverage_shard_before_starting_postgres(
+    monkeypatch: pytest.MonkeyPatch, shard: str
+) -> None:
+    start = MagicMock()
+    monkeypatch.setattr(runner, "DisposablePostgres", start)
+
+    with pytest.raises(SystemExit):
+        runner.main(["--backend-coverage-shard", shard])
+
+    start.assert_not_called()
+
+
 def test_fullstack_stops_before_fastapi_when_static_build_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
