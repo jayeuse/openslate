@@ -111,6 +111,8 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         "GATEWAY_PUBLIC_HOST",
         "GATEWAY_BIND_HOST",
         "GATEWAY_PORT",
+        # Optional: production Caddy/API private network and trusted proxy CIDR.
+        "OPENSLATE_APP_PRIVATE_SUBNET",
         "BACKEND_URL",
         "DATABASE_BOOTSTRAP_URL",
         "MIGRATION_DATABASE_URL",
