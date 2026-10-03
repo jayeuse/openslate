@@ -35,6 +35,15 @@ ACTIVITY_CASES = (
         target_record_id="invoices:000003",
     ),
     RejectionCase(
+        "unversioned_invoice_edit",
+        "admin",
+        ("invoices:000003",),
+        428,
+        "If-Match required",
+        operation="unversioned-record-edit",
+        target_record_id="invoices:000003",
+    ),
+    RejectionCase(
         "record_in_hidden_department",
         "internal_sales_02",
         (),

@@ -24,6 +24,7 @@ from app.systems.manage.backups.schemas import (
     AdoptCommand,
     ClaimResponse,
     FailureCode,
+    HeartbeatCommand,
     OutcomeCommand,
     ReleaseCommand,
 )
@@ -206,6 +207,20 @@ def disposition(host: Host, journal: Json) -> None:
     host.check_readers(values, {identity for identity, value in prior.items() if value["running"]})
 
 
+def heartbeat(host: Host, journal: Json) -> None:
+    """Best effort: tell the API the runner still owns this claim after services resume."""
+    command = HeartbeatCommand(
+        op="heartbeat",
+        installation_id=host.config.installation_id,
+        project=host.config.project_name,
+        claim_id=journal["claim_id"],
+    ).model_dump(mode="json")
+    try:
+        host.bridge(command)
+    except RunnerError:
+        pass  # A missed heartbeat only delays the status; it must not fail the backup.
+
+
 def recover_claim(host: Host, journal: Json, now: Clock) -> dict[str, object]:
     disposition(host, journal)
     facts = marker_facts(host, journal, optional=True)
@@ -247,10 +262,11 @@ def recover_claim(host: Host, journal: Json, now: Clock) -> dict[str, object]:
     if caddy["State"]["Status"] == "running":
         host.compose(["stop", "caddy"], failure="restart_failed")
     host.resume(journal)
+    heartbeat(host, journal)
     if facts["snapshot_id"] is not None:
         state, failure = "succeeded", None
         try:
-            retention(host, journal, facts, now)
+            retention(host, journal, facts, now, lambda: heartbeat(host, journal))
         except RunnerError as error:
             if error.code == "result_unconfirmed" or journal.get("expiry") is not None:
                 raise
@@ -291,6 +307,13 @@ def run_once(
         active = host.active()
         if active is not None and recover:
             return recover_claim(host, active, now)
+        if active is not None and active["phase"] == "prepared" and active["claim"] is None:
+            # A tick writes its journal before asking for a claim and stops nothing
+            # until a claim is saved. If no claim exists, the crash left nothing to recover.
+            lookup = host.bridge({"op": "inspect", "claim_id": active["claim_id"]})
+            if lookup.get("claim") is None:
+                host.finish_empty(active)
+                active = None
         if active is not None:
             raise RunnerError("recovery_required")
         view = host.bridge({"op": "inspect"})
@@ -377,8 +400,9 @@ def run_once(
             )
             host.save(journal)
             raise
+        heartbeat(host, journal)
         try:
-            retention(host, journal, facts, now)
+            retention(host, journal, facts, now, lambda: heartbeat(host, journal))
         except RunnerError as error:
             if error.code == "result_unconfirmed" or journal.get("expiry") is not None:
                 raise

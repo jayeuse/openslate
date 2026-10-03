@@ -41,7 +41,7 @@ def test_backup_commits_verified_result_after_only_original_services_resume(tmp_
     }
     assert running == commands.original_running
     mutations = [request["op"] for request in commands.operations if request["op"] != "inspect"]
-    assert mutations == ["claim", "outcome"]
+    assert mutations == ["claim", "heartbeat", "outcome"]
     restart = [args for args, _ in commands.calls if args[:2] == ["docker", "start"]]
     caddy_id = next(
         item["Id"]

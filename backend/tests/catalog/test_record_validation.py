@@ -380,6 +380,7 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
         RecordUpdate(data={str(closed.id): 1}),
         make_user("record_writer"),
         db,
+        if_match=record.updated_at.isoformat(),
     )
     assert record.data == {str(closed.id): 1}
 
@@ -389,6 +390,7 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
             RecordUpdate(data={str(closed.id): True}),
             make_user("record_writer"),
             db,
+            if_match=record.updated_at.isoformat(),
         )
 
     assert raised.value.status_code == 409

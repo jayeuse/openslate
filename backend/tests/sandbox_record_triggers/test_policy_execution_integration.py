@@ -29,6 +29,7 @@ from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.router import create_record, update_record
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
 from tests.rbac.support import add_user, make_group_access
+from tests.record_versions import record_version
 from tests.sandbox_record_triggers.support import option_id, publish_trigger
 
 pytestmark = pytest.mark.integration
@@ -57,6 +58,7 @@ def _triggered_trigger(
         ),
         actor,
         db,
+        if_match=record_version(db, record.id),
     )
     return actor, fields, definition, record
 
@@ -161,6 +163,7 @@ def test_delayed_person_assignment_rechecks_reader_and_rolls_back_prior_action(
         ),
         actor,
         db,
+        if_match=record_version(db, record.id),
     )
     assignee.status = UserStatus.DISABLED.value
     db.commit()

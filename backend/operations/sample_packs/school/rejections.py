@@ -56,6 +56,15 @@ ACTIVITY_CASES = (
         target_record_id="payments:000003",
     ),
     RejectionCase(
+        key="unversioned_payment_edit",
+        actor_key="admin",
+        needs=("payments:000003",),
+        expected_status=428,
+        expected_detail="If-Match required",
+        operation="unversioned-record-edit",
+        target_record_id="payments:000003",
+    ),
+    RejectionCase(
         key="missing_required_field",
         actor_key="internal_admissions_02",
         needs=(),

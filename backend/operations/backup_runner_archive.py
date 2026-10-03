@@ -198,8 +198,14 @@ def acknowledge_expiry(host: Host, journal: Json, command: Json) -> None:
     host.save(journal)
 
 
-def retention(host: Host, journal: Json, facts: Json, now: Callable[[], datetime]) -> None:
-    """Keep the newest committed point and the new unresolved point; never global-prune."""
+def retention(
+    host: Host,
+    journal: Json,
+    facts: Json,
+    now: Callable[[], datetime],
+    beat: Callable[[], None] = lambda: None,
+) -> None:
+    """Keep the newest verified point and the new point; prune only after a removal."""
     journal["phase"] = "retention"
     host.save(journal)
     if journal.get("expiry"):
@@ -218,7 +224,8 @@ def retention(host: Host, journal: Json, facts: Json, now: Callable[[], datetime
     ]
     if not owned:
         return
-    newest = max(owned, key=lambda value: value.run.finished_at or now())
+    # The database protects the newest point by verified_at (backup_latest_protected).
+    newest = max(owned, key=lambda value: value.run.verified_at or now())
     try:
         candidate_marker(host, newest)
         present = snapshot_ids(host)
@@ -232,6 +239,7 @@ def retention(host: Host, journal: Json, facts: Json, now: Callable[[], datetime
             RESTIC_REPOSITORY=str(host.config.restic_repository),
             RESTIC_PASSWORD_FILE=str(host.config.restic_password_file),
         )
+        removed = 0
         for candidate in owned:
             if (
                 candidate.run.snapshot_id in keep
@@ -268,6 +276,13 @@ def retention(host: Host, journal: Json, facts: Json, now: Callable[[], datetime
                     raise
             acknowledge_expiry(host, journal, command)
             present.discard(candidate.run.snapshot_id)
+            removed += 1
+            beat()
+        if removed:
+            # forget only drops references; prune reclaims their data. It runs only
+            # when this run removed a snapshot, so most nights skip the slow step.
+            host.command(["restic", "prune"], failure="retention_failed", env=env, timeout=3600)
+            beat()
     except RunnerError as error:
         if error.code == "result_unconfirmed":
             raise

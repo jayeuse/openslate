@@ -4111,7 +4111,7 @@ test("record details save every active value with the revision the user opened",
   commands.staleNextSave();
   await details.getByRole("button", { name: "Save changes" }).click();
   await expect(
-    details.getByText("Someone saved this record after you opened it"),
+    details.getByText("This record changed after you opened it"),
   ).toBeVisible();
   const stale = commands.calls.find((call) => call.method === "PATCH");
   expect(stale?.ifMatch).toBe('"2026-09-23T00:00:00Z"');

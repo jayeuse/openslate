@@ -328,7 +328,7 @@ export function RecordDetailsControls({
           {editing.stale ? (
             <Alert role="alert" variant="warning">
               <p className="font-medium">
-                Someone saved this record after you opened it
+                This record changed after you opened it
               </p>
               <p className="mt-1">
                 Your changes are not saved. Load the latest values, then make

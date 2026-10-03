@@ -254,3 +254,15 @@ Source: `backend/operations/sample_control_backups.py`, `sample_control_request_
 | `DELETE /api/users/{user_id}/sessions` | An eligible member with active sessions and an administrator actor; this is the final read-control action. | Revoke the remaining sessions for a target excluded from account controls and every `plan_phases` actor and target. | Revoke sessions before dependent work, target an administrator, or include a phase actor or target. |
 
 For the Access session cleanup, exclude the active member selected first by `plan_account_controls` and every actor and target in `plan_phases`; run revocation last so later controls cannot depend on the ended sessions. The target must be an active member with completed work and at least one session. The candidate/session operations and Board tools review use an administrator. OpenView reads use the corresponding module manager; `/events/mine` uses the actual event author selected by the pack's ordinary Board author rotation. Files, notifications, and Comms remain explicitly deferred.
+
+## Planned refusal: record save without a version (Phase H)
+
+`PATCH /api/records/{id}` requires `If-Match` (the record's `updated_at`). A save without it returns 428 `If-Match required` and writes nothing; a stale token returns 412. Each pack's rejection list includes one `unversioned-record-edit` case. The runner reads the record and sends the same full-value save as `edit-record`, without the header.
+
+The case must use an actor who can write the record, so the request reaches the version check: access is checked first, so an actor without write access gets 403 or 404 instead of 428. Use an existing, pack-authored record that later steps do not depend on changing.
+
+Correct: `RejectionCase(key="unversioned_payment_edit", actor_key="admin", needs=("payments:000003",), expected_status=428, expected_detail="If-Match required", operation="unversioned-record-edit", target_record_id="payments:000003")`
+
+Wrong: `RejectionCase(key="unversioned_payment_edit", actor_key="guest_auditor", ...)` — the guest is refused with 403 before the version check, so the 428 contract is never exercised.
+
+Every other record save in a run must send `If-Match`, including trigger-population and history edits.

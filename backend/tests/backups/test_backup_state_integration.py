@@ -313,3 +313,33 @@ def test_version_failure_preserves_success_and_retention_protects_latest(
     service.record_expiry(integration_db, instance, older)
     service.record_expiry(integration_db, instance, older)
     assert rows[0].expired_at is not None and latest.expired_at is None
+
+
+def test_heartbeat_refreshes_last_seen_only_for_the_running_claim(
+    integration_db: Session,
+) -> None:
+    # A long run used to show "recovery required" after five minutes because
+    # runner_last_seen_at was written only at claim time.
+    from app.systems.manage.backups import service
+    from app.systems.manage.backups.models import BackupPolicy
+
+    _queue(integration_db)
+    instance, claim_id = _identity(integration_db), uuid4()
+    service.claim_run(
+        integration_db, instance, claim_id, now=datetime.now(UTC) + timedelta(seconds=1)
+    )
+    policy = integration_db.scalar(select(BackupPolicy))
+    assert policy is not None
+    claimed_at = datetime.now(UTC) - timedelta(minutes=30)
+    policy.runner_last_seen_at = claimed_at  # a run that has been working for 30 minutes
+    integration_db.flush()
+    assert service.status_response(integration_db, instance).runner.state == "recovery_required"
+
+    service.heartbeat(integration_db, instance, claim_id)
+    integration_db.refresh(policy)
+    assert policy.runner_last_seen_at is not None
+    assert policy.runner_last_seen_at > claimed_at + timedelta(minutes=29)
+    assert service.status_response(integration_db, instance).runner.state == "available"
+
+    with pytest.raises(service.BackupStateError, match="backup_identity_conflict"):
+        service.heartbeat(integration_db, instance, uuid4())

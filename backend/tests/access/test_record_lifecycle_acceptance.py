@@ -347,8 +347,12 @@ def test_record_query_deleted_options(world: _World) -> None:
 
 
 def test_record_history_is_for_admins_and_department_managers(world: _World) -> None:
-    patched = world.client(world.writer).patch(
-        f"/api/records/{world.record.id}", json={"data": {str(world.label.id): "edited"}}
+    writer = world.client(world.writer)
+    opened = writer.get(f"/api/records/{world.record.id}").json()
+    patched = writer.patch(
+        f"/api/records/{world.record.id}",
+        json={"data": {str(world.label.id): "edited"}},
+        headers={"If-Match": f'"{opened["updated_at"]}"'},
     )
     assert patched.status_code == 200, patched.text
     params = {"entity_id": str(world.record.id)}
@@ -368,7 +372,7 @@ def test_record_history_is_for_admins_and_department_managers(world: _World) -> 
         assert world.client(user).get("/api/audit-logs", params=scoped).status_code == 403
 
 
-# Record revision: an optional If-Match on PATCH refuses a stale save.
+# Record revision: PATCH requires If-Match; a missing one is 428, a stale one 412.
 
 
 def _save(world: _World, value: str, revision: str | None = None) -> Any:
@@ -380,8 +384,14 @@ def _save(world: _World, value: str, revision: str | None = None) -> Any:
     )
 
 
-def test_save_without_if_match_still_works(world: _World) -> None:
-    assert _save(world, "seeded").status_code == 200
+def test_save_without_if_match_is_refused_without_a_write(world: _World) -> None:
+    # PATCH replaces every active value, so an unversioned save could erase changes
+    # made after the caller read the record.
+    before = dict(world.record.data)
+    refused = _save(world, "unversioned")
+    assert refused.status_code == 428, refused.text
+    world.db.refresh(world.record)
+    assert world.record.data == before
 
 
 def test_save_with_the_current_revision_from_a_query_row(world: _World) -> None:

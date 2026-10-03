@@ -81,10 +81,13 @@ def test_retention_protects_new_snapshot_and_newest_committed_recovery_point(
     assert newest["run"]["expired_at"] is None
     assert [item["op"] for item in commands.operations if item["op"] != "inspect"] == [
         "claim",
+        "heartbeat",
         "expire",
+        "heartbeat",
+        "heartbeat",
         "outcome",
     ]
-    assert not any("prune" in args for args, _ in commands.calls)
+    assert commands.prunes == 1
 
 
 def test_lost_expiry_ack_replays_exact_command_after_confirming_absence(tmp_path: Path) -> None:

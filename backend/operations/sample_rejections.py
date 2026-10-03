@@ -160,6 +160,15 @@ def _request(context: RejectionContext, case: RejectionCase) -> httpx.Response:
             headers=_record_if_match(current),
         )
 
+    if operation == "unversioned-record-edit":
+        # The same save as edit-record, without If-Match: refused with 428, no write.
+        logical_id = _logical_record_id(case.target_record_id, "record")
+        record_id = records[logical_id]
+        current = client.request("GET", f"/api/records/{record_id}").json()
+        return client.request(
+            "PATCH", f"/api/records/{record_id}", json_body={"data": current["data"]}
+        )
+
     if operation in {"create-relationship", "replace-relationship"}:
         relationship_key = _logical_record_id(case.relationship_key, "relationship")
         source = _logical_record_id(case.source_record_id, "source record")

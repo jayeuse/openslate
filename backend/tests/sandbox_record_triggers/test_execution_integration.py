@@ -26,6 +26,7 @@ from app.systems.sandbox.record_triggers.service import list_recent_runs
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.router import create_record, update_record
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
+from tests.record_versions import record_version
 from tests.sandbox_record_triggers.support import (
     event_count,
     option_id,
@@ -58,6 +59,7 @@ def test_record_mutations_enqueue_once_and_execute_with_audit_and_dedupe(
         RecordUpdate(data=dict(record.data)),
         actor,
         integration_owner_db,
+        if_match=record_version(integration_owner_db, record.id),
     )
     assert event_count(integration_owner_db) == 1
 
@@ -68,6 +70,7 @@ def test_record_mutations_enqueue_once_and_execute_with_audit_and_dedupe(
         ),
         actor,
         integration_owner_db,
+        if_match=record_version(integration_owner_db, record.id),
     )
     assert event_count(integration_owner_db) == 2
 
@@ -152,6 +155,7 @@ def test_event_snapshots_redact_secret_record_values(integration_owner_db: Sessi
         RecordUpdate(data={**record.data, str(fields["title"].id): f"{secret}-next"}),
         actor,
         integration_owner_db,
+        if_match=record_version(integration_owner_db, record.id),
     )
     integration_owner_db.commit()
 

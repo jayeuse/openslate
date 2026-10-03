@@ -153,6 +153,13 @@ class ClaimCommand(BridgeCommand):
     claim_id: UUID
 
 
+class HeartbeatCommand(BridgeCommand):
+    """The runner is still working on this claim (sent after services resume)."""
+
+    op: Literal["heartbeat"]
+    claim_id: UUID
+
+
 class OutcomeCommand(BridgeCommand):
     op: Literal["outcome"]
     run_id: UUID

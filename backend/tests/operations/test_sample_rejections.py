@@ -41,7 +41,7 @@ def test_every_activity_case_is_planned_once_after_the_records_it_needs() -> Non
 
 def test_cases_cover_each_kind_of_refusal() -> None:
     statuses = {case.expected_status for case in (*ACTIVITY_CASES, *CLOSING_CASES)}
-    assert statuses == {401, 403, 404, 409, 412, 422}
+    assert statuses == {401, 403, 404, 409, 412, 422, 428}
     actors = {case.actor_key for case in ACTIVITY_CASES}
     assert {"guest_01", "internal_sales_04", "internal_sales_02", "admin"} <= actors
 
@@ -106,7 +106,7 @@ def test_plan_reports_the_planned_rejections() -> None:
     from operations.seed_sample_data import build_plan_summary
 
     summary = build_plan_summary(_dataset("small"))
-    assert summary["planned_rejections"] == len(ACTIVITY_CASES) + len(CLOSING_CASES) == 14
+    assert summary["planned_rejections"] == len(ACTIVITY_CASES) + len(CLOSING_CASES) == 15
 
 
 def test_stale_post_edit_reads_the_published_post_and_sends_its_previous_revision(

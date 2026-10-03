@@ -37,6 +37,7 @@ from app.systems.manage.backups.schemas import (
     AdoptCommand,
     ClaimCommand,
     ExpireCommand,
+    HeartbeatCommand,
     InspectCommand,
     OutcomeCommand,
     ReleaseCommand,
@@ -44,7 +45,13 @@ from app.systems.manage.backups.schemas import (
 from operations.reset_models import _RESET_ADVISORY_LOCK_KEY
 
 Command = Annotated[
-    InspectCommand | ClaimCommand | OutcomeCommand | ReleaseCommand | ExpireCommand | AdoptCommand,
+    InspectCommand
+    | ClaimCommand
+    | HeartbeatCommand
+    | OutcomeCommand
+    | ReleaseCommand
+    | ExpireCommand
+    | AdoptCommand,
     Field(discriminator="op"),
 ]
 COMMAND_ADAPTER: TypeAdapter[Command] = TypeAdapter(Command)
@@ -150,6 +157,9 @@ def execute(db: AuditSession, command: Command) -> dict[str, Any]:
         return {
             "claim": service.claim_response(run, instance).model_dump(mode="json") if run else None
         }
+    if isinstance(command, HeartbeatCommand):
+        service.heartbeat(db, instance, command.claim_id)
+        return {"recorded": True}
     if isinstance(command, OutcomeCommand):
         run = service.record_outcome(db, instance, command)
         return {"claim": service.claim_response(run, instance).model_dump(mode="json")}

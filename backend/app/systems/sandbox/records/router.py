@@ -150,10 +150,16 @@ def _lock_active_module(db: Session, module_id: UUID) -> Module:
 
 
 def _require_current_revision(record: Record, if_match: str | None) -> None:
-    """An If-Match token is the ``updated_at`` the caller last read; no token skips the check."""
+    """An If-Match token is the ``updated_at`` the caller last read; it is required.
+
+    PATCH replaces every active value, so a save without a version could erase
+    changes made after the caller read the record.
+    """
 
     if if_match is None:
-        return
+        raise HTTPException(
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED, detail="If-Match required"
+        )
     token = if_match.strip().removeprefix("W/").strip('"')
     try:
         revision = datetime.fromisoformat(token)
@@ -287,7 +293,10 @@ def create_record(
 @router.patch(
     "/{record_id}",
     response_model=RecordResponse,
-    responses={412: {"description": "If-Match does not match the record's updated_at"}},
+    responses={
+        412: {"description": "If-Match does not match the record's updated_at"},
+        428: {"description": "If-Match is missing"},
+    },
 )
 def update_record(
     record_id: UUID,

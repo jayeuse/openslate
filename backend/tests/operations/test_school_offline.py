@@ -102,7 +102,7 @@ def test_school_small_plan_is_complete_deterministic_and_authorized():
     summary = build_plan_summary(dataset)
     assert summary["operational_records"] == 1_241
     assert summary["automation_count"] == summary["test_vector_count"] == 8
-    assert summary["planned_rejections"] == 15
+    assert summary["planned_rejections"] == 16
 
 
 def test_school_links_stay_in_department_and_roster_is_many_to_many():

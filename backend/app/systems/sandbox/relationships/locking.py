@@ -17,22 +17,38 @@ from app.systems.sandbox.relationships.errors import (
     RelationshipUnavailable,
 )
 
+# Concurrent link and record writes lock the same module and record rows for a few
+# tens of milliseconds (p95 58 ms, max 331 ms at School Standard size). Waiting up to
+# 2 s absorbs that without a 503, and still fails fast enough behind a long holder
+# such as a publication. A timeout raises the same LockNotAvailable as NOWAIT did,
+# so callers keep mapping it to 503 "temporarily unavailable".
+LOCK_WAIT = "2s"
 
-def _nowait(statement: Select[Any]) -> Select[Any]:
-    return statement.execution_options(populate_existing=True).with_for_update(nowait=True)
+
+def wait_briefly_for_locks(db: Session) -> None:
+    """Bound every row-lock wait for the rest of this transaction."""
+
+    # A transaction setting, not a data change: run it on the connection, outside
+    # the audited session's guard against raw ORM mutations.
+    db.connection().exec_driver_sql(f"SET LOCAL lock_timeout = '{LOCK_WAIT}'")
+
+
+def _for_update(statement: Select[Any]) -> Select[Any]:
+    return statement.execution_options(populate_existing=True).with_for_update()
 
 
 def lock_row[ModelT](db: Session, model: type[ModelT], object_id: UUID) -> ModelT | None:
-    """Lock one lifecycle row without waiting behind another mutation."""
+    """Lock one lifecycle row, waiting at most LOCK_WAIT behind another mutation."""
 
     try:
+        wait_briefly_for_locks(db)
         return cast(
             ModelT | None,
             db.get(
                 model,
                 object_id,
                 populate_existing=True,
-                with_for_update={"nowait": True},
+                with_for_update=True,
             ),
         )
     except OperationalError as error:
@@ -47,9 +63,10 @@ def lock_modules(db: Session, module_ids: Sequence[UUID]) -> dict[UUID, Module]:
     if not unique_ids or not isinstance(db, AuditSession):
         return {}
     try:
+        wait_briefly_for_locks(db)
         locked = list(
             db.scalars(
-                _nowait(select(Module).where(Module.id.in_(unique_ids)).order_by(Module.id))
+                _for_update(select(Module).where(Module.id.in_(unique_ids)).order_by(Module.id))
             ).all()
         )
     except OperationalError as error:
@@ -131,14 +148,15 @@ def _lock_relationship_rows(
         return field, source, target
 
     try:
-        locked_field = db.scalar(_nowait(select(Field).where(Field.id == field.id)))
+        wait_briefly_for_locks(db)
+        locked_field = db.scalar(_for_update(select(Field).where(Field.id == field.id)))
         records = [source, *extra_records]
         if target is not None:
             records.append(target)
         record_ids = sorted({record.id for record in records})
         locked_records = list(
             db.scalars(
-                _nowait(select(Record).where(Record.id.in_(record_ids)).order_by(Record.id))
+                _for_update(select(Record).where(Record.id.in_(record_ids)).order_by(Record.id))
             ).all()
         )
         records_by_id = {record.id: record for record in locked_records}

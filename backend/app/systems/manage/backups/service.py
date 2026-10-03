@@ -352,6 +352,18 @@ def retention_candidates(db: Session, instance: str) -> list[BackupRun]:
     )
 
 
+def heartbeat(db: Session, instance: str, claim_id: UUID) -> None:
+    """Refresh runner_last_seen_at while the runner still owns an unreconciled claim."""
+    run = exact_claim(db, instance, claim_id)
+    if run is None or run.state != "running" or run.reconciled_at is not None:
+        raise BackupStateError("backup_identity_conflict")
+    policy = db.scalar(select(BackupPolicy).with_for_update())
+    if policy is None:
+        raise BackupStateError("backup_identity_conflict")
+    policy.runner_last_seen_at = utc_now()
+    db.flush()
+
+
 def record_expiry(db: Session, instance: str, command: ExpireCommand) -> BackupRun:
     run = exact_claim(db, instance, command.claim_id, command.run_id, lock=True)
     if (

@@ -138,6 +138,7 @@ class SyntheticCommands:
         self.readiness = True
         self.orphan = False
         self.fail_forget = False
+        self.prunes = 0
         self.recreate_on_up = False
         self.last_release_checked_at: str | None = NOW.isoformat()
         self.policy = {
@@ -351,8 +352,22 @@ class SyntheticCommands:
                 candidate = next(
                     item for item in self.candidates if item["run"]["id"] == request["run_id"]
                 )
+                # Like service.record_expiry: the newest committed verified point is protected.
+                newer = [
+                    item
+                    for item in self.candidates
+                    if item["run"]["verified_at"]
+                    and item["run"]["reconciled_at"]
+                    and not item["run"]["expired_at"]
+                    and item["run"]["verified_at"] > candidate["run"]["verified_at"]
+                ]
+                if not newer:
+                    return self.result(args, {"code": "backup_latest_protected"}, 2)
                 candidate["run"]["expired_at"] = request["expired_at"]
                 result = {"claim": candidate}
+            elif op == "heartbeat":
+                assert self.claim and request["claim_id"] == self.claim["claim_id"]
+                result = {"recorded": True}
             elif op == "release":
                 self.last_release_checked_at = request["checked_at"]
                 result = {"recorded": True}
@@ -367,6 +382,9 @@ class SyntheticCommands:
             return self.result(args, result)
         if args[:2] == ["restic", "snapshots"]:
             return self.result(args, [{"id": snapshot} for snapshot in self.snapshots])
+        if args[:2] == ["restic", "prune"]:
+            self.prunes += 1
+            return self.result(args, b"")
         if args[:2] == ["restic", "forget"]:
             if self.fail_forget:
                 return self.result(args, b"", 1)

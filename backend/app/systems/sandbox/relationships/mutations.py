@@ -17,10 +17,11 @@ from app.systems.sandbox.relationships.errors import (
 )
 from app.systems.sandbox.relationships.locking import (
     _active_entity,
+    _for_update,
     _load_create_dependencies,
     _lock_relationship_rows,
-    _nowait,
     validate_relationship_modules,
+    wait_briefly_for_locks,
 )
 from app.systems.sandbox.relationships.models import RelationshipEdge
 from app.systems.sandbox.relationships.projection import get_relationship, relationship_response
@@ -65,7 +66,7 @@ def _active_edge_statement(
         )
         .order_by(RelationshipEdge.id)
     )
-    return _nowait(statement) if for_update else statement
+    return _for_update(statement) if for_update else statement
 
 
 def _find_active_edge(
@@ -82,6 +83,8 @@ def _find_active_edge(
     if target_record_id is not None:
         statement = statement.where(RelationshipEdge.target_record_id == target_record_id)
     try:
+        if for_update:
+            wait_briefly_for_locks(db)
         return db.scalar(statement)
     except OperationalError as error:
         db.rollback()
@@ -105,11 +108,12 @@ def _commit(db: Session, message: str) -> None:
 
 def _locked_edge(db: Session, relationship_id: UUID) -> RelationshipEdge:
     try:
+        wait_briefly_for_locks(db)
         edge = db.get(
             RelationshipEdge,
             relationship_id,
             populate_existing=True,
-            with_for_update={"nowait": True},
+            with_for_update=True,
         )
     except OperationalError as error:
         db.rollback()
