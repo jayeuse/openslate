@@ -69,3 +69,28 @@ def test_two_concurrent_link_writes_in_the_same_modules_both_succeed(
         outcome = outcomes[name]
         assert not isinstance(outcome, Exception), f"{name} write failed: {outcome!r}"
         owned_ids.add(outcome.id)  # type: ignore[attr-defined]
+
+
+def test_a_link_write_sets_the_lock_wait_once_per_transaction(
+    integration_db: AuditSession, owned_ids: set[UUID]
+) -> None:
+    # Each lock helper used to repeat SET LOCAL, adding up to four round trips per request.
+    from sqlalchemy import event
+
+    field, _, _, sources, targets, _ = _seed_committed_graph(owned_ids)
+    assert TEST_DATABASE_URL is not None
+    engine = create_engine(TEST_DATABASE_URL)
+    statements: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def record(_conn, _cursor, statement, *_args) -> None:  # noqa: ANN001
+        statements.append(statement)
+
+    try:
+        with AuditSession(engine, expire_on_commit=False) as session:
+            _set_request(session, uuid7())
+            created = create_relationship(session, field.id, sources[0].id, targets[0].id)
+            owned_ids.add(created.id)
+    finally:
+        engine.dispose()
+    assert sum("lock_timeout" in statement for statement in statements) == 1

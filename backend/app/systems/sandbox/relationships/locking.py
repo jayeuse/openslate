@@ -23,14 +23,22 @@ from app.systems.sandbox.relationships.errors import (
 # such as a publication. A timeout raises the same LockNotAvailable as NOWAIT did,
 # so callers keep mapping it to 503 "temporarily unavailable".
 LOCK_WAIT = "2s"
+_LOCK_WAIT_TRANSACTION = "relationship_lock_wait_transaction"
 
 
 def wait_briefly_for_locks(db: Session) -> None:
-    """Bound every row-lock wait for the rest of this transaction."""
+    """Bound every row-lock wait for the rest of this transaction, once per transaction."""
 
+    connection = db.connection()
+    # Key on the innermost transaction: rolling back a savepoint reverts SET LOCAL,
+    # and the next call must then set it again instead of waiting without a limit.
+    transaction = db.get_nested_transaction() or db.get_transaction()
+    if db.info.get(_LOCK_WAIT_TRANSACTION) is transaction:
+        return
     # A transaction setting, not a data change: run it on the connection, outside
     # the audited session's guard against raw ORM mutations.
-    db.connection().exec_driver_sql(f"SET LOCAL lock_timeout = '{LOCK_WAIT}'")
+    connection.exec_driver_sql(f"SET LOCAL lock_timeout = '{LOCK_WAIT}'")
+    db.info[_LOCK_WAIT_TRANSACTION] = transaction
 
 
 def _for_update(statement: Select[Any]) -> Select[Any]:
