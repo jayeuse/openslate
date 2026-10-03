@@ -39,6 +39,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { SampleDataNote } from "@/components/sample-data-note";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import { DiscardChangesDialog } from "../access/components/people-fields";
 import { ApiError } from "@/lib/api";
 import { requestSessionRecheck } from "@/lib/auth-api";
 import { useMfaFlow } from "@/components/mfa-flow";
@@ -241,6 +242,9 @@ function ManageContent() {
     maintenance.pending;
   const [notice, setNotice] = useState("");
   const [navigationNotice, setNavigationNotice] = useState("");
+  const [pendingLeave, setPendingLeave] = useState<{
+    resume: () => void;
+  } | null>(null);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [draftAcknowledged, setDraftAcknowledged] = useState(false);
@@ -330,7 +334,7 @@ function ManageContent() {
     currency: previewSettings.currency,
   }).format(12500);
 
-  useWorkspaceNavigationGuard(() => {
+  useWorkspaceNavigationGuard((href, resume) => {
     if (manage.pending || livePending) {
       setNavigationNotice(
         "Finish the current change before leaving this page.",
@@ -338,8 +342,39 @@ function ManageContent() {
       return false;
     }
     setNavigationNotice("");
+    // Switching Manage sections keeps drafts; only leaving Manage loses them.
+    const leavesManage =
+      new URL(href, window.location.origin).pathname !==
+      window.location.pathname;
+    if (allDraftsDirty && leavesManage) {
+      setPendingLeave({ resume });
+      return false;
+    }
     return true;
   });
+
+  useEffect(() => {
+    if (!allDraftsDirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [allDraftsDirty]);
+
+  function discardAndLeave() {
+    const leave = pendingLeave;
+    setPendingLeave(null);
+    setWorkspaceDraft({});
+    setWorkspaceStale(false);
+    setWorkspaceRefreshRequired(false);
+    maintenance.discardDraft();
+    setSecurityDraft({});
+    setSecurityStale(false);
+    setSecurityRefreshRequired(false);
+    leave?.resume();
+  }
 
   function changeSetting(
     target: ManageSection,
@@ -821,6 +856,13 @@ function ManageContent() {
               {navigationNotice}
             </Alert>
           ) : null}
+          <DiscardChangesDialog
+            open={pendingLeave !== null}
+            title="Discard unsaved Manage changes?"
+            description="Your unsaved organization, security or backup changes will be lost."
+            onKeep={() => setPendingLeave(null)}
+            onDiscard={discardAndLeave}
+          />
           {notice || (recoveryView && maintenance.notice) ? (
             <Alert
               role="status"

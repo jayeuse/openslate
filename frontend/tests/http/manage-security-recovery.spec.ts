@@ -743,6 +743,11 @@ test("Security reads show recovery and denial without sample sessions", async ({
     page.getByRole("table", { name: "Sessions", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("link", { name: "Notifications", exact: true }).click();
+  // The organization draft above is unsaved, so leaving Manage asks first.
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Discard changes" })
+    .click();
   await expect(page).toHaveURL(/\/platform/);
   const manageGroup = page.getByRole("button", { name: "Manage", exact: true });
   if ((await manageGroup.getAttribute("aria-expanded")) !== "true")

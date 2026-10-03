@@ -204,20 +204,31 @@ export async function listOpenViewRelationshipFields(
     .sort((left, right) => left.position - right.position);
 }
 
-/** Visible links that start or end at the record. */
+const RECORD_LINK_PAGE_SIZE = 100;
+// A record with more links than this is refused rather than shown incomplete.
+const RECORD_LINK_MAX_PAGES = 50;
+
+/** Every visible link that starts or ends at the record (the panel treats it as complete). */
 export async function listOpenViewRecordLinks(
   recordId: string,
 ): Promise<OpenViewRelationship[]> {
-  const query = new URLSearchParams({
-    incident_record_id: uuidSchema.parse(recordId),
-    limit: "100",
-  });
-  const page = await apiFetch(
-    `/relationships?${query.toString()}`,
-    listSchema(relationshipSchema),
-    { cache: "no-store" },
-  );
-  return page.items;
+  const incident = uuidSchema.parse(recordId);
+  const links: OpenViewRelationship[] = [];
+  for (let pageIndex = 0; pageIndex < RECORD_LINK_MAX_PAGES; pageIndex += 1) {
+    const query = new URLSearchParams({
+      incident_record_id: incident,
+      limit: String(RECORD_LINK_PAGE_SIZE),
+      offset: String(pageIndex * RECORD_LINK_PAGE_SIZE),
+    });
+    const page = await apiFetch(
+      `/relationships?${query.toString()}`,
+      listSchema(relationshipSchema),
+      { cache: "no-store" },
+    );
+    links.push(...page.items);
+    if (!page.pagination.hasMore) return links;
+  }
+  throw new ApiContractError();
 }
 
 /** One page of a link field's visible links. */

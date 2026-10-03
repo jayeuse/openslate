@@ -713,3 +713,32 @@ test("Recorded version loading, denial, stale and current observations remain ho
     software.getByText("2.7.1-development", { exact: true }),
   ).toBeVisible();
 });
+
+test("leaving Manage with an unsaved organization draft asks before discarding it", async ({
+  page,
+}) => {
+  installWorkspaceRoute(page);
+  await page.goto("/manage?view=organization");
+  const name = page.getByRole("textbox", {
+    name: "Organization name",
+    exact: true,
+  });
+  await expect(name).toHaveValue("Riverside Services");
+  await name.fill("Riverside Field Services");
+
+  // Switching Manage sections keeps drafts, so it is not held.
+  const leave = page.getByRole("link", { name: /People and groups/ });
+  await leave.click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("Discard unsaved Manage changes?");
+  await dialog.getByRole("button", { name: "Keep editing" }).click();
+  await expect(page).toHaveURL(/\/manage\?view=organization/);
+  await expect(name).toHaveValue("Riverside Field Services");
+
+  await leave.click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Discard changes" })
+    .click();
+  await expect(page).toHaveURL(/\/access/);
+});

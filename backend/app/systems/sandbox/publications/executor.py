@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
@@ -24,6 +24,7 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import validate_module_schema
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.binding_keys import normalize_legacy_field_bindings
+from app.systems.sandbox.publications.close_rules import lifecycle_closed_relationships
 from app.systems.sandbox.publications.models import SandboxBinding, SandboxPublication
 from app.systems.sandbox.publications.planner import (
     _binding_map,
@@ -148,12 +149,13 @@ def apply_publication(
         normalize_legacy_field_bindings(document, bindings, persist=True)
     except ValueError as error:
         raise PublicationError("field_binding_ambiguous", str(error)) from error
+    lifecycle_closed = lifecycle_closed_relationships(db, document, bindings)
     retired = stage_bound_names_and_positions(db, document, bindings, actor_id)
     departments = _apply_departments(db, document, bindings, actor_id)
     modules = _apply_modules(db, document, bindings, departments, actor_id)
     fields = _apply_fields(db, document, bindings, modules, actor_id)
     _apply_title_fields(document, modules, fields, actor_id)
-    _apply_relationships(db, document, bindings, modules, actor_id)
+    _apply_relationships(db, document, bindings, modules, actor_id, lifecycle_closed)
     close_removed_structure(db, document, bindings, actor_id, retired)
     sync_department_boards(db, actor_id)
     version = _append_version(
@@ -397,6 +399,7 @@ def _apply_relationships(
     bindings: Any,
     modules: dict[str, Module],
     actor_id: UUID,
+    lifecycle_closed: Collection[str] = (),
 ) -> None:
     positions = {
         module.id: sum(
@@ -411,6 +414,7 @@ def _apply_relationships(
         closed = (
             modules[desired.source_module_id].is_deleted
             or modules[desired.target_module_id].is_deleted
+            or desired.id in lifecycle_closed
         )
         if row is None:
             row = Field(

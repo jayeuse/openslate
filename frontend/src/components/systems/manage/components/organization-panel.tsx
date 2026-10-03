@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { ArrowUpRight, Compass, UsersRound, Workflow } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -369,7 +369,7 @@ export function OrganizationPanel({
             variant="ghost"
             className="h-auto min-h-12 w-full justify-start gap-3 rounded-lg px-3 py-3 text-left whitespace-normal"
           >
-            <Link href="/access?view=people">
+            <GuardedWorkspaceLink href="/access?view=people">
               <UsersRound className="size-5 shrink-0" aria-hidden="true" />
               <span className="min-w-0 flex-1">
                 <span className="block font-medium">People and groups</span>
@@ -378,14 +378,14 @@ export function OrganizationPanel({
                 </span>
               </span>
               <ArrowUpRight className="size-4 shrink-0" aria-hidden="true" />
-            </Link>
+            </GuardedWorkspaceLink>
           </Button>
           <Button
             asChild
             variant="ghost"
             className="h-auto min-h-12 w-full justify-start gap-3 rounded-lg px-3 py-3 text-left whitespace-normal"
           >
-            <Link href="/sandbox?section=build">
+            <GuardedWorkspaceLink href="/sandbox?section=build">
               <Workflow className="size-5 shrink-0" aria-hidden="true" />
               <span className="min-w-0 flex-1">
                 <span className="block font-medium">
@@ -396,7 +396,7 @@ export function OrganizationPanel({
                 </span>
               </span>
               <ArrowUpRight className="size-4 shrink-0" aria-hidden="true" />
-            </Link>
+            </GuardedWorkspaceLink>
           </Button>
         </nav>
       </aside>
