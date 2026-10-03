@@ -948,6 +948,24 @@
     "path": "/api/auth/sessions"
   },
   {
+    "adapter": "frontend/src/components/systems/platform/adapters/platform-search-api.ts",
+    "function": "readPlatformSearch",
+    "method": "GET",
+    "path": "/api/search"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/record-import-api.ts",
+    "function": "prepareRecordCsv",
+    "method": "POST",
+    "path": "/api/records/export"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/record-import-api.ts",
+    "function": "sendImportBatch",
+    "method": "POST",
+    "path": "/api/records/import"
+  },
+  {
     "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
     "function": "clearSandboxTests",
     "method": "DELETE",
@@ -1234,5 +1252,17 @@
     "function": "verifyMfa",
     "method": "POST",
     "path": "/api/auth/mfa/factors/{param}/verification"
+  },
+  {
+    "adapter": "frontend/src/lib/user-theme-preferences.ts",
+    "function": "readUserTheme",
+    "method": "GET",
+    "path": "/api/users/{param}/preferences"
+  },
+  {
+    "adapter": "frontend/src/lib/user-theme-preferences.ts",
+    "function": "saveUserTheme",
+    "method": "PATCH",
+    "path": "/api/users/{param}/preferences"
   }
 ]

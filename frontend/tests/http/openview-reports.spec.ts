@@ -1085,7 +1085,13 @@ test("Report filters display Select labels, submit stable IDs, and use module-el
     const path = new URL(request.url()).pathname;
     if (path === `/api/modules/${moduleId}/assignable-users`)
       assignableUserRequests.push(path);
-    if (path === "/api/users" || path.startsWith("/api/users/"))
+    if (
+      (path === "/api/users" || path.startsWith("/api/users/")) &&
+      !(
+        path === `/api/users/${userId}/preferences` &&
+        request.method() === "GET"
+      )
+    )
       globalUserRequests.push(path);
   });
   await page.route(`**/api/views/data-sources/${moduleId}/fields**`, (route) =>

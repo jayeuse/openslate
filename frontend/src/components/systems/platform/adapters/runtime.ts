@@ -15,33 +15,15 @@ import { type SampleNotification } from "../../comms/domain/model";
 import { normalizeCommsConfiguration } from "../../comms/domain/configuration";
 import { previewCommsNotification } from "../../comms/domain/notification-policy";
 import {
-  INITIAL_PLATFORM_ACCOUNT,
   INITIAL_PLATFORM_PREFERENCES,
-  type PlatformAccount,
   type PlatformNotificationPreferences,
-  type PlatformImportRow,
 } from "../domain/model";
-import {
-  completePlatformExport,
-  normalizePlatformImportRows,
-} from "../domain/records";
 
-export {
-  INITIAL_PLATFORM_ACCOUNT,
-  INITIAL_PLATFORM_PREFERENCES,
-  PLATFORM_FILES,
-} from "../domain/model";
+export { INITIAL_PLATFORM_PREFERENCES, PLATFORM_FILES } from "../domain/model";
 export type {
-  PlatformAccount,
   PlatformFile,
-  PlatformImportRow,
   PlatformNotificationPreferences,
 } from "../domain/model";
-export {
-  completePlatformExport,
-  normalizePlatformImportRows,
-  pagePlatformSearch,
-} from "../domain/records";
 export { PLATFORM_OWNER_KEYS, readPlatformSnapshot } from "./snapshot";
 export type { PlatformReader, PlatformSnapshot } from "./snapshot";
 
@@ -72,17 +54,6 @@ export function usePlatformCommands() {
       keys: readonly string[],
     ): Promise<T> =>
       commands.run(key, (signal) => runtime.execute(recipe, { keys, signal })),
-    [commands, runtime],
-  );
-  const loadRecordsForExport = useCallback(
-    () =>
-      commands.run("platform:export", (signal) =>
-        runtime.load(
-          (draft) =>
-            completePlatformExport(draft.read("records", INITIAL_RECORDS)),
-          { keys: ["records"], signal },
-        ),
-      ),
     [commands, runtime],
   );
   const markAllNotificationsRead = useCallback(
@@ -210,58 +181,12 @@ export function usePlatformCommands() {
       ),
     [run],
   );
-  const importRecords = useCallback(
-    (rows: readonly PlatformImportRow[]) =>
-      run<PlatformCommandResult<SampleRecord[]>>(
-        "platform:records:import",
-        (draft) => {
-          const normalized = normalizePlatformImportRows(rows);
-          if (!normalized.length)
-            return reject(draft, "Choose at least one valid row to import.");
-          const imported = normalized.map((row) => ({
-            id: `sample-import-${crypto.randomUUID()}`,
-            title: row.title,
-            customer: row.customer,
-            status: "Open",
-            assignee: row.assignee,
-            dueDate: row.dueDate,
-          }));
-          draft.update<SampleRecord[]>("records", INITIAL_RECORDS, (items) => [
-            ...items,
-            ...imported,
-          ]);
-          return accepted(imported);
-        },
-        ["records"],
-      ),
-    [run],
-  );
-  const updateAccount = useCallback(
-    (patch: Partial<PlatformAccount>) =>
-      run<PlatformCommandResult<PlatformAccount>>(
-        "platform:account:update",
-        (draft) => {
-          const current = draft.read<PlatformAccount>(
-            "platformAccount",
-            INITIAL_PLATFORM_ACCOUNT,
-          );
-          const next = { ...current, ...patch };
-          draft.update("platformAccount", INITIAL_PLATFORM_ACCOUNT, next);
-          return accepted(next);
-        },
-        ["platformAccount"],
-      ),
-    [run],
-  );
   return {
     run,
-    loadRecordsForExport,
     markAllNotificationsRead,
     toggleNotification,
     simulateRecordUpdate,
     updateNotificationPreferences,
-    importRecords,
-    updateAccount,
     isPending: commands.isPending,
     pendingKeys: commands.pendingKeys,
   };

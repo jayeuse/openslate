@@ -283,6 +283,22 @@ export function readRecords(path: string) {
   expect(mfaAdapter.routes.map((route) => [route.method, route.path])).toEqual([
     ["GET", "/api/auth/mfa"],
   ]);
+  const themeAdapter = discoverRoutesInSources([
+    {
+      file: "frontend/src/lib/user-theme-preferences.ts",
+      source: readFileSync(
+        resolve(process.cwd(), "src/lib/user-theme-preferences.ts"),
+        "utf8",
+      ),
+    },
+  ]);
+  expect(themeAdapter.diagnostics).toEqual([]);
+  expect(
+    themeAdapter.routes.map((route) => [route.method, route.path]),
+  ).toEqual([
+    ["GET", "/api/users/{param}/preferences"],
+    ["PATCH", "/api/users/{param}/preferences"],
+  ]);
   const unrelatedLibrary = discoverRoutesInSources([
     { file: "frontend/src/lib/unrelated-api.ts", source: libraryRequest },
   ]);

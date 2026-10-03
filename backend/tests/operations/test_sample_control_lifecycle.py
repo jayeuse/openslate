@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from operations.sample_client import SampleWriteOutcomeUnknown
+from operations.sample_control_actions import plan_controls
 from operations.sample_control_sandbox import (
     CONTROL_ROUTES,
     execute_sandbox_control,
@@ -30,6 +31,133 @@ from tests.operations.test_sample_control_sandbox import (
     _dataset,
     _login_response,
 )
+
+
+@pytest.mark.parametrize("pack_key", ("harbor", "school"))
+def test_platform_plan_uses_disposable_structure_and_preserves_lifecycle_order(pack_key):
+    dataset = _dataset(pack_key)
+    document = copy.deepcopy(dataset.document)
+    actions = plan_controls(dataset)
+    platform = [action for action in actions if action.kind == "platform_controls"]
+    assert len(actions) == 84
+    assert [action.values["operation"] for action in platform] == [
+        "import_csv_rows",
+        "search_workspace",
+        "export_and_purge_csv_rows",
+        "review_self_theme",
+        "toggle_restore_self_theme",
+    ]
+    operations = [action.values["operation"] for action in actions]
+    assert operations.index("prepare_lifecycle_bindings") < operations.index("import_csv_rows")
+    assert operations.index("export_and_purge_csv_rows") < operations.index("close_field")
+    assert operations.index("toggle_restore_self_theme") < operations.index("revoke_admin_sessions")
+    assert all(action.actor_key == "admin" for action in platform)
+    assert platform[0].values["module_name"] == dataset.organization.phases.design.new_module_name
+    assert platform[0].values["headers"] == [
+        dataset.organization.phases.design.new_module_title_field_name,
+        dataset.organization.phases.design.text_field_name,
+    ]
+    assert dataset.document == document
+
+
+@pytest.mark.parametrize(
+    "pack_key,fault",
+    [
+        ("school", "none"),
+        *[
+            ("harbor", value)
+            for value in (
+                "none",
+                "preview_created",
+                "bad_digest",
+                "duplicate_ids",
+                "wrong_row",
+                "wrong_data",
+                "import_503",
+                "csv_count",
+                "csv_content",
+                "csv_mime",
+                "purge_blocker",
+                "purge_remains",
+                "search_kind",
+                "search_private",
+                "search_context",
+                "search_page",
+                "theme_owner",
+                "theme_unsaved",
+                "theme_restore",
+            )
+        ],
+    ],
+)
+def test_platform_wire_imports_searches_exports_disposes_and_restores(
+    tmp_path, monkeypatch, pack_key, fault
+):
+    import operations.sample_control_openview_mutations as frozen_helpers
+    from operations.sample_control_actions import execute_control_action
+    from operations.sample_control_platform import OPERATIONS
+    from operations.sample_control_sandbox import OPERATIONS as lifecycle_operations
+    from tests.operations.sample_platform_wire import PlatformWire
+
+    monkeypatch.setattr(frozen_helpers, "_PURGE_POLL_SECONDS", 0)
+    dataset = _dataset(pack_key)
+    wire = PlatformWire(dataset, fault)
+    context = _context(tmp_path, wire.handle)
+    wire.bind(context)
+    selected = [
+        row
+        for row in plan_controls(dataset)
+        if row.kind == "platform_controls" or row.values["operation"] in lifecycle_operations
+    ]
+    results = []
+    try:
+        if fault != "none":
+            with pytest.raises((SamplePhaseActionError, SampleWriteOutcomeUnknown)) as caught:
+                for action in selected:
+                    results.append(execute_control_action(action, dataset, context))
+            assert getattr(caught.value, "step", None) != selected[1].key
+            assert wire.commits <= 1
+            if fault in {"preview_created", "bad_digest"}:
+                assert wire.commits == 0
+            if fault == "import_503":
+                assert len([r for r in wire.requests if r.url.path == "/api/records/import"]) == 2
+                from operations.sample_route_coverage import read_route_evidence
+
+                assert (
+                    sum(read_route_evidence(tmp_path / "requests.jsonl")["failures_5xx"].values())
+                    == 1
+                )
+            return
+        for action in selected:
+            results.append(execute_control_action(action, dataset, context))
+        platform = [row for row in results if row["action_key"].startswith("control:platform:")]
+        assert len(platform) == len(OPERATIONS) == 5
+        assert wire.previews == wire.commits == 1 and wire.purges == 2
+        assert len(wire.created) == len(set(wire.created)) == 2 and wire.records == {}
+        assert wire.theme == wire.original_theme == "dark"
+        assert wire.lifecycle.document == dataset.document
+        first_close = next(
+            i for i, r in enumerate(wire.requests) if r.url.path.endswith("/close/preview")
+        )
+        assert sum(r.url.path.endswith("/purge") for r in wire.requests[:first_close]) == 2
+        assert (
+            sum(
+                r.method == "GET"
+                and r.url.path.startswith("/api/records/")
+                and r.url.path.split("/")[-1] in wire.created
+                for r in wire.requests[:first_close]
+            )
+            >= 4
+        )
+        assert (
+            platform[0]["records_imported"]
+            == platform[2]["records_exported"]
+            == platform[2]["records_purged"]
+            == 2
+        )
+        assert platform[1]["search_kinds_verified"] == 4 and platform[4]["theme_restored"] is True
+    finally:
+        context.clients["admin"].close()
 
 
 def _route(request: httpx.Request) -> tuple[str, str]:

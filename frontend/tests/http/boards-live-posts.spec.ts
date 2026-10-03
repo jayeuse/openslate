@@ -205,6 +205,11 @@ async function installPostBrowserApi(page: Page) {
       const view = url.searchParams.get("view");
       return reply(200, wirePage(view === "published" ? publishedItems : []));
     }
+    if (
+      path === `${prefix}/posts/${postId}` &&
+      url.searchParams.get("view") === "published"
+    )
+      return reply(200, browserPost);
     if (path === `${prefix}/posts/${postId}/revisions`)
       return reply(200, { post_id: postId, items: [revision(2), revision(1)] });
     for (const number of [1, 2] as const)
@@ -245,6 +250,163 @@ test("the published page is one bounded request with no personal state", async (
   } finally {
     mock.restore();
   }
+});
+
+test("URL-selected published post opens outside the feed, survives reload, and closes only its target", async ({
+  page,
+}) => {
+  const api = await installPostBrowserApi(page);
+  api.setPublishedItems([]);
+  const href = `/boards?board=${boardId}&section=posts&post=${postId}&event=${otherBoardId}&keep=chosen`;
+  await page.goto(href);
+  const reader = page.getByRole("dialog", {
+    name: browserPost.title,
+    exact: true,
+  });
+  await expect(reader).toBeVisible();
+  await expect(
+    reader.getByText(browserPost.body, { exact: true }),
+  ).toBeVisible();
+  await expect(reader.locator("script")).toHaveCount(0);
+  await page.reload();
+  await expect(reader).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(reader).toHaveCount(0);
+  await expect(page).toHaveURL(
+    (url) =>
+      !url.searchParams.has("post") &&
+      url.searchParams.get("board") === boardId &&
+      url.searchParams.get("section") === "posts" &&
+      url.searchParams.get("event") === otherBoardId &&
+      url.searchParams.get("keep") === "chosen",
+  );
+  await expect(
+    page.getByRole("searchbox", { name: "Search posts" }),
+  ).toBeFocused();
+  await expect(
+    page.getByRole("heading", { name: "No published posts" }),
+  ).toBeVisible();
+});
+
+test("URL-selected post rejects invalid, missing, and denied targets without private content", async ({
+  page,
+}) => {
+  const api = await installPostBrowserApi(page);
+  api.setPublishedItems([]);
+  const reads: string[] = [];
+  page.on("request", (request) => {
+    if (
+      new URL(request.url()).pathname.startsWith(
+        `/api/boards/${boardId}/posts/`,
+      )
+    )
+      reads.push(request.url());
+  });
+  await page.goto(`/boards?board=${boardId}&section=posts&post=invalid`);
+  const unavailable = page.getByRole("dialog", {
+    name: "Post unavailable",
+    exact: true,
+  });
+  await expect(unavailable).toBeVisible();
+  expect(reads).toEqual([]);
+  for (const status of [403, 404]) {
+    await page.route(
+      `**/api/boards/${boardId}/posts/${postId}?view=published`,
+      (route) =>
+        route.fulfill({ status, json: { detail: "Private post title" } }),
+    );
+    await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
+    await expect(unavailable).toBeVisible();
+    await expect(unavailable.getByText("Private post title")).toHaveCount(0);
+    await expect(unavailable.getByText(browserPost.body)).toHaveCount(0);
+    await unavailable.getByRole("button", { name: "Close post" }).click();
+    await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
+  }
+});
+
+test("URL-selected post retries a failed detail read without falling back to the feed", async ({
+  page,
+}) => {
+  const api = await installPostBrowserApi(page);
+  api.setPublishedItems([]);
+  let available = false;
+  await page.route(
+    `**/api/boards/${boardId}/posts/${postId}?view=published`,
+    (route) =>
+      route.fulfill(
+        available
+          ? { json: browserPost }
+          : { status: 503, json: { detail: "Unavailable" } },
+      ),
+  );
+  await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
+  const unavailable = page.getByRole("dialog", { name: "Post unavailable" });
+  await expect(unavailable).toBeVisible();
+  available = true;
+  await unavailable.getByRole("button", { name: "Retry" }).click();
+  await expect(
+    page.getByRole("dialog", { name: browserPost.title }),
+  ).toBeVisible();
+});
+
+test("closing a URL-selected post ignores its late detail response after another post opens", async ({
+  page,
+}) => {
+  const api = await installPostBrowserApi(page);
+  const nextPost = {
+    ...browserPost,
+    id: otherBoardId,
+    title: "Second public update",
+    body: "Use the west entrance.",
+  };
+  api.setPublishedItems([nextPost]);
+  await page.route(
+    `**/api/boards/${boardId}/posts/${otherBoardId}?view=published`,
+    (route) => route.fulfill({ json: nextPost }),
+  );
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    `**/api/boards/${boardId}/posts/${postId}?view=published`,
+    async (route) => {
+      await held;
+      await route.fulfill({ json: browserPost });
+    },
+  );
+  const requested = page.waitForRequest(
+    `**/api/boards/${boardId}/posts/${postId}?view=published`,
+  );
+  await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
+  await requested;
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Close post" })
+    .click();
+  await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
+  await page.getByRole("button", { name: "Open post", exact: true }).click();
+  const nextReader = page.getByRole("dialog", {
+    name: nextPost.title,
+    exact: true,
+  });
+  await expect(nextReader).toBeVisible();
+  await expect(page).toHaveURL(
+    (url) => url.searchParams.get("post") === otherBoardId,
+  );
+  const response = page.waitForResponse(
+    `**/api/boards/${boardId}/posts/${postId}?view=published`,
+  );
+  release();
+  await (await response).finished();
+  await expect(
+    nextReader.getByText(nextPost.body, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: browserPost.title, exact: true }),
+  ).toHaveCount(0);
+  await nextReader.getByRole("button", { name: "Close post" }).click();
+  await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
 });
 
 test("published search sends one applied title/body query while preserving server totals", async () => {

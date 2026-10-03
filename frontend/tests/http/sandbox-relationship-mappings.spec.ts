@@ -2616,7 +2616,13 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
   });
   const requestPaths: string[] = [];
   page.on("request", (request) => {
-    requestPaths.push(new URL(request.url()).pathname);
+    const path = new URL(request.url()).pathname;
+    if (
+      path === "/api/users/00000000-0000-4000-8000-000000000001/preferences" &&
+      request.method() === "GET"
+    )
+      return;
+    requestPaths.push(path);
   });
   await openAuthenticatedSandbox(page, design);
   let submitted: Record<string, unknown> | undefined;

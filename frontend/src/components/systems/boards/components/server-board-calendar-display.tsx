@@ -25,7 +25,9 @@ function formatDate(date: string): string {
   }).format(new Date(`${date}T12:00:00Z`));
 }
 
-function formatOccurrenceTime(item: Occurrence): string {
+function formatOccurrenceTime(
+  item: Pick<Occurrence, "event" | "start" | "end">,
+): string {
   if (item.event.allDay) {
     return item.start === item.end
       ? `All day · ${formatDate(item.start)}`
@@ -114,6 +116,116 @@ function CalendarEventDisclosure({ children }: { children: ReactNode }) {
   );
 }
 
+function eventContent(
+  event: BoardEvent,
+  compact: boolean,
+  includeAttachments: boolean,
+) {
+  const details = event.details
+    ? createElement(
+        "p",
+        {
+          className: `${compact ? "" : "mt-2 "}whitespace-pre-wrap break-words text-sm`,
+        },
+        event.details,
+      )
+    : null;
+  const location = event.location
+    ? createElement(
+        "p",
+        {
+          className: "text-muted-foreground mt-1 text-sm break-words",
+        },
+        event.location,
+      )
+    : null;
+  const links =
+    event.links.length > 0
+      ? createElement(
+          "ul",
+          {
+            "aria-label": "Event links",
+            className: `${compact ? "" : "mt-2 "}flex min-w-0 flex-col gap-1`,
+          },
+          ...event.links.map((link, index) =>
+            createElement(
+              "li",
+              { key: `${link.url}:${link.label}:${index}` },
+              createElement(
+                "a",
+                {
+                  href: link.url,
+                  target: "_blank",
+                  rel: "noopener noreferrer",
+                  referrerPolicy: "no-referrer",
+                  className:
+                    "text-primary focus-visible:outline-ring inline-block min-h-11 max-w-full rounded-sm py-2.5 text-sm break-words underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2",
+                },
+                link.label,
+                createElement(
+                  "span",
+                  { className: "sr-only" },
+                  " (opens in a new tab)",
+                ),
+              ),
+            ),
+          ),
+        )
+      : null;
+  const attachments = includeAttachments
+    ? createElement(ServerBoardAttachments, {
+        key: `attachments:${event.id}`,
+        access: "read",
+        target: {
+          kind: "event",
+          boardId: event.boardId,
+          contentId: event.id,
+        },
+      })
+    : null;
+  const recordLinks = includeAttachments
+    ? createElement(ServerBoardRecordLinks, {
+        key: `record-links:${event.id}`,
+        access: "read",
+        target: {
+          kind: "event",
+          boardId: event.boardId,
+          contentId: event.id,
+        },
+      })
+    : null;
+  return { details, location, links, attachments, recordLinks };
+}
+
+export function boardEventTimeLabel(event: BoardEvent): string {
+  return formatOccurrenceTime({
+    event,
+    start: event.startDate ?? event.startAt ?? "",
+    end: event.endDate ?? event.endAt ?? "",
+  });
+}
+
+export function ServerBoardEventReaderContent({
+  event,
+}: {
+  event: BoardEvent;
+}) {
+  const { details, location, links, attachments, recordLinks } = eventContent(
+    event,
+    false,
+    true,
+  );
+  return createElement(
+    "div",
+    { className: "mt-5 space-y-3" },
+    details,
+    location,
+    links,
+    attachments,
+    recordLinks,
+  );
+}
+
 export function ServerBoardCalendarDisplay({
   page,
   window,
@@ -197,79 +309,8 @@ export function ServerBoardCalendarDisplay({
               { className: "text-muted-foreground mt-1 text-sm" },
               formatOccurrenceTime(item),
             );
-            const details = item.event.details
-              ? createElement(
-                  "p",
-                  {
-                    className: `${compact ? "" : "mt-2 "}whitespace-pre-wrap break-words text-sm`,
-                  },
-                  item.event.details,
-                )
-              : null;
-            const location = item.event.location
-              ? createElement(
-                  "p",
-                  {
-                    className: "text-muted-foreground mt-1 text-sm break-words",
-                  },
-                  item.event.location,
-                )
-              : null;
-            const links =
-              item.event.links.length > 0
-                ? createElement(
-                    "ul",
-                    {
-                      "aria-label": "Event links",
-                      className: `${compact ? "" : "mt-2 "}flex min-w-0 flex-col gap-1`,
-                    },
-                    ...item.event.links.map((link, index) =>
-                      createElement(
-                        "li",
-                        { key: `${link.url}:${link.label}:${index}` },
-                        createElement(
-                          "a",
-                          {
-                            href: link.url,
-                            target: "_blank",
-                            rel: "noopener noreferrer",
-                            referrerPolicy: "no-referrer",
-                            className:
-                              "text-primary focus-visible:outline-ring inline-block min-h-11 max-w-full rounded-sm py-2.5 text-sm break-words underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2",
-                          },
-                          link.label,
-                          createElement(
-                            "span",
-                            { className: "sr-only" },
-                            " (opens in a new tab)",
-                          ),
-                        ),
-                      ),
-                    ),
-                  )
-                : null;
-            const attachments = includeAttachments
-              ? createElement(ServerBoardAttachments, {
-                  key: `attachments:${item.event.id}`,
-                  access: "read",
-                  target: {
-                    kind: "event",
-                    boardId: item.event.boardId,
-                    contentId: item.event.id,
-                  },
-                })
-              : null;
-            const recordLinks = includeAttachments
-              ? createElement(ServerBoardRecordLinks, {
-                  key: `record-links:${item.event.id}`,
-                  access: "read",
-                  target: {
-                    kind: "event",
-                    boardId: item.event.boardId,
-                    contentId: item.event.id,
-                  },
-                })
-              : null;
+            const { details, location, links, attachments, recordLinks } =
+              eventContent(item.event, compact, includeAttachments);
             const onDemandActions =
               editAction || archiveAction
                 ? createElement(

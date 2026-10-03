@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FormEvent } from "react";
 import { useWorkspaceSignOut } from "../../shared/runtime/workspace-identity";
@@ -17,9 +17,7 @@ import { authMeOptions } from "@/components/systems/openview/adapters/openview-q
 import { manageWorkspaceOptions } from "@/components/systems/manage/adapters/manage-queries";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { ApiError } from "@/lib/api";
-import { sampleOperationMessage } from "../../shared/runtime/sample-async";
 import { Action, Choice, Panel } from "../../shared/components/ui";
-import type { PlatformCommandResult } from "../adapters/runtime";
 import {
   changeAccountPassword,
   endAccountSession,
@@ -30,44 +28,17 @@ import {
   accountSessionsOptions,
   platformKeys,
 } from "../adapters/platform-queries";
-import type { PlatformAccount } from "../domain/model";
-
-type AccountProps = {
-  preferences: PlatformAccount;
-  onAccountChange: (
-    patch: Partial<PlatformAccount>,
-  ) => Promise<PlatformCommandResult<PlatformAccount>>;
-  pending: (key?: string) => boolean;
-};
+import {
+  useUserThemePreference,
+  UserThemeStatus,
+} from "@/components/theme-provider";
 
 type AccountConfirmation =
   | { type: "session"; session: AccountSession }
   | { type: "other-sessions" }
   | null;
 
-type PreferenceKey = "language" | "theme" | "presence";
 const PASSWORD_LENGTH_MESSAGE = "Use 12 to 128 characters.";
-const PREFERENCE_KEYS: PreferenceKey[] = ["language", "theme", "presence"];
-const PREFERENCE_COPY: Record<
-  PreferenceKey,
-  { label: string; success: string; fallback: string }
-> = {
-  language: {
-    label: "Display language",
-    success: "Language preference saved.",
-    fallback: "The language preference could not be saved. Try again.",
-  },
-  theme: {
-    label: "Theme",
-    success: "Theme preference saved.",
-    fallback: "The theme preference could not be saved. Try again.",
-  },
-  presence: {
-    label: "My presence",
-    success: "Presence updated.",
-    fallback: "Presence could not be saved. Try again.",
-  },
-};
 
 function passwordErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -145,11 +116,8 @@ function formatLastActive(
   }
 }
 
-export default function Account({
-  preferences,
-  onAccountChange,
-  pending,
-}: AccountProps) {
+export default function Account() {
+  const theme = useUserThemePreference();
   const queryClient = useQueryClient();
   const completeSignOut = useWorkspaceSignOut();
   const actionTrigger = useRef<HTMLButtonElement | null>(null);
@@ -167,7 +135,6 @@ export default function Account({
     mutationFn: endOtherAccountSessions,
   });
   const [confirmation, setConfirmation] = useState<AccountConfirmation>(null);
-  const [notice, setNotice] = useState("");
   const [passwordFeedback, setPasswordFeedback] = useState("");
   const [passwordFormError, setPasswordFormError] = useState("");
   const [currentPasswordError, setCurrentPasswordError] = useState("");
@@ -178,15 +145,6 @@ export default function Account({
   const [refreshingAfterPassword, setRefreshingAfterPassword] = useState(false);
   const [sessionActionFeedback, setSessionActionFeedback] = useState("");
   const [sessionActionError, setSessionActionError] = useState("");
-  const [preferenceDrafts, setPreferenceDrafts] = useState<
-    Partial<Record<PreferenceKey, string>>
-  >({});
-  const [preferenceErrors, setPreferenceErrors] = useState<
-    Partial<Record<PreferenceKey, string>>
-  >({});
-  const language = preferenceDrafts.language ?? preferences.language;
-  const theme = preferenceDrafts.theme ?? preferences.theme;
-  const presence = preferenceDrafts.presence ?? preferences.presence;
   const activeSessions = sessionsQuery.data ?? [];
   const otherSessions = activeSessions.filter((session) => !session.current);
   const sessionError = identity.isError ? identity.error : sessionsQuery.error;
@@ -200,78 +158,6 @@ export default function Account({
     passwordMutation.isPending ||
     sessionActionPending ||
     refreshingAfterPassword;
-  useEffect(() => {
-    setPreferenceDrafts((current) => {
-      let changed = false;
-      const next = { ...current };
-      for (const key of PREFERENCE_KEYS) {
-        if (next[key] !== undefined && next[key] === preferences[key]) {
-          delete next[key];
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [preferences.language, preferences.theme, preferences.presence]);
-  function setPreferenceError(key: PreferenceKey, message: string) {
-    setPreferenceErrors((current) => ({ ...current, [key]: message }));
-  }
-  function clearPreferenceError(key: PreferenceKey) {
-    setPreferenceErrors((current) => {
-      if (!(key in current)) return current;
-      const next = { ...current };
-      delete next[key];
-      return next;
-    });
-  }
-  async function update(
-    patch: Partial<PlatformAccount>,
-    success: string,
-    preference?: {
-      key: PreferenceKey;
-      value: string;
-      fallback: string;
-    },
-  ) {
-    if (preference) {
-      setPreferenceDrafts((current) => ({
-        ...current,
-        [preference.key]: preference.value,
-      }));
-      clearPreferenceError(preference.key);
-    }
-    try {
-      const result = await onAccountChange(patch);
-      if (result.ok) {
-        setNotice(success);
-        if (preference) clearPreferenceError(preference.key);
-        return true;
-      }
-      setNotice(result.error);
-      if (preference) setPreferenceError(preference.key, result.error);
-    } catch (error) {
-      const message = sampleOperationMessage(
-        error,
-        preference?.fallback ??
-          "The account change could not be saved. Try again.",
-      );
-      setNotice(message);
-      if (preference) setPreferenceError(preference.key, message);
-    }
-    return false;
-  }
-  function updatePreference(key: PreferenceKey, value: string) {
-    void update(
-      { [key]: value } as Partial<PlatformAccount>,
-      PREFERENCE_COPY[key].success,
-      { key, value, fallback: PREFERENCE_COPY[key].fallback },
-    );
-  }
-  function retryPreference(key: PreferenceKey) {
-    const value = preferenceDrafts[key];
-    if (value === undefined) return;
-    updatePreference(key, value);
-  }
   async function submitPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!accountId || securityMutationPending) return;
@@ -357,89 +243,39 @@ export default function Account({
     }
   }
   return (
-    <div
-      className={`${theme === "Dark" ? "dark" : ""} bg-background text-foreground grid grid-cols-1 items-start gap-5 rounded-xl xl:grid-cols-2`}
-    >
+    <div className="bg-background text-foreground grid grid-cols-1 items-start gap-5 rounded-xl xl:grid-cols-2">
       <Panel title="Personal preferences">
         <p className="text-muted-foreground text-sm">
-          These settings change the displayed account. Your sign-in account and
-          session are unchanged.
+          Theme saves to your signed-in account and follows you across devices.
         </p>
-        <Choice
-          label="Display language"
-          value={language}
-          disabled={pending("platform:account:update")}
-          onChange={(event) => updatePreference("language", event.target.value)}
-        >
-          <option>English</option>
-          <option>Filipino</option>
+        <Choice label="Display language" value="unavailable" disabled>
+          <option value="unavailable">Not available yet</option>
         </Choice>
-        <p className="bg-muted rounded-lg p-3 text-sm">
-          {language === "Filipino"
-            ? "Maligayang pagdating. Handa na ang iyong workspace."
-            : "Welcome back. Your workspace is ready."}
-        </p>
+        <p className="text-muted-foreground text-sm">Not available yet.</p>
         <Choice
           label="Theme"
-          value={theme}
-          disabled={pending("platform:account:update")}
-          onChange={(event) => updatePreference("theme", event.target.value)}
+          value={theme.mode ?? ""}
+          disabled={theme.disabled}
+          onChange={(event) =>
+            theme.setMode(event.target.value === "dark" ? "dark" : "light")
+          }
         >
-          <option>Light</option>
-          <option>Dark</option>
+          <option value="" disabled>
+            {theme.error ? "Theme unavailable" : "Loading theme…"}
+          </option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
         </Choice>
-        <p className="text-muted-foreground text-xs">
-          The account preview adopts your selected theme.
-        </p>
-        <Choice
-          label="My presence"
-          value={presence}
-          disabled={pending("platform:account:update")}
-          onChange={(event) => updatePreference("presence", event.target.value)}
-        >
-          {["Available", "Busy", "Away", "Offline"].map((value) => (
-            <option key={value}>{value}</option>
-          ))}
+        <UserThemeStatus />
+        <Choice label="My presence" value="unavailable" disabled>
+          <option value="unavailable">Not available yet</option>
         </Choice>
-        <p className="text-sm">
-          Your status: <strong>{presence}</strong>
-        </p>
-        {PREFERENCE_KEYS.map((key) =>
-          preferenceErrors[key] ? (
-            <div
-              key={key}
-              role="alert"
-              className="border-destructive/50 bg-destructive/10 space-y-2 rounded-lg border p-3 text-sm"
-            >
-              <p>
-                {PREFERENCE_COPY[key].label}: {preferenceErrors[key]}
-              </p>
-              <Action
-                size="sm"
-                variant="outline"
-                disabled={pending("platform:account:update")}
-                onClick={() => retryPreference(key)}
-              >
-                Retry {PREFERENCE_COPY[key].label.toLowerCase()}
-              </Action>
-            </div>
-          ) : null,
-        )}
+        <p className="text-muted-foreground text-sm">Not available yet.</p>
         <div className="space-y-3 border-t pt-4">
           <h3 data-slot="section-title" className="font-medium">
             Team presence
           </h3>
-          {[
-            ["Morgan Kim", "Available"],
-            ["Alex Lee", "Busy"],
-            ["Pat Riley", "Away"],
-            ["Jamie Torres", "Offline"],
-          ].map(([name, status]) => (
-            <p key={name} className="flex justify-between gap-3 text-sm">
-              <span>{name}</span>
-              <span className="text-muted-foreground">{status}</span>
-            </p>
-          ))}
+          <p className="text-muted-foreground text-sm">Not available yet.</p>
         </div>
       </Panel>
       <Panel title="Account security">
@@ -672,11 +508,6 @@ export default function Account({
             </div>
           )}
         </div>
-        {notice && (
-          <p role="status" className="bg-muted rounded-lg p-3 text-sm">
-            {notice}
-          </p>
-        )}
         <AlertDialog
           open={confirmation !== null}
           dismissible={!securityMutationPending}

@@ -111,6 +111,39 @@ def visible_board_clause(user: User) -> ColumnElement[bool]:
     )
 
 
+def managed_board_clause(db: Session, user: User) -> ColumnElement[bool]:
+    """SQL form of ``board_level(...) == manage`` without one query per Board."""
+
+    if not is_active_account(user) or user.role == UserRole.GUEST.value:
+        return false()
+    live = and_(Board.is_deleted.is_(False), Board.deleted_at.is_(None))
+    if user.role == UserRole.ADMIN.value:
+        return live
+    departments = effective_levels(db, user).managed_department_ids() or frozenset()
+    projects = (
+        select(BoardGroup.board_id)
+        .join(Group, Group.id == BoardGroup.group_id)
+        .join(GroupMember, GroupMember.group_id == Group.id)
+        .where(
+            GroupMember.user_id == user.id,
+            GroupMember.is_deleted.is_(False),
+            Group.is_deleted.is_(False),
+            BoardGroup.is_deleted.is_(False),
+            BoardGroup.level == AccessLevel.MANAGE.value,
+        )
+    )
+    return and_(
+        live,
+        or_(
+            and_(
+                Board.scope == BoardScope.DEPARTMENT.value,
+                Board.department_id.in_(sorted(departments)),
+            ),
+            and_(Board.scope == BoardScope.PROJECT.value, Board.id.in_(projects)),
+        ),
+    )
+
+
 def _active_accounts() -> Select[tuple[UUID]]:
     timestamp = utc_now()
     return select(User.id).where(

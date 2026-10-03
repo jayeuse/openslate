@@ -76,6 +76,7 @@ def test_create_listener_stages_and_writes_create_log() -> None:
         "username": "alice",
         "display_name": None,
         "role": "member",
+        "theme_preference": None,
         "job_title": None,
         "sponsor_user_id": None,
         "expires_at": None,

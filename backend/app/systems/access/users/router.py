@@ -4,12 +4,13 @@ from enum import StrEnum
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.dependencies import require_admin
+from app.common.dependencies import get_current_user, require_admin
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -33,6 +34,8 @@ from app.systems.access.users.schemas import (
     InvitationResponse,
     UserAccessResponse,
     UserCreate,
+    UserPreferencesResponse,
+    UserPreferencesUpdate,
     UserResponse,
 )
 from app.systems.access.users.service import (
@@ -41,6 +44,7 @@ from app.systems.access.users.service import (
 
 router = APIRouter(prefix="/users", tags=["users"])
 AdminUser = Annotated[User, Depends(require_admin)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 class UserSortField(StrEnum):
@@ -97,6 +101,57 @@ def get_user(
     if user.is_deleted:
         raise not_found("User")
     return user
+
+
+@router.get("/{user_id}/preferences", response_model=UserPreferencesResponse)
+def get_user_preferences(
+    user_id: UUID, actor: CurrentUser, response: Response
+) -> UserPreferencesResponse:
+    if user_id != actor.id:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "preferences_owner_mismatch",
+                "message": "Preferences belong to the authenticated user",
+            },
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return UserPreferencesResponse.model_validate(
+        {"user_id": actor.id, "theme": actor.theme_preference}
+    )
+
+
+@router.patch("/{user_id}/preferences", response_model=UserPreferencesResponse)
+def update_user_preferences(
+    user_id: UUID,
+    payload: UserPreferencesUpdate,
+    actor: CurrentUser,
+    db: Annotated[Session, Depends(get_db)],
+    response: Response,
+) -> UserPreferencesResponse:
+    if user_id != actor.id:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "preferences_owner_mismatch",
+                "message": "Preferences belong to the authenticated user",
+            },
+        )
+    try:
+        # Authentication may have read an older preference. Serialize this
+        # independent write before deciding whether a same-value update is harmless.
+        db.refresh(actor, with_for_update=True)
+        if actor.theme_preference != payload.theme:
+            actor.theme_preference = payload.theme
+            db.commit()
+            db.refresh(actor)
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Unable to update preferences") from error
+    response.headers["Cache-Control"] = "no-store"
+    return UserPreferencesResponse.model_validate(
+        {"user_id": actor.id, "theme": actor.theme_preference}
+    )
 
 
 @router.get("/{user_id}/access", response_model=UserAccessResponse)

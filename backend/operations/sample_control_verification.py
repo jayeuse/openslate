@@ -33,6 +33,7 @@ _CONTROL_KINDS = frozenset(
         "access_controls",
         "sandbox_controls",
         "audit_controls",
+        "platform_controls",
     }
 )
 
@@ -171,6 +172,80 @@ def _run_final_verifiers(
             continue
         observed.update(counts)
         issues.extend(family_issues)
+    plan = manifest.get("control_plan")
+    if isinstance(plan, list) and any(
+        isinstance(row, Mapping) and row.get("kind") == "platform_controls" for row in plan
+    ):
+        _verify_platform_final(client, manifest, admin_id, observed, issues)
+
+
+def _verify_platform_final(
+    client: SampleClient,
+    manifest: Mapping[str, Any],
+    admin_id: str,
+    observed: dict[str, int],
+    issues: list[str],
+) -> None:
+    from operations.sample_control_platform import RECORD_KEYS
+
+    mappings, results = manifest.get("mappings"), manifest.get("control_results")
+    records = mappings.get("platform_records") if isinstance(mappings, Mapping) else None
+    themes = (
+        [
+            row.get("original_theme")
+            for row in results
+            if isinstance(row, Mapping)
+            and row.get("action_key")
+            in ("control:platform:review_self_theme", "control:platform:toggle_restore_self_theme")
+        ]
+        if isinstance(results, list)
+        else []
+    )
+    if (
+        not isinstance(records, Mapping)
+        or not isinstance(results, list)
+        or set(records) != set(RECORD_KEYS)
+        or any(_canonical_uuid(value) is None for value in records.values())
+        or len(set(records.values())) != 2
+        or len(themes) != 2
+        or themes[0] not in ("light", "dark")
+        or themes[0] != themes[1]
+    ):
+        issues.append("Platform final mappings or original theme differ")
+        return
+    receipt = next(
+        (
+            row.get("mappings")
+            for row in results
+            if isinstance(row, Mapping)
+            and row.get("action_key") == "control:platform:import_csv_rows"
+        ),
+        None,
+    )
+    if receipt != [
+        {"kind": "platform_records", "logical_id": key, "server_id": records[key]}
+        for key in RECORD_KEYS
+    ]:
+        issues.append("Platform final record mappings differ from import receipts")
+        return
+    try:
+        if any(
+            client.request("GET", f"/api/records/{identifier}").status_code != 404
+            for identifier in records.values()
+        ):
+            issues.append("Platform imported records remain after purge")
+        else:
+            observed["platform_records_purged"] = 2
+        response = client.request("GET", f"/api/users/{admin_id}/preferences")
+        if response.status_code != 200 or response.json() != {
+            "user_id": admin_id,
+            "theme": themes[0],
+        }:
+            issues.append("Platform original self theme was not restored")
+        else:
+            observed["platform_theme_restored"] = 1
+    except (SampleClientError, TypeError, ValueError):
+        issues.append("Platform final state readback failed")
 
 
 def verify_controls(

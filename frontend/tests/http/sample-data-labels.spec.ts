@@ -26,11 +26,6 @@ const surfaces = [
     temporary: false,
   },
   {
-    path: "/platform?section=search",
-    says: "Records, files, and people here are examples.",
-    temporary: true,
-  },
-  {
     path: "/platform?section=files",
     says: "Records, files, and people here are examples.",
     temporary: true,
@@ -58,6 +53,38 @@ for (const surface of surfaces) {
       );
   });
 }
+
+test("Platform search describes readable workspace content without example claims", async ({
+  page,
+}) => {
+  await openSignedIn(page, "/platform?section=search");
+  await expect(
+    page.getByRole("searchbox", { name: "Search workspace", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("note", { name: "Example data" })).toHaveCount(0);
+  await expect(
+    page.getByText("Results include workspace content you can read.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  for (const kind of ["Records", "People", "Posts", "Events"]) {
+    const results = page.getByRole("region", {
+      name: `${kind} search results`,
+      exact: true,
+    });
+    await expect(results).toContainText(
+      `Enter a search to find ${kind.toLowerCase()}.`,
+    );
+    await expect(results.getByRole("link")).toHaveCount(0);
+  }
+  for (const kind of ["Conversations", "Files"])
+    await expect(
+      page.getByRole("region", {
+        name: `${kind} search results`,
+        exact: true,
+      }),
+    ).toContainText(`Unavailable · ${kind} search is not available yet.`);
+});
 
 test("Platform notifications label only the sample list", async ({ page }) => {
   await openSignedIn(page, "/platform?section=notifications");

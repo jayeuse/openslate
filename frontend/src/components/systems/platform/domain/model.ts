@@ -49,10 +49,3 @@ export const PLATFORM_FILES = [
 ] as const;
 
 export type PlatformFile = (typeof PLATFORM_FILES)[number];
-
-export type PlatformImportRow = {
-  title: string;
-  customer: string;
-  assignee: string;
-  dueDate: string;
-};

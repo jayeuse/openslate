@@ -38,6 +38,32 @@ class RecordValidationError(ValueError):
         )
 
 
+def _apply_creation_defaults(data: dict[str, Any], fields: list[Field]) -> dict[str, Any]:
+    """Apply published defaults to omitted primitive values only."""
+    with_defaults = dict(data)
+    for field in fields:
+        key = str(field.id)
+        if (
+            key in with_defaults
+            or field.is_deleted
+            or FieldType(field.type) is FieldType.RELATIONSHIP
+        ):
+            continue
+        if "defaultValue" in field.config:
+            with_defaults[key] = field.config["defaultValue"]
+    return with_defaults
+
+
+def prepare_record_creation(
+    db: Session, module_id: UUID, data: dict[str, Any], fields: list[Field]
+) -> dict[str, Any]:
+    """Apply published defaults and validate one new record without writing it."""
+
+    normalized = validate_record_mutation(_apply_creation_defaults(data, fields), {}, fields)
+    validate_live_user_assignments(db, module_id, normalized, fields)
+    return normalized
+
+
 def validate_record_mutation(
     new_data: dict[str, Any],
     current_data: dict[str, Any],

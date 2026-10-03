@@ -3,13 +3,14 @@
 import os
 from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import event, inspect, select, text
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -17,10 +18,12 @@ import app.common.dependencies.auth as auth_dependencies
 import app.systems.access.auth.router as auth_router
 from app.core.config import get_settings
 from app.core.config.provider_instance import assert_provider_instance
+from app.core.database.session import AuditSession
 from app.core.integrations.supabase_auth import SupabaseAuthUnavailable, get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User, UserStatus
+from app.systems.manage.audit.models import AuditLog, SecurityEvent
 from tests.conftest import guarded_create_engine
 
 pytestmark = pytest.mark.integration
@@ -131,6 +134,210 @@ def test_browser_session_requires_binding_and_supports_refresh_csrf_and_revocati
             assert session.provider_signout_pending_at is not None
     finally:
         client.close()
+
+
+@pytest.mark.parametrize("role", ["admin", "member", "guest"])
+def test_self_theme_preferences_persist_audited_changes_without_account_side_effects(
+    provider_account, role: str
+) -> None:
+    email, password, provider_id, local_id, owner = provider_account
+    settings = get_settings()
+    with Session(owner) as db:
+        other = User(
+            email=f"theme-other-{uuid4().hex}@example.test",
+            username=f"theme-other-{uuid4().hex[:16]}",
+            status="active",
+            role="member",
+        )
+        db.add(other)
+        db.flush()
+        other_id = other.id
+        user = db.get(User, local_id)
+        assert user is not None
+        user.supabase_user_id = provider_id
+        user.role = role
+        user.sponsor_user_id = other_id if role == "guest" else None
+        user.expires_at = datetime.now(UTC) + timedelta(days=30) if role == "guest" else None
+        db.commit()
+    client = TestClient(create_app(), base_url=settings.public_origin)
+    client.headers["Origin"] = settings.public_origin
+    path = f"/api/users/{local_id}/preferences"
+    audit_query = select(AuditLog).where(
+        AuditLog.entity_type == "users",
+        AuditLog.entity_id == local_id,
+        AuditLog.action == "update",
+    )
+    try:
+        # No identity override: real Auth, JWT, local session, role and CSRF checks.
+        anonymous_read = client.get(path)
+        anonymous_write = client.patch(path, json={"theme": "dark"})
+        assert (
+            client.post("/api/auth/login", json={"email": email, "password": password}).status_code
+            == 200
+        )
+        initial = client.get(path)
+        assert initial.status_code == 200
+        assert anonymous_read.status_code == 401
+        assert anonymous_write.status_code == 401
+        assert initial.json() == {"user_id": str(local_id), "theme": "light"}
+        assert "no-store" in initial.headers["Cache-Control"]
+        assert client.patch(path, json={"theme": "dark"}).status_code == 401
+        csrf = client.cookies.get("openslate_csrf")
+        assert csrf is not None
+        client.headers["X-CSRF-Token"] = csrf
+        for target in (other_id, uuid7()):
+            for response in (
+                client.get(f"/api/users/{target}/preferences"),
+                client.patch(f"/api/users/{target}/preferences", json={"theme": "dark"}),
+            ):
+                assert response.status_code == 403
+                assert response.json()["detail"]["code"] == "preferences_owner_mismatch"
+        for invalid in (
+            {},
+            {"theme": None},
+            {"theme": "system"},
+            {"theme": "dark", "role": "admin"},
+        ):
+            assert client.patch(path, json=invalid).status_code == 422
+        with Session(owner) as db:
+            before_user = db.get(User, local_id)
+            assert before_user is not None
+            # Only safe profile values; credential/token fields are never asserted or logged.
+            account = (
+                before_user.role,
+                before_user.status,
+                before_user.email,
+                before_user.tokens_valid_after,
+            )
+            sessions = list(
+                db.execute(
+                    select(IdentitySession.id, IdentitySession.revoked_at).where(
+                        IdentitySession.user_id == local_id
+                    )
+                )
+            )
+            security_ids = set(db.scalars(select(SecurityEvent.id)))
+        saved = client.patch(path, json={"theme": "dark"})
+        assert saved.status_code == 200
+        assert saved.json() == {"user_id": str(local_id), "theme": "dark"}
+        assert "no-store" in saved.headers["Cache-Control"]
+        assert client.get(path).json() == saved.json()
+        assert "theme_preference" not in client.get("/api/auth/me").json()
+        with Session(owner) as db:
+            user = db.get(User, local_id)
+            other = db.get(User, other_id)
+            assert user is not None and other is not None
+            assert user.theme_preference == "dark"
+            assert other.theme_preference == "light"
+            assert (user.role, user.status, user.email, user.tokens_valid_after) == account
+            assert (
+                list(
+                    db.execute(
+                        select(IdentitySession.id, IdentitySession.revoked_at).where(
+                            IdentitySession.user_id == local_id
+                        )
+                    )
+                )
+                == sessions
+            )
+            assert set(db.scalars(select(SecurityEvent.id))) == security_ids
+            changes = list(db.scalars(audit_query))
+            assert [(row.before, row.after, row.performed_by) for row in changes] == [
+                ({"theme_preference": "light"}, {"theme_preference": "dark"}, local_id)
+            ]
+            audit_ids = {row.id for row in changes}
+            updated_at = user.updated_at
+        assert client.patch(path, json={"theme": "dark"}).status_code == 200
+        with Session(owner) as db:
+            user = db.get(User, local_id)
+            assert user is not None and user.updated_at == updated_at
+            assert {row.id for row in db.scalars(audit_query)} == audit_ids
+
+        def fail_commit(db: Session) -> None:
+            db.flush()
+            raise SQLAlchemyError("owned theme persistence failure")
+
+        with patch.object(AuditSession, "commit", fail_commit):
+            assert client.patch(path, json={"theme": "light"}).status_code == 503
+        with Session(owner) as db:
+            user = db.get(User, local_id)
+            assert user is not None and user.theme_preference == "dark"
+            assert {row.id for row in db.scalars(audit_query)} == audit_ids
+        assert client.get(path).json() == {"user_id": str(local_id), "theme": "dark"}
+
+        raced = []
+
+        def change_after_auth_read(_db: Session, instance: object) -> None:
+            if isinstance(instance, User) and instance.id == local_id and not raced:
+                raced.append(True)
+                with Session(owner) as concurrent:
+                    changed = concurrent.get(User, local_id)
+                    assert changed is not None
+                    changed.theme_preference = "light"
+                    concurrent.commit()
+
+        # A separate connection commits after auth loaded its User. Same-value
+        # detection must use fresh locked state, not report an unpersisted theme.
+        event.listen(AuditSession, "loaded_as_persistent", change_after_auth_read)
+        try:
+            accepted = client.patch(path, json={"theme": "dark"})
+            assert raced and accepted.status_code == 200
+            assert accepted.json() == {"user_id": str(local_id), "theme": "dark"}
+        finally:
+            event.remove(AuditSession, "loaded_as_persistent", change_after_auth_read)
+        with Session(owner) as db:
+            assert db.get(User, local_id).theme_preference == "dark"
+            assert len(list(db.scalars(audit_query))) == 2
+    finally:
+        client.close()
+        with Session(owner) as db:
+            user = db.get(User, local_id)
+            if user is not None:
+                user.role, user.sponsor_user_id, user.expires_at = "member", None, None
+                db.flush()
+            other = db.get(User, other_id)
+            if other is not None:
+                db.delete(other)
+            db.commit()
+
+
+def test_user_theme_storage_has_a_light_default_and_rejects_invalid_values(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    user = User(
+        email=f"theme-default-{uuid4().hex}@example.test",
+        username=f"theme-{uuid4().hex[:16]}",
+        role="member",
+        status="active",
+    )
+    db.add(user)
+    db.commit()
+    assert (
+        db.connection().scalar(
+            text("SELECT theme_preference FROM users WHERE id = :id"), {"id": user.id}
+        )
+        == "light"
+    )
+    column = next(
+        item
+        for item in inspect(db.get_bind()).get_columns("users")
+        if item["name"] == "theme_preference"
+    )
+    assert column["nullable"] is False
+    assert "light" in column["default"]
+    for invalid in (None, "system"):
+        with pytest.raises(IntegrityError), db.begin_nested():
+            db.connection().execute(
+                text("UPDATE users SET theme_preference = :theme WHERE id = :id"),
+                {"theme": invalid, "id": user.id},
+            )
+    assert (
+        db.connection().scalar(
+            text("SELECT theme_preference FROM users WHERE id = :id"), {"id": user.id}
+        )
+        == "light"
+    )
 
 
 def test_own_session_inventory_returns_active_sessions_newest_first_with_user_agents(

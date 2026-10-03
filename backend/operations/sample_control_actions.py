@@ -56,16 +56,31 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample_control_boards import plan_board_controls
     from operations.sample_control_manage import plan_manage_controls
     from operations.sample_control_openview import plan_openview_controls
+    from operations.sample_control_platform import plan_platform_controls
     from operations.sample_control_read_reviews import plan_read_reviews
     from operations.sample_control_reads import plan_read_controls
     from operations.sample_control_sandbox import plan_sandbox_controls
+
+    sandbox = plan_sandbox_controls(dataset)
+    platform = plan_platform_controls(dataset)
+    split = (
+        next(
+            i
+            for i, row in enumerate(sandbox)
+            if row.values["operation"] == "prepare_lifecycle_bindings"
+        )
+        + 1
+    )
 
     return (
         *plan_account_controls(dataset),
         *plan_board_controls(dataset),
         *plan_openview_controls(dataset),
         *plan_access_controls(dataset),
-        *plan_sandbox_controls(dataset),
+        *sandbox[:split],
+        *platform[:3],
+        *sandbox[split:],
+        *platform[3:],
         *_audit_actions(dataset),
         *plan_read_reviews(dataset),
         *plan_manage_controls(dataset),
@@ -274,6 +289,7 @@ def execute_control_action(
     from operations.sample_control_boards import execute_board_control
     from operations.sample_control_manage import execute_manage_control
     from operations.sample_control_openview import execute_openview_control
+    from operations.sample_control_platform import execute_platform_control
     from operations.sample_control_read_reviews import execute_read_review
     from operations.sample_control_reads import execute_read_control
     from operations.sample_control_sandbox import execute_sandbox_control
@@ -282,6 +298,7 @@ def execute_control_action(
         "access_controls": execute_access_control,
         "account_controls": execute_account_control,
         "manage_controls": execute_manage_control,
+        "platform_controls": execute_platform_control,
         "board_controls": execute_board_control,
         "openview_controls": execute_openview_control,
         "sandbox_controls": execute_sandbox_control,

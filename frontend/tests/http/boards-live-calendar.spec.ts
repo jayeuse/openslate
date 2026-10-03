@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type {
@@ -66,6 +66,244 @@ const page: BoardEventOccurrencePage = {
   pagination: { limit: 100, offset: 0, count: 1, total: 1, hasMore: false },
   boardRevision: 1,
 };
+
+const selectedEventWire = {
+  id: eventId,
+  board_id: boardId,
+  author_id: authorId,
+  title: "Winter planning session",
+  details: "Bring the printed plan.\n<script>plain text</script>",
+  location: "Room 12",
+  links: [{ label: "Planning guide", url: "https://example.org/planning" }],
+  all_day: true,
+  start_date: "2026-12-14",
+  end_date: "2026-12-16",
+  start_at: null,
+  end_at: null,
+  timezone_name: "Asia/Manila",
+  recurrence: "none",
+  repeat_until: null,
+  reminders: ["1d"],
+  archived: false,
+  revision: 1,
+  board_revision: 1,
+  created_at: "2026-09-01T00:00:00Z",
+  updated_at: "2026-09-01T00:00:00Z",
+};
+
+async function installSelectedEventApi(browser: Page) {
+  const board = {
+    id: boardId,
+    scope: "project",
+    department_id: null,
+    name: "Calendar board",
+    description: "Current calendar",
+    status: "active",
+    revision: 1,
+    level: "read",
+    created_at: selectedEventWire.created_at,
+    updated_at: selectedEventWire.updated_at,
+  };
+  await browser.route("**/api/**", (route) =>
+    route.fulfill({
+      status: 404,
+      json: { detail: "Unavailable in calendar test" },
+    }),
+  );
+  await browser.route("**/api/auth/me", (route) =>
+    route.fulfill({ json: { id: authorId, role: "member", access: [] } }),
+  );
+  await browser.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      json: { authenticated: true, user_id: authorId, setup_required: false },
+    }),
+  );
+  await browser.route("**/api/workspace", (route) =>
+    route.fulfill({ json: { today: "2026-09-14" } }),
+  );
+  await browser.route("**/api/boards**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const prefix = `/api/boards/${boardId}`;
+    const emptyPagination = {
+      limit: 100,
+      offset: 0,
+      count: 0,
+      total: 0,
+      has_more: false,
+    };
+    if (path === "/api/boards")
+      return route.fulfill({
+        json: {
+          items: [board],
+          pagination: { ...emptyPagination, limit: 25, count: 1, total: 1 },
+        },
+      });
+    if (path === prefix) return route.fulfill({ json: board });
+    if (path === `${prefix}/my-access`)
+      return route.fulfill({
+        json: { level: "read", read: true, write: false, manage: false },
+      });
+    if (path === `${prefix}/events/occurrences`)
+      return route.fulfill({
+        json: { items: [], pagination: emptyPagination, board_revision: 1 },
+      });
+    if (path === `${prefix}/events/${eventId}`)
+      return route.fulfill({ json: selectedEventWire });
+    if (
+      path === `${prefix}/events/${eventId}/attachments` ||
+      path === `${prefix}/events/${eventId}/record-links`
+    )
+      return route.fulfill({
+        json: { items: [], limit: 20, offset: 0, has_more: false },
+      });
+    return route.fulfill({
+      status: 404,
+      json: { detail: "Unavailable in calendar test" },
+    });
+  });
+}
+
+test("URL-selected event opens outside the month, survives reload, and closes only its target", async ({
+  page: browser,
+}) => {
+  await installSelectedEventApi(browser);
+  const href = `/boards?board=${boardId}&section=calendar&event=${eventId}&post=${authorId}&keep=chosen`;
+  await browser.goto(href);
+  const reader = browser.getByRole("dialog", {
+    name: selectedEventWire.title,
+    exact: true,
+  });
+  await expect(reader).toBeVisible();
+  await expect(
+    reader.getByText(selectedEventWire.details, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    reader.getByText(selectedEventWire.location, { exact: true }),
+  ).toBeVisible();
+  await expect(reader.getByText(/All day.*Dec 14.*Dec 16/)).toBeVisible();
+  await expect(
+    reader.getByRole("link", { name: /Planning guide/ }),
+  ).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(
+    reader.getByRole("button", { name: /Edit|Archive/ }),
+  ).toHaveCount(0);
+  await expect(reader.locator("script")).toHaveCount(0);
+  await browser.reload();
+  await expect(reader).toBeVisible();
+  await browser.keyboard.press("Escape");
+  await expect(reader).toHaveCount(0);
+  await expect(browser).toHaveURL(
+    (url) =>
+      !url.searchParams.has("event") &&
+      url.searchParams.get("board") === boardId &&
+      url.searchParams.get("section") === "calendar" &&
+      url.searchParams.get("post") === authorId &&
+      url.searchParams.get("keep") === "chosen",
+  );
+  await expect(
+    browser.getByRole("button", { name: "Today", exact: true }),
+  ).toBeFocused();
+  await expect(
+    browser.getByRole("heading", { name: "September 2026", exact: true }),
+  ).toBeVisible();
+});
+
+test("URL-selected event rejects invalid, missing, and denied targets without private content", async ({
+  page: browser,
+}) => {
+  await installSelectedEventApi(browser);
+  const reads: string[] = [];
+  browser.on("request", (request) => {
+    if (
+      new URL(request.url()).pathname ===
+      `/api/boards/${boardId}/events/invalid`
+    )
+      reads.push(request.url());
+  });
+  await browser.goto(`/boards?board=${boardId}&section=calendar&event=invalid`);
+  const unavailable = browser.getByRole("dialog", {
+    name: "Event unavailable",
+    exact: true,
+  });
+  await expect(unavailable).toBeVisible();
+  expect(reads).toEqual([]);
+  for (const status of [403, 404]) {
+    await browser.route(`**/api/boards/${boardId}/events/${eventId}`, (route) =>
+      route.fulfill({ status, json: { detail: "Private event title" } }),
+    );
+    await browser.goto(
+      `/boards?board=${boardId}&section=calendar&event=${eventId}`,
+    );
+    await expect(unavailable).toBeVisible();
+    await expect(unavailable.getByText("Private event title")).toHaveCount(0);
+    await expect(unavailable.getByText(selectedEventWire.details)).toHaveCount(
+      0,
+    );
+    await unavailable.getByRole("button", { name: "Close event" }).click();
+    await expect(browser).toHaveURL((url) => !url.searchParams.has("event"));
+  }
+});
+
+test("URL-selected event retries a failed detail read without changing the calendar month", async ({
+  page: browser,
+}) => {
+  await installSelectedEventApi(browser);
+  let available = false;
+  await browser.route(`**/api/boards/${boardId}/events/${eventId}`, (route) =>
+    route.fulfill(
+      available
+        ? { json: selectedEventWire }
+        : { status: 503, json: { detail: "Unavailable" } },
+    ),
+  );
+  await browser.goto(
+    `/boards?board=${boardId}&section=calendar&event=${eventId}`,
+  );
+  const unavailable = browser.getByRole("dialog", {
+    name: "Event unavailable",
+  });
+  await expect(unavailable).toBeVisible();
+  available = true;
+  await unavailable.getByRole("button", { name: "Retry" }).click();
+  await expect(
+    browser.getByRole("dialog", { name: selectedEventWire.title }),
+  ).toBeVisible();
+});
+
+test("closing a URL-selected event ignores its late detail response", async ({
+  page: browser,
+}) => {
+  await installSelectedEventApi(browser);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await browser.route(
+    `**/api/boards/${boardId}/events/${eventId}`,
+    async (route) => {
+      await held;
+      await route.fulfill({ json: selectedEventWire });
+    },
+  );
+  const requested = browser.waitForRequest(
+    `**/api/boards/${boardId}/events/${eventId}`,
+  );
+  await browser.goto(
+    `/boards?board=${boardId}&section=calendar&event=${eventId}`,
+  );
+  await requested;
+  await browser
+    .getByRole("dialog")
+    .getByRole("button", { name: "Close event" })
+    .click();
+  await expect(browser).toHaveURL((url) => !url.searchParams.has("event"));
+  const response = browser.waitForResponse(
+    `**/api/boards/${boardId}/events/${eventId}`,
+  );
+  release();
+  await response;
+  await expect(browser.getByRole("dialog")).toHaveCount(0);
+});
 
 test("calendar month navigation requests one inclusive bounded month", () => {
   expect(calendarWindowForMonth("2026-09")).toMatchObject({

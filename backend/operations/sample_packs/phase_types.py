@@ -17,6 +17,7 @@ PhaseActionKind = Literal[
     "sandbox_controls",
     "account_controls",
     "manage_controls",
+    "platform_controls",
     "audit_controls",
     "read_controls",
     "refuse_role_change",

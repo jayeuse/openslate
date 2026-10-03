@@ -211,6 +211,7 @@ function isAdapterSource(file: string): boolean {
       (file.includes("/adapters/") || file.endsWith("/state/api.ts"))) ||
     file === "frontend/src/lib/auth-api.ts" ||
     file === "frontend/src/lib/mfa-api.ts" ||
+    file === "frontend/src/lib/user-theme-preferences.ts" ||
     file === "frontend/src/components/systems/sandbox/state/lifecycle-api.ts"
   );
 }

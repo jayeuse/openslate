@@ -184,6 +184,13 @@ def verify_request_evidence(
         issues.append("A sample control result has invalid request evidence")
         return
     operation = action.values.get("operation")
+    if action.kind == "platform_controls":
+        from operations.sample_control_platform_verification import verify_platform_evidence
+
+        verify_platform_evidence(
+            dataset, manifest, action, result, admin_id, seen_request_ids, observed, issues
+        )
+        return
     target_id: str | None = None
     manage_steps: dict[str, tuple[str, str, str, int]] = {}
     if action.kind == "manage_controls":

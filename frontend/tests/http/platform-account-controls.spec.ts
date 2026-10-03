@@ -112,10 +112,9 @@ test("loads own sessions and exposes a retryable denied and empty state", async 
     releaseResponse?.();
   }
 
-  let reads = 0;
+  let sessionsDenied = true;
   await page.route("**/api/auth/sessions", async (route) => {
-    reads += 1;
-    if (reads === 1) {
+    if (sessionsDenied) {
       await route.fulfill({
         status: 403,
         json: { detail: "Internal access detail" },
@@ -131,6 +130,7 @@ test("loads own sessions and exposes a retryable denied and empty state", async 
     }),
   ).toBeVisible();
   await expect(page.getByText("Internal access detail")).toHaveCount(0);
+  sessionsDenied = false;
   await page.getByRole("button", { name: "Retry sessions" }).click();
   await expect(page.getByText("No active sessions.")).toBeVisible();
 });
@@ -795,7 +795,9 @@ test("Account explains its mixed sources and associates password validation with
   await openAccount(page);
   await expect(
     page.getByRole("note", { name: "Account data", exact: true }),
-  ).toContainText("Password and device sessions are your real account");
+  ).toContainText(
+    "Password, device sessions, and theme use your signed-in account",
+  );
   await expect(
     page.getByRole("button", { name: "Review sign-out", exact: true }),
   ).toHaveCount(0);

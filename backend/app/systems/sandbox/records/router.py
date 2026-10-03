@@ -21,7 +21,7 @@ from app.systems.access.policy.checks import module_filter, module_level, requir
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import includes
 from app.systems.access.users.models import User
-from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.fields.validation import parse_field_key, validate_record_data
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.record_triggers.outbox import enqueue_record_event
@@ -29,8 +29,12 @@ from app.systems.sandbox.records.display import FieldDisplayResolver, displayed_
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.mutation_validation import (
     RecordValidationError,
+    prepare_record_creation,
     validate_live_user_assignments,
     validate_record_mutation,
+)
+from app.systems.sandbox.records.mutation_validation import (
+    _apply_creation_defaults as _apply_creation_defaults,
 )
 from app.systems.sandbox.records.schemas import RecordCreate, RecordResponse, RecordUpdate
 from app.systems.sandbox.relationships.errors import RelationshipError
@@ -179,23 +183,6 @@ def _active_fields(db: Session, module_id: UUID) -> list[Field]:
     return [field for field in _module_fields(db, module_id) if not field.is_deleted]
 
 
-def _apply_creation_defaults(data: dict[str, Any], fields: list[Field]) -> dict[str, Any]:
-    """Apply published field defaults only at real record creation time."""
-
-    with_defaults = dict(data)
-    for field in fields:
-        key = str(field.id)
-        if (
-            key in with_defaults
-            or field.is_deleted
-            or FieldType(field.type) is FieldType.RELATIONSHIP
-        ):
-            continue
-        if "defaultValue" in field.config:
-            with_defaults[key] = field.config["defaultValue"]
-    return with_defaults
-
-
 def _validate_data(
     db: Session,
     module_id: UUID,
@@ -285,12 +272,7 @@ def create_record(
     if not any(not field.is_deleted for field in fields):
         raise _conflict("Module has no active fields")
     try:
-        normalized_data = validate_record_mutation(
-            _apply_creation_defaults(payload.data, fields),
-            {},
-            fields,
-        )
-        validate_live_user_assignments(db, payload.module_id, normalized_data, fields)
+        normalized_data = prepare_record_creation(db, payload.module_id, payload.data, fields)
     except RecordValidationError as error:
         raise _record_validation_http_error(error) from error
     record = Record(module_id=payload.module_id, data=normalized_data)

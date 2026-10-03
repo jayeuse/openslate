@@ -44,6 +44,17 @@ class AuthMeResponse(UserResponse):
     access: list[AccessEntryResponse]
 
 
+class UserPreferencesResponse(BaseModel):
+    user_id: UUID
+    theme: Literal["light", "dark"]
+
+
+class UserPreferencesUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    theme: Literal["light", "dark"]
+
+
 class AccessGroupResponse(BaseModel):
     """A group whose own row gives an entry its level; a guest's row can be higher."""
 

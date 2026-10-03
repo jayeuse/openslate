@@ -15,6 +15,8 @@ import {
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { SearchSelect } from "@/components/ui/search-select";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
+import { ApiError } from "@/lib/api";
+import { readBoardPost, type BoardPost } from "../adapters/board-posts-api";
 import {
   postFeedQueryForSort,
   normalizePublishedPostSearch,
@@ -24,7 +26,11 @@ import {
   type PublishedPostSort,
 } from "../hooks/use-server-board-posts";
 import { BoardEmpty } from "./ui";
-import { ServerBoardPostFeedDisplay } from "./server-board-post-feed-display";
+import {
+  ServerBoardPostFeedDisplay,
+  ServerBoardPostReader,
+} from "./server-board-post-feed-display";
+import { ServerBoardPostHistory } from "./server-board-post-history";
 export { ServerBoardPostFeedDisplay } from "./server-board-post-feed-display";
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25] as const;
@@ -40,9 +46,13 @@ const SORT_OPTIONS: readonly {
 export function ServerBackedBoardPosts({
   boardId,
   refreshKey,
+  selectedPostId = null,
+  onSelectPost,
 }: {
   boardId: string;
   refreshKey: number;
+  selectedPostId?: string | null;
+  onSelectPost?: (postId: string | null) => void;
 }) {
   const actorId = useVerifiedWorkspaceUserId();
   return (
@@ -50,6 +60,8 @@ export function ServerBackedBoardPosts({
       key={`${actorId}:${boardId}`}
       boardId={boardId}
       refreshKey={refreshKey}
+      selectedPostId={selectedPostId}
+      onSelectPost={onSelectPost}
     />
   );
 }
@@ -57,11 +69,56 @@ export function ServerBackedBoardPosts({
 function ScopedServerBackedBoardPosts({
   boardId,
   refreshKey,
+  selectedPostId,
+  onSelectPost,
 }: {
   boardId: string;
   refreshKey: number;
+  selectedPostId: string | null;
+  onSelectPost?: (postId: string | null) => void;
 }) {
   const id = useId();
+  const actorId = useVerifiedWorkspaceUserId();
+  const [detailRetry, setDetailRetry] = useState(0);
+  const detailKey = `${actorId}:${boardId}:${selectedPostId}:${refreshKey}:${detailRetry}`;
+  const [detail, setDetail] = useState<{
+    key: string;
+    post: BoardPost | null;
+    error: string | null;
+  } | null>(null);
+  const [historyPost, setHistoryPost] = useState<BoardPost | null>(null);
+  const selectedDetail = detail?.key === detailKey ? detail : null;
+  const selectedPost = selectedDetail?.post ?? null;
+  const historyOpen =
+    selectedPost !== null && historyPost?.id === selectedPost.id;
+
+  useEffect(() => {
+    if (!actorId || selectedPostId === null) {
+      setDetail(null);
+      setHistoryPost(null);
+      return;
+    }
+    let active = true;
+    void readBoardPost(boardId, selectedPostId, "published")
+      .then((post) => {
+        if (active) setDetail({ key: detailKey, post, error: null });
+      })
+      .catch((error: unknown) => {
+        if (active)
+          setDetail({
+            key: detailKey,
+            post: null,
+            error:
+              error instanceof ApiError &&
+              [401, 403, 404].includes(error.status)
+                ? "This post is unavailable or you no longer have access."
+                : "Could not load the published post. Try again.",
+          });
+      });
+    return () => {
+      active = false;
+    };
+  }, [actorId, boardId, detailKey, selectedPostId]);
   const [offset, setOffset] = useState(0);
   const [pageSize, setPageSize] = useState<number>(25);
   const [sort, setSort] = useState<PublishedPostSort>("newest");
@@ -287,6 +344,7 @@ function ScopedServerBackedBoardPosts({
           page={page}
           appliedSearch={appliedSearch}
           authorLabels={authorLabels}
+          onReadPost={onSelectPost}
         />
       )}
       {!page && state.status === "loading" && (
@@ -354,6 +412,31 @@ function ScopedServerBackedBoardPosts({
             />
           </div>
         </div>
+      )}
+      {actorId && selectedPostId !== null && !historyOpen && (
+        <ServerBoardPostReader
+          post={selectedPost}
+          authorLabel={
+            selectedPost
+              ? (authorLabels[selectedPost.authorId] ?? "Author unavailable")
+              : "Author unavailable"
+          }
+          loading={selectedDetail === null}
+          error={selectedDetail?.error}
+          onRetry={() => setDetailRetry((current) => current + 1)}
+          onHistory={setHistoryPost}
+          onClose={() => onSelectPost?.(null)}
+          finalFocus={() => document.getElementById(`${id}-search`)}
+        />
+      )}
+      {historyOpen && selectedPost && (
+        <ServerBoardPostHistory
+          boardId={boardId}
+          postId={selectedPost.id}
+          title={selectedPost.title}
+          authorLabels={authorLabels}
+          onClose={() => setHistoryPost(null)}
+        />
       )}
     </div>
   );

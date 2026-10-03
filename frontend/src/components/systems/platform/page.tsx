@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -9,20 +9,22 @@ import {
 import { useSampleRuntime } from "@/components/systems/shared/runtime/sample-state";
 import { PageHeader } from "@/components/page-header";
 import { SampleDataNote } from "@/components/sample-data-note";
-import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import {
+  useWorkspaceNavigationGuard,
+  type WorkspaceNavigationGuard,
+} from "@/components/workspace-navigation-guard";
 import { Action } from "../shared/components/ui";
 import ImportExport from "./components/import-export";
 import Account from "./components/account";
 import Files from "./components/files";
 import Notifications from "./components/notifications";
-import Search, { type PlatformSearchGroup } from "./components/search";
+import Search from "./components/search";
 import { usePlatformCommands } from "./adapters/runtime";
 import {
   PLATFORM_OWNER_KEYS,
   readPlatformSnapshot,
   type PlatformSnapshot,
 } from "./adapters/snapshot";
-import { pagePlatformSearch } from "./domain/records";
 const PLATFORM_SECTIONS = {
   search: "Search",
   notifications: "Notifications",
@@ -33,11 +35,6 @@ const PLATFORM_SECTIONS = {
 
 type PlatformSection =
   (typeof PLATFORM_SECTIONS)[keyof typeof PLATFORM_SECTIONS];
-
-// Search results list message text, so formatting markers are removed.
-function plainMessageText(text: string): string {
-  return text.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1");
-}
 
 function platformSectionFromSearch(
   requestedSection: string | null,
@@ -91,15 +88,7 @@ export default function SamplePlatform() {
     readPlatformSnapshot((_, initial) => initial),
   );
   const workspace = platformResource.data ?? fallback;
-  const {
-    people,
-    records,
-    messages,
-    notifications,
-    preferences,
-    account,
-    files,
-  } = workspace;
+  const { records, notifications, preferences, files } = workspace;
   const platformCommands = usePlatformCommands();
   const [query, setQuery] = useState("");
   const [fileQuery, setFileQuery] = useState("");
@@ -107,47 +96,6 @@ export default function SamplePlatform() {
   const [notice, setNotice] = useState("");
   const selectedRecord = records[0] ?? null;
   const file = files.find((item) => item.id === fileId);
-  const searchGroups: PlatformSearchGroup[] = [
-    {
-      type: "People",
-      items: people.map((person) => ({
-        id: person.id,
-        title: person.name,
-        href: `/access?user=${encodeURIComponent(person.id)}`,
-      })),
-    },
-    {
-      type: "Records",
-      items: records.map((record) => ({
-        id: record.id,
-        title: record.title,
-        href: `/openview?record=${encodeURIComponent(record.id)}`,
-      })),
-    },
-    {
-      type: "Messages",
-      items: messages.map((message) => ({
-        id: message.id,
-        title: plainMessageText(message.text),
-        href: `/comms?conversation=${encodeURIComponent(message.conversation)}&message=${encodeURIComponent(message.id)}`,
-      })),
-    },
-    {
-      type: "Files",
-      items: files.map((item) => ({
-        id: item.id,
-        title: item.name,
-        href: `/platform?file=${encodeURIComponent(item.id)}&section=files`,
-      })),
-    },
-  ].map((group) => {
-    const { complete, page } = pagePlatformSearch(
-      group.items,
-      query,
-      `platform-search:${group.type}:${query.trim().toLowerCase()}`,
-    );
-    return { type: group.type, complete, page };
-  });
   const pendingRecordId = selectedRecord?.id ?? "";
   const pendingSimulation = pendingRecordId
     ? platformCommands.isPending(
@@ -175,12 +123,18 @@ export default function SamplePlatform() {
     [router, searchParams, platformCommands.isPending],
   );
 
+  const importGuardRef = useRef<WorkspaceNavigationGuard | null>(null);
+  const registerImportGuard = useCallback(
+    (guard: WorkspaceNavigationGuard | null) => {
+      importGuardRef.current = guard;
+    },
+    [],
+  );
   useWorkspaceNavigationGuard(
     useCallback(
       (href, resume) => {
-        void href;
-        void resume;
-        return !navigationPending;
+        if (navigationPending) return false;
+        return importGuardRef.current?.(href, resume) ?? true;
       },
       [navigationPending],
     ),
@@ -265,7 +219,9 @@ export default function SamplePlatform() {
         ),
       );
   }
+  const usesSampleData = tab === "Notifications" || tab === "File library";
   if (
+    usesSampleData &&
     platformResource.status === "loading" &&
     platformResource.data === undefined
   )
@@ -280,6 +236,7 @@ export default function SamplePlatform() {
       </section>
     );
   if (
+    usesSampleData &&
     platformResource.status === "error" &&
     platformResource.data === undefined
   )
@@ -302,74 +259,59 @@ export default function SamplePlatform() {
     );
   return (
     <div className="space-y-6">
-      {(platformResource.refreshing || platformResource.error) && (
-        <div className="bg-muted/50 flex items-center gap-3 rounded-lg border p-3 text-sm">
-          <p role="status" className="text-muted-foreground flex-1">
-            {platformResource.refreshing
-              ? "Refreshing Platform…"
-              : `Showing the last saved Platform data. ${platformResource.error}`}
-          </p>
-          {!platformResource.refreshing && (
-            <Action
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={platformResource.reload}
-            >
-              Retry
-            </Action>
-          )}
-        </div>
-      )}
+      {usesSampleData &&
+        (platformResource.refreshing || platformResource.error) && (
+          <div className="bg-muted/50 flex items-center gap-3 rounded-lg border p-3 text-sm">
+            <p role="status" className="text-muted-foreground flex-1">
+              {platformResource.refreshing
+                ? "Refreshing Platform…"
+                : `Showing the last saved Platform data. ${platformResource.error}`}
+            </p>
+            {!platformResource.refreshing && (
+              <Action
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={platformResource.reload}
+              >
+                Retry
+              </Action>
+            )}
+          </div>
+        )}
       <PageHeader
         title="Platform"
         description="Search, notifications, files, and your account."
       />
-      {tab !== "Notifications" ? (
-        <SampleDataNote
-          className="-mt-4"
-          sourceLabel={tab === "Account & presence" ? "Account" : undefined}
-          ariaLabel={tab === "Account & presence" ? "Account data" : undefined}
-          suffix={
-            tab === "Account & presence"
-              ? "Example changes last until you close this tab."
-              : undefined
-          }
+      {tab === "Account & presence" ? (
+        <p
+          role="note"
+          aria-label="Account data"
+          className="text-muted-foreground -mt-4 text-sm"
         >
-          {tab === "Account & presence"
-            ? "Password and device sessions are your real account. Preferences and team presence are examples."
-            : "Records, files, and people here are examples."}
+          Password, device sessions, and theme use your signed-in account.
+          Language and presence are not available yet.
+        </p>
+      ) : tab === "File library" ? (
+        <SampleDataNote className="-mt-4">
+          Records, files, and people here are examples.
         </SampleDataNote>
       ) : null}
-      {notice && (
+      {usesSampleData && notice && (
         <p role="status" className="bg-muted rounded-lg border p-3 text-sm">
           {notice}
         </p>
       )}
       {tab === "Import & export" ? (
-        <ImportExport
-          records={records}
-          people={people}
-          onImport={platformCommands.importRecords}
-          onPrepareExport={platformCommands.loadRecordsForExport}
-          pending={platformCommands.isPending}
-        />
+        <ImportExport onNavigationGuardChange={registerImportGuard} />
       ) : tab === "Account & presence" ? (
-        <Account
-          preferences={account}
-          onAccountChange={platformCommands.updateAccount}
-          pending={platformCommands.isPending}
-        />
+        <Account />
       ) : tab === "Search" ? (
         <Search
           query={query}
           onQueryChange={setQuery}
-          groups={searchGroups}
           navigationPending={navigationPending}
           isNavigationPending={isNavigationPending}
-          onOpenFile={(selectedFileId) =>
-            navigate("File library", { fileId: selectedFileId })
-          }
         />
       ) : tab === "Notifications" ? (
         <Notifications

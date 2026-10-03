@@ -158,6 +158,114 @@ def test_control_verifier_checks_request_and_all_final_families(
 
 
 @pytest.mark.parametrize(
+    "fault",
+    (
+        "none",
+        "missing_step",
+        "reordered",
+        "wrong_actor",
+        "request_reuse",
+        "bad_status",
+        "foreign_path",
+        "missing_mapping",
+        "extra_mapping",
+        "read_checks",
+        "end_state",
+        "unrestored_theme",
+        "record_remaining",
+        "mapping_receipt",
+        "search_step",
+        "search_count",
+        "search_read_checks",
+    ),
+)
+def test_platform_verification_requires_exact_requests_and_restored_state(
+    tmp_path, monkeypatch, fault
+):
+    import operations.sample_control_openview_mutations as frozen_helpers
+    from operations.sample_control_actions import execute_control_action
+    from tests.operations.sample_platform_wire import PlatformWire
+    from tests.operations.test_sample_control_sandbox import _context
+
+    monkeypatch.setattr(frozen_helpers, "_PURGE_POLL_SECONDS", 0)
+    dataset = build_dataset("small", seed=83, anchor_date=date(2026, 10, 2))
+    wire = PlatformWire(dataset)
+    context = _context(tmp_path, wire.handle)
+    wire.bind(context)
+    actions = tuple(row for row in plan_controls(dataset) if row.kind == "platform_controls")
+    setup = next(
+        row
+        for row in plan_controls(dataset)
+        if row.values["operation"] == "prepare_lifecycle_bindings"
+    )
+    try:
+        execute_control_action(setup, dataset, context)
+        results = [execute_control_action(row, dataset, context) for row in actions]
+        _patch_plan_and_final_verifiers(monkeypatch, actions[0])
+        monkeypatch.setattr(sample_control_actions, "plan_controls", lambda _: actions)
+        manifest = {
+            "control_plan": [phase_action_to_manifest(row) for row in actions],
+            "control_results": results,
+            "mappings": context.runtime_mappings,
+            "actor_ids": {},
+        }
+        evidence = results[0]["request_evidence"]
+        if fault == "search_step":
+            results[1]["request_evidence"][-1]["step"] = "search_event_page_20"
+        if fault == "search_count":
+            results[1]["search_pages"]["event"] = 101
+        if fault == "search_read_checks":
+            results[1]["read_checks"] = 9
+        if fault == "missing_step":
+            evidence.pop()
+        if fault == "reordered":
+            evidence.reverse()
+        if fault == "wrong_actor":
+            evidence[0]["actor_id"] = MANAGER_ID
+        if fault == "request_reuse":
+            evidence[1]["request_id"] = evidence[0]["request_id"]
+        if fault == "bad_status":
+            evidence[0]["status_code"] = 503
+        if fault == "foreign_path":
+            evidence[-1]["path"] = f"/api/records/{BOARD_ID}"
+        if fault == "missing_mapping":
+            manifest["mappings"]["platform_records"].pop("opening_review")
+        if fault == "extra_mapping":
+            manifest["mappings"]["platform_records"]["unexpected"] = BOARD_ID
+        if fault == "read_checks":
+            results[0]["read_checks"] = 0
+        if fault == "end_state":
+            results[2]["records_purged"] = False
+        if fault == "mapping_receipt":
+            results[0]["mappings"][0]["server_id"] = BOARD_ID
+        if fault == "unrestored_theme":
+            wire.theme = "light"
+        if fault == "record_remaining":
+            key = wire.created[0]
+            wire.records[key] = {"id": key, "module_id": BOARD_ID, "data": {}, "is_deleted": True}
+        counts, issues = verification.verify_controls(
+            context.clients["admin"], dataset, manifest, context.user_ids["admin"]
+        )
+        if fault == "none":
+            assert issues == []
+            assert results[1]["search_pages"] == dict(record=1, person=1, post=1, event=2)
+            assert results[1]["read_checks"] == 10
+            assert [
+                int(r.url.params["offset"])
+                for r in wire.requests
+                if r.url.path == "/api/search" and r.url.params["kind"] == "event"
+            ] == [0, 10]
+            assert counts["platform_records_purged"] == 2 and counts["platform_theme_restored"] == 1
+            assert counts["control_requests_verified"] == sum(
+                len(row["request_evidence"]) for row in results
+            )
+        else:
+            assert issues
+    finally:
+        context.clients["admin"].close()
+
+
+@pytest.mark.parametrize(
     ("operation", "tamper"),
     (
         ("audit_export", None),
