@@ -12,6 +12,7 @@ import {
   type SampleRecord,
 } from "../../shared/data/sample-data";
 import { useSampleResource } from "../../shared/runtime/sample-async";
+import { SampleOperationError } from "../../shared/runtime/sample-runtime";
 import {
   useSampleRuntime,
   useSampleState,
@@ -22,10 +23,17 @@ import {
   useCommsConfiguration,
 } from "./configuration-state";
 import {
+  COMMS_CONFIGURATION_KEY,
   messageFromCommsError,
   useCommsCommands,
   readCommsConfiguration,
+  stageCommsConfiguration,
 } from "./runtime";
+import { DEFAULT_COMMS_PREFERENCES } from "../domain/configuration-model";
+
+// Example channels start read except these, so unread marks stand out.
+const SAMPLE_UNREAD_CHANNELS = new Set(["workshop", "dispatch", "customers"]);
+const SAMPLE_READ_AT = Date.UTC(2026, 8, 12);
 import {
   CATEGORIES,
   CHANNELS,
@@ -216,6 +224,25 @@ export function useCommsWorkspace(onSeedError: (message: string) => void) {
             EXAMPLE_THREADS.filter((item) => messageIds.has(item.messageId)),
           ),
         );
+        const readAt = Object.fromEntries(
+          [...CHANNELS, ...newChannels]
+            .filter((item) => !SAMPLE_UNREAD_CHANNELS.has(item.name))
+            .map((item) => [item.id, SAMPLE_READ_AT]),
+        );
+        stageCommsConfiguration(draft, (current) => {
+          const viewer =
+            current.preferences["sample-eli"] ?? DEFAULT_COMMS_PREFERENCES;
+          return {
+            ...current,
+            preferences: {
+              ...current.preferences,
+              "sample-eli": {
+                ...viewer,
+                readAt: { ...readAt, ...viewer.readAt },
+              },
+            },
+          };
+        });
         draft.update("commsExamplesLoaded", false, true);
         return true;
       },
@@ -227,8 +254,14 @@ export function useCommsWorkspace(onSeedError: (message: string) => void) {
         "commsMessages",
         "commsThreads",
         "commsExamplesLoaded",
+        COMMS_CONFIGURATION_KEY,
       ],
     ).catch((error: unknown) => {
+      // A newer run of this seed (React runs effects twice in development)
+      // or a newer change cancelled this one; that run seeds instead, so a
+      // cancellation is not a failure to report.
+      if (error instanceof SampleOperationError && error.kind === "aborted")
+        return;
       onSeedError(
         messageFromCommsError(error, "Conversations could not be loaded."),
       );

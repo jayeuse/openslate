@@ -19,9 +19,11 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
     get_supabase_auth_client,
 )
+from app.systems.access.identity.mfa import MFARequired
 from app.systems.access.identity.provider_sessions import resolve_provider_session
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import allowed_module_ids
+from app.systems.manage.workspace.security_policy import ip_allowed, load_workspace_policy
 from app.systems.platform.events.hub import (
     EventHub,
     EventSubscription,
@@ -88,6 +90,7 @@ class BoundedSSEStreamingResponse(StreamingResponse):
 @dataclass(frozen=True, slots=True)
 class EventPrincipal:
     access_token: str
+    client_ip: str | None = None
 
 
 def get_event_principal(
@@ -119,7 +122,7 @@ def get_event_principal(
         raise _unauthorized() from error
     except SupabaseAuthUnavailable as error:
         raise HTTPException(status_code=503, detail="Event authorization unavailable") from error
-    return EventPrincipal(raw_token)
+    return EventPrincipal(raw_token, request.client.host if request.client else None)
 
 
 @router.get("")
@@ -235,6 +238,14 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
         raise HTTPException(status_code=503, detail="Event authorization unavailable") from error
     try:
         with AuditSession(get_engine()) as db:
+            if not ip_allowed(load_workspace_policy(db), principal.client_ip):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "ip_not_allowed",
+                        "message": "Access from this address is not allowed",
+                    },
+                )
             resolved = resolve_provider_session(db, claims, client)
             if resolved is None:
                 return None
@@ -244,6 +255,14 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
                 role=user.role,
                 module_ids=allowed_module_ids(db, user, AccessLevel.READ),
             )
+    except MFARequired as error:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "mfa_required",
+                "message": "Complete multi-factor authentication to continue",
+            },
+        ) from error
     except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
         raise HTTPException(status_code=503, detail="Event authorization unavailable") from error
 

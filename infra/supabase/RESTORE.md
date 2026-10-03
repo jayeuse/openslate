@@ -43,7 +43,83 @@ Replace the final placeholder with the services for the current stage: first `db
 
 Check `/api/ready` through an operator-only/internal path with the configured Host header, while Caddy remains stopped. If any required component is unready, keep ingress closed and investigate. Only after readiness succeeds may the operator explicitly start `caddy` with `--no-deps`, and only if it was running before the outage. Verify the public endpoint before ending the outage. A previously stopped installation remains stopped.
 
-This command does not schedule backups, expire snapshots, or copy them off host. The installation operator must set a backup cadence and retention policy, copy the encrypted Restic repository off host, protect the password separately, keep the marker/config/release identity with the recovery record, monitor backup failures and capacity, and rehearse restoration to a distinct owned target. Do not delete a source snapshot or its required private material until a later usable recovery point is verified.
+The physical archive command does not schedule backups, expire snapshots, or copy them off host. The host runner below executes the application cadence and confirms owned snapshot expiry. The installation operator still copies the encrypted Restic repository off host, protects the password separately, keeps the marker/config/release identity with recovery records, monitors failures/capacity, and rehearses restoration to a distinct owned target. Do not delete a source snapshot or its private material until a later usable recovery point is verified.
+
+## Run the installation backup policy
+
+Manage Backup saves policy and queues requests; it does not install a scheduler or stop services. The bounded host runner executes one owned production Compose request per invocation on Linux or WSL2. It refuses native Windows and development before claim or service stop. Development may save/queue for acceptance, while its actual backups use the manual offline procedure above. macOS disposable production rehearsal is workstation evidence, not supported-server acceptance.
+
+Use the matching release checkout, locked backend Python environment, Docker/Compose CLI and initialized Restic repository. Use the existing owner-only version-3 backup config as a template. Create one existing mode-0700 state directory outside named volumes, repository, staging, Compose/TLS inputs and marker directory; keep the same state directory for every invocation. The application environment must use Docker's literal `KEY=value` format without shell quotes/interpolation, `ENVIRONMENT=production`, the admitted instance identity and constrained runtime database URL at `db:5432/postgres`. Keep bootstrap/owner credentials separate.
+
+From `backend/`, run one tick:
+
+```sh
+uv run python operations/backup_runner.py run \
+  --backup-config ABSOLUTE_PRIVATE_V3_TEMPLATE \
+  --state-directory ABSOLUTE_PRIVATE_RUNNER_STATE
+```
+
+Configure the installation's Linux/WSL2 host scheduler to invoke this once per minute; OpenSlate installs no scheduler. Daily and Sunday-weekly policies execute at 02:00 in the workspace timezone.
+
+### Schedule the runner
+
+Use the same release checkout, template and state directory for every invocation. Replace the uppercase placeholders with absolute paths.
+
+**Linux:** add one line to the crontab of the operator account that owns the checkout (`crontab -e`):
+
+```cron
+* * * * * cd /ABSOLUTE/CHECKOUT/backend && uv run python operations/backup_runner.py run --backup-config ABSOLUTE_PRIVATE_V3_TEMPLATE --state-directory ABSOLUTE_PRIVATE_RUNNER_STATE >> ABSOLUTE_PRIVATE_RUNNER_STATE/scheduler.log 2>&1
+```
+
+**Windows (WSL2):** cron inside WSL2 runs only while the distribution runs, and WSL2 stops an idle distribution. Use Windows Task Scheduler instead, so Windows starts WSL2 for each tick:
+
+1. Open Task Scheduler and select **Create Task**.
+2. On **General**, select **Run whether user is logged on or not**.
+3. On **Triggers**, add a **Daily** trigger that repeats every **1 minute** for **Indefinitely**.
+4. On **Actions**, set **Program** to `wsl.exe` and **Arguments** to:
+
+   ```text
+   -d DISTRIBUTION --cd /ABSOLUTE/CHECKOUT/backend -- uv run python operations/backup_runner.py run --backup-config ABSOLUTE_PRIVATE_V3_TEMPLATE --state-directory ABSOLUTE_PRIVATE_RUNNER_STATE
+   ```
+
+5. On **Settings**, set **If the task is already running** to **Do not start a new instance**.
+
+**macOS:** not a supported server target, so no launchd setup is provided.
+
+**Monitoring:** exit 2 with `runner_busy` is expected while a long backup holds the lock; do not alert on it. Alert on exit 3.
+
+Caution: after a failed or interrupted backup, the runner leaves the services stopped on purpose. The installation stays offline until an operator runs `recover` (see "Reconcile an interrupted host run"). Alert on exit 3 so a night-time failure does not stay unnoticed until the morning. At most one missed occurrence catches up before advancing strictly into the future. Disabled scheduling still permits manual requests. Saving policy alone does not prove a runner is available.
+
+The host admits Docker ownership and application identity, uses the constrained release image on the provider network to admit the connected database and commit one claim, then durably records the original service states and per-run configuration before stopping services. The bridge has no Docker socket or private host mounts. The existing archive function verifies the encrypted snapshot. Restart uses the exact admitted existing container IDs, preserving configuration/labels and avoiding implicit dependencies or recreation. Only previously running services resume, with bounded health waits and required API readiness before Caddy. A deliberately halted scanner worker stays halted; unready required components keep ingress closed.
+
+Private state is under `STATE/INSTALLATION_ID/`: `active.json` identifies `claims/CLAIM_ID/journal.json`. Actual runs retain `backup.json` and `backup-complete.json` there. The runner writes a fresh per-claim marker rather than the template marker. Keep these files and the matching release with recovery material. Journals contain allowlisted identity/state fields and exact pending acknowledgements, never raw Docker environment/config output, credentials or vendor diagnostics. Exit 0 reports an idle/succeeded/adopted/not-claimed result; exit 2 refuses admission or recovery prerequisites; exit 3 reports failure/interruption or uncertain operations. Output is safe JSON.
+
+Retention considers only current-installation verified/reconciled snapshots with matching private material and confirmed Restic ownership. It protects the newest point by verification time, the same rule the database enforces, and the new snapshot. It forgets exact eligible IDs and verifies absence before recording expiry. When a run removed at least one snapshot, it then runs `restic prune` once to reclaim their data; a run that removed nothing skips prune. It never removes foreign or incomplete snapshots and never deletes recovery journals, configuration or markers. A retention or prune failure records `retention_failed` while retaining snapshot verification and successful service reconciliation. After services resume, the runner sends heartbeats so Manage keeps showing the runner as available during long retention. Off-host copies remain an operator procedure.
+
+## Reconcile an interrupted host run
+
+An active journal or unresolved claim prevents another normal run. Exception: a journal left by a tick that crashed before any claim existed is closed automatically on the next tick, because nothing was stopped or claimed. Inspect the installation and private record; do not delete the journal, requeue or infer success from a snapshot ID. Host-spawned Compose/bridge/retention commands and the owned archive child inherit the host lock. Archive descendants are additionally covered by the registered POSIX process-group check and Docker volume-reader checks; the unchanged physical archive does not pass the lock to every descendant. Recovery requires that process group to be gone and refuses surviving Docker readers mounting owned volumes, including readers outside Compose. It does not terminate unknown processes or containers.
+
+Use the same release, template and state directory:
+
+```sh
+uv run python operations/backup_runner.py recover \
+  --backup-config ABSOLUTE_PRIVATE_V3_TEMPLATE \
+  --state-directory ABSOLUTE_PRIVATE_RUNNER_STATE
+```
+
+After disposition checks, recovery can start only the originally running database to verify the exact claim while ingress remains closed. It reuses valid completion evidence, stages original services/readiness and reconciles that claim. Without completion evidence it remains a failed/interrupted backup even after services recover; recovery never starts another backup. An invalid/foreign marker refuses resumption. Lost final acknowledgement replays the identical result. Lost expiry acknowledgement confirms snapshot absence and replays the same expiry command/timestamp without blindly repeating `forget`.
+
+After physical restore finalization and target service admission, an inherited policy remains inactive until explicit adoption. Use the **target** template/state and its existing owner-only finalized marker:
+
+```sh
+uv run python operations/backup_runner.py recover \
+  --backup-config ABSOLUTE_PRIVATE_TARGET_V3_TEMPLATE \
+  --state-directory ABSOLUTE_PRIVATE_TARGET_RUNNER_STATE \
+  --restore-finalized ABSOLUTE_TARGET_DIRECTORY/restore-finalized.json
+```
+
+The host admits the private marker file and passes its full bounded document on stdin; the bridge independently validates finalization/session invalidation and source/target/project identities under the coordination lock. Adoption preserves cadence/retention, schedules after now and leaves previous-installation runs unchanged. It does not change the existing finalizer or startup/ingress admission.
 
 ## Select and inspect the target
 

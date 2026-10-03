@@ -1,7 +1,7 @@
 """Safety rules for closing published Sandbox structure."""
 
-from collections.abc import Collection
-from typing import Literal
+from collections.abc import Collection, Mapping
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import or_, select
@@ -298,12 +298,9 @@ def live_dependencies_exist(
             RecordTrigger.enabled.is_(True),
         ]
         if ignored_trigger_ids:
-            trigger_filters.append(
-                RecordTrigger.id.not_in(ignored_trigger_ids)
-            )
+            trigger_filters.append(RecordTrigger.id.not_in(ignored_trigger_ids))
         has_triggers = (
-            db.scalar(select(RecordTrigger.id).where(*trigger_filters).limit(1))
-            is not None
+            db.scalar(select(RecordTrigger.id).where(*trigger_filters).limit(1)) is not None
         )
         return has_records or has_relationship_target or has_triggers
     if kind in {"field", "relationship"}:
@@ -410,9 +407,7 @@ def _field_has_trigger_dependency(
         ignored_filter = RecordTrigger.id.not_in(ignored_trigger_ids)
         definition_filters.append(ignored_filter)
         child_filters.append(ignored_filter)
-    definition = db.scalar(
-        select(RecordTrigger.id).where(*definition_filters).limit(1)
-    )
+    definition = db.scalar(select(RecordTrigger.id).where(*definition_filters).limit(1))
     condition = db.scalar(
         select(RecordTriggerCondition.id)
         .join(
@@ -446,3 +441,32 @@ def _field_has_trigger_dependency(
         .limit(1)
     )
     return definition is not None or condition is not None or action is not None
+
+
+def lifecycle_closed_relationships(
+    db: Session,
+    document: SandboxDocument,
+    bindings: Mapping[Any, Mapping[str, SandboxBinding]],
+) -> set[str]:
+    """Relationships whose live field lifecycle closed directly, not through a module.
+
+    A relationship has no closed flag in the design, so publication must keep such a
+    field closed; lifecycle reopen owns it. A field closed by a department or module
+    cascade shares that ancestor's marker and still follows its modules. Call this
+    before applying a publication, while the ancestors' markers are unchanged.
+    """
+    closed: set[str] = set()
+    for relationship in document.design.relationships:
+        binding = bindings.get("relationship", {}).get(relationship.id)
+        field = db.get(Field, binding.field_id) if binding and binding.field_id else None
+        marker = field.lifecycle_close_operation_id if field is not None else None
+        if field is None or not field.is_deleted or marker is None:
+            continue
+        ancestors = (
+            db.get(Module, module_id)
+            for module_id in (field.module_id, field.relationship_target_module_id)
+            if module_id is not None
+        )
+        if marker not in {module.lifecycle_close_operation_id for module in ancestors if module}:
+            closed.add(relationship.id)
+    return closed

@@ -53,6 +53,7 @@ export function createCommsMessageOperations({
   setThreadId,
   setReplyingTo,
   setNotice,
+  announce,
   scrollToLatest,
   config,
   viewer,
@@ -70,7 +71,10 @@ export function createCommsMessageOperations({
   replyingTo: Message | null;
   setThreadId: Dispatch<SetStateAction<string>>;
   setReplyingTo: Dispatch<SetStateAction<Message | null>>;
+  /** Reports a failure people must see. */
   setNotice: (message: string) => void;
+  /** Tells assistive technology about a result that is already visible. */
+  announce: (message: string) => void;
   scrollToLatest: () => void;
   config: CommsConfiguration;
   viewer: Person | undefined;
@@ -262,6 +266,68 @@ export function createCommsMessageOperations({
     if (result) setNotice(result);
     return result;
   }
+  /** Puts back a message this person just deleted, in its own channel even
+   *  if they have moved on, under the same rule that let them delete it. */
+  async function undoDelete(original: Message): Promise<string | null> {
+    const result = await run(
+      `message:undo-delete:${original.id}`,
+      (draft) => {
+        const currentConfig = readCommsConfiguration(draft);
+        const currentPeople = draft.read<Person[]>(
+          "access-people",
+          initialPeople,
+        );
+        const currentCategories = draft.read<Category[]>(
+          "commsCategories",
+          CATEGORIES,
+        );
+        const currentChannels = draft.read<Channel[]>(
+          "commsChannels",
+          CHANNELS,
+        );
+        const currentViewer = currentPeople.find(
+          (person) => person.id === viewerId && person.active,
+        );
+        if (!currentViewer || !currentConfig.tombstones[original.id])
+          return draft.reject("This message can no longer be put back.");
+        const error = validateCommsMessageChange({
+          config: currentConfig,
+          person: currentViewer,
+          channel: currentChannels.find(
+            (item) => item.id === original.conversation,
+          ),
+          categories: currentCategories,
+          people: currentPeople,
+          message: original,
+          kind: "delete",
+        });
+        if (error) return draft.reject(error);
+        draft.update<Message[]>("commsMessages", MESSAGES, (items) =>
+          [...items.filter((item) => item.id !== original.id), original].sort(
+            (a, b) => a.created - b.created,
+          ),
+        );
+        stageCommsConfiguration(draft, (current) => {
+          const tombstones = { ...current.tombstones };
+          delete tombstones[original.id];
+          return { ...current, tombstones };
+        });
+        return null;
+      },
+      [
+        "commsMessages",
+        COMMS_CONFIGURATION_KEY,
+        "access-people",
+        "commsCategories",
+        "commsChannels",
+      ],
+    ).catch((error: unknown) =>
+      messageFromCommsError(error, "The message could not be put back."),
+    );
+    if (result) setNotice(result);
+    else announce("Message put back.");
+    return result;
+  }
   function validateDraft(
     draft: MessageDraft,
     kind: "post" | "reply" | "thread",
@@ -435,10 +501,16 @@ export function createCommsMessageOperations({
     }
     if (result.threadId) setThreadId(result.threadId);
     setReplyingTo(null);
-    setNotice("Message sent.");
+    announce("Message sent.");
     requestAnimationFrame(() => scrollToLatest());
     return null;
   }
 
-  return { changeMessage, deleteMessage, validateDraft, sendMessage };
+  return {
+    changeMessage,
+    deleteMessage,
+    undoDelete,
+    validateDraft,
+    sendMessage,
+  };
 }

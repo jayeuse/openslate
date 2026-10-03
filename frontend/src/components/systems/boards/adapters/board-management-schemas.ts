@@ -194,67 +194,6 @@ export const boardListSchema = z
   .object({ items: z.array(boardSchema), pagination: paginationSchema })
   .strict()
   .refine(({ items, pagination }) => items.length === pagination.count);
-const lifecycleRowStateSchema = z
-  .object({
-    entity_type: z.string().min(1).max(100),
-    entity_id: uuidSchema,
-    is_deleted: z.boolean(),
-    deleted_at: timestampSchema.nullable(),
-    updated_at: timestampSchema,
-    state_fingerprint: z.string().max(128),
-    byte_count: z.number().int().min(0).nullable(),
-  })
-  .strict();
-const lifecycleBlockerSchema = z
-  .object({
-    code: z.string().min(1).max(100),
-    entity_type: z.string().min(1).max(100),
-    entity_id: uuidSchema,
-    detail: z.string().max(500),
-    conflicting_entity_type: z.string().max(100).nullable(),
-    conflicting_entity_id: uuidSchema.nullable(),
-    field_id: uuidSchema.nullable(),
-    field_name: z.string().max(150).nullable(),
-    module_id: uuidSchema.nullable(),
-    module_name: z.string().max(150).nullable(),
-    department_id: uuidSchema.nullable(),
-    department_name: z.string().max(150).nullable(),
-  })
-  .strict();
-const lifecycleImpactSchema = z
-  .object({
-    target_type: z.literal("board"),
-    target_id: uuidSchema,
-    operation: z.literal("purge"),
-    actor_id: uuidSchema.nullable(),
-    rows: z.array(lifecycleRowStateSchema),
-    external_impacts: z.array(z.record(z.string(), z.unknown())),
-    key_strips: z.array(z.record(z.string(), z.unknown())),
-    blockers: z.array(lifecycleBlockerSchema),
-    impact_digest: z.string().regex(/^[a-f0-9]{64}$/),
-  })
-  .strict();
-export const boardPurgePreviewSchema = z
-  .object({
-    impact: lifecycleImpactSchema,
-    token: z.string().min(1).max(128),
-    expires_at: timestampSchema,
-    confirmation_name: uuidSchema,
-  })
-  .strict();
-export const boardPurgeResultSchema = z
-  .object({
-    impact: lifecycleImpactSchema,
-    operation_id: uuidSchema.nullable(),
-  })
-  .strict();
-export const boardPurgeInputSchema = z
-  .object({
-    token: z.string().min(1).max(128),
-    confirmationName: z.string().trim().min(1).max(150),
-    password: z.string().min(1).max(256),
-  })
-  .strict();
 export const boardListOptionsSchema = z
   .object({
     limit: z.number().int().min(1).max(100).default(25),
@@ -283,7 +222,6 @@ export const boardUpdateSchema = boardCreateSchema
 export type PortableBoardBundle = z.output<typeof bundleSchema>;
 export type BoardManagementBoard = z.output<typeof boardSchema>;
 export type BoardManagementPage = z.output<typeof boardListSchema>;
-export type BoardPurgePreview = z.output<typeof boardPurgePreviewSchema>;
 export type BoardListOptions = z.input<typeof boardListOptionsSchema>;
 export type BoardCreateInput = z.input<typeof boardCreateSchema>;
 export type BoardUpdateInput = z.input<typeof boardUpdateSchema>;

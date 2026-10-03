@@ -16,6 +16,7 @@ from app.systems.access.identity.provider_actions import complete_invitation
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import UserRole, UserStatus
 from app.systems.access.users.schemas import UserUpdate
+from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.users.test_local_identity_users import _user
 
 pytestmark = pytest.mark.usefixtures("local_identity_security_events")
@@ -60,13 +61,21 @@ def test_resend_rejects_non_pending_or_deleted_profiles(
     db.commit.assert_not_called()
 
 
-def test_provider_rejected_invitation_cannot_change_account_or_password() -> None:
+def test_provider_rejected_invitation_cannot_change_account_or_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     db = Mock(spec=Session)
     provider = Mock()
     provider.verify_email_action.side_effect = InvalidProviderCredentials("expired or consumed")
+    policy = WorkspaceProfile(
+        password_min_length=12, password_require_mixed_case=True, password_require_number=False
+    )
+    monkeypatch.setattr(
+        "app.systems.access.identity.provider_actions.load_workspace_policy", lambda _db: policy
+    )
 
     with pytest.raises(InvitationError, match="Invitation token is invalid"):
-        complete_invitation(db, "a" * 56, "new password", provider)
+        complete_invitation(db, "a" * 56, "New password", provider)
 
     provider.update_password.assert_not_called()
     db.commit.assert_not_called()

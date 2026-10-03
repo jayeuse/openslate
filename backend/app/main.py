@@ -42,6 +42,7 @@ from app.core.readiness import (
 )
 from app.core.static_site import StaticSite
 from app.systems.access.auth.aggregate_router import router as auth_router
+from app.systems.access.auth.mfa_router import router as mfa_router
 from app.systems.access.identity.provider_signout_worker import ProviderSignoutWorker
 from app.systems.access.policy.configuration_router import router as access_policy_router
 from app.systems.boards.access_preview_router import router as board_access_preview_router
@@ -61,7 +62,9 @@ from app.systems.boards.router import router as boards_router
 from app.systems.boards.widget_router import router as board_widgets_router
 from app.systems.manage.audit.router import internal_security_events_router, security_events_router
 from app.systems.manage.audit.router import router as audit_router
+from app.systems.manage.backups.router import router as backups_router
 from app.systems.manage.workspace.router import router as workspace_router
+from app.systems.manage.workspace.security_router import router as workspace_security_router
 from app.systems.openview.dashboards.router import router as dashboards_router
 from app.systems.openview.reports.router import router as reports_router
 from app.systems.openview.reports.schedule_router import router as report_schedule_router
@@ -78,6 +81,7 @@ from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router as files_router
 from app.systems.platform.scheduling.notification_router import router as notifications_router
 from app.systems.platform.scheduling.worker import ReportSchedulingWorker
+from app.systems.platform.search.router import router as search_router
 from app.systems.sandbox.departments.router import router as departments_router
 from app.systems.sandbox.designs.router import router as sandbox_designs_router
 from app.systems.sandbox.fields.router import router as fields_router
@@ -86,6 +90,7 @@ from app.systems.sandbox.modules.router import router as modules_router
 from app.systems.sandbox.publications.router import router as sandbox_publications_router
 from app.systems.sandbox.record_triggers.router import router as sandbox_record_triggers_router
 from app.systems.sandbox.record_triggers.worker import TriggerWorker
+from app.systems.sandbox.records.import_router import router as record_import_router
 from app.systems.sandbox.records.query_router import router as record_queries_router
 from app.systems.sandbox.records.router import router as records_router
 from app.systems.sandbox.relationships.router import router as relationships_router
@@ -150,7 +155,8 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         with get_engine().connect() as connection:
             assert_instance_target(connection, target, expected_user="openslate_runtime")
         assert_provider_instance(
-            environment_inputs(DOTENV_PATH), database_url=settings.database_url,
+            environment_inputs(DOTENV_PATH),
+            database_url=settings.database_url,
             expected_user="openslate_runtime",
         )
     app.state.events_listener.start()
@@ -174,7 +180,8 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         else:
             if not signout_stopped:
                 log_event(
-                    "operational_attention", reason_code="provider_signout_shutdown_incomplete",
+                    "operational_attention",
+                    reason_code="provider_signout_shutdown_incomplete",
                     upstream="supabase-auth",
                 )
             if not trigger_stopped:
@@ -333,6 +340,7 @@ def create_app() -> FastAPI:
             reset_request_context(token)
 
     app.include_router(auth_router, prefix="/api")
+    app.include_router(mfa_router, prefix="/api")
     app.include_router(access_policy_router, prefix="/api")
     app.include_router(departments_router, prefix="/api")
     app.include_router(sandbox_designs_router, prefix="/api")
@@ -341,6 +349,7 @@ def create_app() -> FastAPI:
     app.include_router(sandbox_test_runs_router, prefix="/api")
     app.include_router(modules_router, prefix="/api")
     app.include_router(fields_router, prefix="/api")
+    app.include_router(record_import_router, prefix="/api")
     app.include_router(record_queries_router, prefix="/api")
     app.include_router(records_router, prefix="/api")
     app.include_router(board_portability_router, prefix="/api")
@@ -364,7 +373,10 @@ def create_app() -> FastAPI:
     app.include_router(report_schedule_router, prefix="/api")
     app.include_router(views_router, prefix="/api")
     app.include_router(notifications_router, prefix="/api")
+    app.include_router(search_router, prefix="/api")
     app.include_router(workspace_router, prefix="/api")
+    app.include_router(workspace_security_router, prefix="/api")
+    app.include_router(backups_router, prefix="/api")
     app.include_router(files_router, prefix="/api")
     app.include_router(events_router, prefix="/api")
     app.include_router(file_lifecycle_router, prefix="/api")

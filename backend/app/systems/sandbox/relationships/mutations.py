@@ -17,13 +17,15 @@ from app.systems.sandbox.relationships.errors import (
 )
 from app.systems.sandbox.relationships.locking import (
     _active_entity,
+    _for_update,
     _load_create_dependencies,
     _lock_relationship_rows,
-    _nowait,
     validate_relationship_modules,
+    wait_briefly_for_locks,
 )
 from app.systems.sandbox.relationships.models import RelationshipEdge
-from app.systems.sandbox.relationships.projection import get_relationship
+from app.systems.sandbox.relationships.projection import get_relationship, relationship_response
+from app.systems.sandbox.relationships.schemas import RelationshipResponse
 
 
 def _validate_dependencies(field: Field, source: Record, target: Record) -> None:
@@ -64,7 +66,7 @@ def _active_edge_statement(
         )
         .order_by(RelationshipEdge.id)
     )
-    return _nowait(statement) if for_update else statement
+    return _for_update(statement) if for_update else statement
 
 
 def _find_active_edge(
@@ -81,6 +83,8 @@ def _find_active_edge(
     if target_record_id is not None:
         statement = statement.where(RelationshipEdge.target_record_id == target_record_id)
     try:
+        if for_update:
+            wait_briefly_for_locks(db)
         return db.scalar(statement)
     except OperationalError as error:
         db.rollback()
@@ -104,11 +108,12 @@ def _commit(db: Session, message: str) -> None:
 
 def _locked_edge(db: Session, relationship_id: UUID) -> RelationshipEdge:
     try:
+        wait_briefly_for_locks(db)
         edge = db.get(
             RelationshipEdge,
             relationship_id,
             populate_existing=True,
-            with_for_update={"nowait": True},
+            with_for_update=True,
         )
     except OperationalError as error:
         db.rollback()
@@ -120,14 +125,21 @@ def _locked_edge(db: Session, relationship_id: UUID) -> RelationshipEdge:
     return edge
 
 
-def _refresh_edge(db: Session, edge: RelationshipEdge) -> None:
+def _commit_response(db: Session, edge: RelationshipEdge, message: str) -> RelationshipResponse:
+    """Snapshot flushed values while locked; return only after the commit succeeds."""
     try:
-        db.refresh(edge)
+        db.flush()
+        response = relationship_response(edge)
+    except IntegrityError as error:
+        db.rollback()
+        raise RelationshipConflict(message) from error
     except OperationalError as error:
         db.rollback()
         raise RelationshipUnavailable(
             "Relationship operation is temporarily unavailable"
         ) from error
+    _commit(db, message)
+    return response
 
 
 def create_relationship(
@@ -135,7 +147,7 @@ def create_relationship(
     field_id: UUID,
     source_record_id: UUID,
     target_record_id: UUID,
-) -> RelationshipEdge:
+) -> RelationshipResponse:
     field, source, target = _load_create_dependencies(
         db, field_id, source_record_id, target_record_id
     )
@@ -170,9 +182,7 @@ def create_relationship(
         target_record=target,
     )
     db.add(edge)
-    _commit(db, "Relationship cardinality or uniqueness conflict")
-    _refresh_edge(db, edge)
-    return edge
+    return _commit_response(db, edge, "Relationship cardinality or uniqueness conflict")
 
 
 def unlink_relationship(db: Session, relationship_id: UUID) -> None:
@@ -205,7 +215,7 @@ def assign_relationship(
     field_id: UUID,
     source_record_id: UUID,
     target_record_id: UUID | None,
-) -> RelationshipEdge | None:
+) -> RelationshipResponse | None:
     field = db.scalar(select(Field).where(Field.id == field_id))
     source = db.scalar(select(Record).where(Record.id == source_record_id))
     if field is None or source is None:
@@ -255,7 +265,7 @@ def assign_relationship(
         current.field = locked_field
         current.source_record = locked_source
         current.target_record = locked_target or current.target_record
-        return current
+        return relationship_response(current)
     if target is None:
         raise RelationshipConflict("Target record is unavailable")
 
@@ -283,9 +293,7 @@ def assign_relationship(
         target_record=target,
     )
     db.add(replacement)
-    _commit(db, "Unable to assign relationship")
-    _refresh_edge(db, replacement)
-    return replacement
+    return _commit_response(db, replacement, "Unable to assign relationship")
 
 
 def validate_cardinality_change(

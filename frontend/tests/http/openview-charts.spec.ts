@@ -11,6 +11,7 @@ const selectFieldId = "00000000-0000-4000-8000-000000000112";
 const userFieldId = "00000000-0000-4000-8000-000000000113";
 const choiceId = "00000000-0000-4000-8000-000000000114";
 const eligibleUserId = "00000000-0000-4000-8000-000000000115";
+const userId = "00000000-0000-4000-8000-000000000101";
 
 function pageResponse(items: unknown[]) {
   return {
@@ -28,14 +29,14 @@ function pageResponse(items: unknown[]) {
 test("Charts filter on stable choice and eligible person IDs", async ({
   page,
 }) => {
-  const requestPaths: string[] = [];
+  const requestPaths: Array<{ path: string; method: string }> = [];
   let assignableUserRequests = 0;
   let aggregateBody: Record<string, unknown> | null = null;
   let aggregateRequests = 0;
   let groupLabel = "Alex Reader";
   page.on("request", (request) => {
     const url = new URL(request.url());
-    requestPaths.push(url.pathname);
+    requestPaths.push({ path: url.pathname, method: request.method() });
     if (
       url.pathname === `/api/modules/${moduleId}/assignable-users` &&
       request.method() === "GET"
@@ -48,7 +49,7 @@ test("Charts filter on stable choice and eligible person IDs", async ({
       contentType: "application/json",
       body: JSON.stringify({
         authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000101",
+        user_id: userId,
         setup_required: false,
       }),
     }),
@@ -200,9 +201,13 @@ test("Charts filter on stable choice and eligible person IDs", async ({
     operator: "eq",
     value: eligibleUserId,
   });
-  expect(requestPaths.some((path) => /^\/api\/users(?:\/|$)/.test(path))).toBe(
-    false,
-  );
+  expect(
+    requestPaths.filter(
+      ({ path, method }) =>
+        /^\/api\/users(?:\/|$)/.test(path) &&
+        !(path === `/api/users/${userId}/preferences` && method === "GET"),
+    ),
+  ).toEqual([]);
   const resultTable = page.getByRole("table", {
     name: "Complete aggregate data",
   });

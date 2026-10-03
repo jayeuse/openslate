@@ -310,6 +310,10 @@ export function ProfilePopover({
 
 type MessageMenuProps = {
   id: string;
+  /** Names the actions button, so each message's button is distinct. */
+  label: string;
+  /** The viewer wrote this message: they can schedule it, not report it. */
+  own: boolean;
   className?: string;
   highlighted?: boolean;
   children: ReactNode;
@@ -333,6 +337,8 @@ type MessageMenuProps = {
 };
 export function MessageMenu({
   id,
+  label,
+  own,
   className,
   highlighted,
   children,
@@ -387,7 +393,7 @@ export function MessageMenu({
           type="button"
           size="icon"
           variant="ghost"
-          aria-label="Message actions"
+          aria-label={`Message actions: ${label}`}
           aria-haspopup="menu"
           aria-expanded={open}
           className="bg-card absolute top-1 right-1 size-8 opacity-100 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
@@ -405,7 +411,7 @@ export function MessageMenu({
         sideOffset={4}
         collisionPadding={10}
 
-        aria-label="Message actions"
+        aria-label={`Message actions: ${label}`}
         finalFocus={() => buttonAnchor ?? article.current}
         className="w-56"
       >
@@ -481,14 +487,15 @@ export function MessageMenu({
             </ContextMenuItem>
           )}
         </ContextMenuGroup>
+        <ContextMenuSeparator />
         <ContextMenuGroup>
           {(
             [
-              ["report", "Report message"],
+              ...(own ? [] : ([["report", "Report message"]] as const)),
               ["message-history", "Edit history"],
-              ["outbox", "Schedule message"],
+              ...(own ? ([["outbox", "Schedule a copy"]] as const) : []),
             ] as const
-          ).map(([view, label]) => (
+          ).map(([view, itemLabel]) => (
             <ContextMenuItem
               key={view}
               className="min-h-9"
@@ -497,7 +504,7 @@ export function MessageMenu({
                 if (opener) onTool?.(view, opener);
               }}
             >
-              {label}
+              {itemLabel}
             </ContextMenuItem>
           ))}
         </ContextMenuGroup>
@@ -529,11 +536,12 @@ export function RowEditMenu({
   onEdit,
   actions = [],
 }: {
-  label: "Edit channel" | "Edit category";
+  label: "Channel settings" | "Category settings";
   actionsLabel: string;
   showActions?: boolean;
   children: ReactNode;
-  onEdit: (opener: HTMLElement) => void;
+  /** Absent for people who cannot change settings. */
+  onEdit?: (opener: HTMLElement) => void;
   actions?: {
     label: string;
     onSelect: (opener: HTMLElement) => void;
@@ -611,18 +619,20 @@ export function RowEditMenu({
         className="w-48"
       >
         <ContextMenuGroup>
-          <ContextMenuItem
-            className="min-h-9"
-            onClick={() => {
-              const opener = row.current?.querySelector("button");
-              if (!opener) return;
-              openingEditor.current = true;
-              onEdit(opener);
-            }}
-          >
-            <Pencil aria-hidden="true" />
-            {label}
-          </ContextMenuItem>
+          {onEdit && (
+            <ContextMenuItem
+              className="min-h-9"
+              onClick={() => {
+                const opener = row.current?.querySelector("button");
+                if (!opener) return;
+                openingEditor.current = true;
+                onEdit(opener);
+              }}
+            >
+              <Pencil aria-hidden="true" />
+              {label}
+            </ContextMenuItem>
+          )}
           {actions.map((action) => (
             <ContextMenuItem
               key={action.label}

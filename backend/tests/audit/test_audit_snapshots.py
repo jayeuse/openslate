@@ -70,6 +70,7 @@ def test_serialize_record_contains_only_local_profile_fields() -> None:
         "username": "alice",
         "display_name": None,
         "role": "member",
+        "theme_preference": None,
         "job_title": None,
         "sponsor_user_id": None,
         "expires_at": None,
@@ -94,16 +95,16 @@ def test_update_snapshot_contains_only_changed_nested_values() -> None:
     )
 
     assert snapshot == {
-            "before": {
-                "role": "member",
-                "config": {"theme": "light"},
-                "required": False,
-            },
-            "after": {
-                "role": "admin",
-                "config": {"theme": "dark", "density": "compact"},
-                "required": True,
-            },
+        "before": {
+            "role": "member",
+            "config": {"theme": "light"},
+            "required": False,
+        },
+        "after": {
+            "role": "admin",
+            "config": {"theme": "dark", "density": "compact"},
+            "required": True,
+        },
     }
 
 

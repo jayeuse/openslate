@@ -35,5 +35,12 @@ export interface SandboxInspectorProps {
   onAddRelationship?: () => void;
   onDuplicate?: (target: SandboxInspectorTarget) => void;
   onToggleLifecycle?: (target: SandboxInspectorTarget) => void;
+  lifecycleState?: (target: SandboxInspectorTarget) => {
+    closed: boolean;
+    canPurge: boolean;
+    disabled: boolean;
+  };
+  onPurge?: (target: SandboxInspectorTarget) => SandboxCommand;
+  onEditingChange?: (editing: boolean) => void;
   pending?: boolean;
 }

@@ -19,6 +19,43 @@ export const test = base.extend({
     await context.route("**/api/auth/me", (route) =>
       route.fulfill({ json: defaultSignedInIdentity }),
     );
+    // Preferences are read under the verified session ID, which individual
+    // journeys may override independently of this default navigation identity.
+    // Only UUID paths and the approved light/dark command are supported.
+    const themes = new Map<string, "light" | "dark">();
+    await context.route(
+      /\/api\/users\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/preferences$/,
+      async (route) => {
+        const userId = new URL(route.request().url()).pathname.split("/")[3];
+        if (route.request().method() === "PATCH") {
+          const body: unknown = route.request().postDataJSON();
+          if (
+            typeof body !== "object" ||
+            body === null ||
+            !("theme" in body) ||
+            Object.keys(body).length !== 1 ||
+            (body.theme !== "light" && body.theme !== "dark")
+          ) {
+            await route.fulfill({
+              status: 422,
+              json: { detail: "Invalid preference" },
+            });
+            return;
+          }
+          themes.set(userId, body.theme === "dark" ? "dark" : "light");
+        } else if (route.request().method() !== "GET") {
+          await route.fulfill({
+            status: 405,
+            json: { detail: "Method not allowed" },
+          });
+          return;
+        }
+        await route.fulfill({
+          headers: { "Cache-Control": "no-store" },
+          json: { user_id: userId, theme: themes.get(userId) ?? "light" },
+        });
+      },
+    );
     await provide(context);
   },
 });

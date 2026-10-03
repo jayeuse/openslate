@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import {
   searchSandboxStructure,
   type SandboxFieldType,
@@ -45,6 +45,9 @@ type OutlineProps = Pick<
   | "onAddRelationship"
   | "onDuplicate"
   | "onToggleLifecycle"
+  | "lifecycleState"
+  | "onPurge"
+  | "onEditingChange"
   | "pending"
 > & { visible: boolean };
 
@@ -143,10 +146,17 @@ export function SandboxInspectorOutline({
   onAddRelationship,
   onDuplicate,
   onToggleLifecycle,
+  lifecycleState,
+  onPurge,
+  onEditingChange,
   pending = false,
 }: OutlineProps) {
   const { selectedCellId } = state;
   const [editingId, setEditingId] = useState<string | null>(null);
+  useEffect(() => {
+    onEditingChange?.(editingId !== null);
+  }, [editingId, onEditingChange]);
+  useEffect(() => () => onEditingChange?.(false), [onEditingChange]);
   const [editingValue, setEditingValue] = useState("");
   const [editingError, setEditingError] = useState("");
   const committingId = useRef<string | null>(null);
@@ -224,10 +234,12 @@ export function SandboxInspectorOutline({
     id: string,
     name: string,
   ) {
+    const live = lifecycleState?.({ kind, id });
     const closed =
-      state.departments.some((item) => item.id === id && item.closed) ||
-      state.modules.some((item) => item.id === id && item.closed) ||
-      state.fields.some((item) => item.id === id && item.closed);
+      live?.closed ??
+      (state.departments.some((item) => item.id === id && item.closed) ||
+        state.modules.some((item) => item.id === id && item.closed) ||
+        state.fields.some((item) => item.id === id && item.closed));
     return (
       <>
         <ContextMenuGroup>
@@ -242,10 +254,22 @@ export function SandboxInspectorOutline({
           {onToggleLifecycle ? (
             <ContextMenuItem
               className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-              disabled={pending}
+              disabled={
+                pending || Boolean(live?.disabled) || editingId !== null
+              }
               onClick={() => void onToggleLifecycle({ kind, id })}
             >
               {closed ? "Reopen" : "Close"} {kind}
+            </ContextMenuItem>
+          ) : null}
+          {live?.canPurge && onPurge ? (
+            <ContextMenuItem
+              className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+              variant="destructive"
+              disabled={pending || live.disabled || editingId !== null}
+              onClick={() => void onPurge({ kind, id })}
+            >
+              Permanently delete {kind}
             </ContextMenuItem>
           ) : null}
           {onDuplicate ? (

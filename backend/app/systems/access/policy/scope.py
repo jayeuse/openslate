@@ -396,6 +396,28 @@ def module_reader_ids(
     return frozenset(db.scalars(_readers(target, now)).all())
 
 
+def module_reader_statement(
+    module_ids: Select[tuple[UUID]], *, now: datetime | None = None
+) -> Select[tuple[UUID]]:
+    """Active readers of any module in a caller-scoped module query, in one statement.
+
+    An empty module query has no readers, including administrators. The caller
+    owns module visibility/lifecycle filters; reader eligibility and group access
+    remain the same canonical rules as :func:`module_reader_ids`.
+    """
+
+    target = exists(
+        select(Module.id)
+        .where(
+            Module.id.in_(module_ids),
+            GroupAccess.department_id == Module.department_id,
+            or_(GroupAccess.module_id.is_(None), GroupAccess.module_id == Module.id),
+        )
+        .correlate(GroupAccess)
+    )
+    return _readers(target, now).where(module_ids.exists().correlate(None))
+
+
 def department_reader_ids(
     db: Session, department_id: UUID, *, now: datetime | None = None
 ) -> frozenset[UUID]:

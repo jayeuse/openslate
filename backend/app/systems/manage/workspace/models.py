@@ -11,6 +11,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base_model import BaseModel
@@ -34,10 +35,34 @@ class WorkspaceProfile(BaseModel):
             "guest_duration_days BETWEEN 1 AND 365",
             name="ck_workspace_profiles_guest_duration_days_range",
         ),
+        CheckConstraint("currency ~ '^[A-Z]{3}$'", name="ck_workspace_profiles_currency"),
+        CheckConstraint(
+            "week_start IN ('monday', 'sunday')", name="ck_workspace_profiles_week_start"
+        ),
+        CheckConstraint(
+            "business_hours = btrim(business_hours)",
+            name="ck_workspace_profiles_business_hours_trimmed",
+        ),
+        CheckConstraint("mark = btrim(mark)", name="ck_workspace_profiles_mark_trimmed"),
+        CheckConstraint(
+            "session_timeout_minutes IN (15, 30, 60, 480)",
+            name="ck_workspace_profiles_session_timeout_minutes",
+        ),
+        CheckConstraint(
+            "password_min_length BETWEEN 12 AND 128",
+            name="ck_workspace_profiles_password_min_length",
+        ),
+        CheckConstraint(
+            "mfa_policy IN ('optional', 'admins', 'everyone')",
+            name="ck_workspace_profiles_mfa_policy",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(ip_allow_list) = 'array'", name="ck_workspace_profiles_ip_allow_list"
+        ),
         UniqueConstraint("singleton_key", name="uq_workspace_profiles_singleton_key"),
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset(
-        {"contact_email", "contact_phone", "postal_address"}
+        {"contact_email", "contact_phone", "postal_address", "ip_allow_list"}
     )
 
     singleton_key: Mapped[bool] = mapped_column(
@@ -58,6 +83,36 @@ class WorkspaceProfile(BaseModel):
     )
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
     locale: Mapped[str] = mapped_column(String(35), nullable=False)
+    currency: Mapped[str] = mapped_column(
+        String(3), default="PHP", server_default=text("'PHP'"), nullable=False
+    )
+    week_start: Mapped[str] = mapped_column(
+        String(6), default="monday", server_default=text("'monday'"), nullable=False
+    )
+    business_hours: Mapped[str] = mapped_column(
+        String(200), default="09:00–18:00", server_default=text("'09:00–18:00'"), nullable=False
+    )
+    mark: Mapped[str] = mapped_column(
+        String(32), default="RS", server_default=text("'RS'"), nullable=False
+    )
+    session_timeout_minutes: Mapped[int] = mapped_column(
+        Integer, default=60, server_default=text("60"), nullable=False
+    )
+    password_min_length: Mapped[int] = mapped_column(
+        Integer, default=12, server_default=text("12"), nullable=False
+    )
+    password_require_mixed_case: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
+    password_require_number: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    mfa_policy: Mapped[str] = mapped_column(
+        String(8), default="optional", server_default=text("'optional'"), nullable=False
+    )
+    ip_allow_list: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
     invitation_expiry_days: Mapped[int] = mapped_column(
         Integer, default=7, server_default=text("7"), nullable=False
     )

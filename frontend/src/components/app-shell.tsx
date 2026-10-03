@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { flushSync } from "react-dom";
 import type { Route } from "next";
 import {
   Bell,
@@ -32,8 +33,8 @@ import {
 } from "@/components/workspace-navigation-guard";
 import { releaseAllLocalAttachments } from "@/components/systems/shared/runtime/local-attachments";
 import {
-  clearAccessDraftsForAccountChange,
   clearVerifiedWorkspaceSessionSnapshot,
+  WorkspaceSignOutProvider,
 } from "@/components/systems/shared/runtime/workspace-identity";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
@@ -71,9 +72,11 @@ function clampSidebarWidth(width: number) {
 export function AppShell({
   children,
   verifiedUserId,
+  onSignOutAccepted,
 }: {
   children: ReactNode;
   verifiedUserId: string | null;
+  onSignOutAccepted: () => void;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -95,8 +98,10 @@ export function AppShell({
   } | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
-  const [signedOutDraftCleanupFailed, setSignedOutDraftCleanupFailed] =
-    useState(false);
+  const [signOutCleanup, setSignOutCleanup] = useState<
+    "active" | "clearing" | "failed"
+  >("active");
+  const cleanupPending = useRef(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const mobileCloseRef = useRef<HTMLButtonElement>(null);
   const navigationReturnFocus = useRef<HTMLElement | null>(null);
@@ -155,26 +160,39 @@ export function AppShell({
   }
 
   async function finishSignOut() {
-    if (!clearAccessDraftsForAccountChange()) {
-      setSignedOutDraftCleanupFailed(true);
-      return;
+    if (cleanupPending.current) return;
+    cleanupPending.current = true;
+    const cleanup = clearVerifiedWorkspaceSessionSnapshot(verifiedUserId);
+    flushSync(() => {
+      onSignOutAccepted();
+      setSignOutCleanup("clearing");
+    });
+    releaseAllLocalAttachments();
+    try {
+      if (!(await cleanup)) {
+        setSignOutCleanup("failed");
+        return;
+      }
+      router.replace("/login");
+    } catch {
+      setSignOutCleanup("failed");
+    } finally {
+      cleanupPending.current = false;
     }
-    await clearVerifiedWorkspaceSessionSnapshot(verifiedUserId);
-    router.replace("/login");
   }
 
   async function logout() {
     try {
       await signOut();
-      releaseAllLocalAttachments();
-      await finishSignOut();
     } catch {
       toast.add({
         title: "Could not sign out",
         description: "Your workspace is still active. Try again.",
         type: "error",
       });
+      return;
     }
+    await finishSignOut();
   }
 
   const sidebarStyle = {
@@ -182,24 +200,32 @@ export function AppShell({
     "--sidebar-width-icon": "64px",
   } as CSSProperties;
 
-  if (signedOutDraftCleanupFailed)
+  if (signOutCleanup !== "active")
     return (
       <main className="bg-background text-foreground grid min-h-screen place-items-center">
         <div className="max-w-md px-6 text-center">
           <h1 data-slot="page-title" className="text-xl font-semibold">
             Signed out
           </h1>
-          <p className="mt-3 text-sm" role="alert">
-            We could not clear saved Access drafts in this tab. Close this tab
-            before another person signs in, or clear this site&apos;s session
-            data. You can retry cleanup here.
-          </p>
-          <Button
-            className="mt-5 min-h-11"
-            onClick={() => void finishSignOut()}
-          >
-            Retry clearing drafts
-          </Button>
+          {signOutCleanup === "failed" ? (
+            <>
+              <p className="mt-3 text-sm" role="alert">
+                We could not clear saved Access drafts or other workspace drafts
+                in this tab. Close this tab before another person signs in, or
+                clear this site&apos;s session data. You can retry cleanup here.
+              </p>
+              <Button
+                className="mt-5 min-h-11"
+                onClick={() => void finishSignOut()}
+              >
+                Retry clearing drafts
+              </Button>
+            </>
+          ) : (
+            <p className="mt-3 text-sm" role="status">
+              Clearing saved drafts…
+            </p>
+          )}
         </div>
       </main>
     );
@@ -208,7 +234,7 @@ export function AppShell({
     <WorkspaceNavigationGuardProvider
       onAcceptedNavigation={closeMobileNavigation}
     >
-      <>
+      <WorkspaceSignOutProvider complete={finishSignOut}>
         <SidebarProvider
           open={!sidebarCollapsed}
           onOpenChange={setSidebarOpen}
@@ -369,7 +395,7 @@ export function AppShell({
           >
             <header
               data-skin="topbar"
-              className="border-border bg-background sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5"
+              className="border-border bg-card sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b px-4 sm:px-5"
             >
               <div className="flex min-w-0 items-center gap-2.5">
                 <Button
@@ -407,7 +433,7 @@ export function AppShell({
           </div>
         </SidebarProvider>
         <Toaster />
-      </>
+      </WorkspaceSignOutProvider>
     </WorkspaceNavigationGuardProvider>
   );
 }

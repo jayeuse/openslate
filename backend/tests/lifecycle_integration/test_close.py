@@ -1,10 +1,14 @@
 import os
+from typing import cast
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleClosedAncestorError,
     LifecyclePlanDriftError,
@@ -14,6 +18,7 @@ from app.systems.sandbox.lifecycle.planner import plan_lifecycle
 from app.systems.sandbox.lifecycle.schemas import LifecycleBlockerCode, LifecycleTargetType
 from app.systems.sandbox.lifecycle.service import close_lifecycle, reopen_lifecycle
 from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.models import Record
 from tests.lifecycle_integration.lifecycle_integration_support import _item  # noqa: F401
 
 pytestmark = [
@@ -57,21 +62,50 @@ def test_field_close_reports_same_module_records_and_department_label(
     integration_db: Session, lifecycle_graph: dict[str, object]
 ) -> None:
     field = _item(lifecycle_graph, "field_same")
-    module = _item(lifecycle_graph, "module_x")
+    module = cast(Module, _item(lifecycle_graph, "module_x"))
+    source = cast(Record, _item(lifecycle_graph, "source"))
+    repeated_target = cast(Record, _item(lifecycle_graph, "same_target"))
+    blank_target = cast(Record, _item(lifecycle_graph, "deleted_target"))
+    option_id = str(uuid7())
+    title_field = Field(
+        module_id=module.id,
+        name="Work order title",
+        type=FieldType.SELECT,
+        position=2,
+        config={"options": [{"id": option_id, "label": "Pump seal replacement"}]},
+    )
+    integration_db.add(title_field)
+    integration_db.flush()
+    module.title_field_id = title_field.id
+    source.data = {str(title_field.id): option_id}
+    repeated_target.data = {str(title_field.id): str(uuid7())}
+    blank_target.data = {str(title_field.id): "   "}
+    integration_db.commit()
     result = close_lifecycle(
-        integration_db, LifecycleTargetType.FIELD, field.id, None  # type: ignore[attr-defined]
+        integration_db,
+        LifecycleTargetType.FIELD,
+        field.id,  # type: ignore[attr-defined]
+        None,
     )
 
     assert [row.entity_type for row in result.rows] == ["fields"]
     assert len(result.external_impacts) == 4
     assert {impact.external_module_id for impact in result.external_impacts} == {module.id}  # type: ignore[attr-defined]
+    assert {impact.external_department_name for impact in result.external_impacts} == {
+        lifecycle_graph["department_x"].department_name
+    }  # type: ignore[attr-defined]
     assert {
-        impact.external_department_name for impact in result.external_impacts
-    } == {lifecycle_graph["department_x"].department_name}  # type: ignore[attr-defined]
+        impact.external_record_id: impact.model_dump().get("external_record_label")
+        for impact in result.external_impacts
+    } == {
+        source.id: "Pump seal replacement",
+        repeated_target.id: f"Record {str(repeated_target.id)[:8]}",
+        blank_target.id: f"Record {str(blank_target.id)[:8]}",
+    }
     assert field.is_deleted is True  # type: ignore[attr-defined]
 
 
-def test_reopen_department_sweeps_independently_closed_descendants(
+def test_reopen_legacy_department_only_restores_explicit_root(
     integration_db: Session, lifecycle_graph: dict[str, object]
 ) -> None:
     department = _item(lifecycle_graph, "department_x")
@@ -83,18 +117,75 @@ def test_reopen_department_sweeps_independently_closed_descendants(
     integration_db.flush()
 
     result = reopen_lifecycle(
-        integration_db, LifecycleTargetType.DEPARTMENT, department.id, None  # type: ignore[attr-defined]
+        integration_db,
+        LifecycleTargetType.DEPARTMENT,
+        department.id,
+        None,  # type: ignore[attr-defined]
     )
 
-    assert {row.entity_type for row in result.rows} >= {
-        "departments",
-        "modules",
-        "fields",
-        "records",
-    }
-    assert all(
-        row.is_deleted is False for row in (department, module, field, record)
-    )  # type: ignore[attr-defined]
+    assert [row.entity_type for row in result.rows] == ["departments"]
+    assert department.is_deleted is False  # type: ignore[attr-defined]
+    assert all(row.is_deleted is True for row in (module, field, record))  # type: ignore[attr-defined]
+
+
+def test_ancestor_reopen_preserves_independent_closures_and_deleted_records(
+    integration_db: Session, lifecycle_graph: dict[str, object]
+) -> None:
+    department = _item(lifecycle_graph, "department_x")
+    module = cast(Module, _item(lifecycle_graph, "module_x"))
+    source = cast(Record, _item(lifecycle_graph, "source"))
+    manually_deleted = cast(Record, _item(lifecycle_graph, "deleted_target"))
+    manually_deleted.is_deleted = True
+    independent = Module(department_id=module.department_id, module_name="Independent closure")
+    independent_field = Field(
+        module_id=module.id, name="Independently closed", type=FieldType.TEXT, position=2
+    )
+    integration_db.add_all([independent, independent_field])
+    integration_db.flush()
+    nested_record = Record(module_id=independent.id, data={})
+    integration_db.add(nested_record)
+    integration_db.commit()
+    close_lifecycle(integration_db, "module", independent.id, None)
+    close_lifecycle(integration_db, "field", independent_field.id, None)
+    close_lifecycle(integration_db, "department", department.id, None)  # type: ignore[attr-defined]
+    assert source.is_deleted
+
+    reopened = reopen_lifecycle(integration_db, "department", department.id, None)  # type: ignore[attr-defined]
+
+    assert manually_deleted.is_deleted
+    assert independent.is_deleted and independent_field.is_deleted and nested_record.is_deleted
+    assert not department.is_deleted and not module.is_deleted and not source.is_deleted  # type: ignore[attr-defined]
+    assert independent.id not in {row.entity_id for row in reopened.rows}
+    assert independent_field.id not in {row.entity_id for row in reopened.rows}
+
+
+@pytest.mark.parametrize(
+    "key,table",
+    [
+        ("department_x", "departments"),
+        ("module_x", "modules"),
+        ("field_same", "fields"),
+        ("source", "records"),
+    ],
+)
+def test_close_provenance_constraint_rejects_a_marker_on_an_active_row(
+    integration_db: Session, lifecycle_graph: dict[str, object], key: str, table: str
+) -> None:
+    name = f"ck_{table}_lifecycle_close_provenance"
+    actual = integration_db.connection().scalar(
+        text(
+            "SELECT conname FROM pg_constraint WHERE conname = :name "
+            "AND conrelid = CAST(:table AS regclass)"
+        ),
+        {"name": name, "table": f"public.{table}"},
+    )
+    assert actual == name
+    row = _item(lifecycle_graph, key)
+    assert not row.is_deleted  # type: ignore[attr-defined]
+    with pytest.raises(IntegrityError) as rejected, integration_db.begin_nested():
+        row.lifecycle_close_operation_id = uuid7()  # type: ignore[attr-defined]
+        integration_db.flush()
+    assert rejected.value.orig.diag.constraint_name == name  # type: ignore[attr-defined]
 
 
 def test_plan_drift_rolls_back_without_closing_rows(
@@ -103,14 +194,19 @@ def test_plan_drift_rolls_back_without_closing_rows(
     department = _item(lifecycle_graph, "department_x")
     module = _item(lifecycle_graph, "module_x")
     plan = plan_lifecycle(
-        integration_db, LifecycleTargetType.DEPARTMENT, department.id, "close", None  # type: ignore[attr-defined]
+        integration_db,
+        LifecycleTargetType.DEPARTMENT,
+        department.id,
+        "close",
+        None,  # type: ignore[attr-defined]
     )
     module.module_name = f"Drifted {uuid7()}"  # type: ignore[attr-defined]
     integration_db.flush()
 
-    with pytest.raises(LifecyclePlanDriftError), patch.object(
-        integration_db, "rollback", wraps=integration_db.rollback
-    ) as rollback:
+    with (
+        pytest.raises(LifecyclePlanDriftError),
+        patch.object(integration_db, "rollback", wraps=integration_db.rollback) as rollback,
+    ):
         close_lifecycle(
             integration_db,
             LifecycleTargetType.DEPARTMENT,

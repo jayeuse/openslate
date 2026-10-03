@@ -92,7 +92,7 @@ def test_registered_logout_returns_204_clears_cookies_and_revokes_session(
     db.get.return_value = session
     monkeypatch.setattr("app.systems.access.auth.router.get_settings", lambda: _settings())
     monkeypatch.setattr(
-        "app.systems.access.auth.router.get_current_identity",
+        "app.systems.access.auth.router.get_mfa_identity",
         lambda *_args: CurrentIdentity(user, session.id, True, False),
     )
     application = FastAPI()

@@ -1,4 +1,9 @@
 import { useCallback, useState, useEffect, useMemo, useRef } from "react";
+import type {
+  SandboxBinding,
+  SandboxLifecycleBinding,
+  SandboxLifecycleOperation,
+} from "../state/lifecycle-api";
 import {
   ChevronLeft,
   ChevronRight,
@@ -190,6 +195,9 @@ export function Designer({
   onCreateRequestHandled,
   onStartFromTemplate,
   pending,
+  bindings,
+  onLifecycle,
+  onDraftStateChange,
 }: {
   initialSelected: string;
   /** A link asked for one item, so narrow screens open on its Properties. */
@@ -212,6 +220,12 @@ export function Designer({
   onCreateRequestHandled: (id: number) => void;
   onStartFromTemplate: () => void;
   pending: boolean;
+  bindings: readonly SandboxBinding[] | null;
+  onLifecycle: (
+    binding: SandboxLifecycleBinding,
+    operation: SandboxLifecycleOperation,
+  ) => Promise<SandboxCommandResult<Design>>;
+  onDraftStateChange: (dirty: boolean) => void;
 }) {
   const [viewPreferences, setViewPreferences] =
     useState<SandboxViewPreferences>(loadSandboxViewPreferences);
@@ -219,6 +233,17 @@ export function Designer({
   const [pane, setPane] = useState<DesignerPane>(
     inspectOnOpen ? "Inspector" : "Canvas",
   );
+  const [dirtyFields, setDirtyFields] = useState<Set<string>>(() => new Set());
+  const [outlineEditing, setOutlineEditing] = useState(false);
+  const reportFieldDraft = useCallback((id: string, dirty: boolean) => {
+    setDirtyFields((current) => {
+      if (current.has(id) === dirty) return current;
+      const next = new Set(current);
+      if (dirty) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
   const [wide, setWide] = useState(false);
   // Wide screens show one workbench beside the canvas. A selection opens
   // Properties; an empty design starts on Structure.
@@ -363,6 +388,12 @@ export function Designer({
     selectedRef.current = selected;
   }, [selected]);
   const [editor, setEditor] = useState("");
+  const localDraftDirty =
+    dirtyFields.size > 0 || outlineEditing || editor !== "";
+  useEffect(() => {
+    onDraftStateChange(dirtyFields.size > 0 || outlineEditing);
+  }, [dirtyFields, outlineEditing, onDraftStateChange]);
+  useEffect(() => () => onDraftStateChange(false), [onDraftStateChange]);
   const [editingRelationship, setEditingRelationship] = useState<string | null>(
     null,
   );
@@ -589,8 +620,21 @@ export function Designer({
 
   async function toggleLifecycle(
     target: SandboxInspectorTarget,
-  ): Promise<void> {
-    if (pending) return;
+  ): Promise<SandboxCommandResult<Design>> {
+    if (pending || bindings === null)
+      return {
+        ok: false,
+        error: "Wait for live state to load before changing this item.",
+      };
+    const binding = bindingFor(target);
+    if (binding) {
+      if (localDraftDirty)
+        return {
+          ok: false,
+          error: "Save or cancel your edits before changing live state.",
+        };
+      return onLifecycle(binding, binding.is_deleted ? "reopen" : "close");
+    }
     const result = await change((previous) => {
       if (target.kind === "department")
         return {
@@ -629,6 +673,50 @@ export function Designer({
       return previous;
     });
     if (!result.ok) notify(result.error);
+    return result;
+  }
+  function bindingFor(
+    target: SandboxInspectorTarget,
+  ): SandboxLifecycleBinding | undefined {
+    if (target.kind === "link") return undefined;
+    const field =
+      target.kind === "field" ? projectedField(design, target.id) : undefined;
+    const id = field?.field.id ?? target.id;
+    const parent = field?.moduleId ?? null;
+    const binding = bindings?.find(
+      (item) =>
+        item.kind === target.kind &&
+        item.sandbox_id === id &&
+        item.parent_sandbox_id === parent,
+    );
+    return binding ? { ...binding, kind: target.kind } : undefined;
+  }
+  function lifecycleState(target: SandboxInspectorTarget) {
+    const binding = bindingFor(target);
+    const draftClosed =
+      target.kind === "department"
+        ? design.departments.find((item) => item.id === target.id)?.closed
+        : target.kind === "module"
+          ? design.modules.find((item) => item.id === target.id)?.closed
+          : projectedField(design, target.id)?.field.closed;
+    return {
+      closed: binding?.is_deleted ?? draftClosed ?? false,
+      canPurge: Boolean(binding?.is_deleted),
+      disabled:
+        pending || bindings === null || Boolean(binding && localDraftDirty),
+    };
+  }
+  async function purgeLifecycle(
+    target: SandboxInspectorTarget,
+  ): Promise<SandboxCommandResult<Design>> {
+    const binding = bindingFor(target);
+    if (!binding?.is_deleted || lifecycleState(target).disabled)
+      return {
+        ok: false,
+        error:
+          "Load the closed live item and save or cancel your edits before reviewing permanent deletion.",
+      };
+    return onLifecycle(binding, "purge");
   }
   async function renameDepartment(
     id: string,
@@ -1468,6 +1556,9 @@ export function Designer({
         onDeleteSelected={requestDelete}
         onDuplicate={duplicateTarget}
         onToggleLifecycle={toggleLifecycle}
+        lifecycleState={lifecycleState}
+        onPurge={purgeLifecycle}
+        onEditingChange={setOutlineEditing}
         onAddDepartment={() => open("department")}
         onAddModule={(id) => {
           setSelected(id);
@@ -1598,7 +1689,12 @@ export function Designer({
           <Button
             variant="outline"
             className="w-full justify-start"
-            disabled={pending}
+            disabled={
+              lifecycleState({
+                kind: selectedModule ? "module" : "department",
+                id: (selectedModule ?? department)!.id,
+              }).disabled
+            }
             aria-describedby="sandbox-lifecycle-note"
             onClick={async () => {
               if (selectedModule) {
@@ -1614,16 +1710,51 @@ export function Designer({
               }
             }}
           >
-            {`${(selectedModule ?? department)?.closed ? "Reopen" : "Close"} ${selectedModule ? "module" : "department"}`}
+            {`${lifecycleState({ kind: selectedModule ? "module" : "department", id: (selectedModule ?? department)!.id }).closed ? "Reopen" : "Close"} ${selectedModule ? "module" : "department"}`}
           </Button>
           <p
             id="sandbox-lifecycle-note"
             className="text-muted-foreground -mt-2 text-xs"
           >
-            {(selectedModule ?? department)?.closed
-              ? "Reopening lets people add new records again."
-              : "Stops new records. Keeps existing data. You can reopen it."}
+            {bindings === null
+              ? "Load live state before changing this item."
+              : localDraftDirty
+                ? "Save or cancel your edits before changing live state."
+                : !bindingFor({
+                      kind: selectedModule ? "module" : "department",
+                      id: (selectedModule ?? department)!.id,
+                    })
+                  ? "Changes this draft. Review and publish to apply it to the workspace."
+                  : lifecycleState({
+                        kind: selectedModule ? "module" : "department",
+                        id: (selectedModule ?? department)!.id,
+                      }).closed
+                    ? "Reopening lets people add new records again."
+                    : "Stops new records. Keeps existing data. You can reopen it."}
           </p>
+          {lifecycleState({
+            kind: selectedModule ? "module" : "department",
+            id: (selectedModule ?? department)!.id,
+          }).canPurge ? (
+            <Button
+              variant="outline"
+              className="w-full justify-start"
+              disabled={
+                lifecycleState({
+                  kind: selectedModule ? "module" : "department",
+                  id: (selectedModule ?? department)!.id,
+                }).disabled
+              }
+              onClick={() =>
+                void purgeLifecycle({
+                  kind: selectedModule ? "module" : "department",
+                  id: (selectedModule ?? department)!.id,
+                })
+              }
+            >
+              Permanently delete {selectedModule ? "module" : "department"}
+            </Button>
+          ) : null}
           {selectedModule && (
             <>
               <div className="border-border flex flex-col gap-2 border-t pt-4">
@@ -1788,6 +1919,16 @@ export function Designer({
                         })
                       }
                       onLifecycle={async () => {
+                        if (bindings === null)
+                          return {
+                            ok: false,
+                            error: "Load live state before changing this item.",
+                          };
+                        const target = {
+                          kind: "field" as const,
+                          id: canvasFieldId(selectedModule.id, f.id),
+                        };
+                        if (bindingFor(target)) return toggleLifecycle(target);
                         const removedMappings = { current: 0 };
                         const closedFieldName = { current: "" };
                         const result = await change((previous) => {
@@ -1848,6 +1989,32 @@ export function Designer({
                         return result;
                       }}
                       pending={pending}
+                      lifecycleClosed={
+                        lifecycleState({
+                          kind: "field",
+                          id: canvasFieldId(selectedModule.id, f.id),
+                        }).closed
+                      }
+                      lifecycleDisabled={
+                        lifecycleState({
+                          kind: "field",
+                          id: canvasFieldId(selectedModule.id, f.id),
+                        }).disabled
+                      }
+                      draftId={canvasFieldId(selectedModule.id, f.id)}
+                      onDraftStateChange={reportFieldDraft}
+                      onPurge={
+                        lifecycleState({
+                          kind: "field",
+                          id: canvasFieldId(selectedModule.id, f.id),
+                        }).canPurge
+                          ? () =>
+                              purgeLifecycle({
+                                kind: "field",
+                                id: canvasFieldId(selectedModule.id, f.id),
+                              })
+                          : undefined
+                      }
                       autoFocus={
                         focusTargetId === canvasFieldId(selectedModule.id, f.id)
                       }
@@ -1996,7 +2163,7 @@ export function Designer({
         <ResizablePanelGroup
           orientation="horizontal"
           elementRef={panelGroupElementRef}
-          className="sandbox-ui border-card-edge bg-card shadow-card overflow-hidden rounded-xl border [--canvas-grid-major:var(--rule-strong)] [--canvas-grid:var(--border)] max-xl:h-auto xl:h-full"
+          className="sandbox-ui border-card-edge bg-card shadow-card overflow-hidden rounded-2xl border max-xl:h-auto xl:h-full"
           onLayoutChanged={(layout, meta) => {
             if (
               !meta.isUserInteraction ||

@@ -46,9 +46,7 @@ def test_assignable_picker_and_record_writes_follow_current_module_readers(
     eligible = add_user(db, "assignment-eligible", role=UserRole.MEMBER)
     eligible.display_name = "Alex Reader"
     outsider = add_user(db, "assignment-outsider", role=UserRole.MEMBER)
-    disabled = add_user(
-        db, "assignment-disabled", role=UserRole.MEMBER, status=UserStatus.DISABLED
-    )
+    disabled = add_user(db, "assignment-disabled", role=UserRole.MEMBER, status=UserStatus.DISABLED)
     grant = make_group_access(db, [eligible, disabled], department, module)
     db.commit()
 
@@ -78,9 +76,7 @@ def test_assignable_picker_and_record_writes_follow_current_module_readers(
         assert invalid.status_code == 422
         assert invalid.json()["detail"]["code"] == "record_validation_failed"
         assert (
-            db.scalar(
-                select(func.count()).select_from(Record).where(Record.module_id == module.id)
-            )
+            db.scalar(select(func.count()).select_from(Record).where(Record.module_id == module.id))
             == 0
         )
 
@@ -102,6 +98,7 @@ def test_assignable_picker_and_record_writes_follow_current_module_readers(
         denied = client.patch(
             f"/api/records/{record_id}",
             json={"data": {str(assignee.id): str(eligible.id)}},
+            headers={"If-Match": f'"{historical.json()["updated_at"]}"'},
         )
         assert denied.status_code == 422
         assert denied.json()["detail"]["code"] == "record_validation_failed"

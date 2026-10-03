@@ -75,6 +75,25 @@ def test_module_scoped_event_without_its_module_fails_closed_to_administrators(
     assert parse_invalidation_payload(event.to_payload()).administrators_only
 
 
+@pytest.mark.parametrize("entity", ["backup_policies", "backup_runs", "update_statuses"])
+def test_backup_authority_invalidations_reach_only_administrators(entity: str) -> None:
+    event = event_for_entity(entity, uuid7())
+    assert event is not None and event.administrators_only
+    assert parse_invalidation_payload(event.to_payload()).administrators_only
+
+    async def exercise() -> None:
+        hub = EventHub()
+        admin = await hub.subscribe(_viewer(role="admin"))
+        member = await hub.subscribe(_viewer())
+        await hub.publish(event)
+        assert await admin.queue.get() == event
+        assert member.queue.empty()
+        await hub.unsubscribe(admin)
+        await hub.unsubscribe(member)
+
+    asyncio.run(exercise())
+
+
 def test_runtime_settings_target_rejects_an_owner_or_different_database() -> None:
     runtime = "postgresql+psycopg://openslate_runtime:runtime@127.0.0.1:55322/openslate"
 

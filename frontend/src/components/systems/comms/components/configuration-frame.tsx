@@ -38,6 +38,8 @@ export interface ConfigurationFrameProps {
   onSave?: () => void | boolean | Promise<void | boolean>;
   children: ReactNode;
   saveLabel?: string;
+  /** Name of the header close button (default "Close settings"). */
+  closeLabel?: string;
   footer?: ReactNode;
   disabled?: boolean;
   className?: string;
@@ -52,6 +54,7 @@ export function ConfigurationFrame({
   onSave,
   children,
   saveLabel = "Save changes",
+  closeLabel = "Close settings",
   footer,
   disabled = false,
   className,
@@ -109,9 +112,11 @@ export function ConfigurationFrame({
         <header className="flex shrink-0 items-start justify-between gap-4 px-5 py-4 sm:px-6">
           <div className="min-w-0">
             <DialogTitle>{title}</DialogTitle>
-            <DialogDescription className="mt-1">
-              {description || "Configure how your conversations work."}
-            </DialogDescription>
+            {description && (
+              <DialogDescription className="mt-1">
+                {description}
+              </DialogDescription>
+            )}
           </div>
           <TooltipProvider>
             <Tooltip>
@@ -121,7 +126,7 @@ export function ConfigurationFrame({
                     type="button"
                     size="icon"
                     variant="ghost"
-                    aria-label="Close settings"
+                    aria-label={closeLabel}
                     className="shrink-0"
                     onClick={requestClose}
                     disabled={saving}
@@ -130,7 +135,7 @@ export function ConfigurationFrame({
               >
                 <X aria-hidden="true" />
               </TooltipTrigger>
-              <TooltipContent>Close settings</TooltipContent>
+              <TooltipContent>{closeLabel}</TooltipContent>
             </Tooltip>
           </TooltipProvider>
         </header>
@@ -141,25 +146,21 @@ export function ConfigurationFrame({
           </fieldset>
         </ScrollArea>
         <Separator className="shrink-0" />
-        <footer className="bg-muted/15 grid shrink-0 grid-cols-2 items-center justify-end gap-2 px-5 py-4 sm:flex sm:flex-wrap sm:px-6">
+        <footer className="bg-muted/15 flex shrink-0 flex-wrap items-center justify-end gap-2 px-5 py-4 sm:px-6">
           {error && (
-            <Alert
-              role="alert"
-              variant="destructive"
-              className="col-span-2 mr-auto"
-            >
+            <Alert role="alert" variant="destructive" className="w-full">
               {error}
             </Alert>
           )}
           {footer && (
             <fieldset disabled={saving} className="contents">
-              <div className="col-span-2 mr-auto">{footer}</div>
+              <div className="mr-auto">{footer}</div>
             </fieldset>
           )}
           <Button
             type="button"
             variant="outline"
-            className={cn("min-h-11", !onSave && "col-start-2")}
+            className="min-h-11"
             onClick={requestClose}
             disabled={saving}
           >

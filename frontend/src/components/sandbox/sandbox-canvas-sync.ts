@@ -113,6 +113,7 @@ export function synchronizeSandboxCanvas({
               markup: [
                 { tagName: "rect", selector: "body" },
                 { tagName: "rect", selector: "band" },
+                { tagName: "rect", selector: "edge" },
                 { tagName: "rect", selector: "mark" },
                 { tagName: "text", selector: "heading" },
                 { tagName: "text", selector: "subheading" },
@@ -132,9 +133,11 @@ export function synchronizeSandboxCanvas({
       departmentNode.setAttrs({
         ...departmentAttrs,
         body: { ...departmentAttrs.body, ...frameSize },
+        band: { ...departmentAttrs.band, width: frameSize.width - 2 },
+        edge: { ...departmentAttrs.edge, ...frameSize },
         subheading: {
           ...departmentAttrs.subheading,
-          x: frameSize.width - 12,
+          x: frameSize.width - 16,
         },
       });
       departmentNode.setData({
@@ -332,20 +335,26 @@ export function synchronizeSandboxCanvas({
                 attrs: {
                   label: {
                     fontSize: 12,
-                    fill: "var(--canvas-label-ink, #20242c)",
+                    fontWeight: 500,
+                    // A relationship's label takes its line's action ink.
+                    fill: handoff
+                      ? "var(--canvas-label-ink)"
+                      : "var(--action-text)",
                     pointerEvents: "none",
                     text: link.label,
                   },
                   body: {
                     ref: "label",
-                    fill: "var(--canvas-label-fill, #ffffff)",
-                    stroke: "var(--canvas-label-frame, #e4e7ec)",
+                    // Corners come from the look's --radius (globals.css).
+                    "data-sandbox-part": "line-label",
+                    fill: "var(--canvas-label-fill)",
+                    stroke: "var(--canvas-label-frame)",
                     strokeWidth: 1,
-                    rx: 3,
-                    ry: 3,
-                    refWidth: 10,
+                    rx: 6,
+                    ry: 6,
+                    refWidth: 14,
                     refHeight: 6,
-                    refX: -5,
+                    refX: -7,
                     refY: -3,
                   },
                 },

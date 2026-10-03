@@ -26,7 +26,13 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
-from tests.rbac.support import _client, add_department, add_module, add_user, make_group_access
+from tests.rbac.support import (
+    _client,
+    add_department,
+    add_module,
+    add_user,
+    make_group_access,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -51,18 +57,21 @@ def test_same_flush_record_ancestry_and_relationship_source_are_stamped(
     module = Module(id=uuid7(), department_id=inventory.id, module_name="Items")
     other_module = Module(id=uuid7(), department_id=finance.id, module_name="Accounts")
     field = Field(
-        id=uuid7(), module_id=module.id, name="Related item", type=FieldType.RELATIONSHIP,
-        position=0, relationship_target_module_id=other_module.id,
-        relationship_multiple_targets=True, relationship_multiple_sources=True,
+        id=uuid7(),
+        module_id=module.id,
+        name="Related item",
+        type=FieldType.RELATIONSHIP,
+        position=0,
+        relationship_target_module_id=other_module.id,
+        relationship_multiple_targets=True,
+        relationship_multiple_sources=True,
     )
     source = Record(id=uuid7(), module_id=module.id, data={})
     target = Record(id=uuid7(), module_id=other_module.id, data={})
     edge = RelationshipEdge(
         id=uuid7(), field_id=field.id, source_record_id=source.id, target_record_id=target.id
     )
-    integration_db.add_all(
-        [inventory, finance, module, other_module, field, source, target, edge]
-    )
+    integration_db.add_all([inventory, finance, module, other_module, field, source, target, edge])
     integration_db.flush()
 
     for entity in (inventory, module, field, source, edge):
@@ -81,7 +90,9 @@ def test_view_report_dashboard_and_group_access_use_their_own_department(
     report = Report(module_id=module.id, name="Items", recipe={})
     dashboard = Dashboard(department_id=department.id, name="Items")
     grant = GroupAccess(
-        group_id=group.id, department_id=department.id, module_id=None,
+        group_id=group.id,
+        department_id=department.id,
+        module_id=None,
         level=AccessLevel.READ,
     )
     integration_db.add_all([group, view, report, dashboard, grant])
@@ -106,21 +117,42 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
         id=uuid7(), board_id=board.id, author_id=author.id, title="Count", body="Today"
     )
     event = BoardEvent(
-        id=uuid7(), board_id=board.id, author_id=author.id, title="Count", all_day=True,
-        start_date=date(2026, 10, 1), end_date=date(2026, 10, 1), timezone_name="UTC",
+        id=uuid7(),
+        board_id=board.id,
+        author_id=author.id,
+        title="Count",
+        all_day=True,
+        start_date=date(2026, 10, 1),
+        end_date=date(2026, 10, 1),
+        timezone_name="UTC",
     )
     widget = BoardWidget(
-        board_id=board.id, module_id=module.id, name="Items", position=0,
-        widget_type="records", config={},
+        board_id=board.id,
+        module_id=module.id,
+        name="Items",
+        position=0,
+        widget_type="records",
+        config={},
     )
     revision = BoardPostRevision(
-        id=uuid7(), post_id=post.id, publication_number=1, publication_key=uuid7(),
-        content_fingerprint="a" * 64, author_id=author.id, title="Count", body="Today",
+        id=uuid7(),
+        post_id=post.id,
+        publication_number=1,
+        publication_key=uuid7(),
+        content_fingerprint="a" * 64,
+        author_id=author.id,
+        title="Count",
+        body="Today",
         published_at=datetime.now(UTC),
     )
     file = File(
-        id=uuid7(), purpose="board_attachment", board_id=board.id, creator_id=author.id,
-        filename="items.txt", expected_size=1, object_key=f"audit-{uuid7()}",
+        id=uuid7(),
+        purpose="board_attachment",
+        board_id=board.id,
+        creator_id=author.id,
+        filename="items.txt",
+        expected_size=1,
+        object_key=f"audit-{uuid7()}",
     )
     integration_db.add_all([record, board])
     integration_db.flush()
@@ -130,7 +162,9 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
     integration_db.flush()
     reminder = BoardEventReminder(board_id=board.id, event_id=event.id, timing="start")
     link = BoardRecordLink(
-        board_id=board.id, post_id=post.id, record_id=record.id,
+        board_id=board.id,
+        post_id=post.id,
+        record_id=record.id,
         module_id=module.id,
     )
     attachment = BoardAttachment(board_id=board.id, post_id=post.id, file_id=file.id)
@@ -144,8 +178,16 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
     integration_db.flush()
 
     for entity in (
-        board, post, event, widget, revision, reminder, link, attachment,
-        revision_link, revision_attachment,
+        board,
+        post,
+        event,
+        widget,
+        revision,
+        reminder,
+        link,
+        attachment,
+        revision_link,
+        revision_attachment,
     ):
         assert _created_log(integration_db, entity).department_id == department.id
     assert _created_log(integration_db, file).department_id is None
@@ -158,9 +200,13 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
     module = add_module(integration_db, department)
     author = add_user(integration_db, role=UserRole.ADMIN)
     relationship_field = Field(
-        module_id=module.id, name="Related", type=FieldType.RELATIONSHIP, position=0,
+        module_id=module.id,
+        name="Related",
+        type=FieldType.RELATIONSHIP,
+        position=0,
         relationship_target_module_id=module.id,
-        relationship_multiple_targets=True, relationship_multiple_sources=True,
+        relationship_multiple_targets=True,
+        relationship_multiple_sources=True,
     )
     source = Record(module_id=module.id, data={})
     target = Record(module_id=module.id, data={})
@@ -171,14 +217,21 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
     integration_db.add(post)
     integration_db.flush()
     link = BoardRecordLink(
-        board_id=board.id, post_id=post.id, record_id=source.id,
+        board_id=board.id,
+        post_id=post.id,
+        record_id=source.id,
         module_id=module.id,
     )
     integration_db.add(link)
     integration_db.flush()
     revision = BoardPostRevision(
-        post_id=post.id, publication_number=1, publication_key=uuid7(),
-        content_fingerprint="a" * 64, author_id=author.id, title="Count", body="Today",
+        post_id=post.id,
+        publication_number=1,
+        publication_key=uuid7(),
+        content_fingerprint="a" * 64,
+        author_id=author.id,
+        title="Count",
+        body="Today",
         published_at=datetime.now(UTC),
     )
     integration_db.add(revision)
@@ -192,24 +245,32 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
 
     module_child = Field(module_id=module_id, name="Notes", type=FieldType.TEXT, position=1)
     record_child = RelationshipEdge(
-        field_id=relationship_field.id, source_record_id=source.id,
+        field_id=relationship_field.id,
+        source_record_id=source.id,
         target_record_id=target.id,
     )
     board_child = BoardWidget(
-        board_id=board_id, module_id=module_id, name="Items", position=0,
-        widget_type="records", config={},
+        board_id=board_id,
+        module_id=module_id,
+        name="Items",
+        position=0,
+        widget_type="records",
+        config={},
     )
     post_child = BoardPostRevision(
-        post_id=post_id, publication_number=2, publication_key=uuid7(),
-        content_fingerprint="b" * 64, author_id=author.id, title="Count", body="Today",
+        post_id=post_id,
+        publication_number=2,
+        publication_key=uuid7(),
+        content_fingerprint="b" * 64,
+        author_id=author.id,
+        title="Count",
+        body="Today",
         published_at=datetime.now(UTC),
     )
     revision_child = BoardPostRevisionRecordLink(
         revision_id=revision.id, record_id=source.id, module_id=module_id
     )
-    integration_db.add_all(
-        [module_child, record_child, board_child, post_child, revision_child]
-    )
+    integration_db.add_all([module_child, record_child, board_child, post_child, revision_child])
     integration_db.flush()
 
     for child in (module_child, record_child, board_child, post_child, revision_child):
@@ -252,7 +313,9 @@ def test_child_audit_department_survives_same_flush_parent_hard_delete(
 
     assert integration_db.get(Department, department_id) is None
     for entity, entity_id in (
-        (department, department_id), (module, module.id), (record, record.id)
+        (department, department_id),
+        (module, module.id),
+        (record, record.id),
     ):
         assert integration_db.get(AuditLog, created_ids[entity.__tablename__]).department_id == (
             department_id
@@ -286,7 +349,10 @@ def test_department_manager_lists_only_the_explicitly_managed_department(
     module_manager = add_user(integration_db, role=UserRole.MEMBER)
     make_group_access(integration_db, [manager], inventory, level=AccessLevel.MANAGE)
     make_group_access(
-        integration_db, [module_manager], inventory, inventory_module,
+        integration_db,
+        [module_manager],
+        inventory,
+        inventory_module,
         level=AccessLevel.MANAGE,
     )
 
@@ -325,7 +391,8 @@ def test_department_manager_lists_only_the_explicitly_managed_department(
 
     inventory_log: UUID = _created_log(integration_db, inventory_record).id
     for restricted in (
-        f"{path}/{inventory_log}", f"{path}/export?department_id={inventory.id}",
+        f"{path}/{inventory_log}",
+        f"{path}/export?department_id={inventory.id}",
         "/api/security-events",
     ):
         assert _client(api, manager, integration_db).get(restricted).status_code == 403

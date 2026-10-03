@@ -25,6 +25,7 @@ from app.systems.sandbox.lifecycle.dashboard_dependencies import (
 from app.systems.sandbox.lifecycle.department_board_dependencies import (
     load_department_board_purge_dependencies,
 )
+from app.systems.sandbox.lifecycle.design_sync import binding_identity, owned_binding
 from app.systems.sandbox.lifecycle.planning_scope import LifecycleScope, row_state
 from app.systems.sandbox.lifecycle.report_dependencies import load_report_purge_dependencies
 from app.systems.sandbox.lifecycle.schemas import (
@@ -40,6 +41,7 @@ from app.systems.sandbox.record_triggers.models import (
     RecordTriggerCondition,
     RecordTriggerEvent,
     RecordTriggerRun,
+    TriggerEventState,
 )
 
 
@@ -53,6 +55,13 @@ class PurgeDependencies:
 def fingerprint(values: object) -> str:
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _owned_terminal_event(event: RecordTriggerEvent, record_ids: list[UUID]) -> bool:
+    return event.record_id in record_ids and event.state in {
+        TriggerEventState.SUCCEEDED,
+        TriggerEventState.FAILED,
+    }
 
 
 def load_purge_dependencies(
@@ -212,6 +221,22 @@ def load_purge_dependencies(
         else []
     )
     event_ids = [event.id for event in events]
+    if record_ids and event_ids:
+        # A root cannot be removed while another record's history still references it.
+        # Inventory and lock those dependants without expanding record ownership.
+        events += list(
+            db.scalars(
+                select(RecordTriggerEvent)
+                .where(
+                    RecordTriggerEvent.root_event_id.in_(event_ids),
+                    RecordTriggerEvent.id.not_in(event_ids),
+                )
+                .order_by(RecordTriggerEvent.id)
+            )
+        )
+        events.sort(key=lambda event: event.id)
+        event_ids = [event.id for event in events]
+    events_by_id = {event.id: event for event in events}
     run_filters = []
     if definition_ids:
         run_filters.append(RecordTriggerRun.trigger_id.in_(definition_ids))
@@ -303,14 +328,49 @@ def load_purge_dependencies(
     )
     for entity_type, dependencies in trigger_dependencies:
         for dependency in dependencies:
-            rows.append(row_state(entity_type, dependency))
+            state = row_state(entity_type, dependency)
+            removable = False
+            if isinstance(dependency, RecordTriggerEvent):
+                state.state_fingerprint = fingerprint(
+                    {
+                        key: getattr(dependency, key)
+                        for key in (
+                            "record_id",
+                            "module_id",
+                            "state",
+                            "root_event_id",
+                            "depth",
+                            "scheduled_trigger_id",
+                            "attempt_count",
+                            "lease_expires_at",
+                        )
+                    }
+                )
+                removable = _owned_terminal_event(dependency, record_ids)
+            elif isinstance(dependency, RecordTriggerRun):
+                state.state_fingerprint = fingerprint(
+                    {key: getattr(dependency, key) for key in ("event_id", "trigger_id", "state")}
+                )
+                event = events_by_id.get(dependency.event_id)
+                removable = event is not None and _owned_terminal_event(event, record_ids)
+            elif isinstance(dependency, SandboxBinding):
+                state.state_fingerprint = fingerprint(binding_identity(dependency))
+                removable = owned_binding(
+                    dependency, set(department_ids), set(module_ids), set(field_ids)
+                )
+            rows.append(state)
+            if removable:
+                continue
             blockers.append(
                 LifecycleBlocker(
                     code=LifecycleBlockerCode.PURGE_TRIGGER_DEPENDENCY,
                     entity_type=entity_type,
                     entity_id=dependency.id,
                     detail=(
-                        "Remove the record trigger configuration or execution history "
+                        "Automation work is still pending or running, or history belongs "
+                        "to another record that depends on this item"
+                        if target is LifecycleTargetType.RECORD
+                        else "Remove the record trigger configuration or execution history "
                         "that references this item before purging it"
                     ),
                 )

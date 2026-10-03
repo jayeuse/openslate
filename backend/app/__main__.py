@@ -17,6 +17,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     options = parser.parse_args(argv)
     settings = get_settings()
+    trusted_proxies = []
+    if is_relaxed_development(settings):
+        trusted_proxies = ["127.0.0.1", "::1"]
+    elif (
+        settings.environment == "production" and settings.open_slate_app_private_subnet is not None
+    ):
+        trusted_proxies = [str(settings.open_slate_app_private_subnet)]
     uvicorn.run(
         "app.main:app",
         host=settings.backend_bind_host,
@@ -27,6 +34,7 @@ def main(argv: list[str] | None = None) -> None:
         timeout_keep_alive=settings.server_keep_alive_seconds,
         reload=options.reload,
         access_log=False,
+        forwarded_allow_ips=trusted_proxies,
     )
 
 

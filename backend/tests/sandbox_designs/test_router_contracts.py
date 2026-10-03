@@ -95,3 +95,37 @@ def test_document_write_refuses_an_older_format_with_a_clear_422(monkeypatch) ->
         "This design uses an older format and cannot be opened."
     ]
     replace.assert_not_called()
+
+
+def test_bindings_read_denies_non_administrators_without_reading_structure() -> None:
+    from tests.rbac.support import _client, make_user
+
+    application = create_app()
+    database = Mock(spec=Session)
+    for role in ("member", "guest"):
+        response = _client(application, make_user(role, role=role), database).get(
+            "/api/sandbox/bindings"
+        )
+        assert response.status_code == 403
+    database.scalar.assert_not_called()
+    database.execute.assert_not_called()
+
+
+def test_bindings_database_failure_is_safe_unavailability_not_an_empty_design() -> None:
+    from sqlalchemy.exc import OperationalError
+
+    from tests.rbac.support import _client, make_user
+
+    application = create_app()
+    database = Mock(spec=Session)
+    database.scalar.side_effect = OperationalError(
+        "private statement", {}, RuntimeError("private database detail")
+    )
+    response = _client(application, make_user("reader"), database).get("/api/sandbox/bindings")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": {"code": "bindings_unavailable", "message": "Sandbox bindings are unavailable"}
+    }
+    assert "private" not in response.text
+    database.rollback.assert_called_once()

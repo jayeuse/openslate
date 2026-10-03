@@ -199,9 +199,7 @@ def test_smtp_readiness_requires_configuration_without_sending_mail(
 
     assert response.status_code == 503
     assert response.json()["components"]["smtp"] == _component("not_configured")
-    assert response.json()["components"]["scanner"] == _component(
-        "not_configured", required=False
-    )
+    assert response.json()["components"]["scanner"] == _component("not_configured", required=False)
     assert requests == [
         ("GET", "/auth/v1/health"),
         ("GET", "/storage/v1/status"),
@@ -272,9 +270,7 @@ def test_configured_scanner_requires_the_worker_leader(
     snapshot = readiness._probe_components()
 
     assert snapshot["status"] == overall
-    assert snapshot["components"]["scanner"] == _component(
-        scanner_status, required=required
-    )
+    assert snapshot["components"]["scanner"] == _component(scanner_status, required=required)
     assert scanner.probe_calls == int(leader_present)
 
 
@@ -339,6 +335,8 @@ def test_scanner_leader_probe_is_read_only_and_matches_the_worker_lock(
 
 
 def test_readiness_deadline_callers_share_the_same_in_flight_provider_probe(monkeypatch) -> None:
+    # Isolate sharing from probe-start scheduling; Future.result still times out in real time.
+    monkeypatch.setattr(readiness, "monotonic", lambda: 0.0)
     started = Event()
     release = Event()
     completed = Event()

@@ -21,6 +21,7 @@ from app.core.integrations.supabase_auth import (
 )
 from app.systems.access.identity.schemas import ActionTokenCompleteRequest, RecoveryRequest
 from app.systems.access.users.models import UserRole, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.test_auth_router_contracts import _request, _role, _user
 
 pytestmark = pytest.mark.usefixtures("local_auth_router_settings")
@@ -64,7 +65,7 @@ def _action(monkeypatch, db, *, pending=False):
 
 def _payload():
     return ActionTokenCompleteRequest(
-        token_hash="a" * 56, password="new sufficiently long password"
+        token_hash="a" * 56, password="New sufficiently long password"
     )
 
 
@@ -156,7 +157,7 @@ def test_recovery_cannot_change_password_for_an_ineligible_local_user(monkeypatc
         auth_router.complete_recovery(_payload(), _request(), db)
     assert error.value.status_code == 400
     client.update_password.assert_not_called()
-    client.sign_out.assert_called_once_with("action-access", scope="global")
+    client.sign_out.assert_called_once_with("action-access", scope="local")
 
 
 def test_recovery_request_has_identical_response_for_known_and_unknown_emails(monkeypatch):
@@ -188,7 +189,7 @@ def test_current_identity_validates_one_transport_and_cookie_mutation_csrf(
     monkeypatch.setattr(
         dependencies,
         "resolve_provider_session",
-        lambda *_args: (user, SimpleNamespace(id=session_id)),
+        lambda *_args, **_kwargs: (user, SimpleNamespace(id=session_id)),
     )
     actor = Mock()
     monkeypatch.setattr(dependencies, "set_audit_actor", actor)
@@ -260,3 +261,27 @@ def test_fresh_exact_admin_rejects_an_expired_identity() -> None:
     with pytest.raises(HTTPException) as exact_admin_denied:
         dependencies.require_fresh_exact_admin(exact_admin_db, actor.id)
     assert exact_admin_denied.value.status_code == 403
+
+
+@pytest.mark.parametrize("kind", ["invite", "recovery"])
+def test_weak_action_password_returns_safe_422_without_consuming_token(monkeypatch, kind):
+    db = Mock(spec=Session)
+    _user_value, client, _events = _action(monkeypatch, db, pending=kind == "invite")
+    policy = WorkspaceProfile(
+        password_min_length=16, password_require_mixed_case=True, password_require_number=True
+    )
+    monkeypatch.setattr(
+        auth_router.provider_actions, "load_workspace_policy", lambda _db: policy, raising=False
+    )
+    payload = ActionTokenCompleteRequest(token_hash="a" * 56, password="NoNumbersPassword")
+    action = auth_router.complete_invitation if kind == "invite" else auth_router.complete_recovery
+
+    with pytest.raises(HTTPException) as denied:
+        action(payload, _request(), db)
+
+    assert denied.value.status_code == 422
+    assert denied.value.detail["code"] == "password_policy_violation"
+    assert "16" in denied.value.detail["message"]
+    assert payload.password not in str(denied.value.detail)
+    client.verify_email_action.assert_not_called()
+    client.update_password.assert_not_called()

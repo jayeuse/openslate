@@ -98,6 +98,12 @@ export type LifecycleErrorCode =
   | "invalid_credentials"
   | "password_rate_limited"
   | "password_service_unavailable"
+  | "password_upstream_rate_limited"
+  | "password_upstream_unavailable"
+  | "actor_blocked"
+  | "actor_mismatch"
+  | "preflight_failed"
+  | "temporarily_unavailable"
   | "purge_disabled"
   | "purge_requires_closed"
   | "impact_changed"
@@ -115,6 +121,7 @@ export type LifecycleExternalImpact = {
   edge_id: string;
   field_id: string;
   external_record_id: string;
+  external_record_label: string;
   external_module_id: string;
   external_module_name: string;
   external_module_label?: string;

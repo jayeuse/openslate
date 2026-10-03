@@ -16,6 +16,12 @@ import type { Person } from "../../shared/data/sample-people";
 import { Choice } from "../../shared/components/ui";
 import type { Category, Channel } from "../domain/model";
 import {
+  channelGroupAccess,
+  commsGroup,
+  EVERYONE_GROUP_ID,
+  personGroupAccess,
+} from "../domain/groups";
+import {
   resolveCommsPermission,
   type CommsConfiguration,
   type CommsSettings,
@@ -79,8 +85,22 @@ export function MembershipPreview({
     personId === PERSON_ID ||
     personId === settings.ownerId ||
     settings.moderatorIds.includes(personId);
+  // Groups decide first, in the same words as Who can use.
+  const groupAccess = channel
+    ? channelGroupAccess(channel, categories)
+    : { [EVERYONE_GROUP_ID]: "post" as const };
+  const groupLevel = person ? personGroupAccess(person, groupAccess) : "none";
+  const grantingGroup =
+    (groupAccess[EVERYONE_GROUP_ID] ?? "none") !== "none"
+      ? "Everyone"
+      : commsGroup(
+          person?.departments.find(
+            (group) => (groupAccess[group] ?? "none") !== "none",
+          ),
+        )?.name;
   let path = "Can join without an invitation.";
-  if (!access.allowed)
+  if (groupLevel === "none") path = "Not in a group that can use this channel.";
+  else if (!access.allowed)
     path = "Cannot join with the current access permissions.";
   else if (channel?.archived)
     path = "This channel is archived. Restore it before adding members.";
@@ -124,8 +144,18 @@ export function MembershipPreview({
           ))}
         </Choice>
         <Alert>{path}</Alert>
+        {grantingGroup && groupLevel !== "none" && (
+          <p className="text-muted-foreground text-xs">
+            Included through{" "}
+            {grantingGroup === "Everyone"
+              ? "Everyone"
+              : `the ${grantingGroup} group`}
+            .
+          </p>
+        )}
         <p className="text-muted-foreground text-xs">
-          Access: {access.allowed ? "Allowed" : "Denied"} · {access.reason}
+          Exceptions applied today: {access.allowed ? "Allowed" : "Denied"} ·{" "}
+          {access.reason}
         </p>
         <p className="text-muted-foreground text-xs">
           Your invitation permission:{" "}

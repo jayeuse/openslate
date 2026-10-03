@@ -12,10 +12,7 @@ from typing import Any
 
 import httpx
 
-if __package__:
-    from .reset_models import ResetError  # type: ignore[import-not-found]
-else:
-    from reset_models import ResetError
+from operations.reset_models import ResetError
 
 _BUCKETS = ("openslate-quarantine", "openslate-ready")
 _PAGE_SIZE = 100
@@ -55,8 +52,12 @@ class ResetStorage:
     """Inventory and delete every object in only OpenSlate's two private buckets."""
 
     def __init__(
-        self, url: str, secret_key: str, timeout_seconds: float,
-        *, client: httpx.Client | None = None,
+        self,
+        url: str,
+        secret_key: str,
+        timeout_seconds: float,
+        *,
+        client: httpx.Client | None = None,
     ) -> None:
         try:
             parsed = httpx.URL(url)
@@ -81,10 +82,16 @@ class ResetStorage:
         self._client = client
 
     def _request(
-        self, method: str, path: str, *, payload: dict[str, Any] | None = None,
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
     ) -> tuple[int, bytes]:
-        context = nullcontext(self._client) if self._client is not None else httpx.Client(
-            follow_redirects=False, trust_env=False
+        context = (
+            nullcontext(self._client)
+            if self._client is not None
+            else httpx.Client(follow_redirects=False, trust_env=False)
         )
         try:
             with context as client:
@@ -127,7 +134,11 @@ class ResetStorage:
             raise ResetError("A required Storage bucket is not private")
 
     def _list_folder(
-        self, bucket: str, folder: str, seen_folders: set[str], objects: set[str],
+        self,
+        bucket: str,
+        folder: str,
+        seen_folders: set[str],
+        objects: set[str],
     ) -> None:
         if folder in seen_folders:
             raise ResetError("The private Storage inventory is ambiguous")
@@ -137,9 +148,12 @@ class ResetStorage:
         seen_names: set[str] = set()
         while True:
             status, body = self._request(
-                "POST", f"object/list/{bucket}",
+                "POST",
+                f"object/list/{bucket}",
                 payload={
-                    "prefix": folder, "limit": _PAGE_SIZE, "offset": offset,
+                    "prefix": folder,
+                    "limit": _PAGE_SIZE,
+                    "offset": offset,
                     "sortBy": {"column": "name", "order": "asc"},
                 },
             )
@@ -193,11 +207,12 @@ class ResetStorage:
             raise ResetError("Private Storage cleanup plan changed; run a fresh dry run")
         for bucket in _BUCKETS:
             prefix = f"{bucket}/"
-            keys = [full_key[len(prefix):] for full_key in expected if full_key.startswith(prefix)]
+            keys = [full_key[len(prefix) :] for full_key in expected if full_key.startswith(prefix)]
             for offset in range(0, len(keys), _PAGE_SIZE):
                 status, _ = self._request(
-                    "DELETE", f"object/{bucket}",
-                    payload={"prefixes": keys[offset:offset + _PAGE_SIZE]},
+                    "DELETE",
+                    f"object/{bucket}",
+                    payload={"prefixes": keys[offset : offset + _PAGE_SIZE]},
                 )
                 if status != 200:
                     raise ResetError("Private Storage cleanup is incomplete")

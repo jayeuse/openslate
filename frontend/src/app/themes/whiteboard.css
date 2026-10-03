@@ -48,6 +48,7 @@
   --radius: 0.375rem;
   --font-ui: var(--font-atkinson), system-ui, sans-serif;
   --font-code: var(--font-geist-mono);
+  --font-display: var(--font-ui);
   --card-edge: transparent;
   --card-lift: var(--lift-raised);
   /* Materials, private to this theme's skin rules. */
@@ -58,6 +59,7 @@
   --canvas-dept-fill: #fafbfc;
   --canvas-dept-frame: #2a2f34;
   --canvas-dept-ink: #1b1f23;
+  --canvas-dept-name: var(--canvas-dept-ink);
   --canvas-module-fill: #ffffff;
   --canvas-module-ink: #1b1f23;
   --canvas-row-rule: #e3e7ea;
@@ -147,6 +149,7 @@
   --radius: 0.375rem;
   --font-ui: var(--font-atkinson), system-ui, sans-serif;
   --font-code: var(--font-geist-mono);
+  --font-display: var(--font-ui);
   --card-edge: var(--rule);
   --card-lift: var(--lift-raised);
   --wb-tape: #d7dcd8;
@@ -156,6 +159,7 @@
   --canvas-dept-fill: #1f2729;
   --canvas-dept-frame: #d7dcd8;
   --canvas-dept-ink: #111416;
+  --canvas-dept-name: var(--canvas-dept-ink);
   --canvas-module-fill: #283135;
   --canvas-module-ink: #eff2ee;
   --canvas-row-rule: #34403f;
@@ -374,16 +378,16 @@
   animation: none;
 }
 
-/* Marker lines: a relationship is one solid stroke, a handoff is dashed. */
+/* Marker lines: a relationship is dashed, a handoff is one solid stroke. */
 [data-theme="whiteboard"]
   .sandbox-ui
-  [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
+  [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
   stroke-dasharray: none;
 }
 
 [data-theme="whiteboard"]
   .sandbox-ui
-  [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
+  [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
   stroke-dasharray: 10 6;
 }
 

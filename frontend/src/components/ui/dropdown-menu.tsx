@@ -1,11 +1,14 @@
 "use client";
 import { Menu } from "@base-ui/react/menu";
 import type { ComponentProps } from "react";
+import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 export const DropdownMenu = Menu.Root;
 export const DropdownMenuTrigger = Menu.Trigger;
 export const DropdownMenuGroup = Menu.Group;
 export const DropdownMenuLabel = Menu.GroupLabel;
+/** A nested menu; its content is a DropdownMenuContent with side="right". */
+export const DropdownMenuSub = Menu.SubmenuRoot;
 export function DropdownMenuContent({
   className,
   side = "bottom",
@@ -68,5 +71,27 @@ export function DropdownMenuSeparator({
       className={cn("bg-border -mx-1 my-1 h-px", className)}
       {...props}
     />
+  );
+}
+
+/** Opens a DropdownMenuSub on click, tap, or the Right arrow key. */
+export function DropdownMenuSubTrigger({
+  className,
+  children,
+  ...props
+}: Omit<ComponentProps<typeof Menu.SubmenuTrigger>, "className"> & {
+  className?: string;
+}) {
+  return (
+    <Menu.SubmenuTrigger
+      className={cn(
+        "data-highlighted:bg-accent data-highlighted:text-accent-foreground data-popup-open:bg-accent flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:size-4",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      <ChevronRight aria-hidden="true" className="ml-auto" />
+    </Menu.SubmenuTrigger>
   );
 }

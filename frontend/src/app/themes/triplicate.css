@@ -49,12 +49,14 @@
   --radius: 0.125rem;
   --font-ui: var(--font-archivo), system-ui, sans-serif;
   --font-code: var(--font-geist-mono);
+  --font-display: var(--font-ui);
   --card-edge: var(--rule-strong);
   --card-lift: var(--lift);
   /* Canvas skin. */
   --canvas-dept-fill: #fefefc;
   --canvas-dept-frame: #8e96aa;
   --canvas-dept-ink: #1e2d55;
+  --canvas-dept-name: var(--canvas-dept-ink);
   --canvas-module-fill: #fefefc;
   --canvas-module-frame: #1e2d55;
   --canvas-module-ink: #1e2d55;
@@ -143,12 +145,14 @@
   --radius: 0.125rem;
   --font-ui: var(--font-archivo), system-ui, sans-serif;
   --font-code: var(--font-geist-mono);
+  --font-display: var(--font-ui);
   --card-edge: var(--rule-strong);
   --card-lift: var(--lift);
   /* Canvas skin. */
   --canvas-dept-fill: #171c35;
   --canvas-dept-frame: #414a73;
   --canvas-dept-ink: #e8eaf2;
+  --canvas-dept-name: var(--canvas-dept-ink);
   --canvas-module-fill: #1c223f;
   --canvas-module-frame: #6d77a1;
   --canvas-module-ink: #e8eaf2;
@@ -445,7 +449,11 @@
 
 [data-theme="triplicate"]
   .sandbox-ui
-  :is([data-sandbox-body], [data-sandbox-part="header"]) {
+  :is(
+    [data-sandbox-body],
+    [data-sandbox-part="header"],
+    [data-sandbox-part="edge"]
+  ) {
   rx: 0;
   ry: 0;
 }
@@ -454,25 +462,27 @@
   .sandbox-ui
   .x6-cell:not([data-sandbox-pressed="true"])
   [data-sandbox-kind="department"][data-selected="false"][data-feedback=""] {
-  stroke-dasharray: 6 4;
+  /* A dotted perforation, so the frame never reads as a relationship dash. */
+  stroke-dasharray: 1 3;
+  stroke-linecap: round;
 }
 
 [data-theme="triplicate"] .sandbox-ui [data-sandbox-kind="department"] {
   filter: var(--lift-filter);
 }
 
-/* Carbon lines keep Slate's meaning: a relationship is a solid carbon
-   stroke, and a handoff to another department is dashed. */
+/* Carbon lines keep Slate's meaning: a relationship is dashed, and a
+   handoff to another department is a solid carbon stroke. */
 [data-theme="triplicate"]
   .sandbox-ui
-  [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
+  [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
   stroke-dasharray: none;
   stroke-linecap: butt;
 }
 
 [data-theme="triplicate"]
   .sandbox-ui
-  [data-sandbox-line][data-sandbox-edge-kind="handoff"] {
+  [data-sandbox-line][data-sandbox-edge-kind="relationship"] {
   stroke-dasharray: 6 4;
   stroke-linecap: butt;
 }

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import {
   Check,
   Link as LinkIcon,
@@ -39,6 +39,7 @@ import type {
   TimelineActions,
   TimelinePeople,
 } from "./message-shared";
+import { reportCommsError } from "../state/comms-feedback";
 
 export function ThreadPanel({
   thread,
@@ -87,7 +88,8 @@ export function ThreadPanel({
   );
   const list = useRef<HTMLDivElement>(null);
   const replies = threadMessages(thread);
-  const [notice, setNotice] = useState("");
+  // Failures show as a visible OpenComms notice (state/comms-feedback.ts).
+  const setNotice = reportCommsError;
   async function send(draft: MessageDraft): Promise<string | null> {
     if (!canPost || thread.resolved) return "This thread is read-only.";
     const error = validateDraft?.(draft);
@@ -125,9 +127,6 @@ export function ThreadPanel({
       aria-label="Thread conversation"
       className="flex h-full min-h-0 flex-col"
     >
-      <p role="status" className="sr-only">
-        {notice}
-      </p>
       <header className="flex min-h-14 shrink-0 items-center gap-2 border-b px-4">
         <MessagesSquare className="size-4" />
         <h3

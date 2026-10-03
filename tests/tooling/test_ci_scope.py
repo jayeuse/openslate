@@ -67,6 +67,22 @@ class CiScopeTests(unittest.TestCase):
                 scope = ci_scope.classify_paths([path], base_ref="base")
                 self.assertTrue(scope.decisions["server_image"].run)
 
+    def test_frontend_route_contracts_select_the_backend_guard(self):
+        for path in (
+            "frontend/api-route-manifest.json",
+            "frontend/src/lib/api.ts",
+            "frontend/src/lib/auth-api.ts",
+            "frontend/src/components/systems/openview/adapters/records-api.ts",
+            "frontend/src/components/systems/manage/adapters/workspace-api.ts",
+            "frontend/src/components/systems/access/state/api.ts",
+            "frontend/src/components/systems/sandbox/state/api.ts",
+            "frontend/src/components/systems/boards/adapters/new-control-api.ts",
+        ):
+            with self.subTest(path=path):
+                scope = ci_scope.classify_paths([path], base_ref="base")
+                self.assertTrue(scope.decisions["frontend"].run)
+                self.assertTrue(scope.decisions["backend"].run)
+
     def test_backend_changes_keep_backend_and_unified_server_image_gates(self):
         for path in (
             "backend/app/systems/users/service.py",
@@ -105,11 +121,7 @@ class CiScopeTests(unittest.TestCase):
         scope = ci_scope.classify_paths(["README.md"], base_ref="base")
         self.assertTrue(scope.decisions["docs"].run)
         self.assertTrue(
-            all(
-                not decision.run
-                for name, decision in scope.decisions.items()
-                if name != "docs"
-            )
+            all(not decision.run for name, decision in scope.decisions.items() if name != "docs")
         )
 
     def test_unknown_paths_fail_closed_to_every_decision(self):
@@ -128,8 +140,9 @@ class CiScopeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output_path = Path(directory) / "github-output"
             stdout = io.StringIO()
-            with patch.object(ci_scope, "classify_changes", return_value=scope), redirect_stdout(
-                stdout
+            with (
+                patch.object(ci_scope, "classify_changes", return_value=scope),
+                redirect_stdout(stdout),
             ):
                 result = ci_scope.main(
                     ["--base", "requested-base", "--github-output", str(output_path)]

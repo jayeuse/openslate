@@ -29,6 +29,15 @@ type SandboxOptions = {
   versionMutationDelay?: Promise<void>;
   versions?: Array<Record<string, unknown>>;
   previewChanges?: Array<Record<string, string>>;
+  bindings?: Array<{
+    kind: "department" | "module" | "field" | "relationship" | "trigger";
+    sandbox_id: string;
+    parent_sandbox_id: string | null;
+    live_id: string;
+    is_deleted: boolean;
+  }>;
+  bindingFailure?: number;
+  bindingRevision?: number;
 };
 
 function configuredDesignWithLegacyMapping(): Design {
@@ -69,6 +78,9 @@ async function openAuthenticatedSandbox(
   let documentWrites = 0;
   let versions = options.versions ?? [];
   let document = sandboxDocumentFromDesign(designFixture);
+  let bindings = options.bindings ?? [];
+  let bindingFailure = options.bindingFailure;
+  let bindingRevision = options.bindingRevision;
   await page.route("**/api/auth/session", async (route) => {
     await route.fulfill({
       contentType: "application/json",
@@ -122,6 +134,14 @@ async function openAuthenticatedSandbox(
         publishedHash: options.publishedHash ?? null,
         hasUnpublishedChanges: options.hasUnpublishedChanges ?? true,
       }),
+    });
+  });
+  await page.route("**/api/sandbox/bindings", async (route) => {
+    await route.fulfill({
+      status: bindingFailure ?? 200,
+      json: bindingFailure
+        ? { detail: "Live state is unavailable" }
+        : { document_revision: bindingRevision ?? revision, items: bindings },
     });
   });
   await page.route("**/api/sandbox/imports", async (route) => {
@@ -240,8 +260,621 @@ async function openAuthenticatedSandbox(
     document: () => structuredClone(document),
     documentReads: () => documentReads,
     documentWrites: () => documentWrites,
+    confirmLiveDocument: (next: typeof document) => {
+      document = structuredClone(next);
+      revision += 1;
+    },
+    confirmBindings: (next: typeof bindings) => {
+      bindings = structuredClone(next);
+      bindingFailure = undefined;
+      bindingRevision = undefined;
+    },
   };
 }
+
+function lifecycleImpactFixture(
+  kind: "department" | "module" | "field",
+  id: string,
+  operation: "close" | "reopen" | "purge",
+) {
+  return {
+    target_type: kind,
+    target_id: id,
+    operation,
+    actor_id: "00000000-0000-4000-8000-000000000001",
+    rows: [
+      {
+        entity_type: `${kind}s`,
+        entity_id: id,
+        is_deleted: operation !== "close",
+        deleted_at: operation === "close" ? null : "2026-10-01T00:00:00Z",
+        updated_at: "2026-10-01T00:00:00Z",
+        state_fingerprint: "owned-live-state",
+      },
+    ],
+    external_impacts: [],
+    key_strips: [],
+    blockers: [],
+    impact_digest: "d".repeat(64),
+  };
+}
+
+test("bound module lifecycle uses the live name and refreshes the saved design", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const targetModule = design.modules[0];
+  if (!targetModule) throw new Error("A module fixture is required");
+  targetModule.name = "Unpublished requests";
+  const liveId = "00000000-0000-4000-8000-000000000501";
+  const binding = {
+    kind: "module" as const,
+    sandbox_id: targetModule.id,
+    parent_sandbox_id: null,
+    live_id: liveId,
+    is_deleted: false,
+  };
+  const requests: unknown[] = [];
+  await page.route(`**/api/modules/${liveId}/close/preview`, (route) =>
+    route.fulfill({
+      json: {
+        impact: lifecycleImpactFixture("module", liveId, "close"),
+        token: "owned-close-review",
+        expires_at: "2027-10-01T00:00:00Z",
+        confirmation_name: "Requests",
+      },
+    }),
+  );
+  await page.route(`**/api/modules/${liveId}/close`, async (route) => {
+    requests.push(route.request().postDataJSON());
+    const confirmed = sandbox.document();
+    const target = confirmed.design.modules.find(
+      (item) => item.id === targetModule.id,
+    );
+    if (!target) throw new Error("The owned module disappeared");
+    target.closed = true;
+    sandbox.confirmLiveDocument(confirmed);
+    sandbox.confirmBindings([{ ...binding, is_deleted: true }]);
+    await route.fulfill({
+      json: {
+        impact: lifecycleImpactFixture("module", liveId, "close"),
+        operation_id: "00000000-0000-4000-8000-000000000502",
+      },
+    });
+  });
+  const sandbox = await openAuthenticatedSandbox(page, design, {
+    bindings: [binding],
+  });
+  await page.getByRole("button", { name: "View canvas" }).click();
+  await page.getByRole("menuitem", { name: "Auto-arrange" }).click();
+  await expect(
+    page.getByRole("button", { name: "Undo", exact: true }),
+  ).toBeEnabled();
+  const writes = sandbox.documentWrites();
+  await page.getByRole("button", { name: "Close module", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Close module",
+    exact: true,
+  });
+  await expect(dialog).toBeVisible();
+  await dialog
+    .getByLabel("Type the module name", { exact: true })
+    .fill(targetModule.name);
+  await dialog
+    .getByLabel("Administrator password", { exact: true })
+    .fill("owned-test-password");
+  await expect(
+    dialog.getByRole("button", { name: "Close module", exact: true }),
+  ).toBeDisabled();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(requests).toEqual([]);
+  await page.getByRole("button", { name: "Close module", exact: true }).click();
+  await expect(
+    dialog.getByLabel("Type the module name", { exact: true }),
+  ).toHaveValue("");
+  await expect(
+    dialog.getByLabel("Administrator password", { exact: true }),
+  ).toHaveValue("");
+  await dialog
+    .getByLabel("Type the module name", { exact: true })
+    .fill("Requests");
+  await dialog
+    .getByLabel("Administrator password", { exact: true })
+    .fill("owned-test-password");
+  await dialog
+    .getByRole("button", { name: "Close module", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Reopen module", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Undo", exact: true }),
+  ).toBeDisabled();
+  expect(requests).toEqual([
+    {
+      token: "owned-close-review",
+      confirmation_name: "Requests",
+      password: "owned-test-password",
+    },
+  ]);
+  expect(sandbox.documentWrites()).toBe(writes);
+  expect(
+    sandbox
+      .document()
+      .design.modules.find((item) => item.id === targetModule.id)?.name,
+  ).toBe("Unpublished requests");
+  expect(
+    sandbox
+      .document()
+      .design.modules.find((item) => item.id === targetModule.id)
+      ?.fields.every((field) => !field.closed),
+  ).toBe(true);
+});
+
+for (const status of [403, 503]) {
+  test(`a ${status} bindings read never becomes a draft-only lifecycle action`, async ({
+    page,
+  }) => {
+    const sandbox = await openAuthenticatedSandbox(
+      page,
+      configuredSandboxDesign,
+      { bindingFailure: status },
+    );
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Live state" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Close module", exact: true }),
+    ).toBeDisabled();
+    expect(sandbox.documentWrites()).toBe(0);
+    sandbox.confirmBindings([]);
+    await page
+      .getByRole("button", { name: "Retry live state", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Close module", exact: true }),
+    ).toBeEnabled();
+    await page
+      .getByRole("button", { name: "Close module", exact: true })
+      .click();
+    await expect.poll(sandbox.documentWrites).toBe(1);
+    await expect(
+      page.getByRole("button", { name: "Reopen module", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Permanently delete module",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+  });
+}
+
+test("mismatched binding revisions require a confirmed reload before lifecycle editing", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { bindingRevision: 99 },
+  );
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Live state" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Close module", exact: true }),
+  ).toBeDisabled();
+  expect(sandbox.documentWrites()).toBe(0);
+  sandbox.confirmBindings([]);
+  await page
+    .getByRole("button", { name: "Reload live state", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Close module", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Close module", exact: true }).click();
+  await expect.poll(sandbox.documentWrites).toBe(1);
+});
+
+test("cancelling a pending lifecycle preview ignores its late response and protects exits", async ({
+  page,
+}) => {
+  const targetModule = configuredSandboxDesign.modules[0];
+  if (!targetModule) throw new Error("A module fixture is required");
+  const liveId = "00000000-0000-4000-8000-000000000511";
+  let release = () => {};
+  const delay = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(`**/api/modules/${liveId}/close/preview`, async (route) => {
+    await delay;
+    await route.fulfill({
+      json: {
+        impact: lifecycleImpactFixture("module", liveId, "close"),
+        token: "late-review",
+        expires_at: "2027-10-01T00:00:00Z",
+        confirmation_name: "Requests",
+      },
+    });
+  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    {
+      bindings: [
+        {
+          kind: "module",
+          sandbox_id: targetModule.id,
+          parent_sandbox_id: null,
+          live_id: liveId,
+          is_deleted: false,
+        },
+      ],
+    },
+  );
+  await page.getByRole("button", { name: "Close module", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Close module",
+    exact: true,
+  });
+  const exitGuarded = () =>
+    page.evaluate(() => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+  try {
+    await expect(dialog).toBeVisible();
+    await expect.poll(exitGuarded).toBe(true);
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect.poll(exitGuarded).toBe(false);
+  } finally {
+    release();
+  }
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  await expect(page.getByLabel("Trigger name")).toBeVisible();
+  await expect(dialog).toBeHidden();
+  expect(sandbox.documentWrites()).toBe(0);
+});
+
+test("bound field lifecycle resolves its parent and preserves dirty settings", async ({
+  page,
+}) => {
+  const design = configuredDesignWithLegacyMapping();
+  const targetModule = design.modules[0];
+  const otherModule = design.modules[1];
+  const field = targetModule?.fields[0];
+  const otherField = otherModule?.fields[0];
+  if (!targetModule || !otherModule || !field || !otherField)
+    throw new Error("Two field owners are required");
+  const liveId = "00000000-0000-4000-8000-000000000521";
+  const binding = {
+    kind: "field" as const,
+    sandbox_id: field.id,
+    parent_sandbox_id: targetModule.id,
+    live_id: liveId,
+    is_deleted: false,
+  };
+  otherField.id = field.id;
+  const mapping = design.relationships[0]?.fieldMappings?.[0];
+  if (mapping) mapping.targetFieldId = field.id;
+  const requests: unknown[] = [];
+  await page.route(`**/api/fields/${liveId}/close/preview`, (route) =>
+    route.fulfill({
+      json: {
+        impact: lifecycleImpactFixture("field", liveId, "close"),
+        token: "owned-field-review",
+        expires_at: "2027-10-01T00:00:00Z",
+        confirmation_name: field.name,
+      },
+    }),
+  );
+  await page.route(`**/api/fields/${liveId}/close`, async (route) => {
+    requests.push(route.request().postDataJSON());
+    const confirmed = sandbox.document();
+    const current = confirmed.design.modules
+      .find((item) => item.id === targetModule.id)
+      ?.fields.find((item) => item.id === field.id);
+    if (!current) throw new Error("The owned field disappeared");
+    current.closed = true;
+    confirmed.design.relationships[0]!.fieldMappings = [];
+    sandbox.confirmLiveDocument(confirmed);
+    sandbox.confirmBindings([{ ...binding, is_deleted: true }]);
+    await route.fulfill({
+      json: {
+        impact: lifecycleImpactFixture("field", liveId, "close"),
+        operation_id: null,
+      },
+    });
+  });
+  const sandbox = await openAuthenticatedSandbox(page, design, {
+    bindings: [
+      {
+        ...binding,
+        parent_sandbox_id: otherModule.id,
+        live_id: "00000000-0000-4000-8000-000000000522",
+        is_deleted: true,
+      },
+      binding,
+    ],
+  });
+  const settings = page.getByLabel(`${field.name} field settings`, {
+    exact: true,
+  });
+  await settings
+    .getByRole("button", { name: `Show ${field.name} settings`, exact: true })
+    .click();
+  await settings
+    .getByLabel(`${field.name} name`, { exact: true })
+    .fill("Unsaved field name");
+  await expect(
+    settings.getByRole("button", { name: "Close field", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    settings.getByLabel(`${field.name} name`, { exact: true }),
+  ).toHaveValue("Unsaved field name");
+  await settings.getByRole("button", { name: "Cancel", exact: true }).click();
+  await settings
+    .getByRole("button", { name: "Close field", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Close field", exact: true });
+  await dialog
+    .getByLabel("Type the field name", { exact: true })
+    .fill(field.name);
+  await dialog
+    .getByLabel("Administrator password", { exact: true })
+    .fill("owned-test-password");
+  await dialog
+    .getByRole("button", { name: "Close field", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  await expect(
+    settings.getByRole("button", { name: "Reopen field", exact: true }),
+  ).toBeVisible();
+  expect(requests).toEqual([
+    {
+      token: "owned-field-review",
+      confirmation_name: field.name,
+      password: "owned-test-password",
+    },
+  ]);
+  expect(sandbox.documentWrites()).toBe(0);
+  expect(sandbox.document().design.relationships[0]?.fieldMappings).toEqual([]);
+});
+
+test("bound module purge reviews stale challenges and refreshes removal without a draft write", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const targetModule = design.modules[0];
+  if (!targetModule) throw new Error("A module fixture is required");
+  targetModule.closed = true;
+  const liveId = "00000000-0000-4000-8000-000000000531";
+  const binding = {
+    kind: "module" as const,
+    sandbox_id: targetModule.id,
+    parent_sandbox_id: null,
+    live_id: liveId,
+    is_deleted: true,
+  };
+  let attempts = 0;
+  await page.route(`**/api/modules/${liveId}/purge/preview`, (route) =>
+    route.fulfill({
+      json: {
+        impact: lifecycleImpactFixture("module", liveId, "purge"),
+        token: "owned-purge-review",
+        expires_at: "2027-10-01T00:00:00Z",
+        confirmation_name: "Requests",
+      },
+    }),
+  );
+  await page.route(`**/api/modules/${liveId}/purge`, async (route) => {
+    attempts += 1;
+    expect(route.request().postDataJSON()).toEqual({
+      token: "owned-purge-review",
+      confirmation_name: "Requests",
+      password: "owned-test-password",
+    });
+    if (attempts === 1)
+      return route.fulfill({
+        status: 409,
+        json: { detail: { code: "impact_changed", message: "Changed" } },
+      });
+    const confirmed = sandbox.document();
+    confirmed.design.modules = confirmed.design.modules.filter(
+      (item) => item.id !== targetModule.id,
+    );
+    confirmed.design.relationships = [];
+    sandbox.confirmLiveDocument(confirmed);
+    sandbox.confirmBindings([]);
+    await route.fulfill({
+      json: {
+        impact: lifecycleImpactFixture("module", liveId, "purge"),
+        operation_id: null,
+      },
+    });
+  });
+  const sandbox = await openAuthenticatedSandbox(page, design, {
+    bindings: [binding],
+  });
+  await page
+    .getByRole("button", { name: "Permanently delete module", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Permanently delete module",
+    exact: true,
+  });
+  await dialog
+    .getByLabel("Type the module name", { exact: true })
+    .fill("Requests");
+  await dialog
+    .getByLabel("Administrator password", { exact: true })
+    .fill("owned-test-password");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(attempts).toBe(0);
+  await page
+    .getByRole("button", { name: "Permanently delete module", exact: true })
+    .click();
+  await expect(
+    dialog.getByLabel("Administrator password", { exact: true }),
+  ).toHaveValue("");
+  await dialog
+    .getByLabel("Type the module name", { exact: true })
+    .fill("Requests");
+  await dialog
+    .getByLabel("Administrator password", { exact: true })
+    .fill("owned-test-password");
+  await dialog
+    .getByRole("button", { name: "Permanently delete", exact: true })
+    .click();
+  await expect(dialog.getByRole("alert")).toContainText("changed");
+  await dialog
+    .getByRole("button", { name: "Review again", exact: true })
+    .click();
+  await expect(
+    dialog.getByLabel("Type the module name", { exact: true }),
+  ).toHaveValue("");
+  await expect(
+    dialog.getByLabel("Administrator password", { exact: true }),
+  ).toHaveValue("");
+  await dialog
+    .getByLabel("Type the module name", { exact: true })
+    .fill("Requests");
+  await dialog
+    .getByLabel("Administrator password", { exact: true })
+    .fill("owned-test-password");
+  await dialog
+    .getByRole("button", { name: "Permanently delete", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  await expect
+    .poll(() =>
+      sandbox
+        .document()
+        .design.modules.some((item) => item.id === targetModule.id),
+    )
+    .toBe(false);
+  await expect(
+    page.getByRole("button", { name: "Undo", exact: true }),
+  ).toBeDisabled();
+  expect(sandbox.documentWrites()).toBe(0);
+  expect(attempts).toBe(2);
+});
+
+test("the bound department outline reviews blockers and reopens with explicit confirmation", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const department = design.departments[0];
+  if (!department) throw new Error("A department fixture is required");
+  department.closed = true;
+  design.modules.forEach((targetModule) => {
+    if (targetModule.department === department.id) targetModule.closed = true;
+  });
+  const liveId = "00000000-0000-4000-8000-000000000541";
+  const binding = {
+    kind: "department" as const,
+    sandbox_id: department.id,
+    parent_sandbox_id: null,
+    live_id: liveId,
+    is_deleted: true,
+  };
+  const requests: unknown[] = [];
+  await page.route(`**/api/departments/${liveId}/purge/preview`, (route) =>
+    route.fulfill({
+      json: {
+        impact: {
+          ...lifecycleImpactFixture("department", liveId, "purge"),
+          blockers: [
+            {
+              code: "purge_trigger_dependency",
+              entity_type: "record_triggers",
+              entity_id: "00000000-0000-4000-8000-000000000542",
+              detail: "A configured trigger still depends on this department.",
+              conflicting_entity_type: null,
+              conflicting_entity_id: null,
+              field_id: null,
+              field_name: null,
+              module_id: null,
+              module_name: null,
+              department_id: liveId,
+              department_name: department.name,
+            },
+          ],
+        },
+        token: "blocked-department-review",
+        expires_at: "2027-10-01T00:00:00Z",
+        confirmation_name: department.name,
+      },
+    }),
+  );
+  await page.route(`**/api/departments/${liveId}/reopen`, async (route) => {
+    requests.push(route.request().postDataJSON());
+    const confirmed = sandbox.document();
+    confirmed.design.departments[0]!.closed = false;
+    confirmed.design.modules.forEach((targetModule) => {
+      if (targetModule.departmentId === department.id)
+        targetModule.closed = false;
+    });
+    sandbox.confirmLiveDocument(confirmed);
+    sandbox.confirmBindings([{ ...binding, is_deleted: false }]);
+    await route.fulfill({
+      json: {
+        impact: lifecycleImpactFixture("department", liveId, "reopen"),
+        operation_id: null,
+      },
+    });
+  });
+  const sandbox = await openAuthenticatedSandbox(page, design, {
+    bindings: [binding],
+  });
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
+  const row = page.getByRole("button", {
+    name: `Select department ${department.name}`,
+    exact: true,
+  });
+  await row.click({ button: "right" });
+  await page
+    .getByRole("menuitem", {
+      name: "Permanently delete department",
+      exact: true,
+    })
+    .click();
+  const purge = page.getByRole("dialog", {
+    name: "Permanently delete department",
+    exact: true,
+  });
+  await expect(purge).toContainText(
+    "A configured trigger still depends on this department.",
+  );
+  await expect(
+    purge.getByRole("button", { name: "Permanently delete", exact: true }),
+  ).toBeDisabled();
+  await purge.getByRole("button", { name: "Cancel", exact: true }).click();
+  await row.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Reopen department", exact: true })
+    .click();
+  const reopen = page.getByRole("dialog", {
+    name: "Reopen department",
+    exact: true,
+  });
+  await reopen
+    .getByRole("button", { name: "Reopen department", exact: true })
+    .click();
+  await expect(reopen).toBeHidden();
+  await row.click({ button: "right" });
+  await expect(
+    page.getByRole("menuitem", { name: "Close department", exact: true }),
+  ).toBeVisible();
+  expect(requests).toEqual([{ confirmed: true }]);
+  expect(sandbox.documentWrites()).toBe(0);
+});
 
 test("an organization template replaces the empty draft only after confirmation", async ({
   page,
@@ -983,7 +1616,9 @@ test("a line to another department is drawn as a handoff", async ({ page }) => {
         ),
       };
     }, theme);
-    expect(dashes.handoff, theme).not.toBe(dashes.relationship);
+    // The dash means a link: relationships are dashed, handoffs are solid.
+    expect(dashes.relationship, theme).not.toBe("none");
+    expect(dashes.handoff, theme).toBe("none");
     expect(dashes.keyRelationship, theme).toBe(dashes.relationship);
     expect(dashes.keyHandoff, theme).toBe(dashes.handoff);
   }
@@ -1981,7 +2616,13 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
   });
   const requestPaths: string[] = [];
   page.on("request", (request) => {
-    requestPaths.push(new URL(request.url()).pathname);
+    const path = new URL(request.url()).pathname;
+    if (
+      path === "/api/users/00000000-0000-4000-8000-000000000001/preferences" &&
+      request.method() === "GET"
+    )
+      return;
+    requestPaths.push(path);
   });
   await openAuthenticatedSandbox(page, design);
   let submitted: Record<string, unknown> | undefined;

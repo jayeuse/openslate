@@ -14,7 +14,7 @@ export function PageHeader({
       <div>
         <h1
           data-slot="page-title"
-          className="text-2xl leading-tight font-semibold tracking-[-0.035em] sm:text-[30px]"
+          className="text-2xl leading-tight font-bold tracking-[-0.025em] sm:text-[30px]"
         >
           {title}
         </h1>

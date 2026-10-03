@@ -62,7 +62,7 @@ export function MembersPanel({
         );
         return (
           <section key={String(offline)} className="mt-2">
-            <h4 className="text-muted-foreground mb-2 text-xs font-semibold tracking-wider uppercase">
+            <h4 className="text-muted-foreground mb-2 text-xs font-semibold">
               {offline ? "Offline" : "Online"}
               <span aria-hidden="true"> — {group.length}</span>
             </h4>

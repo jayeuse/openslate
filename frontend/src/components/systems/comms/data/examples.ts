@@ -3,6 +3,7 @@ import {
   OPEN_PERMISSIONS,
   type Category,
   type Channel,
+  type CommsFlow,
   type Direct,
   type Message,
   type Thread,
@@ -44,15 +45,26 @@ export const EXAMPLE_CATEGORIES: Category[] = [
   {
     id: "sample-category-service",
     name: "Service delivery",
+    groupId: "Operations",
     ...OPEN_PERMISSIONS,
   },
   {
     id: "sample-category-growth",
     name: "Customer & growth",
+    groupId: "Commercial",
     ...OPEN_PERMISSIONS,
   },
   { id: "sample-category-team", name: "Team spaces", ...OPEN_PERMISSIONS },
 ];
+// Channels whose access differs from their category's group.
+const SAMPLE_GROUP_ACCESS: Record<string, Channel["groupAccess"]> = {
+  "finance-desk": { Commercial: "post", Finance: "post", everyone: "none" },
+  "parts-and-stock": {
+    Operations: "post",
+    Commercial: "read",
+    everyone: "none",
+  },
+};
 export const EXAMPLE_CHANNELS: Channel[] = [
   [
     "announcements",
@@ -112,7 +124,41 @@ export const EXAMPLE_CHANNELS: Channel[] = [
   ...(name === "announcements"
     ? { posting: "roles" as const, postRoles: ["sample-admin"] }
     : {}),
+  ...(SAMPLE_GROUP_ACCESS[name]
+    ? { groupAccess: SAMPLE_GROUP_ACCESS[name] }
+    : {}),
 }));
+
+/** Handoffs between groups, shown in the conversations they concern. */
+export const EXAMPLE_FLOWS: CommsFlow[] = [
+  {
+    id: "sample-flow-1004-assigned",
+    conversation: "sample-channel-operations",
+    created: Date.UTC(2026, 8, 11, 1, 30),
+    from: "Customer service",
+    to: "Operations",
+    recordId: "sample-sr-1004",
+    text: "assigned to the field team",
+  },
+  {
+    id: "sample-flow-1006-confirmed",
+    conversation: "sample-channel-dispatch",
+    created: Date.UTC(2026, 8, 11, 1, 25),
+    from: "Operations",
+    to: "Customer service",
+    recordId: "sample-sr-1006",
+    text: "visit confirmed with the customer",
+  },
+  {
+    id: "sample-flow-1004-invoice",
+    conversation: "sample-channel-finance-desk",
+    created: Date.UTC(2026, 8, 11, 1, 10),
+    from: "Operations",
+    to: "Finance",
+    recordId: "sample-sr-1004",
+    text: "ready to invoice",
+  },
+];
 
 function authorId(name: string): string {
   if (name === "Eli Cruz") return "sample-eli";

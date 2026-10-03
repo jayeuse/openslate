@@ -27,7 +27,17 @@ _PRIVATE_INVALIDATION_ENTITIES = frozenset(
         "board_record_links",
     }
 )
-_ADMINISTRATOR_ENTITIES = frozenset({"audit_logs", "files", "security_events", "users"})
+_ADMINISTRATOR_ENTITIES = frozenset(
+    {
+        "audit_logs",
+        "files",
+        "security_events",
+        "users",
+        "backup_policies",
+        "backup_runs",
+        "update_statuses",
+    }
+)
 _ALL_AUTHENTICATED_ENTITIES = frozenset({"departments", "workspace_profiles"})
 _ENTITY_ONLY_ENTITIES = frozenset(
     {

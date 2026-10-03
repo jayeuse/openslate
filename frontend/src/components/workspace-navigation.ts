@@ -106,7 +106,6 @@ const workspaceNavigationDefinitions = [
       { id: "import-export", label: "Import & export" },
       { id: "account", label: "Account & presence" },
       { id: "files", label: "File library" },
-      { id: "records", label: "Record actions" },
     ],
   },
 ] as const satisfies readonly WorkspaceNavigationDefinition[];

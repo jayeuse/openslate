@@ -26,9 +26,7 @@ def test_select_option_ids_are_stable_values_and_duplicate_labels_are_rejected()
         {"id": first_id, "label": "Open"},
         {"id": second_id, "label": "Closed"},
     ]
-    config = field_config(
-        FieldType.SELECT, {"options": options, "defaultValue": first_id}
-    )
+    config = field_config(FieldType.SELECT, {"options": options, "defaultValue": first_id})
     field = make_field(uuid7(), FieldType.SELECT, config=config)
     assert validate_field_value(field, first_id) == first_id
     with pytest.raises(ValueError):
@@ -69,6 +67,7 @@ def test_record_route_rejects_numeric_json_for_decimal_field() -> None:
     module = make_module()
     field = make_field(module.id, FieldType.DECIMAL)
     db = Mock(spec=Session)
+    db.info = {}  # a real Session.info is a dict; the lock helper keeps a marker in it
     db.scalar.return_value = module
     db.get.return_value = module
     db.scalars.return_value.all.return_value = [field]

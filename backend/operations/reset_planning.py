@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
 from alembic.config import Config
@@ -21,43 +21,24 @@ from app.core.config.instance import (
     assert_database_url,
     test_manifest_authorizes_process,
 )
-
-if __package__:
-    from .reset_models import (  # type: ignore[import-not-found]
-        _ALEMBIC_HEAD_STATEMENT,
-        _COUNT_STATEMENTS,
-        _EFFECTIVE_ADMIN_PROFILES_STATEMENT,
-        _PROFILE_DELETE_COUNTS_STATEMENT,
-        _PROFILE_STATEMENT,
-        _PROVIDER_SUBJECTS_STATEMENT,
-        _PUBLIC_TABLES_STATEMENT,
-        _WORKSPACE_STATEMENT,
-        APPLICATION_TABLES,
-        EXPECTED_DATABASE_USER,
-        ProfileSnapshot,
-        ResetError,
-        ResetPlan,
-        WorkspaceSnapshot,
-        stable_snapshot_payload,
-    )
-else:
-    from reset_models import (
-        _ALEMBIC_HEAD_STATEMENT,
-        _COUNT_STATEMENTS,
-        _EFFECTIVE_ADMIN_PROFILES_STATEMENT,
-        _PROFILE_DELETE_COUNTS_STATEMENT,
-        _PROFILE_STATEMENT,
-        _PROVIDER_SUBJECTS_STATEMENT,
-        _PUBLIC_TABLES_STATEMENT,
-        _WORKSPACE_STATEMENT,
-        APPLICATION_TABLES,
-        EXPECTED_DATABASE_USER,
-        ProfileSnapshot,
-        ResetError,
-        ResetPlan,
-        WorkspaceSnapshot,
-        stable_snapshot_payload,
-    )
+from operations.reset_backups import read_backup_snapshot
+from operations.reset_models import (
+    _ALEMBIC_HEAD_STATEMENT,
+    _COUNT_STATEMENTS,
+    _EFFECTIVE_ADMIN_PROFILES_STATEMENT,
+    _PROFILE_DELETE_COUNTS_STATEMENT,
+    _PROFILE_STATEMENT,
+    _PROVIDER_SUBJECTS_STATEMENT,
+    _PUBLIC_TABLES_STATEMENT,
+    _WORKSPACE_STATEMENT,
+    APPLICATION_TABLES,
+    EXPECTED_DATABASE_USER,
+    ProfileSnapshot,
+    ResetError,
+    ResetPlan,
+    WorkspaceSnapshot,
+    stable_snapshot_payload,
+)
 
 
 def required_environment(mapping: Mapping[str, str]) -> tuple[str, str]:
@@ -180,19 +161,31 @@ def _read_profile(connection: Any, user_id: UUID) -> ProfileSnapshot:
         raise ResetError("The administrator profile is missing or ambiguous")
     row = rows[0]
     return ProfileSnapshot(
-        id=_as_uuid(row[0]), created_at=row[1], deleted_at=row[2], is_deleted=row[3],
-        updated_at=row[4], performed_by=row[5], email=row[6],
+        id=_as_uuid(row[0]),
+        created_at=row[1],
+        deleted_at=row[2],
+        is_deleted=row[3],
+        updated_at=row[4],
+        performed_by=row[5],
+        email=row[6],
         supabase_user_id=_as_uuid(row[7]) if row[7] is not None else None,
-        username=row[8], status=row[9], role=row[10], display_name=row[11],
+        username=row[8],
+        status=row[9],
+        role=row[10],
+        display_name=row[11],
         job_title=row[12],
         sponsor_user_id=_as_uuid(row[13]) if row[13] is not None else None,
-        expires_at=row[14], invitation_sent_at=row[15], invitation_accepted_at=row[16],
+        expires_at=row[14],
+        invitation_sent_at=row[15],
+        invitation_accepted_at=row[16],
         tokens_valid_after=row[17],
     )
 
 
 def _read_provider_subjects(
-    connection: Any, preserved_id: UUID, preserved_provider_id: UUID,
+    connection: Any,
+    preserved_id: UUID,
+    preserved_provider_id: UUID,
 ) -> tuple[tuple[UUID, UUID | None], ...]:
     rows = _fetchall(connection, _PROVIDER_SUBJECTS_STATEMENT, (preserved_id,))
     subjects: list[tuple[UUID, UUID | None]] = []
@@ -203,8 +196,10 @@ def _read_provider_subjects(
             raise ResetError("The provider subject mapping is invalid")
         app_id = _as_uuid(row[0])
         provider_id = _as_uuid(row[1]) if row[1] is not None else None
-        if app_id == preserved_id or app_id in seen_app or (
-            provider_id is not None and provider_id in seen_provider
+        if (
+            app_id == preserved_id
+            or app_id in seen_app
+            or (provider_id is not None and provider_id in seen_provider)
         ):
             raise ResetError("The provider subject mapping is ambiguous")
         seen_app.add(app_id)
@@ -220,11 +215,23 @@ def _read_workspace(connection: Any) -> WorkspaceSnapshot:
         raise ResetError("The workspace singleton is missing or ambiguous")
     row = rows[0]
     return WorkspaceSnapshot(
-        id=_as_uuid(row[0]), singleton_key=row[1], display_name=row[2], legal_name=row[3],
-        description=row[4], contact_email=row[5], contact_phone=row[6], postal_address=row[7],
-        logo_file_id=row[8], timezone=row[9], locale=row[10], revision=row[11],
-        deleted_at=row[12], is_deleted=row[13], performed_by=row[14],
-        invitation_expiry_days=row[15], guest_duration_days=row[16],
+        id=_as_uuid(row[0]),
+        singleton_key=row[1],
+        display_name=row[2],
+        legal_name=row[3],
+        description=row[4],
+        contact_email=row[5],
+        contact_phone=row[6],
+        postal_address=row[7],
+        logo_file_id=row[8],
+        timezone=row[9],
+        locale=row[10],
+        revision=row[11],
+        deleted_at=row[12],
+        is_deleted=row[13],
+        performed_by=row[14],
+        invitation_expiry_days=row[15],
+        guest_duration_days=row[16],
     )
 
 
@@ -263,7 +270,7 @@ def _expected_snapshot_payload(snapshot: object, preserved_admin_id: UUID) -> di
                 payload["performed_by"] = None
         except ResetError:
             payload["performed_by"] = None
-    return cast(dict[str, object], payload)
+    return payload
 
 
 def _impact_digest(plan: ResetPlan) -> str:
@@ -278,9 +285,11 @@ def _impact_digest(plan: ResetPlan) -> str:
             [str(app_id), str(provider_id) if provider_id is not None else None]
             for app_id, provider_id in plan.provider_subjects
         ],
+        "provider_account_ids": [str(user_id) for user_id in plan.provider_account_ids],
         "workspace": stable_snapshot_payload(plan.workspace_snapshot),
         "storage_object_keys": list(plan.storage_object_keys),
         "alembic_head": plan.alembic_head,
+        "backup_snapshot": stable_snapshot_payload(plan.backup_snapshot),
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
@@ -292,12 +301,14 @@ def build_reset_plan(
     sample_email: str,
     *,
     storage_object_keys: tuple[str, ...] = (),
+    provider_account_ids: tuple[UUID, ...] | None = None,
     read_profile_fn: Callable[[Any, UUID], ProfileSnapshot] = _read_profile,
 ) -> ResetPlan:
     """Read and validate every local state value required for one safe reset."""
     try:
         email = _normalize_email(sample_email)
         _read_public_table_names(connection)
+        backup_snapshot = read_backup_snapshot(connection)
         alembic_head = _read_alembic_head(connection)
         rows = _fetchall(
             connection,
@@ -311,9 +322,25 @@ def build_reset_plan(
         profile = read_profile_fn(connection, admin_id)
         if profile.id != admin_id or profile.supabase_user_id is None:
             raise ResetError("The administrator provider identity is not active and preserved")
-        provider_subjects = _read_provider_subjects(
-            connection, admin_id, profile.supabase_user_id
-        )
+        provider_subjects = _read_provider_subjects(connection, admin_id, profile.supabase_user_id)
+        if provider_account_ids is None:
+            provider_account_ids = tuple(
+                sorted(
+                    (
+                        provider_id
+                        for _, provider_id in provider_subjects
+                        if provider_id is not None
+                    ),
+                    key=str,
+                )
+            )
+        if (
+            any(not isinstance(user_id, UUID) for user_id in provider_account_ids)
+            or profile.supabase_user_id in provider_account_ids
+            or tuple(sorted(provider_account_ids, key=str)) != provider_account_ids
+            or len(set(provider_account_ids)) != len(provider_account_ids)
+        ):
+            raise ResetError("The provider Auth inventory is invalid")
         if (
             profile.role != "admin"
             or profile.sponsor_user_id is not None
@@ -352,6 +379,8 @@ def build_reset_plan(
             workspace_snapshot=workspace,
             storage_object_keys=storage_object_keys,
             alembic_head=alembic_head,
+            backup_snapshot=backup_snapshot,
+            provider_account_ids=provider_account_ids,
         )
         return replace(plan, impact_digest=_impact_digest(plan))
     except ResetError:

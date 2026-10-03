@@ -1,10 +1,13 @@
 import logging
+from collections.abc import Iterable
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import select
+from fastapi import HTTPException
+from sqlalchemy import Select, String, func, select
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -14,12 +17,15 @@ from app.common.listing import (
     ListQueryResult,
     ListQuerySpec,
     StandardListRequest,
+    build_standard_list_statements,
     execute_standard_list,
 )
 from app.core.base_model import utc_now
 from app.core.database.session import AuditSession, get_engine
 from app.core.middleware.request_context import get_current_request_context
 from app.core.observability import log_event
+from app.systems.access.users.eligibility import established_user_clause
+from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.models import AuditAction, AuditLog, SecurityEvent
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 
@@ -45,15 +51,21 @@ AUDIT_LOG_LIST_SPEC = ListQuerySpec(
     default_sort=AuditLogSortField.CREATED_AT,
     tie_breaker=cast(ColumnElement[Any], AuditLog.id),
     search_fields=(
+        cast(ColumnElement[str], sql_cast(AuditLog.action, String)),
         cast(ColumnElement[str], AuditLog.entity_type),
         cast(ColumnElement[str], AuditLog.request_path),
+        cast(ColumnElement[str], AuditLog.actor_label),
+        cast(ColumnElement[str], sql_cast(AuditLog.entity_id, String)),
+        cast(ColumnElement[str], sql_cast(AuditLog.before, String)),
+        cast(ColumnElement[str], sql_cast(AuditLog.after, String)),
     ),
 )
 
 
-def list_audit_logs(
-    db: Session,
-    params: StandardListRequest[AuditLogSortField],
+AUDIT_EXPORT_LIMIT = 10_000
+
+
+def audit_log_statement(
     *,
     action: AuditAction | None = None,
     entity_type: str | None = None,
@@ -63,7 +75,7 @@ def list_audit_logs(
     request_id: UUID | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
-) -> ListQueryResult[AuditLog]:
+) -> Select[tuple[AuditLog]]:
     conditions: list[ColumnElement[bool]] = []
     if action is not None:
         conditions.append(AuditLog.action == action)
@@ -82,8 +94,127 @@ def list_audit_logs(
     if created_before is not None:
         conditions.append(AuditLog.created_at <= created_before)
 
-    statement = select(AuditLog).where(*conditions)
+    return select(AuditLog).where(*conditions)
+
+
+def list_audit_logs(
+    db: Session,
+    params: StandardListRequest[AuditLogSortField],
+    *,
+    action: AuditAction | None = None,
+    entity_type: str | None = None,
+    entity_id: UUID | None = None,
+    department_id: UUID | None = None,
+    performed_by: UUID | None = None,
+    request_id: UUID | None = None,
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
+) -> ListQueryResult[AuditLog]:
+    statement = audit_log_statement(
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        department_id=department_id,
+        performed_by=performed_by,
+        request_id=request_id,
+        created_after=created_after,
+        created_before=created_before,
+    )
     return execute_standard_list(db, statement, params, AUDIT_LOG_LIST_SPEC)
+
+
+def export_audit_log_rows(
+    db: Session,
+    statement: Select[tuple[AuditLog]],
+    params: StandardListRequest[AuditLogSortField],
+) -> list[AuditLog]:
+    ordered, _ = build_standard_list_statements(statement, params, AUDIT_LOG_LIST_SPEC)
+    rows = list(db.scalars(ordered.offset(None).limit(AUDIT_EXPORT_LIMIT + 1)).all())
+    if len(rows) > AUDIT_EXPORT_LIMIT:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "audit_export_limit",
+                "message": (
+                    "Audit exports support up to 10,000 entries. Narrow your filters and try again."
+                ),
+            },
+        )
+    return rows
+
+
+def active_actor_names(db: Session, performed_by_ids: Iterable[UUID | None]) -> dict[UUID, str]:
+    actor_ids = {performed_by for performed_by in performed_by_ids if performed_by is not None}
+    if not actor_ids:
+        return {}
+    actors = db.execute(
+        select(User.id, User.display_name, User.username).where(
+            User.id.in_(actor_ids),
+            User.status == UserStatus.ACTIVE.value,
+            User.is_deleted.is_(False),
+            User.deleted_at.is_(None),
+            established_user_clause(),
+        )
+    ).all()
+    return {actor_id: display_name or username for actor_id, display_name, username in actors}
+
+
+def list_audit_log_options(
+    db: Session,
+    *,
+    department_id: UUID | None = None,
+) -> tuple[list[str], list[tuple[UUID, str | None]]]:
+    conditions: list[ColumnElement[bool]] = []
+    if department_id is not None:
+        conditions.append(AuditLog.department_id == department_id)
+
+    entity_types = list(
+        db.scalars(
+            select(AuditLog.entity_type)
+            .where(*conditions)
+            .group_by(AuditLog.entity_type)
+            .order_by(func.max(AuditLog.created_at).desc(), AuditLog.entity_type.asc())
+            .limit(200)
+        ).all()
+    )
+
+    actor_rank = (
+        func.row_number()
+        .over(
+            partition_by=AuditLog.performed_by,
+            order_by=(AuditLog.created_at.desc(), AuditLog.id.desc()),
+        )
+        .label("actor_rank")
+    )
+    recent_actor_rows = (
+        select(
+            AuditLog.performed_by,
+            AuditLog.actor_label,
+            AuditLog.created_at.label("last_used"),
+            actor_rank,
+        )
+        .where(*conditions, AuditLog.performed_by.is_not(None))
+        .subquery()
+    )
+    actor_rows = (
+        db.execute(
+            select(recent_actor_rows.c.performed_by, recent_actor_rows.c.actor_label)
+            .where(recent_actor_rows.c.actor_rank == 1)
+            .order_by(
+                recent_actor_rows.c.last_used.desc(),
+                recent_actor_rows.c.performed_by.asc(),
+            )
+            .limit(200)
+        )
+        .tuples()
+        .all()
+    )
+    actors = [
+        (performed_by, actor_label)
+        for performed_by, actor_label in actor_rows
+        if performed_by is not None
+    ]
+    return entity_types, actors
 
 
 class SecurityEventSortField(StrEnum):
@@ -144,8 +275,10 @@ def append_committed_security_event(payload: SecurityEventIngestRequest) -> None
         session.commit()
     except SQLAlchemyError as error:
         log_event(
-            "security_event_ingestion_failed", level=logging.ERROR,
-            operation_id=payload.operation_id, reason_code="persistence_failed",
+            "security_event_ingestion_failed",
+            level=logging.ERROR,
+            operation_id=payload.operation_id,
+            reason_code="persistence_failed",
         )
         session.rollback()
         raise SecurityEventPersistenceError("Unable to commit security event") from error

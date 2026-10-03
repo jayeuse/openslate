@@ -19,7 +19,6 @@ import {
   replaceSandboxDocument,
   restoreSandboxVersion,
   publishSandbox,
-  rollbackSandboxVersion,
   updateSandboxVersion,
 } from "../../../src/components/systems/sandbox/state/api";
 
@@ -373,9 +372,6 @@ test("uses documented version and import endpoints with revision payloads", asyn
       restoreSandboxVersion({ versionId, expectedRevision: 7 }),
     ).resolves.toEqual(documentResponse);
     await expect(
-      rollbackSandboxVersion({ versionId, expectedRevision: 7 }),
-    ).resolves.toEqual(documentResponse);
-    await expect(
       importSandboxBundle({ expectedRevision: 7, bundle: document }),
     ).resolves.toEqual(documentResponse);
 
@@ -388,13 +384,12 @@ test("uses documented version and import endpoints with revision payloads", asyn
       [`/api/sandbox/versions/${versionId}`, "PATCH"],
       [`/api/sandbox/versions/${versionId}`, "DELETE"],
       [`/api/sandbox/versions/${versionId}/restorations`, "POST"],
-      [`/api/sandbox/versions/${versionId}/rollbacks`, "POST"],
       ["/api/sandbox/imports", "POST"],
     ]);
     expect(mock.requests[4].init?.body).toBe(
       JSON.stringify({ expectedRevision: 7 }),
     );
-    expect(mock.requests[7].init?.body).toBe(
+    expect(mock.requests[6].init?.body).toBe(
       JSON.stringify({ expectedRevision: 7, bundle: document }),
     );
   } finally {

@@ -85,7 +85,7 @@ export function resolveCommsPermission(
       allowed: true,
       source: "OpenComms owner",
       reason:
-        "Active Eli has protected OpenComms owner access. Channel and messaging policies still apply.",
+        "Eli owns OpenComms, so Eli always has every permission here. Channel locks and message limits still apply.",
     };
   if (permission !== "viewChannel" && channel) {
     const visibility = resolveCommsPermission(config, context, "viewChannel");

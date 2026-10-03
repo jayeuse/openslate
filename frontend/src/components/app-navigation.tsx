@@ -27,6 +27,8 @@ import {
   authMeOptions,
   prefetchOpenViewSection,
 } from "@/components/systems/openview/adapters/openview-queries";
+import { prefetchManageWorkspace } from "@/components/systems/manage/adapters/manage-queries";
+import { prefetchPlatformSection } from "@/components/systems/platform/adapters/platform-queries";
 import {
   Collapsible,
   CollapsibleContent,
@@ -189,6 +191,12 @@ export function AppNavigation({
       // Data can go stale between visits, so each intent may refresh it;
       // the cache skips reads that are still fresh.
       prefetchOpenViewSection(queryClient, href);
+      prefetchPlatformSection(queryClient, href, identity.data?.id);
+      if (
+        identity.data?.role === "admin" &&
+        href === "/manage?view=organization"
+      )
+        void prefetchManageWorkspace(queryClient);
       if (prefetchedRoutes.current.has(href)) return;
       prefetchedRoutes.current.add(href);
       if (prefetchedRoutes.current.size > MAX_PREFETCHED_ROUTES) {

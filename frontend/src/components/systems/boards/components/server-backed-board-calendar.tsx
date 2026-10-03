@@ -8,6 +8,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  X,
 } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import {
@@ -19,6 +20,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -72,6 +80,8 @@ import {
   MonthGrid,
   MyEventsDisplay,
   ServerBoardCalendarDisplay,
+  ServerBoardEventReaderContent,
+  boardEventTimeLabel,
 } from "./server-board-calendar-display";
 export {
   ServerBoardCalendarDisplay,
@@ -135,10 +145,14 @@ export function ServerBackedBoardCalendar({
   refreshKey,
   boardActive = false,
   onDraftStateChange,
+  selectedEventId = null,
+  onCloseSelectedEvent,
 }: {
   boardId: string;
   refreshKey: number;
   boardActive?: boolean;
+  selectedEventId?: string | null;
+  onCloseSelectedEvent?: () => void;
   onDraftStateChange?: (
     boardId: string,
     dirty: boolean,
@@ -146,6 +160,14 @@ export function ServerBackedBoardCalendar({
   ) => void;
 }) {
   const viewerId = useVerifiedWorkspaceUserId();
+  const todayButton = useRef<HTMLButtonElement>(null);
+  const [selectedRetry, setSelectedRetry] = useState(0);
+  const selectedKey = `${viewerId}:${boardId}:${selectedEventId}:${refreshKey}:${selectedRetry}`;
+  const [selectedDetail, setSelectedDetail] = useState<{
+    key: string;
+    event: BoardEvent | null;
+    error: string | null;
+  } | null>(null);
   const [workspaceToday, setWorkspaceToday] = useState<string | null>(null);
   const [workspaceDateError, setWorkspaceDateError] = useState<string | null>(
     null,
@@ -212,6 +234,11 @@ export function ServerBackedBoardCalendar({
       ? access.value
       : null;
   const accessDenied = boardActive && blockedBoardId === boardId;
+  const currentSelectedDetail =
+    selectedDetail?.key === selectedKey && !accessDenied
+      ? selectedDetail
+      : null;
+  const selectedEvent = currentSelectedDetail?.event ?? null;
   const accessFailed =
     boardActive && access?.key === accessKey && access.status === "error";
   const calendarPage = accessDenied ? null : state.data;
@@ -227,6 +254,33 @@ export function ServerBackedBoardCalendar({
       : null;
   const activeDraft = canEdit && draft?.boardId === boardId ? draft : null;
   const myEventsKey = `${boardId}:${refreshKey}:${myEventsOffset}:${myEventsRetry}`;
+
+  useEffect(() => {
+    if (!viewerId || selectedEventId === null || accessDenied) {
+      setSelectedDetail(null);
+      return;
+    }
+    let active = true;
+    void readBoardEvent(boardId, selectedEventId)
+      .then((event) => {
+        if (active) setSelectedDetail({ key: selectedKey, event, error: null });
+      })
+      .catch((error: unknown) => {
+        if (active)
+          setSelectedDetail({
+            key: selectedKey,
+            event: null,
+            error:
+              error instanceof ApiError &&
+              [401, 403, 404].includes(error.status)
+                ? "This event is unavailable or you no longer have access."
+                : "Could not load the event. Try again.",
+          });
+      });
+    return () => {
+      active = false;
+    };
+  }, [accessDenied, boardId, selectedEventId, selectedKey, viewerId]);
 
   useEffect(() => {
     let active = true;
@@ -908,6 +962,60 @@ export function ServerBackedBoardCalendar({
       aria-label="Board calendar"
       className="flex min-w-0 flex-col gap-4"
     >
+      {viewerId && selectedEventId !== null && (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) onCloseSelectedEvent?.();
+          }}
+        >
+          <DialogContent
+            className="max-w-3xl p-5 sm:p-7"
+            finalFocus={todayButton}
+          >
+            <DialogHeader>
+              <DialogTitle className="pr-10 text-xl leading-snug break-words">
+                {selectedEvent?.title ??
+                  (currentSelectedDetail?.error || accessDenied
+                    ? "Event unavailable"
+                    : "Opening event")}
+              </DialogTitle>
+              <DialogDescription>
+                {selectedEvent
+                  ? boardEventTimeLabel(selectedEvent)
+                  : accessDenied
+                    ? "This event is unavailable or you no longer have access."
+                    : (currentSelectedDetail?.error ?? "Loading the event.")}
+              </DialogDescription>
+            </DialogHeader>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute top-3 right-3 size-11"
+              onClick={onCloseSelectedEvent}
+              aria-label="Close event"
+            >
+              <X aria-hidden="true" />
+            </Button>
+            {selectedEvent ? (
+              <ServerBoardEventReaderContent
+                key={selectedKey}
+                event={selectedEvent}
+              />
+            ) : currentSelectedDetail?.error && !accessDenied ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-5 min-h-11"
+                onClick={() => setSelectedRetry((current) => current + 1)}
+              >
+                Retry
+              </Button>
+            ) : null}
+          </DialogContent>
+        </Dialog>
+      )}
       <header className="space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="space-y-1">
@@ -1066,6 +1174,7 @@ export function ServerBackedBoardCalendar({
             type="button"
             variant="outline"
             className="ml-2 min-h-11"
+            ref={todayButton}
             disabled={workspaceToday === null}
             onClick={() => {
               if (!workspaceToday) return;

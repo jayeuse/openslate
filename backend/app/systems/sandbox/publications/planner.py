@@ -17,6 +17,7 @@ from app.systems.sandbox.publications.binding_keys import normalize_legacy_field
 from app.systems.sandbox.publications.close_rules import (
     close_blockers,
     hierarchy_close_blockers,
+    lifecycle_closed_relationships,
     live_dependencies_exist,
     live_relationship_department_blockers,
     unmanaged_field_blockers,
@@ -182,11 +183,14 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
             if not field_closed:
                 active_position += 1
     module_departments = {module.id: module.department_id for module in document.design.modules}
+    lifecycle_closed = lifecycle_closed_relationships(db, document, by_kind)
     for relationship in document.design.relationships:
         desired_ids["relationship"].add(relationship.id)
-        relationship_closed = effective_module_closed.get(
-            relationship.source_module_id, False
-        ) or effective_module_closed.get(relationship.target_module_id, False)
+        relationship_closed = (
+            effective_module_closed.get(relationship.source_module_id, False)
+            or effective_module_closed.get(relationship.target_module_id, False)
+            or relationship.id in lifecycle_closed
+        )
         _plan_item(
             changes,
             "relationship",

@@ -214,4 +214,5 @@ def test_module_entrypoint_passes_each_server_option_explicitly(
         timeout_keep_alive=5,
         reload=False,
         access_log=False,
+        forwarded_allow_ips=[],
     )

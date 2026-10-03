@@ -7,6 +7,7 @@ import {
   Geist,
   Geist_Mono,
   Martian_Mono,
+  Schibsted_Grotesk,
 } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
@@ -23,12 +24,26 @@ const geistMono = Geist_Mono({
   preload: false,
 });
 
+// Slate's display face: headings, page titles, and department names.
+// Preloaded because Slate is the default look and every page has a title,
+// so the title never swaps face after the first paint.
+const schibstedGrotesk = Schibsted_Grotesk({
+  variable: "--font-schibsted",
+  subsets: ["latin"],
+  weight: ["700", "800"],
+});
+
 // Organization themes (src/app/themes). Without preload, a browser fetches a
 // face only when rendered text uses it, so Slate pages load none of these.
+// next/font has no fallback metrics for Atkinson Hyperlegible Next or Big
+// Shoulders Stencil, and the dev server warns on every compile when it looks
+// them up. An explicit fallback list skips that lookup; it matches the stacks
+// the Whiteboard and Stockroom looks already put after these faces.
 const atkinson = Atkinson_Hyperlegible_Next({
   variable: "--font-atkinson",
   subsets: ["latin"],
   preload: false,
+  fallback: ["system-ui", "sans-serif"],
 });
 
 const archivo = Archivo({
@@ -42,6 +57,7 @@ const bigShouldersStencil = Big_Shoulders_Stencil({
   variable: "--font-stencil",
   subsets: ["latin"],
   preload: false,
+  fallback: ["sans-serif"],
 });
 
 const martianMono = Martian_Mono({
@@ -69,7 +85,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       // differs from this render. Suppress the warning and keep React
       // from patching those attributes back.
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} ${atkinson.variable} ${archivo.variable} ${martianMono.variable} ${bigShouldersStencil.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${schibstedGrotesk.variable} ${atkinson.variable} ${archivo.variable} ${martianMono.variable} ${bigShouldersStencil.variable} h-full antialiased`}
     >
       <head>
         {/* eslint-disable-next-line @next/next/no-sync-scripts */}

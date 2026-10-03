@@ -13,6 +13,10 @@ import {
   readBrowserAppearancePreferences,
   type AppearancePreferences,
 } from "@/lib/appearance-preferences";
+import {
+  useUserThemePreference,
+  UserThemeStatus,
+} from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
 
 const modes = [
@@ -21,6 +25,7 @@ const modes = [
 ] as const;
 
 export default function AppearancePage() {
+  const theme = useUserThemePreference();
   const [preferences, setPreferences] = useState<AppearancePreferences>(
     DEFAULT_APPEARANCE_PREFERENCES,
   );
@@ -35,20 +40,32 @@ export default function AppearancePage() {
     const sync = () => setDeviceReducesMotion(query.matches);
     sync();
     query.addEventListener("change", sync);
-    return () => query.removeEventListener("change", sync);
+    const syncStoredMotion = (event: StorageEvent) => {
+      if (event.key === null || event.key === "openslate-motion")
+        setPreferences(readBrowserAppearancePreferences());
+    };
+    window.addEventListener("storage", syncStoredMotion);
+    return () => {
+      query.removeEventListener("change", sync);
+      window.removeEventListener("storage", syncStoredMotion);
+    };
   }, []);
 
   function apply(next: Partial<AppearancePreferences>) {
-    const values = { ...preferences, ...next };
+    const values = {
+      ...preferences,
+      ...next,
+      mode: theme.mode ?? readBrowserAppearancePreferences().mode,
+    };
     setPreferences(values);
-    applyAppearancePreferences(values);
+    applyAppearancePreferences({ ...values, mode: theme.mode ?? "light" });
     persistAppearancePreferences(values);
   }
   return (
     <>
       <PageHeader
         title="Appearance"
-        description="Choose light or dark, and how much the workspace moves. These settings apply to you on this device. The organization look is set in Manage, under Organization."
+        description="Choose light or dark, and how much the workspace moves. Color mode saves to your account. Reduced motion applies on this device. The organization look is set in Manage, under Organization."
       />
       <div className="grid max-w-md gap-4">
         <Card>
@@ -58,9 +75,10 @@ export default function AppearancePage() {
           <CardContent>
             <RadioGroup
               aria-label="Color mode"
-              value={preferences.mode}
+              value={theme.mode ?? ""}
+              disabled={theme.disabled}
               onValueChange={(value) =>
-                apply({ mode: value as AppearancePreferences["mode"] })
+                theme.setMode(value === "dark" ? "dark" : "light")
               }
               className="grid grid-cols-2 gap-3"
             >
@@ -70,7 +88,7 @@ export default function AppearancePage() {
                   value={id}
                   className={cn(
                     "h-auto w-full flex-col items-center gap-3 rounded-md border p-5 text-sm",
-                    preferences.mode === id
+                    theme.mode === id
                       ? "border-primary bg-action-tint text-action-text"
                       : "border-border text-foreground hover:bg-muted",
                   )}
@@ -80,13 +98,14 @@ export default function AppearancePage() {
                   <Check
                     size={15}
                     aria-hidden="true"
-                    className={
-                      preferences.mode === id ? undefined : "invisible"
-                    }
+                    className={theme.mode === id ? undefined : "invisible"}
                   />
                 </RadioGroupItem>
               ))}
             </RadioGroup>
+            <div className="mt-3">
+              <UserThemeStatus />
+            </div>
           </CardContent>
         </Card>
         <Card>

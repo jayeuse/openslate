@@ -55,6 +55,7 @@ def test_department_purge_removes_owned_rows_and_all_incident_edges_only(
     same_target = _item(lifecycle_graph, "same_target")
     deleted_target = _item(lifecycle_graph, "deleted_target")
     external_edge = _item(lifecycle_graph, "external_edge")
+    external_target = _item(lifecycle_graph, "external_target")
     external_unrelated_edge = _item(lifecycle_graph, "external_unrelated_edge")
     _close_rows(department, module, field_same, field_external, source, same_target, deleted_target)
     external_edge.is_deleted = True  # type: ignore[attr-defined]
@@ -62,16 +63,30 @@ def test_department_purge_removes_owned_rows_and_all_incident_edges_only(
     integration_db.commit()
 
     plan = plan_lifecycle(
-        integration_db, LifecycleTargetType.DEPARTMENT, department.id, "purge", None  # type: ignore[attr-defined]
+        integration_db,
+        LifecycleTargetType.DEPARTMENT,
+        department.id,
+        "purge",
+        None,  # type: ignore[attr-defined]
     )
     assert {state.edge_id for state in plan.edge_states} == {
         lifecycle_graph[key].id  # type: ignore[attr-defined]
         for key in ("same_edge", "external_edge", "unrelated_edge")
     }
     assert not plan.blockers
+    assert {
+        (impact.edge_id, impact.external_record_id, impact.external_record_label)
+        for impact in plan.external_impacts
+    } == {
+        (external_edge.id, external_target.id, f"Record {str(external_target.id)[:8]}"),  # type: ignore[attr-defined]
+    }
 
     purge_lifecycle(
-        integration_db, LifecycleTargetType.DEPARTMENT, department.id, None, plan=plan  # type: ignore[attr-defined]
+        integration_db,
+        LifecycleTargetType.DEPARTMENT,
+        department.id,
+        None,
+        plan=plan,  # type: ignore[attr-defined]
     )
 
     for key in (
@@ -88,7 +103,6 @@ def test_department_purge_removes_owned_rows_and_all_incident_edges_only(
     ):
         value = _item(lifecycle_graph, key)
         assert integration_db.get(type(value), value.id) is None  # type: ignore[attr-defined]
-    external_target = _item(lifecycle_graph, "external_target")
     assert integration_db.get(type(external_target), external_target.id) is not None  # type: ignore[attr-defined]
     assert (
         integration_db.get(type(external_unrelated_edge), external_unrelated_edge.id) is not None  # type: ignore[attr-defined]
@@ -204,32 +218,6 @@ def test_primitive_field_purge_strips_exact_uuid_key_from_active_and_archived_re
     assert archived.data["keep"] == "archived"  # type: ignore[attr-defined]
 
 
-def test_relationship_field_purge_deletes_active_and_closed_edges_but_preserves_records(
-    integration_db: Session, lifecycle_graph: dict[str, object]
-) -> None:
-    field = _item(lifecycle_graph, "field_same")
-    edge = _item(lifecycle_graph, "same_edge")
-    unrelated_edge = _item(lifecycle_graph, "unrelated_edge")
-    source = _item(lifecycle_graph, "source")
-    same_target = _item(lifecycle_graph, "same_target")
-    deleted_target = _item(lifecycle_graph, "deleted_target")
-    _close_rows(field)
-    unrelated_edge.is_deleted = True  # type: ignore[attr-defined]
-    unrelated_edge.deleted_at = datetime.now(UTC)  # type: ignore[attr-defined]
-    integration_db.flush()
-
-    plan = plan_lifecycle(integration_db, LifecycleTargetType.FIELD, field.id, "purge", None)  # type: ignore[attr-defined]
-    assert {state.is_deleted for state in plan.edge_states} == {False, True}
-    purge_lifecycle(integration_db, LifecycleTargetType.FIELD, field.id, None, plan=plan)  # type: ignore[attr-defined]
-
-    assert integration_db.get(Field, field.id) is None  # type: ignore[attr-defined]
-    assert integration_db.get(Record, source.id) is not None  # type: ignore[attr-defined]
-    assert integration_db.get(Record, same_target.id) is not None  # type: ignore[attr-defined]
-    assert integration_db.get(Record, deleted_target.id) is not None  # type: ignore[attr-defined]
-    assert integration_db.get(type(edge), edge.id) is None  # type: ignore[attr-defined]
-    assert integration_db.get(type(unrelated_edge), unrelated_edge.id) is None  # type: ignore[attr-defined]
-
-
 def test_record_purge_removes_only_incident_edges_and_preserves_other_rows(
     integration_db: Session, lifecycle_graph: dict[str, object]
 ) -> None:
@@ -250,6 +238,13 @@ def test_record_purge_removes_only_incident_edges_and_preserves_other_rows(
     assert integration_db.get(type(external_edge), external_edge.id) is None  # type: ignore[attr-defined]
     assert integration_db.get(type(unrelated_edge), unrelated_edge.id) is not None  # type: ignore[attr-defined]
     assert integration_db.get(type(external_unrelated_edge), external_unrelated_edge.id) is not None  # type: ignore[attr-defined]
+
+    field = lifecycle_graph["field_same"]
+    _close_rows(field)
+    integration_db.commit()
+    purge_lifecycle(integration_db, "field", field.id, None)  # type: ignore[attr-defined]
+    assert lifecycle_graph["field_external"].position == 0  # type: ignore[attr-defined]
+    assert lifecycle_graph["field_y"].position == 0  # type: ignore[attr-defined]
 
 
 def test_record_purge_preflights_record_trigger_history(
@@ -352,14 +347,10 @@ def test_field_purge_preflights_cross_module_trigger_references_including_closed
     integration_db.add(referenced_field)
     integration_db.flush()
     condition = integration_db.scalar(
-        select(RecordTriggerCondition).where(
-            RecordTriggerCondition.trigger_id == definition.id
-        )
+        select(RecordTriggerCondition).where(RecordTriggerCondition.trigger_id == definition.id)
     )
     action = integration_db.scalar(
-        select(RecordTriggerAction).where(
-            RecordTriggerAction.trigger_id == definition.id
-        )
+        select(RecordTriggerAction).where(RecordTriggerAction.trigger_id == definition.id)
     )
     trigger_binding = integration_db.scalar(
         select(SandboxBinding).where(SandboxBinding.trigger_id == definition.id)
@@ -404,7 +395,7 @@ def test_field_purge_preflights_cross_module_trigger_references_including_closed
     assert integration_db.get(Field, referenced_field.id) is not None
 
 
-def test_department_purge_preflights_its_direct_sandbox_binding(
+def test_department_purge_removes_its_owned_structural_binding(
     integration_db: Session,
 ) -> None:
     department = Department(department_name=f"Bound department {uuid7()}")
@@ -423,15 +414,10 @@ def test_department_purge_preflights_its_direct_sandbox_binding(
         integration_db, LifecycleTargetType.DEPARTMENT, department.id, "purge", None
     )
 
-    assert [
-        (blocker.entity_type, blocker.entity_id)
-        for blocker in plan.blockers
-    ] == [("sandbox_bindings", binding.id)]
-    with pytest.raises(LifecyclePreflightError):
-        purge_lifecycle(
-            integration_db, LifecycleTargetType.DEPARTMENT, department.id, None, plan=plan
-        )
-    assert integration_db.get(Department, department.id) is not None
+    assert not plan.blockers
+    purge_lifecycle(integration_db, LifecycleTargetType.DEPARTMENT, department.id, None, plan=plan)
+    assert integration_db.get(SandboxBinding, binding.id) is None
+    assert integration_db.get(Department, department.id) is None
 
 
 def test_purge_plan_drift_aborts_without_deleting_rows(

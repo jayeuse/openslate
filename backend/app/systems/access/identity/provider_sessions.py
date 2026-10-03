@@ -21,19 +21,20 @@ from app.core.integrations.supabase_auth import (
     InvalidProviderToken,
     ProviderAccessIdentity,
     ProviderTokens,
+    ProviderUser,
     SupabaseAuthClient,
     SupabaseAuthUnavailable,
 )
 from app.systems.access.identity.contracts import InvalidCredentials, IssuedSession
 from app.systems.access.identity.eligibility import is_identity_eligible
+from app.systems.access.identity.mfa import MFARequired, requires_mfa
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_session
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import User, UserStatus
+from app.systems.manage.workspace.security_policy import load_workspace_policy, session_timeout
 
-_AUTH_SESSIONS = table(
-    "sessions", column("id", Uuid()), column("user_id", Uuid()), schema="auth"
-)
+_AUTH_SESSIONS = table("sessions", column("id", Uuid()), column("user_id", Uuid()), schema="auth")
 
 
 def _digest(value: str) -> str:
@@ -76,12 +77,18 @@ def _eligible_user(user: User | None, provider_user_id: UUID, now: datetime) -> 
     )
 
 
-def _provider_user_is_live(client: SupabaseAuthClient, user_id: UUID, now: datetime) -> bool:
+def _live_provider_user(
+    client: SupabaseAuthClient, user_id: UUID, now: datetime
+) -> ProviderUser | None:
     try:
         provider_user = client.get_admin_user(user_id)
     except InvalidProviderCredentials:
-        return False
-    return provider_user.id == user_id and provider_user.is_eligible(now=now)
+        return None
+    return (
+        provider_user
+        if provider_user.id == user_id and provider_user.is_eligible(now=now)
+        else None
+    )
 
 
 def admit_provider_session(
@@ -99,14 +106,13 @@ def admit_provider_session(
 
     timestamp = now or utc_now()
     claims = client.verify_access_token(tokens.access_token)
-    if claims.user_id != tokens.user_id or not _provider_user_is_live(
-        client, claims.user_id, timestamp
+    if (
+        claims.user_id != tokens.user_id
+        or _live_provider_user(client, claims.user_id, timestamp) is None
     ):
         raise InvalidCredentials("Invalid credentials")
     user = db.scalar(
-        select(User)
-        .where(User.supabase_user_id == claims.user_id)
-        .with_for_update(of=User)
+        select(User).where(User.supabase_user_id == claims.user_id).with_for_update(of=User)
     )
     if not _eligible_user(user, claims.user_id, timestamp) or not _provider_session_exists(
         db, claims.user_id, claims.session_id
@@ -116,7 +122,7 @@ def admit_provider_session(
     csrf = token_urlsafe(32)
     handle = token_urlsafe(48)
     cipher = _fernet()
-    lifetime = timedelta(days=get_settings().auth_refresh_token_days)
+    lifetime = session_timeout(load_workspace_policy(db))
     session = IdentitySession(
         id=uuid7(),
         user_id=user.id,
@@ -141,6 +147,7 @@ def resolve_provider_session(
     client: SupabaseAuthClient,
     *,
     now: datetime | None = None,
+    allow_aal1: bool = False,
 ) -> tuple[User, IdentitySession] | None:
     """Recheck local access, provider account and provider session for every request."""
 
@@ -159,10 +166,7 @@ def resolve_provider_session(
         or session.expires_at <= timestamp
     ):
         return None
-    user = db.scalar(
-        select(User)
-        .where(User.id == session.user_id)
-    )
+    user = db.scalar(select(User).where(User.id == session.user_id))
     if not _eligible_user(user, claims.user_id, timestamp):
         return None
     assert user is not None
@@ -173,8 +177,21 @@ def resolve_provider_session(
             return None
     if not _provider_session_exists(db, claims.user_id, claims.session_id):
         return None
-    if not _provider_user_is_live(client, claims.user_id, timestamp):
+    provider_user = _live_provider_user(client, claims.user_id, timestamp)
+    if provider_user is None:
         return None
+    if (
+        not allow_aal1
+        and requires_mfa(load_workspace_policy(db), user, provider_user)
+        and (
+            claims.assurance_level != "aal2"
+            or not any(
+                factor.factor_type == "totp" and factor.status == "verified"
+                for factor in provider_user.factors
+            )
+        )
+    ):
+        raise MFARequired("Multi-factor authentication is required")
     return user, session
 
 
@@ -213,6 +230,7 @@ def refresh_provider_session(
     if not session.provider_access_token_encrypted or not session.provider_refresh_token_encrypted:
         _revoke_locked_session(db, session, timestamp)
         raise InvalidCredentials("Invalid credentials")
+    lifetime = session_timeout(load_workspace_policy(db))
     cipher = _fernet()
     try:
         current_access = cipher.decrypt(session.provider_access_token_encrypted.encode()).decode()
@@ -230,9 +248,14 @@ def refresh_provider_session(
         and current_claims.session_id == session.provider_session_id
         and current_claims.expires_at > timestamp + timedelta(seconds=30)
     ):
-        if resolve_provider_session(db, current_claims, client, now=timestamp) is None:
+        if (
+            resolve_provider_session(db, current_claims, client, now=timestamp, allow_aal1=True)
+            is None
+        ):
             _revoke_locked_session(db, session, timestamp)
             raise InvalidCredentials("Invalid credentials")
+        session.expires_at = timestamp + lifetime
+        session.refreshed_at = timestamp
         session_id = session.id
         try:
             db.commit()
@@ -253,7 +276,7 @@ def refresh_provider_session(
         tokens.user_id != session.provider_user_id
         or claims.user_id != session.provider_user_id
         or claims.session_id != session.provider_session_id
-        or resolve_provider_session(db, claims, client, now=timestamp) is None
+        or resolve_provider_session(db, claims, client, now=timestamp, allow_aal1=True) is None
     ):
         _revoke_locked_session(db, session, timestamp)
         raise InvalidCredentials("Invalid credentials")
@@ -262,6 +285,7 @@ def refresh_provider_session(
         tokens.refresh_token.encode()
     ).decode()
     session.refreshed_at = timestamp
+    session.expires_at = timestamp + lifetime
     session_id = session.id
     try:
         db.commit()

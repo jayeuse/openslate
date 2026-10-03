@@ -7,6 +7,7 @@ import {
   duplicateBoardStructure,
   importBoardConfiguration,
   listBoards,
+  previewBoardPurge,
   readBoard,
   readBoardGroups,
   replaceBoardGroups,
@@ -241,6 +242,44 @@ test("Board lifecycle rejects invalid filters and mass-assignment inputs before 
     expect(mock.requests).toHaveLength(0);
   } finally {
     mock.restore();
+  }
+});
+
+test("Board purge maps lifecycle denial and confirmation errors to their actual statuses", async () => {
+  for (const { code, status, message } of [
+    {
+      code: "purge_disabled",
+      status: 403,
+      message: "Permanent Board deletion is disabled",
+    },
+    {
+      code: "confirmation_name_mismatch",
+      status: 422,
+      message: "The Board ID confirmation did not match",
+    },
+    {
+      code: "challenge_not_found",
+      status: 404,
+      message: "The review is unavailable; get a new review",
+    },
+    {
+      code: "challenge_binding_mismatch",
+      status: 403,
+      message: "The review is unavailable; get a new review",
+    },
+  ]) {
+    const mock = installFetch(() =>
+      jsonResponse({ detail: { code, message: "untrusted detail" } }, status),
+    );
+    try {
+      await expect(previewBoardPurge(boardId)).rejects.toMatchObject({
+        status,
+        code,
+        message,
+      });
+    } finally {
+      mock.restore();
+    }
   }
 });
 

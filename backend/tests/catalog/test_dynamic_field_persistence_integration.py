@@ -20,6 +20,7 @@ from tests.catalog.dynamic_field_support import (
     _set_request,
 )
 from tests.rbac.support import make_user
+from tests.record_versions import record_version
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 # Record handlers now read the caller's module level; an administrator needs no group.
@@ -32,6 +33,7 @@ pytestmark = [
     ),
 ]
 pytest_plugins = ("tests.catalog.dynamic_field_support",)
+
 
 def test_router_persists_jsonb_types_and_canonical_decimal_values(
     integration_db: AuditSession, owned_ids: set[UUID]
@@ -78,10 +80,7 @@ def test_router_persists_jsonb_types_and_canonical_decimal_values(
     assert record.data[str(field_ids["decimal"])] == "1.23"
 
     observed = _json_types(integration_db, record.id)
-    assert {
-        key: value[0]
-        for key, value in observed.items()
-    } == {
+    assert {key: value[0] for key, value in observed.items()} == {
         str(field_ids["text"]): "string",
         str(field_ids["number"]): "number",
         str(field_ids["integer"]): "number",
@@ -95,8 +94,7 @@ def test_router_persists_jsonb_types_and_canonical_decimal_values(
 
     audit_rows = list(
         integration_db.scalars(
-            select(AuditLog)
-            .where(
+            select(AuditLog).where(
                 AuditLog.entity_id == record.id,
                 AuditLog.action == AuditAction.CREATE,
             )
@@ -105,6 +103,7 @@ def test_router_persists_jsonb_types_and_canonical_decimal_values(
     assert len(audit_rows) == 1
     assert audit_rows[0].after is not None
     assert audit_rows[0].after["data"] == record.data
+
 
 def test_replacement_update_preserves_closed_values_drops_optional_active_values(
     integration_db: AuditSession, owned_ids: set[UUID]
@@ -145,16 +144,21 @@ def test_replacement_update_preserves_closed_values_drops_optional_active_values
         RecordUpdate(data={str(keep_id): "new"}),
         RECORD_WRITER,
         integration_db,
+        if_match=record_version(integration_db, record_id),
     )
     assert updated.data == {
         str(keep_id): "new",
         str(legacy_id): "legacy value",
     }
 
-    stored = integration_db.connection().execute(
-        text("SELECT data FROM public.records WHERE id = :record_id"),
-        {"record_id": record_id},
-    ).scalar_one()
+    stored = (
+        integration_db.connection()
+        .execute(
+            text("SELECT data FROM public.records WHERE id = :record_id"),
+            {"record_id": record_id},
+        )
+        .scalar_one()
+    )
     assert stored == updated.data
 
     reopened = reopen_lifecycle(
@@ -163,9 +167,8 @@ def test_replacement_update_preserves_closed_values_drops_optional_active_values
         legacy_id,
         None,
     )
-    assert [(row.entity_type, row.entity_id) for row in reopened.rows] == [
-        ("fields", legacy_id)
-    ]
+    assert [(row.entity_type, row.entity_id) for row in reopened.rows] == [("fields", legacy_id)]
+
 
 def test_record_create_rejects_module_whose_last_active_field_is_closed(
     integration_db: AuditSession, owned_ids: set[UUID]
@@ -190,7 +193,12 @@ def test_record_create_rejects_module_whose_last_active_field_is_closed(
         )
     assert raised.value.status_code == 409
     assert raised.value.detail == "Module has no active fields"
-    assert integration_db.connection().execute(
-        text("SELECT count(*) FROM public.records WHERE module_id = :module_id"),
-        {"module_id": seeded.module_id},
-    ).scalar_one() == 0
+    assert (
+        integration_db.connection()
+        .execute(
+            text("SELECT count(*) FROM public.records WHERE module_id = :module_id"),
+            {"module_id": seeded.module_id},
+        )
+        .scalar_one()
+        == 0
+    )

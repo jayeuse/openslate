@@ -143,10 +143,9 @@ interface SandboxCanvasCallbacks {
   onTraceCleared?: () => void;
 }
 
-const CANVAS_BACKGROUND =
-  "var(--canvas-background, var(--background, #ffffff))";
-const CANVAS_GRID = "var(--canvas-grid, #d8dde5)";
-const CANVAS_GRID_MAJOR = "var(--canvas-grid-major, #bac3cf)";
+const CANVAS_BACKGROUND = "var(--canvas-background, var(--background))";
+const CANVAS_GRID = "var(--canvas-grid)";
+const CANVAS_GRID_MAJOR = "var(--canvas-grid-major)";
 
 interface CanvasEditor {
   target: "department" | "module" | "field";
@@ -326,10 +325,9 @@ export function SandboxCanvas({
         `${SANDBOX_GRID_MAJOR_SIZE * scaleX}px ${SANDBOX_GRID_MAJOR_SIZE * scaleY}px`,
       ].join(", ");
       const minorHalf = (SANDBOX_GRID_SIZE * scaleX) / 2;
-      const majorHalf = (SANDBOX_GRID_MAJOR_SIZE * scaleX) / 2;
       grid.style.backgroundPosition = [
         `${offsetX - minorHalf}px ${offsetY - minorHalf}px`,
-        `${offsetX - majorHalf}px ${offsetY - majorHalf}px`,
+        `${offsetX - minorHalf}px ${offsetY - minorHalf}px`,
       ].join(", ");
       grid.dataset.scale = `${scaleX}`;
       grid.dataset.translate = `${offsetX},${offsetY}`;
@@ -1122,15 +1120,16 @@ export function SandboxCanvas({
           // Dots, not lines: the grid guides placement without competing
           // with the diagram.
           backgroundImage: [
-            `radial-gradient(circle, ${CANVAS_GRID} 1px, transparent 1.2px)`,
-            `radial-gradient(circle, ${CANVAS_GRID_MAJOR} 1.2px, transparent 1.6px)`,
+            `radial-gradient(circle, ${CANVAS_GRID} 1px, transparent 1.3px)`,
+            `radial-gradient(circle, ${CANVAS_GRID_MAJOR} 1.3px, transparent 1.6px)`,
           ].join(", "),
           backgroundSize: [
             `${SANDBOX_GRID_SIZE}px ${SANDBOX_GRID_SIZE}px`,
             `${SANDBOX_GRID_MAJOR_SIZE}px ${SANDBOX_GRID_MAJOR_SIZE}px`,
           ].join(", "),
-          // Shift by half a cell so each dot sits on a snap point.
-          backgroundPosition: `${-SANDBOX_GRID_SIZE / 2}px ${-SANDBOX_GRID_SIZE / 2}px, ${-SANDBOX_GRID_MAJOR_SIZE / 2}px ${-SANDBOX_GRID_MAJOR_SIZE / 2}px`,
+          // Shift both layers by half a minor cell so each dot sits on a
+          // snap point and every major dot covers a minor one.
+          backgroundPosition: `${-SANDBOX_GRID_SIZE / 2}px ${-SANDBOX_GRID_SIZE / 2}px, ${-SANDBOX_GRID_SIZE / 2}px ${-SANDBOX_GRID_SIZE / 2}px`,
         }}
       />
       <div
@@ -1180,12 +1179,17 @@ export function SandboxCanvas({
                       // animation.
                       data-sandbox-line="key"
                       data-sandbox-edge-kind={kind ?? undefined}
-                      x1="0"
+                      x1="1"
                       y1="4"
-                      x2="24"
+                      x2="23"
                       y2="4"
-                      stroke="var(--canvas-edge)"
-                      strokeWidth="1.5"
+                      stroke={
+                        kind === "handoff"
+                          ? "var(--canvas-edge)"
+                          : "var(--action)"
+                      }
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
                     />
                   ) : (
                     <circle

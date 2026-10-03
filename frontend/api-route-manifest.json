@@ -1,0 +1,1298 @@
+[
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "createAccessGroup",
+    "method": "POST",
+    "path": "/api/access/groups"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "deleteAccessGroup",
+    "method": "DELETE",
+    "path": "/api/access/groups/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "deleteAccessUser",
+    "method": "DELETE",
+    "path": "/api/users/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "getAccessGroup",
+    "method": "GET",
+    "path": "/api/access/groups/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "getAccessInvitationSettings",
+    "method": "GET",
+    "path": "/api/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "getAccessUser",
+    "method": "GET",
+    "path": "/api/users/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "getAccessUserAccess",
+    "method": "GET",
+    "path": "/api/users/{param}/access"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "inviteAccessUser",
+    "method": "POST",
+    "path": "/api/auth/invitations"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "listAccessDepartments",
+    "method": "GET",
+    "path": "/api/departments"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "listAccessGroups",
+    "method": "GET",
+    "path": "/api/access/groups"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "listAccessMemberCandidates",
+    "method": "GET",
+    "path": "/api/access/member-candidates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "listAccessModules",
+    "method": "GET",
+    "path": "/api/modules"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "listAccessUsers",
+    "method": "GET",
+    "path": "/api/users"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "listAccessUserSessions",
+    "method": "GET",
+    "path": "/api/users/{param}/sessions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "replaceAccessGroupAccess",
+    "method": "PUT",
+    "path": "/api/access/groups/{param}/access"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "replaceAccessGroupMembers",
+    "method": "PUT",
+    "path": "/api/access/groups/{param}/members"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "resendAccessInvitation",
+    "method": "POST",
+    "path": "/api/auth/invitations/{param}/resend"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "restoreAccessUser",
+    "method": "POST",
+    "path": "/api/users/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "revokeAccessInvitation",
+    "method": "DELETE",
+    "path": "/api/auth/invitations/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "revokeAccessUserSession",
+    "method": "DELETE",
+    "path": "/api/users/{param}/sessions/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "revokeAccessUserSessions",
+    "method": "DELETE",
+    "path": "/api/users/{param}/sessions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "updateAccessGroup",
+    "method": "PATCH",
+    "path": "/api/access/groups/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "updateAccessInvitationSettings",
+    "method": "PATCH",
+    "path": "/api/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "updateAccessUser",
+    "method": "PATCH",
+    "path": "/api/users/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-configuration-api.ts",
+    "function": "downloadBoardConfiguration",
+    "method": "GET",
+    "path": "/api/boards/{param}/configuration"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-configuration-api.ts",
+    "function": "importBoardConfiguration",
+    "method": "POST",
+    "path": "/api/boards/import"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
+    "function": "archiveBoardEvent",
+    "method": "POST",
+    "path": "/api/boards/{param}/events/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
+    "function": "createBoardEvent",
+    "method": "POST",
+    "path": "/api/boards/{param}/events"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
+    "function": "deleteBoardEvent",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/events/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
+    "function": "listBoardEventOccurrences",
+    "method": "GET",
+    "path": "/api/boards/{param}/events/occurrences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
+    "function": "listBoardEvents",
+    "method": "GET",
+    "path": "/api/boards/{param}/events"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
+    "function": "listMyBoardEvents",
+    "method": "GET",
+    "path": "/api/boards/{param}/events/mine"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
+    "function": "readBoardEvent",
+    "method": "GET",
+    "path": "/api/boards/{param}/events/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
+    "function": "restoreBoardEvent",
+    "method": "POST",
+    "path": "/api/boards/{param}/events/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
+    "function": "updateBoardEvent",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/events/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "attachBoardFile",
+    "method": "POST",
+    "path": "/api/boards/{param}/events/{param}/attachments"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "attachBoardFile",
+    "method": "POST",
+    "path": "/api/boards/{param}/posts/{param}/attachments"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "detachBoardFile",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/events/{param}/attachments/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "detachBoardFile",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/posts/{param}/attachments/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "downloadBoardAttachment",
+    "method": "GET",
+    "path": "/api/boards/{param}/events/{param}/attachments/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "downloadBoardAttachment",
+    "method": "GET",
+    "path": "/api/boards/{param}/posts/{param}/attachments/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "listBoardAttachments",
+    "method": "GET",
+    "path": "/api/boards/{param}/events/{param}/attachments"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "listBoardAttachments",
+    "method": "GET",
+    "path": "/api/boards/{param}/posts/{param}/attachments"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "readBoardFile",
+    "method": "GET",
+    "path": "/api/boards/{param}/files/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "reserveBoardFile",
+    "method": "POST",
+    "path": "/api/boards/{param}/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "scanBoardFile",
+    "method": "POST",
+    "path": "/api/boards/{param}/files/{param}/scan"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "uploadBoardFile",
+    "method": "PUT",
+    "path": "/api/boards/{param}/files/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
+    "function": "archiveBoard",
+    "method": "POST",
+    "path": "/api/boards/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
+    "function": "createBoard",
+    "method": "POST",
+    "path": "/api/boards"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
+    "function": "duplicateBoardStructure",
+    "method": "POST",
+    "path": "/api/boards/{param}/duplicate"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
+    "function": "listBoards",
+    "method": "GET",
+    "path": "/api/boards"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
+    "function": "previewBoardPurge",
+    "method": "POST",
+    "path": "/api/boards/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
+    "function": "purgeBoard",
+    "method": "POST",
+    "path": "/api/boards/{param}/purge"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
+    "function": "readBoard",
+    "method": "GET",
+    "path": "/api/boards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
+    "function": "readBoardGroups",
+    "method": "GET",
+    "path": "/api/boards/{param}/groups"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
+    "function": "replaceBoardGroups",
+    "method": "PUT",
+    "path": "/api/boards/{param}/groups"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
+    "function": "restoreBoard",
+    "method": "POST",
+    "path": "/api/boards/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
+    "function": "updateBoard",
+    "method": "PATCH",
+    "path": "/api/boards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-post-author-api.ts",
+    "function": "listBoardPostAuthors",
+    "method": "GET",
+    "path": "/api/boards/{param}/post-authors"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-post-manage-state-api.ts",
+    "function": "getBoardPostManageState",
+    "method": "GET",
+    "path": "/api/boards/{param}/posts/{param}/manage-state"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
+    "function": "archiveBoardPost",
+    "method": "POST",
+    "path": "/api/boards/{param}/posts/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
+    "function": "createBoardPost",
+    "method": "POST",
+    "path": "/api/boards/{param}/posts"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
+    "function": "deleteBoardPost",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/posts/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
+    "function": "listBoardPostRevisions",
+    "method": "GET",
+    "path": "/api/boards/{param}/posts/{param}/revisions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
+    "function": "listBoardPosts",
+    "method": "GET",
+    "path": "/api/boards/{param}/posts"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
+    "function": "publishBoardPost",
+    "method": "POST",
+    "path": "/api/boards/{param}/posts/{param}/publish"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
+    "function": "readBoardPost",
+    "method": "GET",
+    "path": "/api/boards/{param}/posts/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
+    "function": "readBoardPostRevision",
+    "method": "GET",
+    "path": "/api/boards/{param}/posts/{param}/revisions/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
+    "function": "restoreBoardPost",
+    "method": "POST",
+    "path": "/api/boards/{param}/posts/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
+    "function": "scheduleBoardPost",
+    "method": "POST",
+    "path": "/api/boards/{param}/posts/{param}/schedule"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
+    "function": "unpublishBoardPost",
+    "method": "POST",
+    "path": "/api/boards/{param}/posts/{param}/unpublish"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-posts-api.ts",
+    "function": "updateBoardPost",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/posts/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
+    "function": "addBoardRecordLink",
+    "method": "POST",
+    "path": "/api/boards/{param}/events/{param}/record-links"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
+    "function": "addBoardRecordLink",
+    "method": "POST",
+    "path": "/api/boards/{param}/posts/{param}/record-links"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
+    "function": "listBoardRecordLinks",
+    "method": "GET",
+    "path": "/api/boards/{param}/events/{param}/record-links"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
+    "function": "listBoardRecordLinks",
+    "method": "GET",
+    "path": "/api/boards/{param}/posts/{param}/record-links"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
+    "function": "removeBoardRecordLink",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/events/{param}/record-links/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
+    "function": "removeBoardRecordLink",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/posts/{param}/record-links/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-tools-api.ts",
+    "function": "getBoardAccessPreview",
+    "method": "GET",
+    "path": "/api/boards/{param}/access-preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-tools-api.ts",
+    "function": "getMyBoardAccess",
+    "method": "GET",
+    "path": "/api/boards/{param}/my-access"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-tools-api.ts",
+    "function": "listBoardActivity",
+    "method": "GET",
+    "path": "/api/boards/{param}/activity"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-tools-api.ts",
+    "function": "listBoardPreviewUsers",
+    "method": "GET",
+    "path": "/api/boards/{param}/preview-users"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
+    "function": "createBoardWidget",
+    "method": "POST",
+    "path": "/api/boards/{param}/widgets"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
+    "function": "deleteBoardWidget",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/widgets/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
+    "function": "duplicateBoardWidget",
+    "method": "POST",
+    "path": "/api/boards/{param}/widgets/{param}/duplicate"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
+    "function": "listBoardWidgets",
+    "method": "GET",
+    "path": "/api/boards/{param}/widgets"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
+    "function": "reorderBoardWidgets",
+    "method": "PUT",
+    "path": "/api/boards/{param}/widgets/order"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
+    "function": "updateBoardWidget",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/widgets/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-workspace-date-api.ts",
+    "function": "getBoardWorkspaceToday",
+    "method": "GET",
+    "path": "/api/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
+    "function": "downloadManageAuditCsv",
+    "method": "GET",
+    "path": "/api/audit-logs/export"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
+    "function": "getManageAuditExportPreview",
+    "method": "GET",
+    "path": "/api/audit-logs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
+    "function": "getManageAuditLog",
+    "method": "GET",
+    "path": "/api/audit-logs/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
+    "function": "getManageAuditOptions",
+    "method": "GET",
+    "path": "/api/audit-logs/options"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
+    "function": "listManageAuditLogs",
+    "method": "GET",
+    "path": "/api/audit-logs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "getManageBackupStatus",
+    "method": "GET",
+    "path": "/api/backups/status"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "getManageVersion",
+    "method": "GET",
+    "path": "/api/version"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "listManageBackups",
+    "method": "GET",
+    "path": "/api/backups"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "queueManageBackup",
+    "method": "POST",
+    "path": "/api/backups"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "updateManageBackupPolicy",
+    "method": "PATCH",
+    "path": "/api/backups/status"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
+    "function": "endAllManageRemoteSessions",
+    "method": "DELETE",
+    "path": "/api/auth/admin-sessions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
+    "function": "endManageSession",
+    "method": "DELETE",
+    "path": "/api/users/{param}/sessions/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
+    "function": "getManageSecurityPolicy",
+    "method": "GET",
+    "path": "/api/workspace/security"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
+    "function": "listManageSessions",
+    "method": "GET",
+    "path": "/api/auth/admin-sessions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
+    "function": "updateManageSecurityPolicy",
+    "method": "PATCH",
+    "path": "/api/workspace/security"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
+    "function": "getManageWorkspace",
+    "method": "GET",
+    "path": "/api/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
+    "function": "updateManageWorkspace",
+    "method": "PATCH",
+    "path": "/api/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
+    "function": "queryOpenViewAggregates",
+    "method": "POST",
+    "path": "/api/records/aggregate-query"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
+    "function": "queryOpenViewAggregateSnapshot",
+    "method": "POST",
+    "path": "/api/records/aggregate-snapshot"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
+    "function": "queryOpenViewGroupedRecords",
+    "method": "POST",
+    "path": "/api/records/grouped-query"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
+    "function": "archiveOpenViewDashboard",
+    "method": "DELETE",
+    "path": "/api/dashboards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
+    "function": "createOpenViewDashboard",
+    "method": "POST",
+    "path": "/api/dashboards"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
+    "function": "getOpenViewDashboard",
+    "method": "GET",
+    "path": "/api/dashboards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
+    "function": "listOpenViewDashboards",
+    "method": "GET",
+    "path": "/api/dashboards"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
+    "function": "restoreOpenViewDashboard",
+    "method": "POST",
+    "path": "/api/dashboards/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
+    "function": "updateOpenViewDashboard",
+    "method": "PATCH",
+    "path": "/api/dashboards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/departments-api.ts",
+    "function": "listOpenViewDepartments",
+    "method": "GET",
+    "path": "/api/departments"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/invalidation-events.ts",
+    "function": "subscribeOpenViewInvalidations",
+    "method": "GET",
+    "path": "/api/events"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "assignOpenViewRecordLink",
+    "method": "PUT",
+    "path": "/api/relationships/fields/{param}/sources/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "createOpenViewRecord",
+    "method": "POST",
+    "path": "/api/records"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "deleteOpenViewRecord",
+    "method": "DELETE",
+    "path": "/api/records/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "getOpenViewRecord",
+    "method": "GET",
+    "path": "/api/records/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "linkOpenViewRecords",
+    "method": "POST",
+    "path": "/api/relationships"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "listOpenViewFieldLinks",
+    "method": "GET",
+    "path": "/api/relationships"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "listOpenViewRecordHistory",
+    "method": "GET",
+    "path": "/api/audit-logs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "listOpenViewRecordLinks",
+    "method": "GET",
+    "path": "/api/relationships"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "listOpenViewRelationshipFields",
+    "method": "GET",
+    "path": "/api/fields"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "previewRecordPurge",
+    "method": "POST",
+    "path": "/api/records/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "purgeRecord",
+    "method": "POST",
+    "path": "/api/records/{param}/purge"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "restoreOpenViewRecord",
+    "method": "POST",
+    "path": "/api/records/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "searchOpenViewLinkTargets",
+    "method": "POST",
+    "path": "/api/records/query"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "unlinkOpenViewRecords",
+    "method": "DELETE",
+    "path": "/api/relationships/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "updateOpenViewRecord",
+    "method": "PATCH",
+    "path": "/api/records/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/report-notification-api.ts",
+    "function": "listOpenViewReportNotifications",
+    "method": "GET",
+    "path": "/api/notifications"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/report-notification-api.ts",
+    "function": "markOpenViewReportNotificationRead",
+    "method": "POST",
+    "path": "/api/notifications/{param}/read"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/report-schedule-api.ts",
+    "function": "createOpenViewReportSchedule",
+    "method": "POST",
+    "path": "/api/reports/{param}/schedule"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/report-schedule-api.ts",
+    "function": "getOpenViewReportSchedule",
+    "method": "GET",
+    "path": "/api/reports/{param}/schedule"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/report-schedule-api.ts",
+    "function": "updateOpenViewReportSchedule",
+    "method": "PATCH",
+    "path": "/api/reports/{param}/schedule"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "archiveOpenViewReport",
+    "method": "DELETE",
+    "path": "/api/reports/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "createOpenViewReport",
+    "method": "POST",
+    "path": "/api/reports"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "createOpenViewReportRun",
+    "method": "POST",
+    "path": "/api/reports/{param}/runs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "downloadOpenViewReportRunCsv",
+    "method": "GET",
+    "path": "/api/reports/{param}/runs/{param}/csv"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "getOpenViewReport",
+    "method": "GET",
+    "path": "/api/reports/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "getOpenViewReportRun",
+    "method": "GET",
+    "path": "/api/reports/{param}/runs/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "listOpenViewReportRuns",
+    "method": "GET",
+    "path": "/api/reports/{param}/runs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "listOpenViewReports",
+    "method": "GET",
+    "path": "/api/reports"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "listOpenViewSharedReportRuns",
+    "method": "GET",
+    "path": "/api/reports/shared-runs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "restoreOpenViewReport",
+    "method": "POST",
+    "path": "/api/reports/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "updateOpenViewReport",
+    "method": "PATCH",
+    "path": "/api/reports/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
+    "function": "archiveOpenViewSavedView",
+    "method": "DELETE",
+    "path": "/api/views/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
+    "function": "createOpenViewSavedView",
+    "method": "POST",
+    "path": "/api/views"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
+    "function": "getOpenViewSavedView",
+    "method": "GET",
+    "path": "/api/views/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
+    "function": "listOpenViewAssignableUsers",
+    "method": "GET",
+    "path": "/api/modules/{param}/assignable-users"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
+    "function": "listOpenViewDataSourceFields",
+    "method": "GET",
+    "path": "/api/views/data-sources/{param}/fields"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
+    "function": "listOpenViewDataSources",
+    "method": "GET",
+    "path": "/api/views/data-sources"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
+    "function": "listOpenViewSavedViews",
+    "method": "GET",
+    "path": "/api/views"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
+    "function": "queryOpenViewRecords",
+    "method": "POST",
+    "path": "/api/records/query"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
+    "function": "restoreOpenViewSavedView",
+    "method": "POST",
+    "path": "/api/views/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/views-api.ts",
+    "function": "updateOpenViewSavedView",
+    "method": "PATCH",
+    "path": "/api/views/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/window-api.ts",
+    "function": "queryOpenViewWindowRecords",
+    "method": "POST",
+    "path": "/api/records/window-query"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",
+    "function": "changeAccountPassword",
+    "method": "POST",
+    "path": "/api/auth/password/change"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",
+    "function": "endAccountSession",
+    "method": "DELETE",
+    "path": "/api/auth/sessions/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",
+    "function": "endOtherAccountSessions",
+    "method": "POST",
+    "path": "/api/auth/sessions/revoke-others"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/account-api.ts",
+    "function": "listAccountSessions",
+    "method": "GET",
+    "path": "/api/auth/sessions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/platform-search-api.ts",
+    "function": "readPlatformSearch",
+    "method": "GET",
+    "path": "/api/search"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/record-import-api.ts",
+    "function": "prepareRecordCsv",
+    "method": "POST",
+    "path": "/api/records/export"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/record-import-api.ts",
+    "function": "sendImportBatch",
+    "method": "POST",
+    "path": "/api/records/import"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "clearSandboxTests",
+    "method": "DELETE",
+    "path": "/api/sandbox/tests"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "createSandboxPublicationPreview",
+    "method": "POST",
+    "path": "/api/sandbox/publication-previews"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "createSandboxTest",
+    "method": "POST",
+    "path": "/api/sandbox/tests"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "createSandboxVersion",
+    "method": "POST",
+    "path": "/api/sandbox/versions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "deleteSandboxVersion",
+    "method": "DELETE",
+    "path": "/api/sandbox/versions/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "exportSandboxBundle",
+    "method": "GET",
+    "path": "/api/sandbox/export"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "getSandboxTest",
+    "method": "GET",
+    "path": "/api/sandbox/tests/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "getSandboxVersion",
+    "method": "GET",
+    "path": "/api/sandbox/versions/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "importSandboxBundle",
+    "method": "POST",
+    "path": "/api/sandbox/imports"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "listAllSandboxVersions",
+    "method": "GET",
+    "path": "/api/sandbox/versions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "listSandboxTests",
+    "method": "GET",
+    "path": "/api/sandbox/tests"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "listSandboxTriggerRuns",
+    "method": "GET",
+    "path": "/api/sandbox/trigger-runs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "listSandboxVersions",
+    "method": "GET",
+    "path": "/api/sandbox/versions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "loadSandboxDocument",
+    "method": "GET",
+    "path": "/api/sandbox/document"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "publishSandbox",
+    "method": "POST",
+    "path": "/api/sandbox/publications"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "replaceSandboxDocument",
+    "method": "PUT",
+    "path": "/api/sandbox/document"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "restoreSandboxVersion",
+    "method": "POST",
+    "path": "/api/sandbox/versions/{param}/restorations"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "updateSandboxVersion",
+    "method": "PATCH",
+    "path": "/api/sandbox/versions/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/departments/{param}/close"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/departments/{param}/purge"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/departments/{param}/reopen"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/fields/{param}/close"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/fields/{param}/purge"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/fields/{param}/reopen"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/modules/{param}/close"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/modules/{param}/purge"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "confirmSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/modules/{param}/reopen"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "getSandboxBindings",
+    "method": "GET",
+    "path": "/api/sandbox/bindings"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "previewSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/departments/{param}/close/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "previewSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/departments/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "previewSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/fields/{param}/close/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "previewSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/fields/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "previewSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/modules/{param}/close/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/lifecycle-api.ts",
+    "function": "previewSandboxLifecycle",
+    "method": "POST",
+    "path": "/api/modules/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/lib/api.ts",
+    "function": "hasAuthenticatedSession",
+    "method": "GET",
+    "path": "/api/auth/session"
+  },
+  {
+    "adapter": "frontend/src/lib/api.ts",
+    "function": "refreshAfterSessionRecheck",
+    "method": "POST",
+    "path": "/api/auth/refresh"
+  },
+  {
+    "adapter": "frontend/src/lib/auth-api.ts",
+    "function": "completeInvitation",
+    "method": "POST",
+    "path": "/api/auth/invitations/complete"
+  },
+  {
+    "adapter": "frontend/src/lib/auth-api.ts",
+    "function": "completeRecovery",
+    "method": "POST",
+    "path": "/api/auth/recovery/complete"
+  },
+  {
+    "adapter": "frontend/src/lib/auth-api.ts",
+    "function": "getAuthMe",
+    "method": "GET",
+    "path": "/api/auth/me"
+  },
+  {
+    "adapter": "frontend/src/lib/auth-api.ts",
+    "function": "getSessionStatus",
+    "method": "GET",
+    "path": "/api/auth/session"
+  },
+  {
+    "adapter": "frontend/src/lib/auth-api.ts",
+    "function": "requestRecovery",
+    "method": "POST",
+    "path": "/api/auth/recovery/request"
+  },
+  {
+    "adapter": "frontend/src/lib/auth-api.ts",
+    "function": "signIn",
+    "method": "POST",
+    "path": "/api/auth/login"
+  },
+  {
+    "adapter": "frontend/src/lib/auth-api.ts",
+    "function": "signOut",
+    "method": "POST",
+    "path": "/api/auth/logout"
+  },
+  {
+    "adapter": "frontend/src/lib/mfa-api.ts",
+    "function": "cancelMfaEnrollment",
+    "method": "DELETE",
+    "path": "/api/auth/mfa/factors/{param}"
+  },
+  {
+    "adapter": "frontend/src/lib/mfa-api.ts",
+    "function": "enrollMfa",
+    "method": "POST",
+    "path": "/api/auth/mfa/factors"
+  },
+  {
+    "adapter": "frontend/src/lib/mfa-api.ts",
+    "function": "getMfaStatus",
+    "method": "GET",
+    "path": "/api/auth/mfa"
+  },
+  {
+    "adapter": "frontend/src/lib/mfa-api.ts",
+    "function": "removeMfa",
+    "method": "DELETE",
+    "path": "/api/auth/mfa/factors/{param}"
+  },
+  {
+    "adapter": "frontend/src/lib/mfa-api.ts",
+    "function": "verifyMfa",
+    "method": "POST",
+    "path": "/api/auth/mfa/factors/{param}/verification"
+  },
+  {
+    "adapter": "frontend/src/lib/user-theme-preferences.ts",
+    "function": "readUserTheme",
+    "method": "GET",
+    "path": "/api/users/{param}/preferences"
+  },
+  {
+    "adapter": "frontend/src/lib/user-theme-preferences.ts",
+    "function": "saveUserTheme",
+    "method": "PATCH",
+    "path": "/api/users/{param}/preferences"
+  }
+]

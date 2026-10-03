@@ -77,6 +77,7 @@ class AuditLogResponse(BaseModel):
     action: AuditAction
     entity_type: str
     entity_id: UUID | None
+    target_label: str = Field(min_length=1)
     department_id: UUID | None
     before: dict[str, object] | None
     after: dict[str, object] | None
@@ -84,6 +85,7 @@ class AuditLogResponse(BaseModel):
     request_method: str | None
     request_path: str | None
     actor_label: str | None
+    actor_name: str | None = None
     note: str | None
 
     model_config = ConfigDict(from_attributes=True)
@@ -91,6 +93,17 @@ class AuditLogResponse(BaseModel):
 
 class AuditLogListResponse(StandardListResponse[AuditLogResponse]):
     pass
+
+
+class AuditLogActorOption(BaseModel):
+    performed_by: UUID
+    actor_label: str | None
+    actor_name: str | None
+
+
+class AuditLogOptionsResponse(BaseModel):
+    entity_types: list[str]
+    actors: list[AuditLogActorOption]
 
 
 class SecurityEventIngestRequest(BaseModel):

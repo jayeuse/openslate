@@ -9,7 +9,6 @@ import {
 } from "react";
 import {
   ChevronDown,
-  ChevronUp,
   Hash,
   MessageSquare,
   Pin,
@@ -19,6 +18,9 @@ import {
   ArrowLeft,
   CornerDownRight,
   FolderPlus,
+  FolderOpen,
+  ShieldCheck,
+  UserRound,
   X,
 } from "lucide-react";
 import {
@@ -38,7 +40,10 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   ResizablePanelGroup,
@@ -134,6 +139,24 @@ import {
 } from "./domain/configuration";
 import { CommsSettingsDialog } from "./components/settings-dialog";
 import { CommsToolsDialog } from "./components/tools-dialog";
+import {
+  ConfirmActionDialog,
+  type ConfirmActionRequest,
+} from "./components/confirm-action-dialog";
+import { reportCommsDone, reportCommsError } from "./state/comms-feedback";
+import { EXAMPLE_FLOWS } from "./data/examples";
+import { isCommsManager } from "./domain/message-policy";
+import {
+  channelGroupAccess,
+  channelTone,
+  commsGroup,
+  personGroupAccess,
+  recordContext,
+  visibleToLabel,
+  type GroupTone,
+} from "./domain/groups";
+import { GroupMark } from "./components/group-mark";
+import { RecordPanel } from "./components/record-panel";
 
 function stageCommsEditor(
   draft: SampleTransactionDraft,
@@ -194,75 +217,203 @@ type WorkspaceSetting =
   | "outbox"
   | "retention";
 
+/** Who can use the open channel. Opens its settings for people who may
+ *  change them; for everyone else it is plain text. */
+function AccessChip({
+  label,
+  tone,
+  onOpen,
+}: {
+  label: string;
+  tone: GroupTone;
+  onOpen?: (opener: HTMLElement) => void;
+}) {
+  const body = (
+    <>
+      <GroupMark tone={tone} className="size-2" />
+      <span className="truncate">{label}</span>
+    </>
+  );
+  const chip =
+    "bg-muted text-muted-foreground hidden h-7 max-w-64 shrink-0 items-center gap-1.5 rounded-[var(--radius)] px-2 text-xs shadow-[inset_0_0_0_1px_var(--border)] sm:inline-flex";
+  if (!onOpen) return <span className={chip}>{body}</span>;
+  return (
+    <button
+      type="button"
+      onClick={(event) => onOpen(event.currentTarget)}
+      className={cn(
+        chip,
+        "hover:text-foreground focus-visible:outline-ring outline-none focus-visible:outline-2",
+      )}
+    >
+      {body}
+      <span className="sr-only">. Change who can use this channel.</span>
+    </button>
+  );
+}
+
+/** How many removed messages wait in Moderation; the words are read out,
+ *  the number is shown. */
+function RecoverableBadge({ count }: { count: number }) {
+  return (
+    <Badge variant="warning" className="ml-auto">
+      <span aria-hidden="true">{count}</span>
+      <span className="sr-only">
+        {count} removed {count === 1 ? "message" : "messages"} to review
+      </span>
+    </Badge>
+  );
+}
+
+/** Everyday items first, in small groups; tools for administrators and
+ *  moderators wait behind one Admin tools entry. */
 function CommsMenu({
   compact = false,
   hasChannel,
+  canManageChannel,
+  canCreate,
+  canAdminister,
+  recoverableCount,
   onSelect,
 }: {
   compact?: boolean;
   hasChannel: boolean;
+  canManageChannel: boolean;
+  canCreate: boolean;
+  canAdminister: boolean;
+  recoverableCount: number;
   onSelect: (setting: WorkspaceSetting, opener: HTMLElement) => void;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
-  const actions = [
-    { id: "personal", label: "My preferences", icon: Settings2 },
-    { id: "workspace", label: "Workspace settings", icon: Settings2 },
-    { id: "management", label: "Channel management", icon: Hash },
-    { id: "templates", label: "Templates", icon: FolderPlus },
-    { id: "automation", label: "Automation", icon: Settings2 },
-    { id: "history", label: "History", icon: MessageSquare },
-    { id: "moderation", label: "Moderation", icon: Users },
-    { id: "outbox", label: "Scheduled messages", icon: MessageSquare },
-    { id: "retention", label: "Retention", icon: Settings2 },
-    { id: "create-channel", label: "Create channel", icon: Plus },
-    { id: "edit-channel", label: "Edit channel", icon: Settings2 },
-    { id: "create-category", label: "Create category", icon: FolderPlus },
-    { id: "edit-category", label: "Edit category", icon: Settings2 },
+  const groups = [
+    [
+      { id: "personal", label: "My preferences", icon: UserRound },
+      { id: "threads", label: "Browse threads", icon: MessageSquare },
+    ],
+    canManageChannel
+      ? [
+          { id: "edit-channel", label: "Channel settings", icon: Hash },
+          { id: "edit-category", label: "Category settings", icon: FolderOpen },
+        ]
+      : [],
+    canCreate
+      ? [
+          { id: "create-channel", label: "New channel", icon: Plus },
+          { id: "create-category", label: "New category", icon: FolderPlus },
+        ]
+      : [],
+  ].filter((group) => group.length > 0) as {
+    id: WorkspaceSetting;
+    label: string;
+    icon: typeof Hash;
+  }[][];
+  const adminGroups = [
+    {
+      label: "Messages and safety",
+      tools: [
+        { id: "moderation", label: "Moderation" },
+        { id: "outbox", label: "Scheduled messages" },
+        { id: "retention", label: "Message retention" },
+      ],
+    },
+    {
+      label: "Setup",
+      tools: [
+        { id: "workspace", label: "Workspace settings" },
+        { id: "templates", label: "Channel templates" },
+        { id: "automation", label: "Automation" },
+        { id: "management", label: "Bulk channel changes" },
+        { id: "history", label: "Settings history" },
+      ],
+    },
   ] as const;
+  const select = (id: WorkspaceSetting) => {
+    if (trigger.current) onSelect(id, trigger.current);
+  };
   return (
-    <h1 className={cn("min-w-0", compact && "md:hidden")}>
+    <div
+      className={cn(
+        "flex min-w-0 items-center gap-0.5",
+        compact && "md:hidden",
+      )}
+    >
+      <h1
+        className={cn(
+          "truncate pl-2 font-semibold tracking-tight",
+          compact && "pl-0 text-xs",
+        )}
+      >
+        OpenComms
+      </h1>
       <DropdownMenu>
         <DropdownMenuTrigger
           ref={trigger}
+          aria-label="OpenComms menu"
           className={cn(
-            "hover:bg-muted focus-visible:ring-ring flex min-h-11 items-center gap-2 rounded-md px-2 text-left font-semibold tracking-tight outline-none focus-visible:ring-2",
-            compact && "min-h-7 px-0 text-xs",
+            "hover:bg-muted focus-visible:ring-ring grid size-11 shrink-0 place-items-center rounded-md outline-none focus-visible:ring-2",
+            compact && "size-7",
           )}
         >
-          OpenComms <ChevronDown aria-hidden="true" className="size-3.5" />
+          <ChevronDown aria-hidden="true" className="size-3.5" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent
-          className="w-60 max-w-[calc(100vw-32px)] p-1.5"
-          aria-label="OpenComms settings"
-        >
-          <DropdownMenuGroup>
-            {actions.map(({ id, label, icon: Icon }) => (
-              <DropdownMenuItem
-                key={id}
-                className="min-h-10"
-                disabled={id.startsWith("edit-") && !hasChannel}
-                onClick={() => {
-                  if (trigger.current) onSelect(id, trigger.current);
-                }}
-              >
-                <Icon aria-hidden="true" /> {label}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem
-              className="min-h-10"
-              onClick={() => {
-                if (trigger.current) onSelect("threads", trigger.current);
-              }}
-            >
-              <MessageSquare aria-hidden="true" /> Browse threads
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
+        <DropdownMenuContent className="w-60 max-w-[calc(100vw-32px)] p-1.5">
+          {groups.map((group, index) => (
+            <DropdownMenuGroup key={group[0].id}>
+              {index > 0 && <DropdownMenuSeparator />}
+              {group.map(({ id, label, icon: Icon }) => (
+                <DropdownMenuItem
+                  key={id}
+                  className="min-h-10"
+                  disabled={id.startsWith("edit-") && !hasChannel}
+                  onClick={() => select(id)}
+                >
+                  <Icon aria-hidden="true" /> {label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuGroup>
+          ))}
+          {canAdminister && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="min-h-10">
+                  <ShieldCheck aria-hidden="true" /> Admin tools
+                  {recoverableCount > 0 && (
+                    <RecoverableBadge count={recoverableCount} />
+                  )}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuContent
+                  side="right"
+                  sideOffset={6}
+                  className="w-56 max-w-[calc(100vw-32px)] p-1.5"
+                >
+                  {adminGroups.map((group, index) => (
+                    <DropdownMenuGroup key={group.label}>
+                      {index > 0 && <DropdownMenuSeparator />}
+                      <DropdownMenuLabel className="text-muted-foreground px-2 pt-1.5 pb-1 text-xs font-semibold">
+                        {group.label}
+                      </DropdownMenuLabel>
+                      {group.tools.map(({ id, label }) => (
+                        <DropdownMenuItem
+                          key={id}
+                          className="min-h-10"
+                          onClick={() => select(id)}
+                        >
+                          {label}
+                          {id === "moderation" && recoverableCount > 0 && (
+                            <RecoverableBadge count={recoverableCount} />
+                          )}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuGroup>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenuSub>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
-    </h1>
+    </div>
   );
 }
 
@@ -379,7 +530,12 @@ function CommsSkeleton({
 }
 
 export default function SampleComms() {
-  const [notice, setNotice] = useState("");
+  // Failures show as a visible notice; results that are already visible
+  // (a sent message) are only announced.
+  const setNotice = reportCommsError;
+  const [announcement, setAnnouncement] = useState("");
+  const [confirmRequest, setConfirmRequest] =
+    useState<ConfirmActionRequest | null>(null);
   const { commsResource, workspace, run, isPending } =
     useCommsWorkspace(setNotice);
   const {
@@ -512,8 +668,16 @@ export default function SampleComms() {
   const canPost =
     canParticipate &&
     permission("post") &&
-    (settings.mode !== "announcements" || viewerId === "sample-eli");
+    // Announcements: the same manager rule the send check uses.
+    (settings.mode !== "announcements" ||
+      isCommsManager({ config, person: viewer, channel, categories }));
   const elevated = permission("pin");
+  const commsMenuAccess = {
+    canManageChannel: permission("manageChannel"),
+    canCreate: permission("createChannel"),
+    canAdminister: permission("manageWorkspace") || permission("moderate"),
+    recoverableCount: Object.keys(config.tombstones).length,
+  };
   async function patchPreferences(patch: Partial<CommsPreferences>) {
     try {
       await run(
@@ -567,18 +731,23 @@ export default function SampleComms() {
         ...channelThreads.flatMap(threadMessages),
       ].filter((item) => item.pinned)
     : [];
+  // A channel's members are the people its groups let in (shown, not yet
+  // enforced), so the list agrees with "Who can use".
   const members = activePeople.filter((person) =>
     channel
-      ? resolveCommsPermission(
-          config,
-          { person, channel, categories },
-          "viewChannel",
-        ).allowed
+      ? personGroupAccess(person, channelGroupAccess(channel, categories)) !==
+        "none"
       : person.name === direct?.user,
   );
   const currentThread = canView
     ? threads.find((item) => item.id === threadId)
     : undefined;
+  // A linked record opens in the same place as a thread; a thread wins.
+  const [recordId, setRecordId] = useState("");
+  const conversationsLoaded = commsResource.data !== undefined;
+  const openRecord = currentThread
+    ? undefined
+    : records.find((item) => item.id === recordId);
   const {
     container,
     channelsPanel,
@@ -595,7 +764,7 @@ export default function SampleComms() {
     threadWidth,
   } = useCommsPanelLayout({
     preferences,
-    hasThread: !!currentThread,
+    hasThread: !!currentThread || !!openRecord,
     membersVisible,
   });
   const {
@@ -650,7 +819,7 @@ export default function SampleComms() {
       metadata: (
         <>
           {item.replies.length} replies ·{" "}
-          {item.resolved ? "Inactive" : "Active"}
+          {item.resolved ? "Resolved" : "Active"}
         </>
       ),
     }),
@@ -674,7 +843,10 @@ export default function SampleComms() {
       target?.scrollIntoView({ block: "center" });
     } else
       messageList.current?.scrollTo({ top: messageList.current.scrollHeight });
-  }, [selected, mobileConversation, desktop]);
+    // Runs again once the conversations load, so the first view opens at
+    // the latest message instead of the oldest.
+  }, [selected, mobileConversation, desktop, conversationsLoaded]);
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const shortcut = [
@@ -731,7 +903,7 @@ export default function SampleComms() {
         `${window.location.origin}/comms?conversation=${encodeURIComponent(id)}`,
       )
       .then(
-        () => setNotice("Conversation link copied."),
+        () => reportCommsDone("Conversation link copied."),
         () => setNotice("The browser could not copy the link."),
       );
   }
@@ -825,26 +997,32 @@ export default function SampleComms() {
       ),
     }),
   );
-  const { changeMessage, deleteMessage, validateDraft, sendMessage } =
-    createCommsMessageOperations({
-      run,
-      selected,
-      viewerId,
-      replyingTo,
-      setThreadId,
-      setReplyingTo,
-      setNotice,
-      scrollToLatest,
-      config,
-      viewer,
-      channel,
-      categories,
-      people,
-      roles,
-      allMessages,
-      channelThreads,
-      records,
-    });
+  const {
+    changeMessage,
+    deleteMessage,
+    undoDelete,
+    validateDraft,
+    sendMessage,
+  } = createCommsMessageOperations({
+    run,
+    selected,
+    viewerId,
+    replyingTo,
+    setThreadId,
+    setReplyingTo,
+    setNotice,
+    announce: setAnnouncement,
+    scrollToLatest,
+    config,
+    viewer,
+    channel,
+    categories,
+    people,
+    roles,
+    allMessages,
+    channelThreads,
+    records,
+  });
   async function moveCategory(id: string, direction: number) {
     try {
       await run(
@@ -864,25 +1042,6 @@ export default function SampleComms() {
     } catch (error) {
       setNotice(
         messageFromCommsError(error, "The category order could not be saved."),
-      );
-    }
-  }
-  async function moveChannelToCategory(channelId: string, categoryId: string) {
-    try {
-      await run(
-        `channel:move:${channelId}`,
-        (draft) => {
-          draft.update<Channel[]>("commsChannels", CHANNELS, (items) =>
-            items.map((item) =>
-              item.id === channelId ? { ...item, categoryId } : item,
-            ),
-          );
-        },
-        ["commsChannels"],
-      );
-    } catch (error) {
-      setNotice(
-        messageFromCommsError(error, "The channel could not be moved."),
       );
     }
   }
@@ -921,16 +1080,58 @@ export default function SampleComms() {
       );
     }
   }
-  async function toggleChannelArchive(channelId: string) {
+  /** Deleting shows a notice with Undo, so a slip costs one click. Undos
+   *  run one after another: two at once would cancel each other. */
+  const undoQueue = useRef<Promise<unknown>>(Promise.resolve());
+  async function deleteWithUndo(id: string): Promise<string | null> {
+    const original = messages.find((item) => item.id === id);
+    const error = await deleteMessage(id);
+    if (!error && original)
+      reportCommsDone("Message deleted.", {
+        label: "Undo",
+        onClick: () => {
+          undoQueue.current = undoQueue.current.then(() =>
+            undoDelete(original),
+          );
+        },
+      });
+    return error;
+  }
+  function confirmArchive(channel: Channel, opener: HTMLElement) {
+    setConfirmRequest({
+      title: `Archive #${channel.name}?`,
+      description:
+        "No one can post in an archived channel. Its messages stay readable, and you can restore it at any time.",
+      confirmLabel: "Archive channel",
+      onConfirm: () => void setChannelArchived(channel, true),
+      opener,
+    });
+  }
+  function confirmBlock(directId: string, name: string, opener: HTMLElement) {
+    setConfirmRequest({
+      title: `Block ${name}?`,
+      description:
+        "Neither of you can send messages in this conversation until you unblock them. Earlier messages stay.",
+      confirmLabel: "Block user",
+      destructive: true,
+      onConfirm: () => void toggleDirect(directId, "blocked"),
+      opener,
+    });
+  }
+  /** Sets the archive state explicitly, so an Undo created before the
+   *  change always goes the right way and reports what it did. */
+  async function setChannelArchived(
+    target: Pick<Channel, "id" | "name">,
+    archived: boolean,
+  ) {
+    const channelId = target.id;
     try {
       await run(
         `channel:archive:${channelId}`,
         (draft) => {
           draft.update<Channel[]>("commsChannels", CHANNELS, (items) =>
             items.map((item) =>
-              item.id === channelId
-                ? { ...item, archived: !item.archived }
-                : item,
+              item.id === channelId ? { ...item, archived } : item,
             ),
           );
         },
@@ -943,7 +1144,14 @@ export default function SampleComms() {
           "The channel archive state could not be saved.",
         ),
       );
+      return;
     }
+    if (!archived) reportCommsDone(`#${target.name} restored.`);
+    else
+      reportCommsDone(`#${target.name} archived.`, {
+        label: "Undo",
+        onClick: () => void setChannelArchived(target, false),
+      });
   }
   async function ensureRecordThread(item: RecordThread) {
     try {
@@ -1097,6 +1305,67 @@ export default function SampleComms() {
       pending={isPending(`thread:update:${currentThread.id}`)}
     />
   );
+  function showRecord(id: string) {
+    setThreadId("");
+    setRecordId(id);
+  }
+  function conversationName(id: string): string {
+    const namedChannel = channels.find((item) => item.id === id);
+    if (namedChannel) return `#${namedChannel.name}`;
+    return directs.find((item) => item.id === id)?.user ?? "A conversation";
+  }
+  // Records linked in conversations, most recently mentioned first.
+  // Only conversations this person can open feed the record lists.
+  const visibleConversation = (id: string) => {
+    const target = channels.find((item) => item.id === id);
+    if (!target) return directs.some((item) => item.id === id);
+    return resolveCommsPermission(
+      config,
+      { person: viewer, channel: target, categories },
+      "viewChannel",
+    ).allowed;
+  };
+  const recordMessages = messages.filter(
+    (item) => item.recordId && visibleConversation(item.conversation),
+  );
+  const followedRecords = [
+    ...new Map(
+      [...recordMessages]
+        .sort((a, b) => b.created - a.created)
+        .map((item) => [item.recordId!, item] as const),
+    ).keys(),
+  ]
+    .map((id) => records.find((record) => record.id === id))
+    .filter((record) => record !== undefined)
+    .slice(0, 4);
+  const recordContent = openRecord && (
+    <RecordPanel
+      key={openRecord.id}
+      record={openRecord}
+      people={people}
+      mentions={recordMessages
+        .filter((item) => item.recordId === openRecord.id)
+        .sort((a, b) => b.created - a.created)
+        .map((item) => ({
+          messageId: item.id,
+          conversationName: conversationName(item.conversation),
+          author: item.author,
+          // Mentions are a preview; formatting marks are not shown.
+          text: item.text
+            .replace(/\*\*(.+?)\*\*\n/g, "$1: ")
+            .replace(/[*_`]/g, ""),
+        }))}
+      onJump={(messageId) => {
+        // On narrow screens the record covers the timeline; close it first.
+        if (!wide) setRecordId("");
+        const target = messages.find((item) => item.id === messageId);
+        if (target && target.conversation !== selected)
+          select(target.conversation);
+        requestAnimationFrame(() => jumpToMessage(messageId));
+      }}
+      onClose={() => setRecordId("")}
+    />
+  );
 
   if (commsResource.status === "error" && commsResource.data === undefined)
     return (
@@ -1156,6 +1425,10 @@ export default function SampleComms() {
                   )}
                 </div>
               )}
+              <ConfirmActionDialog
+                request={confirmRequest}
+                onClose={() => setConfirmRequest(null)}
+              />
               {settingsDialog && (
                 <CommsSettingsDialog
                   {...settingsDialog}
@@ -1212,22 +1485,25 @@ export default function SampleComms() {
                       <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
                         <CommsMenu
                           hasChannel={!!channel}
+                          {...commsMenuAccess}
                           onSelect={openWorkspaceSetting}
                         />
-                        <Action
-                          aria-label="Create channel"
-                          size="icon"
-                          variant="ghost"
-                          onClick={(event) =>
-                            setEditor({
-                              opener: event.currentTarget,
-                              kind: "channel",
-                              value: newChannel(categories[0].id),
-                            })
-                          }
-                        >
-                          <Plus className="size-4" />
-                        </Action>
+                        {commsMenuAccess.canCreate && (
+                          <Action
+                            aria-label="Create channel"
+                            size="icon"
+                            variant="ghost"
+                            onClick={(event) =>
+                              setEditor({
+                                opener: event.currentTarget,
+                                kind: "channel",
+                                value: newChannel(categories[0].id),
+                              })
+                            }
+                          >
+                            <Plus className="size-4" />
+                          </Action>
+                        )}
                       </div>
                       <SampleDataNote className="border-b px-4 py-2 text-xs">
                         Conversations here are examples.
@@ -1258,7 +1534,7 @@ export default function SampleComms() {
                               }
                             >
                               <RowEditMenu
-                                label="Edit category"
+                                label="Category settings"
                                 actionsLabel={`Category actions: ${category.name}`}
                                 showActions={false}
                                 actions={[
@@ -1296,54 +1572,55 @@ export default function SampleComms() {
                                         },
                                       }),
                                   },
-                                  {
-                                    label: "Create channel in category",
-                                    onSelect: (opener) =>
-                                      setEditor({
-                                        kind: "channel",
-                                        value: newChannel(category.id),
-                                        opener,
-                                      }),
-                                  },
-                                  {
-                                    label: "Category settings",
-                                    onSelect: (opener) =>
-                                      setSettingsDialog({
-                                        scope: {
-                                          kind: "category",
-                                          id: category.id,
+                                  ...(commsMenuAccess.canCreate
+                                    ? [
+                                        {
+                                          label: "Create channel in category",
+                                          onSelect: (opener: HTMLElement) =>
+                                            setEditor({
+                                              kind: "channel",
+                                              value: newChannel(category.id),
+                                              opener,
+                                            }),
                                         },
-                                        opener,
-                                      }),
-                                  },
-                                  {
-                                    label: "Move category up",
-                                    disabled: categoryIndex === 0,
-                                    onSelect: () =>
-                                      moveCategory(category.id, -1),
-                                  },
-                                  {
-                                    label: "Move category down",
-                                    disabled:
-                                      categoryIndex === categories.length - 1,
-                                    onSelect: () =>
-                                      moveCategory(category.id, 1),
-                                  },
-                                  {
-                                    label: "Apply template",
-                                    onSelect: (opener) =>
-                                      setToolsDialog({
-                                        view: "templates",
-                                        opener,
-                                      }),
-                                  },
+                                      ]
+                                    : []),
+                                  ...(commsMenuAccess.canManageChannel
+                                    ? [
+                                        {
+                                          label: "Move category up",
+                                          disabled: categoryIndex === 0,
+                                          onSelect: () =>
+                                            moveCategory(category.id, -1),
+                                        },
+                                        {
+                                          label: "Move category down",
+                                          disabled:
+                                            categoryIndex ===
+                                            categories.length - 1,
+                                          onSelect: () =>
+                                            moveCategory(category.id, 1),
+                                        },
+                                        {
+                                          label: "Apply template",
+                                          onSelect: (opener: HTMLElement) =>
+                                            setToolsDialog({
+                                              view: "templates",
+                                              opener,
+                                            }),
+                                        },
+                                      ]
+                                    : []),
                                 ]}
-                                onEdit={(opener) =>
-                                  setEditor({
-                                    kind: "category",
-                                    value: category,
-                                    opener,
-                                  })
+                                onEdit={
+                                  commsMenuAccess.canManageChannel
+                                    ? (opener) =>
+                                        setEditor({
+                                          kind: "category",
+                                          value: category,
+                                          opener,
+                                        })
+                                    : undefined
                                 }
                               >
                                 <div className="group flex items-center">
@@ -1363,42 +1640,42 @@ export default function SampleComms() {
                                           "-rotate-90",
                                       )}
                                     />
-                                    <span className="truncate">
-                                      {category.name}
+                                    {category.groupId && (
+                                      <GroupMark
+                                        tone={
+                                          commsGroup(category.groupId)?.tone ??
+                                          0
+                                        }
+                                        className="ml-0.5"
+                                      />
+                                    )}
+                                    <span className="flex min-w-0 flex-col">
+                                      <span className="truncate">
+                                        {category.name}
+                                      </span>
+                                      {category.groupId && (
+                                        <span className="text-muted-foreground truncate text-xs font-normal">
+                                          {category.groupId} group
+                                        </span>
+                                      )}
                                     </span>
                                   </CollapsibleTrigger>
-                                  <Action
-                                    size="icon"
-                                    variant="ghost"
-                                    aria-label={`Edit category ${category.name}`}
-                                    onClick={(event) =>
-                                      setEditor({
-                                        kind: "category",
-                                        value: category,
-                                        opener: event.currentTarget,
-                                      })
-                                    }
-                                  >
-                                    <Settings2 className="size-3" />
-                                  </Action>
-                                  <Action
-                                    size="icon"
-                                    variant="ghost"
-                                    aria-label={`Move ${category.name} ${categoryIndex ? "up" : "down"}`}
-                                    disabled={categories.length < 2}
-                                    onClick={() =>
-                                      moveCategory(
-                                        category.id,
-                                        categoryIndex ? -1 : 1,
-                                      )
-                                    }
-                                  >
-                                    {categoryIndex ? (
-                                      <ChevronUp className="size-3" />
-                                    ) : (
-                                      <ChevronDown className="size-3" />
-                                    )}
-                                  </Action>
+                                  {commsMenuAccess.canManageChannel && (
+                                    <Action
+                                      size="icon"
+                                      variant="ghost"
+                                      aria-label={`Category settings: ${category.name}`}
+                                      onClick={(event) =>
+                                        setEditor({
+                                          kind: "category",
+                                          value: category,
+                                          opener: event.currentTarget,
+                                        })
+                                      }
+                                    >
+                                      <Settings2 className="size-3" />
+                                    </Action>
+                                  )}
                                 </div>
                               </RowEditMenu>
                               <CollapsibleContent>
@@ -1409,7 +1686,7 @@ export default function SampleComms() {
                                   .map((item) => (
                                     <div key={item.id}>
                                       <RowEditMenu
-                                        label="Edit channel"
+                                        label="Channel settings"
                                         actionsLabel={`Channel actions: ${item.name}`}
                                         actions={[
                                           {
@@ -1480,51 +1757,58 @@ export default function SampleComms() {
                                             onSelect: () =>
                                               copyConversation(item.id),
                                           },
-                                          {
-                                            label: "Channel settings",
-                                            onSelect: (opener) =>
-                                              setSettingsDialog({
-                                                scope: {
-                                                  kind: "channel",
-                                                  id: item.id,
+                                          ...(commsMenuAccess.canManageChannel
+                                            ? [
+                                                {
+                                                  // The category field is on the
+                                                  // settings Overview.
+                                                  label:
+                                                    "Move to another category…",
+                                                  disabled:
+                                                    categories.length < 2,
+                                                  onSelect: (
+                                                    opener: HTMLElement,
+                                                  ) =>
+                                                    setEditor({
+                                                      kind: "channel",
+                                                      value: item,
+                                                      opener,
+                                                    }),
                                                 },
-                                                opener,
-                                              }),
-                                          },
-                                          ...categories
-                                            .filter(
-                                              (category) =>
-                                                category.id !== item.categoryId,
-                                            )
-                                            .map((category) => ({
-                                              label: `Move to ${category.name}`,
-                                              onSelect: () =>
-                                                void moveChannelToCategory(
-                                                  item.id,
-                                                  category.id,
-                                                ),
-                                            })),
-                                          {
-                                            label: "Duplicate channel",
-                                            onSelect: () =>
-                                              void duplicateChannel(item),
-                                          },
-                                          {
-                                            label: item.archived
-                                              ? "Restore channel"
-                                              : "Archive channel",
-                                            onSelect: () =>
-                                              void toggleChannelArchive(
-                                                item.id,
-                                              ),
-                                          },
+                                                {
+                                                  label: "Duplicate channel",
+                                                  onSelect: () =>
+                                                    void duplicateChannel(item),
+                                                },
+                                                {
+                                                  label: item.archived
+                                                    ? "Restore channel"
+                                                    : "Archive channel",
+                                                  onSelect: (
+                                                    opener: HTMLElement,
+                                                  ) =>
+                                                    item.archived
+                                                      ? void setChannelArchived(
+                                                          item,
+                                                          false,
+                                                        )
+                                                      : confirmArchive(
+                                                          item,
+                                                          opener,
+                                                        ),
+                                                },
+                                              ]
+                                            : []),
                                         ]}
-                                        onEdit={(opener) =>
-                                          setEditor({
-                                            kind: "channel",
-                                            value: item,
-                                            opener,
-                                          })
+                                        onEdit={
+                                          commsMenuAccess.canManageChannel
+                                            ? (opener) =>
+                                                setEditor({
+                                                  kind: "channel",
+                                                  value: item,
+                                                  opener,
+                                                })
+                                            : undefined
                                         }
                                       >
                                         <Button
@@ -1534,7 +1818,20 @@ export default function SampleComms() {
                                               ? "secondary"
                                               : "ghost"
                                           }
-                                          aria-label={item.name}
+                                          aria-label={[
+                                            item.name,
+                                            selected !== item.id &&
+                                            channelUnread(item.id)
+                                              ? "unread"
+                                              : "",
+                                            (preferences.mutedUntil[item.id] ??
+                                              0) > Date.now()
+                                              ? "muted"
+                                              : "",
+                                            item.archived ? "archived" : "",
+                                          ]
+                                            .filter(Boolean)
+                                            .join(", ")}
                                           aria-current={
                                             selected === item.id &&
                                             !currentThread
@@ -1542,7 +1839,13 @@ export default function SampleComms() {
                                               : undefined
                                           }
                                           onClick={() => select(item.id)}
-                                          className="h-auto min-h-11 w-full justify-start py-2 pr-10 pl-3 text-left"
+                                          className={cn(
+                                            "h-auto min-h-11 w-full justify-start py-2 pr-10 pl-3 text-left",
+                                            // Unread channels stand out; read ones step back.
+                                            selected !== item.id &&
+                                              !channelUnread(item.id) &&
+                                              "text-muted-foreground font-medium",
+                                          )}
                                         >
                                           <Hash className="text-muted-foreground size-4 shrink-0" />
                                           <span className="truncate">
@@ -1559,12 +1862,13 @@ export default function SampleComms() {
                                               Muted
                                             </span>
                                           )}
-                                          {channelUnread(item.id) && (
-                                            <span
-                                              aria-label="Unread"
-                                              className="bg-foreground ml-auto size-1.5 shrink-0 rounded-full"
-                                            />
-                                          )}
+                                          {selected !== item.id &&
+                                            channelUnread(item.id) && (
+                                              <span
+                                                aria-label="Unread"
+                                                className="bg-foreground ml-auto size-1.5 shrink-0 rounded-full"
+                                              />
+                                            )}
                                           {item.archived && (
                                             <span className="text-muted-foreground ml-auto text-xs">
                                               Archived
@@ -1632,7 +1936,16 @@ export default function SampleComms() {
                                                           item.id,
                                                         )
                                                       }
-                                                      className="h-auto min-h-9 min-w-0 justify-start pr-2 pl-0 text-left"
+                                                      className={cn(
+                                                        "h-auto min-h-9 min-w-0 justify-start pr-2 pl-0 text-left",
+                                                        // Threads step back with a read channel.
+                                                        currentThread?.id !==
+                                                          entry.thread.id &&
+                                                          !channelUnread(
+                                                            item.id,
+                                                          ) &&
+                                                          "text-muted-foreground font-normal",
+                                                      )}
                                                     />
                                                   }
                                                 >
@@ -1648,7 +1961,7 @@ export default function SampleComms() {
                                                       variant="secondary"
                                                       className="ml-auto shrink-0"
                                                     >
-                                                      Inactive
+                                                      Resolved
                                                     </Badge>
                                                   )}
                                                 </TooltipTrigger>
@@ -1664,24 +1977,69 @@ export default function SampleComms() {
                               </CollapsibleContent>
                             </Collapsible>
                           ))}
-                          <Action
-                            variant="ghost"
-                            className="text-muted-foreground w-full justify-start"
-                            onClick={(event) =>
-                              setEditor({
-                                opener: event.currentTarget,
-                                kind: "category",
-                                value: {
-                                  id: "",
-                                  name: "",
-                                  ...OPEN_PERMISSIONS,
-                                },
-                              })
-                            }
-                          >
-                            <Plus className="size-3" />
-                            Create category
-                          </Action>
+                          {commsMenuAccess.canCreate && (
+                            <Action
+                              variant="ghost"
+                              className="text-muted-foreground w-full justify-start"
+                              onClick={(event) =>
+                                setEditor({
+                                  opener: event.currentTarget,
+                                  kind: "category",
+                                  value: {
+                                    id: "",
+                                    name: "",
+                                    ...OPEN_PERMISSIONS,
+                                  },
+                                })
+                              }
+                            >
+                              <Plus className="size-3" />
+                              Create category
+                            </Action>
+                          )}
+                          {followedRecords.length > 0 && (
+                            <section className="mt-5">
+                              <h2 className="text-muted-foreground px-2 text-xs font-semibold">
+                                Records you follow
+                              </h2>
+                              <ul
+                                aria-label="Records you follow"
+                                className="mt-1 flex flex-col"
+                              >
+                                {followedRecords.map((record) => {
+                                  const { module, group } = recordContext(
+                                    record,
+                                    people,
+                                  );
+                                  return (
+                                    <li key={record.id}>
+                                      <Button
+                                        type="button"
+                                        variant={
+                                          openRecord?.id === record.id
+                                            ? "secondary"
+                                            : "ghost"
+                                        }
+                                        className="h-auto min-h-11 w-full justify-start gap-2 px-2 py-1.5 text-left font-normal"
+                                        onClick={() => showRecord(record.id)}
+                                      >
+                                        <GroupMark tone={group?.tone ?? 0} />
+                                        <span className="flex min-w-0 flex-col">
+                                          <span className="truncate text-sm font-semibold">
+                                            {record.title}
+                                          </span>
+                                          <span className="text-muted-foreground truncate text-xs">
+                                            {group?.name ?? module} ·{" "}
+                                            {record.status}
+                                          </span>
+                                        </span>
+                                      </Button>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </section>
+                          )}
                           <div className="mt-5 flex items-center justify-between px-2">
                             <h2 className="text-muted-foreground text-xs font-semibold">
                               Direct messages
@@ -1776,6 +2134,7 @@ export default function SampleComms() {
                           <CommsMenu
                             compact
                             hasChannel={!!channel}
+                            {...commsMenuAccess}
                             onSelect={openWorkspaceSetting}
                           />
                           <h2
@@ -1789,7 +2148,42 @@ export default function SampleComms() {
                           <p className="text-muted-foreground hidden truncate text-xs lg:block">
                             {channel?.description ?? "Private conversation"}
                           </p>
+                          {channel && (
+                            <p className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs sm:hidden">
+                              <GroupMark
+                                tone={channelTone(
+                                  channelGroupAccess(channel, categories),
+                                )}
+                                className="size-2"
+                              />
+                              <span className="truncate">
+                                {visibleToLabel(
+                                  channelGroupAccess(channel, categories),
+                                )}
+                              </span>
+                            </p>
+                          )}
                         </div>
+                        {channel && (
+                          <AccessChip
+                            label={visibleToLabel(
+                              channelGroupAccess(channel, categories),
+                            )}
+                            tone={channelTone(
+                              channelGroupAccess(channel, categories),
+                            )}
+                            onOpen={
+                              commsMenuAccess.canManageChannel
+                                ? (opener) =>
+                                    setEditor({
+                                      kind: "channel",
+                                      value: channel,
+                                      opener,
+                                    })
+                                : undefined
+                            }
+                          />
+                        )}
                         <FloatingList
                           label="Threads"
                           icon={<MessageSquare className="size-4" />}
@@ -1866,7 +2260,7 @@ export default function SampleComms() {
                         >
                           <Users className="size-4" />
                         </Action>
-                        {channel && (
+                        {channel && commsMenuAccess.canManageChannel && (
                           <Action
                             variant="ghost"
                             size="icon"
@@ -1905,8 +2299,14 @@ export default function SampleComms() {
                           <Action
                             size="sm"
                             variant="ghost"
-                            onClick={() =>
-                              void toggleDirect(selected, "blocked")
+                            onClick={(event) =>
+                              direct.blocked
+                                ? void toggleDirect(selected, "blocked")
+                                : confirmBlock(
+                                    selected,
+                                    direct.user,
+                                    event.currentTarget,
+                                  )
                             }
                           >
                             {direct.blocked ? "Unblock user" : "Block user"}
@@ -1918,7 +2318,7 @@ export default function SampleComms() {
                           className="bg-muted/30 border-b px-4 py-2 text-xs underline"
                           href={`/openview?record=${encodeURIComponent(settings.pinnedRecordId)}`}
                         >
-                          Pinned incident ·{" "}
+                          Pinned record ·{" "}
                           {records.find(
                             (record) => record.id === settings.pinnedRecordId,
                           )?.title ?? "View record"}
@@ -1946,15 +2346,19 @@ export default function SampleComms() {
                             <MessageScrollerContent className="gap-0">
                               {!canView ? (
                                 <Alert>
-                                  Your role does not have access to this
-                                  channel. Choose another conversation or update
-                                  the channel settings.
+                                  You do not have access to this channel. Choose
+                                  another conversation, or ask an administrator
+                                  for access.
                                 </Alert>
                               ) : (
                                 <>
                                   <div className="mt-4 mb-8 px-3">
                                     <div className="bg-muted mb-3 flex size-12 items-center justify-center rounded-2xl">
-                                      <Hash className="text-muted-foreground size-6" />
+                                      {channel ? (
+                                        <Hash className="text-muted-foreground size-6" />
+                                      ) : (
+                                        <MessageSquare className="text-muted-foreground size-6" />
+                                      )}
                                     </div>
                                     <h3 className="text-xl font-semibold tracking-tight">
                                       {channel
@@ -1979,6 +2383,10 @@ export default function SampleComms() {
                                     key={selected}
                                     visibleMessages={visibleMessages}
                                     allMessages={allMessages}
+                                    flows={EXAMPLE_FLOWS.filter(
+                                      (flow) => flow.conversation === selected,
+                                    )}
+                                    onOpenRecord={showRecord}
                                     records={records}
                                     threads={channelThreads}
                                     highlightedId={highlightedId}
@@ -1993,7 +2401,7 @@ export default function SampleComms() {
                                       })
                                     }
                                     onChange={changeMessage}
-                                    onDelete={deleteMessage}
+                                    onDelete={deleteWithUndo}
                                     onReply={beginReply}
                                     onThread={startThread}
                                     onJump={jumpToMessage}
@@ -2046,7 +2454,9 @@ export default function SampleComms() {
                         onSend={sendMessage}
                         pending={isPending(`message:send:${selected}`)}
                       />
-                      {notice && <Alert className="sr-only">{notice}</Alert>}
+                      <p role="status" className="sr-only">
+                        {announcement}
+                      </p>
                     </section>
                   </ResizablePanel>
                 )}
@@ -2054,7 +2464,11 @@ export default function SampleComms() {
                   <>
                     <ResizableHandle
                       aria-label={
-                        currentThread ? "Resize thread" : "Resize members"
+                        currentThread
+                          ? "Resize thread"
+                          : openRecord
+                            ? "Resize record"
+                            : "Resize members"
                       }
                       onKeyDownCapture={(event) => {
                         if (event.key !== "Home" && event.key !== "End") return;
@@ -2062,38 +2476,62 @@ export default function SampleComms() {
                         event.stopPropagation();
                         const width =
                           event.key === "Home"
-                            ? currentThread
+                            ? currentThread || openRecord
                               ? 320
                               : 200
-                            : currentThread
+                            : currentThread || openRecord
                               ? threadMaximum
                               : memberMaximum;
                         rightPanel.current?.resize(width);
                         patchPreferences(
-                          currentThread
+                          currentThread || openRecord
                             ? { threadWidth: width }
                             : { memberWidth: width },
                         );
                       }}
                     />
                     <ResizablePanel
-                      key={currentThread ? "thread" : "members"}
-                      id={currentThread ? "thread" : "members"}
+                      key={
+                        currentThread
+                          ? "thread"
+                          : openRecord
+                            ? "record"
+                            : "members"
+                      }
+                      id={
+                        currentThread
+                          ? "thread"
+                          : openRecord
+                            ? "record"
+                            : "members"
+                      }
                       panelRef={rightPanel}
-                      defaultSize={currentThread ? threadWidth : memberWidth}
-                      minSize={currentThread ? 320 : 200}
-                      maxSize={currentThread ? threadMaximum : memberMaximum}
+                      defaultSize={
+                        currentThread || openRecord ? threadWidth : memberWidth
+                      }
+                      minSize={currentThread || openRecord ? 320 : 200}
+                      maxSize={
+                        currentThread || openRecord
+                          ? threadMaximum
+                          : memberMaximum
+                      }
                       groupResizeBehavior="preserve-pixel-size"
                     >
                       <aside
                         id="comms-members"
                         aria-label={
-                          currentThread ? "Thread panel" : "Channel members"
+                          currentThread
+                            ? "Thread panel"
+                            : openRecord
+                              ? "Record"
+                              : "Channel members"
                         }
                         className="bg-muted/15 h-full min-h-0 overflow-hidden border-l"
                       >
                         {currentThread ? (
                           threadContent
+                        ) : openRecord ? (
+                          recordContent
                         ) : (
                           <ScrollArea className="h-full">
                             {membersContent}
@@ -2108,32 +2546,43 @@ export default function SampleComms() {
                 {!wide &&
                   !toolsDialog &&
                   !settingsDialog &&
-                  (memberOpen || currentThread) && (
+                  (memberOpen || currentThread || openRecord) && (
                     <Dialog
                       open
                       onOpenChange={(open) => {
                         if (!open) {
                           setMemberOpen(false);
                           setThreadId("");
+                          setRecordId("");
                         }
                       }}
                     >
                       <DialogContent
                         className={
-                          currentThread
+                          currentThread || openRecord
                             ? "h-[calc(100dvh-24px)] max-h-[calc(100dvh-24px)] max-w-lg overflow-hidden p-0"
                             : "h-[85dvh] max-w-md"
                         }
                       >
                         <DialogTitle className="sr-only">
-                          {currentThread ? "Thread" : "Members"}
+                          {currentThread
+                            ? "Thread"
+                            : openRecord
+                              ? "Record"
+                              : "Members"}
                         </DialogTitle>
                         <DialogDescription className="sr-only">
                           {currentThread
                             ? "Replies to this message"
-                            : "People with access to this conversation"}
+                            : openRecord
+                              ? "A linked record and where it is mentioned"
+                              : "People with access to this conversation"}
                         </DialogDescription>
-                        {currentThread ? threadContent : membersContent}
+                        {currentThread
+                          ? threadContent
+                          : openRecord
+                            ? recordContent
+                            : membersContent}
                       </DialogContent>
                     </Dialog>
                   )}
@@ -2230,7 +2679,9 @@ export default function SampleComms() {
                           Message {person.name}
                         </Action>
                       ))}
-                    <Action onClick={() => setDmOpen(false)}>Cancel</Action>
+                    <Action variant="outline" onClick={() => setDmOpen(false)}>
+                      Cancel
+                    </Action>
                   </div>
                 </DialogContent>
               </Dialog>

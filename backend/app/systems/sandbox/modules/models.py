@@ -1,7 +1,7 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Index, String, text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.base_model import BaseModel
@@ -15,6 +15,10 @@ if TYPE_CHECKING:
 class Module(BaseModel):
     __tablename__ = "modules"
     __table_args__ = (
+        CheckConstraint(
+            "lifecycle_close_operation_id IS NULL OR is_deleted",
+            name="ck_modules_lifecycle_close_provenance",
+        ),
         Index(
             "uq_modules_department_name_active",
             "department_id",
@@ -23,6 +27,11 @@ class Module(BaseModel):
             postgresql_where=text("is_deleted = false"),
         ),
     )
+
+    __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset(
+        {"lifecycle_close_operation_id"}
+    )
+    lifecycle_close_operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
 
     department_id: Mapped[UUID] = mapped_column(
         ForeignKey("departments.id", ondelete="RESTRICT"),

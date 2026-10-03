@@ -10,6 +10,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  type DialogContentProps,
 } from "@/components/ui/dialog";
 import type { BoardPostPage } from "../adapters/board-posts-api";
 import type { BoardPost } from "../adapters/board-posts-api";
@@ -110,42 +111,52 @@ export function ServerBoardPostReaderContent({ post }: { post: BoardPost }) {
   );
 }
 
-function ServerBoardPostReader({
+export function ServerBoardPostReader({
   post,
   authorLabel,
   onHistory,
   onClose,
+  loading = false,
+  error = null,
+  onRetry,
+  finalFocus,
 }: {
   post: BoardPost | null;
   authorLabel: string;
   onHistory: (post: BoardPost) => void;
   onClose: () => void;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
+  finalFocus?: DialogContentProps["finalFocus"];
 }) {
-  if (!post) return null;
+  if (!post && !loading && !error) return null;
 
-  const metadata = [
-    createElement("span", { key: "author" }, authorLabel),
-    post.publishedAt
-      ? createElement(
-          "time",
-          { key: "published", dateTime: post.publishedAt },
-          publishedLabel(post.publishedAt),
-        )
-      : null,
-    post.pinned ? createElement("span", { key: "pinned" }, "Pinned") : null,
-    post.edited
-      ? createElement(
-          "button",
-          {
-            key: "edited",
-            type: "button",
-            className: editedLinkClass,
-            onClick: () => onHistory(post),
-          },
-          "Edited",
-        )
-      : null,
-  ].filter((item) => item !== null);
+  const metadata = post
+    ? [
+        createElement("span", { key: "author" }, authorLabel),
+        post.publishedAt
+          ? createElement(
+              "time",
+              { key: "published", dateTime: post.publishedAt },
+              publishedLabel(post.publishedAt),
+            )
+          : null,
+        post.pinned ? createElement("span", { key: "pinned" }, "Pinned") : null,
+        post.edited
+          ? createElement(
+              "button",
+              {
+                key: "edited",
+                type: "button",
+                className: editedLinkClass,
+                onClick: () => onHistory(post),
+              },
+              "Edited",
+            )
+          : null,
+      ].filter((item) => item !== null)
+    : [];
 
   return createElement(
     Dialog,
@@ -157,30 +168,32 @@ function ServerBoardPostReader({
     },
     createElement(
       DialogContent,
-      { className: "max-w-3xl p-5 sm:p-7" },
+      { className: "max-w-3xl p-5 sm:p-7", finalFocus },
       createElement(
         DialogHeader,
         { className: "pr-10" },
         createElement(
           DialogTitle,
           { className: "text-xl leading-snug break-words" },
-          post.title,
+          post?.title ?? (error ? "Post unavailable" : "Opening post"),
         ),
         createElement(
           DialogDescription,
           { className: "flex flex-wrap items-center gap-x-2 gap-y-1" },
-          ...metadata.flatMap((item, index) =>
-            index === 0
-              ? [item]
-              : [
-                  createElement(
-                    "span",
-                    { key: `separator-${index}`, "aria-hidden": "true" },
-                    "·",
-                  ),
-                  item,
-                ],
-          ),
+          ...(post
+            ? metadata.flatMap((item, index) =>
+                index === 0
+                  ? [item]
+                  : [
+                      createElement(
+                        "span",
+                        { key: `separator-${index}`, "aria-hidden": "true" },
+                        "·",
+                      ),
+                      item,
+                    ],
+              )
+            : [error ?? "Loading the published post."]),
         ),
       ),
       createElement(
@@ -195,10 +208,23 @@ function ServerBoardPostReader({
         },
         createElement(X, { "aria-hidden": "true" }),
       ),
-      createElement(ServerBoardPostReaderContent, {
-        key: `${post.id}:${post.publicationNumber}`,
-        post,
-      }),
+      post
+        ? createElement(ServerBoardPostReaderContent, {
+            key: `${post.id}:${post.publicationNumber}`,
+            post,
+          })
+        : error && onRetry
+          ? createElement(
+              Button,
+              {
+                type: "button",
+                variant: "outline",
+                className: "mt-5 min-h-11",
+                onClick: onRetry,
+              },
+              "Retry",
+            )
+          : null,
     ),
   );
 }
@@ -207,10 +233,12 @@ export function ServerBoardPostFeedDisplay({
   page,
   appliedSearch = "",
   authorLabels = null,
+  onReadPost,
 }: {
   page: BoardPostPage;
   appliedSearch?: string;
   authorLabels?: Record<string, string> | null;
+  onReadPost?: (postId: string) => void;
 }) {
   const [readerPostId, setReaderPostId] = useState<string | null>(null);
   const readerPost =
@@ -385,7 +413,10 @@ export function ServerBoardPostFeedDisplay({
                           type: "button",
                           variant: "ghost",
                           className: "min-h-11",
-                          onClick: () => setReaderPostId(item.id),
+                          onClick: () =>
+                            onReadPost
+                              ? onReadPost(item.id)
+                              : setReaderPostId(item.id),
                         },
                         "Open post",
                         createElement(ArrowUpRight, {

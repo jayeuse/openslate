@@ -1,4 +1,5 @@
 "use client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -11,9 +12,9 @@ import {
 } from "lucide-react";
 import {
   Suspense,
+  useEffect,
   useRef,
   useState,
-  type FormEvent,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -38,41 +39,84 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { SampleDataNote } from "@/components/sample-data-note";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import { DiscardChangesDialog } from "../access/components/people-fields";
+import { ApiError } from "@/lib/api";
+import { requestSessionRecheck } from "@/lib/auth-api";
+import { useMfaFlow } from "@/components/mfa-flow";
 import ManageAudit from "./components/audit";
 import {
   decodeManageSettings,
   diffManageSettings,
-  downloadManageSnapshot,
   initialManageSettings,
   useManageController,
   type ManageSection,
   type ManageSettings,
-  type ManageSnapshot,
 } from "./state/state";
-import type { ManageSession } from "./state/sessions";
 import { SettingsChanges } from "./components/panel-ui";
 import {
   ManageMfaDialog,
-  ManagePreviewDialog,
-  ManageSnapshotCompareDialog,
-  ManageSnapshotRenameDialog,
   ManageConfirmationDialog,
   type ConfirmState,
-  type PreviewState,
 } from "./components/manage-dialogs";
 import { OrganizationPanel } from "./components/organization-panel";
-import { SecurityPanel, SecurityPolicyForm } from "./components/security-panel";
-import { BackupPanel, SnapshotScheduleForm } from "./components/backup-panel";
-import { UpdatesPanel } from "./components/updates-panel";
 import {
-  LicensingPanel,
-  LicenseTierComparison,
-} from "./components/licensing-panel";
+  afterManageWorkspaceChange,
+  afterManageSecurityChange,
+  afterManageSessionsChange,
+  manageWorkspaceOptions,
+  manageKeys,
+  manageSecurityOptions,
+  manageSessionsOptions,
+} from "./adapters/manage-queries";
+import {
+  isStaleWorkspaceRevision,
+  organizationLocaleTag,
+  workspaceSettingsFormFields,
+  workspaceSettingsPatch,
+  updateManageWorkspace,
+  type WorkspaceSettingsFormDraft,
+} from "./adapters/workspace-api";
+import {
+  defaultManageSessionsRequest,
+  endAllManageRemoteSessions,
+  endManageSession,
+  securitySettingsFormFields,
+  securitySettingsPatch,
+  updateManageSecurityPolicy,
+  type ManageAdminSession,
+  type SecuritySettingsFormDraft,
+} from "./adapters/security-api";
+import { SecurityPanel, SecurityPolicyForm } from "./components/security-panel";
+import {
+  BackupPanel,
+  BackupRunnerStatus,
+  SnapshotScheduleForm,
+} from "./components/backup-panel";
+import { useManageMaintenance } from "./state/controller";
+import { backupScheduleLabels } from "./adapters/backup-api";
+import { UpdatesPanel } from "./components/updates-panel";
+import { LicensingPanel } from "./components/licensing-panel";
 
 type ViewTab =
   "Organization" | "Security" | "Audit" | "Backup" | "Updates & licensing";
 
-type Snapshot = ManageSnapshot;
+function organizationErrors(
+  draft: WorkspaceSettingsFormDraft,
+  workspaceReady: boolean,
+): Partial<Record<keyof ManageSettings, string>> {
+  const errors: Partial<Record<keyof ManageSettings, string>> = {};
+  if (!workspaceReady) return errors;
+  if (draft.name !== undefined) {
+    if (!draft.name.trim()) errors.name = "Enter an organization name.";
+    else if (draft.name.length > 200)
+      errors.name = "Use 200 characters or fewer.";
+  }
+  if (draft.logo !== undefined && draft.logo.trim().length > 32)
+    errors.logo = "Use 32 characters or fewer.";
+  if (draft.hours !== undefined && draft.hours.trim().length > 200)
+    errors.hours = "Use 200 characters or fewer.";
+  return errors;
+}
 
 const manageTabs: readonly ViewTab[] = [
   "Organization",
@@ -119,40 +163,105 @@ function ManageContent() {
   const router = useRouter();
   const requestedTab = manageTabFromQuery(searchParams.get("view"));
   const manage = useManageController();
-  const activeUsers = manage.people.filter((person) => person.active).length;
-  const {
-    settings,
-    snapshots: backups,
-    sessions,
-    history,
-    storageUnavailable,
-    hasDrafts: allDraftsDirty,
-  } = manage;
-  const seatLimit = settings.tier === "Business" ? 100 : 25;
+  const queryClient = useQueryClient();
+  const { settings, storageUnavailable } = manage;
+  const maintenance = useManageMaintenance({
+    recoveryActive: requestedTab === "Security" || requestedTab === "Backup",
+    historyActive: requestedTab === "Backup",
+    versionActive: requestedTab === "Updates & licensing",
+  });
   const tab = requestedTab;
+  const [workspaceDraft, setWorkspaceDraft] =
+    useState<WorkspaceSettingsFormDraft>({});
+  const [workspaceStale, setWorkspaceStale] = useState(false);
+  const [workspaceRefreshRequired, setWorkspaceRefreshRequired] =
+    useState(false);
+  const [workspaceSavePending, setWorkspaceSavePending] = useState(false);
+  const workspaceQuery = useQuery({
+    ...manageWorkspaceOptions(),
+    enabled: tab === "Organization",
+  });
+  const [securityDraft, setSecurityDraft] = useState<SecuritySettingsFormDraft>(
+    {},
+  );
+  const [securityStale, setSecurityStale] = useState(false);
+  const [securityRefreshRequired, setSecurityRefreshRequired] = useState(false);
+  const [securitySavePending, setSecuritySavePending] = useState(false);
+  const [sessionEndPending, setSessionEndPending] = useState(false);
+  const [sessionsReadDenied, setSessionsReadDenied] = useState(false);
+  const [policyReadDenied, setPolicyReadDenied] = useState(false);
+  const [sessionRequest, setSessionRequest] = useState(
+    defaultManageSessionsRequest,
+  );
+  const securityQuery = useQuery({
+    ...manageSecurityOptions(),
+    enabled: (tab === "Security" || tab === "Backup") && !policyReadDenied,
+  });
+  const sessionsQuery = useQuery({
+    ...manageSessionsOptions(sessionRequest),
+    enabled: (tab === "Security" || tab === "Backup") && !sessionsReadDenied,
+  });
+  const currentPolicyReadDenied =
+    securityQuery.error instanceof ApiError &&
+    securityQuery.error.status === 403;
+  if (currentPolicyReadDenied && !policyReadDenied) setPolicyReadDenied(true);
+  const securityDenied = policyReadDenied || currentPolicyReadDenied;
+  const currentSessionReadDenied =
+    sessionsQuery.error instanceof ApiError &&
+    sessionsQuery.error.status === 403;
+  // A cached filter revisit cannot clear a server refusal. Only Retry's fresh
+  // successful read can admit the session collection again for this account.
+  if (currentSessionReadDenied && !sessionsReadDenied)
+    setSessionsReadDenied(true);
+  const sessionsDenied = sessionsReadDenied || currentSessionReadDenied;
+  useEffect(() => {
+    const refusedKeys = [
+      ...(sessionsReadDenied ? [manageKeys.sessions()] : []),
+      ...(policyReadDenied ? [manageKeys.security()] : []),
+    ];
+    for (const queryKey of refusedKeys) {
+      void queryClient.cancelQueries({ queryKey }).then(() => {
+        queryClient.removeQueries({ queryKey });
+      });
+    }
+  }, [sessionsReadDenied, policyReadDenied, queryClient]);
+  const securityFields =
+    securityQuery.data && !securityDenied
+      ? securitySettingsFormFields(securityQuery.data)
+      : null;
+  const securityPatch = securityQuery.data
+    ? securitySettingsPatch(securityQuery.data, securityDraft)
+    : null;
+  const securityDirty =
+    securityPatch !== null ||
+    (!securityQuery.data && Object.keys(securityDraft).length > 0);
+  const livePending =
+    workspaceSavePending ||
+    securitySavePending ||
+    sessionEndPending ||
+    maintenance.pending;
   const [notice, setNotice] = useState("");
   const [navigationNotice, setNavigationNotice] = useState("");
+  const [pendingLeave, setPendingLeave] = useState<{
+    resume: () => void;
+  } | null>(null);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [draftAcknowledged, setDraftAcknowledged] = useState(false);
-  const [preview, setPreview] = useState<PreviewState | null>(null);
-  const [mfaStep, setMfaStep] = useState(0);
-  const [mfaOpen, setMfaOpen] = useState(false);
-  const [showChangelog, setShowChangelog] = useState(false);
-  const [dummyKey, setDummyKey] = useState("SAMPLE-TEAM-2026");
+  const mfa = useMfaFlow();
+  const cancelMfa = mfa.cancel;
+  useEffect(() => () => cancelMfa(), [cancelMfa]);
   const [policyOpen, setPolicyOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const policyOpener = useRef<HTMLButtonElement | null>(null);
   const scheduleOpener = useRef<HTMLButtonElement | null>(null);
-  const [renameTarget, setRenameTarget] = useState<Snapshot | null>(null);
-  const [renameValue, setRenameValue] = useState("");
-  const [renameError, setRenameError] = useState("");
-  const [compareTarget, setCompareTarget] = useState<Snapshot | null>(null);
   const confirmOpener = useRef<HTMLElement | null>(null);
-  const renameOpener = useRef<HTMLElement | null>(null);
   const mfaOpener = useRef<HTMLButtonElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const optionsOpener = useRef<HTMLButtonElement | null>(null);
+  const sessionConfirmationRefused =
+    sessionsDenied && confirm?.origin === "admin-sessions";
+  if (sessionConfirmationRefused) setConfirm(null);
   const recoveryView = tab === "Security" || tab === "Backup";
   const pageTitle = recoveryView ? "Security & recovery" : tab;
   const sampleSubject =
@@ -163,32 +272,58 @@ function ManageContent() {
         : recoveryView
           ? "Sessions and snapshots"
           : "Settings";
+  const liveSourceStatus =
+    tab === "Organization"
+      ? "Settings save to the organization."
+      : tab === "Audit"
+        ? "Audit entries are loaded from your organization."
+        : recoveryView
+          ? "Account policy, sessions, backup policy, and backup history are loaded from your server."
+          : "The running version and host runner release observations are loaded from your server. No license is required.";
   const pageDescription =
     tab === "Organization"
       ? "Make this workspace feel like your organization."
       : tab === "Audit"
         ? "See who changed what, then inspect the details."
         : tab === "Updates & licensing"
-          ? "Your workspace version and plan, together in one place."
-          : "Review sessions and keep a copy of your workspace settings.";
+          ? "Your running version and license status, together in one place."
+          : "Review sessions and manage backup requests.";
 
   const section = sectionForTab(tab);
+  const workspacePatch = workspaceQuery.data
+    ? workspaceSettingsPatch(workspaceQuery.data, workspaceDraft)
+    : null;
+  const workspaceDraftDirty = workspacePatch !== null;
+  const allDraftsDirty =
+    securityDirty || maintenance.dirty || workspaceDraftDirty;
   const currentFor = (view: ViewTab): ManageSettings => {
     const currentSection = sectionForTab(view);
     return currentSection ? manage.getDraft(currentSection) : settings;
   };
-  const current = currentFor(tab);
-  const previewSettings = decodeManageSettings(current);
-  const dirty = section ? manage.dirty(section) : false;
-  const errors = section ? manage.errors(section) : {};
-  const updateAvailable = manage.updateAvailable;
-  const remoteSessions = sessions.filter((session) => !session.current);
-  const localeCode =
-    current.locale === "Filipino"
-      ? "fil-PH"
-      : current.locale === "English (US)"
-        ? "en-US"
-        : "en-PH";
+  const sampleCurrent = currentFor(tab);
+  const workspaceFields = workspaceQuery.data
+    ? workspaceSettingsFormFields(workspaceQuery.data)
+    : null;
+  const current =
+    tab === "Organization" && workspaceFields
+      ? { ...sampleCurrent, ...workspaceFields, ...workspaceDraft }
+      : sampleCurrent;
+  const previewSettings =
+    tab === "Organization" && workspaceFields
+      ? current
+      : decodeManageSettings(current);
+  const dirty =
+    tab === "Organization"
+      ? workspaceDraftDirty
+      : section
+        ? manage.dirty(section)
+        : false;
+  const sectionErrors = section ? manage.errors(section) : {};
+  const errors =
+    tab === "Organization"
+      ? organizationErrors(workspaceDraft, workspaceQuery.data !== undefined)
+      : sectionErrors;
+  const localeCode = organizationLocaleTag(current.locale);
   const regionalDate = new Intl.DateTimeFormat(localeCode, {
     dateStyle: "medium",
     timeStyle: "short",
@@ -198,37 +333,132 @@ function ManageContent() {
     style: "currency",
     currency: previewSettings.currency,
   }).format(12500);
-  const retention = manage.retentionPreview();
 
-  useWorkspaceNavigationGuard(() => {
-    if (manage.pending) {
+  useWorkspaceNavigationGuard((href, resume) => {
+    if (manage.pending || livePending) {
       setNavigationNotice(
         "Finish the current change before leaving this page.",
       );
       return false;
     }
     setNavigationNotice("");
+    // Switching Manage sections keeps drafts; only leaving Manage loses them.
+    const leavesManage =
+      new URL(href, window.location.origin).pathname !==
+      window.location.pathname;
+    if (allDraftsDirty && leavesManage) {
+      setPendingLeave({ resume });
+      return false;
+    }
     return true;
   });
+
+  useEffect(() => {
+    if (!allDraftsDirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [allDraftsDirty]);
+
+  function discardAndLeave() {
+    const leave = pendingLeave;
+    setPendingLeave(null);
+    setWorkspaceDraft({});
+    setWorkspaceStale(false);
+    setWorkspaceRefreshRequired(false);
+    maintenance.discardDraft();
+    setSecurityDraft({});
+    setSecurityStale(false);
+    setSecurityRefreshRequired(false);
+    leave?.resume();
+  }
 
   function changeSetting(
     target: ManageSection,
     key: keyof ManageSettings,
     value: string,
   ) {
+    if (
+      target === "organization" &&
+      (key === "name" ||
+        key === "locale" ||
+        key === "timezone" ||
+        key === "logo" ||
+        key === "currency" ||
+        key === "week" ||
+        key === "hours")
+    ) {
+      const saved = workspaceQuery.data
+        ? workspaceSettingsFormFields(workspaceQuery.data)
+        : null;
+      setWorkspaceDraft((currentDraft) => {
+        const next = { ...currentDraft, [key]: value };
+        const unchanged = saved
+          ? key === "name" || key === "logo" || key === "hours"
+            ? value.trim() === saved[key]
+            : value === saved[key]
+          : false;
+        if (unchanged) delete next[key];
+        return next;
+      });
+      setNotice("");
+      setError("");
+      return;
+    }
+    if (
+      target === "security" &&
+      (key === "password" ||
+        key === "timeout" ||
+        key === "mfa" ||
+        key === "ips")
+    ) {
+      setSecurityDraft((draft) => {
+        const next = { ...draft, [key]: value };
+        if (securityFields && value === securityFields[key]) delete next[key];
+        return next;
+      });
+      setNotice("");
+      setError("");
+      return;
+    }
     manage.change(target, key, value);
     setNotice("");
     setError("");
   }
 
   function clearDraft(target: ManageSection) {
-    if (manage.pending) return;
-    manage.discard(target);
+    if (manage.pending || livePending) return;
+    if (target === "security") {
+      setSecurityDraft({});
+      setSecurityStale(false);
+      setSecurityRefreshRequired(false);
+    } else if (target === "backup") maintenance.discardDraft();
+    else manage.discard(target);
+    if (target === "organization") {
+      setWorkspaceDraft({});
+      setWorkspaceStale(false);
+      setWorkspaceRefreshRequired(false);
+    }
     setError("");
     setNotice("Unsaved changes discarded.");
   }
 
   async function saveSection(target: ManageSection) {
+    if (target === "organization") {
+      await saveOrganization();
+      return;
+    }
+    if (target === "security") {
+      await saveSecurity();
+      return;
+    }
+    if (target === "backup") {
+      await maintenance.savePolicy();
+      return;
+    }
     const result = await manage.save(target);
     if (!result.ok) {
       setError(result.message);
@@ -242,6 +472,146 @@ function ManageContent() {
     );
   }
 
+  async function retryWorkspace() {
+    const result = await workspaceQuery.refetch();
+    if (result.isError || !result.data) {
+      setError("The organization settings could not be loaded. Try again.");
+      return;
+    }
+    setError("");
+    if (workspaceRefreshRequired) {
+      setWorkspaceRefreshRequired(false);
+      setWorkspaceStale(true);
+    }
+  }
+
+  async function saveOrganization() {
+    if (manage.pending || livePending) return;
+    const validationError = Object.values(
+      organizationErrors(workspaceDraft, workspaceQuery.data !== undefined),
+    )[0];
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    if (!workspaceQuery.data) {
+      setError(
+        "The organization settings could not be loaded. Retry before saving.",
+      );
+      return;
+    }
+
+    const patch = workspaceQuery.data
+      ? workspaceSettingsPatch(workspaceQuery.data, workspaceDraft)
+      : null;
+    setNotice("");
+    setError("");
+    if (patch) {
+      setWorkspaceSavePending(true);
+      try {
+        const saved = await updateManageWorkspace(patch);
+        afterManageWorkspaceChange(queryClient, saved);
+        setWorkspaceDraft({});
+        setWorkspaceStale(false);
+        setWorkspaceRefreshRequired(false);
+        setNotice("Organization settings saved.");
+      } catch (caught) {
+        if (isStaleWorkspaceRevision(caught)) {
+          setWorkspaceRefreshRequired(true);
+          const refreshed = await workspaceQuery.refetch();
+          if (refreshed.isError || !refreshed.data) {
+            setError(
+              "Workspace settings changed, but the latest values could not be loaded. Retry before saving again.",
+            );
+          } else {
+            setWorkspaceRefreshRequired(false);
+            setWorkspaceStale(true);
+            setError("");
+          }
+          return;
+        }
+        setError(
+          caught instanceof ApiError && caught.status === 403
+            ? "Only administrators can change these settings. Reload the page to check your access."
+            : "The settings could not be saved. Try again.",
+        );
+        return;
+      } finally {
+        setWorkspaceSavePending(false);
+      }
+    } else if (Object.keys(workspaceDraft).length > 0) {
+      setWorkspaceDraft({});
+      setWorkspaceStale(false);
+    }
+
+    setError("");
+    setNotice("Organization settings saved.");
+  }
+
+  async function retrySecurity() {
+    const result = await securityQuery.refetch();
+    if (!result.isError && result.data) {
+      setPolicyReadDenied(false);
+      setSecurityRefreshRequired(false);
+      setError("");
+    }
+  }
+
+  async function retrySessions() {
+    const result = await sessionsQuery.refetch();
+    if (!result.isError && result.data) setSessionsReadDenied(false);
+  }
+
+  async function saveSecurity() {
+    if (manage.pending || livePending) return;
+    if (!securityQuery.data || securityDenied || securityRefreshRequired) {
+      setError("Account policy could not be loaded. Retry before saving.");
+      return;
+    }
+    const patch = securitySettingsPatch(securityQuery.data, securityDraft);
+    if (!patch) {
+      setSecurityDraft({});
+      return;
+    }
+    setError("");
+    setNotice("");
+    setSecuritySavePending(true);
+    try {
+      const saved = await updateManageSecurityPolicy(patch);
+      afterManageSecurityChange(queryClient, saved);
+      setSecurityDraft({});
+      setSecurityStale(false);
+      setSecurityRefreshRequired(false);
+      setNotice("Account policy saved.");
+      requestSessionRecheck();
+    } catch (caught) {
+      if (isStaleWorkspaceRevision(caught)) {
+        setSecurityStale(true);
+        setSecurityRefreshRequired(true);
+        const refreshed = await securityQuery.refetch();
+        if (!refreshed.isError && refreshed.data)
+          setSecurityRefreshRequired(false);
+        else
+          setError(
+            "The latest policy could not be loaded. Retry before saving again.",
+          );
+      } else {
+        setError(
+          caught instanceof ApiError && caught.code === "ip_lockout"
+            ? "The IP allow list would block your current address. Include your current address before saving."
+            : caught instanceof ApiError && caught.status === 422
+              ? "Check the policy values and IP addresses. Your changes are still here."
+              : caught instanceof ApiError && caught.status === 403
+                ? "Only administrators can change account policy. Reload the page to check your access."
+                : "The policy could not be saved. Try again.",
+        );
+      }
+    } finally {
+      setSecuritySavePending(false);
+    }
+  }
+
   function requestConfirm(next: ConfirmState, event?: MouseEvent<HTMLElement>) {
     confirmOpener.current = event?.currentTarget ?? null;
     setDraftAcknowledged(false);
@@ -249,44 +619,12 @@ function ManageContent() {
     setConfirm(next);
   }
 
-  async function addSnapshot(name: string) {
-    const result = await manage.createSnapshot(
-      name.trim() || "Manual snapshot",
-    );
-    setError(result.ok ? "" : result.message);
-    setNotice(result.ok ? result.message : "");
-    return result.ok;
-  }
-
-  function requestRestore(snapshot: Snapshot, event: MouseEvent<HTMLElement>) {
-    const differences = manage.snapshotDiff(snapshot.id);
-    requestConfirm(
-      {
-        title: "Restore configuration",
-        description: `Restore the saved Manage settings from ${snapshot.name}? This replaces committed organization, policy, backup, update and license settings only.`,
-        confirmLabel: "Confirm restore",
-        requiresDraftAck: allDraftsDirty,
-        body: <SettingsChanges differences={differences} />,
-        action: async () => {
-          const result = await manage.restoreSnapshot(snapshot.id, {
-            discardDrafts: allDraftsDirty,
-          });
-          setError(result.ok ? "" : result.message);
-          setNotice(result.ok ? result.message : "");
-
-          return result.ok;
-        },
-      },
-      event,
-    );
-  }
-
   function requestReset(event: MouseEvent<HTMLElement>) {
     requestConfirm(
       {
         title: "Reset Manage configuration",
         description:
-          "Restore organization, security, backup, update and license settings to the bundled defaults. People, sessions, snapshots, activity and other pages remain unchanged.",
+          "Restore browser preview settings to bundled defaults and discard unsaved Manage drafts. Persisted organization and account policy are unchanged.",
         confirmLabel: "Reset Manage configuration",
         requiresDraftAck: allDraftsDirty,
         body: (
@@ -295,9 +633,24 @@ function ManageContent() {
           />
         ),
         action: async () => {
-          const result = await manage.reset({ discardDrafts: allDraftsDirty });
+          const result = await manage.reset({
+            discardDrafts: allDraftsDirty,
+          });
+          if (result.ok) {
+            setWorkspaceDraft({});
+            setWorkspaceStale(false);
+            setWorkspaceRefreshRequired(false);
+            maintenance.discardDraft();
+            setSecurityDraft({});
+            setSecurityStale(false);
+            setSecurityRefreshRequired(false);
+          }
           setError(result.ok ? "" : result.message);
-          setNotice(result.ok ? result.message : "");
+          setNotice(
+            result.ok
+              ? "Preview settings restored. Organization and account policy are unchanged."
+              : "",
+          );
 
           return result.ok;
         },
@@ -306,19 +659,45 @@ function ManageContent() {
     );
   }
 
-  function endSession(session: ManageSession, event: MouseEvent<HTMLElement>) {
+  async function runSessionEnd(action: () => Promise<null>, all: boolean) {
+    if (manage.pending || livePending) return false;
+    setSessionEndPending(true);
+    setError("");
+    setNotice("");
+    try {
+      await action();
+      await afterManageSessionsChange(queryClient);
+      setSessionRequest((request) => ({ ...request, offset: 0 }));
+      setNotice(
+        all
+          ? "Remote sessions ended. Your current session stays active."
+          : "Session ended.",
+      );
+      return true;
+    } catch {
+      setError(
+        all
+          ? "Remote sessions could not be ended. Try again."
+          : "The session could not be ended. Try again.",
+      );
+      return false;
+    } finally {
+      setSessionEndPending(false);
+    }
+  }
+
+  function endSession(
+    session: ManageAdminSession,
+    event: MouseEvent<HTMLElement>,
+  ) {
+    if (session.current) return;
     requestConfirm(
       {
+        origin: "admin-sessions",
         title: "End session",
-        description: `${session.personName}'s ${session.device} ${session.browser} session in ${session.location} will be removed from this session list. Your current session stays active.`,
+        description: `${session.person_name}'s ${session.device} ${session.browser} session will be signed out. Your current session stays active.`,
         confirmLabel: "Confirm end session",
-        action: async () => {
-          const result = await manage.revokeSession(session.id);
-          setError(result.ok ? "" : result.message);
-          setNotice(result.ok ? result.message : "");
-
-          return result.ok;
-        },
+        action: () => runSessionEnd(() => endManageSession(session), false),
       },
       event,
     );
@@ -327,119 +706,30 @@ function ManageContent() {
   function endAllRemoteSessions(event: MouseEvent<HTMLElement>) {
     requestConfirm(
       {
+        origin: "admin-sessions",
         title: "End all remote sessions",
-        description: `End ${remoteSessions.length} remote sessions? The current session remains active and no account will be signed out.`,
+        description:
+          "End all other active sessions across the organization? Your current session stays active.",
         confirmLabel: "Confirm end all remote sessions",
-        action: async () => {
-          const result = await manage.revokeAllSessions();
-          setError(result.ok ? "" : result.message);
-          setNotice(result.ok ? result.message : "");
-
-          return result.ok;
-        },
+        action: () => runSessionEnd(endAllManageRemoteSessions, true),
       },
       event,
     );
   }
 
   function openMfa(event?: MouseEvent<HTMLButtonElement>) {
-    setMfaStep(0);
     mfaOpener.current = event?.currentTarget ?? null;
-    setMfaOpen(true);
-  }
-
-  function startUpdate() {
-    requestConfirm({
-      title: "Apply update",
-      description: `Update version ${settings.version} to 1.5.0? This updates the visible version and keeps a rollback point. No software is installed.`,
-      confirmLabel: "Confirm update",
-      action: async () => {
-        const result = await manage.applyUpdate();
-        setError(result.ok ? "" : result.message);
-        setNotice(result.ok ? result.message : "");
-
-        return result.ok;
-      },
-    });
-  }
-
-  function rollbackUpdate(event: MouseEvent<HTMLElement>) {
-    requestConfirm(
-      {
-        title: "Roll back update",
-        description: `Return the version to ${settings.previous}? This only changes the displayed version.`,
-        confirmLabel: "Confirm rollback",
-        action: async () => {
-          const result = await manage.rollbackUpdate();
-          setError(result.ok ? "" : result.message);
-          setNotice(result.ok ? result.message : "");
-
-          return result.ok;
-        },
-      },
-      event,
-    );
-  }
-
-  function activateLicense(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    requestConfirm({
-      title: "Activate license",
-      description: `Activate the bundled ${dummyKey.includes("BUSINESS") ? "Business" : "Team"} license? No payment or license service will be contacted.`,
-      confirmLabel: "Confirm activation",
-      action: async () => {
-        const result = await manage.activateLicense(dummyKey);
-        setError(result.ok ? "" : result.message);
-        setNotice(result.ok ? result.message : "");
-
-        return result.ok;
-      },
-    });
-  }
-
-  function renewLicense(event: MouseEvent<HTMLElement>) {
-    requestConfirm(
-      {
-        title: "Renew license",
-        description:
-          "Extend the displayed expiration date by one year. No purchase or payment will occur.",
-        confirmLabel: "Confirm renewal",
-        action: async () => {
-          const result = await manage.renewLicense();
-          setError(result.ok ? "" : result.message);
-          setNotice(result.ok ? result.message : "");
-
-          return result.ok;
-        },
-      },
-      event,
-    );
-  }
-
-  function downloadSnapshot(snapshot: Snapshot) {
-    downloadManageSnapshot(snapshot);
-    setNotice(`Downloaded ${snapshot.name}.`);
-  }
-
-  async function submitSnapshotRename(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!renameTarget || !renameValue.trim() || manage.pending) return;
-    const result = await manage.renameSnapshot(
-      renameTarget.id,
-      renameValue.trim(),
-    );
-    if (!result.ok) {
-      setRenameError(result.message);
-      return;
-    }
-    setRenameTarget(null);
-    setNotice(result.message);
+    mfa.openManage();
   }
 
   const panelClass =
     "min-w-0 w-full rounded-[var(--radius)] border-border bg-card";
 
-  if (manage.resource.status !== "ready")
+  if (
+    manage.resource.status !== "ready" &&
+    tab !== "Backup" &&
+    tab !== "Updates & licensing"
+  )
     return (
       <section className="space-y-4">
         <h1 data-slot="page-title" className="text-2xl font-semibold">
@@ -474,8 +764,25 @@ function ManageContent() {
         <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
           {pageDescription}
         </p>
-        <SampleDataNote className="mt-3">
-          {sampleSubject} here are examples.
+        <SampleDataNote
+          ariaLabel={
+            tab === "Backup" || tab === "Updates & licensing"
+              ? "Server data"
+              : liveSourceStatus
+                ? "Organization data"
+                : undefined
+          }
+          className="mt-3"
+          sourceLabel={
+            tab === "Backup" || tab === "Updates & licensing"
+              ? "Server"
+              : liveSourceStatus
+                ? "Organization"
+                : undefined
+          }
+          suffix={liveSourceStatus ? "" : undefined}
+        >
+          {liveSourceStatus ?? `${sampleSubject} here are examples.`}
         </SampleDataNote>
       </div>
       <div className="flex shrink-0 items-center gap-2">
@@ -513,11 +820,11 @@ function ManageContent() {
   return (
     <div className="min-w-0 space-y-6">
       <fieldset
-        disabled={manage.pending}
-        aria-busy={manage.pending}
+        disabled={manage.pending || livePending}
+        aria-busy={manage.pending || livePending}
         className="min-w-0 space-y-6"
       >
-        {manage.pending ? (
+        {manage.pending || livePending ? (
           <p role="status" className="text-muted-foreground text-sm">
             Saving changes…
           </p>
@@ -534,7 +841,9 @@ function ManageContent() {
         ) : null}
         {tab !== "Audit" ? renderPageHeader() : null}
 
-        {storageUnavailable ? (
+        {storageUnavailable &&
+        tab !== "Backup" &&
+        tab !== "Updates & licensing" ? (
           <Alert role="note" variant="warning">
             Browser storage is unavailable. Your latest changes exist in memory
             only and may be lost on reload.
@@ -547,14 +856,21 @@ function ManageContent() {
               {navigationNotice}
             </Alert>
           ) : null}
-          {notice ? (
+          <DiscardChangesDialog
+            open={pendingLeave !== null}
+            title="Discard unsaved Manage changes?"
+            description="Your unsaved organization, security or backup changes will be lost."
+            onKeep={() => setPendingLeave(null)}
+            onDiscard={discardAndLeave}
+          />
+          {notice || (recoveryView && maintenance.notice) ? (
             <Alert
               role="status"
               variant="success"
               className="flex items-center gap-2"
             >
               <CheckCircle2 aria-hidden="true" />
-              {notice}
+              {notice || maintenance.notice}
             </Alert>
           ) : null}
           {error ? (
@@ -580,6 +896,11 @@ function ManageContent() {
               panelClass={panelClass}
               regionalDate={regionalDate}
               regionalCurrency={regionalCurrency}
+              workspace={workspaceQuery.data}
+              workspaceLoading={workspaceQuery.isPending}
+              workspaceLoadFailed={workspaceQuery.isError}
+              onRetryWorkspace={retryWorkspace}
+              staleRevision={workspaceStale}
             />
           ) : null}
 
@@ -589,8 +910,8 @@ function ManageContent() {
               className="min-w-0 space-y-5"
             >
               <Alert role="note">
-                Preview workspace · Policies and sessions are simulated.
-                Snapshots contain saved Manage settings only.
+                Backup requests are queued for a configured host runner. Restore
+                and software updates are offline server-operator procedures.
               </Alert>
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="bg-card flex flex-wrap items-center gap-4 rounded-lg border p-5">
@@ -603,15 +924,16 @@ function ManageContent() {
                       <h2 data-slot="section-title" className="font-semibold">
                         Account policy
                       </h2>
-                      {manage.dirty("security") ? (
+                      {securityDirty ? (
                         <Badge variant="warning">Unsaved changes</Badge>
                       ) : null}
                     </div>
                     <p className="text-muted-foreground mt-1 text-sm">
-                      {settings.mfa === "Optional"
-                        ? "Optional two-factor"
-                        : settings.mfa}{" "}
-                      · {settings.timeout} timeout
+                      {securityFields
+                        ? `${securityFields.mfa === "Optional" ? "Optional two-factor" : securityFields.mfa} · ${securityFields.timeout} timeout`
+                        : securityQuery.isPending && !securityDenied
+                          ? "Loading policy…"
+                          : "Account policy unavailable"}
                     </p>
                   </div>
                   <Button
@@ -634,19 +956,38 @@ function ManageContent() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 data-slot="section-title" className="font-semibold">
-                        Snapshot schedule
+                        Backup schedule
                       </h2>
-                      {manage.dirty("backup") ? (
+                      {maintenance.dirty ? (
                         <Badge variant="warning">Unsaved changes</Badge>
                       ) : null}
                     </div>
                     <p className="text-muted-foreground mt-1 text-sm">
-                      {settings.schedule} · Keep{" "}
-                      {settings.retention.toLowerCase()}
+                      {maintenance.acceptedStatus
+                        ? `${backupScheduleLabels[maintenance.acceptedStatus.policy.schedule]} · Keep ${maintenance.acceptedStatus.policy.retention_days} days`
+                        : maintenance.status.isPending &&
+                            !maintenance.policyRefused
+                          ? "Loading backup policy…"
+                          : "Backup policy unavailable"}
                     </p>
-                    <p className="text-muted-foreground text-xs">
-                      Simulated schedule
-                    </p>
+                    {maintenance.acceptedStatus ? (
+                      <BackupRunnerStatus status={maintenance.acceptedStatus} />
+                    ) : maintenance.status.isError ||
+                      maintenance.policyRefused ? (
+                      <Alert role="alert" variant="destructive">
+                        <p>
+                          {maintenance.policyRefused
+                            ? "Only administrators can review backup policy."
+                            : "Backup policy could not be loaded."}
+                        </p>
+                        <Button
+                          variant="outline"
+                          onClick={() => void maintenance.retryPolicy()}
+                        >
+                          Retry backup policy
+                        </Button>
+                      </Alert>
+                    ) : null}
                   </div>
                   <Button
                     ref={scheduleOpener}
@@ -664,7 +1005,7 @@ function ManageContent() {
               <Tabs
                 value={tab === "Backup" ? "snapshots" : "sessions"}
                 onValueChange={(value) => {
-                  if (!manage.pending)
+                  if (!manage.pending && !livePending)
                     router.push(
                       `/manage?view=${value === "snapshots" ? "backup" : "security"}`,
                       { scroll: false },
@@ -673,85 +1014,67 @@ function ManageContent() {
               >
                 <TabsList aria-label="Security and recovery views">
                   <TabsTrigger value="sessions" className="min-h-11 gap-2 px-4">
-                    Sessions <Badge variant="outline">{sessions.length}</Badge>
+                    Sessions{" "}
+                    <Badge variant="outline">
+                      {sessionsDenied
+                        ? "—"
+                        : (sessionsQuery.data?.pagination.total ?? "—")}
+                    </Badge>
                   </TabsTrigger>
                   <TabsTrigger
                     value="snapshots"
                     className="min-h-11 gap-2 px-4"
                   >
-                    Snapshots <Badge variant="outline">{backups.length}</Badge>
+                    Backups{" "}
+                    <Badge variant="outline">
+                      {maintenance.acceptedHistory?.pagination.total ?? "—"}
+                    </Badge>
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="sessions" keepMounted className="min-w-0">
                   <SecurityPanel
-                    sessions={manage.collections.sessions}
+                    sessions={
+                      sessionsDenied || sessionsQuery.isError
+                        ? {
+                            status: "error",
+                            message: sessionsDenied
+                              ? "Only administrators can review sessions."
+                              : "Sessions could not be loaded.",
+                            page: sessionsDenied
+                              ? undefined
+                              : sessionsQuery.data,
+                          }
+                        : sessionsQuery.isPending
+                          ? { status: "loading" }
+                          : { status: "ready", page: sessionsQuery.data }
+                    }
+                    request={sessionRequest}
+                    onRequestChange={setSessionRequest}
+                    onRetry={() => void retrySessions()}
                     actions={{ endAllRemoteSessions, endSession }}
                   />
                 </TabsContent>
                 <TabsContent value="snapshots" keepMounted className="min-w-0">
-                  <BackupPanel
-                    snapshots={manage.collections.snapshots}
-                    actions={{
-                      addSnapshot,
-                      requestRestore,
-                      setCompareTarget,
-                      downloadSnapshot,
-                      renameOpener,
-                      setRenameTarget,
-                      setRenameError,
-                      setRenameValue,
-                      requestConfirm,
-                      manage,
-                      setError,
-                      setNotice,
-                    }}
-                  />
+                  <BackupPanel maintenance={maintenance} />
                 </TabsContent>
               </Tabs>
             </section>
           ) : null}
 
           {tab === "Audit" ? (
-            <ManageAudit
-              entries={manage.collections.activity}
-              renderHeader={renderPageHeader}
-            />
+            <ManageAudit renderHeader={renderPageHeader} />
           ) : null}
 
           {tab === "Updates & licensing" ? (
             <div className="min-w-0 space-y-5">
               <Alert role="note">
-                Preview environment. Version and license changes here are
-                simulated.
+                This page reads the running server version and recorded release
+                observations. Updates are applied by your server operator. No
+                license is required.
               </Alert>
               <div className="bg-card grid min-w-0 divide-y overflow-hidden rounded-lg border xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] xl:divide-x xl:divide-y-0">
-                <UpdatesPanel
-                  settings={settings}
-                  actions={{
-                    manage,
-                    setError,
-                    setNotice,
-                    startUpdate,
-                    setShowChangelog,
-                    rollbackUpdate,
-                  }}
-                  updateAvailable={updateAvailable}
-                  showChangelog={showChangelog}
-                  history={history}
-                />
-                <LicensingPanel
-                  settings={settings}
-                  activeUsers={activeUsers}
-                  seatLimit={seatLimit}
-                  actions={{ renewLicense }}
-                  licenseForm={{ activateLicense, dummyKey, setDummyKey }}
-                />
-              </div>
-              <div className="bg-card rounded-lg border">
-                <LicenseTierComparison
-                  settings={settings}
-                  setPreview={setPreview}
-                />
+                <UpdatesPanel maintenance={maintenance} />
+                <LicensingPanel />
               </div>
             </div>
           ) : null}
@@ -760,7 +1083,7 @@ function ManageContent() {
       <Dialog
         open={policyOpen}
         onOpenChange={setPolicyOpen}
-        dismissible={!manage.pending}
+        dismissible={!manage.pending && !livePending}
       >
         <DialogContent
           className="max-w-3xl"
@@ -773,20 +1096,20 @@ function ManageContent() {
                 variant="ghost"
                 size="icon"
                 aria-label="Close account policy"
-                disabled={manage.pending}
+                disabled={manage.pending || livePending}
                 onClick={() => setPolicyOpen(false)}
               >
                 <X aria-hidden="true" />
               </Button>
             </div>
             <DialogDescription>
-              Set account protection preferences. These preview settings are not
-              enforced. Closing keeps your unsaved changes.
+              Set the account policy enforced by your organization. Closing
+              keeps your unsaved changes.
             </DialogDescription>
           </DialogHeader>
           <fieldset
-            disabled={manage.pending}
-            aria-busy={manage.pending}
+            disabled={manage.pending || livePending}
+            aria-busy={manage.pending || livePending}
             className="min-w-0 space-y-4"
           >
             {error ? (
@@ -794,21 +1117,50 @@ function ManageContent() {
                 {error}
               </Alert>
             ) : null}
-            <SecurityPolicyForm
-              form={{
-                dirty: manage.dirty("security"),
-                current: manage.getDraft("security"),
-                errors: manage.errors("security"),
-                saveSection,
-                clearDraft,
-                changeSetting,
-              }}
-              onPreviewMfa={() => {
-                setPolicyOpen(false);
-                openMfa();
-                mfaOpener.current = policyOpener.current;
-              }}
-            />
+            {securityStale ? (
+              <Alert role="note" variant="warning">
+                Policy changed since you opened it. Your draft is kept; review
+                the latest values before saving again.
+              </Alert>
+            ) : null}
+            {securityQuery.isPending && !securityDenied ? (
+              <p role="status">Loading account policy…</p>
+            ) : null}
+            {securityDenied ||
+            securityQuery.isError ||
+            securityRefreshRequired ? (
+              <Alert role="alert" variant="destructive">
+                <p>
+                  {securityDenied
+                    ? "Only administrators can review account policy."
+                    : "Account policy could not be loaded."}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void retrySecurity()}
+                >
+                  Retry account policy
+                </Button>
+              </Alert>
+            ) : null}
+            {securityFields ? (
+              <SecurityPolicyForm
+                form={{
+                  dirty: securityDirty,
+                  current: { ...settings, ...securityFields, ...securityDraft },
+                  errors: {},
+                  saveSection,
+                  clearDraft,
+                  changeSetting,
+                }}
+                onPreviewMfa={() => {
+                  setPolicyOpen(false);
+                  openMfa();
+                  mfaOpener.current = policyOpener.current;
+                }}
+              />
+            ) : null}
             <DialogFooter>
               <Button variant="outline" onClick={() => setPolicyOpen(false)}>
                 Close
@@ -820,7 +1172,7 @@ function ManageContent() {
       <Dialog
         open={scheduleOpen}
         onOpenChange={setScheduleOpen}
-        dismissible={!manage.pending}
+        dismissible={!maintenance.pending}
       >
         <DialogContent
           className="max-w-3xl"
@@ -828,51 +1180,28 @@ function ManageContent() {
         >
           <DialogHeader className="mb-5">
             <div className="flex items-center justify-between gap-3">
-              <DialogTitle>Snapshot schedule</DialogTitle>
+              <DialogTitle>Backup schedule</DialogTitle>
               <Button
                 variant="ghost"
                 size="icon"
-                aria-label="Close snapshot schedule"
-                disabled={manage.pending}
+                aria-label="Close backup schedule"
+                disabled={maintenance.pending}
                 onClick={() => setScheduleOpen(false)}
               >
                 <X aria-hidden="true" />
               </Button>
             </div>
             <DialogDescription>
-              Save schedule and retention preferences. No background job runs;
-              snapshots contain saved Manage settings only.
+              Save the server’s schedule and retention policy. Your server
+              operator configures the host runner.
             </DialogDescription>
           </DialogHeader>
           <fieldset
-            disabled={manage.pending}
-            aria-busy={manage.pending}
+            disabled={maintenance.pending}
+            aria-busy={maintenance.pending}
             className="min-w-0 space-y-4"
           >
-            {error ? (
-              <Alert role="alert" variant="destructive">
-                {error}
-              </Alert>
-            ) : null}
-            <SnapshotScheduleForm
-              form={{
-                dirty: manage.dirty("backup"),
-                current: manage.getDraft("backup"),
-                errors: manage.errors("backup"),
-                saveSection,
-                clearDraft,
-                changeSetting,
-              }}
-              settings={settings}
-              retention={retention}
-              actions={{
-                addSnapshot,
-                setPreview: (next) => {
-                  setScheduleOpen(false);
-                  setPreview(next);
-                },
-              }}
-            />
+            <SnapshotScheduleForm maintenance={maintenance} />
             <DialogFooter>
               <Button variant="outline" onClick={() => setScheduleOpen(false)}>
                 Close
@@ -881,35 +1210,10 @@ function ManageContent() {
           </fieldset>
         </DialogContent>
       </Dialog>
-      <ManageMfaDialog
-        open={mfaOpen}
-        step={mfaStep}
-        opener={mfaOpener}
-        onOpenChange={setMfaOpen}
-        onBack={() => setMfaStep((step) => step - 1)}
-        onNext={() => setMfaStep((step) => step + 1)}
-      />
-      <ManageSnapshotRenameDialog
-        open={renameTarget !== null}
-        pending={manage.pending}
-        value={renameValue}
-        error={renameError}
-        opener={renameOpener}
-        headingRef={headingRef}
-        onValueChange={setRenameValue}
-        onErrorClear={() => setRenameError("")}
-        onCancel={() => setRenameTarget(null)}
-        onSubmit={submitSnapshotRename}
-      />
-      <ManageSnapshotCompareDialog
-        target={compareTarget}
-        differences={compareTarget ? manage.snapshotDiff(compareTarget.id) : []}
-        onClose={() => setCompareTarget(null)}
-      />
-      <ManagePreviewDialog preview={preview} onClose={() => setPreview(null)} />
+      <ManageMfaDialog opener={mfaOpener} />
       <ManageConfirmationDialog
-        confirm={confirm}
-        pending={manage.pending}
+        confirm={sessionConfirmationRefused ? null : confirm}
+        pending={manage.pending || livePending}
         error={error}
         draftAcknowledged={draftAcknowledged}
         confirmOpener={confirmOpener}

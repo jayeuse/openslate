@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
+import { UserThemeProvider } from "@/components/theme-provider";
 import { bindOpenViewAccess } from "@/components/systems/openview/adapters/openview-access";
 
 function createQueryClient() {
@@ -33,5 +34,9 @@ export function AppQueryProvider({ children }: { children: ReactNode }) {
     bindOpenViewAccess(created);
     return created;
   });
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={client}>
+      <UserThemeProvider>{children}</UserThemeProvider>
+    </QueryClientProvider>
+  );
 }

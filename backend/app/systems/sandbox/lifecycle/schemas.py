@@ -70,6 +70,7 @@ class LifecycleExternalImpact(BaseModel):
     edge_id: UUID
     field_id: UUID
     external_record_id: UUID
+    external_record_label: str
     external_module_id: UUID
     external_module_name: str
     external_department_id: UUID

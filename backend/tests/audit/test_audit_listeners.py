@@ -76,6 +76,7 @@ def test_create_listener_stages_and_writes_create_log() -> None:
         "username": "alice",
         "display_name": None,
         "role": "member",
+        "theme_preference": None,
         "job_title": None,
         "sponsor_user_id": None,
         "expires_at": None,
@@ -117,10 +118,12 @@ def test_record_create_snapshots_redact_current_dynamic_fields_in_one_query() ->
     logs = [entry for entry in session.added if isinstance(entry, AuditLog)]
     assert len(logs) == 2
     assert logs[0].after == {
+        "lifecycle_close_operation_id": REDACTED,
         "module_id": str(module_id),
         "data": {redacted_key: REDACTED, "clear": "visible"},
     }
     assert logs[1].after == {
+        "lifecycle_close_operation_id": REDACTED,
         "module_id": str(module_id),
         "data": {redacted_key: REDACTED},
     }

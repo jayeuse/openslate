@@ -6,7 +6,6 @@ import {
 import {
   MESSAGES,
   type Message,
-  type RecordThread,
   type SampleNotification,
 } from "../../comms/domain/model";
 import {
@@ -16,12 +15,10 @@ import {
 import {
   INITIAL_PLATFORM_ACCOUNT,
   INITIAL_PLATFORM_PREFERENCES,
-  INITIAL_PLATFORM_SESSIONS,
   PLATFORM_FILES,
   type PlatformAccount,
   type PlatformFile,
   type PlatformNotificationPreferences,
-  type PlatformSession,
 } from "../domain/model";
 
 export const PLATFORM_OWNER_KEYS = [
@@ -31,10 +28,7 @@ export const PLATFORM_OWNER_KEYS = [
   "comms-configuration",
   "platformNotifications",
   "platformNotificationPreferences",
-  "platformFollowedRecords",
-  "commsRecordThreads",
   "platformAccount",
-  "platformSessions",
 ] as const;
 
 export type PlatformReader = <T>(key: string, initial: T) => T;
@@ -46,10 +40,7 @@ export type PlatformSnapshot = {
   commsConfiguration: CommsConfiguration;
   notifications: SampleNotification[];
   preferences: PlatformNotificationPreferences;
-  followed: string[];
-  recordThreads: RecordThread[];
   account: PlatformAccount;
-  sessions: PlatformSession[];
   files: readonly PlatformFile[];
 };
 
@@ -65,12 +56,7 @@ export function readPlatformSnapshot(read: PlatformReader): PlatformSnapshot {
     preferences: structuredClone(
       read("platformNotificationPreferences", INITIAL_PLATFORM_PREFERENCES),
     ),
-    followed: structuredClone(read("platformFollowedRecords", [])),
-    recordThreads: structuredClone(read("commsRecordThreads", [])),
     account: structuredClone(read("platformAccount", INITIAL_PLATFORM_ACCOUNT)),
-    sessions: structuredClone(
-      read("platformSessions", INITIAL_PLATFORM_SESSIONS),
-    ),
     files: PLATFORM_FILES,
   };
 }

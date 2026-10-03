@@ -85,17 +85,29 @@ export function CommsToolsDialog(props: CommsToolsDialogProps) {
   if (props.view === "automation") return <AutomationTools {...props} />;
   return <LifecycleTools {...props} />;
 }
+// Titles match the OpenComms menu labels that open them.
 const titles: Record<CommsToolsView, string> = {
-  management: "Channel management",
+  management: "Bulk channel changes",
   templates: "Channel templates",
   automation: "Automation",
-  history: "Configuration history",
+  history: "Settings history",
   moderation: "Moderation",
-  outbox: "Scheduled outbox",
-  retention: "Retention preview",
+  outbox: "Scheduled messages",
+  retention: "Message retention",
   thread: "Thread settings",
   "message-history": "Message history",
   report: "Report message",
+};
+const descriptions: Partial<Record<CommsToolsView, string>> = {
+  history: "Every settings change. Preview one to restore its earlier values.",
+  moderation:
+    "Review reports, limit who can post, and restore removed messages.",
+  outbox:
+    "Messages set to send later. In this example, nothing is sent outside OpenComms.",
+  retention:
+    "See which messages a retention period would remove. Nothing is deleted.",
+  "message-history": "Earlier versions of this message.",
+  report: "Tell moderators what is wrong with this message.",
 };
 function LifecycleTools({
   view,
@@ -795,6 +807,7 @@ function LifecycleTools({
   return (
     <ConfigurationFrame
       title={titles[view]}
+      description={descriptions[view]}
       opener={opener}
       onClose={onClose}
       dirty={dirty}

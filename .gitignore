@@ -64,3 +64,6 @@ next-env.d.ts
 .claude/
 .mcp.json
 .impeccable/
+
+# Supabase CLI working state (can hold local secrets); this project runs its own stack in infra/supabase.
+supabase/

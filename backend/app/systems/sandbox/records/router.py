@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -21,7 +21,7 @@ from app.systems.access.policy.checks import module_filter, module_level, requir
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import includes
 from app.systems.access.users.models import User
-from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.fields.validation import parse_field_key, validate_record_data
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.record_triggers.outbox import enqueue_record_event
@@ -29,8 +29,12 @@ from app.systems.sandbox.records.display import FieldDisplayResolver, displayed_
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.mutation_validation import (
     RecordValidationError,
+    prepare_record_creation,
     validate_live_user_assignments,
     validate_record_mutation,
+)
+from app.systems.sandbox.records.mutation_validation import (
+    _apply_creation_defaults as _apply_creation_defaults,
 )
 from app.systems.sandbox.records.schemas import RecordCreate, RecordResponse, RecordUpdate
 from app.systems.sandbox.relationships.errors import RelationshipError
@@ -145,6 +149,28 @@ def _lock_active_module(db: Session, module_id: UUID) -> Module:
     return module
 
 
+def _require_current_revision(record: Record, if_match: str | None) -> None:
+    """An If-Match token is the ``updated_at`` the caller last read; it is required.
+
+    PATCH replaces every active value, so a save without a version could erase
+    changes made after the caller read the record.
+    """
+
+    if if_match is None:
+        raise HTTPException(
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED, detail="If-Match required"
+        )
+    token = if_match.strip().removeprefix("W/").strip('"')
+    try:
+        revision = datetime.fromisoformat(token)
+    except ValueError:
+        revision = None
+    if revision is None or revision.tzinfo is None or revision != record.updated_at:
+        raise HTTPException(
+            status_code=status.HTTP_412_PRECONDITION_FAILED, detail="Record changed"
+        )
+
+
 def _lock_record(db: Session, record: Record) -> Record:
     try:
         locked = lock_row(db, Record, record.id)
@@ -161,23 +187,6 @@ def _module_fields(db: Session, module_id: UUID) -> list[Field]:
 
 def _active_fields(db: Session, module_id: UUID) -> list[Field]:
     return [field for field in _module_fields(db, module_id) if not field.is_deleted]
-
-
-def _apply_creation_defaults(data: dict[str, Any], fields: list[Field]) -> dict[str, Any]:
-    """Apply published field defaults only at real record creation time."""
-
-    with_defaults = dict(data)
-    for field in fields:
-        key = str(field.id)
-        if (
-            key in with_defaults
-            or field.is_deleted
-            or FieldType(field.type) is FieldType.RELATIONSHIP
-        ):
-            continue
-        if "defaultValue" in field.config:
-            with_defaults[key] = field.config["defaultValue"]
-    return with_defaults
 
 
 def _validate_data(
@@ -269,12 +278,7 @@ def create_record(
     if not any(not field.is_deleted for field in fields):
         raise _conflict("Module has no active fields")
     try:
-        normalized_data = validate_record_mutation(
-            _apply_creation_defaults(payload.data, fields),
-            {},
-            fields,
-        )
-        validate_live_user_assignments(db, payload.module_id, normalized_data, fields)
+        normalized_data = prepare_record_creation(db, payload.module_id, payload.data, fields)
     except RecordValidationError as error:
         raise _record_validation_http_error(error) from error
     record = Record(module_id=payload.module_id, data=normalized_data)
@@ -286,12 +290,20 @@ def create_record(
     return displayed_record(record, FieldDisplayResolver(db, record.module_id, fields))
 
 
-@router.patch("/{record_id}", response_model=RecordResponse)
+@router.patch(
+    "/{record_id}",
+    response_model=RecordResponse,
+    responses={
+        412: {"description": "If-Match does not match the record's updated_at"},
+        428: {"description": "If-Match is missing"},
+    },
+)
 def update_record(
     record_id: UUID,
     payload: RecordUpdate,
     user: RecordWriteUser,
     db: Annotated[Session, Depends(get_db)],
+    if_match: Annotated[str | None, Header()] = None,
 ) -> RecordResponse:
     _require_patch(payload)
     record = _record(db, user, record_id, AccessLevel.WRITE)
@@ -304,6 +316,7 @@ def update_record(
     record = _lock_record(db, record)
     if record.is_deleted:
         raise _conflict("Record is deleted")
+    _require_current_revision(record, if_match)
     if payload.data is not None:
         previous = dict(record.data)
         try:
@@ -332,6 +345,7 @@ def delete_record(
     if record.is_deleted:
         raise _conflict("Record is already deleted")
     record.is_deleted = True
+    record.lifecycle_close_operation_id = None
     record.deleted_at = datetime.now(UTC)
     _commit(db, "Unable to delete record")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -356,6 +370,7 @@ def restore_record(
     # field set; create and update continue to validate against active fields.
     _validate_data(db, record.module_id, record.data, _module_fields(db, record.module_id))
     record.is_deleted = False
+    record.lifecycle_close_operation_id = None
     record.deleted_at = None
     _commit(db, "Unable to restore record")
     return displayed_record(

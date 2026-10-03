@@ -12,47 +12,30 @@ from app.systems.boards.department_boards import COMPANY_BOARD_NAME
 from app.systems.sandbox.designs.defaults import empty_document
 from app.systems.sandbox.designs.schemas import DOCUMENT_SCHEMA_VERSION
 from app.systems.sandbox.designs.service import canonical_document
-
-if __package__:
-    from .reset_models import (  # type: ignore[import-not-found]
-        _COUNT_STATEMENTS,
-        _LOCK_APPLICATION_STATEMENT,
-        _RESET_ADVISORY_LOCK_KEY,
-        _SCANNER_LEADER_LOCK_KEY,
-        DELETE_ORDER,
-        NON_PRESERVED_TABLES,
-        ResetError,
-        ResetPlan,
-        stable_snapshot_payload,
-    )
-    from .reset_planning import (  # type: ignore[import-not-found]
-        _expected_snapshot_payload,
-        _read_alembic_head,
-        _read_profile,
-        _read_workspace,
-        _single_value,
-        build_reset_plan,
-    )
-else:
-    from reset_models import (
-        _COUNT_STATEMENTS,
-        _LOCK_APPLICATION_STATEMENT,
-        _RESET_ADVISORY_LOCK_KEY,
-        _SCANNER_LEADER_LOCK_KEY,
-        DELETE_ORDER,
-        NON_PRESERVED_TABLES,
-        ResetError,
-        ResetPlan,
-        stable_snapshot_payload,
-    )
-    from reset_planning import (
-        _expected_snapshot_payload,
-        _read_alembic_head,
-        _read_profile,
-        _read_workspace,
-        _single_value,
-        build_reset_plan,
-    )
+from operations.reset_backups import (
+    delete_unclaimed_backup_queue,
+    require_no_unresolved_backup,
+    validate_backup_preservation,
+)
+from operations.reset_models import (
+    _COUNT_STATEMENTS,
+    _LOCK_APPLICATION_STATEMENT,
+    _RESET_ADVISORY_LOCK_KEY,
+    _SCANNER_LEADER_LOCK_KEY,
+    DELETE_ORDER,
+    NON_PRESERVED_TABLES,
+    ResetError,
+    ResetPlan,
+    stable_snapshot_payload,
+)
+from operations.reset_planning import (
+    _expected_snapshot_payload,
+    _read_alembic_head,
+    _read_profile,
+    _read_workspace,
+    _single_value,
+    build_reset_plan,
+)
 
 
 def _begin_transaction(connection: Any) -> None:
@@ -164,6 +147,7 @@ def _validate_postconditions(
 
     if _read_alembic_head(connection) != plan.alembic_head:
         raise ResetError("The database migration head changed")
+    validate_backup_preservation(connection, plan.backup_snapshot, plan.preserved_admin_id)
 
 
 def apply_reset(
@@ -172,6 +156,7 @@ def apply_reset(
     *,
     execute: bool = False,
     stdin_is_tty: bool = False,
+    noninteractive_development: bool = False,
     confirmation: str | None = None,
     storage: Any | None = None,
     auth: Any | None = None,
@@ -181,7 +166,7 @@ def apply_reset(
     """Apply one freshly confirmed plan, or do nothing for the default dry run."""
     if not execute:
         return
-    if not stdin_is_tty:
+    if not stdin_is_tty and not noninteractive_development:
         raise ResetError("Execute mode requires a TTY")
     if confirmation != plan.impact_digest:
         raise ResetError("An exact impact-digest confirmation is required")
@@ -200,20 +185,32 @@ def apply_reset(
         # The dry run may have left a read transaction open. Session advisory
         # locks survive transaction boundaries, so no table lock spans HTTP.
         connection.rollback()
-        reset_lock_held = _single_value(
-            connection, "SELECT pg_try_advisory_lock(%s)", (_RESET_ADVISORY_LOCK_KEY,)
-        ) is True
+        reset_lock_held = (
+            _single_value(
+                connection, "SELECT pg_try_advisory_lock(%s)", (_RESET_ADVISORY_LOCK_KEY,)
+            )
+            is True
+        )
         if not reset_lock_held:
             raise ResetError("Another application reset is running")
-        scanner_lock_held = _single_value(
-            connection, "SELECT pg_try_advisory_lock(%s)", (_SCANNER_LEADER_LOCK_KEY,)
-        ) is True
+        require_no_unresolved_backup(connection, plan.backup_snapshot.installation_id)
+        scanner_lock_held = (
+            _single_value(
+                connection, "SELECT pg_try_advisory_lock(%s)", (_SCANNER_LEADER_LOCK_KEY,)
+            )
+            is True
+        )
         if not scanner_lock_held:
             raise ResetError("The scanner worker must be stopped before reset")
         connection.commit()
 
         preflight_plan = (build_plan_fn or build_reset_plan)(
-            connection, plan.sample_email, storage_object_keys=storage.list_object_keys()
+            connection,
+            plan.sample_email,
+            storage_object_keys=storage.list_object_keys(),
+            provider_account_ids=auth.list_account_ids(
+                plan.preserved_admin_provider_id, plan.sample_email
+            ),
         )
         if preflight_plan.impact_digest != plan.impact_digest:
             raise ResetError("The reset plan changed; run a fresh dry run and confirmation")
@@ -221,16 +218,15 @@ def apply_reset(
         auth.require_present(plan.preserved_admin_provider_id)
         provider_cleanup_started = True
         try:
-            auth.delete_and_verify_missing(
-                tuple(provider_id for _, provider_id in plan.provider_subjects
-                      if provider_id is not None)
-            )
+            auth.delete_and_verify_missing(plan.provider_account_ids)
         except Exception:
             raise ResetError(
                 "Provider account cleanup is incomplete; application profiles were retained; "
                 "run a fresh dry run before retrying"
             ) from None
         provider_cleanup_completed = True
+        if auth.list_account_ids(plan.preserved_admin_provider_id, plan.sample_email):
+            raise ResetError("The provider Auth inventory changed after cleanup")
 
         # Re-inventory Storage before taking the short application table lock.
         # The final cleanup rechecks the same snapshot after SQL commit.
@@ -240,9 +236,13 @@ def apply_reset(
         _execute(connection, "SET LOCAL lock_timeout = '5s'")
         _execute(connection, "SET LOCAL statement_timeout = '30s'")
         _execute(connection, _LOCK_APPLICATION_STATEMENT)
+        require_no_unresolved_backup(connection, plan.backup_snapshot.installation_id)
 
         locked_plan = (build_plan_fn or build_reset_plan)(
-            connection, plan.sample_email, storage_object_keys=final_storage_keys
+            connection,
+            plan.sample_email,
+            storage_object_keys=final_storage_keys,
+            provider_account_ids=plan.provider_account_ids,
         )
         if locked_plan.impact_digest != plan.impact_digest:
             raise ResetError("The reset plan changed; run a fresh dry run and confirmation")
@@ -257,10 +257,18 @@ def apply_reset(
                performed_by = NULL WHERE id = %s""",
             (locked_plan.workspace_snapshot.id,),
         )
+        # Modules point at their title field while fields point back to the
+        # owning module. Break the restrictive title reference before deleting
+        # fields, then the module/field rows can be removed in dependency order.
+        _execute(
+            connection,
+            "UPDATE public.modules SET title_field_id = NULL WHERE title_field_id IS NOT NULL",
+        )
         for table_name in DELETE_ORDER:
             _execute(connection, f"DELETE FROM public.{table_name}")
         _reset_sandbox_workspace(connection)
         _reset_company_board(connection)
+        delete_unclaimed_backup_queue(connection, locked_plan.backup_snapshot.installation_id)
         _execute(
             connection,
             "DELETE FROM public.users WHERE role = 'guest' AND id <> %s",

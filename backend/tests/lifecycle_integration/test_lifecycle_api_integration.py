@@ -305,7 +305,10 @@ def test_registered_close_maps_provider_failure_and_consumed_token_replay(
 
     with client.engine.begin() as connection:
         connection.execute(
-            text("UPDATE public.modules SET is_deleted = false, deleted_at = NULL WHERE id = :id"),
+            text(
+                "UPDATE public.modules SET is_deleted = false, deleted_at = NULL, "
+                "lifecycle_close_operation_id = NULL WHERE id = :id"
+            ),
             {"id": module_id},
         )
     replay = client.request(

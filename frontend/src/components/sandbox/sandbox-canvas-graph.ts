@@ -39,13 +39,14 @@ export interface DropResolution {
   error: string | null;
 }
 
-const CANVAS_NODE_BORDER = "var(--canvas-dept-frame, #a8b2c1)";
-const CANVAS_NODE_TEXT = "var(--canvas-dept-ink, #555e6c)";
+const CANVAS_NODE_BORDER = "var(--canvas-dept-frame)";
+const CANVAS_NODE_TEXT = "var(--canvas-dept-ink)";
+const CANVAS_NODE_NAME = "var(--canvas-dept-name)";
 /** Height of the department head band that holds the name. */
-export const DEPARTMENT_HEAD_HEIGHT = 36;
-const CANVAS_NODE_SELECTED = "var(--accent, #f5f9ff)";
-const CANVAS_NODE_ACTIVE = "var(--primary, #3b82f6)";
-const CANVAS_NODE_MOVING = "var(--canvas-moving, #fff8eb)";
+export const DEPARTMENT_HEAD_HEIGHT = 40;
+const CANVAS_NODE_SELECTED = "var(--accent)";
+const CANVAS_NODE_ACTIVE = "var(--primary)";
+const CANVAS_NODE_MOVING = "var(--canvas-moving)";
 
 export function isDropKind(value: string): value is SandboxDropKind {
   return (DROP_KINDS as readonly string[]).includes(value);
@@ -101,24 +102,26 @@ export function departmentNodeAttrs(
       fill: moving
         ? CANVAS_NODE_MOVING
         : dropTarget
-          ? "var(--canvas-drop, #eff6ff)"
+          ? "var(--canvas-drop)"
           : selected
             ? CANVAS_NODE_SELECTED
-            : `var(--dept-${tone}-sheet, #ffffff)`,
+            : `var(--dept-${tone}-sheet)`,
       stroke: moving
-        ? "var(--warning, #f59e0b)"
+        ? "var(--warning)"
         : dropTarget || selected
           ? CANVAS_NODE_ACTIVE
           : CANVAS_NODE_BORDER,
       strokeWidth: moving || dropTarget || selected ? 2 : 1,
       strokeDasharray: "",
-      rx: 8,
-      ry: 8,
+      // Corners come from the look's --radius in CSS (globals.css); these
+      // are the Slate values for a missing stylesheet.
+      rx: 14,
+      ry: 14,
       "data-selected": selected ? "true" : "false",
       "data-feedback": feedback ?? "",
     },
-    // The head band and identity mark exist in every theme; each theme
-    // colors them through --dept-n-band and --dept-n.
+    // The head band, top edge, and identity mark exist in every theme; each
+    // theme colors them through --dept-n-band and --dept-n.
     band: {
       "data-sandbox-part": "band",
       x: 1,
@@ -129,29 +132,49 @@ export function departmentNodeAttrs(
       stroke: "none",
       pointerEvents: "none",
     },
+    // The department color as a 3px top edge that follows the frame's
+    // corners: the frame's shape, clipped to its top in CSS.
+    edge: {
+      "data-sandbox-part": "edge",
+      width: DEPARTMENT_WIDTH,
+      height,
+      rx: 14,
+      ry: 14,
+      // A state stroke (selected, drop target, moving) runs along the top
+      // too, so the edge takes its color instead of hiding it.
+      fill: moving
+        ? "var(--warning)"
+        : dropTarget || selected
+          ? CANVAS_NODE_ACTIVE
+          : `var(--dept-${tone})`,
+      stroke: "none",
+      pointerEvents: "none",
+    },
     mark: {
       "data-sandbox-part": "identity",
-      x: 12,
-      y: 14,
-      width: 8,
-      height: 8,
-      rx: 2,
-      fill: `var(--dept-${tone}, #8e79b8)`,
+      x: 16,
+      y: 16,
+      width: 10,
+      height: 10,
+      rx: 3,
+      fill: `var(--dept-${tone})`,
       stroke: "none",
       pointerEvents: "none",
     },
     heading: {
-      x: 26,
-      y: 18,
+      // Set in the look's display face (globals.css).
+      "data-sandbox-part": "department-name",
+      x: 34,
+      y: 21,
       textAnchor: "start",
       textVerticalAnchor: "middle",
-      fontSize: 13,
-      fontWeight: 600,
+      fontSize: 15,
+      fontWeight: 700,
       fill: moving
-        ? "var(--warning, #b45309)"
+        ? "var(--warning)"
         : dropTarget || selected
           ? CANVAS_NODE_ACTIVE
-          : CANVAS_NODE_TEXT,
+          : CANVAS_NODE_NAME,
       text: truncateLabel(name, 30),
     },
     resizeGrip: {
@@ -176,8 +199,8 @@ export function departmentNodeAttrs(
       visibility: selected ? "visible" : "hidden",
     },
     subheading: {
-      x: DEPARTMENT_WIDTH - 12,
-      y: 18,
+      x: DEPARTMENT_WIDTH - 16,
+      y: 21,
       textAnchor: "end",
       textVerticalAnchor: "middle",
       fontSize: 12,
@@ -221,7 +244,8 @@ export function updateDepartmentSizeAttrs(node: Node): void {
   node.setAttrs({
     body: { width, height },
     band: { width: width - 2 },
-    subheading: { x: width - 12 },
+    edge: { width, height },
+    subheading: { x: width - 16 },
     resizeGrip: { x: width - 24, y: height - 24 },
     resizeLines: {
       d: `M${width - 17} ${height - 7}l10 -10 M${width - 11} ${height - 7}l4 -4`,

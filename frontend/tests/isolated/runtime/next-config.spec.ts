@@ -80,6 +80,23 @@ function createLauncherFixture({
       ");",
     ].join("\n"),
   );
+  const nextPackage = resolve(frontend, "node_modules", "next");
+  writeFileSync(
+    resolve(nextPackage, "package.json"),
+    JSON.stringify({ main: "index.js" }),
+  );
+  writeFileSync(
+    resolve(nextPackage, "index.js"),
+    [
+      'const { writeFileSync } = require("node:fs");',
+      "module.exports = () => {",
+      '  writeFileSync("../next-invocation.json", JSON.stringify({',
+      '    arguments: ["dev", ...process.argv.slice(3)], environment: process.env, execArguments: process.execArgv',
+      "  }));",
+      "  process.exit(0);",
+      "};",
+    ].join("\n"),
+  );
 
   return {
     capturePath,

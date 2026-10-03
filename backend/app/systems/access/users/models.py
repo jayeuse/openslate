@@ -44,6 +44,7 @@ class User(BaseModel):
             name="ck_users_status",
         ),
         CheckConstraint("role IN ('admin', 'member', 'guest')", name="ck_users_role"),
+        CheckConstraint("theme_preference IN ('light', 'dark')", name="ck_users_theme_preference"),
         CheckConstraint(
             "(role = 'guest') = (sponsor_user_id IS NOT NULL AND expires_at IS NOT NULL)",
             name="ck_users_guest",
@@ -57,6 +58,9 @@ class User(BaseModel):
     username: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     role: Mapped[str] = mapped_column(Text, nullable=False)
+    theme_preference: Mapped[str] = mapped_column(
+        Text, nullable=False, default="light", server_default=text("'light'")
+    )
     job_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     sponsor_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT", use_alter=True),

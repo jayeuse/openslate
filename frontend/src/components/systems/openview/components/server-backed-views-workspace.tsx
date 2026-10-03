@@ -12,7 +12,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import type { Route } from "next";
 import { ApiError } from "@/lib/api";
-import { Columns3, MoreHorizontal, Settings2, X } from "lucide-react";
+import { Columns3, MoreHorizontal, Plus, Settings2, X } from "lucide-react";
 import {
   queryOpenViewGroupedRecords,
   type OpenViewGroupSelector,
@@ -87,7 +87,7 @@ import {
   useWorkspaceNavigationGuard,
 } from "@/components/workspace-navigation-guard";
 import { serializeOpenViewUrl } from "../domain/model";
-import { canManageOpenView } from "../domain/manage-access";
+import { canManageOpenView, openViewLevel } from "../domain/manage-access";
 import {
   changedSavedViewFields,
   draftForView,
@@ -114,6 +114,7 @@ import {
   type RecordInspectionPage,
 } from "./live-record-inspector";
 import { LiveRecordResults } from "./live-record-results";
+import { RecordCreateDialog } from "./record-create-dialog";
 import { SavedViewColumnControls } from "./saved-view-column-controls";
 import { SavedViewFilterControls } from "./saved-view-filter-controls";
 import { SavedViewAdvancedControls } from "./saved-view-advanced-controls";
@@ -149,6 +150,8 @@ type RecordPageState = {
   moduleId: string;
   queryKey: string;
   rows: OpenViewRecord[];
+  /** The query that produced `rows`; a reload keeps the previous rows. */
+  rowsQueryKey: string;
   limit: number;
   offset: number;
   total: number;
@@ -336,8 +339,15 @@ export default function ServerBackedViewsWorkspace({
     loadMoreModuleMetadata,
     refreshModule,
     retryCatalog,
-    recordInvalidation,
+    recordInvalidation: streamRecordInvalidation,
   } = resource;
+  // A record change made here refreshes results at once; the stream's own
+  // invalidation for it may arrive later.
+  const [recordChanges, setRecordChanges] = useState(0);
+  const recordInvalidation = streamRecordInvalidation + recordChanges;
+  const [createRecordOpen, setCreateRecordOpen] = useState(false);
+  // An open edit form keeps the record dialog from closing by accident.
+  const [recordEditing, setRecordEditing] = useState(false);
   const [recordPage, setRecordPage] = useState<RecordPageState | null>(null);
   const [recordPageSize, setRecordPageSize] = useState(
     DEFAULT_RECORD_PAGE_SIZE,
@@ -434,6 +444,16 @@ export default function ServerBackedViewsWorkspace({
     identity.data,
     source?.departmentId,
     moduleId,
+  );
+  const recordLevel =
+    source && moduleId
+      ? openViewLevel(identity.data, source.departmentId, moduleId)
+      : null;
+  // The server checks every change; these only decide which controls show.
+  const canWriteRecords = recordLevel === "write" || recordLevel === "manage";
+  // Record history is for administrators and managers of the department.
+  const canReadRecordHistory = Boolean(
+    source && openViewLevel(identity.data, source.departmentId) === "manage",
   );
   const routedView = isUuid(requestedView) ? requestedView : undefined;
   const explicitUnsavedSelection = Boolean(
@@ -711,6 +731,8 @@ export default function ServerBackedViewsWorkspace({
       moduleId,
       queryKey,
       rows: previous?.moduleId === moduleId ? previous.rows : [],
+      rowsQueryKey:
+        previous?.moduleId === moduleId ? previous.rowsQueryKey : queryKey,
       limit: recordPageSize,
       offset: previous?.moduleId === moduleId ? previous.offset : 0,
       total: previous?.moduleId === moduleId ? previous.total : 0,
@@ -730,6 +752,7 @@ export default function ServerBackedViewsWorkspace({
           moduleId,
           queryKey,
           rows: result.items,
+          rowsQueryKey: queryKey,
           limit: result.pagination.limit,
           offset: result.pagination.offset,
           total: result.pagination.total,
@@ -750,6 +773,7 @@ export default function ServerBackedViewsWorkspace({
             moduleId,
             queryKey,
             rows: [],
+            rowsQueryKey: queryKey,
             limit: recordPageSize,
             offset: 0,
             total: 0,
@@ -764,6 +788,8 @@ export default function ServerBackedViewsWorkspace({
           moduleId,
           queryKey,
           rows: previous?.moduleId === moduleId ? previous.rows : [],
+          rowsQueryKey:
+            previous?.moduleId === moduleId ? previous.rowsQueryKey : queryKey,
           limit: recordPageSize,
           offset: previous?.moduleId === moduleId ? previous.offset : 0,
           total: previous?.moduleId === moduleId ? previous.total : 0,
@@ -925,6 +951,7 @@ export default function ServerBackedViewsWorkspace({
           moduleId,
           queryKey: generalGroupRequestKey,
           rows: selectedGeneralGroupPage?.items ?? [],
+          rowsQueryKey: generalGroupRequestKey,
           limit: selectedGeneralGroupPage?.pagination?.limit ?? recordPageSize,
           offset: selectedGeneralGroupPage?.pagination?.offset ?? 0,
           total:
@@ -2070,18 +2097,23 @@ export default function ServerBackedViewsWorkspace({
   );
   const rowPageLoading = currentRecordPage?.loading ?? recordPageRequestPending;
   const rowError = currentRecordPage?.error ?? "";
-  const linkedRecordLoading = Boolean(
+  // A refresh keeps showing the record its own lookup already returned, so an
+  // open edit form is not discarded while results reload. A row from another
+  // query (such as the list) never shows before the lookup authorizes it.
+  const linkedRecordRow =
     isUuid(requestedRecord) &&
-    (!ordinaryRecordPage || ordinaryRecordPage.loading),
-  );
-  const linkedRecord =
-    isUuid(requestedRecord) &&
-    !linkedRecordLoading &&
     ordinaryRecordPage &&
-    !ordinaryRecordPage.error
+    !ordinaryRecordPage.error &&
+    ordinaryRecordPage.rowsQueryKey === queryKey
       ? (ordinaryRecordPage.rows.find((row) => row.id === requestedRecord) ??
         null)
       : null;
+  const linkedRecordLoading = Boolean(
+    isUuid(requestedRecord) &&
+    (!ordinaryRecordPage || ordinaryRecordPage.loading) &&
+    !linkedRecordRow,
+  );
+  const linkedRecord = linkedRecordLoading ? null : linkedRecordRow;
   const inspectionActions = linkedRecord ? (
     <div className="flex flex-wrap items-center gap-2">
       {activeInspectionContext ? (
@@ -2622,11 +2654,40 @@ export default function ServerBackedViewsWorkspace({
                         onRemoveFilter={removeFilter}
                         onAddFilter={addFilter}
                       />
+                      <Field>
+                        <FieldLabel htmlFor="openview-deleted-records">
+                          Deleted records
+                        </FieldLabel>
+                        <Select
+                          id="openview-deleted-records"
+                          className="min-h-11"
+                          value={draft.definition.deleted}
+                          disabled={Boolean(pendingAction)}
+                          onValueChange={(next) => {
+                            if (
+                              next === "exclude" ||
+                              next === "include" ||
+                              next === "only"
+                            )
+                              updateDefinition((current) => ({
+                                ...current,
+                                deleted: next,
+                              }));
+                          }}
+                        >
+                          <option value="exclude">Hide deleted records</option>
+                          <option value="include">Show deleted records</option>
+                          <option value="only">
+                            Show only deleted records
+                          </option>
+                        </Select>
+                      </Field>
                     </SearchFilterToolbar>
                   </div>
 
                   <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-                    {draft.definition.filters.length ? (
+                    {draft.definition.filters.length ||
+                    draft.definition.deleted !== "exclude" ? (
                       <div
                         aria-label="Active filters"
                         className="flex min-w-0 basis-full flex-wrap items-center gap-2 sm:flex-1 sm:basis-auto"
@@ -2657,6 +2718,29 @@ export default function ServerBackedViewsWorkspace({
                             </Button>
                           );
                         })}
+                        {draft.definition.deleted !== "exclude" ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="min-h-11"
+                            aria-label={
+                              draft.definition.deleted === "only"
+                                ? "Remove filter: Only deleted records"
+                                : "Remove filter: Deleted records shown"
+                            }
+                            onClick={() =>
+                              updateDefinition((current) => ({
+                                ...current,
+                                deleted: "exclude",
+                              }))
+                            }
+                          >
+                            {draft.definition.deleted === "only"
+                              ? "Only deleted records"
+                              : "Deleted records shown"}
+                            <X aria-hidden="true" />
+                          </Button>
+                        ) : null}
                       </div>
                     ) : (
                       <p className="text-muted-foreground text-sm">
@@ -2666,6 +2750,18 @@ export default function ServerBackedViewsWorkspace({
                       </p>
                     )}
                     <div className="flex flex-wrap gap-2">
+                      {canWriteRecords ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-11"
+                          disabled={Boolean(pendingAction)}
+                          onClick={() => setCreateRecordOpen(true)}
+                        >
+                          <Plus aria-hidden="true" />
+                          New record
+                        </Button>
+                      ) : null}
                       <Button
                         type="button"
                         variant="outline"
@@ -3083,11 +3179,12 @@ export default function ServerBackedViewsWorkspace({
 
                 <Dialog
                   open={isUuid(requestedRecord)}
+                  dismissible={!recordEditing}
                   onOpenChange={(open) => {
                     if (!open && isUuid(requestedRecord)) returnToResults();
                   }}
                 >
-                  <DialogContent className="max-w-2xl">
+                  <DialogContent className="flex max-w-2xl flex-col overflow-y-hidden">
                     <DialogHeader>
                       <DialogTitle>Record details</DialogTitle>
                       <DialogDescription className="space-y-1">
@@ -3102,13 +3199,14 @@ export default function ServerBackedViewsWorkspace({
                           </span>
                         ) : null}
                         <span className="block">
-                          Read-only details show fields selected in this view.
+                          Details show the fields selected in this view. Editing
+                          shows every field.
                         </span>
                       </DialogDescription>
                     </DialogHeader>
-                    <div className="max-h-[calc(90dvh-10rem)] overflow-y-auto">
+                    <div className="min-h-0 flex-1 overflow-y-auto">
                       <LiveRecordInspector
-                        actions={inspectionActions}
+                        actions={recordEditing ? null : inspectionActions}
                         record={linkedRecord}
                         recordLoading={linkedRecordLoading}
                         recordError={ordinaryRecordPage?.error ?? ""}
@@ -3119,19 +3217,54 @@ export default function ServerBackedViewsWorkspace({
                         onRetryRecord={() =>
                           setRecordRetry((value) => value + 1)
                         }
+                        controls={
+                          moduleId && source
+                            ? {
+                                moduleId,
+                                departmentId: source.departmentId,
+                                editableFields: fields,
+                                dataSources: catalog ?? [],
+                                canWrite: canWriteRecords,
+                                canReadHistory: canReadRecordHistory,
+                                onChanged: (message) => {
+                                  if (message) setNotice(message);
+                                  setRecordChanges((value) => value + 1);
+                                },
+                                onEditingChange: setRecordEditing,
+                              }
+                            : undefined
+                        }
                       />
                     </div>
-                    <DialogFooter>
-                      <DialogClose
-                        render={
-                          <Button variant="outline" className="min-h-11" />
-                        }
-                      >
-                        Close
-                      </DialogClose>
-                    </DialogFooter>
+                    {recordEditing ? null : (
+                      <DialogFooter>
+                        <DialogClose
+                          render={
+                            <Button variant="outline" className="min-h-11" />
+                          }
+                        >
+                          Close
+                        </DialogClose>
+                      </DialogFooter>
+                    )}
                   </DialogContent>
                 </Dialog>
+                {moduleId && canWriteRecords ? (
+                  <RecordCreateDialog
+                    open={createRecordOpen}
+                    moduleId={moduleId}
+                    moduleName={moduleName ?? "this data source"}
+                    fields={fields}
+                    onOpenChange={setCreateRecordOpen}
+                    onCreated={(created) => {
+                      setCreateRecordOpen(false);
+                      setNotice("Record created.");
+                      setRecordChanges((value) => value + 1);
+                      setInspectionContext(null);
+                      setRoute({ record: created.id });
+                    }}
+                  />
+                ) : null}
               </div>
             )}
           </LoadingRegion>

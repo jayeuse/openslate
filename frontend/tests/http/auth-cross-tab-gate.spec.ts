@@ -1,4 +1,289 @@
 import { expect, test } from "./helpers/test";
+import { mockManageSecurity } from "./helpers/manage-security";
+import { mockManageBackups } from "./helpers/manage-backups";
+import {
+  concealMfaTestCredentials,
+  deferredMfaResponse,
+  mockMfa,
+  mfaUserA,
+  mfaUserB,
+} from "./helpers/mfa";
+
+test.use({ trace: "off", screenshot: "off", video: "off" });
+test.afterEach(async ({ page }) => {
+  await concealMfaTestCredentials(page);
+});
+
+test("MFA gate stays accessible over an unrelated dialog and restores its same-account draft", async ({
+  page,
+}) => {
+  const policy = await mockManageSecurity(page);
+  const backups = await mockManageBackups(page);
+  const state = await mockMfa(page, { verified: true, aal2: true });
+  await page.goto("/manage?view=security");
+  await page.getByRole("tab", { name: /Backups/ }).click();
+  await page.getByRole("button", { name: "Back up now", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Back up now",
+    exact: true,
+  });
+  await dialog
+    .getByRole("textbox", { name: "Backup name" })
+    .fill("Unsubmitted backup request");
+  state.actors.get(mfaUserA)!.assurance = "aal1";
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  const gate = page.getByRole("dialog", {
+    name: "Session verification",
+    exact: true,
+  });
+  await expect(
+    gate.getByLabel("Verification code", { exact: true }),
+  ).toBeVisible();
+  await gate.getByLabel("Verification code", { exact: true }).fill("222222");
+  await gate.getByRole("button", { name: "Verify code", exact: true }).click();
+  await expect(gate).toBeHidden();
+  await expect(
+    dialog.getByRole("textbox", { name: "Backup name" }),
+  ).toHaveValue("Unsubmitted backup request");
+  expect(policy.writes).toEqual([]);
+  expect(backups.queueRequests).toEqual([]);
+  expect(backups.patches).toEqual([]);
+  await page.keyboard.press("Escape");
+});
+
+test("MFA gate stays accessible over an alert dialog and restores its typed confirmation without a write", async ({
+  page,
+}) => {
+  const id = "00000000-0000-4000-8000-000000000301";
+  const board = {
+    id,
+    scope: "project",
+    department_id: null,
+    name: "Pending dispatch",
+    description: null,
+    status: "active",
+    revision: 1,
+    level: "manage",
+    created_at: "2026-10-02T00:00:00Z",
+    updated_at: "2026-10-02T00:00:00Z",
+  };
+  const writes: string[] = [];
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill({ json: { today: "2026-10-02" } }),
+  );
+  await page.route("**/api/boards**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (route.request().method() !== "GET") writes.push(path);
+    if (path === `/api/boards/${id}`) return route.fulfill({ json: board });
+    if (path === `/api/boards/${id}/my-access`)
+      return route.fulfill({
+        json: { level: "manage", read: true, write: true, manage: true },
+      });
+    if (path === `/api/boards/${id}/groups`)
+      return route.fulfill({ json: { board_id: id, revision: 1, groups: [] } });
+    const items = path === "/api/boards" ? [board] : [];
+    return route.fulfill({
+      json: {
+        items,
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: items.length,
+          total: items.length,
+          has_more: false,
+        },
+        board_revision: 1,
+      },
+    });
+  });
+  const state = await mockMfa(page, { verified: true, aal2: true });
+  await page.goto(`/boards?board=${id}&section=overview`);
+  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Manage Board", exact: true })
+    .getByRole("button", { name: "Archive Board", exact: true })
+    .click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Archive Board?",
+    exact: true,
+  });
+  await confirmation
+    .getByLabel("Type “Pending dispatch” to confirm", { exact: true })
+    .fill("Pending dispatch");
+  state.actors.get(mfaUserA)!.assurance = "aal1";
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  const gate = page.getByRole("dialog", {
+    name: "Session verification",
+    exact: true,
+  });
+  await expect(
+    gate.getByLabel("Verification code", { exact: true }),
+  ).toBeVisible();
+  await gate.getByLabel("Verification code", { exact: true }).fill("222222");
+  await gate.getByRole("button", { name: "Verify code", exact: true }).click();
+  await expect(gate).toBeHidden();
+  await expect(
+    confirmation.getByLabel("Type “Pending dispatch” to confirm", {
+      exact: true,
+    }),
+  ).toHaveValue("Pending dispatch");
+  expect(writes).toEqual([]);
+  await confirmation
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+});
+
+test("required MFA challenges an existing factor and waits for the real session recheck", async ({
+  page,
+}) => {
+  const state = await mockMfa(page, { verified: true });
+  state.statusFailure = 503;
+  await page.goto("/platform?section=search");
+  await expect(
+    page.getByRole("button", { name: "Sign out", exact: true }),
+  ).toBeVisible();
+  state.statusFailure = 0;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Complete multi-factor authentication" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Platform", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Set up authenticator", exact: true }),
+  ).toHaveCount(0);
+  const session = deferredMfaResponse();
+  state.holdSession = session;
+  await page.getByLabel("Verification code", { exact: true }).fill("222222");
+  await page.getByRole("button", { name: "Verify code", exact: true }).click();
+  await session.begun;
+  await expect(
+    page.getByRole("heading", { name: "Platform", exact: true }),
+  ).toHaveCount(0);
+  session.release();
+  await expect(
+    page.getByRole("heading", { name: "Platform", exact: true }),
+  ).toBeVisible();
+  expect(
+    state.calls.filter(
+      (call) => call.method === "POST" && call.path === "/auth/mfa/factors",
+    ),
+  ).toHaveLength(0);
+});
+
+test("required enrollment survives an authenticator app switch without exposing credentials during recheck", async ({
+  page,
+}) => {
+  const state = await mockMfa(page, { required: true, aal2: true });
+  await page.goto("/platform?section=search");
+  await page
+    .getByRole("button", { name: "Set up authenticator", exact: true })
+    .click();
+  await expect(
+    page.getByRole("img", { name: "Authenticator QR code" }),
+  ).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
+  await expect(
+    page.getByRole("img", { name: "Authenticator QR code" }),
+  ).toHaveCount(0);
+  const identity = deferredMfaResponse();
+  state.holdStatus = identity;
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await identity.begun;
+  await expect(
+    page.getByRole("img", { name: "Authenticator QR code" }),
+  ).toHaveCount(0);
+  identity.release();
+  await expect(
+    page.getByRole("img", { name: "Authenticator QR code" }),
+  ).toBeVisible();
+  expect(
+    state.calls.filter(
+      (call) => call.method === "POST" && call.path === "/auth/mfa/factors",
+    ),
+  ).toHaveLength(1);
+  await page.getByLabel("Verification code", { exact: true }).fill("222222");
+  await page.getByRole("button", { name: "Verify code", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Platform", exact: true }),
+  ).toBeVisible();
+});
+
+test("late MFA enrollment and verification cannot expose the prior account after cookies switch", async ({
+  page,
+}) => {
+  const state = await mockMfa(page, { required: true });
+  await page.goto("/platform?section=search");
+  const enrollment = deferredMfaResponse();
+  state.holdEnroll = enrollment;
+  await page
+    .getByRole("button", { name: "Set up authenticator", exact: true })
+    .click();
+  await enrollment.begun;
+  state.userId = mfaUserB;
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await expect
+    .poll(
+      () =>
+        state.calls.filter(
+          (call) => call.path === "/auth/mfa" && call.userId === mfaUserB,
+        ).length,
+    )
+    .toBeGreaterThan(0);
+  enrollment.release();
+  await expect(
+    page.getByRole("img", { name: "Authenticator QR code" }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Set up authenticator", exact: true })
+    .click();
+  await expect(
+    page.getByRole("img", { name: "Authenticator QR code" }),
+  ).toBeVisible();
+  const verification = deferredMfaResponse();
+  state.holdVerify = verification;
+  await page.getByLabel("Verification code", { exact: true }).fill("222222");
+  await page.getByRole("button", { name: "Verify code", exact: true }).click();
+  await verification.begun;
+  state.userId = mfaUserA;
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await expect(
+    page.getByRole("button", { name: "Set up authenticator", exact: true }),
+  ).toBeVisible();
+  verification.release();
+  await expect(
+    page.getByRole("heading", { name: "Platform", exact: true }),
+  ).toHaveCount(0);
+  expect(state.calls.filter((call) => call.method === "DELETE")).toHaveLength(
+    0,
+  );
+});
+
+test("an IP-denied session is distinct from an outage and permits retry or sign-out", async ({
+  page,
+}) => {
+  const state = await mockMfa(page);
+  state.networkDenied = true;
+  await page.goto("/platform?section=search");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "address is not allowed" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("We can’t verify your session right now.", { exact: false }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Sign out", exact: true }),
+  ).toBeVisible();
+  state.networkDenied = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Platform", exact: true }),
+  ).toBeVisible();
+});
 
 const userA = "00000000-0000-4000-8000-000000000101";
 const userB = "00000000-0000-4000-8000-000000000201";

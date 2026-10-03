@@ -29,6 +29,7 @@ services:
       POSTGRES_DATABASE: postgres
       BACKEND_BIND_HOST: 0.0.0.0
       BACKEND_PORT: "8000"
+      OPENSLATE_APP_PRIVATE_SUBNET: &app-private-subnet ${OPENSLATE_APP_PRIVATE_SUBNET:-172.31.248.0/28}
       SUPABASE_URL: http://api-gw:8000
       SUPABASE_AUTH_ISSUER: ${API_EXTERNAL_URL:?Set the installation Auth issuer}
       SMTP_HOST: ${SMTP_HOST:?Set an SMTP host}
@@ -199,6 +200,9 @@ volumes:
 networks:
   app-private:
     internal: true
+    ipam:
+      config:
+        - subnet: *app-private-subnet
   scanner-private:
     internal: true
   public-ingress:

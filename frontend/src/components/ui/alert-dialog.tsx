@@ -1,7 +1,8 @@
 "use client";
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
-import type { ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import { cn } from "@/lib/utils";
+import { useWorkspaceInteractionSuspended } from "@/components/systems/shared/runtime/workspace-identity";
 export {
   DialogHeader as AlertDialogHeader,
   DialogFooter as AlertDialogFooter,
@@ -14,15 +15,26 @@ export function AlertDialog({
   onOpenChange,
   ...props
 }: AlertDialogProps) {
+  const suspended = useWorkspaceInteractionSuspended();
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(
+    Boolean(props.defaultOpen),
+  );
   return (
     <AlertDialogPrimitive.Root
       {...props}
+      open={!suspended && (props.open ?? uncontrolledOpen)}
       onOpenChange={(open, details) => {
+        if (suspended) {
+          details.cancel();
+          return;
+        }
         if (!open && !dismissible) {
           details.cancel();
           return;
         }
         onOpenChange?.(open, details);
+        if (!details.isCanceled && props.open === undefined)
+          setUncontrolledOpen(open);
       }}
     />
   );

@@ -36,6 +36,10 @@ def _profile(revision: int = 3) -> WorkspaceProfile:
         logo_file_id=None,
         timezone="UTC",
         locale="en-US",
+        mark="RS",
+        currency="PHP",
+        week_start="monday",
+        business_hours="09:00–18:00",
         invitation_expiry_days=7,
         guest_duration_days=30,
         revision=revision,
@@ -203,12 +207,13 @@ def test_workspace_patch_rejects_stale_revision_without_writing(
 
     response = _client(monkeypatch, database).patch(
         "/api/workspace",
-        json={"revision": 3, "display_name": "Renamed"},
+        json={"revision": 3, "display_name": "Renamed", "currency": "SGD"},
     )
 
     assert response.status_code == status.HTTP_409_CONFLICT
     assert response.json()["detail"]["code"] == "stale_revision"
     assert profile.display_name == "OpenSlate"
+    assert profile.currency == "PHP"
     assert database.commit_count == 0
 
 
@@ -219,6 +224,15 @@ def test_workspace_patch_rejects_stale_revision_without_writing(
         {"revision": 3, "timezone": " "},
         {"revision": 3, "locale": None},
         {"revision": 3, "locale": "en-US-u-ca-gregory"},
+        {"revision": 3, "currency": "ZZZ"},
+        {"revision": 3, "currency": "US"},
+        {"revision": 3, "currency": None},
+        {"revision": 3, "week_start": "tuesday"},
+        {"revision": 3, "week_start": None},
+        {"revision": 3, "mark": None},
+        {"revision": 3, "mark": "x" * 33},
+        {"revision": 3, "business_hours": None},
+        {"revision": 3, "business_hours": "x" * 201},
     ],
 )
 def test_workspace_patch_rejects_invalid_supplied_region_without_writing(
@@ -245,12 +259,25 @@ def test_workspace_patch_uses_exact_admin_and_increments_revision(
 
     response = _client(monkeypatch, database, actor).patch(
         "/api/workspace",
-        json={"revision": 3, "display_name": "OpenSlate Operations", "locale": "en-GB"},
+        json={
+            "revision": 3,
+            "display_name": "OpenSlate Operations",
+            "locale": "en-GB",
+            "currency": " sgD ",
+            "week_start": "sunday",
+            "business_hours": " 08:00–17:00 ",
+            "mark": " Compass ",
+        },
     )
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["display_name"] == "OpenSlate Operations"
     assert response.json()["locale"] == "en-GB"
+    assert response.json()["currency"] == "SGD"
+    assert response.json()["week_start"] == "sunday"
+    assert response.json()["business_hours"] == "08:00–17:00"
+    assert response.json()["mark"] == "Compass"
+    assert profile.timezone == "UTC"
     assert response.json()["revision"] == 4
     assert profile.performed_by == actor.id
     assert database.commit_count == 1
@@ -291,6 +318,10 @@ def test_workspace_response_contract_has_only_public_profile_fields() -> None:
         "logo_file_id",
         "timezone",
         "locale",
+        "mark",
+        "currency",
+        "week_start",
+        "business_hours",
         "invitation_expiry_days",
         "guest_duration_days",
         "revision",
@@ -445,3 +476,9 @@ def test_workspace_logo_download_rejects_replacement_during_storage_read(
     response = client.get("/api/workspace/logo")
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_workspace_security_route_is_registered(monkeypatch: pytest.MonkeyPatch) -> None:
+    database = _Session(_profile())
+    response = _client(monkeypatch, database).get("/api/workspace/security")
+    assert response.status_code != status.HTTP_404_NOT_FOUND

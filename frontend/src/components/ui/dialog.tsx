@@ -3,6 +3,7 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import type { ComponentProps, HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
+import { useWorkspaceInteractionSuspended } from "@/components/systems/shared/runtime/workspace-identity";
 
 export interface DialogProps extends DialogPrimitive.Root.Props {
   dismissible?: boolean;
@@ -12,11 +13,17 @@ export function Dialog({
   onOpenChange,
   ...props
 }: DialogProps) {
+  const suspended = useWorkspaceInteractionSuspended();
   return (
     <DialogPrimitive.Root
       {...props}
+      modal={suspended ? false : props.modal}
       disablePointerDismissal={!dismissible || props.disablePointerDismissal}
       onOpenChange={(open, details) => {
+        if (suspended) {
+          details.cancel();
+          return;
+        }
         if (!open && !dismissible) {
           details.cancel();
           return;

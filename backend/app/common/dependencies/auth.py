@@ -16,11 +16,13 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
     get_supabase_auth_client,
 )
+from app.systems.access.identity.mfa import MFARequired
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_sessions import resolve_provider_session, validate_csrf
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit.context import set_audit_actor
+from app.systems.manage.workspace.security_policy import ip_allowed, load_workspace_policy
 
 _bearer = HTTPBearer(auto_error=False)
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -51,6 +53,25 @@ def get_current_identity(
     bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> CurrentIdentity:
+    return _resolve_identity(request, bearer, db, allow_aal1=False)
+
+
+def get_mfa_identity(
+    request: Request,
+    bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CurrentIdentity:
+    """Allow only MFA completion/logout to use an otherwise fully admitted AAL1 session."""
+    return _resolve_identity(request, bearer, db, allow_aal1=True)
+
+
+def _resolve_identity(
+    request: Request,
+    bearer: HTTPAuthorizationCredentials | None,
+    db: Session,
+    *,
+    allow_aal1: bool,
+) -> CurrentIdentity:
     cookie_token = request.cookies.get("openslate_access")
     refresh_cookie = request.cookies.get("openslate_refresh")
     bearer_token = bearer.credentials if bearer is not None else None
@@ -64,7 +85,15 @@ def get_current_identity(
     client = get_supabase_auth_client()
     try:
         claims = client.verify_access_token(raw_token)
-        resolved = resolve_provider_session(db, claims, client)
+        resolved = resolve_provider_session(db, claims, client, allow_aal1=allow_aal1)
+    except MFARequired as error:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "mfa_required",
+                "message": "Complete multi-factor authentication to continue",
+            },
+        ) from error
     except InvalidProviderToken as error:
         raise _unauthorized() from error
     except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
@@ -72,6 +101,7 @@ def get_current_identity(
     if resolved is None:
         raise _unauthorized()
     user, session = resolved
+    require_allowed_source(request, db)
     session_id = session.id
     cookie_authenticated = cookie_token is not None
     if cookie_authenticated and request.method in _UNSAFE_METHODS:
@@ -79,6 +109,20 @@ def get_current_identity(
     if isinstance(db.info, dict):
         set_audit_actor(db, user.id)
     return CurrentIdentity(user, session_id, cookie_authenticated, False)
+
+
+def require_allowed_source(request: Request, db: Session) -> None:
+    try:
+        permitted = ip_allowed(
+            load_workspace_policy(db), request.client.host if request.client else None
+        )
+    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+        raise HTTPException(status_code=503, detail="Authentication service unavailable") from error
+    if not permitted:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "ip_not_allowed", "message": "Access from this address is not allowed"},
+        )
 
 
 def _validate_cookie_mutation(request: Request, db: Session, session_id: UUID) -> None:

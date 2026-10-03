@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from ipaddress import IPv4Network, IPv6Network, ip_network
 from pathlib import Path
 from typing import ClassVar, Literal
 from urllib.parse import urlsplit
@@ -127,8 +128,36 @@ class Settings(EnvironmentSettings):
     )
     backend_bind_host: str = Field(validation_alias="BACKEND_BIND_HOST")
     backend_port: int = Field(ge=1, le=65535, validation_alias="BACKEND_PORT")
+    open_slate_app_private_subnet: IPv4Network | IPv6Network | None = Field(
+        default=None, validation_alias="OPENSLATE_APP_PRIVATE_SUBNET"
+    )
     server_max_concurrency: int = Field(ge=3, validation_alias="SERVER_MAX_CONCURRENCY")
     server_keep_alive_seconds: int = Field(gt=0, validation_alias="SERVER_KEEP_ALIVE_SECONDS")
+
+    @field_validator("open_slate_app_private_subnet", mode="before")
+    @classmethod
+    def validate_private_proxy_subnet(cls, value: object) -> IPv4Network | IPv6Network | None:
+        if value is None:
+            return None
+        if isinstance(value, str) and "/" in value:
+            try:
+                network = ip_network(value, strict=True)
+            except ValueError:
+                raise ValueError("must be a private network CIDR") from None
+        elif isinstance(value, IPv4Network | IPv6Network):
+            network = value
+        else:
+            raise ValueError("must be a private network CIDR")
+        if isinstance(network, IPv4Network):
+            is_private = any(
+                network.subnet_of(IPv4Network(cidr))
+                for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+            )
+        else:
+            is_private = network.subnet_of(IPv6Network("fc00::/7"))
+        if not is_private:
+            raise ValueError("must be a private network CIDR")
+        return network
 
     @model_validator(mode="before")
     @classmethod

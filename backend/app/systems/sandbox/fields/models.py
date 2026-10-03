@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import UUID
 
 from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, String, text
@@ -33,6 +33,10 @@ class FieldType(StrEnum):
 class Field(BaseModel):
     __tablename__ = "fields"
     __table_args__ = (
+        CheckConstraint(
+            "lifecycle_close_operation_id IS NULL OR is_deleted",
+            name="ck_fields_lifecycle_close_provenance",
+        ),
         CheckConstraint("position >= 0", name="ck_fields_position_nonnegative"),
         CheckConstraint(
             "type IN ('text', 'long_text', 'email', 'url', 'number', 'decimal', 'int', "
@@ -65,6 +69,11 @@ class Field(BaseModel):
             postgresql_where=text("is_deleted = false"),
         ),
     )
+
+    __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset(
+        {"lifecycle_close_operation_id"}
+    )
+    lifecycle_close_operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
 
     module_id: Mapped[UUID] = mapped_column(
         ForeignKey("modules.id", ondelete="RESTRICT"),

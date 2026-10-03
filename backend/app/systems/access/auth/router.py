@@ -13,6 +13,7 @@ from app.common.dependencies import (
     get_current_user,
     require_admin,
 )
+from app.common.dependencies.auth import get_mfa_identity, require_allowed_source
 from app.core.config import get_settings
 from app.core.config.development import browser_origin_is_permitted, is_relaxed_development
 from app.core.database import get_db
@@ -65,7 +66,7 @@ from app.systems.access.identity.schemas import (
     RefreshTokenRequest,
     TokenResponse,
 )
-from app.systems.access.identity.session_revocation import revoke_session, revoke_user_sessions
+from app.systems.access.identity.session_revocation import revoke_session
 from app.systems.access.policy.scope import effective_levels
 from app.systems.access.users.acceptance import (
     begin_invitation_acceptance,
@@ -86,6 +87,7 @@ from app.systems.access.users.service import (
     invite_user,
     resend_invitation,
 )
+from app.systems.manage.workspace.security_policy import PasswordPolicyViolation
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 router = APIRouter()
@@ -116,6 +118,7 @@ def login(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, bool]:
     _require_browser_origin(request)
+    require_allowed_source(request, db)
     try:
         issued = login_with_provider(
             db,
@@ -155,6 +158,7 @@ def refresh(
     if raw_refresh is None:
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
     csrf_token = _require_refresh_csrf(request)
+    require_allowed_source(request, db)
     try:
         issued = refresh_provider_session(
             db, raw_refresh, get_supabase_auth_client(), csrf_token=csrf_token
@@ -175,6 +179,7 @@ def issue_bearer_token(
     db: Annotated[Session, Depends(get_db)],
 ) -> TokenResponse:
     _reject_mixed_credentials(request)
+    require_allowed_source(request, db)
     try:
         issued = login_with_provider(
             db,
@@ -205,6 +210,7 @@ def refresh_bearer_token(
     db: Annotated[Session, Depends(get_db)],
 ) -> TokenResponse:
     _reject_mixed_credentials(request)
+    require_allowed_source(request, db)
     try:
         issued = refresh_provider_session(db, payload.refresh_token, get_supabase_auth_client())
     except InvalidCredentials as error:
@@ -222,6 +228,7 @@ def logout(
 ) -> Response:
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     _reject_mixed_credentials(request)
+    require_allowed_source(request, db)
     if request.cookies.get("openslate_access") or request.cookies.get("openslate_refresh"):
         _require_browser_origin(request)
     session_id: UUID | None = None
@@ -235,7 +242,7 @@ def logout(
             raise HTTPException(status_code=401, detail="Invalid authentication credentials")
     else:
         try:
-            identity = get_current_identity(request, _bearer_credentials(request), db)
+            identity = get_mfa_identity(request, _bearer_credentials(request), db)
             if revoke_session(db, identity.session_id, identity.user.id):
                 session_id = identity.session_id
         except HTTPException as error:
@@ -325,35 +332,6 @@ def session_status(
     }
 
 
-@auth_router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-def revoke_one_session(
-    session_id: UUID,
-    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
-    response: Response,
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    identity = _require_completed_identity(identity)
-    revoke_session(db, session_id, identity.user.id)
-    db.commit()
-    response.status_code = status.HTTP_204_NO_CONTENT
-    if session_id == identity.session_id:
-        _clear_browser_session(response)
-    return response
-
-
-@auth_router.post("/sessions/revoke-others", status_code=status.HTTP_204_NO_CONTENT)
-def revoke_other_sessions(
-    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
-    response: Response,
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    identity = _require_completed_identity(identity)
-    revoke_user_sessions(db, identity.user.id, except_session_id=identity.session_id)
-    db.commit()
-    response.status_code = status.HTTP_204_NO_CONTENT
-    return response
-
-
 @auth_router.post("/password/change")
 def change_password(
     payload: PasswordChangeRequest,
@@ -383,6 +361,15 @@ def change_password(
             payload.password,
             get_supabase_auth_client(),
         )
+    except PasswordPolicyViolation as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "password_policy_violation",
+                "message": str(error),
+            },
+        ) from error
     except (InvalidCredentials, InvalidProviderCredentials) as error:
         db.rollback()
         raise HTTPException(status_code=403, detail="Password cannot be changed") from error
@@ -402,6 +389,7 @@ def request_recovery(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     _require_browser_origin(request)
+    require_allowed_source(request, db)
     try:
         permitted = (
             recovery_request_permitted(db, payload.email, source=_source(request))
@@ -426,10 +414,20 @@ def complete_recovery(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     _require_browser_origin(request)
+    require_allowed_source(request, db)
     try:
         provider_actions.complete_recovery(
             db, payload.token_hash, payload.password, get_supabase_auth_client()
         )
+    except PasswordPolicyViolation as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "password_policy_violation",
+                "message": str(error),
+            },
+        ) from error
     except (ActionTokenInvalid, InvalidProviderCredentials) as error:
         db.rollback()
         raise HTTPException(status_code=400, detail="Recovery token is invalid") from error
@@ -446,6 +444,7 @@ def complete_invitation(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     _require_browser_origin(request)
+    require_allowed_source(request, db)
     try:
         permitted = invitation_completion_permitted(
             db,
@@ -468,6 +467,15 @@ def complete_invitation(
         provider_actions.complete_invitation(
             db, payload.token_hash, payload.password, get_supabase_auth_client()
         )
+    except PasswordPolicyViolation as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "password_policy_violation",
+                "message": str(error),
+            },
+        ) from error
     except (InvitationError, InvalidProviderCredentials) as error:
         db.rollback()
         operation_id = begin_invitation_acceptance(None)

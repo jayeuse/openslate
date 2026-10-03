@@ -371,6 +371,7 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
     record.updated_at = record.created_at
     record.is_deleted = False
     db = Mock(spec=Session)
+    db.info = {}  # a real Session.info is a dict; the lock helper keeps a marker in it
     db.get.side_effect = lambda model, *_args, **_kwargs: module if model is Module else record
     db.scalar.return_value = module
     db.scalars.return_value.all.return_value = [closed]
@@ -380,6 +381,7 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
         RecordUpdate(data={str(closed.id): 1}),
         make_user("record_writer"),
         db,
+        if_match=record.updated_at.isoformat(),
     )
     assert record.data == {str(closed.id): 1}
 
@@ -389,6 +391,7 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
             RecordUpdate(data={str(closed.id): True}),
             make_user("record_writer"),
             db,
+            if_match=record.updated_at.isoformat(),
         )
 
     assert raised.value.status_code == 409

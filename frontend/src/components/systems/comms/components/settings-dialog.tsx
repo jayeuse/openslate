@@ -1,4 +1,5 @@
 "use client";
+import { ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -49,6 +50,11 @@ import {
   SETTINGS_SECTIONS,
 } from "./settings-fields";
 import { PermissionFields, PermissionInspector } from "./permission-inspector";
+import { GroupAccessSummary } from "./group-access-summary";
+import {
+  ConfirmActionDialog,
+  type ConfirmActionRequest,
+} from "./confirm-action-dialog";
 import {
   COMMS_CONFIGURATION_KEY,
   messageFromCommsError,
@@ -69,6 +75,8 @@ export interface CommsSettingsDialogProps {
   onClose: () => void;
   title?: string;
   overview?: ReactNode;
+  /** Shown at the end of Overview, after its settings (for example, archive). */
+  overviewEnd?: ReactNode;
   additionalDirty?: boolean;
   onBeforeSave?: () => boolean | Promise<boolean>;
   onBeforeSaveTransaction?: (draft: SampleTransactionDraft) => void;
@@ -88,6 +96,7 @@ export function CommsSettingsDialog({
   onClose,
   title,
   overview,
+  overviewEnd,
   additionalDirty = false,
   onBeforeSave,
   onBeforeSaveTransaction,
@@ -106,6 +115,9 @@ export function CommsSettingsDialog({
     structuredClone(getCommsScope(config, target)),
   );
   const [draft, setDraft] = useState(baseline);
+  const [confirmReset, setConfirmReset] = useState<ConfirmActionRequest | null>(
+    null,
+  );
   const [initialPreferences] = useState(() =>
     structuredClone(config.preferences[PERSON_ID] ?? DEFAULT_COMMS_PREFERENCES),
   );
@@ -419,9 +431,9 @@ export function CommsSettingsDialog({
         { id: "shortcuts", label: "Shortcuts" },
       ]
     : [
-        SETTINGS_SECTIONS[0],
-        { id: "permissions", label: "Advanced Permissions" },
-        ...SETTINGS_SECTIONS.slice(1),
+        // Everyday behavior first; who may do what comes last.
+        ...SETTINGS_SECTIONS,
+        { id: "permissions", label: "Permissions" },
       ];
   const search = query.trim().toLowerCase();
   function fields(keys: CommsSettingKey[]) {
@@ -437,7 +449,6 @@ export function CommsSettingsDialog({
         keys={visible}
         values={values}
         overrides={overrides}
-        sources={resolved.sources}
         locked={lockedSettings}
         workspace={!personal && target.kind === "workspace"}
         people={people}
@@ -467,7 +478,11 @@ export function CommsSettingsDialog({
       description={
         personal
           ? "Make OpenComms comfortable for you. Shared rules still apply."
-          : "Configure conversation defaults, permissions, and channel behavior."
+          : target.kind === "workspace"
+            ? "Defaults for every category and channel. Categories and channels can change them unless you lock a setting."
+            : target.kind === "category"
+              ? "Defaults for the channels in this category. A channel can change them unless the workspace locks a setting."
+              : `Settings for #${channels.find((item) => item.id === target.id)?.name ?? "this channel"} only.`
       }
       opener={opener}
       dirty={dirty}
@@ -475,12 +490,30 @@ export function CommsSettingsDialog({
       onSave={save}
       saveLabel={saveLabel}
       footer={
-        <Action type="button" className="mr-auto" onClick={resetDefaults}>
+        <Action
+          type="button"
+          className="mr-auto"
+          onClick={(event) =>
+            setConfirmReset({
+              title: `Reset ${
+                personal
+                  ? "your preferences"
+                  : target.kind === "workspace"
+                    ? "workspace settings"
+                    : `these ${target.kind} settings`
+              } to default?`,
+              description: `This clears every section of this dialog back to its default. Nothing is saved until you select ${saveLabel ?? "Save changes"}.`,
+              confirmLabel: "Reset to default",
+              onConfirm: resetDefaults,
+              opener: event.currentTarget,
+            })
+          }
+        >
           Reset to default
         </Action>
       }
     >
-      <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-end sm:px-6">
+      <div className="flex items-end gap-3 px-5 py-4 sm:px-6">
         <div className="min-w-0 flex-1">
           <TextField
             label="Search settings"
@@ -512,7 +545,7 @@ export function CommsSettingsDialog({
       >
         <TabsList
           aria-label="Settings sections"
-          className="bg-muted/20 max-w-full items-stretch justify-start overflow-x-auto rounded-none border-b p-2 sm:flex-col sm:border-r sm:border-b-0"
+          className="bg-muted/20 max-w-full items-stretch justify-start overflow-x-auto rounded-none border-b p-2 sm:sticky sm:top-0 sm:flex-col sm:self-start sm:border-r sm:border-b-0"
         >
           {sections.map((item) => (
             <TabsTrigger
@@ -694,37 +727,77 @@ export function CommsSettingsDialog({
               </FieldGroup>
             </TabsContent>
           ) : section === "permissions" ? (
-            <TabsContent value="permissions">
-              <PermissionFields
-                initialSubject={initialSubject}
-                value={draft.permissions}
-                roles={roles}
-                people={people}
-                locked={lockedPermissions}
-                workspace={target.kind === "workspace"}
-                search=""
-                modifiedOnly={modifiedOnly}
-                onChange={(subject, permission, value) =>
-                  setDraft((current) => ({
-                    ...current,
-                    permissions: {
-                      ...current.permissions,
-                      [subject]: {
-                        ...current.permissions[subject],
-                        [permission]: value,
-                      },
-                    },
-                  }))
+            <TabsContent value="permissions" className="flex flex-col gap-6">
+              <GroupAccessSummary
+                scope={target.kind}
+                channel={channels.find((item) => item.id === target.id)}
+                category={categories.find((item) => item.id === target.id)}
+                categories={categories}
+                onChangeGroups={
+                  overview && target.kind !== "workspace"
+                    ? () => {
+                        setSection("overview");
+                        // Keep keyboard focus: go to the field it names.
+                        setTimeout(() => {
+                          const field = document.getElementById(
+                            `who-can-use-${target.id}`,
+                          );
+                          field?.scrollIntoView({ block: "start" });
+                          field?.focus();
+                        });
+                      }
+                    : undefined
                 }
-                onLock={(permission, locked) =>
-                  setLockedPermissions((current) =>
-                    locked
-                      ? [...new Set([...current, permission])]
-                      : current.filter((item) => item !== permission),
-                  )
-                }
-                onInspect={() => setInspect(true)}
               />
+              <details
+                open={Boolean(initialSubject)}
+                className="group/exceptions border-card-edge rounded-[calc(var(--radius)*1.25)] border"
+              >
+                <summary className="hover:bg-muted focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-[calc(var(--radius)*1.25)] px-3 text-sm font-semibold outline-none focus-visible:outline-2 [&::-webkit-details-marker]:hidden">
+                  <ChevronRight
+                    aria-hidden="true"
+                    className="text-muted-foreground size-4 shrink-0 transition-transform duration-(--motion-fast) group-open/exceptions:rotate-90 motion-reduce:transition-none"
+                  />
+                  <span className="mr-auto">
+                    Exceptions for roles and people
+                  </span>
+                  <span className="text-muted-foreground text-xs font-normal">
+                    Applied today
+                  </span>
+                </summary>
+                <div className="border-t p-3">
+                  <PermissionFields
+                    initialSubject={initialSubject}
+                    value={draft.permissions}
+                    roles={roles}
+                    people={people}
+                    locked={lockedPermissions}
+                    workspace={target.kind === "workspace"}
+                    search=""
+                    modifiedOnly={modifiedOnly}
+                    onChange={(subject, permission, value) =>
+                      setDraft((current) => ({
+                        ...current,
+                        permissions: {
+                          ...current.permissions,
+                          [subject]: {
+                            ...current.permissions[subject],
+                            [permission]: value,
+                          },
+                        },
+                      }))
+                    }
+                    onLock={(permission, locked) =>
+                      setLockedPermissions((current) =>
+                        locked
+                          ? [...new Set([...current, permission])]
+                          : current.filter((item) => item !== permission),
+                      )
+                    }
+                    onInspect={() => setInspect(true)}
+                  />
+                </div>
+              </details>
             </TabsContent>
           ) : (
             <TabsContent value={section}>
@@ -762,6 +835,7 @@ export function CommsSettingsDialog({
                   SETTINGS_SECTIONS.find((item) => item.id === section)?.keys ??
                     [],
                 )}
+                {section === "overview" && overviewEnd}
                 {section === "notifications" && (
                   <>
                     <Action
@@ -782,6 +856,10 @@ export function CommsSettingsDialog({
           )}
         </div>
       </Tabs>
+      <ConfirmActionDialog
+        request={confirmReset}
+        onClose={() => setConfirmReset(null)}
+      />
     </ConfigurationFrame>
   );
 }

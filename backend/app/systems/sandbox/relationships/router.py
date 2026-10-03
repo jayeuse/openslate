@@ -80,13 +80,11 @@ def create_relationship(
 ) -> RelationshipResponse:
     require_link_change(db, user, payload.source_record_id, payload.target_record_id)
     try:
-        return relationship_response(
-            create_relationship_service(
-                db,
-                payload.field_id,
-                payload.source_record_id,
-                payload.target_record_id,
-            )
+        return create_relationship_service(
+            db,
+            payload.field_id,
+            payload.source_record_id,
+            payload.target_record_id,
         )
     except RelationshipError as error:
         raise _raise_service_error(error) from error
@@ -124,12 +122,11 @@ def assign_relationship(
 ) -> RelationshipResponse | None:
     require_link_change(db, user, source_record_id, payload.target_record_id, field_id=field_id)
     try:
-        edge = assign_relationship_service(
+        return assign_relationship_service(
             db,
             field_id,
             source_record_id,
             payload.target_record_id,
         )
-        return relationship_response(edge) if edge is not None else None
     except RelationshipError as error:
         raise _raise_service_error(error) from error

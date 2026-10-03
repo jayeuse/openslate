@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
@@ -24,6 +24,7 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import validate_module_schema
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.binding_keys import normalize_legacy_field_bindings
+from app.systems.sandbox.publications.close_rules import lifecycle_closed_relationships
 from app.systems.sandbox.publications.models import SandboxBinding, SandboxPublication
 from app.systems.sandbox.publications.planner import (
     _binding_map,
@@ -148,12 +149,13 @@ def apply_publication(
         normalize_legacy_field_bindings(document, bindings, persist=True)
     except ValueError as error:
         raise PublicationError("field_binding_ambiguous", str(error)) from error
+    lifecycle_closed = lifecycle_closed_relationships(db, document, bindings)
     retired = stage_bound_names_and_positions(db, document, bindings, actor_id)
     departments = _apply_departments(db, document, bindings, actor_id)
     modules = _apply_modules(db, document, bindings, departments, actor_id)
     fields = _apply_fields(db, document, bindings, modules, actor_id)
     _apply_title_fields(document, modules, fields, actor_id)
-    _apply_relationships(db, document, bindings, modules, actor_id)
+    _apply_relationships(db, document, bindings, modules, actor_id, lifecycle_closed)
     close_removed_structure(db, document, bindings, actor_id, retired)
     sync_department_boards(db, actor_id)
     version = _append_version(
@@ -267,6 +269,8 @@ def _apply_departments(
             db.flush()
             _bind(db, "department", desired.id, actor_id, department_id=row.id)
         else:
+            if row.is_deleted != desired.closed:
+                row.lifecycle_close_operation_id = None
             row.department_name = desired.name
             row.is_deleted = desired.closed
             row.deleted_at = datetime.now(UTC) if desired.closed else None
@@ -296,9 +300,11 @@ def _apply_modules(
             db.flush()
             _bind(db, "module", desired.id, actor_id, module_id=row.id)
         else:
+            closed = desired.closed or department.is_deleted
+            if row.department_id != department.id or row.is_deleted != closed:
+                row.lifecycle_close_operation_id = None
             row.department_id = department.id
             row.module_name = desired.name
-            closed = desired.closed or department.is_deleted
             row.is_deleted = closed
             row.deleted_at = datetime.now(UTC) if closed else None
             row.performed_by = actor_id
@@ -333,10 +339,14 @@ def _apply_fields(
                 db.flush()
                 _bind(db, "field", field_key, actor_id, field_id=row.id)
             else:
+                keep_position = row.is_deleted and closed and row.module_id == modules[module.id].id
+                if row.module_id != modules[module.id].id or row.is_deleted != closed:
+                    row.lifecycle_close_operation_id = None
                 row.module_id = modules[module.id].id
                 row.name = desired.name
                 row.required = desired.required
-                row.position = active_position
+                if not keep_position:
+                    row.position = active_position
                 row.config = operational_config(desired)
                 row.is_deleted = closed
                 row.deleted_at = datetime.now(UTC) if closed else None
@@ -389,6 +399,7 @@ def _apply_relationships(
     bindings: Any,
     modules: dict[str, Module],
     actor_id: UUID,
+    lifecycle_closed: Collection[str] = (),
 ) -> None:
     positions = {
         module.id: sum(
@@ -403,6 +414,7 @@ def _apply_relationships(
         closed = (
             modules[desired.source_module_id].is_deleted
             or modules[desired.target_module_id].is_deleted
+            or desired.id in lifecycle_closed
         )
         if row is None:
             row = Field(
@@ -425,9 +437,22 @@ def _apply_relationships(
             db.flush()
             _bind(db, "relationship", desired.id, actor_id, field_id=row.id)
         else:
+            keep_position = (
+                row.is_deleted
+                and closed
+                and row.module_id == modules[desired.source_module_id].id
+                and row.relationship_target_module_id == modules[desired.target_module_id].id
+            )
+            if (
+                row.module_id != modules[desired.source_module_id].id
+                or row.relationship_target_module_id != modules[desired.target_module_id].id
+                or row.is_deleted != closed
+            ):
+                row.lifecycle_close_operation_id = None
             row.module_id = modules[desired.source_module_id].id
             row.name = desired.name
-            row.position = positions[desired.source_module_id]
+            if not keep_position:
+                row.position = positions[desired.source_module_id]
             if not closed:
                 positions[desired.source_module_id] += 1
             row.relationship_target_module_id = modules[desired.target_module_id].id

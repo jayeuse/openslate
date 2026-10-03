@@ -26,7 +26,7 @@ export function TabsList({
     <TabsPrimitive.List
       data-slot="tabs-list"
       className={cn(
-        "bg-muted text-muted-foreground relative inline-flex w-fit items-center gap-1 rounded-[var(--radius)] p-1",
+        "text-muted-foreground relative inline-flex w-fit items-center gap-1 rounded-[var(--radius)] bg-[var(--surface-sunken)] p-1 shadow-[inset_0_0_0_1px_var(--rule)]",
         className,
       )}
       {...props}
@@ -37,7 +37,7 @@ export function TabsList({
           tab). */}
       <TabsPrimitive.Indicator
         data-slot="tabs-indicator"
-        className="bg-card absolute top-(--active-tab-top) left-(--active-tab-left) h-(--active-tab-height) w-(--active-tab-width) rounded-sm shadow-sm transition-[left,top,width,height] duration-(--motion-base) ease-(--ease-out) motion-reduce:transition-none"
+        className="absolute top-(--active-tab-top) left-(--active-tab-left) h-(--active-tab-height) w-(--active-tab-width) rounded-[calc(var(--radius)*0.75)] bg-[var(--surface-raised)] shadow-[var(--lift),inset_0_0_0_1px_var(--rule)] transition-[left,top,width,height] duration-(--motion-base) ease-(--ease-out) motion-reduce:transition-none"
       />
     </TabsPrimitive.List>
   );
@@ -52,7 +52,7 @@ export function TabsTrigger({
     <TabsPrimitive.Tab
       data-slot="tabs-trigger"
       className={cn(
-        "focus-visible:outline-ring data-active:text-foreground relative z-[1] inline-flex items-center justify-center rounded-sm px-3 py-1.5 text-sm font-medium transition-colors duration-(--motion-fast) outline-none focus-visible:outline-2 disabled:opacity-50",
+        "focus-visible:outline-ring data-active:text-action-text relative z-[1] inline-flex items-center justify-center rounded-sm px-3 py-1.5 text-sm font-medium transition-colors duration-(--motion-fast) outline-none focus-visible:outline-2 disabled:opacity-50 data-active:font-semibold",
         className,
       )}
       {...props}

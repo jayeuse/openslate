@@ -50,6 +50,7 @@ const PAIRS = [
   ...[1, 2, 3, 4].flatMap((n) => [
     ["canvas-module-ink", `dept-${n}-card`, 4.5],
     ["canvas-dept-ink", `dept-${n}-band`, 4.5],
+    ["canvas-dept-name", `dept-${n}-band`, 4.5],
     ["canvas-field-ink", `dept-${n}-module`, 4.5],
     ["canvas-type-ink", `dept-${n}-module`, 4.5],
     ["canvas-field-ink", `dept-${n}-stripe`, 4.5],

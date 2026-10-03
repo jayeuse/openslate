@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from uuid6 import uuid7
 
 from app.core.database import get_db
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.events import router as events_router
 from app.systems.platform.events.hub import EventHub, EventViewer
 from app.systems.platform.events.models import InvalidationEvent
@@ -182,6 +183,9 @@ def test_unbound_provider_identity_cannot_open_event_stream(
     monkeypatch.setattr(events_router, "get_engine", lambda: "engine")
     monkeypatch.setattr(events_router, "AuditSession", session)
     monkeypatch.setattr(events_router, "resolve_provider_session", resolve_provider_session)
+    monkeypatch.setattr(
+        events_router, "load_workspace_policy", lambda _db: WorkspaceProfile(ip_allow_list=[])
+    )
 
     application = FastAPI()
     application.state.events_hub = EventHub()
@@ -227,7 +231,7 @@ def test_cookie_event_principal_checks_browser_origin_before_stream(
         lambda: SimpleNamespace(public_origin="https://app.example"),
         raising=False,
     )
-    request = SimpleNamespace(cookies={"openslate_access": "cookie"}, headers=headers)
+    request = SimpleNamespace(cookies={"openslate_access": "cookie"}, headers=headers, client=None)
 
     if allowed:
         assert get_event_principal(request, None) == EventPrincipal("cookie")
@@ -239,7 +243,7 @@ def test_cookie_event_principal_checks_browser_origin_before_stream(
 
 def test_bearer_event_principal_does_not_require_browser_origin(monkeypatch) -> None:
     _install_provider_auth(monkeypatch, "bearer")
-    request = SimpleNamespace(cookies={}, headers={})
+    request = SimpleNamespace(cookies={}, headers={}, client=None)
 
     assert get_event_principal(request, SimpleNamespace(credentials="bearer")) == EventPrincipal(
         "bearer"

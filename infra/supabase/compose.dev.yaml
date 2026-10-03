@@ -1,6 +1,17 @@
 # Use with compose.yaml for disposable development and test instances.
 # Set SMTP_HOST=mailpit and SMTP_PORT=1025 in the installation env file.
 services:
+  auth:
+    environment:
+      # Development mail stays in owned Mailpit; allow complete sample rosters.
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: "1000"
+      # Sample runs sign in about 30 users and refresh each one near token expiry.
+      # Password sign-in and refresh share this limit; the Auth source reads a plain
+      # value as events per hour. A limited refresh revokes the local session.
+      # Invitation completion uses the verify limit.
+      GOTRUE_RATE_LIMIT_TOKEN_REFRESH: "10000"
+      GOTRUE_RATE_LIMIT_VERIFY: "1000"
+
   db:
     ports:
       - "127.0.0.1:${SUPABASE_DB_PORT:-55432}:5432"

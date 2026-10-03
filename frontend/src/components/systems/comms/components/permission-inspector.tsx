@@ -98,8 +98,9 @@ export function PermissionFields({
     <FieldGroup>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-muted-foreground max-w-md text-xs">
-          Workspace → category → channel. Each scope applies everyone, then
-          role, then person exceptions. Inherit keeps the previous decision.
+          Access is decided from the workspace down to the channel. At each
+          level, a rule for a person beats a rule for their role, which beats
+          the rule for everyone. Inherit uses the broader rule.
         </p>
         <Action type="button" onClick={onInspect}>
           Inspect effective access
@@ -129,8 +130,8 @@ export function PermissionFields({
       </Choice>
       {subject === "person:sample-eli" && (
         <Alert>
-          Eli has protected OpenComms owner access. These overrides cannot
-          remove that access; channel and message policies still apply.
+          Eli owns OpenComms, so Eli always has every permission here. Channel
+          locks and message limits still apply.
         </Alert>
       )}
       {!permissions.length && (
@@ -166,8 +167,8 @@ export function PermissionFields({
               ? "Locked by workspace"
               : value[subject]?.[permission] &&
                   value[subject][permission] !== "inherit"
-                ? "Explicit exception at this scope"
-                : "Inherited from preceding scope or subject"}
+                ? "Set here"
+                : "Not set here, so a broader rule applies"}
           </p>
           {workspace && (
             <Toggle
@@ -209,7 +210,8 @@ export function PermissionInspector({
   return (
     <ConfigurationFrame
       title="Effective access"
-      description="Read-only preview of the current settings draft. This does not switch your identity."
+      description="See what one person can do with your unsaved changes. This does not sign you in as them."
+      closeLabel="Back to settings"
       opener={opener}
       onClose={onBack}
       footer={
@@ -220,7 +222,7 @@ export function PermissionInspector({
     >
       <FieldGroup className="p-5 sm:p-6">
         <Choice
-          label="Inspect person"
+          label="Check access for"
           value={personId}
           onChange={(event) => setPersonId(event.target.value)}
         >
@@ -245,32 +247,54 @@ export function PermissionInspector({
             ))}
           </Choice>
         )}
-        <div className="flex flex-col">
-          {COMMS_PERMISSIONS.map((permission, index) => {
-            const result = resolveCommsPermission(
+        {(() => {
+          const results = COMMS_PERMISSIONS.map((permission) => ({
+            permission,
+            result: resolveCommsPermission(
               config,
               { person, channel: selectedChannel, categories },
               permission,
-            );
-            return (
-              <div key={permission} className="grid gap-2 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-sm font-medium">
-                    {PERMISSION_LABELS[permission]}
-                  </h3>
-                  <Badge variant={result.allowed ? "secondary" : "outline"}>
-                    {result.allowed ? "Allowed" : "Denied"}
-                  </Badge>
-                </div>
-                <p className="text-muted-foreground text-xs">{result.reason}</p>
-                <p className="text-muted-foreground text-xs break-words">
-                  Source: {result.source}
-                </p>
-                {index < COMMS_PERMISSIONS.length - 1 && <Separator />}
+            ),
+          }));
+          // One reason for every row (the owner rule) is said once, above.
+          const sharedReason = results.every(
+            ({ result }) => result.reason === results[0]?.result.reason,
+          )
+            ? results[0]?.result.reason
+            : undefined;
+          return (
+            <>
+              {sharedReason && <Alert>{sharedReason}</Alert>}
+              <div className="flex flex-col">
+                {results.map(({ permission, result }, index) => {
+                  return (
+                    <div key={permission} className="grid gap-2 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <h3 className="text-sm font-medium">
+                          {PERMISSION_LABELS[permission]}
+                        </h3>
+                        <Badge
+                          variant={result.allowed ? "secondary" : "outline"}
+                        >
+                          {result.allowed ? "Allowed" : "Denied"}
+                        </Badge>
+                      </div>
+                      {!sharedReason && (
+                        <p className="text-muted-foreground text-xs">
+                          {result.reason}
+                        </p>
+                      )}
+                      <p className="text-muted-foreground text-xs break-words">
+                        Source: {result.source}
+                      </p>
+                      {index < COMMS_PERMISSIONS.length - 1 && <Separator />}
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
-        </div>
+            </>
+          );
+        })()}
       </FieldGroup>
     </ConfigurationFrame>
   );

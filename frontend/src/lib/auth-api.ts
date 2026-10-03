@@ -29,6 +29,10 @@ const authMeResponse = z.object({
 });
 
 export type SessionStatus = z.output<typeof sessionResponse>;
+export const sessionRecheckEvent = "openslate:session-recheck";
+export function requestSessionRecheck() {
+  window.dispatchEvent(new Event(sessionRecheckEvent));
+}
 export type AccessLevel = z.output<typeof accessLevel>;
 /** A module entry wins over its department entry. An admin has no entries. */
 export type AccessEntry = {

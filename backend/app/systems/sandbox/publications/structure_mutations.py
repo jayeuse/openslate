@@ -111,6 +111,7 @@ def sync_department_boards(db: Session, actor_id: UUID) -> None:
 
 
 def _close(row: Department | Module | Field, actor_id: UUID) -> None:
+    row.lifecycle_close_operation_id = None
     row.is_deleted = True
     row.deleted_at = datetime.now(UTC)
     row.performed_by = actor_id

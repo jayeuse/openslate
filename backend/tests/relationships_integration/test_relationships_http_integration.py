@@ -1,13 +1,21 @@
 """Registered relationship API contracts against PostgreSQL."""
+
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import datetime
 from uuid import UUID
 
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import ORMExecuteState, Session
 
+from app.core.database import get_db
 from app.main import create_app
 
 pytestmark = [
@@ -28,17 +36,68 @@ def _payload(field_id: object, source_id: object, target_id: object) -> dict[str
     }
 
 
-def test_create_route_persists_and_rejects_duplicate_edge(relationship_http_fixture) -> None:
+@pytest.mark.parametrize("postcommit_read_fault", [False, True], ids=["normal", "postcommit-fault"])
+def test_create_route_persists_and_rejects_duplicate_edge(
+    relationship_http_fixture, postcommit_read_fault: bool
+) -> None:
     graph = relationship_http_fixture.graph
     assert graph is not None
+    if postcommit_read_fault:
+
+        def guarded_request_database(request: Request) -> Iterator[Session]:
+            with contextmanager(relationship_http_fixture._request_database)(request) as database:
+                committed = False
+
+                def after_commit(_session: Session) -> None:
+                    nonlocal committed
+                    committed = True
+
+                def reject_postcommit_read(state: ORMExecuteState) -> None:
+                    if committed and state.is_select:
+                        raise OperationalError(
+                            "request response read after commit",
+                            {},
+                            RuntimeError("forced read fault"),
+                        )
+
+                event.listen(database, "after_commit", after_commit)
+                event.listen(database, "do_orm_execute", reject_postcommit_read)
+                try:
+                    yield database
+                finally:
+                    event.remove(database, "after_commit", after_commit)
+                    event.remove(database, "do_orm_execute", reject_postcommit_read)
+
+        relationship_http_fixture.app.dependency_overrides[get_db] = guarded_request_database
+
     with relationship_http_fixture.client() as client:
         created = client.post(
             "/api/relationships",
             json=_payload(graph.field_id, graph.source_id, graph.target_id),
         )
+        with relationship_http_fixture.owner_engine.connect() as connection:
+            persisted = connection.execute(
+                text(
+                    "SELECT id, created_at, updated_at, performed_by "
+                    "FROM public.relationship_edges WHERE field_id = :field_id AND NOT is_deleted"
+                ),
+                {"field_id": graph.field_id},
+            ).one()
+            audits = connection.execute(
+                text(
+                    "SELECT action, performed_by FROM public.audit_logs "
+                    "WHERE entity_type = 'relationship_edges' AND entity_id = :edge_id"
+                ),
+                {"edge_id": persisted.id},
+            ).all()
+        assert audits == [("create", relationship_http_fixture.actor_id)]
         assert created.status_code == 201
         body = created.json()
         assert "data" not in body
+        assert body["id"] == str(persisted.id)
+        assert datetime.fromisoformat(body["created_at"]) == persisted.created_at
+        assert datetime.fromisoformat(body["updated_at"]) == persisted.updated_at
+        assert body["performed_by"] == str(persisted.performed_by)
         assert body["field_id"] == str(graph.field_id)
         assert body["source_record_id"] == str(graph.source_id)
         assert body["target_record_id"] == str(graph.target_id)
@@ -100,13 +159,14 @@ def test_delete_route_unlinks_edge_without_deleting_domain_rows(relationship_htt
 
     assert relationship_http_fixture.active_edge_ids() == set()
     with relationship_http_fixture.owner_engine.connect() as connection:
-        rows = connection.execute(
-            text(
-                "SELECT is_deleted FROM public.relationship_edges "
-                "WHERE field_id = :field_id"
-            ),
-            {"field_id": graph.field_id},
-        ).scalars().all()
+        rows = (
+            connection.execute(
+                text("SELECT is_deleted FROM public.relationship_edges WHERE field_id = :field_id"),
+                {"field_id": graph.field_id},
+            )
+            .scalars()
+            .all()
+        )
     assert rows == [True]
 
 
@@ -161,9 +221,7 @@ def test_visibility_projection_hides_archived_target_from_available_list(
         assert available.status_code == 200
         assert available.json()["items"] == []
 
-        hidden = client.get(
-            f"/api/relationships?field_id={graph.field_id}&availability=hidden"
-        )
+        hidden = client.get(f"/api/relationships?field_id={graph.field_id}&availability=hidden")
         assert hidden.status_code == 200
         assert hidden.json()["items"][0]["id"] == edge_id
         assert hidden.json()["items"][0]["visibility"] == "hidden"

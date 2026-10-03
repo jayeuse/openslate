@@ -398,6 +398,17 @@ function ServerBackedBoardsContent() {
     [currentDraftState],
   );
   useWorkspaceNavigationGuard(guardWorkspaceNavigation);
+  function selectBoardContent(
+    kind: "post" | "event",
+    contentId: string | null,
+  ) {
+    const next = new URLSearchParams(searchParams.toString());
+    if (contentId === null) next.delete(kind);
+    else next.set(kind, contentId);
+    const href = `/boards?${next.toString()}` as Route;
+    const resume = () => router.replace(href, { scroll: false });
+    if (requestNavigation(href, resume)) resume();
+  }
   const updateDraftState = useCallback(
     (
       boardId: string,
@@ -990,6 +1001,8 @@ function ServerBackedBoardsContent() {
                 boardActive={board.status === "active"}
                 refreshKey={resource.detail.sequence}
                 onDraftStateChange={onCalendarDraftStateChange}
+                selectedEventId={searchParams.get("event")}
+                onCloseSelectedEvent={() => selectBoardContent("event", null)}
               />
             ) : section === "posts" ? (
               <div className="flex min-w-0 flex-col gap-6">
@@ -1031,6 +1044,8 @@ function ServerBackedBoardsContent() {
                   key={board.id}
                   boardId={board.id}
                   refreshKey={resource.detail.sequence}
+                  selectedPostId={searchParams.get("post")}
+                  onSelectPost={(postId) => selectBoardContent("post", postId)}
                 />
 
                 <Sheet
