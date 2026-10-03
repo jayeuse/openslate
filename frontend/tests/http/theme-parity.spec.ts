@@ -10,6 +10,34 @@ async function signIn(page: Page) {
       },
     }),
   );
+  // Organization reads the server workspace; without an answer the panel moves
+  // between loading and error, so two looks could be captured in different states.
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill({
+      json: {
+        id: "00000000-0000-4000-8000-000000000077",
+        display_name: "Riverside Services",
+        legal_name: null,
+        description: null,
+        contact_email: null,
+        contact_phone: null,
+        postal_address: null,
+        logo_file_id: null,
+        timezone: "Asia/Manila",
+        locale: "en-PH",
+        mark: "RS",
+        currency: "PHP",
+        week_start: "monday",
+        business_hours: "09:00–18:00",
+        invitation_expiry_days: 7,
+        guest_duration_days: 30,
+        revision: 4,
+        created_at: "2026-09-01T00:00:00Z",
+        updated_at: "2026-09-01T00:00:00Z",
+        today: "2026-09-01",
+      },
+    }),
+  );
 }
 
 // Themes change look only. Compare the persistent shell and page, excluding
