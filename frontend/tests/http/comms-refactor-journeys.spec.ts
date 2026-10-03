@@ -332,6 +332,8 @@ test("two quick deletes each get their own Undo", async ({ page }) => {
   const undo = page.getByRole("button", { name: "Undo", exact: true });
   await expect(undo).toHaveCount(2);
   await undo.nth(0).click();
+  // The used notice can linger while it closes; click the remaining Undo only.
+  await expect(undo).toHaveCount(1);
   await undo.nth(0).click();
   await expect(article("First quick delete")).toHaveCount(1);
   await expect(article("Second quick delete")).toHaveCount(1);
