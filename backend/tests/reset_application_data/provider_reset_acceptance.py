@@ -21,8 +21,8 @@ from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.platform.files.models import File
 from app.systems.platform.files.supabase_storage import SupabaseStorage
 from app.systems.sandbox.departments.models import Department
-from operations import reset_models
-from operations.reset_storage import ResetStorage
+from operations.reset import models as reset_models
+from operations.reset.storage import ResetStorage
 from tests import fullstack_runner
 from tests.conftest import _guard_integration_database, guarded_create_engine
 from tests.reset_application_data.provider_reset_cli import dry_run_digest, tty_reset

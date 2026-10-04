@@ -24,12 +24,12 @@ from app.core.config.instance import (
 )
 from app.core.config.provider_instance import assert_provider_instance
 from app.core.config.settings import DOTENV_PATH
-from operations.reset_auth import ResetAuth
-from operations.reset_execution import (
+from operations.reset.auth import ResetAuth
+from operations.reset.execution import (
     _validate_postconditions as _execution_validate_postconditions,
 )
-from operations.reset_execution import apply_reset as _execute_reset
-from operations.reset_models import (
+from operations.reset.execution import apply_reset as _execute_reset
+from operations.reset.models import (
     _LOCK_APPLICATION_STATEMENT,
     _RESET_ADVISORY_LOCK_KEY,
     APPLICATION_TABLES,
@@ -38,19 +38,19 @@ from operations.reset_models import (
     ResetError,
     ResetPlan,
 )
-from operations.reset_planning import (
+from operations.reset.planning import (
     _read_alembic_head,
     _read_profile,
     required_environment,
     validate_local_database_url,
 )
-from operations.reset_planning import (
+from operations.reset.planning import (
     _validated_database_url as _psycopg_database_url,
 )
-from operations.reset_planning import (
+from operations.reset.planning import (
     build_reset_plan as _build_reset_plan,
 )
-from operations.reset_storage import ResetStorage, require_api_stopped
+from operations.reset.storage import ResetStorage, require_api_stopped
 
 __all__ = (
     "APPLICATION_TABLES",

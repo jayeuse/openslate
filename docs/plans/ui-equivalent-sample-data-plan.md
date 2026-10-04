@@ -168,14 +168,14 @@ Audit timestamps show the real run window. Business dates inside records keep th
 
 | Fact | Source |
 | --- | --- |
-| Before this work, each record's creator and "Assigned to" value was its department lead (`@actor:<department>`), so only 6 people created or owned data | `sample_scenario.py` `_field_value`; `sample_population_workflow.py` `build_record_payload` |
-| Before this work, population signed in 7 accounts (admin and 6 leads); the other 24 active members never acted | `sample_people.py` (actors); `sample_population_workflow.py` actor-set check |
-| Before this work, Inventory, Purchasing and Finance members could write only one module each; guests are capped at read | `sample_people.py` `_GROUP_ACCESS`; `access/policy/scope.py` |
-| All 18 relationship definitions stay inside one department, so a department's records and edges can be written together | `sample_catalog.py`; `test_sample_references.py` |
-| Record verification requires each create audit to match one actor per department | `sample_verification.py` |
-| The API rotates an access token only in its last 30 seconds. The seeder refreshes in the last 20 seconds and stops if the expiry does not advance (implemented after a Standard run stopped at the 15-minute token lifetime) | `provider_sessions.py` refresh; `sample_client.py` |
+| Before this work, each record's creator and "Assigned to" value was its department lead (`@actor:<department>`), so only 6 people created or owned data | `sample/scenario.py` `_field_value`; `sample/population/workflow.py` `build_record_payload` |
+| Before this work, population signed in 7 accounts (admin and 6 leads); the other 24 active members never acted | `sample/population/people.py` (actors); `sample/population/workflow.py` actor-set check |
+| Before this work, Inventory, Purchasing and Finance members could write only one module each; guests are capped at read | `sample/population/people.py` `_GROUP_ACCESS`; `access/policy/scope.py` |
+| All 18 relationship definitions stay inside one department, so a department's records and edges can be written together | `sample/catalog.py`; `test_sample_references.py` |
+| Record verification requires each create audit to match one actor per department | `sample/verification/core.py` |
+| The API rotates an access token only in its last 30 seconds. The seeder refreshes in the last 20 seconds and stops if the expiry does not advance (implemented after a Standard run stopped at the 15-minute token lifetime) | `provider_sessions.py` refresh; `sample/client.py` |
 | Supabase Auth shares one limit for password sign-in and token refresh (default 150; the hosted documentation describes 150 per 5 minutes, and the Auth source reads a plain value as events per hour). A Supabase 429 during a refresh revokes the local session. FastAPI's own sign-in limits are off in loopback development | `infra/supabase/compose.yaml`; `access/auth/router.py`; `identity/provider_sessions.py` |
-| Titles, notes, e-mail addresses, post bodies and OpenView names use fixed templates. Customers repeat 5 names; one supplier name uses a real airline brand | `sample_scenario.py` `_title`; `sample_catalog.py`; `sample_board_entries.py`; `sample_openview.py` |
+| Titles, notes, e-mail addresses, post bodies and OpenView names use fixed templates. Customers repeat 5 names; one supplier name uses a real airline brand | `sample/scenario.py` `_title`; `sample/catalog.py`; `sample/population/board_entries.py`; `sample/population/openview.py` |
 
 ### Proposed design
 
@@ -261,7 +261,7 @@ A generator test fails if any value contains a whole-word match for `sample`, `t
 
 Live runs happen at three fixed points, because each needs a guarded reset that the operator confirms: a Small run after the episode planner, a Small run after planned rejections, then Standard. The first reset also clears the partial Standard data. Other slices use generator and planner tests only.
 
-Backend files keep the 500-line limit. `sample_people.py`, `sample_scenario.py` and `sample_client.py` are near it, so the planner, executor, text vocabulary and rejection logic go into new modules.
+Backend files keep the 500-line limit. `sample/population/people.py`, `sample/scenario.py` and `sample/client.py` are near it, so the planner, executor, text vocabulary and rejection logic go into new modules.
 
 ### Decisions
 
@@ -302,12 +302,12 @@ OpenSlate serves any organization, so sample data is not limited to a business. 
 
 Design rules:
 
-- A pack is data in `backend/operations/sample_packs/<key>/`, not a set of code hooks. The engine reads every count from the pack; no test pins a Harbor count unless it belongs to the Harbor pack.
+- A pack is data in `backend/operations/sample/packs/<key>/`, not a set of code hooks. The engine reads every count from the pack; no test pins a Harbor count unless it belongs to the Harbor pack.
 - Planned rejections derive their actors and targets from the pack's access table and fields: a read-only member, a member without a department, a guest, a one-to-one relationship, and Select and Number fields in a writable module.
 - Every pack has one named scenario: a parent amount that a child record settles in part (for example a school fee and a partial payment). Board links and verification read it from the pack.
 - Harbor's purchasing and receipt reconciliation stays inside the Harbor pack.
 - Each pack's design must pass the Sandbox document validation offline before any live run.
-- The generated-data marker check blocks the words `sample`, `test`, `demo`, `dummy`, `fake`, `placeholder`, `lorem`, `ipsum`, `scenario` and `synthetic` (`tests/operations/test_sample_text.py`), except inside the pack's allowed trade phrases (`TRADE_PHRASES`). Schools and clinics use the word "test" for real work, so each pack lists its own phrases.
+- The generated-data marker check blocks the words `sample`, `test`, `demo`, `dummy`, `fake`, `placeholder`, `lorem`, `ipsum`, `scenario` and `synthetic` (`tests/operations/sample/test_sample_text.py`), except inside the pack's allowed trade phrases (`TRADE_PHRASES`). Schools and clinics use the word "test" for real work, so each pack lists its own phrases.
 
 Correct: `Grade 8 science unit test — Section B`. Wrong: `Test record for class 12`.
 

@@ -10,9 +10,9 @@ from sqlalchemy.engine import make_url
 
 from app.core.config.instance import InstanceTarget
 from operations import reset_application_data as reset
-from operations import reset_execution as execution
-from operations.reset_models import ResetError
-from operations.reset_storage import require_api_stopped
+from operations.reset import execution
+from operations.reset.models import ResetError
+from operations.reset.storage import require_api_stopped
 from tests.reset_application_data.test_execution import _plan
 
 

@@ -2,7 +2,7 @@
 
 This document records the organization data each sample pack must provide so the generic runner can exercise the controls completed through Phase E using the same authenticated APIs as the UI. Harbor and School are the only packs in scope through Phase G. New packs start after Phase G, one at a time, using Harbor and School as references.
 
-The contract follows the current action composition in `backend/operations/sample_control_actions.py::plan_controls`. The action planners are `sample_control_account.py::plan_account_controls`, `sample_control_boards.py::plan_board_controls`, `sample_control_openview.py::plan_openview_controls`, `sample_control_access.py::plan_access_controls`, `sample_control_sandbox.py::plan_sandbox_controls`, `sample_control_platform.py::plan_platform_controls`, `sample_control_read_reviews.py::plan_read_reviews`, `sample_control_manage.py::plan_manage_controls`, and `sample_control_reads.py::plan_read_controls`. Audit review is planned and executed in `sample_control_actions.py`.
+The contract follows the current action composition in `backend/operations/sample/controls/actions.py::plan_controls`. The action planners are `sample/controls/account.py::plan_account_controls`, `sample/controls/boards.py::plan_board_controls`, `sample/controls/openview.py::plan_openview_controls`, `sample/controls/access.py::plan_access_controls`, `sample/controls/sandbox.py::plan_sandbox_controls`, `sample/controls/platform.py::plan_platform_controls`, `sample/controls/read_reviews.py::plan_read_reviews`, `sample/controls/manage.py::plan_manage_controls`, and `sample/controls/reads.py::plan_read_controls`. Audit review is planned and executed in `sample/controls/actions.py`.
 
 Sample runs seed realistic organization data and check API stability: each control sends the frontend's request shape, receives its expected status, and leaves the required end state. Per-control audit entity, count, action, and attribution assertions are outside this scope; the existing Phase 0 record and relationship audit checks remain. Repeated record purge reviews are allowed while automation finishes. Invitation completion coverage comes from the existing invitation flow's journal. Each phase's live acceptance uses Harbor Small and School Small; School Standard is required in Phase G.
 
@@ -34,7 +34,7 @@ All nine controls use one active, non-admin pack member with a generated, privat
 | `POST /api/auth/recovery/complete` — complete recovery | A recovery message the owned mailbox can return for that member. | Read the new token from the mailbox and restore the original credential. | Hard-code a token, use another member's message, or store the token in pack data. |
 | `GET /api/events` — verify authenticated event stream | The active member's authenticated SSE session so session invalidation can be observed. | Open the stream as the primary member and verify the expected resynchronization. | Open an unauthenticated stream or use another person's session. |
 
-The account planner is in `backend/operations/sample_control_account.py::plan_account_controls`; the run sequence and private credential/mailbox handling are in `execute_account_control`.
+The account planner is in `backend/operations/sample/controls/account.py::plan_account_controls`; the run sequence and private credential/mailbox handling are in `execute_account_control`.
 
 ### Manage Organization and Security
 
@@ -98,7 +98,7 @@ Only the duplicate and imported copies are mutated or purged; the authored sourc
 | `purge_duplicate` | The disposable duplicate after its temporary post, event, links, and widgets have been handled. | Archive, preview, and purge the duplicate after its temporary content is cleaned up. | Purge the authored source project Board or bypass the preview. |
 | `purge_import` | The separate imported copy with no unhandled temporary dependencies. | Archive, preview, and purge the imported copy created by `board_import`. | Reuse the duplicate's ID or purge a pack-authored Board. |
 
-Source: `backend/operations/sample_control_boards.py::plan_board_controls`, `sample_control_board_content.py`, `sample_control_board_record_links.py`, `sample_control_board_widgets.py`, and `sample_control_board_execution.py`.
+Source: `backend/operations/sample/controls/boards.py::plan_board_controls`, `sample/controls/board_content.py`, `sample/controls/board_record_links.py`, `sample/controls/board_widgets.py`, and `sample/controls/board_execution.py`.
 
 ### OpenView
 
@@ -121,7 +121,7 @@ The query controls share a pack-derived module manager, a module with a `Name` f
 | `record_lifecycle` | A module with a generated record, a Name field, and no published trigger on that module; a manager can write it. The pack provides natural titles for the new record and its changed details. | Choose a trigger-free module and derive both titles from the pack's business vocabulary and record attributes, then restore and purge the record. | Choose a trigger-bearing module or append a seed, machine code, generation marker or verification label to its title. |
 | `relationship_delete` | A pack-authored one-to-many or many-to-many edge whose endpoint modules are trigger-free and in one department; the acting member has source write and target read. | Use an existing in-department edge and delete only the temporary relationship and endpoint records created for the control. | Use a cross-department edge, a one-to-one relation, or an actor missing either permission. |
 
-Source: `backend/operations/sample_control_openview_queries.py::plan_openview_query_controls`, `backend/operations/sample_control_openview.py::plan_openview_controls`, and `sample_control_openview_mutations.py`. Record titles come from `SampleDataset.organization.text.record_title`; saved-resource names come from `sample_board_text.py`.
+Source: `backend/operations/sample/controls/openview_queries.py::plan_openview_query_controls`, `backend/operations/sample/controls/openview.py::plan_openview_controls`, and `sample/controls/openview_mutations.py`. Record titles come from `SampleDataset.organization.text.record_title`; saved-resource names come from `sample/board_text.py`.
 
 ### Access
 
@@ -137,7 +137,7 @@ The Access controls use the first pack department only to describe a temporary e
 | `resend_invitation` | One pending member with a valid pack address routable through the owned invitation flow. | Resend the pack member's pending invitation. | Use an active user, an unaddressable invite, or a hand-created profile. |
 | `revoke_invitation` | The same pending member after resend. | Revoke that invite and leave the profile pending but unsent. | Revoke another invite or delete the profile to stand in for invitation revocation. |
 
-Source: `backend/operations/sample_control_access.py::plan_access_controls`.
+Source: `backend/operations/sample/controls/access.py::plan_access_controls`.
 
 ### Sandbox
 
@@ -153,7 +153,7 @@ Each pack must author a valid Sandbox document and a nonempty vector set that ca
 | `clear_test_history` | A nonempty authored vector set and exactly the same active history count at runtime. | Clear only when the list count equals `len(dataset.test_vectors)`. | Clear if the count differs, including when unrelated active tests appeared. |
 | `restore_test_history` | Every vector references a module, values, event, and trigger IDs in the pack's published design. | Recreate and detail-read each vector with its exact authored inputs. | Reduce the vector set, substitute IDs, or leave an authored test unrepresented. |
 
-Source: `backend/operations/sample_control_sandbox.py::plan_sandbox_controls`, `sample_control_sandbox_execution.py`, and `backend/operations/sample_blueprint.py::_build_test_vectors`.
+Source: `backend/operations/sample/controls/sandbox.py::plan_sandbox_controls`, `sample/controls/sandbox_execution.py`, and `backend/operations/sample/blueprint.py::_build_test_vectors`.
 
 ### Bound structural lifecycle
 
@@ -178,7 +178,7 @@ Close/purge requests use exactly `{token,confirmation_name,password}` from the s
 
 The fixture publication remains immutable after purge and is explicitly mapped/projected as `control_lifecycle_published`; final expected Sandbox history grows from eight to nine versions. Final configuration still requires the exact version set, kinds, hashes and snapshots. Disposal returns current core structure, record and Board counts to their existing baseline before the unchanged phases create their persistent module with distinct IDs. No lifecycle route is deferred or made an interactive exception; the permanent14 and authenticator3 exclusions retain their existing meaning.
 
-Source: `sample_control_sandbox.py::plan_lifecycle_controls`, `sample_control_lifecycle.py`, `sample_control_sandbox_verification.py` and `sample_phase_outputs.py`.
+Source: `sample/controls/sandbox.py::plan_lifecycle_controls`, `sample/controls/lifecycle.py`, `sample/controls/sandbox_verification.py` and `sample/phases/outputs.py`.
 
 ### Audit review and export
 
@@ -191,7 +191,7 @@ The two read-only audit actions use the first published module in the supplied p
 
 Preview and ordinary lists retain the shared pagination shape and `created_at` descending sort. Export checks `text/csv;charset=utf-8`, the `openslate-audit.csv` attachment, `no-store`, `X-Audit-Export-Count`, and the seven columns Date/User/Entity/Action/Target/Before/After through an actual CSV parser. Multiline snapshot cells are preserved; selected preview dates, actors, actions and module-name snapshot content must agree with the downloaded rows, including the server's actor-name trimming and formula-cell escaping. A preview above the cap stops before download, and an unsuccessful or malformed response stops the action. Filtering module history bounds the workload independently of the pack's record count.
 
-Source: `backend/operations/sample_control_actions.py::plan_controls` and `execute_control_action`.
+Source: `backend/operations/sample/controls/actions.py::plan_controls` and `execute_control_action`.
 
 ### Platform import, export, search and self theme
 
@@ -209,7 +209,7 @@ CSV headers derive from the pack-authored title/note field names. Row titles and
 
 Import outcomes are non-idempotent and stop on unknown/failed acceptance without replay. Record creation can leave pending automation even without fixture triggers; cleanup reuses the existing bounded purge-preview wait and refuses unrelated blockers. Exact request descriptors include GET readbacks and purge404s, preserve unique request IDs and actual statuses, and allow repeated previews only for those two records. Search pages retain the same query and ten-result limit, require exact requested offsets/residual counts/has-more flags and a stable initial total, and stop on a missing/exhausted target, malformed response, request failure or the 100-page bound per kind. Later reads have unique sequential step suffixes such as `search_event_page_10`; they do not permit duplicate step descriptors. Results record each kind's page count (1–100), and verification requires the exact ordered GET sequence and five oracle reads plus the sum of those counts. The first import receipt's IDs must match final mappings, both records must be absent, and the two theme results must agree on the restored original value. Core counts, the nine immutable snapshots, permanent14 deferred routes and three interactive MFA exceptions are preserved; no per-control audit accounting is added.
 
-Source: `backend/operations/sample_control_platform.py`, `sample_control_request_verification.py`, `sample_control_verification.py`, and the actual Platform/theme adapters.
+Source: `backend/operations/sample/controls/platform.py`, `sample/controls/request_verification.py`, `sample/controls/verification.py`, and the actual Platform/theme adapters.
 
 ### Backup policy, queued history and recorded version
 
@@ -225,11 +225,11 @@ Five administrator actions use the authored workspace identity and actual backup
 
 Every response retains no-store and its actual request ID. Exact ordered descriptors cover all eleven reads/writes across the five actions; they contain route paths but no request bodies, query values or idempotency key. Final verification requires the original policy restored at the expected revision, the exact current unstarted queued row matching its receipt and request-time policy, and the same running version with a valid recorded observation. The queued row remains for the next guarded application-data reset. Core data counts, the nine immutable Sandbox snapshots, 14 permanently deferred operations and three interactive MFA exceptions remain unchanged. The existing two neutrality safeguards continue to cover the generic sampler: an unknown pack key must produce the same plan, and generic code must contain no authored pack/module/department keys outside the backend schema's wire-vocabulary exception.
 
-Source: `backend/operations/sample_control_backups.py`, `sample_control_request_verification.py`, `sample_control_verification.py`, and `frontend/src/components/systems/manage/adapters/backup-api.ts`.
+Source: `backend/operations/sample/controls/backups.py`, `sample/controls/request_verification.py`, `sample/controls/verification.py`, and `frontend/src/components/systems/manage/adapters/backup-api.ts`.
 
 ## Additional read-controls lane
 
-`sample_control_read_reviews.py::plan_read_reviews` composes five reviews: `review_view_fields` makes four reads, `review_report_run` makes two, `review_board_tools` makes nine, `review_my_events` makes one, and `review_member_candidates` makes one. Each executor checks the returned objects and selects detail IDs from real list responses. Board reads use only the pack's existing `phases.existing_project_board`; they must not create temporary nodes. `sample_control_reads.py::plan_read_controls` adds `revoke_user_sessions` last, reading the selected member's sessions before and after its bulk DELETE.
+`sample/controls/read_reviews.py::plan_read_reviews` composes five reviews: `review_view_fields` makes four reads, `review_report_run` makes two, `review_board_tools` makes nine, `review_my_events` makes one, and `review_member_candidates` makes one. Each executor checks the returned objects and selects detail IDs from real list responses. Board reads use only the pack's existing `phases.existing_project_board`; they must not create temporary nodes. `sample/controls/reads.py::plan_read_controls` adds `revoke_user_sessions` last, reading the selected member's sessions before and after its bulk DELETE.
 
 | Read operation | Pack must supply | Correct example | Wrong example |
 | --- | --- | --- | --- |

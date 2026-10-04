@@ -42,7 +42,7 @@ from app.systems.manage.backups.schemas import (
     OutcomeCommand,
     ReleaseCommand,
 )
-from operations.reset_models import _RESET_ADVISORY_LOCK_KEY
+from operations.reset.models import _RESET_ADVISORY_LOCK_KEY
 
 Command = Annotated[
     InspectCommand

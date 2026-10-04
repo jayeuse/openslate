@@ -242,7 +242,7 @@ class TestSelectionTests(unittest.TestCase):
                 "tests/runtime/test_readiness.py",
                 "tests/migration_0015/test_static.py",
                 "tests/catalog/test_legacy_delete_api.py",
-                "tests/operations/test_disposable_database_guard.py",
+                "tests/operations/runner/test_disposable_database_guard.py",
             ]:
                 file = root / "backend" / path
                 file.parent.mkdir(parents=True, exist_ok=True)
@@ -255,7 +255,7 @@ class TestSelectionTests(unittest.TestCase):
                 runner.select_files(root, "backend", {"database"}, "all"),
                 [
                     "tests/migration_0015/test_static.py",
-                    "tests/operations/test_disposable_database_guard.py",
+                    "tests/operations/runner/test_disposable_database_guard.py",
                 ],
             )
             self.assertEqual(

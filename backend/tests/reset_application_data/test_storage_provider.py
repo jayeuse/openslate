@@ -5,8 +5,8 @@ import json
 import httpx
 import pytest
 
-from operations.reset_models import ResetError
-from operations.reset_storage import ResetStorage
+from operations.reset.models import ResetError
+from operations.reset.storage import ResetStorage
 
 
 def _storage_api(*, public_bucket: str | None = None):
