@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.systems.access.users.models import User, UserStatus
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleClosedAncestorError,
@@ -19,6 +20,12 @@ from app.systems.sandbox.lifecycle.schemas import LifecycleBlockerCode, Lifecycl
 from app.systems.sandbox.lifecycle.service import close_lifecycle, reopen_lifecycle
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.relationships.models import RelationshipEdge
+from app.systems.sandbox.relationships.projection import list_relationships
+from app.systems.sandbox.relationships.schemas import (
+    RelationshipAvailability,
+    RelationshipListRequest,
+)
 from tests.lifecycle_integration.lifecycle_integration_support import _item  # noqa: F401
 
 pytestmark = [
@@ -56,6 +63,82 @@ def test_department_close_cascades_only_owned_rows_and_commits_once(
     assert field_y.is_deleted is False  # type: ignore[attr-defined]
     assert external_edge.is_deleted is False  # type: ignore[attr-defined]
     assert department_y.is_deleted is False  # type: ignore[attr-defined]
+
+
+def _external_link_state(
+    db: Session, graph: dict[str, object]
+) -> list[tuple[object, str, list[str]]]:
+    """List the X -> Y field for an administrator, in hidden and available state."""
+
+    reader = User(
+        email="lifecycle-reader@example.test", role="admin", status=UserStatus.ACTIVE.value
+    )
+    field = cast(Field, _item(graph, "field_external"))
+    items, _pagination = list_relationships(
+        db,
+        RelationshipListRequest(field_id=field.id, availability=RelationshipAvailability.ALL),
+        reader=reader,
+    )
+    return [
+        (item.id, item.visibility.value, [reason.value for reason in item.hidden_reasons])
+        for item in items
+    ]
+
+
+def test_target_department_close_hides_the_cross_department_link_without_writing_it(
+    integration_db: Session, lifecycle_graph: dict[str, object]
+) -> None:
+    department_x = _item(lifecycle_graph, "department_x")
+    department_y = _item(lifecycle_graph, "department_y")
+    module_x = cast(Module, _item(lifecycle_graph, "module_x"))
+    field_external = cast(Field, _item(lifecycle_graph, "field_external"))
+    source = cast(Record, _item(lifecycle_graph, "source"))
+    external_edge = cast(RelationshipEdge, _item(lifecycle_graph, "external_edge"))
+    edge_updated_at = external_edge.updated_at
+
+    result = close_lifecycle(
+        integration_db,
+        LifecycleTargetType.DEPARTMENT,
+        department_y.id,  # type: ignore[attr-defined]
+        None,
+    )
+
+    assert department_y.is_deleted is True  # type: ignore[attr-defined]
+    assert "relationship_edges" not in {row.entity_type for row in result.rows}
+    integration_db.refresh(external_edge)
+    assert external_edge.is_deleted is False
+    assert external_edge.updated_at == edge_updated_at
+    assert (department_x.is_deleted, module_x.is_deleted) == (False, False)  # type: ignore[attr-defined]
+    assert (field_external.is_deleted, source.is_deleted) == (False, False)
+    assert [
+        (
+            impact.edge_id,
+            impact.external_record_id,
+            impact.external_module_id,
+            impact.external_department_id,
+        )
+        for impact in result.external_impacts
+    ] == [(external_edge.id, source.id, module_x.id, department_x.id)]  # type: ignore[attr-defined]
+    assert _external_link_state(integration_db, lifecycle_graph) == [
+        (external_edge.id, "hidden", ["target_record_archived", "target_module_archived"])
+    ]
+
+
+def test_target_department_reopen_makes_the_cross_department_link_available_again(
+    integration_db: Session, lifecycle_graph: dict[str, object]
+) -> None:
+    department_y = _item(lifecycle_graph, "department_y")
+    external_edge = cast(RelationshipEdge, _item(lifecycle_graph, "external_edge"))
+    close_lifecycle(integration_db, LifecycleTargetType.DEPARTMENT, department_y.id, None)  # type: ignore[attr-defined]
+    assert _external_link_state(integration_db, lifecycle_graph)[0][1] == "hidden"
+
+    reopen_lifecycle(integration_db, LifecycleTargetType.DEPARTMENT, department_y.id, None)  # type: ignore[attr-defined]
+
+    integration_db.refresh(external_edge)
+    assert external_edge.is_deleted is False
+    assert _external_link_state(integration_db, lifecycle_graph) == [
+        (external_edge.id, "available", [])
+    ]
 
 
 def test_field_close_reports_same_module_records_and_department_label(

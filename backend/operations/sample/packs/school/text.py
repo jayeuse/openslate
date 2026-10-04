@@ -7,7 +7,7 @@ from collections.abc import Mapping
 
 from operations.sample.packs.school import vocabulary
 from operations.sample.packs.school.catalog_fields import TERMS, YEAR_GROUPS
-from operations.sample.packs.school.links import REFERENCE_FIELDS, reference_parents
+from operations.sample.packs.school.links import student_index
 
 _PREFIXES = {
     "admission_inquiries": "INQ-26-",
@@ -116,10 +116,7 @@ def site_name(index: int, seed: int, _counts: Mapping[str, int]) -> str:
 
 def record_title(module_key: str, index: int, seed: int, counts: Mapping[str, int]) -> str:
     person = person_name(module_key, index, seed)
-    student_index = index % counts["students"]
-    if (module_key, "student_reference") in REFERENCE_FIELDS:
-        student_index = reference_parents(module_key, "student_reference", index, counts)[0][1]
-    student = reference_code("students", student_index, seed) or "Pupil"
+    student = reference_code("students", student_index(module_key, index, counts), seed) or "Pupil"
     year_group = YEAR_GROUPS[(index * 5 + seed) % len(YEAR_GROUPS)]
     term = TERMS[(index + seed) % len(TERMS)]
     if module_key in {"admission_inquiries", "applications"}:

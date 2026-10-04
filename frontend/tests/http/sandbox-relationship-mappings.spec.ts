@@ -1627,6 +1627,111 @@ test("a line to another department is drawn as a handoff", async ({ page }) => {
   }
 });
 
+async function openConnectModules(page: Page) {
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
+  await page.getByRole("button", { name: /^Add relationship$/i }).click();
+  return page.getByRole("dialog", { name: "Connect modules" });
+}
+
+test("a relationship can target a module in another department and publish", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(page, {
+    ...configuredSandboxDesign,
+    rules: [],
+  });
+  const published: unknown[] = [];
+  await page.route("**/api/sandbox/publications", (route) => {
+    published.push(route.request().postDataJSON());
+    return route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "00000000-0000-4000-8000-000000000711",
+        version: {
+          id: "00000000-0000-4000-8000-000000000712",
+          sequence: 1,
+          kind: "published",
+          label: "Published",
+        },
+        documentRevision: 2,
+        documentHash: "b".repeat(64),
+        impactDigest: "c".repeat(64),
+        publishedAt: "2026-10-04T00:00:00Z",
+      }),
+    });
+  });
+  const dialog = await openConnectModules(page);
+  const target = dialog.getByLabel("Target module");
+
+  // Each department's modules sit under that department's name.
+  await expect(
+    target.locator('optgroup[label="Operations"] option'),
+  ).toHaveText(["Service requests", "Equipment"]);
+  await expect(
+    target.locator('optgroup[label="Commercial"] option'),
+  ).toHaveText(["Customers"]);
+  await dialog.getByLabel("Source module").selectOption("sample-requests");
+  await target.selectOption("sample-customers");
+  await expect(dialog.getByRole("note")).toHaveText(
+    "This relationship connects modules in Operations and Commercial. A person sees each link only when they can read both modules.",
+  );
+  await dialog.getByLabel("Relationship name").fill("Bills customer");
+  await dialog.getByRole("button", { name: "Create relationship" }).click();
+  await expect(dialog).toBeHidden();
+
+  await expect
+    .poll(() =>
+      sandbox
+        .document()
+        .design.relationships.find((item) => item.name === "Bills customer"),
+    )
+    .toMatchObject({
+      sourceModuleId: "sample-requests",
+      targetModuleId: "sample-customers",
+    });
+  // A link to another department is not an item that needs attention.
+  await expect(page.getByText(/need attention/)).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  const review = page.getByRole("dialog", { name: "Review and publish" });
+  await review.getByLabel("Your password").fill("local password");
+  await review.getByRole("button", { name: "Publish changes" }).click();
+  await expect(
+    page.getByText("Your changes are now published to the live workspace."),
+  ).toBeVisible();
+  expect(published).toHaveLength(1);
+});
+
+test("leaving Connect modules after choosing another department saves nothing", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(page);
+  const writes = sandbox.documentWrites();
+  const dialog = await openConnectModules(page);
+
+  await dialog.getByLabel("Target module").selectOption("sample-customers");
+  await dialog.getByLabel("Relationship name").fill("Unsaved customer link");
+  await expect(dialog.getByRole("note")).toContainText(
+    "connects modules in Operations and Commercial.",
+  );
+  await page.keyboard.press("Escape");
+
+  await expect(dialog).toBeHidden();
+  expect(sandbox.documentWrites()).toBe(writes);
+  expect(
+    sandbox.document().design.relationships.map((item) => item.id),
+  ).toEqual(["sample-uses"]);
+  await expect(
+    page
+      .getByRole("region", { name: "Organization canvas" })
+      .locator('[data-sandbox-edge-kind="handoff"]'),
+  ).toHaveCount(0);
+});
+
 test("a rejected password is reported beside Publish, not above the list", async ({
   page,
 }) => {

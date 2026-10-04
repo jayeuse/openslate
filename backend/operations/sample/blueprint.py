@@ -94,6 +94,21 @@ class SampleDataset:
     named_scenarios: tuple[NamedScenario, ...]
 
 
+def edge_child_ids(dataset: SampleDataset) -> tuple[str, ...]:
+    """For each edge, the record created later, which links itself to the other end."""
+    child_end = {
+        dataset.relationship_ids[spec.key]: spec.child
+        for spec in dataset.organization.catalog.relationships
+        if spec.key in dataset.relationship_ids
+    }
+    return tuple(
+        edge.source_record_id
+        if child_end.get(edge.relationship_id) == "source"
+        else edge.target_record_id
+        for edge in dataset.edges
+    )
+
+
 def _field_config(
     field: FieldSpec,
     seed: int,

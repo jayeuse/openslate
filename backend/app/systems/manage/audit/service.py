@@ -6,10 +6,11 @@ from typing import Any, cast
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import Select, String, func, select
+from sqlalchemy import Select, String, exists, func, or_, select
 from sqlalchemy import cast as sql_cast
+from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from sqlalchemy.sql.elements import ColumnElement
 from uuid6 import uuid7
 
@@ -25,9 +26,12 @@ from app.core.database.session import AuditSession, get_engine
 from app.core.middleware.request_context import get_current_request_context
 from app.core.observability import log_event
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.manage.audit.models import AuditAction, AuditLog, SecurityEvent
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.relationships.access import readable_link_clause
+from app.systems.sandbox.relationships.models import RelationshipEdge
 
 
 class AuditLogSortField(StrEnum):
@@ -63,6 +67,48 @@ AUDIT_LOG_LIST_SPEC = ListQuerySpec(
 
 
 AUDIT_EXPORT_LIMIT = 10_000
+
+
+def _logged_record_id(key: str) -> ColumnElement[Any]:
+    snapshot = func.coalesce(AuditLog.after[key].astext, AuditLog.before[key].astext)
+    return sql_cast(snapshot, PostgreSQLUUID(as_uuid=True))
+
+
+def readable_audit_entries(db: Session, reader: User) -> ColumnElement[bool]:
+    """Show a link entry only to a reader of both of its modules, as the link API does.
+
+    The link row names its records while it exists. After a purge, the entry's own
+    snapshot can still name them. An entry that names neither stays hidden.
+    """
+
+    def readable(source: Any, target: Any) -> ColumnElement[bool]:
+        return readable_link_clause(db, reader, source.module_id, target.module_id)
+
+    source, target = aliased(Record), aliased(Record)
+    through_link = exists(
+        select(RelationshipEdge.id)
+        .join(source, source.id == RelationshipEdge.source_record_id)
+        .join(target, target.id == RelationshipEdge.target_record_id)
+        .where(RelationshipEdge.id == AuditLog.entity_id, readable(source, target))
+    )
+    logged_source, logged_target = aliased(Record), aliased(Record)
+    through_snapshot = exists(
+        select(logged_source.id)
+        .join(logged_target, logged_target.id == _logged_record_id("target_record_id"))
+        .where(
+            logged_source.id == _logged_record_id("source_record_id"),
+            readable(logged_source, logged_target),
+        )
+    )
+    return or_(
+        AuditLog.entity_type != RelationshipEdge.__tablename__, through_link, through_snapshot
+    )
+
+
+def _reader_conditions(db: Session, reader: User | None) -> list[ColumnElement[bool]]:
+    if reader is None or reader.role == UserRole.ADMIN.value:
+        return []
+    return [readable_audit_entries(db, reader)]
 
 
 def audit_log_statement(
@@ -101,6 +147,7 @@ def list_audit_logs(
     db: Session,
     params: StandardListRequest[AuditLogSortField],
     *,
+    reader: User | None = None,
     action: AuditAction | None = None,
     entity_type: str | None = None,
     entity_id: UUID | None = None,
@@ -119,7 +166,7 @@ def list_audit_logs(
         request_id=request_id,
         created_after=created_after,
         created_before=created_before,
-    )
+    ).where(*_reader_conditions(db, reader))
     return execute_standard_list(db, statement, params, AUDIT_LOG_LIST_SPEC)
 
 
@@ -163,8 +210,9 @@ def list_audit_log_options(
     db: Session,
     *,
     department_id: UUID | None = None,
+    reader: User | None = None,
 ) -> tuple[list[str], list[tuple[UUID, str | None]]]:
-    conditions: list[ColumnElement[bool]] = []
+    conditions = _reader_conditions(db, reader)
     if department_id is not None:
         conditions.append(AuditLog.department_id == department_id)
 

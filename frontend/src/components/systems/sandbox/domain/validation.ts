@@ -14,7 +14,6 @@ import {
 } from "./field-validation";
 import {
   issue,
-  warning,
   SANDBOX_LIMITS,
   type SandboxValidationIssue,
 } from "./validation-types";
@@ -407,24 +406,6 @@ export function validateSandboxDesign(
         issue(
           "relationship.target_missing",
           "Relationship target module does not exist",
-          relationship.id,
-        ),
-      );
-    const sourceDepartment = design.modules.find(
-      (item) => item.id === relationship.source,
-    )?.department;
-    const targetDepartment = design.modules.find(
-      (item) => item.id === relationship.target,
-    )?.department;
-    if (
-      sourceDepartment !== undefined &&
-      targetDepartment !== undefined &&
-      sourceDepartment !== targetDepartment
-    )
-      issues.push(
-        warning(
-          "relationship.cross_department",
-          "Relationship crosses departments; review access and ownership",
           relationship.id,
         ),
       );

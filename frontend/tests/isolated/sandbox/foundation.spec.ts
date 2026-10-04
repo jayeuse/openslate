@@ -134,13 +134,10 @@ test("derived validation reports broken references, duplicate relationships, and
   expect(codes).toContain("relationship.duplicate");
   expect(codes).toContain("relationship.source_missing");
   expect(codes).toContain("field.default_type_mismatch");
-  expect(validation).toContainEqual(
-    expect.objectContaining({
-      code: "relationship.cross_department",
-      severity: "warning",
-      targetId: "cross-department-link",
-    }),
-  );
+  // A link to another department is a normal relationship, not an issue.
+  expect(
+    validation.filter((issue) => issue.targetId === "cross-department-link"),
+  ).toEqual([]);
 });
 
 test("field validation issues retain module-scoped identity when field IDs repeat", () => {

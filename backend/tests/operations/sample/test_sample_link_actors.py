@@ -9,6 +9,7 @@ from uuid import NAMESPACE_URL, uuid5
 import httpx
 import pytest
 
+from operations.sample.blueprint import edge_child_ids
 from operations.sample.client import SampleClient
 from operations.sample.episodes import plan_sessions
 from operations.sample.packs import get_pack
@@ -75,25 +76,24 @@ def test_school_relationship_creators_have_source_write_and_target_read():
     dataset = build_dataset("small", seed=42, anchor_date=ANCHOR, organization=get_pack("school"))
     records = {record.logical_id: record for record in dataset.records}
     failures = []
-    for edge in dataset.edges:
+    cross_department = 0
+    for edge, child_id in zip(dataset.edges, edge_child_ids(dataset), strict=True):
         source, target = records[edge.source_record_id], records[edge.target_record_id]
-        actor = getattr(edge, "creator_key", "") or target.creator_key
-        source_level = _LEVEL_RANK[
-            _module_level(dataset.organization, actor, source.actor_key, source.module_key)
-        ]
-        target_level = _LEVEL_RANK[
-            _module_level(dataset.organization, actor, target.actor_key, target.module_key)
-        ]
-        if source_level < 2 or target_level < 1:
+        child = records[child_id]
+        actor = edge.creator_key
+        cross_department += source.actor_key != target.actor_key
+
+        def level(person, record):
+            return _LEVEL_RANK[
+                _module_level(dataset.organization, person, record.actor_key, record.module_key)
+            ]
+
+        if level(actor, source) < 2 or level(actor, target) < 1:
             failures.append((edge.source_record_id, edge.target_record_id, actor))
-        child_source_level = _LEVEL_RANK[
-            _module_level(
-                dataset.organization, target.creator_key, source.actor_key, source.module_key
-            )
-        ]
-        if child_source_level >= 2:
-            assert actor == target.creator_key
+        if level(child.creator_key, source) >= 2 and level(child.creator_key, target) >= 1:
+            assert actor == child.creator_key
     assert failures == []
+    assert cross_department == 415
 
 
 def test_relationships_without_an_eligible_member_stop_before_population():

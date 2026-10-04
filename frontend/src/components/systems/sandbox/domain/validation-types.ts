@@ -1,6 +1,6 @@
 export type SandboxValidationIssue = {
   code: string;
-  severity: "error" | "warning";
+  severity: "error";
   message: string;
   targetId?: string;
   moduleId?: string;
@@ -28,12 +28,4 @@ export function issue(
   targetId?: string,
 ): SandboxValidationIssue {
   return { code, severity: "error", message, targetId };
-}
-
-export function warning(
-  code: string,
-  message: string,
-  targetId?: string,
-): SandboxValidationIssue {
-  return { code, severity: "warning", message, targetId };
 }

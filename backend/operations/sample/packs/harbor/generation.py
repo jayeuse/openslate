@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Mapping
 from datetime import date
 
 from operations.sample.actors import assignee_key
@@ -19,9 +18,6 @@ from operations.sample.packs.harbor.links import (
 from operations.sample.packs.harbor.links import (
     receipt_order_index as _receipt_order_index,
 )
-from operations.sample.packs.harbor.links import (
-    reference_parents,
-)
 from operations.sample.packs.harbor.text import (
     email_value,
     note_text,
@@ -34,19 +30,6 @@ from operations.sample.packs.harbor.text import (
 from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.types import OMIT as _OMIT
 from operations.sample.packs.types import FieldSpec, JsonValue, ModuleSpec
-
-
-def _sample_reference_value(
-    module_key: str, field_key: str, index: int, counts: Mapping[str, int], seed: int
-) -> str:
-    parents = reference_parents(module_key, field_key, index, counts)
-    values = []
-    for target, target_index in parents:
-        code = reference_code(target, target_index, seed)
-        if code is None:
-            raise ValueError(f"{target} records have no reference number")
-        values.append(code)
-    return "; ".join(values)
 
 
 def _product_price(index: int) -> int:
@@ -183,8 +166,6 @@ def _field_value(
             return serial_value(index, seed)
         code = reference_code(module.key, index, seed)
         return _OMIT if code is None else code
-    if field.value_kind == "sample_reference":
-        return _sample_reference_value(module.key, field.key, index, counts, seed)
     if field.value_kind == "status":
         label = _status_label(module, index, seed, counts, anchor)
         if field.has_default and label == field.default_value and index % 5 == 0:

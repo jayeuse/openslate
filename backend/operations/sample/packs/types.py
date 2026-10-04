@@ -58,6 +58,8 @@ class RelationshipSpec:
     source: str
     target: str
     cardinality: Literal["one-to-one", "one-to-many", "many-to-many"]
+    # The end created later, which links itself to the other end once it exists.
+    child: Literal["source", "target"] = "target"
 
 
 @dataclass(frozen=True)

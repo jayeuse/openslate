@@ -24,7 +24,11 @@ def invoice_payment_index(invoice_index: int, counts: Mapping[str, int]) -> int 
 
 
 def parent_indices(key: str, target: int, counts: Mapping[str, int]) -> tuple[int, ...]:
-    """Return the source record indexes that one relationship target links to."""
+    """Return the parent record indexes that one child record links to.
+
+    For most links the child is the target. For links to another department the child is
+    the referencing source record, and the result is the indexes of the records it names.
+    """
     if key == "equipment_work_orders":
         return ((target * 2) % counts["equipment"], (target * 2 + 1) % counts["equipment"])
     if key == "purchase_order_lines":
@@ -42,10 +46,15 @@ def parent_indices(key: str, target: int, counts: Mapping[str, int]) -> tuple[in
         return (payment_invoice_index(target),)
     if key == "invoice_credits":
         return ((target + 3) % counts["invoices"],)
-    return (target % counts[_SOURCES[key]],)
+    if key == "movement_receipt":
+        return (target // 5,)
+    if key == "work_order_products":
+        products = counts["products"]
+        return ((target * 3) % products, (target * 3 + 13) % products)
+    return (target % counts[_PARENTS[key]],)
 
 
-_SOURCES = {
+_PARENTS = {
     "customer_contacts": "customers",
     "customer_quotes": "customers",
     "customer_orders": "customers",
@@ -57,40 +66,20 @@ _SOURCES = {
     "supplier_orders": "suppliers",
     "warehouse_counts": "warehouses",
     "product_counts": "products",
+    "site_customer": "customers",
+    "invoice_customer": "customers",
+    "invoice_sales_order": "sales_orders",
+    "request_equipment": "equipment",
+    "line_product": "products",
+    "order_warehouse": "warehouses",
 }
 
 
 def reference_parents(
     module_key: str, field_key: str, index: int, counts: Mapping[str, int]
 ) -> tuple[tuple[str, int], ...]:
-    """Records in other departments that a reference field names, as (module, index)."""
-    if module_key == "customer_sites" and field_key == "customer_reference":
-        return (("customers", index % counts["customers"]),)
-    if module_key == "invoices" and field_key == "customer_reference":
-        return (("customers", index % counts["customers"]),)
-    if module_key == "invoices" and field_key == "sales_order_reference":
-        return (("sales_orders", index % counts["sales_orders"]),)
-    if module_key == "service_requests" and field_key == "equipment_reference":
-        return (("equipment", index % counts["equipment"]),)
-    if module_key == "purchase_lines" and field_key == "product_reference":
-        return (("products", index % counts["products"]),)
-    if module_key == "stock_movements" and field_key == "receipt_reference":
-        return (("goods_receipts", index // 5),)
-    if module_key == "purchase_orders" and field_key == "warehouse_reference":
-        return (("warehouses", index % counts["warehouses"]),)
-    if module_key == "work_orders" and field_key == "products_used":
-        products = counts["products"]
-        return (("products", (index * 3) % products), ("products", (index * 3 + 13) % products))
+    """Harbor names other records only through relationships, never through typed codes."""
     raise ValueError("Unknown reference field")
 
 
-REFERENCE_FIELDS = (
-    ("customer_sites", "customer_reference"),
-    ("invoices", "customer_reference"),
-    ("invoices", "sales_order_reference"),
-    ("service_requests", "equipment_reference"),
-    ("purchase_lines", "product_reference"),
-    ("stock_movements", "receipt_reference"),
-    ("purchase_orders", "warehouse_reference"),
-    ("work_orders", "products_used"),
-)
+REFERENCE_FIELDS: tuple[tuple[str, str], ...] = ()

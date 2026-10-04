@@ -137,6 +137,17 @@ def test_school_grants_preserve_finance_separation_and_sensitive_module_limits()
         assert _department_level(pack, lead, department) == "manage"
 
 
+def test_school_finance_staff_who_see_fee_links_can_read_but_not_change_students() -> None:
+    pack = get_pack("school")
+
+    # Fee records link to the student in the Academic Office; finance staff who bill
+    # or oversee billing see that student, and only the Academic Office changes it.
+    for key in ("internal_finance_lead", "internal_finance_02", "internal_finance_04"):
+        assert _module_level(pack, key, "academic", "students") == "read", key
+    assert _module_level(pack, "internal_finance_03", "academic", "students") is None
+    assert _module_level(pack, "internal_finance_lead", "academic", "attendance_exceptions") is None
+
+
 def test_school_refusals_match_the_declared_actor_grants_and_operations() -> None:
     pack = get_pack("school")
     cases = _cases(pack)

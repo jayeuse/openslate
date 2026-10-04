@@ -23,7 +23,6 @@ MODULES = (
         (
             _field("student_no", "Student number", "Text", "reference", required=True),
             _field("upn", "Unique pupil number", "Text", "upn"),
-            _field("application_reference", "Application number", "Text", "cross_reference"),
             _field(
                 "fee_required",
                 "Fee assessment needed",
@@ -110,7 +109,6 @@ MODULES = (
                 default=False,
                 has_default=True,
             ),
-            _field("clinic_reference", "Clinic visit reference", "Text", "cross_reference"),
             _field("arrival_at", "Arrival time", "Date/Time", "arrival_datetime"),
             _field("reason_notes", "Reason notes", "Text", "attendance_note"),
             _choice(
@@ -200,7 +198,6 @@ MODULES = (
                 maximum=33,
                 step=1,
             ),
-            _field("room_reference", "Room code", "Text", "cross_reference"),
         ),
     ),
     _module(

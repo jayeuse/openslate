@@ -184,13 +184,6 @@ def test_relationship_validation_returns_contract_statuses_without_mutation(
         assert inactive.status_code == 409
         assert "not active" in inactive.json()["detail"]
 
-        cross_department = client.post(
-            "/api/relationships",
-            json=_payload(graph.cross_field_id, graph.source_id, graph.cross_target_id),
-        )
-        assert cross_department.status_code == 409
-        assert "same department" in cross_department.json()["detail"]
-
         relationship_http_fixture.restore_target()
         self_link = client.post(
             "/api/relationships",

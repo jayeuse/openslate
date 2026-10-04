@@ -73,7 +73,7 @@ def test_update_steps_come_after_creation_and_in_order() -> None:
             for logical_id in session.record_ids:
                 created[logical_id] = position
             continue
-        if session.kind == "reject":
+        if session.kind in {"reject", "link"}:
             continue
         assert session.kind == "update"
         for logical_id, step_index in session.steps:

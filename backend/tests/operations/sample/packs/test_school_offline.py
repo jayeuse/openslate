@@ -31,6 +31,7 @@ from operations.sample.packs.registry import get_pack, pack_keys
 from operations.sample.scenario import build_dataset
 from operations.seed_sample_data import build_plan_summary
 from tests.operations.sample.packs.test_school_access import _LEVEL_RANK, _module_level
+from tests.operations.sample.packs.test_school_consistency import pupil_codes
 from tests.operations.sample.packs.test_school_content import _content_text
 from tests.operations.sample.test_sample_text import MARKERS, RESERVED_DOMAIN
 
@@ -105,11 +106,15 @@ def test_school_small_plan_is_complete_deterministic_and_authorized():
     assert summary["planned_rejections"] == 16
 
 
-def test_school_links_stay_in_department_and_roster_is_many_to_many():
+def test_school_cross_department_links_start_at_the_referencing_record_and_roster_is_many_to_many():
     dataset = _school("standard")
     modules = {module.key: module for module in dataset.organization.catalog.modules}
     for relationship in dataset.organization.catalog.relationships:
-        assert modules[relationship.source].department == modules[relationship.target].department
+        same_department = (
+            modules[relationship.source].department == modules[relationship.target].department
+        )
+        # A link to another department's record starts at the record that names it.
+        assert relationship.child == ("target" if same_department else "source")
         assert "fee_items" not in {relationship.source, relationship.target}
     roster_id = dataset.relationship_ids["student_roster"]
     roster = [edge for edge in dataset.edges if edge.relationship_id == roster_id]
@@ -273,38 +278,34 @@ def test_master_data_modules_keep_their_date_free_research_schema():
 @pytest.mark.parametrize("profile", ("small", "standard"))
 def test_linked_pupil_records_keep_the_same_pupil_reference(profile):
     dataset = _school(profile)
-    records = {record.logical_id: record for record in dataset.records}
-
-    def reference(logical_id, key):
-        record = records[logical_id]
-        return record.data[dataset.field_ids[record.module_key][key]]
-
+    codes = pupil_codes(dataset)
     relationships = {
         dataset.relationship_ids[item.key]: item
         for item in dataset.organization.catalog.relationships
     }
     failures = []
+    checked = Counter()
     for edge in dataset.edges:
         relationship = relationships[edge.relationship_id]
-        source_field = None
-        if relationship.source == "students" and relationship.target in {
-            "attendance_exceptions",
-            "academic_alerts",
-            "grade_change_requests",
-        }:
-            source_field = "student_no"
-        elif relationship.key in {
-            "behaviour_guidance",
-            "assessment_adjustments",
-            "fee_collections",
-        }:
-            source_field = "student_reference"
-        if source_field and reference(edge.source_record_id, source_field) != reference(
-            edge.target_record_id,
-            "student_reference",
-        ):
+        same_pupil = (
+            relationship.source == "students"
+            and relationship.target
+            in {"attendance_exceptions", "academic_alerts", "grade_change_requests"}
+        ) or relationship.key in {"behaviour_guidance", "assessment_adjustments", "fee_collections"}
+        if not same_pupil:
+            continue
+        checked[relationship.key] += 1
+        if codes[edge.source_record_id] != codes[edge.target_record_id]:
             failures.append((relationship.key, edge.source_record_id, edge.target_record_id))
     assert failures == []
+    assert set(checked) == {
+        "student_attendance",
+        "student_academic_alerts",
+        "student_grade_changes",
+        "behaviour_guidance",
+        "assessment_adjustments",
+        "fee_collections",
+    }
 
 
 @pytest.mark.parametrize("profile", ("small", "standard", "large"))

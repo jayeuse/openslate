@@ -1,8 +1,9 @@
 """Order record creation as interleaved work sessions, the way a team fills a system.
 
 A session is one person's short run of records in one module. Each record is created
-and immediately linked to its parents, so every parent (a relationship source or a
-record named by a reference field) must be created in an earlier session.
+and immediately linked to its parents, so every parent (the other end of a relationship
+the record links from, or a record named by a reference field) must be created in an
+earlier session.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import groupby
 
-from operations.sample.blueprint import SampleDataset
+from operations.sample.blueprint import SampleDataset, edge_child_ids
 from operations.sample.history import RecordHistory, plan_history
 from operations.sample.links import reference_parents
 
@@ -48,8 +49,9 @@ def record_parents(dataset: SampleDataset) -> Mapping[str, tuple[str, ...]]:
     parents: dict[str, set[str]] = {record.logical_id: set() for record in dataset.records}
     for child, required in dataset.organization.links.after_flags.items():
         parents[child].update(required)
-    for edge in dataset.edges:
-        parents[edge.target_record_id].add(edge.source_record_id)
+    for edge, child in zip(dataset.edges, edge_child_ids(dataset), strict=True):
+        source_is_child = child == edge.source_record_id
+        parents[child].add(edge.target_record_id if source_is_child else edge.source_record_id)
     for record in dataset.records:
         index = int(record.logical_id.split(":")[1]) - 1
         for module_key, field_key in dataset.organization.links.reference_fields:
@@ -92,12 +94,13 @@ def _short_batches(records: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
 def _link_sessions(dataset: SampleDataset) -> Mapping[str, tuple[tuple[int, str, str], ...]]:
     records = {record.logical_id: record for record in dataset.records}
     deferred: dict[str, list[tuple[int, str, str]]] = {}
-    for index, edge in enumerate(dataset.edges):
-        target = records[edge.target_record_id]
-        actor = edge.creator_key or target.creator_key
-        if actor != target.creator_key:
+    children = edge_child_ids(dataset)
+    for index, (edge, child_id) in enumerate(zip(dataset.edges, children, strict=True)):
+        child = records[child_id]
+        actor = edge.creator_key or child.creator_key
+        if actor != child.creator_key:
             module = records[edge.source_record_id].module_key
-            deferred.setdefault(target.logical_id, []).append((index, actor, module))
+            deferred.setdefault(child.logical_id, []).append((index, actor, module))
     return {key: tuple(edges) for key, edges in deferred.items()}
 
 

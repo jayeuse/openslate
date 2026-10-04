@@ -381,8 +381,8 @@ def test_plan_summary_reports_exact_profile_counts_and_fixed_supporting_catalogu
     assert summary["operational_records"] == 1_001
     assert summary["department_count"] == 6
     assert summary["module_count"] == 24
-    assert summary["relationship_definition_count"] == 18
-    assert summary["relationship_edges"] == 1_145
+    assert summary["relationship_definition_count"] == 26
+    assert summary["relationship_edges"] == 1_780
     assert summary["automation_count"] == 8
     assert summary["test_vector_count"] == 8
     assert summary["module_counts"]["stock_counts"] == 25

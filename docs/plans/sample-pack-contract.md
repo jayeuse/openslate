@@ -11,6 +11,11 @@ Sample runs seed realistic organization data and check API stability: each contr
 - Put organization-specific facts in the pack's people, catalog, identity, scenario, and content data. Generic `sample_*.py` planners must use those values and helper callbacks; they must not branch on a pack key or hard-code a pack's module or department keys.
 - A control uses a real pack-authored object or person, then restores or removes its temporary changes. Do not insert rows directly through SQL, ORM, provider-admin APIs, or fabricated audit evidence.
 - Every created name, label, description and note must be natural content a person in that organization would write, grounded in the pack's research and vocabulary. Use pack content callbacks and authored business facts. Seeds, hexadecimal suffixes, generation markers and verification instructions belong only in private run metadata; never append them to organization content.
+- Model a link to a record in another department as a relationship, not as a typed code in a text field. The record that names the other record is the source. Give the groups that write the source module read access to the target module, so the person who links has source write and target read.
+
+  Correct: a fee assessment's Student relationship targets the student record in the Academic Office, and the finance writer has read access to Students.
+
+  Wrong: a fee assessment keeps the student's code in a text field, although the student is a record in the organization.
 - Do not add fixed credentials, recovery tokens, provider secrets, or real personal data to a pack. Runtime-generated credentials and mailbox tokens stay in the private run context.
 - For every phase that adds actions, the offline pack-neutral test must plan Harbor and School at Small size and prove the planner consumes pack data without checking Harbor/School keys or embedding pack-specific module/department keys.
 
@@ -119,7 +124,7 @@ The query controls share a pack-derived module manager, a module with a `Name` f
 | `report_patch` | An authored report source, readable module, and natural report name inputs. | Derive the daily report name from the module and its available group field. | Patch an unrelated or missing report by a fixed identifier. |
 | `schedule_patch` | The same authored report and the organization's timezone. | Read, update, and restore that report's schedule using the pack timezone. | Use a timezone string unrelated to the pack or another report's schedule. |
 | `record_lifecycle` | A module with a generated record, a Name field, and no published trigger on that module; a manager can write it. The pack provides natural titles for the new record and its changed details. | Choose a trigger-free module and derive both titles from the pack's business vocabulary and record attributes, then restore and purge the record. | Choose a trigger-bearing module or append a seed, machine code, generation marker or verification label to its title. |
-| `relationship_delete` | A pack-authored one-to-many or many-to-many edge whose endpoint modules are trigger-free and in one department; the acting member has source write and target read. | Use an existing in-department edge and delete only the temporary relationship and endpoint records created for the control. | Use a cross-department edge, a one-to-one relation, or an actor missing either permission. |
+| `relationship_delete` | A pack-authored one-to-many or many-to-many edge whose endpoint modules are trigger-free; the acting member has source write and target read. | Use an existing authored edge and delete only the temporary relationship and endpoint records created for the control. | Use a one-to-one relation, or an actor missing either permission. |
 
 Source: `backend/operations/sample/controls/openview_queries.py::plan_openview_query_controls`, `backend/operations/sample/controls/openview.py::plan_openview_controls`, and `sample/controls/openview_mutations.py`. Record titles come from `SampleDataset.organization.text.record_title`; saved-resource names come from `sample/board_text.py`.
 

@@ -207,65 +207,6 @@ def unmanaged_field_blockers(
     return blockers
 
 
-def live_relationship_department_blockers(
-    db: Session,
-    bindings: dict[BindingKind, dict[str, SandboxBinding]],
-    document: SandboxDocument,
-) -> list[PublicationBlocker]:
-    """Protect every live relationship, including links outside Sandbox ownership."""
-
-    desired_modules = {module.id: module for module in document.design.modules}
-    desired_departments: dict[UUID, tuple[str, str]] = {}
-    sandbox_module_by_live: dict[UUID, str] = {}
-    for sandbox_id, binding in bindings["module"].items():
-        desired = desired_modules.get(sandbox_id)
-        if desired is None or binding.module_id is None:
-            continue
-        department_binding = bindings["department"].get(desired.department_id)
-        token = (
-            ("live", str(department_binding.department_id))
-            if department_binding is not None and department_binding.department_id is not None
-            else ("sandbox", desired.department_id)
-        )
-        desired_departments[binding.module_id] = token
-        sandbox_module_by_live[binding.module_id] = sandbox_id
-
-    live_modules = {
-        module.id: module
-        for module in db.scalars(select(Module).where(Module.is_deleted.is_(False)))
-    }
-    blockers: list[PublicationBlocker] = []
-    for field in db.scalars(
-        select(Field).where(
-            Field.type == "relationship",
-            Field.is_deleted.is_(False),
-            Field.relationship_target_module_id.is_not(None),
-        )
-    ):
-        target_id = field.relationship_target_module_id
-        if target_id is None:
-            continue
-        source = live_modules.get(field.module_id)
-        target = live_modules.get(target_id)
-        if source is None or target is None:
-            continue
-        source_department = desired_departments.get(source.id, ("live", str(source.department_id)))
-        target_department = desired_departments.get(target.id, ("live", str(target.department_id)))
-        if source_department == target_department:
-            continue
-        affected_module = sandbox_module_by_live.get(source.id) or sandbox_module_by_live.get(
-            target.id
-        )
-        blockers.append(
-            PublicationBlocker(
-                code="module_move_breaks_live_relationship",
-                message="Move connected modules together before publishing",
-                target_id=affected_module,
-            )
-        )
-    return blockers
-
-
 def live_dependencies_exist(
     db: Session,
     kind: BindingKind,

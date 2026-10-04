@@ -23,6 +23,9 @@ const relationshipId = "00000000-0000-4000-8000-000000000070";
 const handoverFieldId = "00000000-0000-4000-8000-000000000063";
 const handoverRecordId = "00000000-0000-4000-8000-000000000051";
 const handoverRelationshipId = "00000000-0000-4000-8000-000000000071";
+const otherDepartmentId = "00000000-0000-4000-8000-000000000012";
+const incomingFieldId = "00000000-0000-4000-8000-000000000064";
+const incomingRelationshipId = "00000000-0000-4000-8000-000000000072";
 
 type Relationship = {
   id: string;
@@ -42,6 +45,12 @@ type HarnessOptions = {
   failedRelationshipReads?: number;
   failedRelationshipReadStatus?: number;
   handoverLink?: boolean;
+  /** Put the linked data source in a second department. */
+  targetInOtherDepartment?: boolean;
+  /** Add a link from a Service visit to the open record. */
+  incomingLink?: boolean;
+  /** Leave Service visits out of the readable data sources. */
+  targetUnreadable?: boolean;
 };
 
 function pageResponse<T>(items: T[]) {
@@ -181,6 +190,17 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
             },
           ]
         : []),
+      ...(options.incomingLink
+        ? [
+            {
+              ...relationship(),
+              id: incomingRelationshipId,
+              field_id: incomingFieldId,
+              source_record_id: handoverRecordId,
+              target_record_id: recordId,
+            },
+          ]
+        : []),
     ] as Relationship[],
     createCount: 0,
     deleteCount: 0,
@@ -207,17 +227,20 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       });
     if (url.pathname === "/api/departments")
       return route.fulfill({
-        json: pageResponse([
-          {
-            id: departmentId,
-            department_name: "Field service",
+        json: pageResponse(
+          [
+            [departmentId, "Field service"],
+            [otherDepartmentId, "Dispatch"],
+          ].map(([id, name]) => ({
+            id,
+            department_name: name,
             created_at: "2026-09-30T08:00:00Z",
             updated_at: "2026-09-30T08:00:00Z",
             deleted_at: null,
             is_deleted: false,
             performed_by: userId,
-          },
-        ]),
+          })),
+        ),
       });
     if (url.pathname === "/api/views/data-sources")
       return route.fulfill({
@@ -228,12 +251,18 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
             department_id: departmentId,
             title_field_id: sourceNameFieldId,
           },
-          {
-            id: targetModuleId,
-            name: "Service visits",
-            department_id: departmentId,
-            title_field_id: targetNameFieldId,
-          },
+          ...(options.targetUnreadable
+            ? []
+            : [
+                {
+                  id: targetModuleId,
+                  name: "Service visits",
+                  department_id: options.targetInOtherDepartment
+                    ? otherDepartmentId
+                    : departmentId,
+                  title_field_id: targetNameFieldId,
+                },
+              ]),
         ]),
       });
     if (
@@ -656,4 +685,77 @@ test("a busy removal still present can be retried explicitly", async ({
   await retry.click();
   await expect(page.getByText("No linked records.")).toBeVisible();
   expect(api.state.deleteCount).toBe(2);
+});
+
+test("a link to another department names that department beside the record", async ({
+  page,
+}) => {
+  const api = await installLinksApi(page, {
+    initialLink: true,
+    incomingLink: true,
+    targetInOtherDepartment: true,
+  });
+  await openLinksPanel(page);
+
+  // The open record is in Field service; Service visits is in Dispatch.
+  const followUp = linkField(page, "Follow-up visit");
+  await expect(followUp.getByRole("listitem")).toContainText(
+    "Loading Bay follow-up visitService visits · Dispatch",
+  );
+  const linkedFrom = page
+    .getByRole("heading", { name: "Linked from", exact: true })
+    .locator("xpath=ancestor::section[1]");
+  await expect(linkedFrom.getByRole("listitem")).toContainText(
+    "Loading Bay handover visitService visits · Dispatch",
+  );
+
+  const add = followUp.getByRole("button", { name: "Add link" });
+  await add.click();
+  const search = page.getByRole("textbox", {
+    name: "Find a record in Service visits · Dispatch",
+    exact: true,
+  });
+  await search.fill("Loading Bay");
+
+  // Leaving mid-search writes nothing and returns to Add link.
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(search).toHaveCount(0);
+  await expect(add).toBeFocused();
+  expect(api.state.createCount).toBe(0);
+  await expect(followUp.getByRole("listitem")).toHaveCount(1);
+});
+
+test("a link inside the record's department shows no department name", async ({
+  page,
+}) => {
+  await installLinksApi(page, { initialLink: true });
+  await openLinksPanel(page);
+
+  await expect(
+    linkField(page, "Follow-up visit").getByRole("listitem"),
+  ).toContainText("Loading Bay follow-up visitService visits");
+  await expect(page.getByText(/· Field service/)).toHaveCount(0);
+  await linkField(page, "Follow-up visit")
+    .getByRole("button", { name: "Add link" })
+    .click();
+  await expect(
+    page.getByRole("textbox", {
+      name: "Find a record in Service visits",
+      exact: true,
+    }),
+  ).toBeVisible();
+});
+
+test("a link field into a data source the person cannot read offers no Add link", async ({
+  page,
+}) => {
+  const api = await installLinksApi(page, { targetUnreadable: true });
+  await openLinksPanel(page);
+
+  const followUp = linkField(page, "Follow-up visit");
+  await expect(followUp.getByText("No linked records.")).toBeVisible();
+  await expect(
+    followUp.getByRole("button", { name: /^(Add|Replace) link$/ }),
+  ).toHaveCount(0);
+  expect(api.state.createCount).toBe(0);
 });

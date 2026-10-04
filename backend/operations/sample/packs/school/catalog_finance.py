@@ -59,7 +59,6 @@ MODULES = (
         ),
         834,
         (
-            _field("student_reference", "Student number", "Text", "cross_reference", required=True),
             _field("soa_no", "Statement number", "Text", "reference", required=True),
             _choice("school_year", "School year", SCHOOL_YEARS, required=True),
             _choice("payment_plan", "Payment plan", ("Annual", "Termly", "Monthly"), required=True),
@@ -124,7 +123,6 @@ MODULES = (
         ("Requested", "Under review", "Approved", "Applied", "Declined", "Revoked"),
         140,
         (
-            _field("student_reference", "Student number", "Text", "cross_reference", required=True),
             _choice(
                 "adjustment_type",
                 "Type",
@@ -154,7 +152,6 @@ MODULES = (
         ("Open", "Promise to pay", "Settled", "Broken promise", "Withdrawn pupil", "Written off"),
         70,
         (
-            _field("student_reference", "Student number", "Text", "cross_reference", required=True),
             _field(
                 "amount_overdue",
                 "Amount overdue £",

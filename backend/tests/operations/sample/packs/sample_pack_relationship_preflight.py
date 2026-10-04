@@ -12,7 +12,7 @@ from app.systems.sandbox.publications.rules import relationship_metadata
 from app.systems.sandbox.relationships.locking import validate_relationship_modules
 from operations.sample.blueprint import build_document
 from operations.sample.catalog import module_counts
-from operations.sample.links import parent_indices
+from operations.sample.links import link_pairs
 from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.types import SampleProfile
 
@@ -44,13 +44,12 @@ def admit_relationship_profile(organization: OrganizationPack, profile: SamplePr
         outgoing: Counter[int] = Counter()
         incoming: Counter[int] = Counter()
         pairs: set[tuple[int, int]] = set()
-        for target_index in range(counts[spec.target]):
-            for source_index in parent_indices(spec.key, target_index, counts, organization):
-                pair = (source_index, target_index)
-                assert pair not in pairs
-                pairs.add(pair)
-                outgoing[source_index] += 1
-                incoming[target_index] += 1
+        for source_index, target_index in link_pairs(spec, counts, organization):
+            pair = (source_index, target_index)
+            assert pair not in pairs
+            pairs.add(pair)
+            outgoing[source_index] += 1
+            incoming[target_index] += 1
         multiple_targets, multiple_sources = relationship_metadata(relationship)
         if not multiple_sources:
             assert max(incoming.values(), default=0) <= 1

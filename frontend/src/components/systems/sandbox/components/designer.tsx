@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/field";
 import {
   NativeSelect,
+  NativeSelectOptGroup,
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import {
@@ -157,6 +158,34 @@ function ResponsiveDesignerTabPanel({
 }
 
 type WorkbenchTab = Exclude<DesignerPane, "Canvas">;
+
+/** Module choices, grouped by department once the design has more than one. */
+function GroupedModuleOptions({ design }: { design: Design }) {
+  const option = (item: Design["modules"][number]) => (
+    <NativeSelectOption key={item.id} value={item.id}>
+      {item.name}
+    </NativeSelectOption>
+  );
+  if (design.departments.length < 2) return design.modules.map(option);
+  const departmentIds = new Set(design.departments.map((item) => item.id));
+  return (
+    <>
+      {design.departments.map((department) => {
+        const modules = design.modules.filter(
+          (item) => item.department === department.id,
+        );
+        return modules.length ? (
+          <NativeSelectOptGroup key={department.id} label={department.name}>
+            {modules.map(option)}
+          </NativeSelectOptGroup>
+        ) : null;
+      })}
+      {design.modules
+        .filter((item) => !departmentIds.has(item.department))
+        .map(option)}
+    </>
+  );
+}
 
 function isEditableShortcutTarget(target: EventTarget | null): boolean {
   return (
@@ -1271,6 +1300,18 @@ export function Designer({
     setRelationshipError("");
   }
   const editorNameLabel = `${editor === "rename" ? "Item" : editor.charAt(0).toUpperCase() + editor.slice(1)} name`;
+  const departmentOf = (moduleId: string) => {
+    const departmentId = design.modules.find(
+      (item) => item.id === moduleId,
+    )?.department;
+    return design.departments.find((item) => item.id === departmentId);
+  };
+  const sourceDepartment = departmentOf(source);
+  const targetDepartment = departmentOf(target);
+  const crossDepartment =
+    sourceDepartment !== undefined &&
+    targetDepartment !== undefined &&
+    sourceDepartment.id !== targetDepartment.id;
   const editorForm = (
     <form onSubmit={submit} className="flex flex-col gap-4">
       <h3 className="font-semibold">
@@ -1374,11 +1415,7 @@ export function Designer({
                 value={source}
                 onChange={(e) => changeRelationshipSource(e.target.value)}
               >
-                {design.modules.map((m) => (
-                  <NativeSelectOption key={m.id} value={m.id}>
-                    {m.name}
-                  </NativeSelectOption>
-                ))}
+                <GroupedModuleOptions design={design} />
               </NativeSelect>
             </FormField>
             <FormField>
@@ -1389,14 +1426,13 @@ export function Designer({
                 id="sandbox-editor-target-module"
                 className="w-full [&_select]:min-h-10"
                 disabled={pending}
+                aria-describedby={
+                  crossDepartment ? "sandbox-editor-departments" : undefined
+                }
                 value={target}
                 onChange={(e) => changeRelationshipTarget(e.target.value)}
               >
-                {design.modules.map((m) => (
-                  <NativeSelectOption key={m.id} value={m.id}>
-                    {m.name}
-                  </NativeSelectOption>
-                ))}
+                <GroupedModuleOptions design={design} />
               </NativeSelect>
             </FormField>
             <FormField>
@@ -1471,13 +1507,13 @@ export function Designer({
                 })}
               </fieldset>
             ) : null}
-            {design.modules.find((m) => m.id === target)?.department !==
-              design.modules.find((m) => m.id === source)?.department && (
-              <Alert role="alert" variant="warning">
-                Cross-department relationship: review access for both
-                departments. This connection belongs to the current design.
+            {crossDepartment ? (
+              <Alert id="sandbox-editor-departments" role="note">
+                This relationship connects modules in {sourceDepartment.name}{" "}
+                and {targetDepartment.name}. A person sees each link only when
+                they can read both modules.
               </Alert>
-            )}
+            ) : null}
             {relationshipError ? (
               <Alert role="alert" variant="destructive">
                 {relationshipError}
@@ -1645,7 +1681,7 @@ export function Designer({
             <div>
               <dt className="text-foreground inline font-medium">Handoff: </dt>
               <dd className="inline">
-                a dashed line, where work passes to another department.
+                a solid line, where work passes to another department.
               </dd>
             </div>
           </dl>
