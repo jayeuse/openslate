@@ -10,6 +10,7 @@ from typing import get_args
 
 import pytest
 
+import operations as operations_package
 from app.systems.sandbox.designs.schemas import SandboxBindingResponse
 from operations.sample.controls.actions import plan_controls
 from operations.sample.packs.registry import get_pack
@@ -107,9 +108,11 @@ def test_generic_control_planners_contain_no_fixed_pack_module_or_department_key
     # Required API binding kinds may coincide with catalog keys; only the
     # actual backend schema defines this wire-vocabulary exception.
     forbidden.difference_update(get_args(SandboxBindingResponse.model_fields["kind"].annotation))
-    operations = Path(__file__).resolve().parents[2] / "operations"
+    engine = Path(operations_package.__file__).resolve().parent / "sample"
+    paths = sorted(path for path in engine.rglob("*.py") if "packs" not in path.parts)
+    assert len(paths) > 50, "the generic sample engine was not found"
     violations = []
-    for path in sorted(operations.glob("sample_*.py")):
+    for path in paths:
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if (
