@@ -24,7 +24,17 @@ DEPARTMENTS = {
 }
 MODULES = {
     key: str(uuid5(NAMESPACE_URL, f"module:{key}"))
-    for key in ("inspections", "products", "purchase_orders", "invoices")
+    for key in (
+        "inspections",
+        "products",
+        "purchase_orders",
+        "invoices",
+        "customers",
+        "sales_orders",
+        "equipment",
+        "warehouses",
+        "goods_receipts",
+    )
 }
 
 
@@ -287,8 +297,13 @@ def test_population_creates_ui_groups_and_identity_states_with_private_roster(
     assert scoped_access["inventory-control"] == {
         (DEPARTMENTS["inventory"], None): "write",
         (DEPARTMENTS["inventory"], MODULES["products"]): "manage",
+        (DEPARTMENTS["purchasing"], MODULES["goods_receipts"]): "read",
     }
-    assert scoped_access["purchasing-review"] == {(DEPARTMENTS["purchasing"], None): "write"}
+    assert scoped_access["purchasing-review"] == {
+        (DEPARTMENTS["purchasing"], None): "write",
+        (DEPARTMENTS["inventory"], MODULES["products"]): "read",
+        (DEPARTMENTS["inventory"], MODULES["warehouses"]): "read",
+    }
     assert scoped_access["internal-audit"] == {
         (DEPARTMENTS["finance"], None): "read",
         (DEPARTMENTS["purchasing"], None): "read",

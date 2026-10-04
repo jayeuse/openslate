@@ -5,6 +5,8 @@ from datetime import date
 from decimal import Decimal
 from uuid import NAMESPACE_URL, uuid5
 
+import pytest
+
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.validation import validate_document
 from app.systems.sandbox.publications.preflight import (
@@ -22,6 +24,8 @@ from operations.sample.blueprint import (
 from operations.sample.catalog import FieldSpec, ModuleSpec, RelationshipSpec
 from operations.sample.episodes import plan_sessions
 from operations.sample.history import plan_history
+from operations.sample.links import link_pairs
+from operations.sample.packs import get_pack
 from operations.sample.packs.content_types import ContentSpec
 from operations.sample.packs.interface import (
     OrganizationPack,
@@ -376,3 +380,22 @@ def test_harbor_pack_preserves_the_existing_workspace_identity() -> None:
         "en-US",
         "Asia/Manila",
     )
+
+
+@pytest.mark.parametrize("pack_key", ["harbor", "school"])
+def test_a_many_to_many_link_repeats_a_source_or_target_at_some_size(pack_key: str) -> None:
+    """Links whose data names one record on each side are one-to-one, so the server enforces it."""
+    pack = get_pack(pack_key)
+    unique_both_ways = []
+    for spec in pack.catalog.relationships:
+        if spec.cardinality != "many-to-many":
+            continue
+        repeats = False
+        for counts in pack.catalog.counts_by_profile.values():
+            pairs = list(link_pairs(spec, counts, pack))
+            sources = [source for source, _target in pairs]
+            targets = [target for _source, target in pairs]
+            repeats |= len(set(sources)) < len(sources) or len(set(targets)) < len(targets)
+        if not repeats:
+            unique_both_ways.append(spec.key)
+    assert unique_both_ways == []

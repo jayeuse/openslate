@@ -96,6 +96,24 @@ def test_school_relationship_creators_have_source_write_and_target_read():
     assert cross_department == 415
 
 
+def test_harbor_staff_write_the_cross_department_links_of_records_they_create():
+    dataset = build_dataset("small", seed=42, anchor_date=ANCHOR, organization=get_pack("harbor"))
+    records = {record.logical_id: record for record in dataset.records}
+    leads = {team[0] for team in dataset.organization.actors.team_keys.values()}
+    by_lead = not_by_child_creator = cross_department = 0
+    for edge, child_id in zip(dataset.edges, edge_child_ids(dataset), strict=True):
+        source, target = records[edge.source_record_id], records[edge.target_record_id]
+        if source.actor_key == target.actor_key:
+            continue
+        cross_department += 1
+        by_lead += edge.creator_key in leads
+        not_by_child_creator += edge.creator_key != records[child_id].creator_key
+    assert cross_department == 635
+    # Staff groups read the modules they link to, so the clerk who created the record links it.
+    assert not_by_child_creator == 0
+    assert by_lead < cross_department // 2
+
+
 def test_relationships_without_an_eligible_member_stop_before_population():
     with pytest.raises(ValueError, match="relationship.*writer"):
         _dataset(no_writer=True)

@@ -11,7 +11,6 @@ from operations.sample.packs.harbor.vocabulary import (
 from operations.sample.packs.types import PersonSpec
 
 DEPARTMENT_KEYS = ("sales", "service", "field", "inventory", "purchasing", "finance")
-MODULE_KEYS = ("inspections", "products", "purchase_orders", "invoices")
 TEAM_GROUPS = {
     "sales": "sales-desk",
     "service": "service-triage",
@@ -23,14 +22,47 @@ TEAM_GROUPS = {
 GROUP_ACCESS: dict[str, tuple[tuple[str, str | None, str], ...]] = {
     "harbor-operations": tuple((key, None, "manage") for key in DEPARTMENT_KEYS),
     "sales-desk": (("sales", None, "manage"),),
-    "service-triage": (("service", None, "manage"),),
-    "field-operations": (("field", None, "write"), ("field", "inspections", "manage")),
-    "inventory-control": (("inventory", None, "write"), ("inventory", "products", "manage")),
-    "purchasing-review": (("purchasing", None, "write"),),
-    "finance-review": (("finance", None, "write"),),
+    # Staff read the other department's modules their records link to, so clerks write links.
+    "service-triage": (
+        ("service", None, "manage"),
+        ("sales", "customers", "read"),
+        ("field", "equipment", "read"),
+    ),
+    "field-operations": (
+        ("field", None, "write"),
+        ("field", "inspections", "manage"),
+        ("inventory", "products", "read"),
+    ),
+    "inventory-control": (
+        ("inventory", None, "write"),
+        ("inventory", "products", "manage"),
+        ("purchasing", "goods_receipts", "read"),
+    ),
+    "purchasing-review": (
+        ("purchasing", None, "write"),
+        ("inventory", "products", "read"),
+        ("inventory", "warehouses", "read"),
+    ),
+    "finance-review": (
+        ("finance", None, "write"),
+        ("sales", "customers", "read"),
+        ("sales", "sales_orders", "read"),
+    ),
     "internal-audit": (("finance", None, "read"), ("purchasing", None, "read")),
     "guest-readers": tuple((key, None, "manage") for key in DEPARTMENT_KEYS),
 }
+# Modules named by group access or by later phases, resolved to server IDs before people.
+MODULE_KEYS = tuple(
+    dict.fromkeys(
+        (
+            "inspections",
+            "products",
+            "purchase_orders",
+            "invoices",
+            *(module for rows in GROUP_ACCESS.values() for _, module, _ in rows if module),
+        )
+    )
+)
 
 
 def _identity(name: str, domain: str = INTERNAL_DOMAIN) -> tuple[str, str]:

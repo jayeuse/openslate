@@ -16,6 +16,12 @@ Sample runs seed realistic organization data and check API stability: each contr
   Correct: a fee assessment's Student relationship targets the student record in the Academic Office, and the finance writer has read access to Students.
 
   Wrong: a fee assessment keeps the student's code in a text field, although the student is a record in the organization.
+
+- Give a relationship the cardinality its data has. If every record on each side names at most one record on the other side at every size, use one-to-one, so the server refuses a second link. A pack test fails a many-to-many link that never repeats a source or a target.
+
+  Correct: a School Fee Assessment names one Student and each Student has one Fee Assessment in the data, so the link is one-to-one.
+
+  Wrong: the same link is many-to-many, so the API accepts a second student on one fee assessment.
 - Do not add fixed credentials, recovery tokens, provider secrets, or real personal data to a pack. Runtime-generated credentials and mailbox tokens stay in the private run context.
 - For every phase that adds actions, the offline pack-neutral test must plan Harbor and School at Small size and prove the planner consumes pack data without checking Harbor/School keys or embedding pack-specific module/department keys.
 

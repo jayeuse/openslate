@@ -27,9 +27,10 @@ Products–Purchase Lines, Goods Receipts–Stock Movements,
 Warehouses–Purchase Orders, Sales Orders–Invoices, and Work Orders–Products.
 In each link, the record that names the other record is the source. For
 example, a Customer Site links to its Customer. The source record links itself
-after both records exist. If its creator cannot read the target module, a
-colleague with the necessary access writes the link in a short separate
-session. The relationship graph still exercises one-to-one, one-to-many and
+after both records exist. Each department's staff group reads the other
+department's modules its records link to, so the clerk who created the record
+also writes the link. A Customer Site names one Customer, so that link is
+one-to-one. The relationship graph still exercises one-to-one, one-to-many and
 many-to-many cardinalities. Exact definition and edge counts are printed from
 the generated profile before population.
 
@@ -182,7 +183,7 @@ Audit timestamps show the real run window. Business dates inside records keep th
 
 **Actor plan.** Each generated record carries a creator key and an assignee key, chosen by seed from the department's active users who have write access to that module. Assignees spread across department members in proportions that look like normal workload differences. The verifier matches each create, update and relationship audit row to the planned actor of that write, using a map of all acting users. Automation updates are excluded from this check: their audit rows have no user (`performed_by` is empty) and an actor label that starts with `Trigger:`. Admin performs only admin work: Sandbox, invitations, groups, workspace, Board setup (project Boards, their access and widgets), and Company Board posts and events.
 
-**Group access.** Members of Inventory, Purchasing and Finance get write access to all modules in their department, so every department has several writers. The Harbor Operations group, which holds the six department leads, gets manage access to every department, so leads build their department's shared views, Dashboards and Reports. Project Board grants give each project's department team write access. Denial examples come from guests, from members outside a department (404), and from a new small group, Internal Audit. It gives two Sales members read access to Finance and Purchasing, so their create attempts there return 403.
+**Group access.** Members of Inventory, Purchasing and Finance get write access to all modules in their department, so every department has several writers. The Harbor Operations group, which holds the six department leads, gets manage access to every department, so leads build their department's shared views, Dashboards and Reports. Project Board grants give each project's department team write access. Each staff group also reads the modules in other departments that its records link to (for example, Finance reads Customers and Sales Orders). Denial examples come from guests, from members outside a department (404), and from a new small group, Internal Audit. It gives two Sales members read access to Finance and Purchasing, so their create attempts there return 403.
 
 **Episodes.** The planner turns the dataset into one ordered list of episodes. An episode is one user's short piece of work:
 

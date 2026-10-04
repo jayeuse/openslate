@@ -316,7 +316,7 @@ _RELATIONSHIPS = (
     # Links to records in another department. The referencing record is the source and is
     # created after the record it names, so it is the child end.
     RelationshipSpec(
-        "site_customer", "Customer", "customer_sites", "customers", "many-to-many", child="source"
+        "site_customer", "Customer", "customer_sites", "customers", "one-to-one", child="source"
     ),
     RelationshipSpec(
         "invoice_customer", "Customer", "invoices", "customers", "many-to-many", child="source"
