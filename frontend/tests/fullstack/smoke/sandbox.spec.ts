@@ -28,7 +28,7 @@ test("The Sandbox designer publishes a change @sandbox", async ({ page }) => {
   ).toBeVisible();
   // Publishing asks the administrator to confirm with their password.
   await review
-    .getByRole("textbox", { name: "Your password" })
+    .getByLabel("Your password")
     .fill(smokeFixture().roles.admin.password);
   await review.getByRole("button", { name: "Publish changes" }).click();
   await expect(review).toBeHidden({ timeout: 30_000 });
