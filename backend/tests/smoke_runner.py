@@ -29,6 +29,7 @@ if __package__:
     from .postgres_runtime import DisposablePostgres
     from .runner_console import (
         e2e_browser_flags,
+        playwright_results,
         run_streamed,
         stop_on_signals,
         stop_process_group,
@@ -40,6 +41,7 @@ else:
     from postgres_runtime import DisposablePostgres
     from runner_console import (
         e2e_browser_flags,
+        playwright_results,
         run_streamed,
         stop_on_signals,
         stop_process_group,
@@ -138,9 +140,16 @@ def main() -> int:
     processes: list[subprocess.Popen[str]] = []
     started = time.monotonic()
 
-    def run(command: list[str], cwd: Path, env: dict[str, str]) -> None:
+    browser_lines: list[str] = []
+    revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=BACKEND, capture_output=True, text=True, check=False
+    ).stdout.strip()
+
+    def run(
+        command: list[str], cwd: Path, env: dict[str, str], shown: list[str] | None = None
+    ) -> None:
         print(f"Smoke: {stage}", flush=True)
-        run_streamed(command, cwd, env, log)
+        run_streamed(command, cwd, env, log, shown=shown)
 
     def timed(name: str) -> None:
         nonlocal stage, started
@@ -258,6 +267,7 @@ def main() -> int:
                 "E2E_ALLOW_MUTATIONS": "true",
                 "PLAYWRIGHT_NO_COPY_PROMPT": "1",
             },
+            browser_lines,
         )
         timed("complete")
         result = 0
@@ -289,6 +299,14 @@ def main() -> int:
                     "stage": stage,
                     "failure_type": failure_type,
                     "stage_seconds": stages,
+                    # Sanitized evidence that outlives the private run directory.
+                    "revision": revision,
+                    "command": "uv run python -m tests.smoke_runner (from backend/)",
+                    "tests": playwright_results(browser_lines),
+                    "artifacts": {
+                        "playwright_output": "frontend/test-results/smoke",
+                        "private_diagnostics": None if result == 0 else str(private),
+                    },
                     "seed": {
                         "organization": ORGANIZATION,
                         "profile": "small",

@@ -46,8 +46,12 @@ def run_streamed(
     log: IO[str],
     *,
     capture: bool = False,
+    shown: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run like subprocess.run(check=True), and echo test results while they finish."""
+    """Run like subprocess.run(check=True), and echo test results while they finish.
+
+    `shown` collects the echoed lines, which hold no output beyond test results.
+    """
     if capture:
         return subprocess.run(
             command, cwd=cwd, env=env, check=True, stdout=subprocess.PIPE, stderr=log, text=True
@@ -68,9 +72,11 @@ def run_streamed(
     try:
         for line in process.stdout:
             log.write(line)
-            shown = progress_line(line)
-            if shown is not None:
-                print(shown, flush=True)
+            progress = progress_line(line)
+            if progress is not None:
+                print(progress, flush=True)
+                if shown is not None:
+                    shown.append(progress)
         process.wait()
     except BaseException:
         # Interrupted: stop the group before the runner removes the services it uses.
@@ -106,6 +112,30 @@ def stop_process_group(process: subprocess.Popen[str], timeout: float = 10) -> N
         process.wait()
     # Descendants that outlive the leader are still in its group.
     _signal_group(process.pid, signal.SIGKILL)
+
+
+PLAYWRIGHT_OUTCOMES = {"✓": "passed", "ok": "passed", "✘": "failed", "x": "failed", "-": "skipped"}
+PLAYWRIGHT_TEST = re.compile(
+    r"^\s+(?P<mark>✓|✘|ok|x|-)\s+\d+ \[[^\]]+\] › (?P<location>\S+) › (?P<title>.+?)"
+    r"(?: \((?P<duration>[\d.]+m?s)\))?$"
+)
+
+
+def playwright_results(lines: list[str]) -> list[dict[str, str | None]]:
+    """Read test outcomes from Playwright list-reporter lines: status, place, title, time."""
+    results = []
+    for line in lines:
+        match = PLAYWRIGHT_TEST.match(line)
+        if match:
+            results.append(
+                {
+                    "status": PLAYWRIGHT_OUTCOMES[match["mark"]],
+                    "location": match["location"],
+                    "title": match["title"],
+                    "duration": match["duration"],
+                }
+            )
+    return results
 
 
 def e2e_browser_flags() -> list[str]:

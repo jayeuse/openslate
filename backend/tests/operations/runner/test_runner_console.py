@@ -259,3 +259,39 @@ def test_a_group_that_ends_during_a_stop_counts_as_stopped(
     runner_console.stop_process_group(group)  # type: ignore[arg-type]
 
     assert sent == signals
+
+
+def test_smoke_evidence_keeps_each_test_outcome_without_other_output(tmp_path: Path) -> None:
+    # Review finding 7: a passing smoke run deleted its private log and kept no
+    # per-test outcome.
+    script = (
+        "print('  ✓  1 [chromium] › smoke/records.spec.ts:9:5 › opens a record @records (1.2s)');"
+        "print('fill password synthetic-secret');"
+        "print('  ✘  2 [chromium] › smoke/boards.spec.ts:7:5 › posts (3.0s)');"
+        "print('  -  3 [chromium] › smoke/manage.spec.ts:4:5 › skipped case')"
+    )
+    shown: list[str] = []
+    with (tmp_path / "process.log").open("w") as log:
+        run_streamed([sys.executable, "-c", script], tmp_path, dict(os.environ), log, shown=shown)
+
+    assert runner_console.playwright_results(shown) == [
+        {
+            "status": "passed",
+            "location": "smoke/records.spec.ts:9:5",
+            "title": "opens a record @records",
+            "duration": "1.2s",
+        },
+        {
+            "status": "failed",
+            "location": "smoke/boards.spec.ts:7:5",
+            "title": "posts",
+            "duration": "3.0s",
+        },
+        {
+            "status": "skipped",
+            "location": "smoke/manage.spec.ts:4:5",
+            "title": "skipped case",
+            "duration": None,
+        },
+    ]
+    assert "synthetic-secret" not in "".join(shown)

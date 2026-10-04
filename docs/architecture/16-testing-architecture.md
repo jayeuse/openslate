@@ -111,8 +111,9 @@ The tests in `frontend/tests/fullstack/smoke/` read and edit the seeded data and
 fixtures. Credentials and saved sessions stay in the private run directory.
 
 Each test carries a feature tag (`@records`, `@boards`, `@access`, `@manage`, `@platform`,
-`@sandbox`). `frontend/test-results/smoke-summary.json` records the result and the time of
-each stage. A full run takes about eight minutes. Seeding Harbor Small through the seeder takes
+`@sandbox`). `frontend/test-results/smoke-summary.json` records the result, the time of
+each stage, the revision, and each test's status, place, title, and duration. It keeps no
+credentials; the private run directory is removed after a passing run. A full run takes about eight minutes. Seeding Harbor Small through the seeder takes
 about 6.5 minutes of sequential API calls, and the browser suite takes under a minute.
 
 ## Test output
