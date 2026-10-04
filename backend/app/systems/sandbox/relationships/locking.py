@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import Select, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.database.session import AuditSession
 from app.systems.sandbox.fields.models import Field
@@ -179,6 +180,11 @@ def _lock_relationship_rows(
         or (target is not None and locked_target is None)
     ):
         raise RelationshipConflict("Relationship dependency is unavailable")
+    # The response reads each record's module; give it the rows locked above instead of
+    # a lazy load per record. This sets loaded state only, not a change to write.
+    for record in (locked_source, locked_target, *extra_records):
+        if record is not None and record.module_id in locked_modules:
+            set_committed_value(record, "module", locked_modules[record.module_id])
     _validate_locked_modules(
         locked_field,
         locked_source,
@@ -203,9 +209,10 @@ def validate_relationship_modules(source_module: Module, target_module: Module) 
 def _load_create_dependencies(
     db: Session, field_id: UUID, source_id: UUID, target_id: UUID
 ) -> tuple[Field, Record, Record]:
-    field = db.scalar(select(Field).where(Field.id == field_id))
-    source = db.scalar(select(Record).where(Record.id == source_id))
-    target = db.scalar(select(Record).where(Record.id == target_id))
+    # The access check already loaded the records; the locks below refresh every row.
+    field = db.get(Field, field_id)
+    source = db.get(Record, source_id)
+    target = db.get(Record, target_id)
     if field is None:
         raise RelationshipConflict("Relationship field is unavailable")
     if source is None or target is None:

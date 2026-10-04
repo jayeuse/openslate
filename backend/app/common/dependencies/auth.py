@@ -22,6 +22,7 @@ from app.systems.access.identity.provider_sessions import resolve_provider_sessi
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit.context import set_audit_actor
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import ip_allowed, load_workspace_policy
 
 _bearer = HTTPBearer(auto_error=False)
@@ -85,7 +86,11 @@ def _resolve_identity(
     client = get_supabase_auth_client()
     try:
         claims = client.verify_access_token(raw_token)
-        resolved = resolve_provider_session(db, claims, client, allow_aal1=allow_aal1)
+        # One read of the workspace policy serves the MFA and the address checks.
+        policy = load_workspace_policy(db)
+        resolved = resolve_provider_session(
+            db, claims, client, allow_aal1=allow_aal1, policy=policy
+        )
     except MFARequired as error:
         raise HTTPException(
             status_code=403,
@@ -101,7 +106,7 @@ def _resolve_identity(
     if resolved is None:
         raise _unauthorized()
     user, session = resolved
-    require_allowed_source(request, db)
+    require_allowed_source(request, db, policy)
     session_id = session.id
     cookie_authenticated = cookie_token is not None
     if cookie_authenticated and request.method in _UNSAFE_METHODS:
@@ -111,10 +116,13 @@ def _resolve_identity(
     return CurrentIdentity(user, session_id, cookie_authenticated, False)
 
 
-def require_allowed_source(request: Request, db: Session) -> None:
+def require_allowed_source(
+    request: Request, db: Session, policy: WorkspaceProfile | None = None
+) -> None:
     try:
         permitted = ip_allowed(
-            load_workspace_policy(db), request.client.host if request.client else None
+            policy or load_workspace_policy(db),
+            request.client.host if request.client else None,
         )
     except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
         raise HTTPException(status_code=503, detail="Authentication service unavailable") from error

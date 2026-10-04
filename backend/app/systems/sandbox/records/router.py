@@ -125,13 +125,6 @@ def _record(
     return record
 
 
-def _active_module(db: Session, module_id: UUID) -> Module:
-    module = db.scalar(select(Module).where(Module.id == module_id, Module.is_deleted.is_(False)))
-    if module is None:
-        raise _conflict("Module is not active")
-    return module
-
-
 def _lock_module(db: Session, module_id: UUID) -> Module:
     try:
         module = lock_row(db, Module, module_id)
@@ -143,6 +136,8 @@ def _lock_module(db: Session, module_id: UUID) -> Module:
 
 
 def _lock_active_module(db: Session, module_id: UUID) -> Module:
+    """Lock the module and require it to be active; a missing or closed one is a 409."""
+
     module = _lock_module(db, module_id)
     if module.is_deleted is True:
         raise _conflict("Module is not active")
@@ -272,7 +267,6 @@ def create_record(
     db: Annotated[Session, Depends(get_db)],
 ) -> RecordResponse:
     require_module_access(db, user, payload.module_id, AccessLevel.WRITE)
-    _active_module(db, payload.module_id)
     _lock_active_module(db, payload.module_id)
     fields = _module_fields(db, payload.module_id)
     if not any(not field.is_deleted for field in fields):
@@ -287,6 +281,8 @@ def create_record(
     enqueue_record_event(db, record, previous=None)
     _commit(db, "Unable to create record")
     db.refresh(record)
+    # The commit expired the fields; reading them again is one query, not one per field.
+    fields = _module_fields(db, record.module_id)
     return displayed_record(record, FieldDisplayResolver(db, record.module_id, fields))
 
 
@@ -311,7 +307,6 @@ def update_record(
         raise _conflict("Record is deleted")
     if payload.module_id is not None and payload.module_id != record.module_id:
         raise _conflict("Record module cannot be changed")
-    _active_module(db, record.module_id)
     _lock_active_module(db, record.module_id)
     record = _lock_record(db, record)
     if record.is_deleted:
@@ -339,7 +334,6 @@ def delete_record(
     record = _record(db, user, record_id, AccessLevel.WRITE)
     if record.is_deleted:
         raise _conflict("Record is already deleted")
-    _active_module(db, record.module_id)
     _lock_active_module(db, record.module_id)
     record = _lock_record(db, record)
     if record.is_deleted:
@@ -360,7 +354,6 @@ def restore_record(
     record = _record(db, user, record_id, AccessLevel.WRITE)
     if not record.is_deleted:
         raise _conflict("Record is not deleted")
-    _active_module(db, record.module_id)
     _lock_active_module(db, record.module_id)
     record = _lock_record(db, record)
     if not record.is_deleted:

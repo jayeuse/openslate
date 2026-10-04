@@ -78,7 +78,9 @@ def create_relationship(
     user: RelationshipWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> RelationshipResponse:
-    require_link_change(db, user, payload.source_record_id, payload.target_record_id)
+    _checked_rows = require_link_change(
+        db, user, payload.source_record_id, payload.target_record_id
+    )
     try:
         return create_relationship_service(
             db,
@@ -120,7 +122,9 @@ def assign_relationship(
     user: RelationshipWriteUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> RelationshipResponse | None:
-    require_link_change(db, user, source_record_id, payload.target_record_id, field_id=field_id)
+    _checked_rows = require_link_change(
+        db, user, source_record_id, payload.target_record_id, field_id=field_id
+    )
     try:
         return assign_relationship_service(
             db,
