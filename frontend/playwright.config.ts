@@ -76,8 +76,10 @@ export default defineConfig({
   outputDir: "test-results/playwright",
   fullyParallel: true,
   // CI runners for this private repository have 2 CPUs, where Playwright's
-  // default (half the CPUs) is 1 worker and the suite outgrows the job.
-  workers: isCI ? 2 : undefined,
+  // default (half the CPUs) is 1 worker and the suite outgrows the job. Five
+  // workers passed three full local runs in a row once the dev server stopped
+  // disposing compiled routes (next.config.ts onDemandEntries).
+  workers: isCI ? 5 : undefined,
   timeout: 30_000,
   expect: { timeout: 5_000 },
   forbidOnly: isCI,
