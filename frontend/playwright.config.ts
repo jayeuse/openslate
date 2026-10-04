@@ -1,3 +1,5 @@
+import { availableParallelism } from "node:os";
+
 import { defineConfig } from "@playwright/test";
 
 const isCI = Boolean(process.env.CI);
@@ -75,11 +77,12 @@ export default defineConfig({
   testDir: "./tests",
   outputDir: "test-results/playwright",
   fullyParallel: true,
-  // CI runners for this private repository have 2 CPUs, where Playwright's
-  // default (half the CPUs) is 1 worker and the suite outgrows the job. Five
-  // workers passed three full local runs in a row once the dev server stopped
-  // disposing compiled routes (next.config.ts onDemandEntries).
-  workers: isCI ? 5 : undefined,
+  // On CI, one worker per CPU, at most five. Playwright's default (half the
+  // CPUs) gives 1 worker on the 2-CPU runners, and the suite outgrows the job.
+  // Five workers on those 2 CPUs starved the dev server's on-demand compile:
+  // post-detail waits passed 5 s and failed. Five workers pass locally (10 CPUs)
+  // since the dev server keeps compiled routes (next.config.ts onDemandEntries).
+  workers: isCI ? Math.min(5, availableParallelism()) : undefined,
   timeout: 30_000,
   expect: { timeout: 5_000 },
   forbidOnly: isCI,
