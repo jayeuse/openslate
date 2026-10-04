@@ -25,7 +25,8 @@ GATE_NAMES: Final[tuple[str, ...]] = (
 _FRONTEND_PREFIX = "frontend/"
 _BACKEND_PREFIX = "backend/"
 _BACKEND_RUNTIME_PREFIX = "infra/supabase/"
-_SERVER_IMAGE_PREFIXES: Final[tuple[str, ...]] = ("infra/", "contracts/")
+_CONTRACTS_PREFIX = "contracts/"
+_SERVER_IMAGE_PREFIXES: Final[tuple[str, ...]] = ("infra/", _CONTRACTS_PREFIX)
 _SERVER_IMAGE_PATHS: Final[frozenset[str]] = frozenset(
     {
         ".dockerignore",
@@ -237,6 +238,8 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
         )
 
     frontend_paths = tuple(path for path in functional if path.startswith(_FRONTEND_PREFIX))
+    # Shared contract data (for example the OpenAPI snapshot) is read by frontend tests.
+    contract_paths = tuple(path for path in functional if path.startswith(_CONTRACTS_PREFIX))
     frontend_route_paths = tuple(
         path
         for path in frontend_paths
@@ -261,8 +264,9 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
     )
     tooling_paths = tuple(path for path in functional if path.startswith(_TOOLING_PREFIXES))
     broad = bool(tooling_paths)
-    frontend_run = broad or bool(frontend_paths)
-    backend_run = broad or bool(backend_paths) or bool(frontend_route_paths)
+    frontend_run = broad or bool(frontend_paths) or bool(contract_paths)
+    # The OpenAPI snapshot is also checked against the FastAPI app by a backend test.
+    backend_run = broad or bool(backend_paths) or bool(frontend_route_paths) or bool(contract_paths)
     server_image_run = (
         broad or bool(frontend_paths) or bool(backend_paths) or bool(server_image_paths)
     )
@@ -272,6 +276,8 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
         if frontend_paths
         else f"Shared CI/tooling paths changed: {_path_list(tooling_paths)}"
         if broad
+        else f"Shared contracts changed: {_path_list(contract_paths)}"
+        if contract_paths
         else "No frontend paths changed"
     )
     backend_reason = (
@@ -284,6 +290,8 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
             f"{_path_list(frontend_route_paths)}"
         )
         if frontend_route_paths
+        else f"Shared contracts changed: {_path_list(contract_paths)}"
+        if contract_paths
         else "No backend paths changed"
     )
     server_image_reason = (

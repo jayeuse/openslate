@@ -1,0 +1,178 @@
+import {
+  createAccessGroup,
+  deleteAccessGroup,
+  deleteAccessUser,
+  getAccessGroup,
+  getAccessInvitationSettings,
+  getAccessUser,
+  getAccessUserAccess,
+  inviteAccessUser,
+  listAccessDepartments,
+  listAccessGroups,
+  listAccessMemberCandidates,
+  listAccessModules,
+  listAccessUsers,
+  listAccessUserSessions,
+  replaceAccessGroupAccess,
+  replaceAccessGroupMembers,
+  resendAccessInvitation,
+  restoreAccessUser,
+  revokeAccessInvitation,
+  revokeAccessUserSession,
+  revokeAccessUserSessions,
+  updateAccessGroup,
+  updateAccessInvitationSettings,
+  updateAccessUser,
+} from "../../../src/components/systems/access/state/api";
+import { describeContracts } from "./openapi-contract";
+
+const userId = "00000000-0000-4000-8000-000000000001";
+const groupId = "00000000-0000-4000-8000-000000000002";
+const sessionId = "00000000-0000-4000-8000-000000000003";
+const departmentId = "00000000-0000-4000-8000-000000000004";
+const moduleId = "00000000-0000-4000-8000-000000000005";
+const etag = '"group-1"';
+const list = {
+  limit: 25,
+  offset: 0,
+  sort_order: "asc",
+  search: "ana",
+  deleted: "exclude",
+} as const;
+
+describeContracts("Access", [
+  {
+    name: "listAccessUsers",
+    run: () =>
+      listAccessUsers({ ...list, sort_by: "username", role: "member" }),
+  },
+  { name: "getAccessUser", run: () => getAccessUser(userId) },
+  {
+    name: "inviteAccessUser",
+    run: () =>
+      inviteAccessUser({
+        email: "ana@example.com",
+        username: "ana",
+        role: "guest",
+        group_ids: [groupId],
+        display_name: "Ana",
+        job_title: "Clerk",
+        sponsor_user_id: userId,
+        expires_at: "2026-02-01T00:00:00Z",
+      }),
+  },
+  {
+    name: "updateAccessUser",
+    run: () =>
+      updateAccessUser(userId, {
+        username: "ana",
+        role: "member",
+        status: "active",
+        display_name: "Ana",
+        job_title: "Clerk",
+        sponsor_user_id: null,
+        expires_at: null,
+      }),
+  },
+  { name: "deleteAccessUser", run: () => deleteAccessUser(userId) },
+  { name: "restoreAccessUser", run: () => restoreAccessUser(userId) },
+  { name: "resendAccessInvitation", run: () => resendAccessInvitation(userId) },
+  { name: "revokeAccessInvitation", run: () => revokeAccessInvitation(userId) },
+  { name: "getAccessUserAccess", run: () => getAccessUserAccess(userId) },
+  {
+    name: "listAccessUserSessions",
+    run: () => listAccessUserSessions(userId, { limit: 25, offset: 0 }),
+  },
+  {
+    name: "revokeAccessUserSession",
+    run: () => revokeAccessUserSession(userId, sessionId),
+  },
+  {
+    name: "revokeAccessUserSessions",
+    run: () => revokeAccessUserSessions(userId),
+  },
+  {
+    name: "listAccessGroups",
+    run: () => listAccessGroups({ ...list, sort_by: "name" }),
+  },
+  { name: "getAccessGroup", run: () => getAccessGroup(groupId) },
+  {
+    name: "createAccessGroup",
+    run: () =>
+      createAccessGroup({
+        name: "Clerks",
+        description: "Front desk",
+        member_ids: [userId],
+      }),
+  },
+  {
+    name: "updateAccessGroup",
+    run: () =>
+      updateAccessGroup(groupId, {
+        name: "Clerks",
+        description: "Front desk",
+        etag,
+      }),
+  },
+  {
+    name: "replaceAccessGroupAccess",
+    run: () =>
+      replaceAccessGroupAccess(groupId, {
+        access: [
+          { department_id: departmentId, module_id: null, level: "read" },
+          { department_id: departmentId, module_id: moduleId, level: "write" },
+        ],
+        etag,
+      }),
+  },
+  {
+    name: "replaceAccessGroupMembers",
+    run: () =>
+      replaceAccessGroupMembers(groupId, { member_ids: [userId], etag }),
+  },
+  {
+    name: "deleteAccessGroup",
+    run: () => deleteAccessGroup(groupId, { etag }),
+  },
+  {
+    name: "listAccessMemberCandidates",
+    run: () =>
+      listAccessMemberCandidates({
+        limit: 25,
+        offset: 0,
+        sort_by: "display_name",
+        sort_order: "desc",
+        search: "ana",
+      }),
+    responses: {
+      // The route never lists administrators; the frontend rejects one on purpose.
+      "GET /api/access/member-candidates": { items: [{ role: "member" }] },
+    },
+  },
+  {
+    name: "listAccessDepartments",
+    run: () => listAccessDepartments({ ...list, sort_by: "department_name" }),
+  },
+  {
+    name: "listAccessModules",
+    run: () =>
+      listAccessModules({
+        ...list,
+        sort_by: "module_name",
+        department_id: departmentId,
+      }),
+  },
+  {
+    name: "getAccessInvitationSettings",
+    run: () => getAccessInvitationSettings(),
+  },
+  {
+    name: "updateAccessInvitationSettings",
+    run: () =>
+      updateAccessInvitationSettings({
+        revision: 3,
+        invitation_expiry_days: 7,
+        guest_duration_days: 30,
+      }),
+  },
+]);
