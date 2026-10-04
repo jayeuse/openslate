@@ -31,6 +31,18 @@ class PrepushTests(unittest.TestCase):
         )
         self.assertLess(names.index("backend-coverage"), names.index(reset.name))
 
+    def test_release_smoke_runs_only_with_the_release_flag_and_after_backend_stacks(self):
+        default = prepush.build_plan(all_gate_scope(), Path("/repo"))
+        self.assertNotIn("release-smoke", [step.name for step in default.steps])
+        plan = prepush.build_plan(all_gate_scope(), Path("/repo"), release=True)
+        names = [step.name for step in plan.steps]
+        smoke = plan.steps[names.index("release-smoke")]
+        self.assertEqual(smoke.command, ("uv", "run", "python", "-m", "tests.smoke_runner"))
+        self.assertEqual(
+            (smoke.cwd, smoke.lane, smoke.serial_group), ("backend", "backend", "backend-postgres")
+        )
+        self.assertLess(names.index("provider-reset-acceptance"), names.index("release-smoke"))
+
     def test_plan_keeps_frontend_lean_and_backend_independent(self):
         plan = prepush.build_plan(all_gate_scope(), Path("/repo"))
         names = [step.name for step in plan.steps]

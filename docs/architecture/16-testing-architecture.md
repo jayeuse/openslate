@@ -75,6 +75,37 @@ traceable procedures and artifacts for executed E2E acceptance, including comman
 working directory, revision, prerequisites, outcome, and report/trace locations;
 architecture docs do not record task-run counts or results.
 
+## Release smoke suite
+
+The release smoke suite runs one main path per screen against seeded Harbor data. It
+belongs to the release gate, not to every push. Run it before a release:
+
+1. From the repository root, run `python3 scripts/prepush.py --base <base-ref> --release`.
+   The `--release` flag adds the `release-smoke` step after the backend stacks.
+2. To run only the smoke suite, run `uv run python -m tests.smoke_runner` from `backend/`.
+
+The runner creates a new disposable stack and builds the static export. FastAPI serves
+the export behind the Caddy gateway, as in production; `next dev` is not used. The runner
+seeds Harbor Small once through the sample-data seeder (seed 42, anchor date 2026-09-30).
+The seeder trusts the gateway's local certificate authority, because the test environment
+sends `Secure` session cookies. Two switches exist only for a test stack, and the API refuses
+to start with either one outside `ENVIRONMENT=test`:
+
+- `E2E_BACKGROUND_WORKERS=true` runs the automation and scheduling workers, as production
+  does. Other test runs drive these workers directly.
+- `E2E_SEEDING_WITHOUT_ANONYMOUS_LIMITS=true` turns off the anonymous invitation limit
+  (5 completions per 15 minutes from one address) while the seeder completes every invitation.
+  The runner then restarts the API without it, so the browser tests run with every limit on. Playwright signs in once per role (administrator,
+department lead, service clerk, guest) and saves each session as a `storageState` file.
+The tests in `frontend/tests/fullstack/smoke/` read and edit the seeded data and build no
+fixtures. Credentials and saved sessions stay in the private run directory.
+
+Each test carries a feature tag (`@records`, `@boards`, `@access`, `@manage`, `@platform`,
+`@sandbox`). `frontend/test-results/smoke-summary.json` records the result and the time of
+each stage. A full run takes about eight minutes. Seeding Harbor Small through the seeder takes
+about 6.5 minutes of sequential API calls, and the browser suite takes under a minute.
+
+## Acceptance boundaries
 ## Acceptance boundaries
 
 Compose validation, unit tests, and migrations alone do not establish clean-host

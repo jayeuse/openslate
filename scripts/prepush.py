@@ -238,7 +238,22 @@ def _add_server_image_step(steps: list[Step]) -> None:
     )
 
 
-def build_plan(scope: ChangeScope, root: Path) -> PrepushPlan:
+def _add_release_smoke_step(steps: list[Step]) -> None:
+    # Release gate only: Harbor Small through the seeder, then one browser path per screen.
+    steps.append(
+        Step(
+            name="release-smoke",
+            gate="release",
+            phase="resource",
+            cwd="backend",
+            command=("uv", "run", "python", "-m", "tests.smoke_runner"),
+            lane="backend",
+            serial_group=SERIAL_BACKEND_STACK,
+        )
+    )
+
+
+def build_plan(scope: ChangeScope, root: Path, *, release: bool = False) -> PrepushPlan:
     """Build the command plan without starting any subprocesses."""
 
     del root  # The plan uses repository-relative working directories.
@@ -249,6 +264,8 @@ def build_plan(scope: ChangeScope, root: Path) -> PrepushPlan:
         _add_backend_steps(steps)
     if scope.decisions["server_image"].run:
         _add_server_image_step(steps)
+    if release:
+        _add_release_smoke_step(steps)
     ordered = tuple(step for phase in ("fast", "resource") for step in steps if step.phase == phase)
     return PrepushPlan(scope=scope, steps=ordered)
 
@@ -392,6 +409,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the classified plan without running checks",
     )
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="Also run the release smoke suite (Harbor Small seed and browser paths)",
+    )
     return parser
 
 
@@ -399,7 +421,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     root = Path(__file__).resolve().parents[1]
     scope = classify_changes(root, args.base)
-    plan = build_plan(scope, root)
+    plan = build_plan(scope, root, release=args.release)
     if args.list_only:
         print(json.dumps(plan.as_dict(), indent=2, sort_keys=True))
         return 0
