@@ -52,6 +52,7 @@ def run_streamed(
         return subprocess.run(
             command, cwd=cwd, env=env, check=True, stdout=subprocess.PIPE, stderr=log, text=True
         )
+    # Its own process group: a stopped run can stop the command and everything it started.
     process = subprocess.Popen(
         command,
         cwd=cwd,
@@ -61,18 +62,50 @@ def run_streamed(
         text=True,
         encoding="utf-8",
         errors="replace",
+        start_new_session=True,
     )
     assert process.stdout is not None
-    with process:
+    try:
         for line in process.stdout:
             log.write(line)
             shown = progress_line(line)
             if shown is not None:
                 print(shown, flush=True)
-    log.flush()
+        process.wait()
+    except BaseException:
+        # Interrupted: stop the group before the runner removes the services it uses.
+        stop_process_group(process)
+        raise
+    finally:
+        process.stdout.close()
+        log.flush()
     if process.returncode:
         raise subprocess.CalledProcessError(process.returncode, command)
     return subprocess.CompletedProcess(command, process.returncode)
+
+
+def _signal_group(group: int, number: int) -> None:
+    try:
+        os.killpg(group, number)
+    except ProcessLookupError:
+        pass  # The group has ended already.
+
+
+def stop_process_group(process: subprocess.Popen[str], timeout: float = 10) -> None:
+    """Stop a group leader and everything it started; a group that has ended counts as stopped.
+
+    The process must have started with start_new_session=True.
+    """
+    if process.poll() is not None:
+        return
+    _signal_group(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _signal_group(process.pid, signal.SIGKILL)
+        process.wait()
+    # Descendants that outlive the leader are still in its group.
+    _signal_group(process.pid, signal.SIGKILL)
 
 
 def e2e_browser_flags() -> list[str]:

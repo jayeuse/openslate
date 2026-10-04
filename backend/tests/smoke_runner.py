@@ -14,7 +14,6 @@ From backend/:  uv run python -m tests.smoke_runner
 import json
 import os
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -28,13 +27,23 @@ if __package__:
     from .fullstack_environment import RUNNER_API_PORT, RUNNER_CONCURRENCY_LIMIT, api_environment
     from .fullstack_runner import API, BACKEND, FRONTEND, WEB, seed, wait_for
     from .postgres_runtime import DisposablePostgres
-    from .runner_console import e2e_browser_flags, run_streamed, stop_on_signals
+    from .runner_console import (
+        e2e_browser_flags,
+        run_streamed,
+        stop_on_signals,
+        stop_process_group,
+    )
 else:
     from caddy_runtime import GATEWAY_PORT, DisposableCaddy
     from fullstack_environment import RUNNER_API_PORT, RUNNER_CONCURRENCY_LIMIT, api_environment
     from fullstack_runner import API, BACKEND, FRONTEND, WEB, seed, wait_for
     from postgres_runtime import DisposablePostgres
-    from runner_console import e2e_browser_flags, run_streamed, stop_on_signals
+    from runner_console import (
+        e2e_browser_flags,
+        run_streamed,
+        stop_on_signals,
+        stop_process_group,
+    )
 
 SEED = 42
 ANCHOR_DATE = "2026-09-30"
@@ -92,17 +101,6 @@ def gateway_root_certificate(caddy: DisposableCaddy, private: Path) -> Path:
         target.write_text(certificate, encoding="utf-8")
     target.chmod(0o600)
     return target
-
-
-def _stop(process: subprocess.Popen[str]) -> None:
-    if process.poll() is not None:
-        return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=10)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
 
 
 def _write_private(path: Path, value: object) -> Path:
@@ -238,7 +236,7 @@ def main() -> int:
             private / "smoke-fixture.json",
             {"runId": run_id, "baseURL": WEB, "roles": smoke_identities(credentials, admin)},
         )
-        _stop(processes.pop())
+        stop_process_group(processes.pop())
         start_api(api_env)
         timed("browser smoke suite")
         run(
@@ -269,7 +267,12 @@ def main() -> int:
         print(f"Smoke FAIL at {stage} ({failure_type}).")
     finally:
         for process in reversed(processes):
-            _stop(process)
+            try:
+                stop_process_group(process)
+            except Exception:
+                # The gateway and the stack below must still be removed.
+                print("Smoke process cleanup failed; operator attention required.")
+                result = 1
         for owned in (caddy, postgres):
             if owned is not None:
                 try:

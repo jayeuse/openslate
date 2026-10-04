@@ -150,3 +150,112 @@ def test_parallel_coverage_handles_a_stop_before_it_starts_shards(
 
     with pytest.raises(_Installed):
         parallel_coverage.main([])
+
+
+_RUNNER = """
+import sys
+from pathlib import Path
+from tests.runner_console import run_streamed, stop_on_signals
+
+pids, cleaned = Path(sys.argv[1]), Path(sys.argv[2])
+child = (
+    "import os, subprocess, sys, time; "
+    "grandchild = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)']); "
+    f"open({str(pids)!r}, 'w').write(f'{{os.getpid()}} {{grandchild.pid}}'); "
+    "time.sleep(120)"
+)
+stop_on_signals()
+try:
+    with (pids.parent / "process.log").open("w") as log:
+        run_streamed([sys.executable, "-c", child], pids.parent, {}, log)
+finally:
+    cleaned.write_text("cleanup ran")
+"""
+
+
+def _gone(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def test_a_stopped_runner_stops_its_command_and_what_the_command_started(
+    tmp_path: Path,
+) -> None:
+    # Review finding 1: an interrupted run_streamed left pytest or npm running while
+    # the runner removed the services they used.
+    import time
+
+    pids, cleaned = tmp_path / "pids", tmp_path / "cleaned"
+    runner = subprocess.Popen(
+        [sys.executable, "-c", _RUNNER, str(pids), str(cleaned)],
+        cwd=Path(__file__).resolve().parents[3],
+    )
+    children: list[int] = []
+    try:
+        deadline = time.monotonic() + 30
+        while not (pids.exists() and pids.read_text().count(" ") == 1):
+            assert time.monotonic() < deadline, "the command did not start"
+            assert runner.poll() is None, "the runner ended early"
+            time.sleep(0.05)
+        children = [int(pid) for pid in pids.read_text().split()]
+        runner.send_signal(signal.SIGTERM)
+        runner.wait(timeout=30)
+        assert cleaned.read_text() == "cleanup ran"
+        deadline = time.monotonic() + 10
+        while not all(_gone(pid) for pid in children):
+            assert time.monotonic() < deadline, f"still running: {children}"
+            time.sleep(0.05)
+    finally:
+        for pid in children:
+            if not _gone(pid):
+                os.kill(pid, signal.SIGKILL)
+        if runner.poll() is None:
+            runner.kill()
+
+
+class _Group:
+    """A process double whose group can end at any step."""
+
+    def __init__(self, *, exited: bool = False, waits: int = 0) -> None:
+        self.pid, self.exited, self.timeouts = 4242, exited, waits
+
+    def poll(self) -> int | None:
+        return 0 if self.exited else None
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self.timeouts and timeout is not None:
+            self.timeouts -= 1
+            raise subprocess.TimeoutExpired("api", timeout)
+        return 0
+
+
+@pytest.mark.parametrize(
+    ("group", "missing_from", "signals"),
+    [
+        (_Group(exited=True), 0, []),
+        (_Group(), 1, [signal.SIGTERM, signal.SIGKILL]),
+        (_Group(waits=1), 9, [signal.SIGTERM, signal.SIGKILL, signal.SIGKILL]),
+        (_Group(waits=1), 2, [signal.SIGTERM, signal.SIGKILL, signal.SIGKILL]),
+    ],
+    ids=["already-exited", "gone-before-term", "timeout-then-kill", "gone-before-kill"],
+)
+def test_a_group_that_ends_during_a_stop_counts_as_stopped(
+    monkeypatch: pytest.MonkeyPatch, group: _Group, missing_from: int, signals: list[int]
+) -> None:
+    # Review finding 2: a group that ended between poll() and SIGTERM raised
+    # ProcessLookupError from the SIGKILL fallback and skipped the smoke cleanup.
+    sent: list[int] = []
+
+    def killpg(_group: int, number: int) -> None:
+        sent.append(number)
+        if missing_from and len(sent) >= missing_from:
+            raise ProcessLookupError
+
+    monkeypatch.setattr(runner_console.os, "killpg", killpg)
+
+    runner_console.stop_process_group(group)  # type: ignore[arg-type]
+
+    assert sent == signals
