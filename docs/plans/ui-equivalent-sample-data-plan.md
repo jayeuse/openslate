@@ -307,7 +307,7 @@ Design rules:
 - Every pack has one named scenario: a parent amount that a child record settles in part (for example a school fee and a partial payment). Board links and verification read it from the pack.
 - Harbor's purchasing and receipt reconciliation stays inside the Harbor pack.
 - Each pack's design must pass the Sandbox document validation offline before any live run.
-- The generated-data marker check blocks the words `sample`, `test`, `demo`, `dummy`, `fake`, `placeholder`, `lorem`, `ipsum`, `scenario` and `synthetic` (`tests/operations/test_sample_text.py`), except inside the pack's allowed trade phrases (`TRADE_PHRASES`). Schools and clinics use the word "test" for real work, so each pack lists its own phrases.
+- The generated-data marker check blocks the words `sample`, `test`, `demo`, `dummy`, `fake`, `placeholder`, `lorem`, `ipsum`, `scenario` and `synthetic` (`tests/operations/sample/test_sample_text.py`), except inside the pack's allowed trade phrases (`TRADE_PHRASES`). Schools and clinics use the word "test" for real work, so each pack lists its own phrases.
 
 Correct: `Grade 8 science unit test — Section B`. Wrong: `Test record for class 12`.
 
