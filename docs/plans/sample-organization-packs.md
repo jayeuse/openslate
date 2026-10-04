@@ -20,9 +20,12 @@ The research behind it is seven sourced reports, one per organization type, in [
 8. **Sensitive records get their own module.** Safeguarding cases, guidance notes, clinic visits and civil registry entries are in modules that the wide groups cannot read. A guest sees every row of a module it can read, so guests get read access only to modules that are safe to show in full.
 9. **Each pack has one named scenario** in which a child record settles part of a parent amount. Board links and verification read it from the pack.
 10. **Each pack adds its own trade phrases to the marker check.** The check blocks the words `sample`, `test`, `demo`, `dummy`, `fake`, `placeholder`, `lorem`, `ipsum`, `scenario` and `synthetic` in generated content. Real work in these fields uses "test" and "sample", so each pack lists the exact phrases it allows, and the check still blocks the words everywhere else.
-11. **Relationships stay inside one department.** The engine only links modules in the same department. Each pack groups its modules so that the main chains link inside a department. A link that crosses departments becomes a visible reference code, as Harbor does (for example a student number on a Fee Assessment). The relationship lists in the research reports are input; each pack checks every relationship against its department mapping and records the reference codes it uses instead.
 
-Correct: `Unit test 2 — Year 8 Science, Set 2` in the school pack. Wrong: `Test record 12 for class 8`.
+    Correct: `Unit test 2 — Year 8 Science, Set 2` in the school pack. Wrong: `Test record 12 for class 8`.
+
+11. **A link to a record in another department is a relationship.** A relationship can connect modules in two departments. When a record names a record that the organization keeps in another department, the pack models a relationship, not a typed code. The record that names the other record is the source. It links itself after both records exist. The person who links needs write access to the source module and read access to the target module, so the pack gives that read access to the groups that write the source module. Keep a typed code only when it repeats a relationship that the department already has. The relationship lists in the research reports are input; each pack checks every relationship against its department mapping and its access groups.
+
+    Correct: a Fee Assessment has a Student relationship to the student record in the Academic Office. Wrong: a Fee Assessment has a Student number text field that repeats the code of that student record.
 
 ## Engine facts that shape the packs
 
@@ -81,7 +84,7 @@ The counts below are the proposed Standard counts. The Small profile is about on
   - The bursar records a Payment and gets 403.
   - A guest auditor edits a Payment and gets 403.
 - **Trade phrases:** unit test, end-of-term test, test paper, entrance test, sample essay.
-- **Department mapping (rule 11):** the roster (Student and Class Section) must be in one department. Put Student, Course, Class Section, Assessment, Report Card Batch, Academic Alert, Grade Change Request and Attendance Exception in one Academic Office department (registrar and academics together), and keep Admissions separate. Fee Assessment, Clinic Visit, Behavior Incident and Guidance Case carry the student number as a reference code.
+- **Department mapping (rule 11):** the roster (Student and Class Section) must be in one department. Put Student, Course, Class Section, Assessment, Report Card Batch, Academic Alert, Grade Change Request and Attendance Exception in one Academic Office department (registrar and academics together), and keep Admissions separate. Fee Assessment, Clinic Visit, Behavior Incident and Guidance Case link to the student record through a Student relationship.
 - **UK vocabulary:** year groups (Reception, Year 1 to Year 13), form groups and teaching sets, three terms with half-terms, DfE attendance codes, £ amounts, UK spelling (enrolment, behaviour). The research report also gives Philippine and US terms; do not mix them in.
 
 ### Clinic (`clinic`)

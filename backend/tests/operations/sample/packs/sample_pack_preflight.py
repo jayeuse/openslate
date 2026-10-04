@@ -235,7 +235,6 @@ def _validate_relationships(dataset: SampleDataset, document: SandboxDocument) -
         relationship = relationships[relationship_key]
         assert source.module_key == relationship.source
         assert target.module_key == relationship.target
-        assert source.actor_key == target.actor_key
         schema = document_relationships[edge.relationship_id]
         RelationshipCreate.model_validate(
             {
@@ -258,10 +257,9 @@ def _validate_relationships(dataset: SampleDataset, document: SandboxDocument) -
     document_modules = {module.id: module for module in document.design.modules}
     for spec in pack.catalog.relationships:
         relation = document_relationships[dataset.relationship_ids[spec.key]]
-        source_module = document_modules[relation.source_module_id]
-        target_module = document_modules[relation.target_module_id]
+        assert document_modules[relation.source_module_id].id == dataset.module_ids[spec.source]
+        assert document_modules[relation.target_module_id].id == dataset.module_ids[spec.target]
         validate_relationship_modules(module_rows[spec.source], module_rows[spec.target])
-        assert source_module.department_id == target_module.department_id
         edges = edges_by_relationship[spec.key]
         assert len(edges) == len(set(edges))
         multiple_targets, multiple_sources = relationship_metadata(relation)

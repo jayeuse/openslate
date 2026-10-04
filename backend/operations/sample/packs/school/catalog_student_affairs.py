@@ -23,7 +23,6 @@ MODULES = (
         90,
         (
             _field("incident_no", "Incident number", "Text", "reference", required=True),
-            _field("student_reference", "Student number", "Text", "cross_reference", required=True),
             _field("occurred_at", "Date and time", "Date/Time", "datetime", required=True),
             _choice(
                 "location",
@@ -102,8 +101,6 @@ MODULES = (
         ("Referred", "Intake", "Active", "Monitoring", "Closed", "Referred externally"),
         65,
         (
-            _field("student_reference", "Student number", "Text", "cross_reference", required=True),
-            _field("attendance_reference", "Attendance reference", "Text", "cross_reference"),
             _choice(
                 "referral_source",
                 "Referral source",
@@ -146,11 +143,6 @@ MODULES = (
         ("To contact", "Contacted", "Follow-up due", "Done", "Unreachable"),
         240,
         (
-            _field("student_reference", "Student number", "Text", "cross_reference", required=True),
-            _field("attendance_reference", "Attendance reference", "Text", "cross_reference"),
-            _field(
-                "academic_alert_reference", "Academic alert reference", "Text", "cross_reference"
-            ),
             _choice(
                 "contact_type",
                 "Contact type",
@@ -197,7 +189,6 @@ MODULES = (
                 "Meeting day",
                 ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday"),
             ),
-            _field("room_reference", "Room code", "Text", "cross_reference"),
             _field(
                 "maximum_members",
                 "Maximum members",

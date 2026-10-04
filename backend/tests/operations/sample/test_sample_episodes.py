@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from functools import cache
 
+from operations.sample.blueprint import edge_child_ids
 from operations.sample.episodes import SampleSession, plan_sessions, record_parents
 from operations.sample.scenario import SampleDataset, build_dataset
 
@@ -40,8 +41,9 @@ def test_links_and_references_only_point_to_records_that_already_exist() -> None
     for record in dataset.records:
         for parent in parents[record.logical_id]:
             assert position[parent] < position[record.logical_id], (parent, record.logical_id)
-    for edge in dataset.edges:
-        assert position[edge.source_record_id] < position[edge.target_record_id]
+    for edge, child in zip(dataset.edges, edge_child_ids(dataset), strict=True):
+        parent = edge.target_record_id if child == edge.source_record_id else edge.source_record_id
+        assert position[parent] < position[child]
 
 
 def test_sessions_belong_to_one_person_and_one_module() -> None:
@@ -54,6 +56,14 @@ def test_sessions_belong_to_one_person_and_one_module() -> None:
             assert 1 <= len(session.steps) <= 6
             assert {item.split(":")[0] for item, _ in session.steps} == {session.module_key}
             continue
+        if session.kind == "link":
+            edges = [dataset.edges[index] for index in session.edge_indices]
+            assert 1 <= len(edges) <= 6
+            assert {edge.creator_key for edge in edges} == {session.creator_key}
+            assert {records[edge.source_record_id].module_key for edge in edges} == {
+                session.module_key
+            }
+            continue
         assert 1 <= len(session.record_ids) <= 6
         assert {records[item].creator_key for item in session.record_ids} == {session.creator_key}
         assert {records[item].module_key for item in session.record_ids} == {session.module_key}
@@ -62,7 +72,8 @@ def test_sessions_belong_to_one_person_and_one_module() -> None:
 def test_departments_take_turns() -> None:
     dataset = _dataset("standard")
     department = {record.module_key: record.actor_key for record in dataset.records}
-    sessions = [session for session in _plan("standard") if session.kind != "reject"]
+    # A link session follows the create session it belongs to, in the same department.
+    sessions = [session for session in _plan("standard") if session.kind in {"create", "update"}]
     # Teams finish at different times, so only the final stretch may narrow.
     for start in range(0, int(len(sessions) * 0.95) - 60, 60):
         window = {department[item.module_key] for item in sessions[start : start + 60]}

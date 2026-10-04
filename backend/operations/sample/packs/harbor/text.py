@@ -199,7 +199,7 @@ def record_title(module_key: str, index: int, seed: int, counts: Mapping[str, in
         return f"{tier} service agreement — {customer}, {label}"
     if module_key == "service_requests":
         customer, label = _site_parts(_parent("site_requests", index, counts), seed, counts)
-        # The unit named in the title is the one in the Equipment reference field.
+        # The unit named in the title is the one the request's Equipment link names.
         unit_name, _tag, type_index = _equipment(index % counts["equipment"])
         faults = EQUIPMENT_TYPES[type_index][2]
         return f"{unit_name} {faults[rng.randrange(len(faults))]} — {customer}, {label}"

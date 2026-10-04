@@ -22,6 +22,10 @@ class SampleInvitationError(RuntimeError):
     """A safe private-roster or invitation-delivery failure."""
 
 
+class _InboxChanged(SampleInvitationError):
+    """Mail arrived or was pruned between the pages of one inbox read."""
+
+
 _PAGE_SIZE = 50
 _MAX_PAGES = 20
 _WAIT_SECONDS = 20.0
@@ -214,7 +218,7 @@ class InvitationMailbox:
 
     def snapshot(self) -> set[str]:
         ids = set()
-        for message in self._messages():
+        for message in self._settled_messages():
             message_id = message.get("ID")
             if not isinstance(message_id, str) or not message_id:
                 raise SampleInvitationError("Mailpit returned a message without an ID")
@@ -236,7 +240,7 @@ class InvitationMailbox:
         deadline = time.monotonic() + _WAIT_SECONDS
         while True:
             tokens: set[str] = set()
-            for summary in self._messages():
+            for summary in self._settled_messages(deadline):
                 message_id = summary.get("ID")
                 if (
                     not isinstance(message_id, str)
@@ -254,6 +258,21 @@ class InvitationMailbox:
             if time.monotonic() >= deadline:
                 raise SampleInvitationError("No new matching email action arrived before timeout")
             time.sleep(0.25)
+
+    def _settled_messages(self, deadline: float | None = None) -> list[Mapping[str, Any]]:
+        """Read the inbox again while it changes mid-read, until the deadline.
+
+        Mailpit keeps at most 500 messages, so a full inbox changes its total
+        whenever mail arrives or old mail is pruned.
+        """
+        until = time.monotonic() + _WAIT_SECONDS if deadline is None else deadline
+        while True:
+            try:
+                return self._messages()
+            except _InboxChanged:
+                if time.monotonic() >= until:
+                    raise
+                time.sleep(0.25)
 
     def _messages(self) -> list[Mapping[str, Any]]:
         result: list[Mapping[str, Any]] = []
@@ -284,12 +303,12 @@ class InvitationMailbox:
                 if total > _PAGE_SIZE * _MAX_PAGES:
                     raise SampleInvitationError("Mailpit inbox exceeds the safe snapshot bound")
             elif count != total:
-                raise SampleInvitationError("Mailpit inbox changed during message pagination")
+                raise _InboxChanged("Mailpit inbox changed during message pagination")
             result.extend(rows)
             if start + len(rows) >= total:
                 return result
             if not rows:
-                raise SampleInvitationError("Mailpit pagination ended before the reported total")
+                raise _InboxChanged("Mailpit pagination ended before the reported total")
         raise SampleInvitationError("Mailpit inbox exceeds the safe snapshot page count")
 
     @staticmethod

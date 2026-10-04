@@ -89,19 +89,28 @@ GROUP_ACCESS: dict[str, tuple[tuple[str, str | None, str], ...]] = {
     "academic-leaders": (
         ("academic", None, "manage"),
         *_rows("academic", _ACADEMIC_READ_MODULES, "read"),
+        # The dean links an attendance exception to the clinic visit that explains it.
+        ("health", "clinic_visits", "read"),
     ),
-    "academic-registrars": _rows("academic", _ACADEMIC_READ_MODULES, "manage"),
+    "academic-registrars": (
+        *_rows("academic", _ACADEMIC_READ_MODULES, "manage"),
+        # Registrars link students to their applications and class sections to rooms.
+        ("admissions", "applications", "read"),
+        ("facilities", "rooms", "read"),
+    ),
     "student-affairs-office": (
         *_rows(
             "student_affairs", ("behaviour_incidents", "parent_contacts", "activities"), "write"
         ),
+        *_rows("academic", ("students", "attendance_exceptions", "academic_alerts"), "read"),
+        ("facilities", "rooms", "read"),
     ),
     "student-affairs-leaders": (
         ("student_affairs", None, "manage"),
         ("student_affairs", "guidance_cases", "read"),
     ),
     "guidance-counsellors": (("student_affairs", "guidance_cases", "manage"),),
-    "health-services": (("health", None, "write"),),
+    "health-services": (("health", None, "write"), ("academic", "students", "read")),
     "health-leaders": (("health", None, "manage"),),
     "finance-office": (
         ("finance", None, "write"),
@@ -110,10 +119,12 @@ GROUP_ACCESS: dict[str, tuple[tuple[str, str | None, str], ...]] = {
     "finance-leaders": (
         ("finance", None, "manage"),
         *_rows("finance", _FINANCE_MODULES, "read"),
+        ("academic", "students", "read"),
     ),
     "finance-accounts": (
         *_rows("finance", ("fee_items", "fee_assessments", "collection_cases"), "manage"),
         *_rows("finance", ("payments", "fee_adjustments"), "read"),
+        ("academic", "students", "read"),
     ),
     "finance-cashiers": (
         ("finance", None, "write"),
@@ -128,6 +139,7 @@ GROUP_ACCESS: dict[str, tuple[tuple[str, str | None, str], ...]] = {
         ("finance", None, "manage"),
         *_rows("finance", ("fee_items", "fee_assessments", "payments", "collection_cases"), "read"),
         ("finance", "fee_adjustments", "manage"),
+        ("academic", "students", "read"),
     ),
     "facilities-team": (("facilities", None, "write"),),
     "facilities-leaders": (("facilities", None, "manage"),),

@@ -18,6 +18,7 @@ import {
 } from "../adapters/records-api";
 import {
   boundedItems,
+  departmentsOptions,
   fieldsFirstPageOptions,
 } from "../adapters/openview-queries";
 import { openViewRecordTitle } from "../domain/record-display";
@@ -99,13 +100,34 @@ function containsRelationship(
   );
 }
 
+/**
+ * The department of a linked data source, named only when it differs from the
+ * department of the record being viewed, so a person knows where it lives.
+ */
+function useOtherDepartmentName(
+  dataSources: readonly OpenViewDataSource[],
+  homeModuleId: string,
+  linkedModuleId: string | undefined,
+): string | null {
+  const departments = useQuery(departmentsOptions());
+  const departmentOf = (moduleId: string | undefined) =>
+    dataSources.find((item) => item.id === moduleId)?.departmentId;
+  const home = departmentOf(homeModuleId);
+  const linked = departmentOf(linkedModuleId);
+  if (!home || !linked || home === linked) return null;
+  return departments.data?.find((item) => item.id === linked)?.name ?? null;
+}
+
 function LinkedRecordName({
   id,
   recordId,
+  homeModuleId,
   dataSources,
 }: {
   id?: string;
   recordId: string;
+  /** The module of the record whose links are shown. */
+  homeModuleId: string;
   dataSources: readonly OpenViewDataSource[];
 }) {
   const linked = useQuery({
@@ -113,6 +135,11 @@ function LinkedRecordName({
     queryFn: () => getOpenViewRecord(recordId),
     retry: false,
   });
+  const department = useOtherDepartmentName(
+    dataSources,
+    homeModuleId,
+    linked.data?.moduleId,
+  );
   if (linked.isPending)
     return (
       <span id={id} className="text-muted-foreground">
@@ -133,7 +160,7 @@ function LinkedRecordName({
       </span>
       {source ? (
         <span className="text-muted-foreground block text-xs">
-          {source.name}
+          {department ? `${source.name} · ${department}` : source.name}
         </span>
       ) : null}
     </span>
@@ -179,6 +206,11 @@ function LinkPicker({
   }, [searchId]);
   const targetFields = useQuery(fieldsFirstPageOptions(field.targetModuleId));
   const target = dataSources.find((item) => item.id === field.targetModuleId);
+  const targetDepartment = useOtherDepartmentName(
+    dataSources,
+    record.moduleId,
+    field.targetModuleId,
+  );
   const fields = targetFields.data?.items ?? [];
   const titleField =
     fields.find((item) => item.id === target?.titleFieldId) ??
@@ -354,6 +386,11 @@ function LinkPicker({
         <Field className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
           <FieldLabel htmlFor={`link-search-${field.id}`}>
             Find a record in {target?.name ?? "the linked data source"}
+            {targetDepartment ? (
+              <span className="text-muted-foreground font-normal">
+                {` · ${targetDepartment}`}
+              </span>
+            ) : null}
           </FieldLabel>
           <Input
             id={searchId}
@@ -541,7 +578,13 @@ function FieldLinks({
   };
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const targetModuleId = field.targetModuleId;
+  // Linking needs read access to the target; a data source the person cannot
+  // read is absent from their catalog, so no Add link is offered for it.
+  const targetModuleId = dataSources.some(
+    (item) => item.id === field.targetModuleId,
+  )
+    ? field.targetModuleId
+    : null;
   const full = !field.multipleTargets && links.length > 0;
 
   const reconcileUnlink = async (check: RelationshipWriteCheck) => {
@@ -664,6 +707,7 @@ function FieldLinks({
               <LinkedRecordName
                 id={`${namePrefix}-${link.id}`}
                 recordId={link.targetRecordId}
+                homeModuleId={record.moduleId}
                 dataSources={dataSources}
               />
               {canChange ? (
@@ -861,6 +905,7 @@ export function RecordLinksPanel({
               <li key={link.id} className="py-2 text-sm">
                 <LinkedRecordName
                   recordId={link.sourceRecordId}
+                  homeModuleId={record.moduleId}
                   dataSources={dataSources}
                 />
               </li>

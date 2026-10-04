@@ -19,7 +19,6 @@ from app.systems.sandbox.publications.close_rules import (
     hierarchy_close_blockers,
     lifecycle_closed_relationships,
     live_dependencies_exist,
-    live_relationship_department_blockers,
     unmanaged_field_blockers,
 )
 from app.systems.sandbox.publications.live_state import live_state_digest
@@ -182,7 +181,6 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
                     )
             if not field_closed:
                 active_position += 1
-    module_departments = {module.id: module.department_id for module in document.design.modules}
     lifecycle_closed = lifecycle_closed_relationships(db, document, by_kind)
     for relationship in document.design.relationships:
         desired_ids["relationship"].add(relationship.id)
@@ -200,16 +198,6 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
             by_kind["relationship"],
             snapshot,
         )
-        if module_departments.get(relationship.source_module_id) != module_departments.get(
-            relationship.target_module_id
-        ):
-            blockers.append(
-                PublicationBlocker(
-                    code="relationship_department_mismatch",
-                    message="Connected modules must stay in the same department",
-                    target_id=relationship.id,
-                )
-            )
         binding = by_kind["relationship"].get(relationship.id)
         if binding is not None and binding.field_id is not None:
             live = snapshot.fields.get(binding.field_id)
@@ -296,7 +284,6 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
     blockers.extend(close_blockers(db, by_kind, desired_ids, document, snapshot=snapshot))
     blockers.extend(hierarchy_close_blockers(document))
     blockers.extend(unmanaged_field_blockers(db, by_kind, document))
-    blockers.extend(live_relationship_department_blockers(db, by_kind, document))
     profile = db.scalar(select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True)))
     if profile is None:
         blockers.append(

@@ -71,7 +71,11 @@ def writer_weights(
 
 
 def edge_creator_key(
-    source: SampleRecord, target: SampleRecord, organization: OrganizationPack
+    source: SampleRecord,
+    target: SampleRecord,
+    organization: OrganizationPack,
+    *,
+    child: str = "target",
 ) -> str:
     """Prefer the child creator, then an eligible source writer, without an admin fallback."""
     members = {
@@ -79,8 +83,13 @@ def edge_creator_key(
         for person in organization.actors.people
         if person.status == "active" and person.role == "member"
     }
+    child_record = source if child == "source" else target
     candidates = dict.fromkeys(
-        (target.creator_key, source.creator_key, *organization.actors.team_keys[source.actor_key])
+        (
+            child_record.creator_key,
+            source.creator_key,
+            *organization.actors.team_keys[source.actor_key],
+        )
     )
     for key in candidates:
         if (

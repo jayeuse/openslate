@@ -7,7 +7,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from operations.sample.blueprint import SampleDataset, SampleEdge, SampleRecord, _option_id
+from operations.sample.blueprint import (
+    SampleDataset,
+    SampleEdge,
+    SampleRecord,
+    _option_id,
+    edge_child_ids,
+)
 from operations.sample.catalog import JsonValue
 from operations.sample.client import SampleClient, SampleWriteOutcomeUnknown
 from operations.sample.episodes import SampleSession
@@ -303,9 +309,10 @@ def run_activity(
     """Run every session: create and link records, then move records on through history."""
     by_logical = {record.logical_id: record for record in dataset.records}
     relation_key = {document_id: key for key, document_id in dataset.relationship_ids.items()}
-    edges_by_target: dict[str, list[SampleEdge]] = {}
-    for edge in dataset.edges:
-        edges_by_target.setdefault(edge.target_record_id, []).append(edge)
+    children = edge_child_ids(dataset)
+    edges_by_child: dict[str, list[SampleEdge]] = {}
+    for edge, child_id in zip(dataset.edges, children, strict=True):
+        edges_by_child.setdefault(child_id, []).append(edge)
     histories = plan_history(dataset)
     rule_results = _rule_results(dataset, field_ids, histories)
     rule_waits = _RuleWaits()
@@ -329,7 +336,7 @@ def run_activity(
                 if not 0 <= index < len(dataset.edges):
                     raise SamplePopulationError("Link session edge index is invalid")
                 edge = dataset.edges[index]
-                actor = edge.creator_key or by_logical[edge.target_record_id].creator_key
+                actor = edge.creator_key or by_logical[children[index]].creator_key
                 if (
                     actor != session.creator_key
                     or by_logical[edge.source_record_id].module_key != session.module_key
@@ -387,7 +394,7 @@ def run_activity(
             }
             if logical_id in rule_results:
                 rule_waits.wait(client, record_id, *rule_results[logical_id])
-            for edge in edges_by_target.get(logical_id, []):
+            for edge in edges_by_child.get(logical_id, []):
                 if not edge.creator_key or edge.creator_key == session.creator_key:
                     _write_edge(client, edge, result, relation_key, relationship_fields)
     return result

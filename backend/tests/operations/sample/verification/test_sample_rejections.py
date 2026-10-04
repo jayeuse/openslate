@@ -77,9 +77,7 @@ def test_invalid_payloads_break_exactly_one_rule(case_key: str, problem: str) ->
 def test_outcomes_match_on_status_and_detail_not_status_alone() -> None:
     case = next(item for item in ACTIVITY_CASES if item.key == "duplicate_link")
     assert outcome_matches(case, 409, {"detail": "Relationship already exists"})
-    assert not outcome_matches(
-        case, 409, {"detail": "Relationship records must be in the same department"}
-    )
+    assert not outcome_matches(case, 409, {"detail": "Target already has a relationship source"})
     coded = next(item for item in ACTIVITY_CASES if item.key == "unknown_field")
     body = {"detail": {"code": "record_validation_failed", "errors": [{"code": "unknown_field"}]}}
     assert outcome_matches(coded, 422, body)

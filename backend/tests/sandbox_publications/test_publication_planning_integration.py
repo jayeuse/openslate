@@ -396,30 +396,6 @@ def test_preview_blocks_active_unmanaged_fields(integration_owner_db: Session) -
     assert ("module_has_unmanaged_fields", "sample-requests") in {(item.code, item.target_id) for item in publication_plan(integration_owner_db, document).blockers}
 
 
-def test_module_moves_must_preserve_relationship_departments(integration_owner_db: Session) -> None:
-    publisher, document = publish_structure(integration_owner_db)
-    split = document.model_copy(deep=True)
-    next(module for module in split.design.modules if module.id == "sample-requests").department_id = "sample-commercial"
-    assert ("relationship_department_mismatch", "sample-uses") in {(item.code, item.target_id) for item in publication_plan(integration_owner_db, split).blockers}
-    next(module for module in split.design.modules if module.id == "sample-equipment").department_id = "sample-commercial"
-    publish_revision(integration_owner_db, publisher, split, "paired-module-move")
-    assert bound_module(integration_owner_db, "sample-requests").department_id == bound_module(integration_owner_db, "sample-equipment").department_id
-
-
-def test_module_move_blocks_unbound_incoming_relationship(integration_owner_db: Session) -> None:
-    _publisher, document = publish_structure(integration_owner_db)
-    operations = bound_department(integration_owner_db, "sample-operations")
-    requests = bound_module(integration_owner_db, "sample-requests")
-    outside = Module(department_id=operations.id, module_name="Outside Sandbox")
-    integration_owner_db.add(outside)
-    integration_owner_db.flush()
-    integration_owner_db.add(Field(module_id=outside.id, name="Incoming request", type="relationship", position=0, required=False, config={}, relationship_target_module_id=requests.id, relationship_multiple_targets=False, relationship_multiple_sources=True))
-    integration_owner_db.flush()
-    for module_id in ("sample-requests", "sample-equipment"):
-        next(module for module in document.design.modules if module.id == module_id).department_id = "sample-commercial"
-    assert "module_move_breaks_live_relationship" in {item.code for item in publication_plan(integration_owner_db, document).blockers}
-
-
 def test_publish_rejects_workspace_and_audit_drift_after_preview(integration_owner_db: Session) -> None:
     publisher, document = publish_structure(integration_owner_db)
     edited = document.model_copy(deep=True)

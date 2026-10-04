@@ -1,4 +1,4 @@
-"""School departments, Sandbox modules, in-department links, and size profiles."""
+"""School departments, Sandbox modules, relationships, and size profiles."""
 
 from __future__ import annotations
 
@@ -98,6 +98,113 @@ _RELATIONSHIPS = (
     ),
     RelationshipSpec(
         "room_maintenance", "Maintenance requests", "rooms", "maintenance_requests", "one-to-many"
+    ),
+    # Links to records in another department. The referencing record is the source and is
+    # created after the record it names, so it is the child end.
+    RelationshipSpec(
+        "attendance_clinic_visit",
+        "Clinic visit",
+        "attendance_exceptions",
+        "clinic_visits",
+        "one-to-one",
+        child="source",
+    ),
+    RelationshipSpec(
+        "student_application",
+        "Application",
+        "students",
+        "applications",
+        "one-to-one",
+        child="source",
+    ),
+    RelationshipSpec(
+        "section_room", "Room", "class_sections", "rooms", "many-to-many", child="source"
+    ),
+    RelationshipSpec(
+        "activity_room", "Room", "activities", "rooms", "many-to-many", child="source"
+    ),
+    RelationshipSpec(
+        "behaviour_student",
+        "Student",
+        "behaviour_incidents",
+        "students",
+        "many-to-many",
+        child="source",
+    ),
+    RelationshipSpec(
+        "guidance_student", "Student", "guidance_cases", "students", "many-to-many", child="source"
+    ),
+    RelationshipSpec(
+        "guidance_attendance",
+        "Attendance",
+        "guidance_cases",
+        "attendance_exceptions",
+        "one-to-one",
+        child="source",
+    ),
+    RelationshipSpec(
+        "parent_contact_student",
+        "Student",
+        "parent_contacts",
+        "students",
+        "many-to-many",
+        child="source",
+    ),
+    RelationshipSpec(
+        "parent_contact_attendance",
+        "Attendance",
+        "parent_contacts",
+        "attendance_exceptions",
+        "one-to-one",
+        child="source",
+    ),
+    RelationshipSpec(
+        "parent_contact_academic_alert",
+        "Academic alert",
+        "parent_contacts",
+        "academic_alerts",
+        "one-to-one",
+        child="source",
+    ),
+    RelationshipSpec(
+        "clinic_visit_student",
+        "Student",
+        "clinic_visits",
+        "students",
+        "many-to-many",
+        child="source",
+    ),
+    RelationshipSpec(
+        "health_alert_student",
+        "Student",
+        "health_alerts",
+        "students",
+        "many-to-many",
+        child="source",
+    ),
+    RelationshipSpec(
+        "fee_assessment_student",
+        "Student",
+        "fee_assessments",
+        "students",
+        "many-to-many",
+        child="source",
+    ),
+    RelationshipSpec(
+        "fee_adjustment_student",
+        "Student",
+        "fee_adjustments",
+        "students",
+        "many-to-many",
+        child="source",
+    ),
+    RelationshipSpec(
+        "collection_student",
+        "Student",
+        "collection_cases",
+        "students",
+        "many-to-many",
+        child="source",
     ),
 )
 

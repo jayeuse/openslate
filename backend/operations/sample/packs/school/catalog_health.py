@@ -14,7 +14,6 @@ MODULES = (
         ("Open", "Disposed", "Parent informed", "Closed"),
         290,
         (
-            _field("student_reference", "Student number", "Text", "cross_reference", required=True),
             _field("time_in", "Time in", "Date/Time", "datetime", required=True),
             _choice(
                 "complaint",
@@ -97,7 +96,6 @@ MODULES = (
         ("Pending documents", "Active", "Expired", "Archived"),
         100,
         (
-            _field("student_reference", "Student number", "Text", "cross_reference", required=True),
             _choice(
                 "condition",
                 "Condition",

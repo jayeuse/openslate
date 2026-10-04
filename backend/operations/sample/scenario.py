@@ -17,7 +17,7 @@ from operations.sample.blueprint import (
     build_document,
 )
 from operations.sample.catalog import _OMIT, _anchor, _doc_id, module_counts
-from operations.sample.links import parent_indices
+from operations.sample.links import link_pairs
 from operations.sample.packs import default_pack
 from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.types import JsonValue, SampleProfile
@@ -73,22 +73,21 @@ def _edges(
     output: list[SampleEdge] = []
     by_logical = {record.logical_id: record for record in records}
     for spec in organization.catalog.relationships:
-        for target in range(counts[spec.target]):
-            for source in parent_indices(spec.key, target, counts, organization):
-                source_id, target_id = (
-                    _record_id(spec.source, source),
-                    _record_id(spec.target, target),
+        for source, target in link_pairs(spec, counts, organization):
+            source_id, target_id = _record_id(spec.source, source), _record_id(spec.target, target)
+            output.append(
+                SampleEdge(
+                    relationship_ids[spec.key],
+                    source_id,
+                    target_id,
+                    edge_creator_key(
+                        by_logical[source_id],
+                        by_logical[target_id],
+                        organization,
+                        child=spec.child,
+                    ),
                 )
-                output.append(
-                    SampleEdge(
-                        relationship_ids[spec.key],
-                        source_id,
-                        target_id,
-                        edge_creator_key(
-                            by_logical[source_id], by_logical[target_id], organization
-                        ),
-                    )
-                )
+            )
     return tuple(output)
 
 

@@ -42,6 +42,7 @@ class RelationshipGraph:
     target_id: UUID
     replacement_id: UUID
     cross_target_id: UUID
+    cross_replacement_id: UUID
 
     @property
     def ids(self) -> set[UUID]:
@@ -58,6 +59,7 @@ class RelationshipGraph:
             self.target_id,
             self.replacement_id,
             self.cross_target_id,
+            self.cross_replacement_id,
         }
 
 
@@ -108,11 +110,13 @@ class RelationshipHTTPFixture:
         self.actor_id = uuid7()
         self.member_id = uuid7()
         self.guest_id = uuid7()
+        self.writer_id = uuid7()
         self.group_id = uuid7()
         self.member: User | None = None
         self.guest: User | None = None
+        self.writer: User | None = None
         self.graph: RelationshipGraph | None = None
-        self._all_ids: set[UUID] = {self.actor_id, self.member_id, self.guest_id}
+        self._all_ids: set[UUID] = {self.actor_id, self.member_id, self.guest_id, self.writer_id}
         try:
             self.actor = self._seed()
         except BaseException:
@@ -134,6 +138,7 @@ class RelationshipHTTPFixture:
             target_id=uuid7(),
             replacement_id=uuid7(),
             cross_target_id=uuid7(),
+            cross_replacement_id=uuid7(),
         )
         self.graph = graph
         self._all_ids.update(graph.ids)
@@ -144,7 +149,8 @@ class RelationshipHTTPFixture:
                 text(
                     "INSERT INTO public.users (id, email, username, status, role) "
                     "VALUES (:id, :email, :username, 'active', 'admin'), "
-                    "(:member_id, :member_email, :member_username, 'active', 'member')"
+                    "(:member_id, :member_email, :member_username, 'active', 'member'), "
+                    "(:writer_id, :writer_email, :writer_username, 'active', 'member')"
                 ),
                 {
                     "id": self.actor_id,
@@ -153,12 +159,17 @@ class RelationshipHTTPFixture:
                     "member_id": self.member_id,
                     "member_email": f"rel-http-member-{prefix}@example.com",
                     "member_username": f"rel_http_member_{prefix}",
+                    "writer_id": self.writer_id,
+                    "writer_email": f"rel-http-writer-{prefix}@example.com",
+                    "writer_username": f"rel_http_writer_{prefix}",
                 },
             )
-            if updated.rowcount != 2:
+            if updated.rowcount != 3:
                 raise RuntimeError("The local test actors could not be created")
             self._insert_graph(connection, graph)
             # A guest whose group writes the whole department still only reads it.
+            # The writer shares that group, so it writes the department and has no
+            # access to the other department.
             connection.execute(
                 text(
                     "INSERT INTO public.users "
@@ -180,9 +191,15 @@ class RelationshipHTTPFixture:
             connection.execute(
                 text(
                     "INSERT INTO public.group_members (id, group_id, user_id) "
-                    "VALUES (:id, :group_id, :user_id)"
+                    "VALUES (:id, :group_id, :user_id), (:writer_row, :group_id, :writer_id)"
                 ),
-                {"id": uuid7(), "group_id": self.group_id, "user_id": self.guest_id},
+                {
+                    "id": uuid7(),
+                    "group_id": self.group_id,
+                    "user_id": self.guest_id,
+                    "writer_row": uuid7(),
+                    "writer_id": self.writer_id,
+                },
             )
             connection.execute(
                 text(
@@ -193,6 +210,7 @@ class RelationshipHTTPFixture:
             )
         self.member = _load_user(self.runtime_engine, self.member_id)
         self.guest = _load_user(self.runtime_engine, self.guest_id)
+        self.writer = _load_user(self.runtime_engine, self.writer_id)
         return _load_user(self.runtime_engine, self.actor_id)
 
     @staticmethod
@@ -259,13 +277,15 @@ class RelationshipHTTPFixture:
                 "(:source_id, :source_module, '{}'::jsonb, false), "
                 "(:target_id, :target_module, '{}'::jsonb, false), "
                 "(:replacement_id, :target_module, '{}'::jsonb, false), "
-                "(:cross_target_id, :cross_module, '{}'::jsonb, false)"
+                "(:cross_target_id, :cross_module, '{}'::jsonb, false), "
+                "(:cross_replacement_id, :cross_module, '{}'::jsonb, false)"
             ),
             {
                 "source_id": graph.source_id,
                 "target_id": graph.target_id,
                 "replacement_id": graph.replacement_id,
                 "cross_target_id": graph.cross_target_id,
+                "cross_replacement_id": graph.cross_replacement_id,
                 "source_module": graph.source_module_id,
                 "target_module": graph.target_module_id,
                 "cross_module": graph.cross_module_id,
@@ -296,26 +316,24 @@ class RelationshipHTTPFixture:
             self._install_overrides(actor)
         return TestClient(self.app)
 
-    def archive_target(self) -> None:
+    def archive_target(self, record_id: UUID | None = None) -> None:
         assert self.graph is not None
         with self.owner_engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE public.records SET is_deleted = true, deleted_at = now() "
-                    "WHERE id = :id"
+                    "UPDATE public.records SET is_deleted = true, deleted_at = now() WHERE id = :id"
                 ),
-                {"id": self.graph.target_id},
+                {"id": record_id or self.graph.target_id},
             )
 
-    def restore_target(self) -> None:
+    def restore_target(self, record_id: UUID | None = None) -> None:
         assert self.graph is not None
         with self.owner_engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE public.records SET is_deleted = false, deleted_at = NULL "
-                    "WHERE id = :id"
+                    "UPDATE public.records SET is_deleted = false, deleted_at = NULL WHERE id = :id"
                 ),
-                {"id": self.graph.target_id},
+                {"id": record_id or self.graph.target_id},
             )
 
     def active_edge_ids(self) -> set[UUID]:
@@ -342,7 +360,7 @@ class RelationshipHTTPFixture:
         try:
             with self.owner_engine.begin() as connection:
                 ids = list(self._all_ids)
-                user_ids = [self.actor_id, self.member_id, self.guest_id]
+                user_ids = [self.actor_id, self.member_id, self.guest_id, self.writer_id]
                 for table in ("group_access", "group_members"):
                     connection.execute(
                         text(f"DELETE FROM public.{table} WHERE group_id = :group_id"),

@@ -110,7 +110,6 @@ _MODULES = (
     _module('customer_sites', 'service', 'SITE', 'Opened on',
         'Active|Seasonal|Closed', 300, (
         _field('address', 'Site address', 'Long text', 'notes'),
-        _field('customer_reference', 'Customer reference', 'Text', 'sample_reference'),
         _field('site_type', 'Site type', 'Select', 'choice',
             False, ('Office', 'Warehouse', 'Plant', 'Retail')),
         _field('latitude', 'Latitude', 'Number', 'number', False, (), None, False, -90, 90),
@@ -125,7 +124,6 @@ _MODULES = (
     )),
     _module('service_requests', 'service', 'SR', 'Due date',
         'Open|In progress|Overdue|Resolved|Cancelled', 1200, (
-        _field('equipment_reference', 'Equipment reference', 'Text', 'sample_reference'),
         _field('priority', 'Priority', 'Select', 'choice',
             False, ('Routine', 'Urgent', 'Emergency')),
         _field('estimated_cost', 'Estimated cost', 'Number', 'amount', False, (), None, False, 0),
@@ -148,7 +146,6 @@ _MODULES = (
     )),
     _module('work_orders', 'field', 'WO', 'Due date',
         'Open|Scheduled|Overdue|In progress|Completed|Cancelled', 2000, (
-        _field('products_used', 'Products used', 'Long text', 'sample_reference'),
         _field('labor_hours', 'Labor hours', 'Number', 'number', False, (), None, False, 0, 1000),
         _field('scheduled_at', 'Scheduled for', 'Date/Time', 'datetime'),
         _field('safety_verified', 'Safety verified', 'Checkbox', 'boolean', False, (), False, True),
@@ -186,7 +183,6 @@ _MODULES = (
     )),
     _module('stock_movements', 'inventory', 'MOV', 'Moved on',
         'Received|Transferred|Adjusted', 3500, (
-        _field('receipt_reference', 'Goods receipt reference', 'Text', 'sample_reference'),
         _field('quantity', 'Quantity', 'Integer', 'movement_quantity',
             False, (), None, False, 1, None, 1),
         _field('unit_cost', 'Unit cost', 'Number', 'movement_cost', False, (), None, False, 0),
@@ -212,14 +208,12 @@ _MODULES = (
     )),
     _module('purchase_orders', 'purchasing', 'PO', 'Expected delivery',
         'Draft|Confirmed|Partially received|Received|Delayed|Cancelled', 700, (
-        _field('warehouse_reference', 'Warehouse reference', 'Text', 'sample_reference'),
         _field('total', 'Total', 'Number', 'purchase_total', False, (), None, False, 0),
         _field('urgent', 'Expedite', 'Checkbox', 'boolean', False, (), False, True),
         _field('confirmed_at', 'Confirmed at', 'Date/Time', 'datetime'),
     )),
     _module('purchase_lines', 'purchasing', 'POL', 'Required by',
         'Open|Partially received|Received|Cancelled', 1400, (
-        _field('product_reference', 'Product reference', 'Text', 'sample_reference'),
         _field('quantity', 'Quantity', 'Integer', 'ordered_quantity',
             False, (), None, False, 1, None, 1),
         _field('unit_price', 'Unit price', 'Number', 'purchase_unit_price',
@@ -235,8 +229,6 @@ _MODULES = (
     )),
     _module('invoices', 'finance', 'INV', 'Due date',
         'Draft|Issued|Partially paid|Paid|Overdue|Disputed|Cancelled', 800, (
-        _field('customer_reference', 'Customer reference', 'Text', 'sample_reference'),
-        _field('sales_order_reference', 'Sales order reference', 'Text', 'sample_reference'),
         _field('total', 'Total', 'Number', 'invoice_total', False, (), None, False, 0),
         _field('issued_at', 'Issued at', 'Date/Time', 'datetime'),
         _field('review_required', 'Review required', 'Checkbox', 'boolean', False, (), False, True),
@@ -321,6 +313,57 @@ _RELATIONSHIPS = (
     RelationshipSpec("product_counts", "Stock counts", "products", "stock_counts", "one-to-many"),
     RelationshipSpec("invoice_payments", "Payments", "invoices", "payments", "one-to-many"),
     RelationshipSpec("invoice_credits", "Credit notes", "invoices", "credit_notes", "one-to-many"),
+    # Links to records in another department. The referencing record is the source and is
+    # created after the record it names, so it is the child end.
+    RelationshipSpec(
+        "site_customer", "Customer", "customer_sites", "customers", "many-to-many", child="source"
+    ),
+    RelationshipSpec(
+        "invoice_customer", "Customer", "invoices", "customers", "many-to-many", child="source"
+    ),
+    RelationshipSpec(
+        "invoice_sales_order",
+        "Sales order",
+        "invoices",
+        "sales_orders",
+        "one-to-one",
+        child="source",
+    ),
+    RelationshipSpec(
+        "request_equipment",
+        "Equipment",
+        "service_requests",
+        "equipment",
+        "many-to-many",
+        child="source",
+    ),
+    RelationshipSpec(
+        "line_product", "Product", "purchase_lines", "products", "many-to-many", child="source"
+    ),
+    RelationshipSpec(
+        "movement_receipt",
+        "Goods receipt",
+        "stock_movements",
+        "goods_receipts",
+        "many-to-many",
+        child="source",
+    ),
+    RelationshipSpec(
+        "order_warehouse",
+        "Warehouse",
+        "purchase_orders",
+        "warehouses",
+        "many-to-many",
+        child="source",
+    ),
+    RelationshipSpec(
+        "work_order_products",
+        "Products used",
+        "work_orders",
+        "products",
+        "many-to-many",
+        child="source",
+    ),
 )
 
 SPECIAL_STATUSES = {

@@ -82,3 +82,62 @@ def test_multiple_new_recovery_links_fail_without_choosing_or_replaying_one(monk
     with _mailbox(monkeypatch, rows, {"first": _link(), "second": _link("b" * 56)}) as mailbox:
         with pytest.raises(SampleInvitationError, match="Multiple"):
             mailbox.recovery_token(set(), RECIPIENT)
+
+
+def test_a_full_inbox_that_changes_while_it_is_read_is_read_again(monkeypatch) -> None:
+    # Mailpit keeps at most 500 messages: new mail and pruning change the total
+    # between pages of one read. The reader reads again instead of stopping.
+    real_client = httpx.Client
+    old = [{"ID": f"old-{index}", "To": [{"Address": "other@example.test"}]} for index in range(60)]
+    new = {"ID": "new", "To": [{"Address": RECIPIENT}]}
+    state = {"listings": 0, "arrived": False, "changed_at": 2}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path != "/api/v1/messages":
+            return httpx.Response(200, json={"HTML": _link()})
+        state["listings"] += 1
+        rows = [new, *old] if state["arrived"] else old
+        start = int(request.url.params["start"])
+        limit = int(request.url.params["limit"])
+        total = len(rows) + (1 if state["listings"] == state["changed_at"] else 0)
+        return httpx.Response(200, json={"messages": rows[start : start + limit], "total": total})
+
+    monkeypatch.setattr(
+        sample_invitations.httpx,
+        "Client",
+        lambda **kwargs: real_client(**kwargs, transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(sample_invitations.time, "sleep", lambda _seconds: None)
+    with InvitationMailbox("http://127.0.0.1:8025", ORIGIN) as mailbox:
+        baseline = mailbox.snapshot()
+        assert baseline == {row["ID"] for row in old}
+        assert state["listings"] == 4
+        state["arrived"] = True
+        state["changed_at"] = 6
+        assert mailbox.recovery_token(baseline, RECIPIENT) == TOKEN
+        assert state["listings"] == 8
+
+
+def test_an_inbox_that_never_settles_stops_at_the_deadline(monkeypatch) -> None:
+    real_client = httpx.Client
+    old = [{"ID": f"old-{index}", "To": [{"Address": "other@example.test"}]} for index in range(60)]
+    listings = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        listings["count"] += 1
+        start = int(request.url.params["start"])
+        return httpx.Response(
+            200, json={"messages": old[start : start + 50], "total": 60 + listings["count"]}
+        )
+
+    monkeypatch.setattr(
+        sample_invitations.httpx,
+        "Client",
+        lambda **kwargs: real_client(**kwargs, transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(sample_invitations, "_WAIT_SECONDS", 0)
+    with InvitationMailbox("http://127.0.0.1:8025", ORIGIN) as mailbox:
+        with pytest.raises(SampleInvitationError, match="changed during message pagination"):
+            mailbox.snapshot()
+        with pytest.raises(SampleInvitationError, match="changed during message pagination"):
+            mailbox.recovery_token(set(), RECIPIENT)

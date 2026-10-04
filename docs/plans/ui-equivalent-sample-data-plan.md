@@ -14,25 +14,26 @@ Current OpenView record inspection is read-only. Add New Record to the selected 
 
 The authorized operational target is the counts the run manifest records for the selected organization pack and profile. Populate only after the authoring controls are implemented and verified. Empty results and failures must remain honest; no fallback examples may stand in for seeded records.
 
-## Department boundary and cross-department references
+## Cross-department relationships
 
-The current publication planner and relationship assignment/create APIs require
-both modules to belong to the same department. Eight proposed links violate
-that rule: Customers–Customer Sites, Customers–Invoices, Equipment–Service
-Requests, Products–Purchase Lines, Goods Receipts–Stock Movements,
+A relationship can connect modules in two departments of one organization. The
+publication planner and the relationship assignment and create APIs accept such
+a link. The person who links needs write access to the source module and read
+access to the target module.
+
+Harbor models eight links across departments as relationships:
+Customers–Customer Sites, Customers–Invoices, Equipment–Service Requests,
+Products–Purchase Lines, Goods Receipts–Stock Movements,
 Warehouses–Purchase Orders, Sales Orders–Invoices, and Work Orders–Products.
-The six-department, 26-definition design therefore cannot be published under the
-current contract. Do not bypass this check or describe the design as populated.
+In each link, the record that names the other record is the source. For
+example, a Customer Site links to its Customer. The source record links itself
+after both records exist. If its creator cannot read the target module, a
+colleague with the necessary access writes the link in a short separate
+session. The relationship graph still exercises one-to-one, one-to-many and
+many-to-many cardinalities. Exact definition and edge counts are printed from
+the generated profile before population.
 
-Population preserves the current department boundary. Cross-department
-connections use visible Text or Long text reference fields containing the other
-record's business reference codes. These are searchable authored values, not
-relationship edges. The supported relationship graph remains within departments
-and still exercises one-to-one, one-to-many and many-to-many cardinalities.
-Exact definition and edge counts are printed from the generated profile before
-population. No backend authorization or relationship contract is changed.
-
-The admitted Harbor design has 18 relationship definitions. Record, edge and content totals are the counts the run manifest records. Current Harbor record totals are Small 1,001, Standard 5,001 and Large 20,004. Version 1 manifests retain the old sizes for verification.
+The admitted Harbor design has 26 relationship definitions. Record, edge and content totals are the counts the run manifest records. Current Harbor record totals are Small 1,001, Standard 5,001 and Large 20,004. Version 1 manifests retain the old sizes for verification.
 
 ## Supported scope
 
@@ -171,7 +172,7 @@ Audit timestamps show the real run window. Business dates inside records keep th
 | Before this work, each record's creator and "Assigned to" value was its department lead (`@actor:<department>`), so only 6 people created or owned data | `sample/scenario.py` `_field_value`; `sample/population/workflow.py` `build_record_payload` |
 | Before this work, population signed in 7 accounts (admin and 6 leads); the other 24 active members never acted | `sample/population/people.py` (actors); `sample/population/workflow.py` actor-set check |
 | Before this work, Inventory, Purchasing and Finance members could write only one module each; guests are capped at read | `sample/population/people.py` `_GROUP_ACCESS`; `access/policy/scope.py` |
-| All 18 relationship definitions stay inside one department, so a department's records and edges can be written together | `sample/catalog.py`; `test_sample_references.py` |
+| Harbor has 26 relationship definitions: 18 link modules inside one department and 8 link a record to a record in another department. The source record links itself after both records exist | `sample/packs/harbor/catalog.py`; `test_sample_references.py` |
 | Record verification requires each create audit to match one actor per department | `sample/verification/core.py` |
 | The API rotates an access token only in its last 30 seconds. The seeder refreshes in the last 20 seconds and stops if the expiry does not advance (implemented after a Standard run stopped at the 15-minute token lifetime) | `provider_sessions.py` refresh; `sample/client.py` |
 | Supabase Auth shares one limit for password sign-in and token refresh (default 150; the hosted documentation describes 150 per 5 minutes, and the Auth source reads a plain value as events per hour). A Supabase 429 during a refresh revokes the local session. FastAPI's own sign-in limits are off in loopback development | `infra/supabase/compose.yaml`; `access/auth/router.py`; `identity/provider_sessions.py` |

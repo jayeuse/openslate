@@ -113,6 +113,7 @@ def get_audit_logs(
     result = list_audit_logs(
         db,
         params,
+        reader=user,
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,
@@ -135,7 +136,9 @@ def get_audit_log_options(
     department_id: UUID | None = None,
 ) -> AuditLogOptionsResponse:
     _require_audit_list_visibility(user, db, department_id)
-    entity_types, actor_options = list_audit_log_options(db, department_id=department_id)
+    entity_types, actor_options = list_audit_log_options(
+        db, department_id=department_id, reader=user
+    )
     actor_names = active_actor_names(db, (performed_by for performed_by, _ in actor_options))
     return AuditLogOptionsResponse(
         entity_types=entity_types,

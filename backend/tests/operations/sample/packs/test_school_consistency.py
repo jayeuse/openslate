@@ -93,21 +93,62 @@ def test_school_class_headcounts_and_capacity_match_actual_admitted_rosters(prof
     assert validation_failures == []
 
 
-def test_school_pupil_titles_agree_with_their_visible_student_references() -> None:
+def pupil_codes(dataset: Any) -> dict[str, str]:
+    """Each pupil record's student number: its own, its typed code, or its linked student's."""
+    records = {record.logical_id: record for record in dataset.records}
+
+    def field(logical_id: str, key: str) -> Any:
+        record = records[logical_id]
+        return record.data.get(dataset.field_ids[record.module_key][key])
+
+    codes = {
+        record.logical_id: field(record.logical_id, "student_no")
+        for record in dataset.records
+        if record.module_key == "students"
+    }
+    codes.update(
+        (record.logical_id, field(record.logical_id, "student_reference"))
+        for record in dataset.records
+        if "student_reference" in dataset.field_ids[record.module_key]
+    )
+    student_links = {
+        dataset.relationship_ids[spec.key]
+        for spec in dataset.organization.catalog.relationships
+        if spec.child == "source" and spec.target == "students"
+    }
+    for edge in dataset.edges:
+        if edge.relationship_id in student_links:
+            codes[edge.source_record_id] = codes[edge.target_record_id]
+    return codes
+
+
+def test_school_pupil_titles_agree_with_their_student_number_or_student_link() -> None:
     dataset = build_dataset(
         "small", seed=42, anchor_date=date(2026, 9, 30), organization=get_pack("school")
     )
+    records = {record.logical_id: record for record in dataset.records}
+    codes = pupil_codes(dataset)
     mismatches = []
-    for record in dataset.records:
-        field_ids = dataset.field_ids[record.module_key]
-        if "student_reference" not in field_ids:
+    for logical_id, code in codes.items():
+        record = records[logical_id]
+        if record.module_key == "students":
             continue
-        reference = record.data.get(field_ids["student_reference"])
-        title = record.data[field_ids["name"]]
-        if reference and reference not in title:
-            mismatches.append((record.logical_id, reference, title))
+        title = record.data[dataset.field_ids[record.module_key]["name"]]
+        if not code or code not in title:
+            mismatches.append((logical_id, code, title))
 
     assert mismatches == []
+    assert {logical_id.split(":")[0] for logical_id in codes} >= {
+        "attendance_exceptions",
+        "behaviour_incidents",
+        "guidance_cases",
+        "parent_contacts",
+        "clinic_visits",
+        "health_alerts",
+        "fee_assessments",
+        "fee_adjustments",
+        "collection_cases",
+    }
 
 
 @pytest.mark.parametrize("anchor", (date(2026, 9, 30), date(2026, 4, 15)))

@@ -193,9 +193,8 @@ def test_named_financial_and_purchase_flows_reconcile_through_links_and_referenc
     for edge in _edges_for(dataset, "purchase_order_receipts"):
         receipts_by_order.setdefault(edge.source_record_id, []).append(edge.target_record_id)
     movements_by_receipt: dict[str, list[str]] = {}
-    for movement in (item for item in dataset.records if item.module_key == "stock_movements"):
-        receipt_reference = str(_value(dataset, movement, "Goods receipt reference"))
-        movements_by_receipt.setdefault(receipt_reference, []).append(movement.logical_id)
+    for edge in _edges_for(dataset, "movement_receipt"):
+        movements_by_receipt.setdefault(edge.target_record_id, []).append(edge.source_record_id)
 
     for order_id, line_ids in lines_by_order.items():
         order = records[order_id]
@@ -222,7 +221,7 @@ def test_named_financial_and_purchase_flows_reconcile_through_links_and_referenc
             assert _value(dataset, receipt, "Units accepted") <= ordered_quantity
             assert _value(dataset, receipt, "Units accepted") == sum(
                 _value(dataset, records[movement_id], "Quantity")
-                for movement_id in movements_by_receipt[str(_value(dataset, receipt, "Reference"))]
+                for movement_id in movements_by_receipt[receipt_id]
             )
 
     payments_by_invoice: dict[str, list[str]] = {}
@@ -245,6 +244,10 @@ def test_generated_edges_respect_each_declared_cardinality() -> None:
     dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 29))
     document = SandboxDocument.model_validate(dataset.document)
     relationships = {item.id: item for item in document.design.relationships}
+    child_end = {
+        dataset.relationship_ids[spec.key]: spec.child
+        for spec in dataset.organization.catalog.relationships
+    }
     edges_by_relationship: dict[str, list[object]] = {}
     for edge in dataset.edges:
         edges_by_relationship.setdefault(edge.relationship_id, []).append(edge)
@@ -258,9 +261,12 @@ def test_generated_edges_respect_each_declared_cardinality() -> None:
             assert len(targets) == len(set(targets))
         elif relationship.cardinality == "one-to-many":
             assert len(targets) == len(set(targets))
-        else:
+        elif child_end[relationship_id] == "target":
             assert len(set(sources)) < len(sources)
             assert len(set(targets)) < len(targets)
+        else:
+            # A record that names another department's record links each target it names once.
+            assert len(edges) == len(set(zip(sources, targets, strict=True)))
 
 
 def test_temporary_test_vectors_cover_each_trigger_without_storing_scenarios() -> None:
@@ -390,20 +396,18 @@ def test_purchase_and_sales_document_statuses_match_their_linked_activity(profil
     assert _select_label(dataset, records["sales_orders:000008"], "Status") != "Cancelled"
     assert _select_label(dataset, records["invoices:000008"], "Status") == "Overdue"
     assert _select_label(dataset, records["payments:000007"], "Status") == "Posted"
-    assert _value(dataset, records["invoices:000008"], "Sales order reference") == _value(
-        dataset, records["sales_orders:000008"], "Reference"
-    )
+    every_record = {record.logical_id: record for record in dataset.records}
+    order_by_invoice = {
+        edge.source_record_id: every_record[edge.target_record_id]
+        for edge in _edges_for(dataset, "invoice_sales_order")
+    }
+    assert order_by_invoice["invoices:000008"].logical_id == "sales_orders:000008"
     assert any(
         edge.source_record_id == "invoices:000008" and edge.target_record_id == "payments:000007"
         for edge in _edges_for(dataset, "invoice_payments")
     )
-    orders_by_reference = {
-        str(_value(dataset, order, "Reference")): order
-        for order in dataset.records
-        if order.module_key == "sales_orders"
-    }
     for invoice in (item for item in dataset.records if item.module_key == "invoices"):
-        order = orders_by_reference[str(_value(dataset, invoice, "Sales order reference"))]
+        order = order_by_invoice[invoice.logical_id]
         order_cancelled = _select_label(dataset, order, "Status") == "Cancelled"
         invoice_cancelled = _select_label(dataset, invoice, "Status") == "Cancelled"
         assert order_cancelled == invoice_cancelled

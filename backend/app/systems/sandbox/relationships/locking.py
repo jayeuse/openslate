@@ -112,8 +112,6 @@ def _validate_locked_modules(
         raise RelationshipConflict("Target record module does not match field")
     if source.module_id != source_module.id:
         raise RelationshipConflict("Source record module does not match field")
-    if source_module.department_id != target_module.department_id:
-        raise RelationshipConflict("Relationship records must be in the same department")
 
 
 def _lock_relationship_rows(
@@ -200,8 +198,6 @@ def _active_entity(entity: Any, label: str) -> None:
 def validate_relationship_modules(source_module: Module, target_module: Module) -> None:
     _active_entity(source_module, "Source module")
     _active_entity(target_module, "Target module")
-    if source_module.department_id != target_module.department_id:
-        raise RelationshipConflict("Relationship target must be in the same department")
 
 
 def _load_create_dependencies(
