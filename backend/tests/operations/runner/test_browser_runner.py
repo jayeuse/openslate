@@ -31,6 +31,7 @@ def test_browser_only_owns_provider_api_gateway_but_does_not_run_scanner_or_back
     monkeypatch.setattr(runner, "DisposableCaddy", lambda *_args: gateway)
     monkeypatch.setattr(runner, "wait_for", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runner, "measure_admission", lambda: {"recovered": True})
+    monkeypatch.setenv("CI", "true")
 
     assert runner.main(("--browser-only",)) == 0
     scanner.start.assert_not_called()
@@ -47,6 +48,7 @@ def test_browser_only_owns_provider_api_gateway_but_does_not_run_scanner_or_back
             "playwright",
             "test",
             "--config=playwright.fullstack.config.ts",
+            "--reporter=list",
             "tests/fullstack/auth-session.spec.ts",
         ]
     ]

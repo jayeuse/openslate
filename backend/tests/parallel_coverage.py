@@ -15,14 +15,15 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 if __package__:
     from .backend_coverage import OUTPUT_OVERRIDE, combine_backend_coverage
-    from .runner_console import stop_on_signals
+    from .runner_console import relay, stop_on_signals
 else:
     from backend_coverage import OUTPUT_OVERRIDE, combine_backend_coverage
-    from runner_console import stop_on_signals
+    from runner_console import relay, stop_on_signals
 
 BACKEND = Path(__file__).resolve().parents[1]
 SHARDS_ROOT = BACKEND / "test-results/coverage-shards"
@@ -44,28 +45,34 @@ def main(arguments: list[str]) -> int:
             command = [sys.executable, "-m", "tests.fullstack_runner"]
             command += ["--backend-coverage-shard", f"{group}/{total}"]
             process = subprocess.Popen(
-                command, cwd=BACKEND, env=environment, stdout=log, stderr=subprocess.STDOUT
+                command,
+                cwd=BACKEND,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
             )
-            runs.append((group, process, log))
+            # Each shard prints one line per finished test; show them as they arrive.
+            reader = threading.Thread(
+                target=relay, args=(process.stdout, log, f"[{group}/{total}]"), daemon=True
+            )
+            reader.start()
+            runs.append((group, process, log, reader))
         failed = False
-        for group, process, log in runs:
+        for group, process, log, reader in runs:
             code = process.wait()
+            reader.join()
             log.close()
-            output = (SHARDS_ROOT / f"shard-{group}.log").read_text(errors="replace")
-            lines = [line for line in output.splitlines() if "PASS" in line or "FAIL" in line]
-            lines += [
-                line for line in output.splitlines() if "failed:" in line or "location:" in line
-            ]
-            print(f"Shard {group}/{total}: exit {code}")
-            for line in lines:
-                print(f"  {line}")
+            print(f"Shard {group}/{total}: exit {code}", flush=True)
             failed = failed or code != 0
     finally:
         # A stopped run stops every shard; each one then removes its own stack.
-        for _, process, _ in runs:
+        for _, process, _, _ in runs:
             if process.poll() is None:
                 process.terminate()
-        for _, process, _ in runs:
+        for _, process, _, _ in runs:
             process.wait()
     if failed:
         print(f"Backend coverage FAIL; shard logs are in {SHARDS_ROOT}")

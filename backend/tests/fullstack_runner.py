@@ -37,7 +37,7 @@ if __package__:
     )
     from .fullstack_summary import summary_path, write_fullstack_summary
     from .postgres_runtime import DisposablePostgres
-    from .runner_console import stop_on_signals
+    from .runner_console import e2e_browser_flags, run_streamed, stop_on_signals
     from .scanner_runtime import DisposableScanner
 else:
     from backend_batches import parse_batch, run_backend_batches
@@ -50,7 +50,7 @@ else:
     )
     from fullstack_summary import summary_path, write_fullstack_summary
     from postgres_runtime import DisposablePostgres
-    from runner_console import stop_on_signals
+    from runner_console import e2e_browser_flags, run_streamed, stop_on_signals
     from scanner_runtime import DisposableScanner
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -75,6 +75,7 @@ def browser_acceptance_command(*, browser_only: bool = False) -> list[str]:
         "playwright",
         "test",
         "--config=playwright.fullstack.config.ts",
+        *e2e_browser_flags(),
     ]
     if browser_only:
         command.append("tests/fullstack/auth-session.spec.ts")
@@ -242,15 +243,7 @@ def main(arguments=()):
 
     def run(command, cwd, env=base_env, capture=False):
         print(f"Full-stack: {stage}", flush=True)
-        return subprocess.run(
-            command,
-            cwd=cwd,
-            env=env,
-            check=True,
-            stdout=subprocess.PIPE if capture else log,
-            stderr=log,
-            text=True,
-        )
+        return run_streamed(command, cwd, env, log, capture=capture)
 
     try:
         stage = "PostgreSQL startup"

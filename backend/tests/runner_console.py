@@ -1,10 +1,84 @@
-"""Console behaviour shared by the disposable-stack test runners.
+"""Show test progress in the runner's terminal; the full output stays in the private log.
 
-Runners turn SIGTERM and SIGHUP into an interrupt, so a stopped run still removes its
-disposable stack.
+The private log can hold provider credentials, so the terminal gets only one line per
+finished test and the final counts. Runners also turn SIGTERM and SIGHUP into an
+interrupt, so a stopped run still removes its disposable stack.
 """
 
+import os
+import re
 import signal
+import subprocess
+import sys
+from pathlib import Path
+from typing import IO
+
+PYTEST_RESULT = re.compile(
+    r"^(?P<test>.+?) (?P<outcome>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)"
+    r"\s+\[\s*(?P<percent>\d+)%\]\s*$"
+)
+PYTEST_TOTAL = re.compile(r"^=+ .*\b(passed|failed|errors?|skipped)\b.* in [\d.]+s.*=+$")
+PLAYWRIGHT_RESULT = re.compile(r"^\s+(✓|✘|ok|x|-)\s+\d+ .*›")
+PLAYWRIGHT_TOTAL = re.compile(r"^\s+\d+ (passed|failed|flaky|skipped|interrupted|did not run)\b")
+# One parametrized ID embeds a 26 MB payload; the terminal gets a readable prefix.
+TEST_LIMIT = 140
+LINE_LIMIT = 200
+
+
+def progress_line(line: str) -> str | None:
+    """Return the terminal form of one output line, or None to keep it in the log only."""
+    text = line.rstrip("\r\n")
+    result = PYTEST_RESULT.match(text)
+    if result:
+        test = result["test"]
+        if len(test) > TEST_LIMIT:
+            test = test[: TEST_LIMIT - 1] + "…"
+        return f"{result['percent']:>3}% {result['outcome']:<7} {test}"
+    if PYTEST_TOTAL.match(text) or PLAYWRIGHT_RESULT.match(text) or PLAYWRIGHT_TOTAL.match(text):
+        return text[:LINE_LIMIT]
+    return None
+
+
+def run_streamed(
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    log: IO[str],
+    *,
+    capture: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    """Run like subprocess.run(check=True), and echo test results while they finish."""
+    if capture:
+        return subprocess.run(
+            command, cwd=cwd, env=env, check=True, stdout=subprocess.PIPE, stderr=log, text=True
+        )
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert process.stdout is not None
+    with process:
+        for line in process.stdout:
+            log.write(line)
+            shown = progress_line(line)
+            if shown is not None:
+                print(shown, flush=True)
+    log.flush()
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, command)
+    return subprocess.CompletedProcess(command, process.returncode)
+
+
+def e2e_browser_flags() -> list[str]:
+    """List each test as it finishes; open a visible browser unless CI or opted out."""
+    headed = not os.environ.get("CI") and os.environ.get("OPENSLATE_E2E_HEADED", "1") != "0"
+    return ["--reporter=list", *(["--headed"] if headed else [])]
 
 
 def stop_on_signals() -> None:
@@ -20,3 +94,12 @@ def stop_on_signals() -> None:
     for name in ("SIGTERM", "SIGHUP"):
         if hasattr(signal, name):
             signal.signal(getattr(signal, name), interrupt)
+
+
+def relay(lines: IO[str], log: IO[str], prefix: str) -> None:
+    """Copy a shard's output to its log and to the terminal with the shard name in front."""
+    for line in lines:
+        log.write(line)
+        log.flush()
+        sys.stdout.write(f"{prefix} {line}")
+        sys.stdout.flush()

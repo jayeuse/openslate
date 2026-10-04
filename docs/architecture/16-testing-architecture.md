@@ -102,8 +102,10 @@ to start with either one outside `ENVIRONMENT=test`:
   does. Other test runs drive these workers directly.
 - `E2E_SEEDING_WITHOUT_ANONYMOUS_LIMITS=true` turns off the anonymous invitation limit
   (5 completions per 15 minutes from one address) while the seeder completes every invitation.
-  The runner then restarts the API without it, so the browser tests run with every limit on. Playwright signs in once per role (administrator,
-department lead, service clerk, guest) and saves each session as a `storageState` file.
+  The runner then restarts the API without it, so the browser tests run with every limit on.
+
+Playwright signs in once per role (administrator, department lead, service clerk, guest)
+and saves each session as a `storageState` file.
 The tests in `frontend/tests/fullstack/smoke/` read and edit the seeded data and build no
 fixtures. Credentials and saved sessions stay in the private run directory.
 
@@ -112,7 +114,24 @@ Each test carries a feature tag (`@records`, `@boards`, `@access`, `@manage`, `@
 each stage. A full run takes about eight minutes. Seeding Harbor Small through the seeder takes
 about 6.5 minutes of sequential API calls, and the browser suite takes under a minute.
 
-## Acceptance boundaries
+## Test output
+
+Each test run shows its progress in the terminal while it works:
+
+- The backend runners (`tests.fullstack_runner`, `tests.parallel_coverage`,
+  `tests.smoke_runner`) show one line per finished test: progress, outcome, and test ID.
+  Parallel coverage puts the shard name in front of each line, for example `[2/3]`.
+  The full output stays in the private run log, because it can contain stack credentials.
+  A test ID longer than 140 characters is shortened in the terminal.
+- The frontend suite uses the Playwright `list` reporter: one line per finished test.
+- The full-stack acceptance and smoke suites open a visible browser. CI runs them headless.
+  To run them headless on a workstation, set `OPENSLATE_E2E_HEADED=0`.
+- The `http` project stays headless, because five workers would open five windows. Add
+  `--headed` to `npm test` to watch it.
+
+The runners turn SIGTERM and SIGHUP into an interrupt, so a stopped run still removes its
+disposable stack and scanner.
+
 ## Acceptance boundaries
 
 Compose validation, unit tests, and migrations alone do not establish clean-host

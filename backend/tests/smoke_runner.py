@@ -4,7 +4,9 @@ Creates a new disposable stack, serves the static frontend export from FastAPI b
 the Caddy gateway, seeds Harbor Small once through the sample-data seeder, signs in
 once per role and runs ``frontend/tests/fullstack/smoke``. It belongs to the release
 gate (``scripts/prepush.py --release``), not to every push. Secrets and raw output stay
-in a private temporary directory; the summary holds only timings and outcomes.
+in a private temporary directory; the terminal shows one line per finished test and the
+browser opens visibly unless CI is set or OPENSLATE_E2E_HEADED=0. The summary holds only
+timings and outcomes.
 
 From backend/:  uv run python -m tests.smoke_runner
 """
@@ -26,13 +28,13 @@ if __package__:
     from .fullstack_environment import RUNNER_API_PORT, RUNNER_CONCURRENCY_LIMIT, api_environment
     from .fullstack_runner import API, BACKEND, FRONTEND, WEB, seed, wait_for
     from .postgres_runtime import DisposablePostgres
-    from .runner_console import stop_on_signals
+    from .runner_console import e2e_browser_flags, run_streamed, stop_on_signals
 else:
     from caddy_runtime import GATEWAY_PORT, DisposableCaddy
     from fullstack_environment import RUNNER_API_PORT, RUNNER_CONCURRENCY_LIMIT, api_environment
     from fullstack_runner import API, BACKEND, FRONTEND, WEB, seed, wait_for
     from postgres_runtime import DisposablePostgres
-    from runner_console import stop_on_signals
+    from runner_console import e2e_browser_flags, run_streamed, stop_on_signals
 
 SEED = 42
 ANCHOR_DATE = "2026-09-30"
@@ -140,7 +142,7 @@ def main() -> int:
 
     def run(command: list[str], cwd: Path, env: dict[str, str]) -> None:
         print(f"Smoke: {stage}", flush=True)
-        subprocess.run(command, cwd=cwd, env=env, check=True, stdout=log, stderr=log, text=True)
+        run_streamed(command, cwd, env, log)
 
     def timed(name: str) -> None:
         nonlocal stage, started
@@ -240,7 +242,13 @@ def main() -> int:
         start_api(api_env)
         timed("browser smoke suite")
         run(
-            ["npx", "playwright", "test", "--config=playwright.fullstack.config.ts"],
+            [
+                "npx",
+                "playwright",
+                "test",
+                "--config=playwright.fullstack.config.ts",
+                *e2e_browser_flags(),
+            ],
             FRONTEND,
             {
                 **base_env,

@@ -81,6 +81,11 @@ def _stub_fullstack_prerequisites(
         lambda *_args: {"admin": {"email": "admin@example.test", "password": "password"}},
     )
     monkeypatch.setattr(runner.subprocess, "run", run)
+    monkeypatch.setattr(
+        runner,
+        "run_streamed",
+        lambda command, cwd, env, log, capture=False: run(command, cwd=cwd, env=env),
+    )
     return scanner
 
 
@@ -232,7 +237,10 @@ def test_gateway_config_preserves_single_origin_routes_with_container_host_upstr
     assert "{{" not in rendered
 
 
-def test_browser_acceptance_command_runs_full_suite_for_scanner_backed_acceptance() -> None:
+def test_browser_acceptance_command_runs_full_suite_for_scanner_backed_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CI", "true")
     command = runner.browser_acceptance_command()
 
     assert command == [
@@ -240,6 +248,7 @@ def test_browser_acceptance_command_runs_full_suite_for_scanner_backed_acceptanc
         "playwright",
         "test",
         "--config=playwright.fullstack.config.ts",
+        "--reporter=list",
     ]
 
 
