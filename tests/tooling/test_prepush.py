@@ -34,9 +34,26 @@ class PrepushTests(unittest.TestCase):
     def test_local_backend_coverage_runs_parallel_shards_and_combines_them(self):
         plan = prepush.build_plan(all_gate_scope(), Path("/repo"))
         coverage = next(step for step in plan.steps if step.name == "backend-coverage")
-        self.assertEqual(coverage.command, ("uv", "run", "python", "-m", "tests.parallel_coverage"))
+        self.assertEqual(
+            coverage.command,
+            ("uv", "run", "python", "-m", "tests.parallel_coverage", "--shards", "3"),
+        )
         self.assertTrue(coverage.needs_base)
         self.assertEqual(coverage.serial_group, "backend-postgres")
+
+    def test_a_smaller_machine_runs_coverage_on_fewer_stacks_with_the_same_gates(self):
+        def coverage_command(stacks):
+            plan = prepush.build_plan(all_gate_scope(), Path("/repo"), coverage_stacks=stacks)
+            return next(step for step in plan.steps if step.name == "backend-coverage").command
+
+        self.assertEqual(
+            coverage_command(1),
+            ("uv", "run", "python", "-m", "tests.fullstack_runner", "--backend-coverage-only"),
+        )
+        self.assertEqual(coverage_command(2)[-2:], ("--shards", "2"))
+        self.assertEqual(
+            prepush._parser().parse_args(["--coverage-stacks", "1"]).coverage_stacks, 1
+        )
 
     def test_release_smoke_runs_only_with_the_release_flag_and_after_backend_stacks(self):
         default = prepush.build_plan(all_gate_scope(), Path("/repo"))

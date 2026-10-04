@@ -40,8 +40,9 @@ shard writes to its own folder under `backend/test-results/coverage-shards/`. Ea
 stack creates six Docker networks, and Docker Desktop's default address pools hold about
 30, so three shards fit beside the development stack. A shard that fails at PostgreSQL
 startup with "all predefined address pools have been fully subnetted" means networks from
-another stack still exist; `docker network ls` shows them. The single
-`--backend-coverage-only` run stays available for repair.
+another stack still exist; `docker network ls` shows them. On a machine with less memory,
+run `prepush.py --coverage-stacks 1` (one stack, the single `--backend-coverage-only` run)
+or `--coverage-stacks 2`; the coverage gates do not change.
 
 The committed Auth/Storage reset acceptance has its own mandatory
 `--reset-acceptance-only` invocation in both gates. Local `prepush.py` runs it after

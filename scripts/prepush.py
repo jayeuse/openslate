@@ -102,7 +102,7 @@ def _add_frontend_steps(steps: list[Step]) -> None:
     )
 
 
-def _add_backend_steps(steps: list[Step]) -> None:
+def _add_backend_steps(steps: list[Step], coverage_stacks: int = 3) -> None:
     steps.extend(
         (
             Step(
@@ -184,8 +184,21 @@ def _add_backend_steps(steps: list[Step]) -> None:
             gate="backend",
             phase="resource",
             cwd="backend",
-            # Three shards on their own disposable stacks, combined under the same gates.
-            command=("uv", "run", "python", "-m", "tests.parallel_coverage"),
+            # Shards on their own disposable stacks, combined under the same gates; one
+            # stack runs the single coverage run for a machine with less memory.
+            command=(
+                ("uv", "run", "python", "-m", "tests.fullstack_runner", "--backend-coverage-only")
+                if coverage_stacks == 1
+                else (
+                    "uv",
+                    "run",
+                    "python",
+                    "-m",
+                    "tests.parallel_coverage",
+                    "--shards",
+                    str(coverage_stacks),
+                )
+            ),
             lane="backend",
             serial_group=SERIAL_BACKEND_STACK,
             needs_base=True,
@@ -247,7 +260,9 @@ def _add_release_smoke_step(steps: list[Step]) -> None:
     )
 
 
-def build_plan(scope: ChangeScope, root: Path, *, release: bool = False) -> PrepushPlan:
+def build_plan(
+    scope: ChangeScope, root: Path, *, release: bool = False, coverage_stacks: int = 3
+) -> PrepushPlan:
     """Build the command plan without starting any subprocesses."""
 
     del root  # The plan uses repository-relative working directories.
@@ -255,7 +270,7 @@ def build_plan(scope: ChangeScope, root: Path, *, release: bool = False) -> Prep
     if scope.decisions["frontend"].run:
         _add_frontend_steps(steps)
     if scope.decisions["backend"].run:
-        _add_backend_steps(steps)
+        _add_backend_steps(steps, coverage_stacks)
     if scope.decisions["server_image"].run:
         _add_server_image_step(steps)
     if release:
@@ -408,6 +423,13 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also run the release smoke suite (Harbor Small seed and browser paths)",
     )
+    parser.add_argument(
+        "--coverage-stacks",
+        type=int,
+        default=3,
+        choices=range(1, 6),
+        help="Disposable stacks for backend coverage at once (default 3; 1 needs less memory)",
+    )
     return parser
 
 
@@ -415,7 +437,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     root = Path(__file__).resolve().parents[1]
     scope = classify_changes(root, args.base)
-    plan = build_plan(scope, root, release=args.release)
+    plan = build_plan(scope, root, release=args.release, coverage_stacks=args.coverage_stacks)
     if args.list_only:
         print(json.dumps(plan.as_dict(), indent=2, sort_keys=True))
         return 0
