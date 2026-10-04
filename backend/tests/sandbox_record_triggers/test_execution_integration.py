@@ -131,6 +131,10 @@ def test_record_mutations_enqueue_once_and_execute_with_audit_and_dedupe(
     assert recent.total == 2
     assert recent.items[0].trigger_name == "Set request status"
     assert recent.items[0].event_kind in {"record-created", "field-changed"}
+    # Pages are cut from the same newest-first order as the full list.
+    pages = [list_recent_runs(integration_owner_db, limit=1, offset=index) for index in (0, 1)]
+    assert [page.items[0].id for page in pages] == [item.id for item in recent.items]
+    assert [page.has_more for page in pages] == [True, False]
     assert execute_claim(integration_owner_db, claims[-1]) is False
 
 
