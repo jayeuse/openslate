@@ -12,6 +12,7 @@ from pathlib import Path
 
 COUNT_KEYS = ("tests", "failures", "errors", "skipped")
 DURATIONS = "tests/.test_durations"
+MAX_DURATION_ID = 500
 
 
 def source_inventory(backend):
@@ -19,6 +20,20 @@ def source_inventory(backend):
         str(path.relative_to(backend)): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted((backend / "app").rglob("*.py"))
     }
+
+
+def compact_durations(durations):
+    """Keep the committed durations file to one line; backend files stay under 500 lines.
+
+    Parametrized IDs can embed whole payloads (one is 26 MB); pytest-split gives a
+    test without a stored duration the average, so long IDs are left out.
+    """
+    rounded = {
+        test: round(seconds, 3)
+        for test, seconds in durations.items()
+        if len(test) <= MAX_DURATION_ID
+    }
+    return json.dumps(rounded, sort_keys=True, separators=(",", ":")) + "\n"
 
 
 def parse_shard(value):
@@ -234,7 +249,7 @@ def combine_backend_coverage(backend, shards_dir, total):
     coverage.json_report(outfile=str(output / "coverage.json"))
     coverage.xml_report(outfile=str(output / "coverage.xml"))
     (output / ".coverage").unlink()
-    (output / "test-durations.json").write_text(json.dumps(durations, sort_keys=True, indent=4))
+    (output / "test-durations.json").write_text(compact_durations(durations))
     (output / "metadata.json").write_text(
         json.dumps(
             {
