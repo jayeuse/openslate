@@ -25,9 +25,9 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("npm run build", source)
         self.assertIn("npm test -- ${{ matrix.args }}", source)
         self.assertIn("args: --project=isolated", source)
-        for shard in range(1, 5):
+        for shard in range(1, 7):
             with self.subTest(shard=shard):
-                self.assertIn(f"args: --project=http --shard={shard}/4", source)
+                self.assertIn(f"args: --project=http --shard={shard}/6", source)
         self.assertIn("fail-fast: false", source)
 
     def test_frontend_verify_preserves_the_required_check(self):
@@ -111,17 +111,17 @@ class CiWorkflowContractTests(unittest.TestCase):
         coverage = source.split("\n  coverage:\n", 1)[1].split("\n  coverage-gate:\n", 1)[0]
         gate = source.split("\n  coverage-gate:\n", 1)[1].split("\n  reset-acceptance:\n", 1)[0]
 
-        self.assertIn("shard: [1, 2, 3, 4]", coverage)
+        self.assertIn("shard: [1, 2, 3, 4, 5]", coverage)
         self.assertIn("fail-fast: false", coverage)
         self.assertIn(
-            "tests.fullstack_runner --backend-coverage-shard ${{ matrix.shard }}/4", coverage
+            "tests.fullstack_runner --backend-coverage-shard ${{ matrix.shard }}/5", coverage
         )
         self.assertIn("name: backend-coverage-shard-${{ matrix.shard }}", coverage)
         self.assertIn("needs: [changes, coverage]", gate)
         self.assertIn("fetch-depth: 0", gate)
         self.assertIn("pattern: backend-coverage-shard-*", gate)
         self.assertIn("tests/backend_coverage.py combine", gate)
-        self.assertIn("--shards 4", gate)
+        self.assertIn("--shards 5", gate)
         self.assertIn("COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}", gate)
 
     def test_backend_requires_a_separate_destructive_reset_acceptance_run(self):
