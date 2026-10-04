@@ -2,11 +2,14 @@
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from coverage import CoverageData
 
 from tests import backend_coverage
+from tests import fullstack_runner as runner
+from tests.operations.test_fullstack_runner import _stub_fullstack_prerequisites
 
 JUNIT = (
     '<testsuites><testsuite tests="{tests}" failures="0" errors="0" skipped="{skipped}"/>'
@@ -30,7 +33,8 @@ def _shard(backend: Path, shards: Path, group: int, total: int, lines, *, skippe
     data.add_lines({str(backend / name): numbers for name, numbers in lines.items()})
     data.write()
     (folder / "pytest.xml").write_text(JUNIT.format(tests=3, skipped=skipped))
-    (folder / "test-durations.json").write_text(json.dumps({f"tests/test_{group}.py::t": 1.0}))
+    durations = {f"tests/test_{group}.py::t": 1.0, f"tests/test_{group}.py::t[{'x' * 600}]": 1.0}
+    (folder / "test-durations.json").write_text(json.dumps(durations))
     (folder / "metadata.json").write_text(
         json.dumps(
             {
@@ -67,8 +71,9 @@ def test_combined_shards_report_every_line_and_sum_the_tests(combine) -> None:
     assert executed["two.py"] == [1]
     metadata = json.loads((output / "metadata.json").read_text())
     assert metadata["test_counts"] == {"tests": 6, "failures": 0, "errors": 0, "skipped": 0}
-    durations = json.loads((output / "test-durations.json").read_text())
-    assert set(durations) == {"tests/test_1.py::t", "tests/test_2.py::t"}
+    written = (output / "test-durations.json").read_text()
+    assert written.count("\n") == 1
+    assert json.loads(written) == {"tests/test_1.py::t": 1.0, "tests/test_2.py::t": 1.0}
 
 
 def test_a_missing_shard_fails_closed(combine) -> None:
@@ -94,3 +99,39 @@ def test_a_shard_from_a_changed_source_tree_fails_the_gate(combine) -> None:
     (backend / "app/two.py").write_text("c = 30\nd = 4\n")
 
     assert backend_coverage.combine_backend_coverage(backend, shards, 2) == 1
+
+
+def test_backend_coverage_shard_passes_its_group_and_skips_the_frontend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commands: list[list[str]] = []
+    shards: list[tuple[int, int]] = []
+
+    def run(command: list[str], **_kwargs: object) -> MagicMock:
+        commands.append(command)
+        return MagicMock()
+
+    _stub_fullstack_prerequisites(monkeypatch, tmp_path, run)
+
+    def coverage(_run, _backend, _private, _environment, _run_id, shard) -> int:
+        shards.append(shard)
+        return 0
+
+    monkeypatch.setattr(runner, "run_backend_coverage", coverage)
+
+    assert runner.main(["--backend-coverage-shard", "2/4"]) == 0
+    assert shards == [(2, 4)]
+    assert ["npm", "run", "build", "--", "--webpack"] not in commands
+
+
+@pytest.mark.parametrize("shard", ["0/4", "5/4", "two/4", "2"])
+def test_runner_rejects_invalid_coverage_shard_before_starting_postgres(
+    monkeypatch: pytest.MonkeyPatch, shard: str
+) -> None:
+    start = MagicMock()
+    monkeypatch.setattr(runner, "DisposablePostgres", start)
+
+    with pytest.raises(SystemExit):
+        runner.main(["--backend-coverage-shard", shard])
+
+    start.assert_not_called()
