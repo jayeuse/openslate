@@ -112,6 +112,7 @@ def _write_private(path: Path, value: object) -> Path:
 
 
 def main() -> int:
+    stop_on_signals()
     for port in (int(RUNNER_API_PORT), GATEWAY_PORT):
         with socket.socket() as listener:
             try:
@@ -119,7 +120,6 @@ def main() -> int:
             except OSError as error:
                 print(f"Test port {port} unavailable: {error.strerror or 'cannot bind'}.")
                 return 1
-    stop_on_signals()
     run_id = uuid4().hex
     private = Path(tempfile.mkdtemp(prefix="openslate-smoke-"))
     base_env = {"PATH": os.environ["PATH"], "OPENSLATE_ENV_SOURCE": "process"}

@@ -138,15 +138,22 @@ def _refuse_to_continue() -> None:
     ("module", "arguments"),
     [("fullstack_runner", (["--backend-coverage-only"],)), ("smoke_runner", ())],
 )
-def test_each_runner_handles_a_stop_before_it_creates_a_stack(
-    monkeypatch: pytest.MonkeyPatch, module: str, arguments: tuple[list[str], ...]
+def test_each_runner_handles_a_stop_before_it_changes_anything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, module: str, arguments: tuple[list[str], ...]
 ) -> None:
+    # CI coverage shard 3/5: this test reached the runner's output cleanup before the stop
+    # handling, removed the shard's own test-results/coverage, and the shard then failed
+    # with FileNotFoundError.
     runner = __import__(f"tests.{module}", fromlist=["main"])
+    output = tmp_path / "test-results/coverage"
+    output.mkdir(parents=True)
+    monkeypatch.setattr(runner, "BACKEND", tmp_path)
     monkeypatch.setattr(runner, "stop_on_signals", _refuse_to_continue)
     monkeypatch.setattr(runner.tempfile, "mkdtemp", lambda **_: pytest.fail("stack started"))
 
     with pytest.raises(_Installed):
         runner.main(*arguments)
+    assert output.is_dir()
 
 
 def test_parallel_coverage_handles_a_stop_before_it_starts_shards(

@@ -177,6 +177,8 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member")):
 
 
 def main(arguments=()):
+    # First: a stop at any later point, including the output cleanup, runs the cleanup.
+    stop_on_signals()
     arguments = tuple(arguments)
     batch = parse_batch(arguments, BACKEND)
     reset_only = arguments == ("--reset-acceptance-only",)
@@ -214,7 +216,6 @@ def main(arguments=()):
             except OSError as error:
                 print(f"Test port {port} unavailable: {error.strerror or 'cannot bind'}.")
                 return 1
-    stop_on_signals()
     run_id = uuid4().hex
     private = Path(tempfile.mkdtemp(prefix="openslate-p5-"))
     processes = []
