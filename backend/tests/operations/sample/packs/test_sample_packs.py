@@ -24,7 +24,6 @@ from operations.sample.blueprint import (
 from operations.sample.catalog import FieldSpec, ModuleSpec, RelationshipSpec
 from operations.sample.episodes import plan_sessions
 from operations.sample.history import plan_history
-from operations.sample.links import link_pairs
 from operations.sample.packs import get_pack
 from operations.sample.packs.content_types import ContentSpec
 from operations.sample.packs.interface import (
@@ -382,20 +381,26 @@ def test_harbor_pack_preserves_the_existing_workspace_identity() -> None:
     )
 
 
+# Each parent has several children in real use, although the seed never repeats one.
+SEVERAL_CHILDREN_PER_PARENT = {
+    "harbor": {"site_customer"},
+    "school": {
+        "activity_room",
+        "behaviour_student",
+        "clinic_visit_student",
+        "health_alert_student",
+        "fee_assessment_student",
+        "fee_adjustment_student",
+    },
+}
+
+
 @pytest.mark.parametrize("pack_key", ["harbor", "school"])
-def test_a_many_to_many_link_repeats_a_source_or_target_at_some_size(pack_key: str) -> None:
-    """Links whose data names one record on each side are one-to-one, so the server enforces it."""
-    pack = get_pack(pack_key)
-    unique_both_ways = []
-    for spec in pack.catalog.relationships:
-        if spec.cardinality != "many-to-many":
-            continue
-        repeats = False
-        for counts in pack.catalog.counts_by_profile.values():
-            pairs = list(link_pairs(spec, counts, pack))
-            sources = [source for source, _target in pairs]
-            targets = [target for _source, target in pairs]
-            repeats |= len(set(sources)) < len(sources) or len(set(targets)) < len(targets)
-        if not repeats:
-            unique_both_ways.append(spec.key)
-    assert unique_both_ways == []
+def test_a_parent_with_several_children_keeps_a_many_to_many_link(pack_key: str) -> None:
+    # PR review: one-to-one refused a second clinic visit for the same student (or a
+    # second site for a customer) with "Target already has a relationship source".
+    cardinality = {spec.key: spec.cardinality for spec in get_pack(pack_key).catalog.relationships}
+
+    assert {
+        key: cardinality[key] for key in SEVERAL_CHILDREN_PER_PARENT[pack_key]
+    } == dict.fromkeys(SEVERAL_CHILDREN_PER_PARENT[pack_key], "many-to-many")

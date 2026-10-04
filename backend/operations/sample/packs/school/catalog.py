@@ -120,13 +120,15 @@ _RELATIONSHIPS = (
     RelationshipSpec(
         "section_room", "Room", "class_sections", "rooms", "many-to-many", child="source"
     ),
-    RelationshipSpec("activity_room", "Room", "activities", "rooms", "one-to-one", child="source"),
+    RelationshipSpec(
+        "activity_room", "Room", "activities", "rooms", "many-to-many", child="source"
+    ),
     RelationshipSpec(
         "behaviour_student",
         "Student",
         "behaviour_incidents",
         "students",
-        "one-to-one",
+        "many-to-many",
         child="source",
     ),
     RelationshipSpec(
@@ -169,7 +171,7 @@ _RELATIONSHIPS = (
         "Student",
         "clinic_visits",
         "students",
-        "one-to-one",
+        "many-to-many",
         child="source",
     ),
     RelationshipSpec(
@@ -177,7 +179,7 @@ _RELATIONSHIPS = (
         "Student",
         "health_alerts",
         "students",
-        "one-to-one",
+        "many-to-many",
         child="source",
     ),
     RelationshipSpec(
@@ -185,7 +187,7 @@ _RELATIONSHIPS = (
         "Student",
         "fee_assessments",
         "students",
-        "one-to-one",
+        "many-to-many",
         child="source",
     ),
     RelationshipSpec(
@@ -193,7 +195,7 @@ _RELATIONSHIPS = (
         "Student",
         "fee_adjustments",
         "students",
-        "one-to-one",
+        "many-to-many",
         child="source",
     ),
     RelationshipSpec(

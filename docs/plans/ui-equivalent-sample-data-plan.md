@@ -29,8 +29,8 @@ In each link, the record that names the other record is the source. For
 example, a Customer Site links to its Customer. The source record links itself
 after both records exist. Each department's staff group reads the other
 department's modules its records link to, so the clerk who created the record
-also writes the link. A Customer Site names one Customer, so that link is
-one-to-one. The relationship graph still exercises one-to-one, one-to-many and
+also writes the link. A Customer Site names one Customer, and a Customer has
+several sites, so that link is many-to-many. The relationship graph still exercises one-to-one, one-to-many and
 many-to-many cardinalities. Exact definition and edge counts are printed from
 the generated profile before population.
 
