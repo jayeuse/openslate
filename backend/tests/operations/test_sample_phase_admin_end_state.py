@@ -6,10 +6,10 @@ import datetime
 
 import pytest
 
-from operations.sample_packs.registry import get_pack
-from operations.sample_phase_expectations import final_people_pack
-from operations.sample_phases import plan_phases
-from operations.sample_scenario import build_dataset
+from operations.sample.packs.registry import get_pack
+from operations.sample.phases.expectations import final_people_pack
+from operations.sample.phases.plan import plan_phases
+from operations.sample.scenario import build_dataset
 
 
 @pytest.mark.parametrize("pack_key", ["harbor", "school"])

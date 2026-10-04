@@ -7,8 +7,8 @@ from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
-from operations.sample_openview import _definition, _view_presentation
-from operations.sample_packs.registry import get_pack
+from operations.sample.packs.registry import get_pack
+from operations.sample.population.openview import _definition, _view_presentation
 
 # Catalog field types as the fields API reports them.
 API_TYPES = {

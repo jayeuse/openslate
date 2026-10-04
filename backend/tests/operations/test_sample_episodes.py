@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import date
 from functools import cache
 
-from operations.sample_episodes import SampleSession, plan_sessions, record_parents
-from operations.sample_scenario import SampleDataset, build_dataset
+from operations.sample.episodes import SampleSession, plan_sessions, record_parents
+from operations.sample.scenario import SampleDataset, build_dataset
 
 
 @cache
@@ -87,7 +87,7 @@ def test_plan_summary_reports_sessions_and_writes_per_person() -> None:
     second = build_plan_summary(build_dataset("small", seed=42, anchor_date=date(2026, 9, 30)))
     assert first["session_count"] == len(_plan("small"))
     writes = first["writes_by_person"]
-    from operations.sample_history import plan_history
+    from operations.sample.history import plan_history
 
     steps = sum(len(item.steps) for item in plan_history(_dataset("small")).values())
     records, edges = len(_dataset("small").records), len(_dataset("small").edges)

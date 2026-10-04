@@ -11,9 +11,9 @@ import pytest
 from psycopg import connect
 
 from operations import reset_application_data as reset
-from operations import reset_execution as execution
-from operations import reset_planning
-from operations.reset_backups import read_backup_snapshot, validate_backup_preservation
+from operations.reset import execution
+from operations.reset import planning as reset_planning
+from operations.reset.backups import read_backup_snapshot, validate_backup_preservation
 from tests.conftest import _guard_integration_database
 
 

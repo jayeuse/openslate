@@ -11,10 +11,10 @@ from typing import get_args
 import pytest
 
 from app.systems.sandbox.designs.schemas import SandboxBindingResponse
-from operations.sample_control_actions import plan_controls
-from operations.sample_packs.registry import get_pack
-from operations.sample_phase_expectations import read_phase_plan
-from operations.sample_scenario import build_dataset
+from operations.sample.controls.actions import plan_controls
+from operations.sample.packs.registry import get_pack
+from operations.sample.phases.expectations import read_phase_plan
+from operations.sample.scenario import build_dataset
 
 REFERENCE_PACKS = ("harbor", "school")
 

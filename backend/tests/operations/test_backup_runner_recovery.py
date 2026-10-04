@@ -10,9 +10,9 @@ from typing import Any
 
 import pytest
 
-from operations import backup_runner_archive
 from operations.backup_runner import run_once
-from operations.backup_runner_host import Host, RunnerError, physical_archive
+from operations.backups import archive as backup_runner_archive
+from operations.backups.host import Host, RunnerError, physical_archive
 from tests.operations.backup_runner_fixtures import (
     NOW,
     SNAPSHOT,

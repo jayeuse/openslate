@@ -11,7 +11,7 @@ from psycopg import connect
 
 from app.systems.boards.post_models import publication_content_fingerprint
 from operations import reset_application_data as reset
-from operations import reset_execution as execution
+from operations.reset import execution
 from tests.conftest import _guard_integration_database
 
 

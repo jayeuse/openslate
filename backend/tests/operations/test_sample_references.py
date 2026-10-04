@@ -6,7 +6,7 @@ from datetime import date
 import pytest
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
-from operations.sample_scenario import SampleDataset, build_dataset
+from operations.sample.scenario import SampleDataset, build_dataset
 
 
 def _field(dataset: SampleDataset, module_key: str, name: str) -> dict[str, object]:

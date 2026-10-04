@@ -5,8 +5,8 @@ from uuid import uuid4
 
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.fields.validation import validate_field_value
-from operations.sample_blueprint import _field_config
-from operations.sample_packs.types import FieldSpec
+from operations.sample.blueprint import _field_config
+from operations.sample.packs.types import FieldSpec
 from tests.operations.test_sample_packs import _TINY_PACK
 
 

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from operations.sample_packs import get_pack
-from operations.sample_packs.interface import OrganizationPack
-from operations.sample_packs.types import PersonSpec, RejectionCase
+from operations.sample.packs import get_pack
+from operations.sample.packs.interface import OrganizationPack
+from operations.sample.packs.types import PersonSpec, RejectionCase
 
 _LEVEL_RANK = {None: 0, "read": 1, "write": 2, "manage": 3}
 

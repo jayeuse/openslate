@@ -10,19 +10,19 @@ from uuid import uuid4
 import httpx
 import pytest
 
-import operations.sample_control_access as access_controls
-from operations.sample_blueprint import SampleDataset
-from operations.sample_client import SampleClient
-from operations.sample_control_access import (
+import operations.sample.controls.access as access_controls
+from operations.sample.blueprint import SampleDataset
+from operations.sample.client import SampleClient
+from operations.sample.controls.access import (
     CONTROL_ROUTES,
     execute_access_control,
     plan_access_controls,
     verify_access_controls,
 )
-from operations.sample_packs import get_pack
-from operations.sample_phase_actions import PhaseExecutionContext, SamplePhaseActionError
-from operations.sample_phases import plan_phases
-from operations.sample_scenario import build_dataset
+from operations.sample.packs import get_pack
+from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
+from operations.sample.phases.plan import plan_phases
+from operations.sample.scenario import build_dataset
 
 ADMIN_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
 GUEST_ID = "e40862a7-fbb7-4e71-a590-90e11f4e893d"

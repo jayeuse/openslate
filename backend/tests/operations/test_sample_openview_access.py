@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import httpx
 
-from operations.sample_client import SampleClient
-from operations.sample_openview import _source_plans, populate_openview
+from operations.sample.client import SampleClient
+from operations.sample.population.openview import _source_plans, populate_openview
 from tests.operations.test_sample_actor_access import _restricted_pack
 from tests.operations.test_sample_packs import _TINY_PACK
 

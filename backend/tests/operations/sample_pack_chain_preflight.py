@@ -7,21 +7,21 @@ from dataclasses import replace
 from datetime import date
 from typing import Any, cast
 
-from operations.sample_actors import planned_access_level
-from operations.sample_blueprint import SampleDataset, SampleRecord
-from operations.sample_boards import project_board_logical_id
-from operations.sample_client import _SAFE_MAPPING_VALUE
-from operations.sample_history import status_label
-from operations.sample_packs.interface import OrganizationPack
-from operations.sample_packs.phase_types import PhaseAction
-from operations.sample_packs.types import JsonValue
-from operations.sample_phases import (
+from operations.sample.actors import planned_access_level
+from operations.sample.blueprint import SampleDataset, SampleRecord
+from operations.sample.client import _SAFE_MAPPING_VALUE
+from operations.sample.history import status_label
+from operations.sample.packs.interface import OrganizationPack
+from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.packs.types import JsonValue
+from operations.sample.phases.plan import (
     phase_action_to_manifest,
     plan_phases,
 )
-from operations.sample_phases import (
+from operations.sample.phases.plan import (
     phase_expected_projection as phase_expected_projection,
 )
+from operations.sample.population.boards import project_board_logical_id
 from tests.operations.sample_pack_openview_preflight import validate_phase_request_payloads
 
 _ACCESS_LEVELS = {"read": 1, "write": 2, "manage": 3}

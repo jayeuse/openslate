@@ -4,8 +4,8 @@ from datetime import date
 
 import pytest
 
-from operations.sample_packs.registry import get_pack, pack_keys
-from operations.sample_scenario import build_dataset
+from operations.sample.packs.registry import get_pack, pack_keys
+from operations.sample.scenario import build_dataset
 from tests.operations.sample_pack_preflight import admit_dataset
 
 ANCHOR = date(2026, 9, 30)

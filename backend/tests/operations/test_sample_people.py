@@ -11,8 +11,9 @@ from uuid import NAMESPACE_URL, uuid5
 import httpx
 import pytest
 
-from operations import sample_invitations, sample_people
-from operations.sample_people import SamplePeopleError, populate_people
+from operations.sample.population import invitations as sample_invitations
+from operations.sample.population import people as sample_people
+from operations.sample.population.people import SamplePeopleError, populate_people
 
 ORIGIN = "http://127.0.0.1:3000"
 MAILPIT_URL = "http://127.0.0.1:8025"

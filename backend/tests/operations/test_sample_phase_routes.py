@@ -7,9 +7,9 @@ from uuid import uuid4
 
 import httpx
 
-from operations.sample_client import SampleClient
-from operations.sample_packs.phase_types import PhaseAction
-from operations.sample_phase_actions import PhaseExecutionContext, execute_phase_action
+from operations.sample.client import SampleClient
+from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.phases.actions import PhaseExecutionContext, execute_phase_action
 
 ADMIN_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
 MEMBER_ID = "9ec0d287-ae14-4603-91c2-f9a4d7b73c0a"

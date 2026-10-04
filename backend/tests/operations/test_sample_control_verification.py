@@ -9,21 +9,19 @@ from uuid import uuid4
 import httpx
 import pytest
 
-import operations.sample_control_verification as verification
-from operations import (
-    sample_control_access_verification,
-    sample_control_account,
-    sample_control_actions,
-    sample_control_board_verification,
-    sample_control_openview_verification,
-    sample_control_sandbox_verification,
-)
-from operations.sample_client import SampleClient
-from operations.sample_control_actions import plan_controls
-from operations.sample_packs.phase_types import PhaseAction
-from operations.sample_phases import phase_action_to_manifest
-from operations.sample_scenario import build_dataset
-from operations.sample_verification import SampleVerificationError
+import operations.sample.controls.verification as verification
+from operations.sample.client import SampleClient
+from operations.sample.controls import access_verification as sample_control_access_verification
+from operations.sample.controls import account as sample_control_account
+from operations.sample.controls import actions as sample_control_actions
+from operations.sample.controls import board_verification as sample_control_board_verification
+from operations.sample.controls import openview_verification as sample_control_openview_verification
+from operations.sample.controls import sandbox_verification as sample_control_sandbox_verification
+from operations.sample.controls.actions import plan_controls
+from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.phases.plan import phase_action_to_manifest
+from operations.sample.scenario import build_dataset
+from operations.sample.verification.core import SampleVerificationError
 
 ADMIN_ID = "55555555-5555-4555-8555-555555555555"
 MANAGER_ID = "66666666-6666-4666-8666-666666666666"
@@ -182,8 +180,8 @@ def test_control_verifier_checks_request_and_all_final_families(
 def test_platform_verification_requires_exact_requests_and_restored_state(
     tmp_path, monkeypatch, fault
 ):
-    import operations.sample_control_openview_mutations as frozen_helpers
-    from operations.sample_control_actions import execute_control_action
+    import operations.sample.controls.openview_mutations as frozen_helpers
+    from operations.sample.controls.actions import execute_control_action
     from tests.operations.sample_platform_wire import PlatformWire
     from tests.operations.test_sample_control_sandbox import _context
 

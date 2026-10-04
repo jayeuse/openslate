@@ -8,12 +8,12 @@ import httpx
 import pytest
 
 from app.systems.manage.backups.schemas import BackupCreate, BackupPolicyUpdate
-from operations.sample_client import SampleWriteOutcomeUnknown
-from operations.sample_control_actions import execute_control_action, plan_controls
-from operations.sample_packs.registry import get_pack
-from operations.sample_phase_actions import SamplePhaseActionError
-from operations.sample_phases import phase_action_to_manifest
-from operations.sample_scenario import build_dataset
+from operations.sample.client import SampleWriteOutcomeUnknown
+from operations.sample.controls.actions import execute_control_action, plan_controls
+from operations.sample.packs.registry import get_pack
+from operations.sample.phases.actions import SamplePhaseActionError
+from operations.sample.phases.plan import phase_action_to_manifest
+from operations.sample.scenario import build_dataset
 from tests.operations.test_sample_control_sandbox import _context, _login_response
 
 
@@ -316,8 +316,8 @@ def test_version_review_preserves_non_numeric_running_version_and_last_observati
 def test_backup_reconciliation_requires_exact_descriptors_and_current_owned_readbacks(
     tmp_path, monkeypatch, tamper
 ):
-    import operations.sample_control_actions as actions_module
-    from operations.sample_control_verification import verify_controls
+    import operations.sample.controls.actions as actions_module
+    from operations.sample.controls.verification import verify_controls
     from tests.operations.test_sample_control_verification import _patch_plan_and_final_verifiers
 
     dataset, wire, context, actions = _backup_journey(tmp_path)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from operations.sample_board_steps import BoardMeta, plan_board_steps
+from operations.sample.population.board_steps import BoardMeta, plan_board_steps
 
 TEAM = {
     "sales": tuple(f"internal_sales_{suffix}" for suffix in ("lead", "02", "03", "04", "05")),

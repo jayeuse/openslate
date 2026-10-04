@@ -7,12 +7,16 @@ from uuid import NAMESPACE_URL, uuid5
 import httpx
 import pytest
 
-from operations import sample_population_workflow as workflow
-from operations.sample_client import SampleClient
-from operations.sample_packs import get_pack
-from operations.sample_people import SampleActorCredential, SamplePeopleResult, SamplePerson
-from operations.sample_population import SamplePopulationError
-from operations.sample_scenario import build_dataset
+from operations.sample.client import SampleClient
+from operations.sample.packs import get_pack
+from operations.sample.population import workflow
+from operations.sample.population.people import (
+    SampleActorCredential,
+    SamplePeopleResult,
+    SamplePerson,
+)
+from operations.sample.population.run import SamplePopulationError
+from operations.sample.scenario import build_dataset
 
 MANAGER = "internal_finance_lead"
 

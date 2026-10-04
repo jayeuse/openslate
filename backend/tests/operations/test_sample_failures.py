@@ -11,13 +11,13 @@ from typing import Any
 import httpx
 import pytest
 
-from operations import sample_population as population
 from operations import seed_sample_data as seed_operator
-from operations.sample_client import SampleClientError
-from operations.sample_content import SampleContentError
-from operations.sample_packs import get_pack
-from operations.sample_population import SamplePopulationError
-from operations.sample_verification import failure_report
+from operations.sample.client import SampleClientError
+from operations.sample.packs import get_pack
+from operations.sample.population import run as population
+from operations.sample.population.content import SampleContentError
+from operations.sample.population.run import SamplePopulationError
+from operations.sample.verification.core import failure_report
 
 
 def _preflight() -> tuple[dict[str, object], str, str]:
@@ -180,7 +180,7 @@ def test_populate_uses_one_generated_seed_for_plan_and_population(
         populated.append(kwargs["seed"])
         return SimpleNamespace(status="complete", run_directory=tmp_path, issues=())
 
-    from operations import sample_population
+    from operations.sample.population import run as sample_population
 
     monkeypatch.setattr(secrets, "randbits", draw_seed)
     monkeypatch.setattr(seed_operator, "_local_preflight", _preflight)
@@ -232,7 +232,7 @@ def test_verify_command_has_no_seed_override() -> None:
 def test_verifier_rebuilds_from_the_recorded_seed_without_drawing_randomness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from operations import sample_run_verification as verifier
+    from operations.sample.verification import run as verifier
 
     pack = get_pack("harbor")
     recorded_seed = 8_231_440
@@ -319,8 +319,9 @@ def test_population_manifest_records_the_selected_seed(
         records=(),
         edges=(),
     )
-    from operations import sample_population_workflow, sample_run_verification
-    from operations.sample_run_verification import SampleVerificationReport
+    from operations.sample.population import workflow as sample_population_workflow
+    from operations.sample.verification import run as sample_run_verification
+    from operations.sample.verification.run import SampleVerificationReport
 
     monkeypatch.setattr(population, "build_dataset", lambda *_args, **_kwargs: dataset)
     monkeypatch.setattr(sample_population_workflow, "_journal_mappings", lambda _path: {})
@@ -361,7 +362,7 @@ def test_population_failure_records_safe_message_and_failed_stage(
         records=(),
         edges=(),
     )
-    from operations import sample_population_workflow
+    from operations.sample.population import workflow as sample_population_workflow
 
     def fail_population(**kwargs: Any) -> dict[str, int]:
         kwargs["manifest"]["stage"] = "activity"

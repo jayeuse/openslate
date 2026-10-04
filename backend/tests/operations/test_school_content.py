@@ -6,8 +6,8 @@ import re
 from datetime import date
 from decimal import Decimal
 
-from operations.sample_board_entries import event_payload
-from operations.sample_packs import get_pack
+from operations.sample.packs import get_pack
+from operations.sample.population.board_entries import event_payload
 
 _MARKERS = re.compile(
     r"\b(sample|samples|test|tests|demo|dummy|fake|placeholder|lorem|ipsum|scenario|synthetic)\b",

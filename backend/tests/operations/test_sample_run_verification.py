@@ -12,10 +12,10 @@ import httpx
 import pytest
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
-from operations.sample_people import _GROUP_ACCESS, _people
-from operations.sample_run_verification import read_run_manifest, verify_sample_data
-from operations.sample_scenario import build_dataset
-from operations.sample_verification import SampleVerificationError
+from operations.sample.population.people import _GROUP_ACCESS, _people
+from operations.sample.scenario import build_dataset
+from operations.sample.verification.core import SampleVerificationError
+from operations.sample.verification.run import read_run_manifest, verify_sample_data
 
 
 def _manifest(directory: Path, **changes: object) -> None:
@@ -77,7 +77,7 @@ def test_manifest_can_be_read_while_population_awaits_verification(tmp_path: Pat
 
 
 def test_trigger_evidence_requires_the_recorded_successful_run() -> None:
-    from operations.sample_run_verification import trigger_evidence_issues
+    from operations.sample.verification.run import trigger_evidence_issues
 
     evidence = [
         {
@@ -373,7 +373,7 @@ def _configuration_fixture() -> tuple[dict[str, Any], dict[str, Any], dict[str, 
 def test_verifier_requires_exact_foundation_readback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed: str
 ) -> None:
-    from operations import sample_run_verification as verifier
+    from operations.sample.verification import run as verifier
 
     payloads, manifest, _ = _configuration_fixture()
     if changed == "guest_sponsor":

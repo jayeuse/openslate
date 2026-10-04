@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from operations.sample_client import (
+from operations.sample.client import (
     SampleAuthenticationError,
     SampleClient,
     SampleClientError,

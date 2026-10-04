@@ -7,10 +7,10 @@ from functools import cache
 
 import pytest
 
-from operations.sample_blueprint import SampleDataset
-from operations.sample_episodes import plan_sessions
-from operations.sample_history import RecordHistory, plan_history
-from operations.sample_scenario import build_dataset
+from operations.sample.blueprint import SampleDataset
+from operations.sample.episodes import plan_sessions
+from operations.sample.history import RecordHistory, plan_history
+from operations.sample.scenario import build_dataset
 
 
 @cache

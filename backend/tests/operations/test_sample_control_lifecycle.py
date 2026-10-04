@@ -13,15 +13,15 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from operations.sample_client import SampleWriteOutcomeUnknown
-from operations.sample_control_actions import plan_controls
-from operations.sample_control_sandbox import (
+from operations.sample.client import SampleWriteOutcomeUnknown
+from operations.sample.controls.actions import plan_controls
+from operations.sample.controls.sandbox import (
     CONTROL_ROUTES,
     execute_sandbox_control,
     plan_sandbox_controls,
     verify_sandbox_controls,
 )
-from operations.sample_phase_actions import SamplePhaseActionError
+from operations.sample.phases.actions import SamplePhaseActionError
 from tests.operations.sample_lifecycle_wire import _LifecycleWire
 from tests.operations.test_sample_control_sandbox import (
     ADMIN_ID,
@@ -93,10 +93,10 @@ def test_platform_plan_uses_disposable_structure_and_preserves_lifecycle_order(p
 def test_platform_wire_imports_searches_exports_disposes_and_restores(
     tmp_path, monkeypatch, pack_key, fault
 ):
-    import operations.sample_control_openview_mutations as frozen_helpers
-    from operations.sample_control_actions import execute_control_action
-    from operations.sample_control_platform import OPERATIONS
-    from operations.sample_control_sandbox import OPERATIONS as lifecycle_operations
+    import operations.sample.controls.openview_mutations as frozen_helpers
+    from operations.sample.controls.actions import execute_control_action
+    from operations.sample.controls.platform import OPERATIONS
+    from operations.sample.controls.sandbox import OPERATIONS as lifecycle_operations
     from tests.operations.sample_platform_wire import PlatformWire
 
     monkeypatch.setattr(frozen_helpers, "_PURGE_POLL_SECONDS", 0)
@@ -121,7 +121,7 @@ def test_platform_wire_imports_searches_exports_disposes_and_restores(
                 assert wire.commits == 0
             if fault == "import_503":
                 assert len([r for r in wire.requests if r.url.path == "/api/records/import"]) == 2
-                from operations.sample_route_coverage import read_route_evidence
+                from operations.sample.verification.route_coverage import read_route_evidence
 
                 assert (
                     sum(read_route_evidence(tmp_path / "requests.jsonl")["failures_5xx"].values())
@@ -419,7 +419,7 @@ def test_sandbox_controls_use_ui_shapes_and_recreate_exact_test_vectors(
             assert requests[-1].url.path == "/api/sandbox/publications"
             journal = (tmp_path / "requests.jsonl").read_text()
             assert '"status_code":503' in journal.replace(" ", "")
-            from operations.sample_route_coverage import read_route_evidence
+            from operations.sample.verification.route_coverage import read_route_evidence
 
             assert (
                 sum(read_route_evidence(tmp_path / "requests.jsonl")["failures_5xx"].values()) == 1
@@ -470,7 +470,7 @@ def test_sandbox_controls_use_ui_shapes_and_recreate_exact_test_vectors(
         for result in results[7:]
         for row in result["request_evidence"]
     )
-    from operations.sample_route_coverage import read_route_evidence
+    from operations.sample.verification.route_coverage import read_route_evidence
 
     covered = {
         (row["method"], row["path"])

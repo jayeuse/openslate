@@ -37,6 +37,7 @@ from app.core.config.instance import (
 )
 from app.core.config.provider_instance import assert_provider_instance
 from app.core.config.settings import DOTENV_PATH
+from operations.reset.auth import ResetAuth
 from operations.reset_application_data import (
     ResetError,
     ResetStorage,
@@ -46,13 +47,12 @@ from operations.reset_application_data import (
     required_storage_environment,
     validate_local_database_url,
 )
-from operations.reset_auth import ResetAuth
-from operations.sample_blueprint import SampleDataset
-from operations.sample_episodes import plan_sessions
-from operations.sample_failures import safe_operator_message
-from operations.sample_history import plan_history
-from operations.sample_packs.registry import default_pack, get_pack, pack_keys
-from operations.sample_scenario import build_dataset
+from operations.sample.blueprint import SampleDataset
+from operations.sample.episodes import plan_sessions
+from operations.sample.failures import safe_operator_message
+from operations.sample.history import plan_history
+from operations.sample.packs.registry import default_pack, get_pack, pack_keys
+from operations.sample.scenario import build_dataset
 
 
 class SampleOperationError(RuntimeError):
@@ -72,7 +72,7 @@ def _anchor_date(value: str) -> date:
 
 def build_plan_summary(dataset: SampleDataset) -> dict[str, Any]:
     """Return the deterministic catalogue counts shown before population."""
-    from operations.sample_phase_expectations import phase_plan_summary
+    from operations.sample.phases.expectations import phase_plan_summary
 
     return {
         **phase_plan_summary(dataset),
@@ -409,12 +409,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SampleOperationError(
                 "Provider accounts remain; clear the baseline before population"
             )
-        from operations.sample_population import (
+        from operations.sample.population.run import (
             SamplePopulationReport,
             populate_sample_data,
             read_admin_password,
         )
-        from operations.sample_run_verification import SampleVerificationReport, verify_sample_data
+        from operations.sample.verification.run import SampleVerificationReport, verify_sample_data
 
         _values, _target, admin_email, _url, origin, _timeout = _environment_values()
         password = (

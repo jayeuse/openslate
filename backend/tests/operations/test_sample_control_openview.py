@@ -23,10 +23,10 @@ from app.systems.sandbox.records.query_schemas import (
 )
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
 from app.systems.sandbox.relationships.schemas import RelationshipCreate
-from operations.sample_client import SampleClient
-from operations.sample_packs.registry import get_pack, pack_keys
-from operations.sample_phase_actions import PhaseExecutionContext, SamplePhaseActionError
-from operations.sample_scenario import build_dataset
+from operations.sample.client import SampleClient
+from operations.sample.packs.registry import get_pack, pack_keys
+from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
+from operations.sample.scenario import build_dataset
 
 
 def _uuid(value: str) -> str:
@@ -57,8 +57,8 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
     tmp_path, monkeypatch: pytest.MonkeyPatch, pack_key: str, schedule_id: str | None
 ) -> None:
     waits: list[float] = []
-    monkeypatch.setattr("operations.sample_control_openview_mutations.time.sleep", waits.append)
-    from operations.sample_control_openview import (
+    monkeypatch.setattr("operations.sample.controls.openview_mutations.time.sleep", waits.append)
+    from operations.sample.controls.openview import (
         CONTROL_ROUTES,
         execute_openview_control,
         plan_openview_controls,

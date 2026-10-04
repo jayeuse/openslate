@@ -10,8 +10,8 @@ from uuid import uuid4
 
 import httpx
 
-from operations.sample_client import SampleClient
-from operations.sample_openview import populate_openview
+from operations.sample.client import SampleClient
+from operations.sample.population.openview import populate_openview
 
 ORIGIN = "https://workspace.example.test"
 BASE_URL = "https://api.example.test"

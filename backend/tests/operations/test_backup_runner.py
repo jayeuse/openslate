@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from operations import backup_runner
-from operations.backup_runner_host import Host, RunnerError
+from operations.backups.host import Host, RunnerError
 from tests.operations.backup_runner_fixtures import (
     NOW,
     SNAPSHOT,

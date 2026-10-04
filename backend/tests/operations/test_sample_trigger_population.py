@@ -8,24 +8,24 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from operations.sample_activity import rule_candidates
-from operations.sample_client import SampleClient
-from operations.sample_history import plan_history
-from operations.sample_packs.registry import get_pack, pack_keys
-from operations.sample_population import SamplePopulationError
-from operations.sample_scenario import build_dataset
-from operations.sample_trigger_population import (
+from operations.sample.client import SampleClient
+from operations.sample.history import plan_history
+from operations.sample.packs.registry import get_pack, pack_keys
+from operations.sample.population.activity import rule_candidates
+from operations.sample.population.run import SamplePopulationError
+from operations.sample.population.triggers import (
     _candidate_records,
     _trigger_by_key,
     _wait_trigger,
     validate_record_trigger_candidates,
 )
+from operations.sample.scenario import build_dataset
 
 
 def test_trigger_record_edit_uses_the_read_revision_like_the_frontend(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from operations import sample_trigger_population as workflow
+    from operations.sample.population import triggers as workflow
 
     dataset = build_dataset("small", 42, date(2026, 9, 30))
     blueprint = dataset.organization.blueprint
@@ -230,7 +230,7 @@ def test_run_evidence_is_journaled_once_even_when_new_runs_arrive_between_polls(
 ) -> None:
     import json
 
-    from operations import sample_trigger_population
+    from operations.sample.population import triggers as sample_trigger_population
 
     monkeypatch.setattr(sample_trigger_population.time, "sleep", lambda _seconds: None)
     record_id = "00000000-0000-0000-0000-000000000011"

@@ -122,7 +122,7 @@ The schema plumbing investigation found that a table change touches more than th
 2. Generate the revision and review it by hand. Default privileges from the baseline grant `SELECT, INSERT, UPDATE, DELETE` to `openslate_app` automatically. An append-only table also needs `REVOKE UPDATE, DELETE, TRUNCATE ... FROM openslate_app`.
 3. A new database function needs `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role` and `GRANT EXECUTE ... TO openslate_app`. Default privileges do not cover functions.
 4. Classify the table in `backend/app/systems/platform/events/models.py`: private, administrator, all authenticated, entity only, or capability-filtered. A table in no set is broadcast to all authenticated users.
-5. Add the table to `APPLICATION_TABLES`, `NON_PRESERVED_TABLES` if applicable, `DELETE_ORDER` and `_LOCK_APPLICATION_STATEMENT` in `backend/operations/reset_models.py`. `reset_planning.py` compares these with the live schema.
+5. Add the table to `APPLICATION_TABLES`, `NON_PRESERVED_TABLES` if applicable, `DELETE_ORDER` and `_LOCK_APPLICATION_STATEMENT` in `backend/operations/reset/models.py`. `reset/planning.py` compares these with the live schema.
 6. Audit is on by default. Set `__audit_enabled__ = False` only for session, rate-limit or queue data. Set `__audit_redacted_fields__` for sensitive columns.
 
 ### 3.2 Renamed table or column
@@ -131,20 +131,20 @@ The schema plumbing investigation found that a table change touches more than th
 2. Rename every index, unique constraint, foreign key, check constraint and primary key so that it matches the naming convention in `backend/app/core/database/base.py`. Use `ALTER INDEX ... RENAME` and `ALTER TABLE ... RENAME CONSTRAINT`.
 3. Replace every database function whose body names the old table or column with `CREATE OR REPLACE FUNCTION`, and grant `EXECUTE` again. A table rename does not change function bodies.
 4. Replace the old name in the SSE classification sets. A missed name falls through to broadcast to all authenticated users.
-5. Replace the old name in the four `reset_models.py` constants and in any SQL text in that file.
+5. Replace the old name in the four `reset/models.py` constants and in any SQL text in that file.
 6. Old `audit_logs.entity_type` values keep the old table name. Any filter by entity type must accept both names. Development data is reset, so this matters only until slice 8.
 
 ### 3.3 Dropped table
 
 1. Remove the model and its `model_registry.py` import. `migration_scope.py` still sees the owned table, so `alembic check` reports the drift until the revision drops it.
 2. Drop the table in the revision. The downgrade recreates the empty table; the data does not return.
-3. Remove the name from the SSE sets and from `reset_models.py`.
+3. Remove the name from the SSE sets and from `reset/models.py`.
 4. Remove the routers, services, schemas, tests and frontend code that use it.
 
 ### 3.4 Changed column
 
 1. Change the model and write the revision by hand when data must move.
-2. Search `reset_models.py`, `backend/tests/fullstack_runner.py` and `backend/operations/*.py` for the column name. These files hold SQL text and ORM code outside the normal import graph.
+2. Search `reset/models.py`, `backend/tests/fullstack_runner.py` and `backend/operations/*.py` for the column name. These files hold SQL text and ORM code outside the normal import graph.
 
 ## 4. Slices
 
@@ -304,7 +304,7 @@ The invitation settings move in this sub-slice, not in slice 6, because `access_
 6. Move the invitation settings to `PATCH /api/workspace`.
 7. The identity response returns `role` and `access` (default D4).
 8. Replace `user_departments` consumers: `boards/announcement_inbox.py:92-96`, `boards/announcement_service.py:280-287` and `boards/event_router.py:106-113` use a new `department_reader_ids(db, department_id)` built on `group_access`. Slice 5 removes these audiences completely. The lifecycle files `sandbox/lifecycle/batch_dependencies.py:469`, `execution.py:12,50` and `membership_dependencies.py` plan and purge `group_access` rows that reference the department or module. Remove the `DEFAULT_DEPARTMENT_REFERENCE` close blocker in `sandbox/lifecycle/planning.py:99-120`.
-9. Update `operations/reset_models.py` (`_PROFILE_STATEMENT`, `_ROLES_STATEMENT`, `_ACCESS_POLICY_*_STATEMENT`, `_EFFECTIVE_ADMIN_PROFILES_STATEMENT`, `_PROFILE_DELETE_COUNTS_STATEMENT`, the table constants), `operations/reset_planning.py:42-43,68-69,263-304`, and `backend/tests/fullstack_runner.py:147-157` (`User(role=...)`) in this pull request. The coverage gate fails without the runner change.
+9. Update `operations/reset/models.py` (`_PROFILE_STATEMENT`, `_ROLES_STATEMENT`, `_ACCESS_POLICY_*_STATEMENT`, `_EFFECTIVE_ADMIN_PROFILES_STATEMENT`, `_PROFILE_DELETE_COUNTS_STATEMENT`, the table constants), `operations/reset/planning.py:42-43,68-69,263-304`, and `backend/tests/fullstack_runner.py:147-157` (`User(role=...)`) in this pull request. The coverage gate fails without the runner change.
 10. SSE: remove `roles` from `_ADMINISTRATOR_ENTITIES`; put `groups`, `group_members` and `group_access` in `_ENTITY_ONLY_ENTITIES`.
 11. Update root `AGENTS.md`: the sentence "Authorization uses ten flat read/write capabilities; …" describes the old model.
 12. Remove the role branches of the audience and grant code, because `user.role_id` no longer exists: `boards/access.py:116,138` (role grants), `boards/announcement_service.py:278-363`, `boards/event_router.py:104-148,233-271`, `boards/widget_router.py:83-111`, `boards/grant_router.py` (`/grant-roles`), `openview/views/access.py`, `openview/reports/audience.py`, `openview/reports/audience_router.py` (`/audience-roles`), `openview/views/catalog.py` (`/audience-options?kind=role`). The user, everyone and department audiences stay until slices 4 and 5.
@@ -399,7 +399,7 @@ DROP TABLE dashboard_defaults, saved_view_defaults, openview_chart_preferences;
 3. Reports: remove `GET /api/reports/audience-roles` and `/audience-users` (`reports/audience_router.py`) and `_owner_clause` (`reports/router.py:97-109`). Reading needs module `read`; changes and schedules need `manage`. Replace `_eligible_owner` (`platform/scheduling/service.py:55-75`) with a workspace actor; `execution.py:88-96` and `run_service.py:128-139` capture without a user. The run audit label is "Scheduled report: <name>" for scheduled runs; on-demand runs keep the requesting user. `capture_run_eligible_users` stores all module readers at run time.
 4. Charts: remove `openview/charts/router.py` and `models.py`, and `GET` and `PUT /api/charts/preferences`.
 5. SSE: remove `saved_view_defaults` from the sets; keep `saved_views` as entity only, now filtered by module (default D10).
-6. `reset_models.py`: remove the three dropped tables.
+6. `reset/models.py`: remove the three dropped tables.
 
 **Frontend.** Remove `adapters/chart-preferences-api.ts`, `components/report-audience-selector.tsx` and `components/audience-confirmation.tsx`. Change `adapters/dashboards-api.ts` (owner, default calls at lines 929 and 938), `adapters/views-api.ts` (audience options, defaults, `isDefault`), `components/report-recipe-editor.tsx`, `report-draft.ts`, `report-schedule-controls.tsx`, `adapters/report-schedule-api.ts`, and the four `server-backed-*` workspaces. Temporary filters stay in the URL. Hide create and edit controls from users without `manage`.
 
@@ -463,7 +463,7 @@ DROP TABLE dashboard_defaults, saved_view_defaults, openview_chart_preferences;
 9. Portability: drop `default_section` and widget audience from the bundle (`portability.py:257`, `portability_router.py:271,289-314`).
 10. `lifecycle_router.py:71-83`: remove the dropped child models; add `BoardGroup`.
 11. SSE: rename the entries in `_PRIVATE_INVALIDATION_ENTITIES`; remove `board_grants`, `board_record_placements`, `board_favorites`, `board_homes`, `board_templates` and `board_announcement_personal_states`; add `board_groups`.
-12. `reset_models.py`: renames and drops.
+12. `reset/models.py`: renames and drops.
 13. Update `AGENTS.md`: Boards is built, not reserved.
 
 **Frontend.** Remove `board-grants-api.ts`, `server-backed-board-grants.tsx`, `use-server-board-grants.ts`, `board-content-audience-api.ts`, `board-content-audience-picker.tsx`, `board-templates-api.ts`, `server-backed-board-templates.tsx`, `use-server-board-templates.ts`, `board-placements-api.ts` and `server-backed-board-placements.tsx`. Rebuild access preview for `board_groups`. Change the board management model (scope, groups), the post and event editors (no audience), the widgets (no audience), the reminders UI (author sets timings on the event), the delete confirmation copy, portability, and the rename to posts. Add an "Edited" link that opens the revision history.
@@ -555,7 +555,7 @@ Keep the existing record-trigger suspension columns and run-state value in this 
 
 ## 5. Per-table matrix
 
-"SSE" names the change in `platform/events/models.py`. "Reset" means the four constants in `operations/reset_models.py`. "Fn" means database functions.
+"SSE" names the change in `platform/events/models.py`. "Reset" means the four constants in `operations/reset/models.py`. "Fn" means database functions.
 
 | Table (current) | Target | Slice | Migration | Fn / grants | SSE | Reset | Main tests | Frontend consumer |
 |---|---|---|---|---|---|---|---|---|

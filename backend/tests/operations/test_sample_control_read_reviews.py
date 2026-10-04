@@ -12,16 +12,16 @@ from uuid import NAMESPACE_URL, uuid5
 import httpx
 import pytest
 
-from operations.sample_boards import project_board_logical_id
-from operations.sample_client import SampleClient
-from operations.sample_control_boards import _board_manager_and_record
-from operations.sample_control_openview_queries import select_openview_target
-from operations.sample_control_read_reviews import execute_read_review, plan_read_reviews
-from operations.sample_packs.phase_types import PhaseAction
-from operations.sample_packs.registry import get_pack
-from operations.sample_people import SampleActorCredential
-from operations.sample_phase_actions import PhaseExecutionContext, SamplePhaseActionError
-from operations.sample_scenario import build_dataset
+from operations.sample.client import SampleClient
+from operations.sample.controls.boards import _board_manager_and_record
+from operations.sample.controls.openview_queries import select_openview_target
+from operations.sample.controls.read_reviews import execute_read_review, plan_read_reviews
+from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.packs.registry import get_pack
+from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
+from operations.sample.population.boards import project_board_logical_id
+from operations.sample.population.people import SampleActorCredential
+from operations.sample.scenario import build_dataset
 
 
 def _id(key: str) -> str:
@@ -253,7 +253,7 @@ def test_board_review_stops_when_access_or_selected_revision_is_invalid(
 
 
 def _manage_run(tmp_path, pack_key, problem=None):
-    from operations.sample_control_actions import plan_controls
+    from operations.sample.controls.actions import plan_controls
 
     dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
     actions = [a for a in plan_controls(dataset) if a.kind == "manage_controls"]
@@ -455,8 +455,8 @@ def _manage_run(tmp_path, pack_key, problem=None):
 def test_manage_controls_persist_safe_policy_and_reauthenticate_every_revoked_actor(
     tmp_path, pack_key
 ):
-    from operations.sample_control_actions import execute_control_action
-    from operations.sample_control_request_verification import verify_request_evidence
+    from operations.sample.controls.actions import execute_control_action
+    from operations.sample.controls.request_verification import verify_request_evidence
 
     dataset, actions, context, state = _manage_run(tmp_path, pack_key)
     baseline = dict(state["policy"])

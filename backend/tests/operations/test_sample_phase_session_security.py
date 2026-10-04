@@ -11,11 +11,11 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from operations.sample_client import SampleClient
-from operations.sample_phase_actions import PhaseExecutionContext, execute_phase_action
-from operations.sample_phase_verification import verify_phases
-from operations.sample_phases import phase_action_to_manifest, plan_phases
-from operations.sample_scenario import build_dataset
+from operations.sample.client import SampleClient
+from operations.sample.phases.actions import PhaseExecutionContext, execute_phase_action
+from operations.sample.phases.plan import phase_action_to_manifest, plan_phases
+from operations.sample.phases.verification import verify_phases
+from operations.sample.scenario import build_dataset
 from tests.operations.sample_phase_verification_helpers import (
     _list_payload,
     _server_revocation_event,

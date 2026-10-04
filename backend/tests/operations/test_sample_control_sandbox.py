@@ -6,15 +6,15 @@ from pathlib import Path
 import httpx
 import pytest
 
-from operations.sample_blueprint import SampleDataset
-from operations.sample_client import SampleClient
-from operations.sample_control_sandbox import (
+from operations.sample.blueprint import SampleDataset
+from operations.sample.client import SampleClient
+from operations.sample.controls.sandbox import (
     plan_sandbox_controls,
     verify_sandbox_controls,
 )
-from operations.sample_packs import get_pack
-from operations.sample_phase_actions import PhaseExecutionContext, SamplePhaseActionError
-from operations.sample_scenario import build_dataset
+from operations.sample.packs import get_pack
+from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
+from operations.sample.scenario import build_dataset
 
 ADMIN_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
 TEMP_VERSION_ID = "fc550514-f60a-4e3b-b483-880eed498014"
@@ -139,8 +139,8 @@ def test_sandbox_verifier_reports_malformed_recorded_plan(tmp_path: Path) -> Non
 def test_sandbox_page_readers_refuse_incomplete_serialized_pages(
     tmp_path: Path, has_more: bool, total: int
 ) -> None:
-    from operations.sample_control_sandbox import _version_list
-    from operations.sample_control_sandbox_verification import _read_final_page
+    from operations.sample.controls.sandbox import _version_list
+    from operations.sample.controls.sandbox_verification import _read_final_page
 
     def handler(request: httpx.Request) -> httpx.Response:
         login = _login_response(request)

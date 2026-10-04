@@ -5,13 +5,13 @@ from datetime import date
 
 import pytest
 
-from operations import sample_phase_population as workflow
-from operations.sample_packs.phase_types import PhaseAction
-from operations.sample_packs.registry import get_pack
-from operations.sample_phase_actions import SamplePhaseActionError
-from operations.sample_phases import phase_action_to_manifest, plan_phases
-from operations.sample_scenario import build_dataset
-from operations.sample_verification import failure_report
+from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.packs.registry import get_pack
+from operations.sample.phases import population as workflow
+from operations.sample.phases.actions import SamplePhaseActionError
+from operations.sample.phases.plan import phase_action_to_manifest, plan_phases
+from operations.sample.scenario import build_dataset
+from operations.sample.verification.core import failure_report
 from operations.seed_sample_data import build_plan_summary
 
 

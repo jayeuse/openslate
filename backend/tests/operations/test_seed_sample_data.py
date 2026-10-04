@@ -9,16 +9,16 @@ import pytest
 from app.core.config.disposable_instance import PROVIDER_IMAGES
 from app.core.config.instance import InstanceTarget
 from operations import seed_sample_data as seed_operator
-from operations.sample_client import SampleClient
-from operations.sample_population_workflow import (
+from operations.sample.client import SampleClient
+from operations.sample.population.workflow import (
     SamplePopulationError as SampleWorkflowError,
 )
-from operations.sample_population_workflow import (
+from operations.sample.population.workflow import (
     build_record_payload,
     relationship_write,
 )
-from operations.sample_scenario import build_dataset
-from operations.sample_verification import (
+from operations.sample.scenario import build_dataset
+from operations.sample.verification.core import (
     SampleVerificationError,
     assert_pristine_baseline,
     assert_pristine_sandbox,
@@ -228,7 +228,7 @@ def test_audit_verification_requires_entity_actor_and_real_request_context() -> 
 
 
 def test_record_payload_maps_published_fields_and_resolves_actor_values() -> None:
-    from operations.sample_blueprint import SampleRecord
+    from operations.sample.blueprint import SampleRecord
 
     record = SampleRecord(
         "invoices:000001",
@@ -268,7 +268,7 @@ def test_record_payload_maps_published_fields_and_resolves_actor_values() -> Non
 
 
 def test_record_payload_refuses_unmapped_fields_or_missing_actors() -> None:
-    from operations.sample_blueprint import SampleRecord
+    from operations.sample.blueprint import SampleRecord
 
     record = SampleRecord(
         "invoices:000001",

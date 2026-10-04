@@ -7,7 +7,7 @@ import pytest
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.validation import validate_document
-from operations.sample_scenario import build_dataset, build_document, module_counts
+from operations.sample.scenario import build_dataset, build_document, module_counts
 
 
 def _module(dataset, key: str) -> dict[str, object]:
@@ -412,7 +412,7 @@ def test_purchase_and_sales_document_statuses_match_their_linked_activity(profil
 
 
 def test_legacy_standard_counts_keep_the_high_index_cancellation_case() -> None:
-    from operations.sample_packs import default_pack
+    from operations.sample.packs import default_pack
 
     pack = default_pack()
     legacy_counts = pack.catalog.legacy_counts_by_profile

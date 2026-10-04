@@ -22,16 +22,16 @@ from app.systems.sandbox.records.router import _apply_creation_defaults
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
 from app.systems.sandbox.relationships.locking import validate_relationship_modules
 from app.systems.sandbox.relationships.schemas import RelationshipCreate
-from operations.sample_activity import build_record_payload, create_data
-from operations.sample_blueprint import SampleDataset, _option_id
-from operations.sample_board_entries import event_payload
-from operations.sample_board_steps import BoardMeta
-from operations.sample_board_text import post_text
-from operations.sample_boards import project_board_logical_id
-from operations.sample_catalog import module_counts
-from operations.sample_client import _SAFE_MAPPING_VALUE
-from operations.sample_history import plan_history
-from operations.sample_packs.interface import OrganizationPack
+from operations.sample.blueprint import SampleDataset, _option_id
+from operations.sample.board_text import post_text
+from operations.sample.catalog import module_counts
+from operations.sample.client import _SAFE_MAPPING_VALUE
+from operations.sample.history import plan_history
+from operations.sample.packs.interface import OrganizationPack
+from operations.sample.population.activity import build_record_payload, create_data
+from operations.sample.population.board_entries import event_payload
+from operations.sample.population.board_steps import BoardMeta
+from operations.sample.population.boards import project_board_logical_id
 from operations.seed_sample_data import build_plan_summary
 from tests.operations.sample_pack_chain_preflight import (
     validate_phase_plan_consistency,
@@ -354,9 +354,9 @@ def _validate_journal_ids(
 
 
 def _validate_access_and_totals(dataset: SampleDataset) -> None:
-    from operations.sample_actors import planned_access_level
-    from operations.sample_episodes import plan_sessions, record_parents
-    from operations.sample_history import plan_history
+    from operations.sample.actors import planned_access_level
+    from operations.sample.episodes import plan_sessions, record_parents
+    from operations.sample.history import plan_history
 
     pack = dataset.organization
     modules = {module.key: module for module in pack.catalog.modules}

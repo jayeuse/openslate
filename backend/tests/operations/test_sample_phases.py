@@ -10,16 +10,16 @@ import pytest
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.validation import validate_document
-from operations.sample_actors import planned_access_level
-from operations.sample_packs import get_pack
-from operations.sample_packs.phase_types import PhaseAction
-from operations.sample_phases import (
+from operations.sample.actors import planned_access_level
+from operations.sample.packs import get_pack
+from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.phases.plan import (
     phase_action_to_manifest,
     phase_expected_projection,
     phase_version_documents,
     plan_phases,
 )
-from operations.sample_scenario import build_dataset
+from operations.sample.scenario import build_dataset
 
 
 @pytest.mark.parametrize("pack_key", ("harbor", "school"))

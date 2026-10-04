@@ -7,11 +7,11 @@ import pytest
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.service import canonical_document
-from operations.sample_client import SampleClient
-from operations.sample_configuration_verification import verify_configuration
-from operations.sample_phases import phase_version_documents, plan_phases
-from operations.sample_run_verification import _people_issues, read_run_manifest
-from operations.sample_verification import SampleVerificationError
+from operations.sample.client import SampleClient
+from operations.sample.phases.plan import phase_version_documents, plan_phases
+from operations.sample.verification.configuration import verify_configuration
+from operations.sample.verification.core import SampleVerificationError
+from operations.sample.verification.run import _people_issues, read_run_manifest
 from tests.operations.test_sample_run_verification import _configuration_fixture, _id, _manifest
 
 

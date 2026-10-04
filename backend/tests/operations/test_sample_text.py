@@ -11,10 +11,10 @@ from functools import cache
 
 import pytest
 
-from operations.sample_packs.registry import get_pack
-from operations.sample_packs.types import SampleProfile
-from operations.sample_scenario import SampleDataset, build_dataset
-from operations.sample_vocabulary import TRADE_PHRASES
+from operations.sample.packs.registry import get_pack
+from operations.sample.packs.types import SampleProfile
+from operations.sample.scenario import SampleDataset, build_dataset
+from operations.sample.vocabulary import TRADE_PHRASES
 
 ANCHOR = date(2026, 9, 30)
 MARKERS = re.compile(
@@ -123,7 +123,7 @@ def _strings(value: object) -> Iterator[str]:
 def test_every_control_plan_string_uses_natural_organization_content(
     pack_key: str, profile: SampleProfile
 ) -> None:
-    from operations.sample_control_actions import plan_controls
+    from operations.sample.controls.actions import plan_controls
 
     dataset = build_dataset(profile, seed=42, anchor_date=ANCHOR, organization=get_pack(pack_key))
     texts = list(_strings([asdict(action) for action in plan_controls(dataset)]))
@@ -318,7 +318,7 @@ def test_related_dates_follow_business_order(module_key: str, earlier: str, late
 def _content_texts() -> list[str]:
     from decimal import Decimal
 
-    from operations.sample_packs.harbor import content_text as harbor_content_text
+    from operations.sample.packs.harbor import content_text as harbor_content_text
 
     dataset = _dataset("small")
     organization = dataset.organization

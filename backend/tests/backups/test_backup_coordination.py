@@ -16,7 +16,7 @@ from app.systems.manage.backups import service
 from app.systems.manage.backups.models import BackupPolicy, BackupRun
 from app.systems.manage.backups.schemas import InspectCommand
 from operations.backup_state import coordinated_session, execute
-from operations.reset_models import _RESET_ADVISORY_LOCK_KEY
+from operations.reset.models import _RESET_ADVISORY_LOCK_KEY
 from tests.conftest import guarded_create_engine
 from tests.rbac.support import _client, add_user
 

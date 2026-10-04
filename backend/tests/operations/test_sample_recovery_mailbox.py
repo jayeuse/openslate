@@ -3,8 +3,8 @@
 import httpx
 import pytest
 
-from operations import sample_invitations
-from operations.sample_invitations import InvitationMailbox, SampleInvitationError
+from operations.sample.population import invitations as sample_invitations
+from operations.sample.population.invitations import InvitationMailbox, SampleInvitationError
 
 ORIGIN = "http://127.0.0.1:3000"
 RECIPIENT = "person@example.test"

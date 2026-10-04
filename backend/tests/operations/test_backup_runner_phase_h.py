@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from operations.backup_runner_host import Host
+from operations.backups.host import Host
 from tests.operations.backup_runner_fixtures import NOW, SyntheticCommands, execute, runner_config
 from tests.operations.test_backup_runner_retention import candidate
 

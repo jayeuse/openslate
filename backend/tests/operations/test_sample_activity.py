@@ -8,10 +8,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from operations import sample_activity
-from operations.sample_activity import _link, _RuleWaits
-from operations.sample_client import SampleClient, SampleWriteOutcomeUnknown
-from operations.sample_population import SamplePopulationError
+from operations.sample.client import SampleClient, SampleWriteOutcomeUnknown
+from operations.sample.population import activity as sample_activity
+from operations.sample.population.activity import _link, _RuleWaits
+from operations.sample.population.run import SamplePopulationError
 
 ORIGIN = "https://workspace.example.test"
 FIELD = {"id": "00000000-0000-4000-8000-00000000f001", "relationship_multiple_targets": True}
@@ -131,9 +131,9 @@ def test_repeated_automation_timeouts_stop_the_run(
 def test_records_created_early_in_their_life_cycle_wait_for_create_automations() -> None:
     from datetime import date
 
-    from operations.sample_activity import create_data, rule_candidates
-    from operations.sample_history import plan_history, status_label
-    from operations.sample_scenario import build_dataset
+    from operations.sample.history import plan_history, status_label
+    from operations.sample.population.activity import create_data, rule_candidates
+    from operations.sample.scenario import build_dataset
 
     dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 30))
     histories = plan_history(dataset)
@@ -158,7 +158,7 @@ def test_records_created_early_in_their_life_cycle_wait_for_create_automations()
 def test_a_history_step_updates_the_whole_record_or_skips_when_already_done(
     tmp_path: Path, already_there: bool
 ) -> None:
-    from operations.sample_activity import _apply_step
+    from operations.sample.population.activity import _apply_step
 
     record_id = "00000000-0000-4000-8000-00000000c001"
     current = {
@@ -191,7 +191,7 @@ def test_a_history_step_updates_the_whole_record_or_skips_when_already_done(
 
 
 def test_a_history_step_that_is_fully_done_writes_nothing(tmp_path: Path) -> None:
-    from operations.sample_activity import _apply_step
+    from operations.sample.population.activity import _apply_step
 
     record_id = "00000000-0000-4000-8000-00000000c002"
 

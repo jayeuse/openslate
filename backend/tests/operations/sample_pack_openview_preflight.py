@@ -32,10 +32,12 @@ from app.systems.sandbox.publications.schemas import (
     PublicationPreviewRequest,
     PublicationRequest,
 )
-from operations.sample_blueprint import SampleDataset
-from operations.sample_board_text import dashboard_name, report_names, view_name
-from operations.sample_client import _SAFE_MAPPING_VALUE
-from operations.sample_openview import (
+from operations.sample.blueprint import SampleDataset
+from operations.sample.board_text import dashboard_name, report_names, view_name
+from operations.sample.client import _SAFE_MAPPING_VALUE
+from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.phases.plan import phase_version_documents as phase_version_documents
+from operations.sample.population.openview import (
     _dashboard_widgets,
     _definition,
     _kind,
@@ -43,8 +45,6 @@ from operations.sample_openview import (
     _source_plans,
     _view_presentation,
 )
-from operations.sample_packs.phase_types import PhaseAction
-from operations.sample_phases import phase_version_documents as phase_version_documents
 
 
 def _api_structures(

@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from operations.sample_board_entries import validate_board_scenarios
-from operations.sample_content import SampleContentError
-from operations.sample_packs.registry import get_pack
+from operations.sample.packs.registry import get_pack
+from operations.sample.population.board_entries import validate_board_scenarios
+from operations.sample.population.content import SampleContentError
 
 ASSESSMENT_ID = "00000000-0000-4000-8000-000000000101"
 PAYMENT_ID = "00000000-0000-4000-8000-000000000102"

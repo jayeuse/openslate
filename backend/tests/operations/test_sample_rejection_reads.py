@@ -5,10 +5,10 @@ from datetime import date
 import httpx
 import pytest
 
-from operations.sample_client import SampleClient
-from operations.sample_packs.types import RejectionCase
-from operations.sample_rejections import RejectionContext, run_rejection
-from operations.sample_scenario import build_dataset
+from operations.sample.client import SampleClient
+from operations.sample.packs.types import RejectionCase
+from operations.sample.scenario import build_dataset
+from operations.sample.verification.rejections import RejectionContext, run_rejection
 from tests.operations.test_sample_packs import _TINY_PACK
 
 
@@ -65,7 +65,7 @@ def test_school_hidden_read_expectation_matches_the_real_record_endpoint(key, mo
     from fastapi import HTTPException
 
     from app.systems.sandbox.records import router
-    from operations.sample_packs import get_pack
+    from operations.sample.packs import get_pack
 
     # The required offline boundary supplies an existing row and no readable grant.
     # Exercise the actual route error path, rather than inventing a response body.

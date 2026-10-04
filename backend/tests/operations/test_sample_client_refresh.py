@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from operations.sample_client import SampleAuthenticationError, SampleClient
+from operations.sample.client import SampleAuthenticationError, SampleClient
 
 ORIGIN = "https://workspace.example.test"
 BASE_URL = "https://api.example.test"

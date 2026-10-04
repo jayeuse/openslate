@@ -10,13 +10,13 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from operations.sample_client import SampleClient
-from operations.sample_control_actions import execute_control_action
-from operations.sample_packs.phase_types import PhaseAction
-from operations.sample_packs.registry import get_pack
-from operations.sample_phase_actions import PhaseExecutionContext, SamplePhaseActionError
-from operations.sample_route_coverage import read_route_evidence
-from operations.sample_scenario import build_dataset
+from operations.sample.client import SampleClient
+from operations.sample.controls.actions import execute_control_action
+from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.packs.registry import get_pack
+from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
+from operations.sample.scenario import build_dataset
+from operations.sample.verification.route_coverage import read_route_evidence
 
 HEADERS = ["Date", "User", "Entity", "Action", "Target", "Before", "After"]
 

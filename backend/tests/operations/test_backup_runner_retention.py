@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from operations.backup_runner_host import RunnerError, digest
+from operations.backups.host import RunnerError, digest
 from tests.operations.backup_runner_fixtures import (
     MANIFEST,
     NOW,

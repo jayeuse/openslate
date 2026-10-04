@@ -6,12 +6,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-from operations.sample_blueprint import SampleDataset
-from operations.sample_packs.phase_types import PhaseAction
-from operations.sample_packs.registry import get_pack
-from operations.sample_phase_verification import verify_phases
-from operations.sample_phases import phase_action_to_manifest
-from operations.sample_scenario import build_dataset
+from operations.sample.blueprint import SampleDataset
+from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.packs.registry import get_pack
+from operations.sample.phases.plan import phase_action_to_manifest
+from operations.sample.phases.verification import verify_phases
+from operations.sample.scenario import build_dataset
 from tests.operations.sample_phase_verification_helpers import (
     ADMIN_ID,
     MEMBER_ID,

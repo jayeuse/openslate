@@ -8,15 +8,15 @@ from uuid import uuid4
 import httpx
 import pytest
 
-import operations.sample_control_reads as control_reads
-from operations.sample_client import SampleClient
-from operations.sample_control_account import plan_account_controls
-from operations.sample_control_reads import CONTROL_ROUTES, plan_read_controls
-from operations.sample_episodes import plan_sessions
-from operations.sample_packs.registry import get_pack
-from operations.sample_phase_actions import PhaseExecutionContext, SamplePhaseActionError
-from operations.sample_phases import plan_phases
-from operations.sample_scenario import build_dataset
+import operations.sample.controls.reads as control_reads
+from operations.sample.client import SampleClient
+from operations.sample.controls.account import plan_account_controls
+from operations.sample.controls.reads import CONTROL_ROUTES, plan_read_controls
+from operations.sample.episodes import plan_sessions
+from operations.sample.packs.registry import get_pack
+from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
+from operations.sample.phases.plan import plan_phases
+from operations.sample.scenario import build_dataset
 
 ADMIN_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
 TARGET_ID = "e40862a7-fbb7-4e71-a590-90e11f4e893d"
@@ -292,13 +292,13 @@ def test_bulk_session_control_fails_when_post_readback_is_not_empty(tmp_path: Pa
     ),
 )
 def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, problem):
-    from operations.sample_client import SampleClientError
-    from operations.sample_control_actions import execute_control_action
+    from operations.sample.client import SampleClientError
+    from operations.sample.controls.actions import execute_control_action
     from tests.operations.test_sample_control_read_reviews import _manage_run
 
     dataset, actions, context, state = _manage_run(tmp_path, "harbor", problem)
     if problem == "credential_identity":
-        from operations.sample_people import SampleActorCredential
+        from operations.sample.population.people import SampleActorCredential
 
         credentials = context.private_values["credentials"]
         key, other = list(credentials)[:2]

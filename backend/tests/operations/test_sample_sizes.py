@@ -1,5 +1,5 @@
-from operations.sample_catalog import module_counts
-from operations.sample_packs import default_pack
+from operations.sample.catalog import module_counts
+from operations.sample.packs import default_pack
 
 
 def _ceil_divide(value: int, divisor: int) -> int:

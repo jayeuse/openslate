@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from operations.sample_boards import project_board_logical_id
-from operations.sample_client import _SAFE_MAPPING_VALUE
-from operations.sample_packs.registry import get_pack
+from operations.sample.client import _SAFE_MAPPING_VALUE
+from operations.sample.packs.registry import get_pack
+from operations.sample.population.boards import project_board_logical_id
 
 PACKS = ("harbor", "school")
 

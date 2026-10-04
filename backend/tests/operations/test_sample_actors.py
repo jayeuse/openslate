@@ -6,9 +6,9 @@ from collections import Counter
 from datetime import date
 from itertools import groupby
 
-from operations.sample_catalog import _MODULES
-from operations.sample_people import _GROUP_ACCESS, _people
-from operations.sample_scenario import build_dataset
+from operations.sample.catalog import _MODULES
+from operations.sample.population.people import _GROUP_ACCESS, _people
+from operations.sample.scenario import build_dataset
 
 _LEVELS = {"read": 1, "write": 2, "manage": 3}
 
@@ -92,7 +92,7 @@ def test_internal_audit_group_gives_two_sales_members_read_only_finance_access()
 
 
 def test_audit_rows_must_name_the_planned_person() -> None:
-    from operations.sample_verification import expected_edge_actor, expected_record_actor
+    from operations.sample.verification.core import expected_edge_actor, expected_record_actor
 
     dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 30))
     record = dataset.records[0]

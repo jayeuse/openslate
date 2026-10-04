@@ -8,9 +8,9 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from operations.sample_client import SampleClient, SampleWriteOutcomeUnknown
-from operations.sample_packs.phase_types import PhaseAction
-from operations.sample_phase_actions import (
+from operations.sample.client import SampleClient, SampleWriteOutcomeUnknown
+from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.phases.actions import (
     PhaseExecutionContext,
     SamplePhaseActionError,
     execute_phase_action,

@@ -10,10 +10,10 @@ from typing import Any
 import httpx
 import pytest
 
-from operations.sample_board_entries import create_board_event, create_board_post
-from operations.sample_boards import replace_project_board_groups
-from operations.sample_client import SampleClient
-from operations.sample_content import (
+from operations.sample.client import SampleClient
+from operations.sample.population.board_entries import create_board_event, create_board_post
+from operations.sample.population.boards import replace_project_board_groups
+from operations.sample.population.content import (
     SampleContentError,
     assert_empty_content,
     verify_content,
@@ -239,7 +239,8 @@ def test_board_post_and_event_use_current_revision_and_ui_payloads(tmp_path: Pat
 def test_content_verify_combines_partial_failures_and_requires_saved_report_outputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from operations import sample_boards, sample_openview
+    from operations.sample.population import boards as sample_boards
+    from operations.sample.population import openview as sample_openview
 
     monkeypatch.setattr(
         sample_boards,

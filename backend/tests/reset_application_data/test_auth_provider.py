@@ -5,8 +5,8 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 
-from operations.reset_auth import ResetAuth
-from operations.reset_models import ResetError
+from operations.reset.auth import ResetAuth
+from operations.reset.models import ResetError
 
 
 def test_reset_auth_deletes_only_confirmed_provider_subjects() -> None:

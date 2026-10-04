@@ -24,11 +24,11 @@ from app.systems.sandbox.publications.rules import (
     operational_config,
 )
 from app.systems.sandbox.records.router import _apply_creation_defaults
-from operations.sample_blueprint import _option_id
-from operations.sample_episodes import plan_sessions, record_parents
-from operations.sample_history import plan_history
-from operations.sample_packs.registry import get_pack, pack_keys
-from operations.sample_scenario import build_dataset
+from operations.sample.blueprint import _option_id
+from operations.sample.episodes import plan_sessions, record_parents
+from operations.sample.history import plan_history
+from operations.sample.packs.registry import get_pack, pack_keys
+from operations.sample.scenario import build_dataset
 from operations.seed_sample_data import build_plan_summary
 from tests.operations.test_sample_text import MARKERS, RESERVED_DOMAIN
 from tests.operations.test_school_access import _LEVEL_RANK, _module_level

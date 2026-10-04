@@ -37,7 +37,7 @@ class PlatformWire:
         self.lifecycle.document, self.lifecycle.revision = copy.deepcopy(dataset.document), 12
 
     def bind(self, context):
-        from operations.sample_control_platform import plan_platform_controls
+        from operations.sample.controls.platform import plan_platform_controls
 
         facts = plan_platform_controls(self.dataset)[0].values
         context.runtime_mappings.update(

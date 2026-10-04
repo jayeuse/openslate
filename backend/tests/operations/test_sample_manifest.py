@@ -11,11 +11,11 @@ from typing import Any
 import httpx
 import pytest
 
-from operations.sample_catalog import module_counts
-from operations.sample_packs.harbor import PACK
-from operations.sample_population import populate_sample_data
-from operations.sample_run_verification import SampleVerificationReport, verify_sample_data
-from operations.sample_verification import SampleVerificationError
+from operations.sample.catalog import module_counts
+from operations.sample.packs.harbor import PACK
+from operations.sample.population.run import populate_sample_data
+from operations.sample.verification.core import SampleVerificationError
+from operations.sample.verification.run import SampleVerificationReport, verify_sample_data
 from tests.operations.test_sample_run_verification import _manifest
 
 
@@ -50,8 +50,8 @@ def _verify(directory: Path) -> SampleVerificationReport:
 def test_population_writes_v2_metadata_and_keeps_all_existing_keys(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from operations import sample_population_workflow as workflow
-    from operations import sample_run_verification as verifier
+    from operations.sample.population import workflow
+    from operations.sample.verification import run as verifier
 
     # Exercise the private manifest lifecycle; all population and API work is replaced.
     monkeypatch.setattr(workflow, "run_population", lambda **_kwargs: {})
@@ -110,7 +110,7 @@ def test_population_writes_v2_metadata_and_keeps_all_existing_keys(
 def test_verification_rebuilds_the_recorded_run_for_both_manifest_versions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: int, expected_total: int
 ) -> None:
-    from operations import sample_run_verification as verifier
+    from operations.sample.verification import run as verifier
 
     directory = tmp_path / ("a" * 32)
     _manifest(directory, profile="standard", **(_v2() if version == 2 else {}))
@@ -167,7 +167,7 @@ def test_verification_rebuilds_the_recorded_run_for_both_manifest_versions(
 def test_invalid_v2_module_counts_are_refused_before_network(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: Any
 ) -> None:
-    from operations import sample_run_verification as verifier
+    from operations.sample.verification import run as verifier
 
     counts: Any = _recorded_counts()
     if invalid == "missing":
@@ -191,7 +191,7 @@ def test_invalid_v2_module_counts_are_refused_before_network(
 def test_unsupported_versions_are_refused_before_network(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: Any
 ) -> None:
-    from operations import sample_run_verification as verifier
+    from operations.sample.verification import run as verifier
 
     directory = tmp_path / ("a" * 32)
     _manifest(directory, schema_version=version)
@@ -209,7 +209,7 @@ def test_unsupported_versions_are_refused_before_network(
 def test_incomplete_pack_metadata_is_refused_before_network(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changes: dict[str, Any]
 ) -> None:
-    from operations import sample_run_verification as verifier
+    from operations.sample.verification import run as verifier
 
     directory = tmp_path / ("a" * 32)
     _manifest(directory, **_v2(**changes))

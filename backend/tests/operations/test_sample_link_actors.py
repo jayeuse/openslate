@@ -9,13 +9,13 @@ from uuid import NAMESPACE_URL, uuid5
 import httpx
 import pytest
 
-from operations.sample_activity import run_activity
-from operations.sample_client import SampleClient
-from operations.sample_episodes import plan_sessions
-from operations.sample_packs import get_pack
-from operations.sample_packs.types import RejectionCase
-from operations.sample_scenario import build_dataset
-from operations.sample_verification import verify_records_and_relationships
+from operations.sample.client import SampleClient
+from operations.sample.episodes import plan_sessions
+from operations.sample.packs import get_pack
+from operations.sample.packs.types import RejectionCase
+from operations.sample.population.activity import run_activity
+from operations.sample.scenario import build_dataset
+from operations.sample.verification.core import verify_records_and_relationships
 from operations.seed_sample_data import build_plan_summary
 from tests.operations.test_sample_actor_access import _restricted_pack
 from tests.operations.test_school_access import _LEVEL_RANK, _module_level

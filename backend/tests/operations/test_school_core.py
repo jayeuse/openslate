@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
-from operations.sample_packs import get_pack
-from operations.sample_scenario import build_dataset
+from operations.sample.packs import get_pack
+from operations.sample.scenario import build_dataset
 
 
 def test_school_pack_exposes_the_approved_standard_record_budget() -> None:

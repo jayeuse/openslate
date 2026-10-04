@@ -8,12 +8,12 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from operations import sample_invitations
-from operations.sample_client import SampleClient, SampleWriteOutcomeUnknown
-from operations.sample_packs import get_pack
-from operations.sample_people import SampleActorCredential
-from operations.sample_phase_actions import PhaseExecutionContext, SamplePhaseActionError
-from operations.sample_scenario import build_dataset
+from operations.sample.client import SampleClient, SampleWriteOutcomeUnknown
+from operations.sample.packs import get_pack
+from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
+from operations.sample.population import invitations as sample_invitations
+from operations.sample.population.people import SampleActorCredential
+from operations.sample.scenario import build_dataset
 
 ORIGIN = "http://127.0.0.1:3000"
 PASSWORD = "original-fixture-password"
@@ -26,7 +26,7 @@ ADMIN_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
 def test_account_planning_requires_active_non_admin_pack_person_without_pack_identity_checks(
     pack_key,
 ) -> None:
-    from operations.sample_control_account import plan_account_controls
+    from operations.sample.controls.account import plan_account_controls
 
     dataset = build_dataset(
         "small", seed=42, anchor_date=date(2026, 9, 30), organization=get_pack(pack_key)
@@ -173,7 +173,7 @@ class AccountServer:
 
 
 def _setup(tmp_path, monkeypatch, *, uncertain_password=False):
-    from operations.sample_control_account import plan_account_controls
+    from operations.sample.controls.account import plan_account_controls
 
     dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 30))
     action = plan_account_controls(dataset)[0]
@@ -225,7 +225,7 @@ def test_account_actions_restore_original_password_keep_primary_usable_and_emit_
     tmp_path,
     monkeypatch,
 ) -> None:
-    from operations.sample_control_account import execute_account_control
+    from operations.sample.controls.account import execute_account_control
 
     dataset, action, context, primary, server = _setup(tmp_path, monkeypatch)
     try:
@@ -265,7 +265,7 @@ def test_account_actions_restore_original_password_keep_primary_usable_and_emit_
 def test_uncertain_password_change_stops_without_retry_or_recovery_mutation(
     tmp_path, monkeypatch
 ) -> None:
-    from operations.sample_control_account import execute_account_control
+    from operations.sample.controls.account import execute_account_control
 
     dataset, action, context, primary, server = _setup(
         tmp_path, monkeypatch, uncertain_password=True
@@ -284,7 +284,7 @@ def test_uncertain_password_change_stops_without_retry_or_recovery_mutation(
 
 
 def test_account_action_refuses_an_admin_target_before_transport(tmp_path, monkeypatch) -> None:
-    from operations.sample_control_account import execute_account_control
+    from operations.sample.controls.account import execute_account_control
 
     dataset, action, context, primary, server = _setup(tmp_path, monkeypatch)
     invalid = replace(action, actor_key="admin", target_key="admin")
@@ -298,7 +298,7 @@ def test_account_action_refuses_an_admin_target_before_transport(tmp_path, monke
 
 
 def test_account_verification_cannot_accept_missing_execution_evidence() -> None:
-    from operations.sample_control_account import verify_account_controls
+    from operations.sample.controls.account import verify_account_controls
 
     dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 30))
     counts, issues = verify_account_controls(None, dataset, {}, ADMIN_ID)
@@ -308,7 +308,7 @@ def test_account_verification_cannot_accept_missing_execution_evidence() -> None
 def test_account_verification_rejects_malformed_actor_manifest_without_crashing(
     tmp_path, monkeypatch
 ) -> None:
-    from operations.sample_control_account import execute_account_control, verify_account_controls
+    from operations.sample.controls.account import execute_account_control, verify_account_controls
 
     dataset, action, context, primary, server = _setup(tmp_path, monkeypatch)
     try:

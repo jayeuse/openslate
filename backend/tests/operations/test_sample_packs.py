@@ -12,19 +12,18 @@ from app.systems.sandbox.publications.preflight import (
     structure_name_blockers,
 )
 from app.systems.sandbox.publications.rules import _trigger_blockers
-from operations.sample_blueprint import (
+from operations.sample.blueprint import (
     NamedCalculationCheck,
     NamedFieldCheck,
     NamedRelationshipCheck,
     NamedScenario,
     _option_id,
 )
-from operations.sample_catalog import FieldSpec, ModuleSpec, RelationshipSpec
-from operations.sample_episodes import plan_sessions
-from operations.sample_history import plan_history
-from operations.sample_named_scenarios import named_scenario_issues
-from operations.sample_packs.content_types import ContentSpec
-from operations.sample_packs.interface import (
+from operations.sample.catalog import FieldSpec, ModuleSpec, RelationshipSpec
+from operations.sample.episodes import plan_sessions
+from operations.sample.history import plan_history
+from operations.sample.packs.content_types import ContentSpec
+from operations.sample.packs.interface import (
     OrganizationPack,
     PackActors,
     PackBlueprint,
@@ -38,8 +37,9 @@ from operations.sample_packs.interface import (
     PackRejections,
     PackText,
 )
-from operations.sample_packs.types import OMIT, JsonValue, PersonSpec, RejectionCase
-from operations.sample_scenario import build_dataset
+from operations.sample.packs.types import OMIT, JsonValue, PersonSpec, RejectionCase
+from operations.sample.scenario import build_dataset
+from operations.sample.verification.named_scenarios import named_scenario_issues
 from operations.seed_sample_data import build_plan_summary
 
 
@@ -369,7 +369,7 @@ def test_named_scenario_verifier_uses_pack_fields_links_and_calculations() -> No
 
 
 def test_harbor_pack_preserves_the_existing_workspace_identity() -> None:
-    from operations.sample_packs.harbor import PACK
+    from operations.sample.packs.harbor import PACK
 
     assert (PACK.identity.workspace_name, PACK.identity.locale, PACK.identity.timezone) == (
         "Harbor Operations Group",

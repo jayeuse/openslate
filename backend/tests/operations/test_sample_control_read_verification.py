@@ -7,17 +7,17 @@ from typing import Any
 import httpx
 import pytest
 
-import operations.sample_control_access_verification as access_verification
-import operations.sample_control_account as account_verification
-import operations.sample_control_actions as control_actions
-import operations.sample_control_board_verification as board_verification
-import operations.sample_control_openview_verification as openview_verification
-import operations.sample_control_sandbox_verification as sandbox_verification
-import operations.sample_control_verification as verification
-from operations.sample_client import SampleClient
-from operations.sample_packs.phase_types import PhaseAction
-from operations.sample_phases import phase_action_to_manifest
-from operations.sample_scenario import build_dataset
+import operations.sample.controls.access_verification as access_verification
+import operations.sample.controls.account as account_verification
+import operations.sample.controls.actions as control_actions
+import operations.sample.controls.board_verification as board_verification
+import operations.sample.controls.openview_verification as openview_verification
+import operations.sample.controls.sandbox_verification as sandbox_verification
+import operations.sample.controls.verification as verification
+from operations.sample.client import SampleClient
+from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.phases.plan import phase_action_to_manifest
+from operations.sample.scenario import build_dataset
 
 ADMIN_ID = "55555555-5555-4555-8555-555555555555"
 TARGET_ID = "66666666-6666-4666-8666-666666666666"
@@ -34,7 +34,7 @@ READ_COUNTS = {
 def _case(operation: str, *, target_key: str | None = None):
     dataset = build_dataset("small", seed=83, anchor_date=date(2026, 10, 2))
     if operation == "revoke_user_sessions" and target_key is None:
-        from operations.sample_control_reads import plan_read_controls
+        from operations.sample.controls.reads import plan_read_controls
 
         target_key = next(
             action.target_key
@@ -205,8 +205,8 @@ def test_bulk_session_revocation_requires_confirmed_result_state(
 def test_bulk_session_revocation_rejects_protected_targets(
     tmp_path: Path, monkeypatch, target: str
 ) -> None:
-    from operations.sample_control_account import plan_account_controls
-    from operations.sample_phases import plan_phases
+    from operations.sample.controls.account import plan_account_controls
+    from operations.sample.phases.plan import plan_phases
 
     dataset = build_dataset("small", seed=83, anchor_date=date(2026, 10, 2))
     if target == "account_actor":
@@ -221,7 +221,7 @@ def test_bulk_session_revocation_rejects_protected_targets(
             and people[action.actor_key].status == "active"
         )
     else:
-        from operations.sample_control_reads import plan_read_controls
+        from operations.sample.controls.reads import plan_read_controls
 
         target_key = plan_read_controls(dataset)[0].target_key
     dataset, action, manifest = _case("revoke_user_sessions", target_key=target_key)

@@ -8,7 +8,8 @@ from alembic.script import ScriptDirectory
 
 from app.core.config.instance import InstanceTarget
 from operations import reset_application_data as reset
-from operations import reset_models, reset_planning
+from operations.reset import models as reset_models
+from operations.reset import planning as reset_planning
 
 
 def test_reset_includes_views_boards_dashboards_and_reports_in_safe_delete_order() -> None:
@@ -214,7 +215,7 @@ def test_unresolved_backup_checkpoint_precedes_auth_or_application_deletion(
 ) -> None:
     from unittest.mock import Mock
 
-    from operations import reset_execution as execution
+    from operations.reset import execution
     from tests.reset_application_data.test_execution import _auth, _plan
 
     plan, database, storage = _plan(), Mock(), Mock()
@@ -345,7 +346,7 @@ def _backup_rows():
 
 
 def test_backup_snapshot_allows_only_owned_queue_deletion_and_deleted_user_nulling() -> None:
-    from operations.reset_backups import read_backup_snapshot, validate_backup_preservation
+    from operations.reset.backups import read_backup_snapshot, validate_backup_preservation
 
     admin, _deleted, rows = _backup_rows()
     snapshot = read_backup_snapshot(_backup_database(rows))
@@ -363,7 +364,7 @@ def test_backup_snapshot_allows_only_owned_queue_deletion_and_deleted_user_nulli
     ("result", "future_column", "policy", "version", "timestamp", "foreign", "admin_attribution"),
 )
 def test_backup_preservation_rejects_same_count_metadata_drift(mutation) -> None:
-    from operations.reset_backups import read_backup_snapshot, validate_backup_preservation
+    from operations.reset.backups import read_backup_snapshot, validate_backup_preservation
 
     admin, _deleted, rows = _backup_rows()
     snapshot = read_backup_snapshot(_backup_database(rows))
@@ -391,7 +392,7 @@ def test_backup_preservation_rejects_same_count_metadata_drift(mutation) -> None
 
 @pytest.mark.parametrize("state", ("running", "failed", "interrupted"))
 def test_current_unresolved_backup_refuses_preview_regardless_of_state(state) -> None:
-    from operations.reset_backups import read_backup_snapshot
+    from operations.reset.backups import read_backup_snapshot
 
     _admin, _deleted, rows = _backup_rows()
     rows["backup_runs"][2].update(installation_id="openslate-fixture", state=state)
@@ -401,7 +402,7 @@ def test_current_unresolved_backup_refuses_preview_regardless_of_state(state) ->
 
 @pytest.mark.parametrize("instance", (None, "", "unadmitted identity"))
 def test_backup_snapshot_refuses_missing_or_invalid_connected_identity(instance) -> None:
-    from operations.reset_backups import read_backup_snapshot
+    from operations.reset.backups import read_backup_snapshot
 
     _admin, _deleted, rows = _backup_rows()
     with pytest.raises(reset.ResetError, match="installation identity"):

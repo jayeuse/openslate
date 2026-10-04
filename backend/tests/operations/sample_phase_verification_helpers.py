@@ -23,8 +23,8 @@ from app.systems.access.users.models import User
 from app.systems.manage.audit.listeners import _is_audited
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.audit.schemas import SecurityEventResponse
-from operations.sample_client import SampleClient
-from operations.sample_packs.phase_types import PhaseAction
+from operations.sample.client import SampleClient
+from operations.sample.packs.phase_types import PhaseAction
 
 ADMIN_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
 MEMBER_ID = "9ec0d287-ae14-4603-91c2-f9a4d7b73c0a"

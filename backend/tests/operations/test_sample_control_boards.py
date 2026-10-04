@@ -8,14 +8,14 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from operations.sample_client import SampleClient
-from operations.sample_control_boards import (
+from operations.sample.client import SampleClient
+from operations.sample.controls.boards import (
     CONTROL_ROUTES,
     plan_board_controls,
 )
-from operations.sample_packs.registry import get_pack
-from operations.sample_phase_actions import PhaseExecutionContext
-from operations.sample_scenario import build_dataset
+from operations.sample.packs.registry import get_pack
+from operations.sample.phases.actions import PhaseExecutionContext
+from operations.sample.scenario import build_dataset
 
 ACTOR_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
 BOARD_ID = "a36755cf-e6ed-4da7-bdee-d9154423b3fb"

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from operations.sample_population import (
+from operations.sample.population.run import (
     SamplePopulationError,
     create_private_run_directory,
     read_admin_password,

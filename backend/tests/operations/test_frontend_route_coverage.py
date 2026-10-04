@@ -9,10 +9,10 @@ from uuid import uuid4
 
 import httpx
 
-import operations.sample_route_coverage as coverage
+import operations.sample.verification.route_coverage as coverage
 from app.main import app
-from operations.sample_client import SampleClient
-from operations.sample_journal import append_event
+from operations.sample.client import SampleClient
+from operations.sample.journal import append_event
 
 MANIFEST = Path(__file__).resolve().parents[3] / "frontend" / "api-route-manifest.json"
 
@@ -23,7 +23,7 @@ def _shape(path: str) -> str:
 
 def test_every_frontend_operation_exists_and_has_simulated_run_coverage() -> None:
     assert MANIFEST.is_file(), "The checked-in frontend route manifest is missing"
-    from operations.sample_route_coverage import DEFERRED_ROUTES, SEEDER_ROUTES
+    from operations.sample.verification.route_coverage import DEFERRED_ROUTES, SEEDER_ROUTES
 
     entries = json.loads(MANIFEST.read_text())
     assert isinstance(entries, list) and entries, "The frontend route manifest must be nonempty"

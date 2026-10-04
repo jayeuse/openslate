@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from operations.sample_blueprint import SampleDataset
-from operations.sample_episodes import plan_sessions
-from operations.sample_rejections import (
+from operations.sample.blueprint import SampleDataset
+from operations.sample.episodes import plan_sessions
+from operations.sample.scenario import build_dataset
+from operations.sample.verification.rejections import (
     ACTIVITY_CASES,
     CLOSING_CASES,
     invalid_record_data,
     outcome_matches,
 )
-from operations.sample_scenario import build_dataset
 
 
 @cache
@@ -87,7 +87,7 @@ def test_outcomes_match_on_status_and_detail_not_status_alone() -> None:
 
 
 def test_rejection_evidence_requires_every_case_matched_and_no_audit_trace() -> None:
-    from operations.sample_rejections import check_rejections
+    from operations.sample.verification.rejections import check_rejections
 
     results = [
         {"case": case.key, "outcome": "matched", "request_id": f"req-{index}"}
@@ -116,8 +116,8 @@ def test_stale_post_edit_reads_the_published_post_and_sends_its_previous_revisio
 
     import httpx
 
-    from operations.sample_client import SampleClient
-    from operations.sample_rejections import RejectionContext, run_rejection
+    from operations.sample.client import SampleClient
+    from operations.sample.verification.rejections import RejectionContext, run_rejection
 
     board_id, post_id = "b" * 8, "p" * 8
     sent: list[dict[str, object]] = []

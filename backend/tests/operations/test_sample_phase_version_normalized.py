@@ -7,9 +7,9 @@ import datetime
 import pytest
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
-from operations.sample_packs.registry import get_pack
-from operations.sample_phases import phase_version_documents, plan_phases
-from operations.sample_scenario import build_dataset
+from operations.sample.packs.registry import get_pack
+from operations.sample.phases.plan import phase_version_documents, plan_phases
+from operations.sample.scenario import build_dataset
 
 
 @pytest.mark.parametrize("pack_key", ["harbor", "school"])

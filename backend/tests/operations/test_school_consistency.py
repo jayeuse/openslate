@@ -13,9 +13,9 @@ from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.fields.validation import validate_field_value
 from app.systems.sandbox.publications.rules import _field_type, operational_config
-from operations.sample_board_entries import validate_board_scenarios
-from operations.sample_packs import get_pack
-from operations.sample_scenario import build_dataset
+from operations.sample.packs import get_pack
+from operations.sample.population.board_entries import validate_board_scenarios
+from operations.sample.scenario import build_dataset
 
 
 def test_school_named_fee_records_pass_real_board_amount_validation() -> None:

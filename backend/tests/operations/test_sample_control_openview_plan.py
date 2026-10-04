@@ -7,13 +7,13 @@ from uuid import NAMESPACE_URL, uuid5
 import httpx
 import pytest
 
-from operations.sample_board_text import report_names, view_name
-from operations.sample_client import SampleClient
-from operations.sample_control_openview_queries import select_openview_target
-from operations.sample_control_openview_verification import verify_openview_controls
-from operations.sample_packs.registry import get_pack, pack_keys
-from operations.sample_packs.types import SampleProfile
-from operations.sample_scenario import build_dataset
+from operations.sample.board_text import report_names, view_name
+from operations.sample.client import SampleClient
+from operations.sample.controls.openview_queries import select_openview_target
+from operations.sample.controls.openview_verification import verify_openview_controls
+from operations.sample.packs.registry import get_pack, pack_keys
+from operations.sample.packs.types import SampleProfile
+from operations.sample.scenario import build_dataset
 
 
 @pytest.mark.parametrize("pack_key", pack_keys())
@@ -22,7 +22,7 @@ def test_openview_control_plan_is_pack_derived_and_covers_query_and_edit_control
     pack_key: str,
     profile: SampleProfile,
 ) -> None:
-    from operations.sample_control_openview import plan_openview_controls
+    from operations.sample.controls.openview import plan_openview_controls
 
     dataset = build_dataset(
         profile, seed=42, anchor_date=date(2026, 9, 30), organization=get_pack(pack_key)

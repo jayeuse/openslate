@@ -10,11 +10,11 @@ from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.rules import relationship_metadata
 from app.systems.sandbox.relationships.locking import validate_relationship_modules
-from operations.sample_blueprint import build_document
-from operations.sample_catalog import module_counts
-from operations.sample_links import parent_indices
-from operations.sample_packs.interface import OrganizationPack
-from operations.sample_packs.types import SampleProfile
+from operations.sample.blueprint import build_document
+from operations.sample.catalog import module_counts
+from operations.sample.links import parent_indices
+from operations.sample.packs.interface import OrganizationPack
+from operations.sample.packs.types import SampleProfile
 
 
 def admit_relationship_profile(organization: OrganizationPack, profile: SampleProfile) -> int:

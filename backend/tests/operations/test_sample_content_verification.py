@@ -8,9 +8,9 @@ from typing import Any
 import httpx
 import pytest
 
-from operations.sample_boards import verify_boards
-from operations.sample_client import SampleClient
-from operations.sample_content import verify_content
+from operations.sample.client import SampleClient
+from operations.sample.population.boards import verify_boards
+from operations.sample.population.content import verify_content
 
 BOARD_ID = "00000000-0000-7000-8000-000000000101"
 OPERATIONS_GROUP = "00000000-0000-7000-8000-000000000102"
@@ -52,7 +52,8 @@ EXPECTED_CONTENT = {
 def test_content_readback_rejects_each_missing_required_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_key: str
 ) -> None:
-    from operations import sample_boards, sample_openview
+    from operations.sample.population import boards as sample_boards
+    from operations.sample.population import openview as sample_openview
 
     observed = {**EXPECTED_CONTENT, "report_outputs": 12, "read_failures": 0}
     observed[missing_key] -= 1

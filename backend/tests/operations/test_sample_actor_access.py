@@ -5,11 +5,11 @@ from datetime import date
 
 import pytest
 
-from operations.sample_actors import assignee_key, creator_keys
-from operations.sample_episodes import plan_sessions
-from operations.sample_history import plan_history
-from operations.sample_packs.types import PersonSpec
-from operations.sample_scenario import build_dataset
+from operations.sample.actors import assignee_key, creator_keys
+from operations.sample.episodes import plan_sessions
+from operations.sample.history import plan_history
+from operations.sample.packs.types import PersonSpec
+from operations.sample.scenario import build_dataset
 from tests.operations.test_sample_packs import _TINY_PACK
 
 

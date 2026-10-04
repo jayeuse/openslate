@@ -5,12 +5,12 @@ from datetime import date
 
 import pytest
 
-from operations.sample_activity import create_data
-from operations.sample_episodes import plan_sessions
-from operations.sample_history import plan_history
-from operations.sample_packs.interface import PackLinks
-from operations.sample_packs.types import FieldSpec
-from operations.sample_scenario import build_dataset
+from operations.sample.episodes import plan_sessions
+from operations.sample.history import plan_history
+from operations.sample.packs.interface import PackLinks
+from operations.sample.packs.types import FieldSpec
+from operations.sample.population.activity import create_data
+from operations.sample.scenario import build_dataset
 from tests.operations.test_sample_packs import _TINY_PACK, _tiny_value
 
 
@@ -91,9 +91,9 @@ def test_a_followup_waits_for_the_flag_and_stops_if_it_does_not_arrive(
     import httpx
     import pytest
 
-    from operations import sample_activity
-    from operations.sample_client import SampleClient
-    from operations.sample_population import SamplePopulationError
+    from operations.sample.client import SampleClient
+    from operations.sample.population import activity as sample_activity
+    from operations.sample.population.run import SamplePopulationError
 
     pack = _counter_pack()
     pack = replace(
