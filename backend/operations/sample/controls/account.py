@@ -282,13 +282,7 @@ def execute_account_control(
                 completion.complete_recovery(token, credential.password),
                 204,
             )
-            if (
-                _read_json(
-                    request(primary, "check_recovered_session", "GET", "/api/auth/session"),
-                    step="check_recovered_session",
-                ).get("authenticated")
-                is not False
-            ):
+            if not signed_out(primary, "check_recovered_session"):
                 raise SamplePhaseActionError(
                     "Recovery did not end the original session", step="check_recovered_session"
                 )
