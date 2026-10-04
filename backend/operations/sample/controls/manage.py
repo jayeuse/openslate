@@ -143,7 +143,11 @@ def execute_manage_control(
     checks = 0
 
     def read(
-        path: str, *, actor: str = action.actor_key, params: Mapping[str, Any] | None = None
+        path: str,
+        *,
+        actor: str = action.actor_key,
+        params: Mapping[str, Any] | None = None,
+        refresh_first: bool = True,
     ) -> dict[str, Any]:
         nonlocal checks
         body = _request_object(
@@ -155,6 +159,7 @@ def execute_manage_control(
             step=f"read:{checks + 1}",
             params=params,
             on_substep=on_substep,
+            refresh_first=refresh_first,
         )
         checks += 1
         return body
@@ -378,7 +383,9 @@ def execute_manage_control(
                 step=action.key,
             )
         for key in credentials:
-            if read("/api/auth/session", actor=key).get("authenticated") is not False:
+            # A revoked session cannot refresh, so the probe reads without refreshing first.
+            probe = read("/api/auth/session", actor=key, refresh_first=False)
+            if probe.get("authenticated") is not False:
                 raise SamplePhaseActionError(
                     "A remote primary session remains authenticated", step=action.key
                 )

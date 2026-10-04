@@ -175,9 +175,16 @@ def execute_account_control(
         path: str,
         expected: int = 200,
         body: Mapping[str, Any] | None = None,
+        refresh_first: bool = True,
     ) -> httpx.Response:
         notify(step)
-        return observed(step, method, path, client.request(method, path, json_body=body), expected)
+        response = client.request(method, path, json_body=body, refresh_first=refresh_first)
+        return observed(step, method, path, response, expected)
+
+    def signed_out(client: SampleClient, step: str) -> bool:
+        # An ended session cannot refresh, so the probe reads without refreshing first.
+        response = request(client, step, "GET", "/api/auth/session", refresh_first=False)
+        return _read_json(response, step=step).get("authenticated") is False
 
     def login(client: SampleClient, step: str, password: str) -> None:
         notify(step)
@@ -221,13 +228,7 @@ def execute_account_control(
             request(
                 end_target, "end_current_session", "DELETE", f"/api/auth/sessions/{session_id}", 204
             )
-            if (
-                _read_json(
-                    request(end_target, "check_ended_session", "GET", "/api/auth/session"),
-                    step="check_ended_session",
-                ).get("authenticated")
-                is not False
-            ):
+            if not signed_out(end_target, "check_ended_session"):
                 raise SamplePhaseActionError(
                     "Ended session remains authenticated", step="check_ended_session"
                 )
@@ -241,13 +242,7 @@ def execute_account_control(
                 )
             )
             request(primary, "end_other_sessions", "POST", "/api/auth/sessions/revoke-others", 204)
-            if (
-                _read_json(
-                    request(other, "check_other_session", "GET", "/api/auth/session"),
-                    step="check_other_session",
-                ).get("authenticated")
-                is not False
-            ):
+            if not signed_out(other, "check_other_session"):
                 raise SamplePhaseActionError(
                     "Other session remains authenticated", step="check_other_session"
                 )
