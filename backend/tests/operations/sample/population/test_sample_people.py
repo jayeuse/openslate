@@ -11,6 +11,7 @@ from uuid import NAMESPACE_URL, uuid5
 import httpx
 import pytest
 
+from operations.sample.packs.harbor.people import MODULE_KEYS as HARBOR_MODULE_KEYS
 from operations.sample.population import invitations as sample_invitations
 from operations.sample.population import people as sample_people
 from operations.sample.population.people import SamplePeopleError, populate_people
@@ -22,20 +23,7 @@ DEPARTMENTS = {
     key: str(uuid5(NAMESPACE_URL, f"department:{key}"))
     for key in ("sales", "service", "field", "inventory", "purchasing", "finance")
 }
-MODULES = {
-    key: str(uuid5(NAMESPACE_URL, f"module:{key}"))
-    for key in (
-        "inspections",
-        "products",
-        "purchase_orders",
-        "invoices",
-        "customers",
-        "sales_orders",
-        "equipment",
-        "warehouses",
-        "goods_receipts",
-    )
-}
+MODULES = {key: str(uuid5(NAMESPACE_URL, f"module:{key}")) for key in HARBOR_MODULE_KEYS}
 
 
 class FakeMailpit:
