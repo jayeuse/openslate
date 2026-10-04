@@ -19,7 +19,7 @@ from app.systems.sandbox.record_triggers.worker import TriggerWorker
 
 
 def test_test_environment_never_starts_a_background_worker() -> None:
-    worker = TriggerWorker(SimpleNamespace(environment="test"))
+    worker = TriggerWorker(SimpleNamespace(environment="test", e2e_background_workers=False))
 
     worker.start()
 

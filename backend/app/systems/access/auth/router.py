@@ -99,7 +99,8 @@ def _require_browser_origin(request: Request) -> None:
 
 
 def _anonymous_rate_limits_enabled() -> bool:
-    return not is_relaxed_development(get_settings())
+    settings = get_settings()
+    return not (is_relaxed_development(settings) or settings.e2e_seeding_without_anonymous_limits)
 
 
 def _require_refresh_csrf(request: Request) -> str:

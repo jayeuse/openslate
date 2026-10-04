@@ -100,6 +100,15 @@ class Settings(EnvironmentSettings):
     )
     security_event_server_key: SecretStr = Field(validation_alias="SECURITY_EVENT_SERVER_KEY")
     lifecycle_purge_enabled: bool = Field(validation_alias="LIFECYCLE_PURGE_ENABLED")
+    # Test stacks only: the release smoke runner seeds one organization through the sample
+    # seeder, which completes every invitation from one address, then restarts the API
+    # without this switch for the browser suite.
+    e2e_seeding_without_anonymous_limits: bool = Field(
+        default=False, validation_alias="E2E_SEEDING_WITHOUT_ANONYMOUS_LIMITS"
+    )
+    # Test stacks only: the release smoke runner runs the automation and scheduling
+    # workers, as production does; other test runs drive them directly.
+    e2e_background_workers: bool = Field(default=False, validation_alias="E2E_BACKGROUND_WORKERS")
     public_origin: str = Field(validation_alias="PUBLIC_ORIGIN")
     web_assets_root: Path | None = Field(default=None, validation_alias="WEB_ASSETS_ROOT")
     request_body_max_bytes: int = Field(gt=0, validation_alias="REQUEST_BODY_MAX_BYTES")
@@ -247,6 +256,14 @@ class Settings(EnvironmentSettings):
         if isinstance(value, str) and value in {"true", "false"}:
             return value == "true"
         raise ValueError("must be true or false")
+
+    @model_validator(mode="after")
+    def validate_seeding_switch(self) -> Settings:
+        if self.e2e_seeding_without_anonymous_limits and self.environment != "test":
+            raise ValueError("E2E_SEEDING_WITHOUT_ANONYMOUS_LIMITS is only for a test stack")
+        if self.e2e_background_workers and self.environment != "test":
+            raise ValueError("E2E_BACKGROUND_WORKERS is only for a test stack")
+        return self
 
     @model_validator(mode="after")
     def validate_public_origin_transport(self) -> Settings:
