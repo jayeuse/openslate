@@ -96,12 +96,24 @@ function sameJson(left: Json, right: Json): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-/** Validates `value` against the JSON-schema subset Pydantic emits; returns error lines. */
-export function validateValue(raw: Schema, value: Json, at: string): string[] {
+/**
+ * Validates `value` against the JSON-schema subset Pydantic emits; returns error lines.
+ * `strict` also refuses object properties the schema does not declare, for response
+ * fixtures: Pydantic response models omit `additionalProperties`, so a fixture could
+ * otherwise restore a property the backend removed.
+ */
+export function validateValue(
+  raw: Schema,
+  value: Json,
+  at: string,
+  strict = false,
+): string[] {
   const schema = resolveSchema(raw);
   const branches = schemasAt(schema.anyOf) ?? schemasAt(schema.oneOf);
   if (branches !== undefined) {
-    const results = branches.map((branch) => validateValue(branch, value, at));
+    const results = branches.map((branch) =>
+      validateValue(branch, value, at, strict),
+    );
     if (results.some((errors) => errors.length === 0)) return [];
     return [
       `${at}: matches no allowed shape (${results.map((errors) => errors[0]).join(" | ")})`,
@@ -109,7 +121,7 @@ export function validateValue(raw: Schema, value: Json, at: string): string[] {
   }
   const allOf = schemasAt(schema.allOf);
   if (allOf !== undefined)
-    return allOf.flatMap((branch) => validateValue(branch, value, at));
+    return allOf.flatMap((branch) => validateValue(branch, value, at, strict));
   if ("const" in schema && !sameJson(schema.const, value))
     return [`${at}: expected ${JSON.stringify(schema.const)}`];
   const allowed = Array.isArray(schema.enum) ? schema.enum : undefined;
@@ -124,8 +136,8 @@ export function validateValue(raw: Schema, value: Json, at: string): string[] {
     return [`${at}: expected ${type}, got ${actual}`];
   if (typeof value === "string") return validateString(schema, value, at);
   if (typeof value === "number") return validateNumber(schema, value, at);
-  if (Array.isArray(value)) return validateArray(schema, value, at);
-  if (isObject(value)) return validateObject(schema, value, at);
+  if (Array.isArray(value)) return validateArray(schema, value, at, strict);
+  if (isObject(value)) return validateObject(schema, value, at, strict);
   return [];
 }
 
@@ -161,7 +173,12 @@ function validateNumber(schema: Schema, value: number, at: string): string[] {
   return errors;
 }
 
-function validateArray(schema: Schema, value: Json[], at: string): string[] {
+function validateArray(
+  schema: Schema,
+  value: Json[],
+  at: string,
+  strict: boolean,
+): string[] {
   const errors: string[] = [];
   const min = numberAt(schema.minItems);
   const max = numberAt(schema.maxItems);
@@ -174,7 +191,9 @@ function validateArray(schema: Schema, value: Json[], at: string): string[] {
   value.forEach((item, index) => {
     const itemSchema = prefix?.[index] ?? items;
     if (itemSchema)
-      errors.push(...validateValue(itemSchema, item, `${at}[${index}]`));
+      errors.push(
+        ...validateValue(itemSchema, item, `${at}[${index}]`, strict),
+      );
   });
   return errors;
 }
@@ -183,6 +202,7 @@ function validateObject(
   schema: Schema,
   value: JsonObject,
   at: string,
+  strict: boolean,
 ): string[] {
   const errors: string[] = [];
   const properties = objectAt(schema.properties) ?? {};
@@ -195,13 +215,15 @@ function validateObject(
   for (const [name, item] of Object.entries(value)) {
     const property = objectAt(properties[name]);
     if (property !== undefined) {
-      errors.push(...validateValue(property, item, `${at}.${name}`));
+      errors.push(...validateValue(property, item, `${at}.${name}`, strict));
     } else if (extra === false) {
       errors.push(
         `${at}.${name}: not declared by the backend (extra="forbid")`,
       );
     } else if (isObject(extra)) {
-      errors.push(...validateValue(extra, item, `${at}.${name}`));
+      errors.push(...validateValue(extra, item, `${at}.${name}`, strict));
+    } else if (strict && extra === undefined) {
+      errors.push(`${at}.${name}: not declared by the backend`);
     }
   }
   return errors;

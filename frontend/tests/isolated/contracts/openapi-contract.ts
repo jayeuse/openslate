@@ -110,6 +110,10 @@ function parameterValue(schema: Schema, raw: string): Json {
   return raw;
 }
 
+function declaresStatus(operation: Operation, status: string): boolean {
+  return objectAt(operation.operation.responses)?.[status] !== undefined;
+}
+
 function parameterSchema(parameter: JsonObject): Schema {
   return objectAt(parameter.schema) ?? {};
 }
@@ -159,6 +163,13 @@ export function validateRequest(
       const value = request.headers.get(name);
       if (value === null && parameter.required === true)
         errors.push(`header ${name}: required by the backend but not sent`);
+      // OpenAPI marks If-Match optional, but the route answers 428 without it.
+      else if (
+        value === null &&
+        name.toLowerCase() === "if-match" &&
+        declaresStatus(operation, "428")
+      )
+        errors.push(`header ${name}: the backend answers 428 without it`);
     }
   }
   const declaredQuery = new Set(
@@ -193,9 +204,24 @@ export function validateRequest(
   return errors;
 }
 
-type PlannedResponse =
-  | { status: number; kind: "empty" }
-  | { status: number; kind: "json"; body: Json };
+type PlannedResponse = {
+  status: number;
+  /** Only the response headers the operation declares. */
+  headers: Record<string, string>;
+  /** Override values that the backend schema does not allow. */
+  problems: string[];
+} & ({ kind: "empty" } | { kind: "json"; body: Json });
+
+function declaredHeaders(
+  response: JsonObject | undefined,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.keys(objectAt(response?.headers) ?? {}).map((name) => [
+      name,
+      name.toLowerCase() === "etag" ? '"contract-1"' : "contract",
+    ]),
+  );
+}
 
 function planResponse(
   operation: Operation,
@@ -208,7 +234,9 @@ function planResponse(
     .sort()[0];
   if (status === undefined)
     throw new Error(`${operation.key}: the backend declares no 2xx response`);
-  if (status === "204") return { status: 204, kind: "empty" };
+  const headers = declaredHeaders(objectAt(responses[status]));
+  if (status === "204")
+    return { status: 204, kind: "empty", headers, problems: [] };
   const schema = objectAt(
     objectAt(
       objectAt(objectAt(responses[status])?.content)?.["application/json"],
@@ -218,12 +246,17 @@ function planResponse(
     throw new Error(
       `${operation.key}: the backend declares no JSON response schema`,
     );
-  const body = generator.generate(schema, "response");
-  return {
-    status: Number(status),
-    kind: "json",
-    body: override === undefined ? body : mergeJson(body, override),
-  };
+  const generated = generator.generate(schema, "response");
+  const body =
+    override === undefined ? generated : mergeJson(generated, override);
+  // A fixture may only narrow the response; it must still match the backend schema.
+  const problems =
+    override === undefined
+      ? []
+      : validateValue(schema, body, "response", true).map(
+          (error) => `${operation.key} response fixture ${error}`,
+        );
+  return { status: Number(status), kind: "json", body, headers, problems };
 }
 
 // ---------------------------------------------------------------- harness
@@ -237,7 +270,10 @@ export type ContractCase = {
    * Only for legitimate frontend narrowing; each entry needs a one-line reason.
    */
   responses?: Record<string, Json>;
-  /** Response headers the adapter requires (for example Content-Disposition). */
+  /**
+   * Response headers the adapter requires that the operation does not declare (for
+   * example Content-Disposition). Declared headers such as ETag are sent already.
+   */
   responseHeaders?: Record<string, string>;
   /**
    * Why the response cannot be checked (CSV, file bytes, no JSON schema).
@@ -311,8 +347,9 @@ export async function checkContract(
       problems.push(error instanceof Error ? error.message : String(error));
       return new Response(null, { status: 500 });
     }
+    problems.push(...planned.problems);
     const headers = {
-      ETag: '"contract-1"',
+      ...planned.headers,
       "Content-Type": "application/json",
       ...contract.responseHeaders,
     };
