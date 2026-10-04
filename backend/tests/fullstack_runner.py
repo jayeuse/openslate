@@ -28,17 +28,29 @@ from app.core.database import model_registry  # noqa: F401
 
 if __package__:
     from .backend_batches import parse_batch, run_backend_batches
-    from .backend_coverage import parse_shard, run_backend_coverage
+    from .backend_coverage import coverage_output, parse_shard, run_backend_coverage
     from .caddy_runtime import CADDY_IMAGE, GATEWAY_PORT, DisposableCaddy, render_gateway_config
+    from .fullstack_environment import (
+        RUNNER_CONCURRENCY_LIMIT,
+        api_environment,
+        runtime_database_environment,
+    )
     from .fullstack_summary import summary_path, write_fullstack_summary
     from .postgres_runtime import DisposablePostgres
+    from .runner_console import e2e_browser_flags, run_streamed, stop_on_signals
     from .scanner_runtime import DisposableScanner
 else:
     from backend_batches import parse_batch, run_backend_batches
-    from backend_coverage import parse_shard, run_backend_coverage
+    from backend_coverage import coverage_output, parse_shard, run_backend_coverage
     from caddy_runtime import CADDY_IMAGE, GATEWAY_PORT, DisposableCaddy, render_gateway_config
+    from fullstack_environment import (
+        RUNNER_CONCURRENCY_LIMIT,
+        api_environment,
+        runtime_database_environment,
+    )
     from fullstack_summary import summary_path, write_fullstack_summary
     from postgres_runtime import DisposablePostgres
+    from runner_console import e2e_browser_flags, run_streamed, stop_on_signals
     from scanner_runtime import DisposableScanner
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,7 +58,6 @@ BACKEND = ROOT / "backend"
 FRONTEND = ROOT / "frontend"
 API = "http://127.0.0.1:8008"
 WEB = f"https://localhost:{GATEWAY_PORT}"
-RUNNER_CONCURRENCY_LIMIT = 64
 
 __all__ = (
     "CADDY_IMAGE",
@@ -57,12 +68,6 @@ __all__ = (
 )
 
 
-def runtime_database_environment(database_env: dict[str, str]) -> dict[str, str]:
-    """Pass only the runtime login to FastAPI and its worker processes."""
-
-    return {"DATABASE_URL": database_env["DATABASE_URL"]}
-
-
 def browser_acceptance_command(*, browser_only: bool = False) -> list[str]:
     """Keep scanner-free auth repair separate from complete scanner-backed acceptance."""
     command = [
@@ -70,6 +75,7 @@ def browser_acceptance_command(*, browser_only: bool = False) -> list[str]:
         "playwright",
         "test",
         "--config=playwright.fullstack.config.ts",
+        *e2e_browser_flags(),
     ]
     if browser_only:
         command.append("tests/fullstack/auth-session.spec.ts")
@@ -126,7 +132,7 @@ def wait_for(url, process, *, verify: bool = True):
     raise RuntimeError("application startup deadline exceeded")
 
 
-def seed(owner_url, run_id, database_environment):
+def seed(owner_url, run_id, database_environment, roles=("admin", "member")):
     """Owner-only fixture setup, guarded by a brand-new empty application DB."""
     from app.systems.access.users.models import User, UserStatus
 
@@ -143,7 +149,7 @@ def seed(owner_url, run_id, database_environment):
             assert_instance_target(db.connection(), target, expected_user="openslate_owner")
             if db.scalar(text("SELECT count(*) FROM public.users")) != 0:
                 raise RuntimeError("refusing to seed a nonempty database")
-            for role in ("admin", "member"):
+            for role in roles:
                 email = f"p5-{run_id}-{role}@example.com"
                 password = f"P5-{secrets.token_urlsafe(24)}!9"
                 user = User(
@@ -171,6 +177,8 @@ def seed(owner_url, run_id, database_environment):
 
 
 def main(arguments=()):
+    # First: a stop at any later point, including the output cleanup, runs the cleanup.
+    stop_on_signals()
     arguments = tuple(arguments)
     batch = parse_batch(arguments, BACKEND)
     reset_only = arguments == ("--reset-acceptance-only",)
@@ -198,7 +206,7 @@ def main(arguments=()):
     acceptance_only = arguments == ("--acceptance-only",)
     browser_only = arguments == ("--browser-only",)
     if not scanner_only and batch is None and not acceptance_only and not browser_only:
-        output = BACKEND / "test-results/coverage"
+        output = coverage_output(BACKEND)
         if output.exists():
             shutil.rmtree(output)
     for port in () if backend_only else (8008, GATEWAY_PORT):
@@ -236,15 +244,7 @@ def main(arguments=()):
 
     def run(command, cwd, env=base_env, capture=False):
         print(f"Full-stack: {stage}", flush=True)
-        return subprocess.run(
-            command,
-            cwd=cwd,
-            env=env,
-            check=True,
-            stdout=subprocess.PIPE if capture else log,
-            stderr=log,
-            text=True,
-        )
+        return run_streamed(command, cwd, env, log, capture=capture)
 
     try:
         stage = "PostgreSQL startup"
@@ -274,35 +274,15 @@ def main(arguments=()):
         stage = "migrations"
         run([sys.executable, "-m", "alembic", "upgrade", "head"], BACKEND, migration_env)
         run([sys.executable, "-m", "alembic", "check"], BACKEND, migration_env)
-        api_env = {
-            **base_env,
-            **runtime_database_environment(database_env),
-            **provider_env,
-            "ENVIRONMENT": "test",
-            "E2E_ALLOW_MUTATIONS": "true",
-            "OPENSLATE_FULLSTACK_RUN_ID": run_id,
-            "OPENSLATE_TEST_DATABASE_MANIFEST": str(database_manifest),
-            "PUBLICATION_SIGNING_KEY": secrets.token_urlsafe(48),
-            "AUTH_REFRESH_TOKEN_DAYS": "7",
-            "LIFECYCLE_PURGE_ENABLED": "false",
-            "SECURITY_EVENT_SERVER_KEY": secrets.token_urlsafe(32),
-            "PUBLIC_ORIGIN": WEB,
-            "LOG_DIR": str(private / "api-logs"),
-            "REQUEST_BODY_MAX_BYTES": "1048576",
-            "DATABASE_POOL_SIZE": "5",
-            "DATABASE_MAX_OVERFLOW": "5",
-            "DATABASE_POOL_TIMEOUT_SECONDS": "5",
-            "DATABASE_CONNECT_TIMEOUT_SECONDS": "3",
-            "DATABASE_STATEMENT_TIMEOUT_MS": "15000",
-            "READINESS_POOL_TIMEOUT_SECONDS": "0.25",
-            "READINESS_CONNECT_TIMEOUT_SECONDS": "1",
-            "READINESS_STATEMENT_TIMEOUT_MS": "500",
-            "READINESS_CALLER_TIMEOUT_SECONDS": "2",
-            "BACKEND_BIND_HOST": "127.0.0.1",
-            "BACKEND_PORT": "8008",
-            "SERVER_MAX_CONCURRENCY": str(RUNNER_CONCURRENCY_LIMIT),
-            "SERVER_KEEP_ALIVE_SECONDS": "5",
-        }
+        api_env = api_environment(
+            base_env,
+            database_env,
+            provider_env,
+            run_id=run_id,
+            database_manifest=database_manifest,
+            private=private,
+            public_origin=WEB,
+        )
         stage = "private Storage initialization"
         run(
             [sys.executable, "operations/provision_storage.py", "--confirm"],

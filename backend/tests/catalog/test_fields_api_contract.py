@@ -127,6 +127,9 @@ def test_missing_record_has_consistent_mutation_404() -> None:
 
 def test_record_create_rejects_missing_active_module_before_writes() -> None:
     db = Mock(spec=Session)
+    db.info = {}
+    # The module lock reads the module; a missing one is refused before any write.
+    db.get.return_value = None
     db.scalar.return_value = None
     client = _catalog_rejection_client(db)
     response = client.post("/api/records", json={"module_id": str(uuid7()), "data": {}})

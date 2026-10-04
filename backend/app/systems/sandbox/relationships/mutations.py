@@ -20,7 +20,6 @@ from app.systems.sandbox.relationships.locking import (
     _for_update,
     _load_create_dependencies,
     _lock_relationship_rows,
-    validate_relationship_modules,
     wait_briefly_for_locks,
 )
 from app.systems.sandbox.relationships.models import RelationshipEdge
@@ -40,10 +39,7 @@ def _validate_dependencies(field: Field, source: Record, target: Record) -> None
         raise RelationshipConflict("Source record module does not match field")
     if field.relationship_target_module_id != target.module_id:
         raise RelationshipConflict("Target record module does not match field")
-    source_module = getattr(source, "module", None)
-    target_module = getattr(target, "module", None)
-    if source_module is not None and target_module is not None:
-        validate_relationship_modules(source_module, target_module)
+    # Both callers already checked the locked source and target modules are active.
 
 
 def _validate_assignment_source(field: Field, source: Record) -> None:
@@ -216,8 +212,8 @@ def assign_relationship(
     source_record_id: UUID,
     target_record_id: UUID | None,
 ) -> RelationshipResponse | None:
-    field = db.scalar(select(Field).where(Field.id == field_id))
-    source = db.scalar(select(Record).where(Record.id == source_record_id))
+    field = db.get(Field, field_id)
+    source = db.get(Record, source_record_id)
     if field is None or source is None:
         raise RelationshipConflict("Relationship dependency is unavailable")
     # Discover the previous target without taking an edge lock before the
@@ -228,11 +224,7 @@ def assign_relationship(
         source_record_id=source_record_id,
         for_update=False,
     )
-    target = (
-        db.scalar(select(Record).where(Record.id == target_record_id))
-        if target_record_id is not None
-        else None
-    )
+    target = db.get(Record, target_record_id) if target_record_id is not None else None
     locked_field, locked_source, locked_target = _lock_relationship_rows(
         db,
         field,

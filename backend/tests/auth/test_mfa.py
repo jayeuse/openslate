@@ -121,8 +121,15 @@ def test_signed_assurance_policy_cannot_be_bypassed_by_request_parameters(
     )
     db.execute.return_value.scalar_one.return_value = True
     profile = WorkspaceProfile(mfa_policy=policy, ip_allow_list=[])
-    monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db: profile)
-    monkeypatch.setattr(dependency, "load_workspace_policy", lambda _db: profile, raising=False)
+    reads = []
+
+    def read_policy(_db):
+        reads.append(profile)
+        return profile
+
+    # Both import sites share one counter: the real resolver may not read it again.
+    monkeypatch.setattr(provider_sessions, "load_workspace_policy", read_policy)
+    monkeypatch.setattr(dependency, "load_workspace_policy", read_policy, raising=False)
     monkeypatch.setattr(dependency, "get_supabase_auth_client", lambda: provider)
     app = FastAPI()
     app.dependency_overrides[get_db] = lambda: db
@@ -143,6 +150,7 @@ def test_signed_assurance_policy_cannot_be_bypassed_by_request_parameters(
     assert response.status_code == expected
     if expected == 403:
         assert response.json()["detail"]["code"] == "mfa_required"
+    assert reads == [profile]
 
 
 @pytest.mark.parametrize(
@@ -186,8 +194,15 @@ def test_authenticated_ip_policy_uses_transport_peer_not_forwarded_header(
     )
     db.execute.return_value.scalar_one.return_value = True
     profile = WorkspaceProfile(mfa_policy="optional", ip_allow_list=["10.0.0.0/8"])
-    monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db: profile)
-    monkeypatch.setattr(dependency, "load_workspace_policy", lambda _db: profile, raising=False)
+    reads = []
+
+    def read_policy(_db):
+        reads.append(profile)
+        return profile
+
+    # Both import sites share one counter: the real resolver may not read it again.
+    monkeypatch.setattr(provider_sessions, "load_workspace_policy", read_policy)
+    monkeypatch.setattr(dependency, "load_workspace_policy", read_policy, raising=False)
     monkeypatch.setattr(dependency, "get_supabase_auth_client", lambda: provider)
     app = FastAPI()
     app.dependency_overrides[get_db] = lambda: db
@@ -207,6 +222,7 @@ def test_authenticated_ip_policy_uses_transport_peer_not_forwarded_header(
     assert response.status_code == expected
     if expected == 403:
         assert response.json()["detail"]["code"] == "ip_not_allowed"
+    assert reads == [profile]
 
 
 @pytest.mark.parametrize(

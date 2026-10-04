@@ -83,6 +83,15 @@ class CiScopeTests(unittest.TestCase):
                 self.assertTrue(scope.decisions["frontend"].run)
                 self.assertTrue(scope.decisions["backend"].run)
 
+    def test_shared_contracts_select_the_frontend_gate(self):
+        scope = ci_scope.classify_paths(["contracts/openapi.json"], base_ref="base")
+        self.assertTrue(scope.decisions["frontend"].run)
+        self.assertIn("contracts/openapi.json", scope.decisions["frontend"].reason)
+        # A hand edit to the snapshot alone must still meet the backend drift test.
+        self.assertTrue(scope.decisions["backend"].run)
+        self.assertIn("contracts/openapi.json", scope.decisions["backend"].reason)
+        self.assertTrue(scope.decisions["server_image"].run)
+
     def test_backend_changes_keep_backend_and_unified_server_image_gates(self):
         for path in (
             "backend/app/systems/users/service.py",

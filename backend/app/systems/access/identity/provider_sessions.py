@@ -32,6 +32,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_session
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import User, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import load_workspace_policy, session_timeout
 
 _AUTH_SESSIONS = table("sessions", column("id", Uuid()), column("user_id", Uuid()), schema="auth")
@@ -148,8 +149,12 @@ def resolve_provider_session(
     *,
     now: datetime | None = None,
     allow_aal1: bool = False,
+    policy: WorkspaceProfile | None = None,
 ) -> tuple[User, IdentitySession] | None:
-    """Recheck local access, provider account and provider session for every request."""
+    """Recheck local access, provider account and provider session for every request.
+
+    ``policy`` is the workspace policy the caller already read in this transaction.
+    """
 
     timestamp = now or utc_now()
     session = db.scalar(
@@ -182,7 +187,7 @@ def resolve_provider_session(
         return None
     if (
         not allow_aal1
-        and requires_mfa(load_workspace_policy(db), user, provider_user)
+        and requires_mfa(policy or load_workspace_policy(db), user, provider_user)
         and (
             claims.assurance_level != "aal2"
             or not any(

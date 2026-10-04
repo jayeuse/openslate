@@ -22,7 +22,9 @@ NOW = datetime(2026, 1, 1, 12, tzinfo=UTC)
 def test_test_environment_does_not_start_report_thread() -> None:
     from app.systems.platform.scheduling.worker import ReportSchedulingWorker
 
-    worker = ReportSchedulingWorker(SimpleNamespace(environment="test"))
+    worker = ReportSchedulingWorker(
+        SimpleNamespace(environment="test", e2e_background_workers=False)
+    )
     worker.start()
     worker.start()
 
@@ -111,9 +113,7 @@ def test_post_poll_failure_does_not_block_report_poll(monkeypatch) -> None:
     logger = Mock()
     monkeypatch.setattr(module, "get_engine", lambda: engine)
     monkeypatch.setattr(module, "execute_due_report_runs", reports)
-    monkeypatch.setattr(
-        module, "execute_due_post_publications", posts, raising=False
-    )
+    monkeypatch.setattr(module, "execute_due_post_publications", posts, raising=False)
     monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
     monkeypatch.setattr(module, "log_event", logger)
 
@@ -138,9 +138,7 @@ def test_report_poll_failure_does_not_block_post_poll(monkeypatch) -> None:
     posts = Mock(return_value=[publication_id])
     monkeypatch.setattr(module, "get_engine", lambda: engine)
     monkeypatch.setattr(module, "execute_due_report_runs", reports)
-    monkeypatch.setattr(
-        module, "execute_due_post_publications", posts, raising=False
-    )
+    monkeypatch.setattr(module, "execute_due_post_publications", posts, raising=False)
     monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
     monkeypatch.setattr(module, "log_event", Mock())
 
@@ -210,9 +208,7 @@ def test_post_backoff_does_not_delay_healthy_report_polls(monkeypatch) -> None:
         post_polls.append(clock.value)
         raise RuntimeError("temporary post fault")
 
-    monkeypatch.setattr(
-        module, "execute_due_post_publications", fail_post, raising=False
-    )
+    monkeypatch.setattr(module, "execute_due_post_publications", fail_post, raising=False)
     monkeypatch.setattr(module, "execute_due_reminders", Mock(return_value=[]))
     monkeypatch.setattr(module, "log_event", Mock())
 

@@ -244,8 +244,9 @@ class SampleClient:
         data: Mapping[str, str] | None = None,
         files: Mapping[str, Any] | None = None,
         content: bytes | None = None,
+        refresh_first: bool = True,  # False for a probe that expects a revoked session
     ) -> httpx.Response:
-        expires_at = self._access_expires_at() if self._last_auth_at is not None else None
+        expires_at = self._access_expires_at() if refresh_first and self._last_auth_at else None
         if expires_at is not None and expires_at - time.time() <= _REFRESH_WITHIN_SECONDS:
             refreshed = self.refresh()
             if not refreshed.is_success:

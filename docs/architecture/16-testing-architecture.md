@@ -34,7 +34,15 @@ combines the five coverage data files, sums the test counts, and then applies th
 different source tree fails the gate. `pytest-split` balances the shards with
 `backend/tests/.test_durations`. Each CI run uploads fresh durations in the
 `backend-coverage` artifact; commit that file again when a shard takes much longer than
-the others. Local `prepush.py` keeps the single `--backend-coverage-only` run.
+the others. Local `prepush.py` runs `python -m tests.parallel_coverage`: three shards on
+their own disposable stacks at the same time, then the same combine step and gates. Each
+shard writes to its own folder under `backend/test-results/coverage-shards/`. Each shard
+stack creates six Docker networks, and Docker Desktop's default address pools hold about
+30, so three shards fit beside the development stack. A shard that fails at PostgreSQL
+startup with "all predefined address pools have been fully subnetted" means networks from
+another stack still exist; `docker network ls` shows them. On a machine with less memory,
+run `prepush.py --coverage-stacks 1` (one stack, the single `--backend-coverage-only` run)
+or `--coverage-stacks 2`; the coverage gates do not change.
 
 The committed Auth/Storage reset acceptance has its own mandatory
 `--reset-acceptance-only` invocation in both gates. Local `prepush.py` runs it after
@@ -74,6 +82,59 @@ workflows use dedicated runner-created identities and isolated services. Preserv
 traceable procedures and artifacts for executed E2E acceptance, including command,
 working directory, revision, prerequisites, outcome, and report/trace locations;
 architecture docs do not record task-run counts or results.
+
+## Release smoke suite
+
+The release smoke suite runs one main path per screen against seeded Harbor data. It
+belongs to the release gate, not to every push. Run it before a release:
+
+1. From the repository root, run `python3 scripts/prepush.py --base <base-ref> --release`.
+   The `--release` flag adds the `release-smoke` step after the backend stacks.
+2. To run only the smoke suite, run `uv run python -m tests.smoke_runner` from `backend/`.
+
+The runner creates a new disposable stack and builds the static export. FastAPI serves
+the export behind the Caddy gateway, as in production; `next dev` is not used. The runner
+seeds Harbor Small once through the sample-data seeder (seed 42, anchor date 2026-09-30).
+The seeder trusts the gateway's local certificate authority, because the test environment
+sends `Secure` session cookies. Two switches exist only for a test stack, and the API refuses
+to start with either one outside `ENVIRONMENT=test`:
+
+- `E2E_BACKGROUND_WORKERS=true` runs the automation and scheduling workers, as production
+  does. Other test runs drive these workers directly.
+- `E2E_SEEDING_WITHOUT_ANONYMOUS_LIMITS=true` turns off the anonymous invitation limit
+  (5 completions per 15 minutes from one address) while the seeder completes every invitation.
+  The runner then restarts the API without it, so the browser tests run with every limit on.
+
+Playwright signs in once per role (administrator, department lead, service clerk, guest)
+and saves each session as a `storageState` file.
+The tests in `frontend/tests/fullstack/smoke/` read and edit the seeded data and build no
+fixtures. Credentials and saved sessions stay in the private run directory.
+
+Each test carries a feature tag (`@records`, `@boards`, `@access`, `@manage`, `@platform`,
+`@sandbox`). `frontend/test-results/smoke-summary.json` records the result, the time of
+each stage, the revision, and each test's status, place, title, and duration. It keeps no
+credentials; the private run directory is removed after a passing run. A full run takes about eight minutes. Seeding Harbor Small through the seeder takes
+about 6.5 minutes of sequential API calls, and the browser suite takes under a minute.
+
+## Test output
+
+Test runs are quiet by default. Drawing a line for each of about 3,000 tests in the
+desktop app's terminal slowed the whole machine, so speed comes first:
+
+- The backend runners (`tests.fullstack_runner`, `tests.parallel_coverage`,
+  `tests.smoke_runner`) show stage names and the final result. Set
+  `OPENSLATE_TEST_PROGRESS=1` to also show one line per finished test (progress, outcome,
+  test ID). Parallel coverage puts the shard name in front of each line, for example
+  `[2/3]`. The full output stays in the private run log, because it can contain stack
+  credentials.
+- The frontend suite uses the Playwright `line` reporter.
+- The full-stack acceptance and smoke suites run headless. Set `OPENSLATE_E2E_HEADED=1` to
+  watch them in a visible browser; CI always runs them headless. Add `--headed` to
+  `npm test` to watch the `http` project.
+
+The runners turn SIGTERM and SIGHUP into an interrupt, and they stop each command's whole
+process group before they remove the disposable stack and scanner, so a stopped run leaves
+nothing behind.
 
 ## Acceptance boundaries
 

@@ -21,7 +21,7 @@ class TriggerWorker:
     """Poll, claim, and execute durable events without sharing sessions."""
 
     def __init__(self, settings: Settings) -> None:
-        self._enabled = settings.environment != "test"
+        self._enabled = settings.environment != "test" or settings.e2e_background_workers
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._running = False

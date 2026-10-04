@@ -175,6 +175,36 @@ test("development config proxies only API traffic to loopback FastAPI", async ()
   ]);
 });
 
+test("development config keeps every compiled route for the test runs", () => {
+  // Disposing an idle route recompiles it and sends a Fast Refresh to every open
+  // page; mid-test that refresh dropped a pending router.push (a flaky HTTP test).
+  const environment = {
+    BACKEND_BIND_HOST: process.env.BACKEND_BIND_HOST,
+    BACKEND_PORT: process.env.BACKEND_PORT,
+    OPENSLATE_DEV_ORIGIN_HOST: process.env.OPENSLATE_DEV_ORIGIN_HOST,
+  };
+  let nextConfig: NextConfig;
+  try {
+    setEnvironment("BACKEND_BIND_HOST", "127.0.0.1");
+    setEnvironment("BACKEND_PORT", "8000");
+    setEnvironment("OPENSLATE_DEV_ORIGIN_HOST", "localhost");
+    nextConfig = createNextConfig(PHASE_DEVELOPMENT_SERVER);
+  } finally {
+    for (const [name, value] of Object.entries(environment))
+      setEnvironment(name, value);
+  }
+  const routes = sourceFiles(resolve(sourceRoot, "app")).filter(
+    (path) => basename(path) === "page.tsx",
+  );
+  // A full HTTP suite run takes about six minutes; keep pages for an hour.
+  expect(nextConfig.onDemandEntries?.maxInactiveAge).toBeGreaterThanOrEqual(
+    60 * 60 * 1000,
+  );
+  expect(nextConfig.onDemandEntries?.pagesBufferLength).toBeGreaterThanOrEqual(
+    routes.length,
+  );
+});
+
 test("development config reaches an IPv6 loopback backend through localhost", async () => {
   const originalBackendBindHost = process.env.BACKEND_BIND_HOST;
   const originalBackendPort = process.env.BACKEND_PORT;

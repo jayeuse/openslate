@@ -22,9 +22,17 @@ if (!process.env.OPENSLATE_FULLSTACK_FIXTURE)
 if (!process.env.OPENSLATE_FULLSTACK_RUN_ID)
   throw new Error("OPENSLATE_FULLSTACK_RUN_ID is required");
 
+// The release smoke suite (backend/tests/smoke_runner.py) reads seeded Harbor data and
+// signs in once per role; the acceptance suite keeps its own fixture and never runs it.
+const smoke = process.env.OPENSLATE_FULLSTACK_SUITE === "smoke";
+if (smoke && !process.env.OPENSLATE_SMOKE_STATE_DIR)
+  throw new Error("OPENSLATE_SMOKE_STATE_DIR is required for the smoke suite");
+
 export default defineConfig({
-  testDir: "./tests/fullstack",
-  outputDir: "test-results/fullstack",
+  testDir: smoke ? "./tests/fullstack/smoke" : "./tests/fullstack",
+  testIgnore: smoke ? undefined : ["smoke/**"],
+  globalSetup: smoke ? "./tests/fullstack/smoke/sign-in.setup.ts" : undefined,
+  outputDir: smoke ? "test-results/smoke" : "test-results/fullstack",
   fullyParallel: false,
   workers: 1,
   timeout: 45_000,

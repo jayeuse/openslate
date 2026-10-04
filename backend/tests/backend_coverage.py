@@ -11,6 +11,14 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 COUNT_KEYS = ("tests", "failures", "errors", "skipped")
+# A local parallel run gives each shard its own folder; CI and single runs use the default.
+OUTPUT_OVERRIDE = "OPENSLATE_COVERAGE_OUTPUT"
+
+
+def coverage_output(backend):
+    return Path(os.environ.get(OUTPUT_OVERRIDE) or backend / "test-results/coverage")
+
+
 DURATIONS = "tests/.test_durations"
 MAX_DURATION_ID = 500
 
@@ -98,7 +106,7 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
     else:
         from postgres_runtime import assert_runner_database_url
 
-    output = backend / "test-results/coverage"
+    output = coverage_output(backend)
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True)
@@ -108,9 +116,7 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
         ("TEST_DATABASE_URL", "openslate_runtime"),
         ("MIGRATION_DATABASE_URL", "openslate_owner"),
     ):
-        assert_runner_database_url(
-            environment[name], environment, allowed_roles=frozenset({role})
-        )
+        assert_runner_database_url(environment[name], environment, allowed_roles=frozenset({role}))
     env = {
         **environment,
         "OPENSLATE_REQUIRE_DATABASE_TESTS": "true",
@@ -145,7 +151,7 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
                 sys.executable,
                 "-m",
                 "pytest",
-                "-q",
+                "-v",
                 "--cov=app",
                 *reports,
                 f"--junitxml={private / 'pytest.xml'}",
@@ -193,7 +199,7 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
             sys.executable,
             "-m",
             "pytest",
-            "-q",
+            "-v",
             "-o",
             "addopts=",
             "tests/security_events/test_operational_checker.py",

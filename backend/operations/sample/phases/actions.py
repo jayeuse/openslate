@@ -157,6 +157,7 @@ def _request(
     primary_action: str | None = None,
     expected_audit_rows: int | None = None,
     related_entity_types: tuple[str, ...] = (),
+    refresh_first: bool = True,
 ) -> httpx.Response:
     if on_substep is not None:
         on_substep(step)
@@ -168,6 +169,7 @@ def _request(
         json_body=json_body,
         params=params,
         headers=headers,
+        refresh_first=refresh_first,
     )
     request_id = _request_id(response)
     is_write = method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
@@ -222,6 +224,7 @@ def _request_object(
     step: str,
     on_substep: PhaseSubstep | None,
     params: Mapping[str, Any] | None = None,
+    refresh_first: bool = True,
 ) -> dict[str, Any]:
     response = _request(
         action,
@@ -234,6 +237,7 @@ def _request_object(
         expected=200,
         on_substep=on_substep,
         params=params,
+        refresh_first=refresh_first,
     )
     return _read_json(response, step=step, request_id=_request_id(response))
 

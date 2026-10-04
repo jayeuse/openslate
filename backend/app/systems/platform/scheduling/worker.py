@@ -25,7 +25,7 @@ class ReportSchedulingWorker:
     """Run both bounded work kinds in one thread without sharing request sessions."""
 
     def __init__(self, settings: Settings) -> None:
-        self._enabled = settings.environment != "test"
+        self._enabled = settings.environment != "test" or settings.e2e_background_workers
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._running = False
@@ -118,9 +118,7 @@ class ReportSchedulingWorker:
         try:
             execute_due_post_publications(get_engine(), now=now)
         except Exception:
-            self._post_retry_seconds = min(
-                self._post_retry_seconds * 2, _MAX_RETRY_SECONDS
-            )
+            self._post_retry_seconds = min(self._post_retry_seconds * 2, _MAX_RETRY_SECONDS)
             if not self._post_failure_reported:
                 log_event(
                     "operational_attention",
@@ -174,8 +172,7 @@ class ReportSchedulingWorker:
                     next_reminder_poll = completed_at + self._reminder_retry_seconds
                 wait_seconds = max(
                     0.0,
-                    min(next_report_poll, next_post_poll, next_reminder_poll)
-                    - time.monotonic(),
+                    min(next_report_poll, next_post_poll, next_reminder_poll) - time.monotonic(),
                 )
                 self._stop.wait(wait_seconds)
         finally:

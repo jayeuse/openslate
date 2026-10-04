@@ -135,3 +135,17 @@ def test_runner_rejects_invalid_coverage_shard_before_starting_postgres(
         runner.main(["--backend-coverage-shard", shard])
 
     start.assert_not_called()
+
+
+def test_a_local_parallel_shard_writes_its_own_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Parallel shards on one checkout each cleared and wrote test-results/coverage.
+    from tests.fullstack_summary import summary_path
+
+    backend = tmp_path / "backend"
+    assert backend_coverage.coverage_output(backend) == backend / "test-results/coverage"
+    shard = tmp_path / "shards" / "shard-2"
+    monkeypatch.setenv(backend_coverage.OUTPUT_OVERRIDE, str(shard))
+    assert backend_coverage.coverage_output(backend) == shard
+    assert summary_path(backend, tmp_path, batch=None, backend_only=True) == shard / "summary.json"

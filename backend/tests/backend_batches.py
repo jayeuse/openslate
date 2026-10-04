@@ -68,9 +68,7 @@ def run_backend_batches(run, backend, private, environment, run_id, batch):
         ("TEST_DATABASE_URL", "openslate_runtime"),
         ("MIGRATION_DATABASE_URL", "openslate_owner"),
     ):
-        assert_runner_database_url(
-            environment[name], environment, allowed_roles=frozenset({role})
-        )
+        assert_runner_database_url(environment[name], environment, allowed_roles=frozenset({role}))
     env = {
         **environment,
         "OPENSLATE_REQUIRE_DATABASE_TESTS": "true",
@@ -98,7 +96,7 @@ def run_backend_batches(run, backend, private, environment, run_id, batch):
                     "-m",
                     "pytest",
                     "--no-cov",
-                    "-q",
+                    "-v",
                     "-x",
                     f"--junitxml={junit}",
                     *filters,

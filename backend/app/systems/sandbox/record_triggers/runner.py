@@ -13,6 +13,7 @@ from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.sandbox.designs.date_values import parse_datetime
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import validate_field_value
+from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.record_triggers.execution import (
     ClaimedTriggerEvent,
     locked_claim,
@@ -34,6 +35,7 @@ SCHEDULE_RECORD_CHUNK = 100
 ACTOR_LABEL_LENGTH = 100
 _MISSING = object()
 
+
 def execute_claim(db: Session, claim: ClaimedTriggerEvent) -> bool:
     """Execute one fenced event as the workspace, requeuing only schedule continuations."""
 
@@ -41,6 +43,7 @@ def execute_claim(db: Session, claim: ClaimedTriggerEvent) -> bool:
     if event is None:
         return False
     root = _locked_root(db, event)
+    _share_module(db, event.module_id)
     fields = _lock_module_fields(db, event.module_id)
     records, has_more = _records(db, event)
     definitions = _definitions(db, event)
@@ -121,6 +124,21 @@ def _definitions(db: Session, event: RecordTriggerEvent) -> list[RecordTrigger]:
             RecordTrigger.event_kind != "schedule",
         )
     return list(db.scalars(statement))
+
+
+def _share_module(db: Session, module_id: UUID) -> None:
+    """Take the module row before its fields and records, as record and link writes do.
+
+    Updating the event row a second time, or adding a child event, rechecks the event's
+    foreign keys and takes FOR KEY SHARE on the module row. Taken late, after the fields
+    and record, it closed a deadlock with a link write that held the module FOR UPDATE
+    and waited for the record. Taking the same lock first keeps one order everywhere:
+    module, then fields, then records.
+    """
+
+    db.execute(
+        select(Module.id).where(Module.id == module_id).with_for_update(read=True, key_share=True)
+    )
 
 
 def _lock_module_fields(db: Session, module_id: UUID) -> dict[UUID, Field]:

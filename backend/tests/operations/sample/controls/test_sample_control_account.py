@@ -1,6 +1,8 @@
 """Pack-neutral account actions preserve primary credentials and never replay writes."""
 
+import base64
 import json
+import time
 from dataclasses import replace
 from datetime import date
 from uuid import uuid4
@@ -59,6 +61,9 @@ class AccountServer:
         self.uncertain_password = uncertain_password
         self.streams_closed = 0
 
+    def access_token(self, session: str) -> str:
+        return session
+
     def session_id(self, request):
         cookies = dict(
             part.split("=", 1)
@@ -87,7 +92,10 @@ class AccountServer:
             return self.response(
                 body={"authenticated": True, "setup_required": False},
                 headers=[
-                    ("Set-Cookie", f"openslate_access={session}; Path=/; HttpOnly"),
+                    (
+                        "Set-Cookie",
+                        f"openslate_access={self.access_token(session)}; Path=/; HttpOnly",
+                    ),
                     ("Set-Cookie", "openslate_csrf=fixture-csrf; Path=/"),
                 ],
             )
@@ -172,7 +180,7 @@ class AccountServer:
         return httpx.Response(200, json=self.details[request.url.path.rsplit("/", 1)[-1]])
 
 
-def _setup(tmp_path, monkeypatch, *, uncertain_password=False):
+def _setup(tmp_path, monkeypatch, *, uncertain_password=False, server_type=AccountServer):
     from operations.sample.controls.account import plan_account_controls
 
     dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 30))
@@ -180,7 +188,7 @@ def _setup(tmp_path, monkeypatch, *, uncertain_password=False):
     person = next(
         person for person in dataset.organization.actors.people if person.key == action.actor_key
     )
-    server = AccountServer(person.email, uncertain_password=uncertain_password)
+    server = server_type(person.email, uncertain_password=uncertain_password)
     real_client = httpx.Client
     monkeypatch.setattr(
         sample_invitations.httpx,
@@ -317,5 +325,71 @@ def test_account_verification_rejects_malformed_actor_manifest_without_crashing(
             None, dataset, {"control_results": [result], "actor_ids": []}, ADMIN_ID
         )
         assert issues and counts["account_control_actions"] == 0
+    finally:
+        primary.close()
+
+
+class ExpiringAccountServer(AccountServer):
+    """Issues access tokens that expire, and refuses to refresh an ended session.
+
+    Completing recovery moves the client clock to 10 seconds before the original
+    token expires, inside the sample client's 20-second refresh window.
+    """
+
+    clock_offset = [0.0]
+    expiries: list[int] = []
+
+    def access_token(self, session: str) -> str:
+        def part(value: dict[str, object]) -> str:
+            encoded = base64.urlsafe_b64encode(json.dumps(value).encode()).decode()
+            return encoded.rstrip("=")
+
+        expiry = int(time.time()) + 3600
+        self.expiries.append(expiry)
+        return f"{part({'alg': 'none'})}.{part({'exp': expiry, 'sid': session})}.signature"
+
+    def session_id(self, request):
+        token = super().session_id(request)
+        if not token:
+            return None
+        payload = token.split(".")[1]
+        return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["sid"]
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        if (
+            request.url.path == "/api/auth/refresh"
+            and self.session_id(request) not in self.sessions
+        ):
+            self.requests.append(request)
+            return self.response(401, {"detail": "Invalid authentication credentials"})
+        response = super().handle(request)
+        if request.url.path == "/api/auth/recovery/complete":
+            self.clock_offset[0] += self.expiries[0] - 10 - time.time()
+        return response
+
+
+def test_the_recovery_probe_reads_the_ended_session_without_refreshing_it(
+    tmp_path, monkeypatch
+) -> None:
+    # Review finding 6: the probe after recovery refreshed first when the token had
+    # 20 seconds or less left; the refused refresh stopped the run before the check.
+    from operations.sample.controls.account import execute_account_control
+
+    real_time = time.time
+    offset = ExpiringAccountServer.clock_offset
+    offset[0] = 0.0
+    ExpiringAccountServer.expiries.clear()
+    monkeypatch.setattr(time, "time", lambda: real_time() + offset[0])
+    dataset, action, context, primary, server = _setup(
+        tmp_path, monkeypatch, server_type=ExpiringAccountServer
+    )
+    try:
+        result = execute_account_control(action, dataset, context)
+        assert offset[0] > 3000
+        assert result["primary_session_authenticated"] is True
+        recovered = [request.url.path for request in server.requests].index(
+            "/api/auth/recovery/complete"
+        )
+        assert server.requests[recovered + 1].url.path == "/api/auth/session"
     finally:
         primary.close()

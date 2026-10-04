@@ -254,7 +254,7 @@ async function openAuthenticatedSandbox(
   });
   await page.goto("/sandbox");
   await expect(
-    page.getByRole("heading", { name: "Organization builder" }),
+    page.getByRole("heading", { name: "Sandbox", exact: true }),
   ).toBeVisible();
   return {
     document: () => structuredClone(document),
@@ -1796,7 +1796,8 @@ test("a successful Publish plays the look's title signature once", async ({
   );
   const title = page.getByRole("heading", {
     level: 1,
-    name: "Organization builder",
+    name: "Sandbox",
+    exact: true,
   });
   // Opening the Sandbox is not an earned moment.
   await expect(title).not.toHaveAttribute("data-signature");

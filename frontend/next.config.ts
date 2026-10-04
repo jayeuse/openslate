@@ -52,6 +52,10 @@ export default function createNextConfig(phase: string): NextConfig {
   return {
     ...baseConfig,
     allowedDevOrigins: [allowedDevOrigin],
+    // Keep every compiled route. Disposing an idle route recompiles and sends a
+    // Fast Refresh to every open page; mid-test that refresh dropped a pending
+    // router.push (Dashboards deep-link test: up to 48 of 60 failed at 10 workers).
+    onDemandEntries: { maxInactiveAge: 60 * 60 * 1000, pagesBufferLength: 100 },
     experimental: { proxyClientMaxBodySize: "25mb" },
     async rewrites() {
       return [

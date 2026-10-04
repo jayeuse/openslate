@@ -5,6 +5,8 @@ from datetime import date
 from decimal import Decimal
 from uuid import NAMESPACE_URL, uuid5
 
+import pytest
+
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.validation import validate_document
 from app.systems.sandbox.publications.preflight import (
@@ -22,6 +24,7 @@ from operations.sample.blueprint import (
 from operations.sample.catalog import FieldSpec, ModuleSpec, RelationshipSpec
 from operations.sample.episodes import plan_sessions
 from operations.sample.history import plan_history
+from operations.sample.packs import get_pack
 from operations.sample.packs.content_types import ContentSpec
 from operations.sample.packs.interface import (
     OrganizationPack,
@@ -376,3 +379,28 @@ def test_harbor_pack_preserves_the_existing_workspace_identity() -> None:
         "en-US",
         "Asia/Manila",
     )
+
+
+# Each parent has several children in real use, although the seed never repeats one.
+SEVERAL_CHILDREN_PER_PARENT = {
+    "harbor": {"site_customer"},
+    "school": {
+        "activity_room",
+        "behaviour_student",
+        "clinic_visit_student",
+        "health_alert_student",
+        "fee_assessment_student",
+        "fee_adjustment_student",
+    },
+}
+
+
+@pytest.mark.parametrize("pack_key", ["harbor", "school"])
+def test_a_parent_with_several_children_keeps_a_many_to_many_link(pack_key: str) -> None:
+    # PR review: one-to-one refused a second clinic visit for the same student (or a
+    # second site for a customer) with "Target already has a relationship source".
+    cardinality = {spec.key: spec.cardinality for spec in get_pack(pack_key).catalog.relationships}
+
+    assert {
+        key: cardinality[key] for key in SEVERAL_CHILDREN_PER_PARENT[pack_key]
+    } == dict.fromkeys(SEVERAL_CHILDREN_PER_PARENT[pack_key], "many-to-many")

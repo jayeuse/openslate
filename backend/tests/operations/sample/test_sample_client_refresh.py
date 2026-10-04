@@ -119,3 +119,28 @@ def test_an_unreadable_token_expiry_never_crashes_a_request(
     with _client(tmp_path, httpx.MockTransport(handler)) as client:
         client.login(EMAIL, PASSWORD)
         assert client.request("POST", "/api/records", json_body={}).status_code == 201
+
+
+def test_a_sign_out_probe_reads_a_revoked_session_without_refreshing_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Smoke runs use 60-second access tokens: after a bulk sign-out, the probe ran inside
+    # the refresh window, and the refused refresh stopped the run before the probe.
+    clock = [1_000.0]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/api/auth/login":
+            return _session_response(_jwt(1_060))
+        if request.url.path == "/api/auth/refresh":
+            return httpx.Response(401, json={"detail": "Invalid authentication credentials"})
+        return httpx.Response(200, json={"authenticated": False})
+
+    with _client(tmp_path, httpx.MockTransport(handler)) as client:
+        client.login(EMAIL, PASSWORD)
+        clock[0] = 1_050.0
+        response = client.request("GET", "/api/auth/session", refresh_first=False)
+        assert response.json() == {"authenticated": False}
+    assert seen == ["/api/auth/login", "/api/auth/session"]

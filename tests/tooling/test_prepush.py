@@ -31,6 +31,42 @@ class PrepushTests(unittest.TestCase):
         )
         self.assertLess(names.index("backend-coverage"), names.index(reset.name))
 
+    def test_local_backend_coverage_runs_parallel_shards_and_combines_them(self):
+        plan = prepush.build_plan(all_gate_scope(), Path("/repo"))
+        coverage = next(step for step in plan.steps if step.name == "backend-coverage")
+        self.assertEqual(
+            coverage.command,
+            ("uv", "run", "python", "-m", "tests.parallel_coverage", "--shards", "3"),
+        )
+        self.assertTrue(coverage.needs_base)
+        self.assertEqual(coverage.serial_group, "backend-postgres")
+
+    def test_a_smaller_machine_runs_coverage_on_fewer_stacks_with_the_same_gates(self):
+        def coverage_command(stacks):
+            plan = prepush.build_plan(all_gate_scope(), Path("/repo"), coverage_stacks=stacks)
+            return next(step for step in plan.steps if step.name == "backend-coverage").command
+
+        self.assertEqual(
+            coverage_command(1),
+            ("uv", "run", "python", "-m", "tests.fullstack_runner", "--backend-coverage-only"),
+        )
+        self.assertEqual(coverage_command(2)[-2:], ("--shards", "2"))
+        self.assertEqual(
+            prepush._parser().parse_args(["--coverage-stacks", "1"]).coverage_stacks, 1
+        )
+
+    def test_release_smoke_runs_only_with_the_release_flag_and_after_backend_stacks(self):
+        default = prepush.build_plan(all_gate_scope(), Path("/repo"))
+        self.assertNotIn("release-smoke", [step.name for step in default.steps])
+        plan = prepush.build_plan(all_gate_scope(), Path("/repo"), release=True)
+        names = [step.name for step in plan.steps]
+        smoke = plan.steps[names.index("release-smoke")]
+        self.assertEqual(smoke.command, ("uv", "run", "python", "-m", "tests.smoke_runner"))
+        self.assertEqual(
+            (smoke.cwd, smoke.lane, smoke.serial_group), ("backend", "backend", "backend-postgres")
+        )
+        self.assertLess(names.index("provider-reset-acceptance"), names.index("release-smoke"))
+
     def test_plan_keeps_frontend_lean_and_backend_independent(self):
         plan = prepush.build_plan(all_gate_scope(), Path("/repo"))
         names = [step.name for step in plan.steps]
