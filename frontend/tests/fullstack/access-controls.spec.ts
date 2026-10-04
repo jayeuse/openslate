@@ -642,7 +642,7 @@ test("admin and a department manager manage group membership across the live Acc
 
     await page.goto("/sandbox?section=designer");
     await expect(
-      page.getByRole("heading", { name: "Organization builder" }),
+      page.getByRole("heading", { name: "Sandbox", exact: true }),
     ).toBeVisible();
     sandboxTouched = true;
     await addDepartment(page, managedDepartment);
@@ -917,7 +917,7 @@ test("admin and a department manager manage group membership across the live Acc
       if (sandboxPublished) {
         await page.goto("/sandbox?section=designer");
         await expect(
-          page.getByRole("heading", { name: "Organization builder" }),
+          page.getByRole("heading", { name: "Sandbox", exact: true }),
         ).toBeVisible();
         await publishDraft(page, runFixture.admin.password);
       }

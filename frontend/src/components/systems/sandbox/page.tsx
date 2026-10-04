@@ -983,7 +983,7 @@ export default function SandboxPage() {
               data-signature={publishCount > 0 ? "play" : undefined}
               className="text-xl font-semibold tracking-tight sm:text-2xl"
             >
-              Organization builder
+              Sandbox
             </h1>
             {loading ? null : <Badge variant="outline">{status.label}</Badge>}
           </div>

@@ -1391,7 +1391,7 @@ test("Sandbox exposes the simplified Build, Triggers, Test, and History journey"
   await page.goto("/sandbox?section=designer");
 
   await expect(
-    page.getByRole("heading", { name: "Organization builder" }),
+    page.getByRole("heading", { name: "Sandbox", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
