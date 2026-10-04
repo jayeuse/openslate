@@ -118,21 +118,23 @@ about 6.5 minutes of sequential API calls, and the browser suite takes under a m
 
 ## Test output
 
-Each test run shows its progress in the terminal while it works:
+Test runs are quiet by default. Drawing a line for each of about 3,000 tests in the
+desktop app's terminal slowed the whole machine, so speed comes first:
 
 - The backend runners (`tests.fullstack_runner`, `tests.parallel_coverage`,
-  `tests.smoke_runner`) show one line per finished test: progress, outcome, and test ID.
-  Parallel coverage puts the shard name in front of each line, for example `[2/3]`.
-  The full output stays in the private run log, because it can contain stack credentials.
-  A test ID longer than 140 characters is shortened in the terminal.
-- The frontend suite uses the Playwright `list` reporter: one line per finished test.
-- The full-stack acceptance and smoke suites open a visible browser. CI runs them headless.
-  To run them headless on a workstation, set `OPENSLATE_E2E_HEADED=0`.
-- The `http` project stays headless, because five workers would open five windows. Add
-  `--headed` to `npm test` to watch it.
+  `tests.smoke_runner`) show stage names and the final result. Set
+  `OPENSLATE_TEST_PROGRESS=1` to also show one line per finished test (progress, outcome,
+  test ID). Parallel coverage puts the shard name in front of each line, for example
+  `[2/3]`. The full output stays in the private run log, because it can contain stack
+  credentials.
+- The frontend suite uses the Playwright `line` reporter.
+- The full-stack acceptance and smoke suites run headless. Set `OPENSLATE_E2E_HEADED=1` to
+  watch them in a visible browser; CI always runs them headless. Add `--headed` to
+  `npm test` to watch the `http` project.
 
-The runners turn SIGTERM and SIGHUP into an interrupt, so a stopped run still removes its
-disposable stack and scanner.
+The runners turn SIGTERM and SIGHUP into an interrupt, and they stop each command's whole
+process group before they remove the disposable stack and scanner, so a stopped run leaves
+nothing behind.
 
 ## Acceptance boundaries
 

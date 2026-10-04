@@ -4,9 +4,9 @@ Creates a new disposable stack, serves the static frontend export from FastAPI b
 the Caddy gateway, seeds Harbor Small once through the sample-data seeder, signs in
 once per role and runs ``frontend/tests/fullstack/smoke``. It belongs to the release
 gate (``scripts/prepush.py --release``), not to every push. Secrets and raw output stay
-in a private temporary directory; the terminal shows one line per finished test and the
-browser opens visibly unless CI is set or OPENSLATE_E2E_HEADED=0. The summary holds only
-timings and outcomes.
+in a private temporary directory; OPENSLATE_TEST_PROGRESS=1 shows one line per finished
+test, and OPENSLATE_E2E_HEADED=1 opens a visible browser. The summary holds only timings
+and outcomes.
 
 From backend/:  uv run python -m tests.smoke_runner
 """

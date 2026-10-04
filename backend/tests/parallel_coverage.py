@@ -54,7 +54,7 @@ def main(arguments: list[str]) -> int:
                 encoding="utf-8",
                 errors="replace",
             )
-            # Each shard prints one line per finished test; show them as they arrive.
+            # Show what each shard prints (stage names; test results on request) at once.
             reader = threading.Thread(
                 target=relay, args=(process.stdout, log, f"[{group}/{total}]"), daemon=True
             )

@@ -51,14 +51,26 @@ def test_playwright_list_results_and_totals_reach_the_terminal() -> None:
     assert progress_line("  16 passed (23.5s)")
 
 
-def test_a_streamed_command_logs_everything_and_shows_only_results(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("progress", "shown"), [(None, ""), ("1", "100% PASSED  tests/a.py::test_b\n")]
+)
+def test_a_streamed_command_is_quiet_unless_progress_is_requested(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    progress: str | None,
+    shown: str,
 ) -> None:
+    # Drawing thousands of result lines slowed the machine, so runs are quiet by default.
+    if progress is None:
+        monkeypatch.delenv("OPENSLATE_TEST_PROGRESS", raising=False)
+    else:
+        monkeypatch.setenv("OPENSLATE_TEST_PROGRESS", progress)
     script = "print('secret=synthetic'); print('tests/a.py::test_b PASSED [100%]')"
     with (tmp_path / "process.log").open("w") as log:
         run_streamed([sys.executable, "-c", script], tmp_path, dict(os.environ), log)
 
-    assert capsys.readouterr().out == "100% PASSED  tests/a.py::test_b\n"
+    assert capsys.readouterr().out == shown
     assert "secret=synthetic" in (tmp_path / "process.log").read_text()
 
 
@@ -72,15 +84,14 @@ def test_a_failed_streamed_command_raises_like_a_checked_run(tmp_path: Path) -> 
     assert failure.value.returncode == 3
 
 
-def test_e2e_browsers_are_visible_locally_and_headless_in_ci(
+def test_e2e_browsers_are_headless_unless_requested_and_always_headless_in_ci(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("OPENSLATE_E2E_HEADED", raising=False)
-    assert e2e_browser_flags() == ["--reporter=list", "--headed"]
-    monkeypatch.setenv("OPENSLATE_E2E_HEADED", "0")
     assert e2e_browser_flags() == ["--reporter=list"]
-    monkeypatch.delenv("OPENSLATE_E2E_HEADED")
+    monkeypatch.setenv("OPENSLATE_E2E_HEADED", "1")
+    assert e2e_browser_flags() == ["--reporter=list", "--headed"]
     monkeypatch.setenv("CI", "true")
     assert e2e_browser_flags() == ["--reporter=list"]
 

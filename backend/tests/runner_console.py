@@ -1,8 +1,9 @@
-"""Show test progress in the runner's terminal; the full output stays in the private log.
+"""Run test commands for the disposable-stack runners; the full output stays in the private log.
 
-The private log can hold provider credentials, so the terminal gets only one line per
-finished test and the final counts. Runners also turn SIGTERM and SIGHUP into an
-interrupt, so a stopped run still removes its disposable stack.
+Runs are quiet by default, because drawing thousands of result lines slowed the machine.
+OPENSLATE_TEST_PROGRESS=1 shows one line per finished test (the private log can hold
+provider credentials, so nothing else is shown). Runners also turn SIGTERM and SIGHUP into
+an interrupt, so a stopped run still removes its disposable stack.
 """
 
 import os
@@ -48,9 +49,9 @@ def run_streamed(
     capture: bool = False,
     shown: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run like subprocess.run(check=True), and echo test results while they finish.
+    """Run like subprocess.run(check=True); with OPENSLATE_TEST_PROGRESS=1, show results.
 
-    `shown` collects the echoed lines, which hold no output beyond test results.
+    `shown` collects the test-result lines either way; they hold no other output.
     """
     if capture:
         return subprocess.run(
@@ -69,12 +70,14 @@ def run_streamed(
         start_new_session=True,
     )
     assert process.stdout is not None
+    echo = os.environ.get("OPENSLATE_TEST_PROGRESS") == "1"
     try:
         for line in process.stdout:
             log.write(line)
             progress = progress_line(line)
             if progress is not None:
-                print(progress, flush=True)
+                if echo:
+                    print(progress, flush=True)
                 if shown is not None:
                     shown.append(progress)
         process.wait()
@@ -139,8 +142,8 @@ def playwright_results(lines: list[str]) -> list[dict[str, str | None]]:
 
 
 def e2e_browser_flags() -> list[str]:
-    """List each test as it finishes; open a visible browser unless CI or opted out."""
-    headed = not os.environ.get("CI") and os.environ.get("OPENSLATE_E2E_HEADED", "1") != "0"
+    """List each test in the private log; open a visible browser only on request, never in CI."""
+    headed = not os.environ.get("CI") and os.environ.get("OPENSLATE_E2E_HEADED") == "1"
     return ["--reporter=list", *(["--headed"] if headed else [])]
 
 

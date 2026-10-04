@@ -84,8 +84,7 @@ export default defineConfig({
   expect: { timeout: 5_000 },
   forbidOnly: isCI,
   retries: 0,
-  // One line per finished test, so a run shows its progress while it works.
-  reporter: "list",
+  reporter: "line",
   use: { baseURL },
   projects: [
     ...(testLayer === "all" || testLayer === "isolated"
