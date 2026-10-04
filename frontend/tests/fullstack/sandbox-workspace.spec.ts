@@ -32,7 +32,8 @@ async function applyTemplate(page: Page, name: string) {
   ).toBeVisible();
 }
 
-async function publishDraft(page: Page, password: string) {
+/** Publish the draft and return the new version's sequence number. */
+async function publishDraft(page: Page, password: string): Promise<number> {
   const preview = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname ===
@@ -54,10 +55,13 @@ async function publishDraft(page: Page, password: string) {
     { timeout: 45_000 },
   );
   await page.getByRole("button", { name: "Publish changes" }).click();
-  expect((await published).status()).toBe(201);
+  const response = await published;
+  expect(response.status()).toBe(201);
   await expect(
     page.getByText("Your changes are now published to the live workspace."),
   ).toBeVisible();
+  const body = (await response.json()) as { version: { sequence: number } };
+  return body.version.sequence;
 }
 
 type SeededSupplier = Readonly<{
@@ -1412,7 +1416,7 @@ test("Sandbox exposes the simplified Build, Triggers, Test, and History journey"
   await expect(page.getByText("Simulation", { exact: true })).toHaveCount(0);
 
   await applyTemplate(page, "Inventory & procurement");
-  await publishDraft(page, credentials.password);
+  const publishedSequence = await publishDraft(page, credentials.password);
   await expect(page.getByText("Published", { exact: true })).toBeVisible();
   const supplier = await seedPublishedSupplier(page, runFixture.runId);
   await exercisePrivateDashboard(page, runFixture.runId, supplier);
@@ -1487,8 +1491,14 @@ test("Sandbox exposes the simplified Build, Triggers, Test, and History journey"
 
   await page.getByRole("link", { name: "History", exact: true }).click();
   await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+  // Other specs in the same run also publish; History then adds the version number
+  // to every "Published structure" label, so select this test's own version.
   await page
-    .getByRole("button", { name: "View Published structure", exact: true })
+    .getByRole("button", {
+      name: new RegExp(
+        `^View Published structure(, version ${publishedSequence})?$`,
+      ),
+    })
     .click();
   await expect(
     page
