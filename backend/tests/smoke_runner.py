@@ -26,11 +26,13 @@ if __package__:
     from .fullstack_environment import RUNNER_API_PORT, RUNNER_CONCURRENCY_LIMIT, api_environment
     from .fullstack_runner import API, BACKEND, FRONTEND, WEB, seed, wait_for
     from .postgres_runtime import DisposablePostgres
+    from .runner_console import stop_on_signals
 else:
     from caddy_runtime import GATEWAY_PORT, DisposableCaddy
     from fullstack_environment import RUNNER_API_PORT, RUNNER_CONCURRENCY_LIMIT, api_environment
     from fullstack_runner import API, BACKEND, FRONTEND, WEB, seed, wait_for
     from postgres_runtime import DisposablePostgres
+    from runner_console import stop_on_signals
 
 SEED = 42
 ANCHOR_DATE = "2026-09-30"
@@ -115,6 +117,7 @@ def main() -> int:
             except OSError as error:
                 print(f"Test port {port} unavailable: {error.strerror or 'cannot bind'}.")
                 return 1
+    stop_on_signals()
     run_id = uuid4().hex
     private = Path(tempfile.mkdtemp(prefix="openslate-smoke-"))
     base_env = {"PATH": os.environ["PATH"], "OPENSLATE_ENV_SOURCE": "process"}

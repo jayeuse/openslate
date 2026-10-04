@@ -37,6 +37,7 @@ if __package__:
     )
     from .fullstack_summary import summary_path, write_fullstack_summary
     from .postgres_runtime import DisposablePostgres
+    from .runner_console import stop_on_signals
     from .scanner_runtime import DisposableScanner
 else:
     from backend_batches import parse_batch, run_backend_batches
@@ -49,6 +50,7 @@ else:
     )
     from fullstack_summary import summary_path, write_fullstack_summary
     from postgres_runtime import DisposablePostgres
+    from runner_console import stop_on_signals
     from scanner_runtime import DisposableScanner
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -211,6 +213,7 @@ def main(arguments=()):
             except OSError as error:
                 print(f"Test port {port} unavailable: {error.strerror or 'cannot bind'}.")
                 return 1
+    stop_on_signals()
     run_id = uuid4().hex
     private = Path(tempfile.mkdtemp(prefix="openslate-p5-"))
     processes = []
