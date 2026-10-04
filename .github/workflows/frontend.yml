@@ -18,56 +18,130 @@ env:
   PLAYWRIGHT_CONFIGURATION: process
 
 jobs:
-  verify:
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    outputs:
+      run_frontend: ${{ steps.scope.outputs.run_frontend }}
+      reason_frontend: ${{ steps.scope.outputs.reason_frontend }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-
       - id: scope
         name: Classify changes
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: python3 scripts/ci_scope.py --base "$BASE_SHA" --github-output "$GITHUB_OUTPUT"
 
+  check:
+    needs: changes
+    if: needs.changes.outputs.run_frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
-        if: steps.scope.outputs.run_frontend == 'true'
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
       - name: Install locked frontend dependencies
-        if: steps.scope.outputs.run_frontend == 'true'
-        working-directory: frontend
         run: npm ci --prefer-offline --no-audit --no-fund
-
-      - name: Install pinned Playwright Chromium
-        if: steps.scope.outputs.run_frontend == 'true'
-        working-directory: frontend
-        run: npm exec --no -- playwright install --with-deps chromium
-
       - name: Check formatting, lint, and types
-        if: steps.scope.outputs.run_frontend == 'true'
-        working-directory: frontend
         run: npm run check
 
-      - name: Run retained frontend tests
-        if: steps.scope.outputs.run_frontend == 'true'
+  build:
+    needs: changes
+    if: needs.changes.outputs.run_frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
         working-directory: frontend
-        run: npm test
-
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
       - name: Build the production frontend
-        if: steps.scope.outputs.run_frontend == 'true'
-        working-directory: frontend
         run: npm run build
 
-      - name: No frontend checks required
-        if: >-
-          steps.scope.outputs.run_frontend != 'true'
+  test:
+    name: test (${{ matrix.suite }})
+    needs: changes
+    if: needs.changes.outputs.run_frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Isolated tests finish in seconds; only the slow dev-server http project is sharded.
+        include:
+          - suite: isolated
+            args: --project=isolated
+          - suite: http 1/6
+            args: --project=http --shard=1/6
+          - suite: http 2/6
+            args: --project=http --shard=2/6
+          - suite: http 3/6
+            args: --project=http --shard=3/6
+          - suite: http 4/6
+            args: --project=http --shard=4/6
+          - suite: http 5/6
+            args: --project=http --shard=5/6
+          - suite: http 6/6
+            args: --project=http --shard=6/6
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Restore the pinned Playwright browser
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+      - name: Install pinned Playwright Chromium
+        run: npm exec --no -- playwright install --with-deps chromium
+      - name: Run retained frontend tests
+        run: npm test -- ${{ matrix.args }}
+
+  verify:
+    needs: [changes, check, build, test]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Preserve the Frontend required check
         env:
-          REASON: ${{ steps.scope.outputs.reason_frontend }}
+          CHANGES: ${{ needs.changes.result }}
+          RUN_FRONTEND: ${{ needs.changes.outputs.run_frontend }}
+          CHECK: ${{ needs.check.result }}
+          BUILD: ${{ needs.build.result }}
+          TEST: ${{ needs.test.result }}
+          REASON: ${{ needs.changes.outputs.reason_frontend }}
         run: |
-          printf 'Frontend check satisfied without execution: %s\n' "$REASON"
+          test "$CHANGES" = "success"
+          if [ "$RUN_FRONTEND" = "true" ]; then
+            test "$CHECK" = "success"
+            test "$BUILD" = "success"
+            test "$TEST" = "success"
+          else
+            test "$CHECK" = "skipped"
+            test "$BUILD" = "skipped"
+            test "$TEST" = "skipped"
+            printf 'Frontend check satisfied without execution: %s\n' "$REASON"
+          fi

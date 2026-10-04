@@ -17,3 +17,8 @@
 **/logs
 **/playwright-report
 **/test-results
+# Tests and local outputs never enter an image; editing them must not bust image layers.
+backend/tests
+frontend/tests
+frontend/coverage
+frontend/out

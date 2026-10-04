@@ -897,7 +897,10 @@ test("an organization template replaces the empty draft only after confirmation"
     .getByRole("button", { name: "Use Inventory & procurement" })
     .click();
 
-  await expect(dialog).toBeHidden();
+  // Applying parses the whole template and renders it on the Build canvas
+  // before the dialog closes; on a 2-CPU runner under `next dev` that alone
+  // can take most of the default 5s.
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
   await expect(
     page.getByText("Procurement", { exact: true }).first(),
   ).toBeVisible();

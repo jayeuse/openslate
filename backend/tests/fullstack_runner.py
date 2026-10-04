@@ -28,14 +28,14 @@ from app.core.database import model_registry  # noqa: F401
 
 if __package__:
     from .backend_batches import parse_batch, run_backend_batches
-    from .backend_coverage import run_backend_coverage
+    from .backend_coverage import parse_shard, run_backend_coverage
     from .caddy_runtime import CADDY_IMAGE, GATEWAY_PORT, DisposableCaddy, render_gateway_config
     from .fullstack_summary import summary_path, write_fullstack_summary
     from .postgres_runtime import DisposablePostgres
     from .scanner_runtime import DisposableScanner
 else:
     from backend_batches import parse_batch, run_backend_batches
-    from backend_coverage import run_backend_coverage
+    from backend_coverage import parse_shard, run_backend_coverage
     from caddy_runtime import CADDY_IMAGE, GATEWAY_PORT, DisposableCaddy, render_gateway_config
     from fullstack_summary import summary_path, write_fullstack_summary
     from postgres_runtime import DisposablePostgres
@@ -180,7 +180,10 @@ def main(arguments=()):
             "layer": "integration",
             "interactive": False,
         }
-    if not batch and arguments not in (
+    shard = None
+    if len(arguments) == 2 and arguments[0] == "--backend-coverage-shard":
+        shard = parse_shard(arguments[1])
+    elif not batch and arguments not in (
         (),
         ("--scanner-only",),
         ("--backend-coverage-only",),
@@ -188,7 +191,9 @@ def main(arguments=()):
         ("--browser-only",),
     ):
         raise SystemExit("Usage: fullstack_runner.py [mode]")
-    backend_only = batch is not None or arguments == ("--backend-coverage-only",)
+    backend_only = (
+        batch is not None or shard is not None or arguments == ("--backend-coverage-only",)
+    )
     scanner_only = arguments == ("--scanner-only",)
     acceptance_only = arguments == ("--acceptance-only",)
     browser_only = arguments == ("--browser-only",)
@@ -317,7 +322,7 @@ def main(arguments=()):
                     "TEST_DATABASE_URL": database_env["DATABASE_URL"],
                 },
                 run_id,
-                *([batch] if batch else []),
+                *([batch] if batch else [shard] if shard else []),
             )
         if backend_only:
             result = result if batch else 0
@@ -481,6 +486,8 @@ def main(arguments=()):
         print(
             "Backend batch session PASS (no coverage gate)."
             if batch
+            else f"Backend coverage shard {shard[0]}/{shard[1]} PASS (gate runs after combine)."
+            if shard
             else "Backend coverage PASS."
             if backend_only
             else "Full-stack PASS."

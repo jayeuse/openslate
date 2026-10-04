@@ -66,10 +66,53 @@ jobs:
         run: uv run python -m unittest discover -s ../tests/tooling -t .. -p 'test_*.py'
 
   coverage:
+    name: coverage (${{ matrix.shard }}/5)
     needs: changes
     if: needs.changes.outputs.run_backend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: latest
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --locked
+      - name: Run one disposable Supabase test shard
+        env:
+          COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}
+        run: uv run python -m tests.fullstack_runner --backend-coverage-shard ${{ matrix.shard }}/5
+      - name: Upload shard coverage data
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-coverage-shard-${{ matrix.shard }}
+          path: |
+            backend/test-results/coverage/coverage.data
+            backend/test-results/coverage/pytest.xml
+            backend/test-results/coverage/metadata.json
+            backend/test-results/coverage/summary.json
+            backend/test-results/coverage/test-durations.json
+            backend/test-results/coverage/operational-coverage.json
+          if-no-files-found: ignore
+          retention-days: 3
+
+  coverage-gate:
+    needs: [changes, coverage]
+    if: needs.changes.outputs.run_backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend
@@ -86,12 +129,16 @@ jobs:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --locked
-      - name: Complete disposable Supabase tests and coverage gates
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: backend-coverage-shard-*
+          path: ${{ runner.temp }}/coverage-shards
+      - name: Combine shards and apply the coverage gates
         env:
           COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}
-        run: uv run python -m tests.fullstack_runner --backend-coverage-only
-      - name: Verify committed provider reset on a separate disposable stack
-        run: uv run python -m tests.fullstack_runner --reset-acceptance-only
+        run: >-
+          uv run python tests/backend_coverage.py combine
+          "$RUNNER_TEMP/coverage-shards" --shards 5
       - name: Upload compact backend coverage evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -103,8 +150,37 @@ jobs:
             backend/test-results/coverage/metadata.json
             backend/test-results/coverage/gate.json
             backend/test-results/coverage/operational-coverage.json
-            backend/test-results/coverage/summary.json
-            backend/test-results/batches/*.json
+            backend/test-results/coverage/test-durations.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  reset-acceptance:
+    needs: changes
+    if: needs.changes.outputs.run_backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: latest
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --locked
+      - name: Verify committed provider reset on a separate disposable stack
+        run: uv run python -m tests.fullstack_runner --reset-acceptance-only
+      - name: Upload reset batch evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-reset-acceptance
+          path: backend/test-results/batches/*.json
           if-no-files-found: ignore
           retention-days: 14
 
@@ -127,7 +203,13 @@ jobs:
           cache-to: type=gha,mode=max,scope=openslate-server
 
   verify:
-    needs: [changes, quality, coverage, container]
+    needs:
+      - changes
+      - quality
+      - coverage
+      - coverage-gate
+      - reset-acceptance
+      - container
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -138,6 +220,8 @@ jobs:
           RUN_SERVER_IMAGE: ${{ needs.changes.outputs.run_server_image }}
           QUALITY: ${{ needs.quality.result }}
           COVERAGE: ${{ needs.coverage.result }}
+          COVERAGE_GATE: ${{ needs.coverage-gate.result }}
+          RESET: ${{ needs.reset-acceptance.result }}
           CONTAINER: ${{ needs.container.result }}
           REASON: ${{ needs.changes.outputs.reason_backend }}
         run: |
@@ -145,9 +229,13 @@ jobs:
           if [ "$RUN_BACKEND" = "true" ]; then
             test "$QUALITY" = "success"
             test "$COVERAGE" = "success"
+            test "$COVERAGE_GATE" = "success"
+            test "$RESET" = "success"
           else
             test "$QUALITY" = "skipped"
             test "$COVERAGE" = "skipped"
+            test "$COVERAGE_GATE" = "skipped"
+            test "$RESET" = "skipped"
             printf 'Backend checks skipped: %s\n' "$REASON"
           fi
           if [ "$RUN_SERVER_IMAGE" = "true" ]; then
