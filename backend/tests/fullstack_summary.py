@@ -1,6 +1,7 @@
 """Parse and write non-secret results for a disposable full-stack run."""
 
 import json
+import os
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -12,7 +13,12 @@ def summary_path(backend: Path, frontend: Path, *, batch: str | None, backend_on
     if batch:
         return backend / "test-results/batches/summary.json"
     if backend_only:
-        return backend / "test-results/coverage/summary.json"
+        override = os.environ.get("OPENSLATE_COVERAGE_OUTPUT")
+        return (
+            Path(override) / "summary.json"
+            if override
+            else (backend / "test-results/coverage/summary.json")
+        )
     return frontend / "test-results/fullstack-summary.json"
 
 

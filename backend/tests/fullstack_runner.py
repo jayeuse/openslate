@@ -28,7 +28,7 @@ from app.core.database import model_registry  # noqa: F401
 
 if __package__:
     from .backend_batches import parse_batch, run_backend_batches
-    from .backend_coverage import parse_shard, run_backend_coverage
+    from .backend_coverage import coverage_output, parse_shard, run_backend_coverage
     from .caddy_runtime import CADDY_IMAGE, GATEWAY_PORT, DisposableCaddy, render_gateway_config
     from .fullstack_environment import (
         RUNNER_CONCURRENCY_LIMIT,
@@ -40,7 +40,7 @@ if __package__:
     from .scanner_runtime import DisposableScanner
 else:
     from backend_batches import parse_batch, run_backend_batches
-    from backend_coverage import parse_shard, run_backend_coverage
+    from backend_coverage import coverage_output, parse_shard, run_backend_coverage
     from caddy_runtime import CADDY_IMAGE, GATEWAY_PORT, DisposableCaddy, render_gateway_config
     from fullstack_environment import (
         RUNNER_CONCURRENCY_LIMIT,
@@ -201,7 +201,7 @@ def main(arguments=()):
     acceptance_only = arguments == ("--acceptance-only",)
     browser_only = arguments == ("--browser-only",)
     if not scanner_only and batch is None and not acceptance_only and not browser_only:
-        output = BACKEND / "test-results/coverage"
+        output = coverage_output(BACKEND)
         if output.exists():
             shutil.rmtree(output)
     for port in () if backend_only else (8008, GATEWAY_PORT):

@@ -34,7 +34,14 @@ combines the five coverage data files, sums the test counts, and then applies th
 different source tree fails the gate. `pytest-split` balances the shards with
 `backend/tests/.test_durations`. Each CI run uploads fresh durations in the
 `backend-coverage` artifact; commit that file again when a shard takes much longer than
-the others. Local `prepush.py` keeps the single `--backend-coverage-only` run.
+the others. Local `prepush.py` runs `python -m tests.parallel_coverage`: three shards on
+their own disposable stacks at the same time, then the same combine step and gates. Each
+shard writes to its own folder under `backend/test-results/coverage-shards/`. Each shard
+stack creates six Docker networks, and Docker Desktop's default address pools hold about
+30, so three shards fit beside the development stack. A shard that fails at PostgreSQL
+startup with "all predefined address pools have been fully subnetted" means networks from
+another stack still exist; `docker network ls` shows them. The single
+`--backend-coverage-only` run stays available for repair.
 
 The committed Auth/Storage reset acceptance has its own mandatory
 `--reset-acceptance-only` invocation in both gates. Local `prepush.py` runs it after

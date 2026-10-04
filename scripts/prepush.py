@@ -184,14 +184,8 @@ def _add_backend_steps(steps: list[Step]) -> None:
             gate="backend",
             phase="resource",
             cwd="backend",
-            command=(
-                "uv",
-                "run",
-                "python",
-                "-m",
-                "tests.fullstack_runner",
-                "--backend-coverage-only",
-            ),
+            # Three shards on their own disposable stacks, combined under the same gates.
+            command=("uv", "run", "python", "-m", "tests.parallel_coverage"),
             lane="backend",
             serial_group=SERIAL_BACKEND_STACK,
             needs_base=True,
