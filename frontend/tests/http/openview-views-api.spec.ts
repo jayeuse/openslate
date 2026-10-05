@@ -4686,3 +4686,24 @@ test("a Comms example record link shows a notice and returns to live Views", asy
     page.getByText("This example record is not in OpenView", { exact: true }),
   ).toHaveCount(0);
 });
+
+test("OpenView request failures use safe destructive feedback without server detail", async ({
+  page,
+}) => {
+  await installViewsApi(page);
+  await page.route("**/api/views/data-sources?*", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { detail: "Private database routing detail" },
+    }),
+  );
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const failure = page
+    .getByRole("alert")
+    .filter({ hasText: "temporarily unavailable" });
+  await expect(failure).toBeVisible();
+  await expect(failure).toHaveAttribute("data-variant", "destructive");
+  await expect(page.getByText("Private database routing detail")).toHaveCount(
+    0,
+  );
+});

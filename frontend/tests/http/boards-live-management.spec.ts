@@ -595,3 +595,96 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
   await expect(confirm).toHaveCount(0);
   expect(deletions).toBe(2);
 });
+
+test("Board creation closes its form and confirms the created Board", async ({
+  page,
+}) => {
+  await installArchivedBoard(page);
+  const created = {
+    id: departmentId,
+    scope: "project",
+    department_id: null,
+    name: "New dispatch",
+    description: "Owned feedback journey",
+    status: "active",
+    revision: 1,
+    level: "manage",
+    created_at: board.createdAt,
+    updated_at: board.updatedAt,
+  };
+  await page.route("**/api/boards", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 201, json: created })
+      : route.fallback(),
+  );
+  await page.route(`**/api/boards/${departmentId}`, (route) =>
+    route.fulfill({ json: created }),
+  );
+  await page.route(`**/api/boards/${departmentId}/my-access`, (route) =>
+    route.fulfill({
+      json: { level: "manage", read: true, write: true, manage: true },
+    }),
+  );
+  await page.goto(`/boards?board=${boardId}&section=overview&status=archived`);
+  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "New project Board", exact: true })
+    .click();
+  const form = page.getByRole("dialog", { name: "New project Board" });
+  await form.getByLabel("Board name").fill(created.name);
+  await form.getByRole("button", { name: "Create Board", exact: true }).click();
+  await expect(form).toBeHidden();
+  await expect(
+    page
+      .getByRole("region", { name: "Notifications", exact: true })
+      .getByText("Board created.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Notifications", exact: true })
+      .getByText("Board created.", { exact: true }),
+  ).toHaveCount(1);
+});
+
+test("Board permanent deletion closes its review and confirms completion", async ({
+  page,
+}) => {
+  await installArchivedBoard(page);
+  await page.route(`**/api/boards/${boardId}/purge**`, (route) =>
+    route.request().url().endsWith("/preview")
+      ? route.fulfill({ json: purgePreview })
+      : route.fulfill({
+          json: {
+            impact: purgePreview.impact,
+            operation_id: null,
+          },
+        }),
+  );
+  await page.goto(`/boards?board=${boardId}&section=overview&status=archived`);
+  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+    .click();
+  const form = page.getByRole("dialog", { name: "Manage Board" });
+  await form
+    .getByRole("button", { name: "Permanently delete Board", exact: true })
+    .click();
+  await form.getByLabel("Type the Board ID").fill(boardId);
+  await form
+    .getByLabel("Administrator password")
+    .fill("synthetic-owned-passphrase");
+  await form
+    .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+    .click();
+  await expect(form).toBeHidden();
+  await expect(
+    page
+      .getByRole("region", { name: "Notifications", exact: true })
+      .getByText("Board permanently deleted.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Notifications", exact: true })
+      .getByText("Board permanently deleted.", { exact: true }),
+  ).toHaveCount(1);
+});

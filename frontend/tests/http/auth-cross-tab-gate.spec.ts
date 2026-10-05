@@ -701,3 +701,122 @@ test("Retry starts a fresh check when the current session request never settles"
     releaseHeldSession();
   }
 });
+
+for (const transition of [
+  "logout",
+  "invalid",
+  "account-change",
+  "closing-account-change",
+] as const) {
+  test(`private notices and Undo leave at ${transition}, and errors can report for the next account`, async ({
+    page,
+  }) => {
+    const changingAccount = transition.includes("account-change");
+    let activeUser: string | null = userA;
+    await page.route("**/api/auth/session", (route) =>
+      route.fulfill({
+        json: activeUser
+          ? { authenticated: true, user_id: activeUser, setup_required: false }
+          : { authenticated: false },
+      }),
+    );
+    await page.route("**/api/auth/refresh", (route) =>
+      route.fulfill({ status: 401 }),
+    );
+    await page.route("**/api/auth/logout", (route) => {
+      activeUser = null;
+      return route.fulfill({ status: 204 });
+    });
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: () =>
+            Promise.reject(new Error("owned clipboard rejection")),
+        },
+      });
+    });
+    await page.goto("/comms");
+    const workshop = page.getByRole("button", { name: /^workshop(,|$)/ });
+    async function copyFailure() {
+      await workshop.click({ button: "right" });
+      await page
+        .getByRole("menuitem", { name: "Copy channel link", exact: true })
+        .click();
+    }
+    await copyFailure();
+    const failure = page
+      .getByRole("region", { name: "Notifications", exact: true })
+      .getByText("The browser could not copy the link.", {
+        exact: true,
+      });
+    await expect(failure).toBeVisible();
+    await copyFailure();
+    await expect(failure).toHaveCount(1);
+    await workshop.click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "Archive channel", exact: true })
+      .click();
+    await page
+      .getByRole("alertdialog", { name: "Archive #workshop?" })
+      .getByRole("button", { name: "Archive channel", exact: true })
+      .click();
+    await expect(
+      page
+        .getByRole("region", { name: "Notifications", exact: true })
+        .getByText("#workshop archived.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Undo", exact: true }),
+    ).toBeVisible();
+    if (transition === "closing-account-change") {
+      const endingNotice = page
+        .getByRole("region", { name: "Notifications", exact: true })
+        .getByRole("alertdialog", { includeHidden: true })
+        .filter({ hasText: "The browser could not copy the link." });
+      // Hold a real ending animation so dismissal is still pending when the
+      // verified account changes; the notice and its callbacks stay real.
+      await endingNotice.evaluate((element) => {
+        element.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 30_000 });
+      });
+      await endingNotice.getByLabel("Dismiss notification").click();
+      await expect(
+        page
+          .getByRole("alert")
+          .filter({ hasText: "The browser could not copy the link." }),
+      ).toHaveCount(1);
+    }
+    if (transition === "logout") {
+      await page.getByRole("button", { name: "Account", exact: true }).click();
+      await page
+        .getByRole("menuitem", { name: "Sign out", exact: true })
+        .click();
+    } else {
+      activeUser = transition === "invalid" ? null : userB;
+      await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+    }
+    if (!changingAccount) await expect(page).toHaveURL(/\/login$/);
+    await expect(failure).toHaveCount(0);
+    await expect(
+      page
+        .getByRole("region", { name: "Notifications", exact: true })
+        .getByText("#workshop archived.", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Undo", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("The browser could not copy the link.", { exact: true }),
+    ).toHaveCount(0);
+    if (!changingAccount) {
+      activeUser = userB;
+      await page.goto("/comms");
+    }
+    await expect(
+      page.getByRole("textbox", { name: "Message", exact: true }),
+    ).toBeVisible();
+    await copyFailure();
+    await expect(failure).toBeVisible();
+    await expect(failure).toHaveCount(1);
+  });
+}

@@ -616,7 +616,22 @@ The open-tab mark is one element, `data-slot="tabs-indicator"` (Base UI's tab in
 
 ### Notices (Alert)
 
-A tinted band per signal: warning, destructive, and success use the signal's `-tint` fill and `-rule` border with `--ink` text; default uses the card surface. 16px padding, 14px text, `role="status"`. Whiteboard draws a 2px border with a 6px corner. Triplicate draws a square 3px double border, like a stamped box. Stockroom keeps a 1px border with a 2px corner and adds a 3px inset band in the text color along the top.
+A tinted band per signal: warning, destructive, and success use the signal's `-tint` fill and `-rule` border with `--ink` text; default uses the card surface. 16px padding, 14px text, `role="status"` for ordinary notices and `role="alert"` for failures. Whiteboard draws a 2px border with a 6px corner. Triplicate draws a square 3px double border, like a stamped box. Stockroom keeps a 1px border with a 2px corner and adds a 3px inset band in the text color along the top.
+
+### Request feedback
+
+Keep feedback where the person can act on it. Preserve working inline notices; use a toast when the action leaves no inline surface.
+
+| Situation | Feedback |
+| --- | --- |
+| An action in an open dialog, sheet, or form | Inline. If success closes the dialog, also show a success toast. Failure stays inline. |
+| An action that closes or leaves its surface | Toast. |
+| A one-click list action or a background action | Toast. |
+| Sandbox autosave | Header status for progress and success; a destructive inline alert for failure. |
+| Authentication pages | An inline Alert on the destination page. Password setup and recovery completion say “Password set. Sign in.” |
+| Any request failure | `role="alert"` and the destructive variant; never neutral status styling. |
+
+Show safe, actionable error text based on known status and error codes. Network failures, unexpected responses, and unknown errors use generic text without exposing raw server messages. Deduplicate an error while its toast is visible; allow it again after dismissal. Keep independent success notices separate. Clear private workspace notices and their actions when the verified account ends or changes.
 
 ### Tables
 

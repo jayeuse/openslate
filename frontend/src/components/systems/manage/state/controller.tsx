@@ -280,6 +280,7 @@ export function useManageMaintenance({
     draftPolicy,
     dirty,
     stale,
+    staleRevision,
     pending,
     error,
     notice,

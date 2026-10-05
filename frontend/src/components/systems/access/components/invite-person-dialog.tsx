@@ -367,7 +367,7 @@ export function InvitePersonDialog({
             </FieldSet>
 
             {settings.isError && form.role === "guest" && form.days === null ? (
-              <Alert variant="warning" role="status">
+              <Alert variant="destructive">
                 The default access length could not be loaded. Enter the number
                 of days.
               </Alert>

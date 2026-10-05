@@ -404,6 +404,13 @@ async function installDashboardApi(
       body: JSON.stringify({ id: userId, ...identity }),
     }),
   );
+  await page.route("**/api/auth/refresh", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          json: { authenticated: true, setup_required: false },
+        })
+      : route.fallback(),
+  );
   await page.route("**/api/departments**", async (route) =>
     route.fulfill({
       contentType: "application/json",
@@ -1840,7 +1847,7 @@ test("stale Dashboard save keeps the name and ordered widget draft available", a
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
   await expect(
-    page.getByText("This Dashboard changed since you opened it."),
+    page.getByText("This item changed. Refresh it and try again."),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Unsaved operations draft" }),

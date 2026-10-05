@@ -68,7 +68,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
         setCleanup(target);
         setCleanupError(cleanupMessage);
       } else
-        toast.add({
+        toast.addPublic({
           type: "error",
           title: "Authenticator cleanup could not finish",
           description:
@@ -293,10 +293,7 @@ export function useMfaFlow() {
 
 export function MfaCleanupNotice({ flow }: { flow: MfaFlow }) {
   return flow.cleanupError ? (
-    <Alert
-      role="alert"
-      className="bg-background fixed bottom-4 left-4 z-[90] max-w-sm shadow-lg"
-    >
+    <Alert role="alert" variant="destructive" className="mb-5">
       <p>{flow.cleanupError}</p>
       {flow.cleanupRetryable && (
         <Button

@@ -496,7 +496,7 @@ export function LiveCalendar(props: LiveCalendarProps) {
         >
           <Alert
             role="alert"
-            variant="warning"
+            variant="destructive"
             className="m-4 flex flex-wrap items-center justify-between gap-3"
           >
             <p>Organization calendar settings could not be loaded.</p>
@@ -675,7 +675,7 @@ function ResolvedLiveCalendar({
       {settingsError ? (
         <Alert
           role="alert"
-          variant="warning"
+          variant="destructive"
           className="m-4 flex flex-wrap items-center justify-between gap-3"
         >
           <p>
@@ -894,7 +894,7 @@ function ResolvedLiveCalendar({
       {error ? (
         <Alert
           role="alert"
-          variant="warning"
+          variant="destructive"
           className="m-4 flex flex-wrap items-center justify-between gap-3"
         >
           <p>{windowPageErrorMessage(error, result, offset)}</p>

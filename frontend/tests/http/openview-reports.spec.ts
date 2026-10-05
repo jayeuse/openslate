@@ -1216,3 +1216,59 @@ test("Report filters display Select labels, submit stable IDs, and use module-el
     },
   });
 });
+
+test("Report CSV errors cannot impersonate browser-blocked print guidance", async ({
+  page,
+}) => {
+  await installReportsApi(page, false, report, { ownerRunCount: 1 });
+  const detail = "Your browser blocked private report database detail";
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "Operations review" }).click();
+  await page.evaluate(
+    ({ detail, path }) => {
+      const original = window.fetch;
+      window.fetch = (input, init) =>
+        new URL(
+          input instanceof Request ? input.url : String(input),
+          location.href,
+        ).pathname === path
+          ? Promise.reject(new Error(detail))
+          : original(input, init);
+    },
+    { detail, path: `/api/reports/${reportId}/runs/${runId}/csv` },
+  );
+  await page
+    .getByRole("button", { name: /Download CSV/ })
+    .first()
+    .click();
+  const failure = page.getByRole("alert").filter({
+    hasText: "The saved Report output could not be opened. Try again.",
+  });
+  await expect(failure).toBeVisible();
+  await expect(failure).toHaveAttribute("data-variant", "destructive");
+  await expect(page.getByText(detail, { exact: true })).toHaveCount(0);
+});
+
+test("Report printing preserves genuine blocked-popup guidance", async ({
+  page,
+}) => {
+  const api = await installReportsApi(page, false, report, {
+    ownerRunCount: 1,
+  });
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "Operations review" }).click();
+  await page.evaluate(() => {
+    window.open = () => null;
+  });
+  await page
+    .getByRole("button", { name: /Print output from/ })
+    .first()
+    .click();
+  await expect(
+    page.getByRole("alert").filter({
+      hasText:
+        "Your browser blocked the print window. Allow pop-ups and try again.",
+    }),
+  ).toBeVisible();
+  expect(api.counts().csvReads).toBe(0);
+});

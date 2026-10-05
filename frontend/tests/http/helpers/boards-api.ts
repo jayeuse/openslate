@@ -73,7 +73,11 @@ export async function installBoardApi(
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ today: "2026-09-25" }),
+      body: JSON.stringify({
+        today: "2026-09-25",
+        week_start: "monday",
+        purge_enabled: true,
+      }),
     }),
   );
   await page.route("**/api/views/data-sources**", (route) =>

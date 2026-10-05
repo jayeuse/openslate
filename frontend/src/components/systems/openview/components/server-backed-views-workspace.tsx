@@ -12,6 +12,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import type { Route } from "next";
 import { ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
 import { Columns3, MoreHorizontal, Plus, Settings2, X } from "lucide-react";
 import {
   queryOpenViewGroupedRecords,
@@ -270,11 +271,6 @@ function quickSortLabel(
         ? "Z to A"
         : "A to Z";
   return `${field.name} · ${order}`;
-}
-
-function messageFor(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
 }
 
 function isAuthorizationDenied(error: unknown): boolean {
@@ -795,7 +791,7 @@ export default function ServerBackedViewsWorkspace({
           total: previous?.moduleId === moduleId ? previous.total : 0,
           hasMore: previous?.moduleId === moduleId ? previous.hasMore : false,
           loading: false,
-          error: messageFor(error, "Records could not be loaded."),
+          error: apiErrorMessage(error, "Records could not be loaded."),
         }));
       });
     return () => {
@@ -865,7 +861,7 @@ export default function ServerBackedViewsWorkspace({
           key: generalGroupRequestKey,
           page: null,
           loading: false,
-          error: messageFor(error, "Grouped records could not be loaded."),
+          error: apiErrorMessage(error, "Grouped records could not be loaded."),
         });
       });
     return () => {
@@ -1793,12 +1789,12 @@ export default function ServerBackedViewsWorkspace({
           setActionError("");
         } catch (refreshError) {
           setSaveError(
-            `${messageFor(refreshError, "The latest saved view could not be reloaded.")} Your local edits remain open.`,
+            `${apiErrorMessage(refreshError, "The latest saved view could not be reloaded.")} Your local edits remain open.`,
           );
         }
       } else {
         setSaveError(
-          messageFor(
+          apiErrorMessage(
             error,
             "The view could not be saved. Your edits remain open.",
           ),
@@ -1883,7 +1879,7 @@ export default function ServerBackedViewsWorkspace({
       refreshModule();
     } catch (error) {
       setArchiveError(
-        messageFor(error, "The saved view could not be archived."),
+        apiErrorMessage(error, "The saved view could not be archived."),
       );
     } finally {
       setPendingAction("");
@@ -1918,7 +1914,7 @@ export default function ServerBackedViewsWorkspace({
       refreshModule();
     } catch (error) {
       setArchivedError(
-        messageFor(error, "The saved view could not be restored."),
+        apiErrorMessage(error, "The saved view could not be restored."),
       );
     } finally {
       setPendingAction("");
@@ -1968,7 +1964,7 @@ export default function ServerBackedViewsWorkspace({
       refreshModule();
     } catch (error) {
       setActionError(
-        messageFor(error, "The default view could not be changed."),
+        apiErrorMessage(error, "The default view could not be changed."),
       );
     } finally {
       setPendingAction("");
@@ -2038,7 +2034,7 @@ export default function ServerBackedViewsWorkspace({
       setNotice(`“${duplicated.name}” was duplicated.`);
     } catch (error) {
       setActionError(
-        messageFor(
+        apiErrorMessage(
           error,
           "The saved view could not be duplicated. Your edits remain open.",
         ),
@@ -2279,7 +2275,7 @@ export default function ServerBackedViewsWorkspace({
           {catalogError ? (
             <Alert
               role="alert"
-              variant="warning"
+              variant="destructive"
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <span>
@@ -2301,7 +2297,7 @@ export default function ServerBackedViewsWorkspace({
           {metadataError ? (
             <Alert
               role="alert"
-              variant="warning"
+              variant="destructive"
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <span>{metadataError}</span>
@@ -2318,7 +2314,7 @@ export default function ServerBackedViewsWorkspace({
           {moduleError ? (
             <Alert
               role="alert"
-              variant="warning"
+              variant="destructive"
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <span>
@@ -2356,7 +2352,7 @@ export default function ServerBackedViewsWorkspace({
           {rowError ? (
             <Alert
               role="alert"
-              variant="warning"
+              variant="destructive"
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <span>
@@ -2402,7 +2398,7 @@ export default function ServerBackedViewsWorkspace({
           ) : null}
           {notice ? <Alert role="status">{notice}</Alert> : null}
           {actionError ? (
-            <Alert role="alert" variant="warning">
+            <Alert role="alert" variant="destructive">
               {actionError}
             </Alert>
           ) : null}
@@ -2878,7 +2874,7 @@ export default function ServerBackedViewsWorkspace({
                             : "Complete the condition in More filters before loading matching records."}
                         </Alert>
                       ) : generalGroupedView && generalGroupError ? (
-                        <Alert role="status">
+                        <Alert role="alert" variant="destructive">
                           Grouped results are unavailable. Use the retry action
                           above.
                         </Alert>
@@ -3281,7 +3277,7 @@ export default function ServerBackedViewsWorkspace({
               {saveConflict ? (
                 <Alert
                   role="alert"
-                  variant="warning"
+                  variant="destructive"
                   className="flex flex-col gap-3"
                 >
                   <p className="font-medium">
@@ -3402,7 +3398,7 @@ export default function ServerBackedViewsWorkspace({
                 </AlertDialogDescription>
               </AlertDialogHeader>
               {archiveError ? (
-                <Alert role="alert" variant="warning">
+                <Alert role="alert" variant="destructive">
                   {archiveError}
                 </Alert>
               ) : null}
@@ -3446,7 +3442,7 @@ export default function ServerBackedViewsWorkspace({
                 </DialogDescription>
               </DialogHeader>
               {archivedError ? (
-                <Alert role="alert" variant="warning">
+                <Alert role="alert" variant="destructive">
                   {archivedError}
                 </Alert>
               ) : null}

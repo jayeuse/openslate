@@ -307,7 +307,7 @@ function ScopedServerBackedBoardPosts({
         </div>
       </Card>
       {authors.state.error && (
-        <Alert variant={choices ? "warning" : "destructive"}>
+        <Alert variant="destructive">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span>{authors.state.error}</span>
             <Button
@@ -322,7 +322,7 @@ function ScopedServerBackedBoardPosts({
         </Alert>
       )}
       {state.error && (
-        <Alert variant={page ? "warning" : "destructive"}>
+        <Alert variant="destructive">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span>
               {page ? "Showing the last loaded posts. " : ""}

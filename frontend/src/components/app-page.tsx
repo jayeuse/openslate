@@ -19,6 +19,7 @@ import {
   signOut,
 } from "@/lib/auth-api";
 import { ApiError, refreshBrowserSession } from "@/lib/api";
+import { toast } from "@/components/ui/toast";
 import { getMfaStatus, type MfaStatus } from "@/lib/mfa-api";
 import {
   MfaFlowContext,
@@ -370,6 +371,7 @@ export function AppPage({ children }: AppPageProps) {
         // the loop will immediately process the newest queued request.
         if (current.nextVersion > requested.version) continue;
         if (result === "invalid") {
+          toast.clearWorkspace();
           clearMfa();
           if (!clearAccessDraftsForAccountChange()) {
             current.queued = null;
@@ -379,14 +381,24 @@ export function AppPage({ children }: AppPageProps) {
             break;
           }
           current.queued = null;
-          void clearVerifiedWorkspaceSessionSnapshot(verifiedUserIdRef.current);
+          const cleanup = clearVerifiedWorkspaceSessionSnapshot(
+            verifiedUserIdRef.current,
+          );
           verifiedUserIdRef.current = null;
           setVerifiedUserId(null);
           setChecking(true);
+          const cleared = await cleanup;
+          if (!mounted.current || current.requestId !== requestId) return;
+          if (current.nextVersion > requested.version) continue;
+          if (!cleared) {
+            setDraftCleanupFailed(true);
+            break;
+          }
           router.replace("/login");
           return;
         }
         if (result === "setup") {
+          toast.clearWorkspace();
           clearMfa();
           if (!clearAccessDraftsForAccountChange()) {
             current.queued = null;
@@ -396,10 +408,19 @@ export function AppPage({ children }: AppPageProps) {
             break;
           }
           current.queued = null;
-          void clearVerifiedWorkspaceSessionSnapshot(verifiedUserIdRef.current);
+          const cleanup = clearVerifiedWorkspaceSessionSnapshot(
+            verifiedUserIdRef.current,
+          );
           verifiedUserIdRef.current = null;
           setVerifiedUserId(null);
           setChecking(true);
+          const cleared = await cleanup;
+          if (!mounted.current || current.requestId !== requestId) return;
+          if (current.nextVersion > requested.version) continue;
+          if (!cleared) {
+            setDraftCleanupFailed(true);
+            break;
+          }
           router.replace("/auth/setup");
           return;
         }
@@ -409,6 +430,8 @@ export function AppPage({ children }: AppPageProps) {
             continue;
           }
           const previousUserId = verifiedUserIdRef.current;
+          if (previousUserId !== null && previousUserId !== responseUserId)
+            toast.clearWorkspace();
           const draftsCleared =
             previousUserId !== null && previousUserId !== responseUserId
               ? clearAccessDraftsForAccountChange()
@@ -420,8 +443,20 @@ export function AppPage({ children }: AppPageProps) {
             setDraftCleanupFailed(true);
             break;
           }
-          if (previousUserId !== null && previousUserId !== responseUserId)
-            void clearVerifiedWorkspaceSessionSnapshot(previousUserId);
+          if (previousUserId !== null && previousUserId !== responseUserId) {
+            const cleanup =
+              clearVerifiedWorkspaceSessionSnapshot(previousUserId);
+            verifiedUserIdRef.current = null;
+            setVerifiedUserId(null);
+            setChecking(true);
+            const cleared = await cleanup;
+            if (!mounted.current || current.requestId !== requestId) return;
+            if (current.nextVersion > requested.version) continue;
+            if (!cleared) {
+              setDraftCleanupFailed(true);
+              break;
+            }
+          }
           verifiedUserIdRef.current = responseUserId;
           bindMfa(responseUserId, "workspace");
           setMfaRequired(false);
@@ -485,6 +520,7 @@ export function AppPage({ children }: AppPageProps) {
   }
 
   function finishFactorRemoval() {
+    toast.clearWorkspace();
     stopActivityRenewal.current?.();
     supersedeSessionCheck(queue.current);
     clearMfa();
@@ -592,8 +628,10 @@ export function AppPage({ children }: AppPageProps) {
   if (verifiedUserId === null || forceFallback) {
     return (
       <main className="bg-background text-foreground grid min-h-screen place-items-center">
-        {verification}
-        <MfaCleanupNotice flow={mfa} />
+        <div className="w-full max-w-xl space-y-5">
+          {verification}
+          <MfaCleanupNotice flow={mfa} />
+        </div>
       </main>
     );
   }
@@ -616,6 +654,7 @@ export function AppPage({ children }: AppPageProps) {
               verifiedUserId={verifiedUserId}
               onSignOutAccepted={acceptSignOut}
             >
+              <MfaCleanupNotice flow={mfa} />
               {children}
             </AppShell>
           </AppQueryProvider>
@@ -642,9 +681,13 @@ export function AppPage({ children }: AppPageProps) {
         onCancel={(event) => event.preventDefault()}
         ref={curtain}
       >
-        <div className="grid min-h-full place-items-center">{verification}</div>
+        <div className="grid min-h-full place-items-center">
+          <div className="w-full max-w-xl space-y-5">
+            {verification}
+            <MfaCleanupNotice flow={mfa} />
+          </div>
+        </div>
       </dialog>
-      <MfaCleanupNotice flow={mfa} />
     </MfaFlowContext.Provider>
   );
 }

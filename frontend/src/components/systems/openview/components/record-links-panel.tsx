@@ -3,6 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
 import type { OpenViewDataSource, OpenViewRecord } from "../adapters/views-api";
 import {
   assignOpenViewRecordLink,
@@ -67,10 +68,6 @@ type RecordLinksPanelProps = {
   canWrite: boolean;
   onChanged: (message: string) => void;
 };
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
 
 function isBusyRelationship(error: unknown): boolean {
   return (
@@ -338,13 +335,13 @@ function LinkPicker({
         return;
       }
       linkState.setWriteCheck(null);
-      const message = errorMessage(caught, "The link could not be saved.");
-      if (mounted.current)
-        setError(
-          /already has a relationship source/i.test(message)
-            ? "That record is already linked from another record in this field. Remove that link first."
-            : message,
-        );
+      const message =
+        caught instanceof ApiError &&
+        typeof caught.details === "string" &&
+        /already has a relationship source/i.test(caught.details)
+          ? "That record is already linked from another record in this field. Remove that link first."
+          : apiErrorMessage(caught, "The link could not be saved.");
+      if (mounted.current) setError(message);
     } finally {
       setPendingId(null);
     }
@@ -478,7 +475,7 @@ function LinkPicker({
         </p>
       ) : results.isError ? (
         <p role="alert" className="text-destructive text-sm">
-          {errorMessage(results.error, "Records could not be searched.")}
+          {apiErrorMessage(results.error, "Records could not be searched.")}
         </p>
       ) : rows.length === 0 ? (
         <p className="text-muted-foreground text-sm">
@@ -660,7 +657,7 @@ function FieldLinks({
       } else {
         linkState.setWriteCheck(null);
         if (mounted.current)
-          setError(errorMessage(caught, "The link could not be removed."));
+          setError(apiErrorMessage(caught, "The link could not be removed."));
       }
     } finally {
       setPendingId(null);

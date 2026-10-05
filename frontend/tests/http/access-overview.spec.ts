@@ -117,10 +117,11 @@ test("a save against a newer revision shows the new values and can be sent again
 
   await guest.fill("30");
   await settings.getByRole("button", { name: "Save settings" }).click();
-  const notice = settings.getByRole("status").filter({
+  const notice = settings.getByRole("alert").filter({
     hasText: "Someone else changed these settings",
   });
   await expect(notice).toContainText("invitation links work for 10 days");
+  await expect(notice).toHaveAttribute("data-variant", "destructive");
   await expect(guest).toHaveValue("30");
 
   await settings.getByRole("button", { name: "Save again" }).click();

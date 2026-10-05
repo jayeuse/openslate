@@ -83,7 +83,7 @@ export function OrganizationPanel({
       aria-label="Organization settings"
     >
       {workspaceLoadFailed ? (
-        <Alert role="alert" variant="warning" className="lg:col-span-2">
+        <Alert role="alert" variant="destructive" className="lg:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p>The organization settings could not be loaded.</p>
@@ -105,7 +105,7 @@ export function OrganizationPanel({
         </Alert>
       ) : null}
       {staleRevision ? (
-        <Alert role="status" variant="warning" className="lg:col-span-2">
+        <Alert variant="destructive" className="lg:col-span-2">
           Workspace settings changed. The latest values are loaded. Review your
           changes and save again.
         </Alert>

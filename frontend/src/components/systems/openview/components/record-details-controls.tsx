@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getApiFieldErrors } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
 import { lifecycleErrorMessage } from "@/lib/lifecycle";
 import { LifecyclePurgeReview } from "@/components/systems/shared/lifecycle-purge-review";
 import { authMeOptions } from "../adapters/openview-queries";
@@ -74,10 +75,6 @@ type RecordDetailsControlsProps = {
 /** Focuses after React renders the next state. */
 function focusSoon(find: () => HTMLElement | null | undefined) {
   requestAnimationFrame(() => find()?.focus());
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 function fieldErrors(
@@ -186,7 +183,7 @@ export function RecordDetailsControls({
         );
     } catch (caught) {
       setError(
-        errorMessage(caught, "The record could not be opened for editing."),
+        apiErrorMessage(caught, "The record could not be opened for editing."),
       );
     } finally {
       setPending(null);
@@ -229,7 +226,7 @@ export function RecordDetailsControls({
         setEditing({ ...editing, errors });
         if (Object.keys(errors).length > 0) focusFirstInvalid();
         if (Object.keys(errors).length === 0)
-          setError(errorMessage(caught, "The record could not be saved."));
+          setError(apiErrorMessage(caught, "The record could not be saved."));
       }
     } finally {
       setPending(null);
@@ -245,7 +242,7 @@ export function RecordDetailsControls({
       onChanged("Record deleted. You can restore it from this dialog.");
     } catch (caught) {
       setConfirmDelete(false);
-      setError(errorMessage(caught, "The record could not be deleted."));
+      setError(apiErrorMessage(caught, "The record could not be deleted."));
     } finally {
       setPending(null);
     }
@@ -258,7 +255,7 @@ export function RecordDetailsControls({
       await restoreOpenViewRecord(record.id);
       onChanged("Record restored.");
     } catch (caught) {
-      setError(errorMessage(caught, "The record could not be restored."));
+      setError(apiErrorMessage(caught, "The record could not be restored."));
     } finally {
       setPending(null);
     }
@@ -350,7 +347,7 @@ export function RecordDetailsControls({
           }}
         >
           {editing.stale ? (
-            <Alert role="alert" variant="warning">
+            <Alert role="alert" variant="destructive">
               <p className="font-medium">
                 This record changed after you opened it
               </p>

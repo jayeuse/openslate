@@ -13,7 +13,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
 import type { AuthMe } from "@/lib/auth-api";
 import { Alert } from "@/components/ui/alert";
 import {
@@ -131,10 +131,6 @@ function marksRead(
   return Boolean(
     mark && readAt && mark.scope === scope && mark.readAt === readAt,
   );
-}
-
-function safeMessage(error: unknown, fallback: string): string {
-  return error instanceof ApiError ? error.message : fallback;
 }
 
 function printFrozenCsv(printWindow: Window, csv: string, title: string): void {
@@ -565,7 +561,7 @@ export default function ServerBackedReports() {
       runRetryRef.current = null;
     } catch (reason) {
       setError(
-        safeMessage(
+        apiErrorMessage(
           reason,
           "The saved Report could not be loaded as a template.",
         ),
@@ -697,7 +693,7 @@ export default function ServerBackedReports() {
         conflict?.message ??
           (reason instanceof ReportDraftError
             ? reason.message
-            : safeMessage(
+            : apiErrorMessage(
                 reason,
                 "The Report could not be saved. Your draft remains open.",
               )),
@@ -731,7 +727,7 @@ export default function ServerBackedReports() {
       );
     } catch (reason) {
       setError(
-        safeMessage(
+        apiErrorMessage(
           reason,
           "The latest Report could not be loaded. Try again.",
         ),
@@ -790,7 +786,10 @@ export default function ServerBackedReports() {
       setStale(Boolean(conflict));
       setError(
         conflict?.message ??
-          safeMessage(reason, "The Report could not be changed. Try again."),
+          apiErrorMessage(
+            reason,
+            "The Report could not be changed. Try again.",
+          ),
       );
     } finally {
       endAction();
@@ -832,7 +831,7 @@ export default function ServerBackedReports() {
       );
     } catch (reason) {
       setError(
-        safeMessage(
+        apiErrorMessage(
           reason,
           "The Report could not run. Retry uses the same request key.",
         ),
@@ -850,13 +849,13 @@ export default function ServerBackedReports() {
     if (!beginAction(`${action}:${run.id}`)) return;
     const isSharedRun = "reportName" in run;
     if (isSharedRun) setSharedActionError("");
+    const blockedPrintMessage =
+      "Your browser blocked the print window. Allow pop-ups and try again.";
     const printWindow = action === "print" ? window.open("", "_blank") : null;
     if (printWindow) printWindow.opener = null;
     try {
       if (action === "print" && !printWindow)
-        throw new Error(
-          "Your browser blocked the print window. Allow pop-ups and try again.",
-        );
+        throw new Error(blockedPrintMessage);
       const { blob, filename } = await downloadOpenViewReportRunCsv(
         run.reportId,
         run.id,
@@ -878,10 +877,9 @@ export default function ServerBackedReports() {
     } catch (reason) {
       printWindow?.close();
       const message =
-        reason instanceof Error &&
-        reason.message.startsWith("Your browser blocked")
-          ? reason.message
-          : safeMessage(
+        action === "print" && !printWindow
+          ? blockedPrintMessage
+          : apiErrorMessage(
               reason,
               "The saved Report output could not be opened. Try again.",
             );
@@ -1014,7 +1012,7 @@ export default function ServerBackedReports() {
           {/* A refusal hides the opened Report too; the draft stays in
               state and returns once an authorized read succeeds. */}
           {accessDenied ? (
-            <Alert variant="destructive">
+            <Alert role="alert" variant="destructive">
               OpenView data is unavailable. Sign in or ask for access, then
               retry.
             </Alert>

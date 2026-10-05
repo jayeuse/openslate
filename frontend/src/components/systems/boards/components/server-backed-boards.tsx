@@ -912,7 +912,7 @@ function ServerBackedBoardsContent() {
         className={boardsRegionClass}
       >
         {resource.list.error && (
-          <Alert variant="warning">
+          <Alert variant="destructive">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span>
                 {currentListPage ? "Showing the last loaded Board list. " : ""}
@@ -929,7 +929,7 @@ function ServerBackedBoardsContent() {
           </Alert>
         )}
         {board && resource.detail.error && (
-          <Alert variant="warning">
+          <Alert variant="destructive">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span>
                 Showing the last loaded Board. {resource.detail.error}

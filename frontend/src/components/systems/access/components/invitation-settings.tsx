@@ -186,7 +186,7 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
             />
           </div>
           {stale ? (
-            <Alert variant="warning" role="status">
+            <Alert variant="destructive">
               <div className="space-y-1">
                 <p className="font-medium">
                   Someone else changed these settings

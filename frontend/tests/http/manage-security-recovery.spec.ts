@@ -127,6 +127,15 @@ test("Cancel and route leave clean only the pending MFA factor, with truthful cl
       .getByRole("alert")
       .filter({ hasText: "unfinished authenticator could not be removed" }),
   ).toBeVisible();
+  const cleanupNotice = page
+    .getByRole("alert")
+    .filter({ hasText: "unfinished authenticator could not be removed" });
+  await expect(cleanupNotice).toHaveAttribute("data-variant", "destructive");
+  expect(
+    await cleanupNotice.evaluate(
+      (element) => getComputedStyle(element).position,
+    ),
+  ).toBe("static");
   await expect(
     page.getByRole("img", { name: "Authenticator QR code" }),
   ).toHaveCount(0);
@@ -1143,6 +1152,10 @@ test("Backup conflict retains a draft and queue retry reuses the accepted reques
   await expect(policy).toContainText(
     "Backup policy changed. Your draft is still here",
   );
+  const passiveChange = policy
+    .getByRole("status")
+    .filter({ hasText: "Backup policy changed. Your draft is still here" });
+  await expect(passiveChange).toHaveAttribute("data-variant", "warning");
   await expect(
     policy.getByLabel("Backup schedule", { exact: true }),
   ).toHaveValue("daily");
@@ -1178,6 +1191,10 @@ test("Backup conflict retains a draft and queue retry reuses the accepted reques
   await expect(policy).toContainText(
     "Backup policy changed. Your draft is still here",
   );
+  const failedSave = policy
+    .getByRole("alert")
+    .filter({ hasText: "Backup policy changed. Your draft is still here" });
+  await expect(failedSave).toHaveAttribute("data-variant", "destructive");
   await expect(
     policy.getByLabel("Retention period", { exact: true }),
   ).toHaveValue("7");

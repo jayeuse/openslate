@@ -15,6 +15,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { lifecycleErrorMessage } from "@/lib/lifecycle";
 import { cn } from "@/lib/utils";
+import { reportDone } from "@/lib/feedback";
 import { LifecyclePurgeReview } from "@/components/systems/shared/lifecycle-purge-review";
 import { Button } from "@/components/ui/button";
 import {
@@ -274,7 +275,12 @@ export function ServerBoardManagementDisplay({
       { "aria-label": "Board management", className: "space-y-3" },
       e(
         "p",
-        { role: loading ? "status" : "alert", className: "text-sm" },
+        {
+          role: loading ? "status" : "alert",
+          className: loading
+            ? "text-sm"
+            : "border-danger-rule bg-danger-tint rounded-md border p-4 text-sm",
+        },
         loading
           ? "Checking Board management access…"
           : failed
@@ -424,7 +430,11 @@ export function ServerBoardManagementDisplay({
     view.conflict
       ? e(
           "div",
-          { role: "status", className: warningClass },
+          {
+            role: "alert",
+            className:
+              "border-danger-rule bg-danger-tint rounded-md border p-4 text-sm",
+          },
           e(
             "div",
             { className: "space-y-3" },
@@ -937,6 +947,7 @@ function ManagementInstance(props: Props) {
           request !== actionRequest.current
         )
           return;
+        reportDone("Board created.");
         props.onCreated(created);
         setDraft(blankDraft);
         setOpen(false);
@@ -1195,6 +1206,7 @@ function ManagementInstance(props: Props) {
         return;
       clearPurgeReview();
       setOpen(false);
+      reportDone("Board permanently deleted.");
       if (props.mode === "manage") props.onPurged(boardId);
     } catch (failure) {
       if (

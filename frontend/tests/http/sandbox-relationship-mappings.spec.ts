@@ -335,6 +335,7 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
     is_deleted: false,
   };
   const requests: unknown[] = [];
+  let failPostMutationRead = false;
   await page.route(`**/api/modules/${liveId}/close/preview`, (route) =>
     route.fulfill({
       json: {
@@ -364,6 +365,33 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
   });
   const sandbox = await openAuthenticatedSandbox(page, design, {
     bindings: [binding],
+  });
+  await page.route("**/api/sandbox/document", (route) => {
+    if (route.request().method() === "GET" && failPostMutationRead) {
+      failPostMutationRead = false;
+      return route.fulfill({
+        status: 503,
+        json: { detail: "Owned live-state refresh unavailable" },
+      });
+    }
+    return route.fallback();
+  });
+  await page.route(`**/api/modules/${liveId}/reopen`, async (route) => {
+    const confirmed = sandbox.document();
+    const target = confirmed.design.modules.find(
+      (item) => item.id === targetModule.id,
+    );
+    if (!target) throw new Error("The owned module disappeared");
+    target.closed = false;
+    sandbox.confirmLiveDocument(confirmed);
+    sandbox.confirmBindings([binding]);
+    failPostMutationRead = true;
+    await route.fulfill({
+      json: {
+        impact: lifecycleImpactFixture("module", liveId, "reopen"),
+        operation_id: null,
+      },
+    });
   });
   await page.getByRole("button", { name: "View canvas" }).click();
   await page.getByRole("menuitem", { name: "Auto-arrange" }).click();
@@ -430,6 +458,42 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
       .design.modules.find((item) => item.id === targetModule.id)
       ?.fields.every((field) => !field.closed),
   ).toBe(true);
+  const confirmedStatus = page.getByRole("status").filter({
+    hasText: "Live change confirmed. The current design has been refreshed.",
+  });
+  await expect(confirmedStatus).toBeVisible();
+  async function confirmModuleChange(action: "Close module" | "Reopen module") {
+    await page.getByRole("button", { name: action, exact: true }).click();
+    const review = page.getByRole("dialog", { name: action, exact: true });
+    if (action === "Close module") {
+      await review
+        .getByLabel("Type the module name", { exact: true })
+        .fill("Requests");
+      await review
+        .getByLabel("Administrator password", { exact: true })
+        .fill("owned-test-password");
+    }
+    await review.getByRole("button", { name: action, exact: true }).click();
+    await expect(review).toBeHidden();
+  }
+  await confirmModuleChange("Reopen module");
+  const recoveryError = page.getByRole("alert").filter({
+    hasText:
+      "The live change was confirmed. Reload live state before making another change.",
+  });
+  await expect(recoveryError).toBeVisible();
+  await expect.soft(confirmedStatus).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Reload live state", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Close module", exact: true }),
+  ).toBeEnabled();
+  await expect.soft(recoveryError).toHaveCount(0);
+  await confirmModuleChange("Close module");
+  await expect(confirmedStatus).toBeVisible();
+  await expect.soft(recoveryError).toHaveCount(0);
+  expect(sandbox.documentWrites()).toBe(writes);
 });
 
 for (const status of [403, 503]) {
@@ -1118,7 +1182,7 @@ test("a rejected template replacement stays open with its recoverable error", as
 
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("alert")).toContainText(
-    "The shared Sandbox changed. Reload it and try again.",
+    "This item changed. Refresh it and try again.",
   );
 });
 
@@ -2173,6 +2237,11 @@ test("a failed structural save remains visibly unsaved until the shared draft is
   await page.getByLabel("Department name").fill("Operations");
   await page.getByRole("button", { name: "Create department" }).click();
 
+  const saveFailure = page
+    .getByRole("alert")
+    .filter({ hasText: "Your change was not saved." });
+  await expect(saveFailure).toBeVisible();
+  await expect(saveFailure).toHaveAttribute("data-variant", "destructive");
   await expect(
     page.getByText(
       "Save did not complete: your proposed document is still local.",
@@ -2246,8 +2315,8 @@ test("discard refresh failure leaves the dialog open and allows a retry", async 
   const dialog = page.getByRole("dialog", { name: "Discard draft changes?" });
   const discard = dialog.getByRole("button", { name: "Discard draft" });
   await discard.click();
-  await expect(dialog.getByRole("status")).toContainText(
-    "The shared Sandbox could not be refreshed.",
+  await expect(dialog.getByRole("alert")).toContainText(
+    "This Sandbox change could not be saved. Try again.",
   );
   await expect(discard).toBeEnabled();
 
@@ -3527,6 +3596,10 @@ test("History deletion failure retains its target and successful deletion select
     .click();
   await expect.poll(() => deleteAttempts).toBe(1);
   await expect(dialog).toBeVisible();
+  const failure = dialog.getByRole("alert");
+  await expect(failure).toContainText("could not");
+  await expect(failure).toHaveAttribute("data-variant", "destructive");
+  await expect(page.getByText("Try deletion again.")).toHaveCount(0);
   await expect(
     dialog.getByRole("button", {
       name: "Delete Disposable checkpoint",
@@ -3537,6 +3610,20 @@ test("History deletion failure retains its target and successful deletion select
     .getByRole("button", { name: "Delete Disposable checkpoint", exact: true })
     .click();
   await expect(dialog).toBeHidden();
+  await expect(
+    page
+      .getByRole("region", { name: "Notifications", exact: true })
+      .getByText("Disposable checkpoint deleted from shared history.", {
+        exact: true,
+      }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Notifications", exact: true })
+      .getByText("Disposable checkpoint deleted from shared history.", {
+        exact: true,
+      }),
+  ).toHaveCount(1);
   await expect(
     page.getByRole("button", {
       name: "View Disposable checkpoint",

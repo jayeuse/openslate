@@ -560,6 +560,7 @@ test("an event author can archive their event, while another author's event stay
     event: event(id, authorId, title, boardRevision),
   });
   let archived = false;
+  let archiveAttempts = 0;
   let archiveBody: unknown = null;
   await page.route(
     `**/api/boards/${boardId}/events/occurrences?**`,
@@ -596,6 +597,17 @@ test("an event author can archive their event, while another author's event stay
     `**/api/boards/${boardId}/events/${eventId}/archive`,
     async (route) => {
       archiveBody = route.request().postDataJSON();
+      archiveAttempts++;
+      if (archiveAttempts === 1)
+        return route.fulfill({
+          status: 409,
+          json: {
+            detail: {
+              code: "stale_revision",
+              message: "Private event implementation detail",
+            },
+          },
+        });
       archived = true;
       return route.fulfill({
         contentType: "application/json",
@@ -648,6 +660,16 @@ test("an event author can archive their event, while another author's event stay
     name: "Archive event?",
   });
   await expect(confirmation).toBeVisible();
+  await confirmation
+    .getByRole("button", { name: "Archive event", exact: true })
+    .click();
+  await expect(confirmation).toBeVisible();
+  const actionFailure = confirmation.getByRole("alert");
+  await expect(actionFailure).toContainText("changed");
+  await expect(actionFailure).toHaveAttribute("data-variant", "destructive");
+  await expect(
+    page.getByText("Private event implementation detail"),
+  ).toHaveCount(0);
   const archivedResponse = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname ===

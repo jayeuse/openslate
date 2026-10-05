@@ -1,4 +1,5 @@
 import { CSPProvider } from "@base-ui/react/csp-provider";
+import { Toaster } from "@/components/ui/toast";
 import type { Metadata } from "next";
 import {
   Archivo,
@@ -93,7 +94,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body className="flex min-h-full flex-col">
         <ThemeProvider />
-        <CSPProvider disableStyleElements>{children}</CSPProvider>
+        <CSPProvider disableStyleElements>
+          {children}
+          <Toaster />
+        </CSPProvider>
       </body>
     </html>
   );

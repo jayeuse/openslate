@@ -129,20 +129,77 @@ test("trusted activity keeps a workspace usable beyond its original 15-minute de
   baseURL,
 }) => {
   const { state, search, advance } = await workspaceSession(page, baseURL);
+  const expiredAccessEvents: string[] = [];
+  const initialAccessExpiry = state.accessExpiresAt;
+  let releaseExpiredRefresh = () => {};
+  const expiredSearchRefused = new Promise<void>((resolve) => {
+    releaseExpiredRefresh = resolve;
+  });
+  page.on("response", (response) => {
+    const url = new URL(response.url());
+    if (
+      url.pathname === "/api/search" &&
+      url.searchParams.get("search") === "Eighteen minute search" &&
+      url.searchParams.get("kind") === "person"
+    ) {
+      expiredAccessEvents.push(`search:${response.status()}`);
+      if (response.status() === 401) releaseExpiredRefresh();
+    } else if (
+      url.pathname === "/api/auth/refresh" &&
+      state.now >= initialAccessExpiry
+    ) {
+      expiredAccessEvents.push(`refresh:${response.status()}`);
+    }
+  });
+  // Let the real protected fetch receive expired provider access before the
+  // held server refresh renews it. Keep the client coordinator unmocked.
+  await page.route("**/api/auth/refresh", async (route) => {
+    if (state.now >= state.accessExpiresAt) await expiredSearchRefused;
+    await route.fallback();
+  });
   async function completeSearch(value: string, activity: () => Promise<void>) {
+    const renewalsBefore = state.renewedUsers.length;
+    const activityRefresh =
+      state.now < initialAccessExpiry
+        ? page.waitForResponse(
+            (response) =>
+              new URL(response.url()).pathname === "/api/auth/refresh" &&
+              response.ok(),
+          )
+        : null;
     const response = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return (
         url.pathname === "/api/search" &&
         url.searchParams.get("search") === value &&
-        url.searchParams.get("kind") === "person"
+        url.searchParams.get("kind") === "person" &&
+        response.ok()
       );
     });
     await search.fill(value);
     await activity();
     await page.clock.runFor(400);
-    await response;
-    await page.clock.runFor(1);
+    if (activityRefresh)
+      await Promise.all([
+        activityRefresh.then((completed) => completed.finished()),
+        expect
+          .poll(async () => {
+            await page.clock.runFor(1);
+            return state.renewedUsers.length;
+          })
+          .toBeGreaterThan(renewalsBefore),
+      ]);
+    // A protected fetch can first refuse expired access. Wait for its accepted
+    // retry while progressing query notification timers within normal timeout.
+    await Promise.all([
+      response.then((completed) => completed.finished()),
+      expect
+        .poll(async () => {
+          await page.clock.runFor(1);
+          return page.getByText(`${value} result`, { exact: true }).count();
+        })
+        .toBe(1),
+    ]);
     await expect(
       page.getByText(`${value} result`, { exact: true }),
     ).toBeVisible();
@@ -153,6 +210,11 @@ test("trusted activity keeps a workspace usable beyond its original 15-minute de
   await completeSearch("Twelve minute search", () => page.mouse.wheel(0, 10));
   await advance(6);
   await completeSearch("Eighteen minute search", () => search.click());
+  expect(expiredAccessEvents).toEqual([
+    "search:401",
+    "refresh:200",
+    "search:200",
+  ]);
   await expect(search).toHaveValue("Eighteen minute search");
   await expect(
     page.getByRole("heading", { name: "Platform", exact: true }),

@@ -664,7 +664,10 @@ export function SnapshotScheduleForm({
       }}
     >
       {maintenance.stale ? (
-        <Alert role="status" variant="warning">
+        <Alert
+          role={maintenance.staleRevision ? "alert" : "status"}
+          variant={maintenance.staleRevision ? "destructive" : "warning"}
+        >
           <p>
             Backup policy changed. Your draft is still here. Review the latest
             policy before saving again.

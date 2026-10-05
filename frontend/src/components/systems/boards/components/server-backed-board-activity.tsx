@@ -132,7 +132,7 @@ export function ServerBackedBoardActivity({
         </Button>
       </div>
       {state.error && (
-        <Alert variant={page ? "warning" : "destructive"}>
+        <Alert variant="destructive">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span>
               {page ? "Showing the last loaded activity. " : ""}

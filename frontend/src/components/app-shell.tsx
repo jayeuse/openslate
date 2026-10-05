@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useLayoutEffect,
   useId,
   useRef,
   useState,
@@ -34,6 +35,7 @@ import {
 import { releaseAllLocalAttachments } from "@/components/systems/shared/runtime/local-attachments";
 import {
   clearVerifiedWorkspaceSessionSnapshot,
+  registerWorkspaceSessionClear,
   WorkspaceSignOutProvider,
 } from "@/components/systems/shared/runtime/workspace-identity";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -44,7 +46,7 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
-import { toast, Toaster } from "@/components/ui/toast";
+import { toast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import {
   Sidebar,
@@ -107,6 +109,19 @@ export function AppShell({
   const navigationReturnFocus = useRef<HTMLElement | null>(null);
   const navigationSearchParams = new URLSearchParams(searchParams.toString());
 
+  useLayoutEffect(() => {
+    if (verifiedUserId === null) return;
+    toast.resumeWorkspace();
+    const unregister = registerWorkspaceSessionClear(
+      verifiedUserId,
+      toast.clearWorkspace,
+    );
+    return () => {
+      unregister();
+      toast.clearWorkspace();
+    };
+  }, [verifiedUserId]);
+
   useEffect(() => {
     try {
       const storedWidth = window.localStorage.getItem(SIDEBAR_WIDTH_KEY);
@@ -162,6 +177,7 @@ export function AppShell({
   async function finishSignOut() {
     if (cleanupPending.current) return;
     cleanupPending.current = true;
+    toast.clearWorkspace();
     const cleanup = clearVerifiedWorkspaceSessionSnapshot(verifiedUserId);
     flushSync(() => {
       onSignOutAccepted();
@@ -432,7 +448,6 @@ export function AppShell({
             </main>
           </div>
         </SidebarProvider>
-        <Toaster />
       </WorkspaceSignOutProvider>
     </WorkspaceNavigationGuardProvider>
   );
