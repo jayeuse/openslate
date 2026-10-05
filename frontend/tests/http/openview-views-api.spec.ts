@@ -12,6 +12,7 @@ import {
 } from "./helpers/openview-event-source";
 
 const userId = "00000000-0000-4000-8000-000000000001";
+test.use({ trace: "off", screenshot: "off", video: "off" });
 const moduleId = "00000000-0000-4000-8000-000000000010";
 const departmentId = "00000000-0000-4000-8000-000000000011";
 const nameFieldId = "00000000-0000-4000-8000-000000000012";
@@ -196,6 +197,7 @@ async function installViewsApi(
     additionalViews?: SavedView[];
     deepViewBeyondBound?: boolean;
     calendarDateTimeValue?: string;
+    weekStart?: "monday" | "sunday";
   } = {},
 ) {
   await installOpenViewEventSource(page);
@@ -341,6 +343,11 @@ async function installViewsApi(
   }[] = [];
   const windowQueryRequests: Record<string, unknown>[] = [];
   let failNextWindowQuery = false;
+  const workspace = {
+    today: "2026-09-20",
+    week_start: options.weekStart ?? "monday",
+  };
+  let workspaceFailure = false;
   let denyRecordQueries = false;
   let deniedRecordId: string | null = null;
   let nextRecordLookupBarrier: {
@@ -385,6 +392,16 @@ async function installViewsApi(
         setup_required: false,
       }),
     }),
+  );
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill(
+      workspaceFailure
+        ? {
+            status: 503,
+            json: { detail: "Organization settings temporarily unavailable" },
+          }
+        : { json: workspace },
+    ),
   );
   await page.route("**/api/departments**", (route) =>
     route.fulfill({
@@ -974,6 +991,10 @@ async function installViewsApi(
     });
   });
   return {
+    workspace,
+    failWorkspaceRead: (failed: boolean) => {
+      workspaceFailure = failed;
+    },
     requests: apiRequests,
     triggerInvalidation: (entity: string) =>
       sendOpenViewEvent(page, "invalidate", { entity }),
@@ -2985,6 +3006,135 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
   });
   await linkedRecord.getByRole("button", { name: "Close" }).click();
   await expect(laneRecords.getByRole("listitem")).toHaveCount(1);
+});
+
+test.describe("organization calendar week start", () => {
+  test.use({
+    timezoneId: "UTC",
+  });
+  for (const weekStart of ["monday", "sunday"] as const) {
+    test(`OpenView ${weekStart} preference aligns the initial week query and month columns`, async ({
+      page,
+    }) => {
+      await page.clock.setFixedTime(new Date("2026-09-20T12:00:00Z"));
+      const api = await installViewsApi(page, {
+        initialLayout: "calendar",
+        initialPresentation: { date_range: "week", scale: "month" },
+        weekStart,
+      });
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      await expect(page.getByLabel("Window starts")).toHaveValue(
+        weekStart === "monday" ? "2026-09-14" : "2026-09-20",
+      );
+      await expect(page.getByLabel("Window ends")).toHaveValue(
+        weekStart === "monday" ? "2026-09-20" : "2026-09-26",
+      );
+      await expect
+        .poll(() => api.windowQueryRequests.at(-1))
+        .toMatchObject({
+          from_date: weekStart === "monday" ? "2026-09-14" : "2026-09-20",
+          to_date: weekStart === "monday" ? "2026-09-20" : "2026-09-26",
+        });
+      const calendar = page.getByRole("region", {
+        name: "September 2026 calendar",
+        exact: true,
+      });
+      await expect(calendar).toBeVisible();
+      await expect(
+        calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
+      ).toHaveText(
+        weekStart === "monday"
+          ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+          : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+      );
+      const tuesday = await calendar
+        .getByText("Tue", { exact: true })
+        .boundingBox();
+      const firstDay = await calendar
+        .getByText("1", { exact: true })
+        .boundingBox();
+      expect(tuesday).not.toBeNull();
+      expect(firstDay).not.toBeNull();
+      expect(
+        Math.abs(
+          firstDay!.x + firstDay!.width / 2 - (tuesday!.x + tuesday!.width / 2),
+        ),
+      ).toBeLessThan(2);
+    });
+  }
+
+  test("OpenView waits for organization settings, retries failures, and retains a manual range during preference refresh", async ({
+    page,
+  }) => {
+    await page.clock.setFixedTime(new Date("2026-09-20T12:00:00Z"));
+    const api = await installViewsApi(page, {
+      initialLayout: "calendar",
+      initialPresentation: { date_range: "week", scale: "month" },
+      weekStart: "sunday",
+    });
+    api.failWorkspaceRead(true);
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    await expect(
+      page.getByRole("button", {
+        name: "Retry calendar settings",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.getByLabel("Window starts")).toHaveCount(0);
+    expect(api.windowQueryRequests).toEqual([]);
+
+    api.failWorkspaceRead(false);
+    await page
+      .getByRole("button", { name: "Retry calendar settings", exact: true })
+      .click();
+    await expect(page.getByLabel("Window starts")).toHaveValue("2026-09-20");
+    await page.getByLabel("Window starts").fill("2026-09-01");
+    await page.getByLabel("Window ends").fill("2026-09-30");
+    await expect(
+      page.getByRole("button", {
+        name: "Open record: Window equipment 01",
+        exact: true,
+      }),
+    ).toBeVisible();
+    api.failWorkspaceRead(true);
+    await api.triggerInvalidation("workspace_profiles");
+    await expect(
+      page.getByRole("button", {
+        name: "Retry calendar settings",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.getByLabel("Window starts")).toHaveValue("2026-09-01");
+    await expect(page.getByLabel("Window ends")).toHaveValue("2026-09-30");
+    await expect(
+      page.getByRole("button", {
+        name: "Open record: Window equipment 01",
+        exact: true,
+      }),
+    ).toBeVisible();
+
+    api.workspace.week_start = "monday";
+    api.failWorkspaceRead(false);
+    await page
+      .getByRole("button", { name: "Retry calendar settings", exact: true })
+      .click();
+    const calendar = page.getByRole("region", {
+      name: "September 2026 calendar",
+      exact: true,
+    });
+    await expect(
+      calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
+    ).toHaveText(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+    await expect(page.getByLabel("Window starts")).toHaveValue("2026-09-01");
+    await expect(page.getByLabel("Window ends")).toHaveValue("2026-09-30");
+    await expect
+      .poll(() => api.windowQueryRequests.at(-1))
+      .toMatchObject({ from_date: "2026-09-01", to_date: "2026-09-30" });
+  });
 });
 
 test("Calendar displays workspace-local window matches, pages results, and retries failures", async ({

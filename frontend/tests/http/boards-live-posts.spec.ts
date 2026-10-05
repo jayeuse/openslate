@@ -154,7 +154,7 @@ async function installPostBrowserApi(page: Page) {
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ today: "2026-09-23" }),
+      body: JSON.stringify({ today: "2026-09-23", week_start: "monday" }),
     }),
   );
   await page.route("**/api/views/data-sources**", (route) =>

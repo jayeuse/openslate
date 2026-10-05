@@ -10,6 +10,7 @@ import type {
   BoardEventOccurrencePage,
 } from "../adapters/board-events-api";
 import type { CalendarWindow } from "../hooks/use-server-board-events";
+import type { WorkspaceCalendarSettings } from "../../manage/adapters/workspace-api";
 import { BoardEmpty } from "./ui";
 import { ServerBoardAttachments } from "./server-backed-board-attachments";
 import { ServerBoardRecordLinks } from "./server-backed-board-record-links";
@@ -370,16 +371,22 @@ export function MonthGrid({
   page,
   selectedDate,
   today,
+  weekStart,
   onSelect,
 }: {
   window: CalendarWindow;
   page: BoardEventOccurrencePage;
   selectedDate: string;
   today: string | null;
+  weekStart: WorkspaceCalendarSettings["week_start"];
   onSelect: (date: string) => void;
 }) {
   const first = new Date(`${window.start}T12:00:00Z`);
-  const leading = first.getUTCDay();
+  const leading = (first.getUTCDay() + (weekStart === "monday" ? 6 : 0)) % 7;
+  const weekdays =
+    weekStart === "monday"
+      ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+      : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const days = Number(window.end.slice(-2));
   const cells = Array.from(
     { length: Math.ceil((leading + days) / 7) * 7 },
@@ -396,7 +403,7 @@ export function MonthGrid({
         >
           <div className="min-w-[36rem]">
             <div className="bg-muted/25 grid grid-cols-7 border-b">
-              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((name) => (
+              {weekdays.map((name) => (
                 <span
                   key={name}
                   className="text-muted-foreground p-2 text-center text-xs font-medium"

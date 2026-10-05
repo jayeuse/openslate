@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { queryOptions } from "@tanstack/react-query";
 
 import { ApiError, apiFetch } from "@/lib/api";
 
@@ -36,6 +37,30 @@ const workspaceSettingsPatchSchema = z
   );
 
 export type ManageWorkspaceProfile = z.output<typeof workspaceProfileSchema>;
+const workspaceCalendarSchema = workspaceProfileSchema
+  .pick({ week_start: true })
+  .extend({ today: z.iso.date() });
+export type WorkspaceCalendarSettings = z.output<
+  typeof workspaceCalendarSchema
+>;
+
+/** Calendar preferences are readable by every authenticated workspace user. */
+export function getWorkspaceCalendarSettings(signal?: AbortSignal) {
+  return apiFetch("/workspace", workspaceCalendarSchema, {
+    cache: "no-store",
+    signal,
+  });
+}
+
+export function workspaceCalendarQueryOptions() {
+  return queryOptions({
+    queryKey: ["workspace", "calendar"] as const,
+    queryFn: ({ signal }) => getWorkspaceCalendarSettings(signal),
+    // A return from Organization settings rechecks its persisted preference.
+    staleTime: 0,
+  });
+}
+
 export type ManageWorkspaceSettingsPatch = z.output<
   typeof workspaceSettingsPatchSchema
 >;

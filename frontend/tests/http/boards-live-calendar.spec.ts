@@ -31,6 +31,7 @@ import {
 const boardId = "00000000-0000-4000-8000-000000000001";
 const eventId = "00000000-0000-4000-8000-000000000002";
 const authorId = "00000000-0000-4000-8000-000000000003";
+test.use({ trace: "off", screenshot: "off", video: "off" });
 const visibleOccurrence: BoardEventOccurrencePage["items"][number] = {
   id: `${eventId}:2026-09-14`,
   eventId,
@@ -91,7 +92,10 @@ const selectedEventWire = {
   updated_at: "2026-09-01T00:00:00Z",
 };
 
-async function installSelectedEventApi(browser: Page) {
+async function installSelectedEventApi(
+  browser: Page,
+  weekStart: "monday" | "sunday" = "monday",
+) {
   const board = {
     id: boardId,
     scope: "project",
@@ -119,7 +123,7 @@ async function installSelectedEventApi(browser: Page) {
     }),
   );
   await browser.route("**/api/workspace", (route) =>
-    route.fulfill({ json: { today: "2026-09-14" } }),
+    route.fulfill({ json: { today: "2026-09-14", week_start: weekStart } }),
   );
   await browser.route("**/api/boards**", (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -162,6 +166,63 @@ async function installSelectedEventApi(browser: Page) {
     });
   });
 }
+
+test.describe("organization calendar week start", () => {
+  for (const weekStart of ["monday", "sunday"] as const) {
+    test(`Boards ${weekStart} preference aligns dates with weekdays and retains the selected day`, async ({
+      page: browser,
+    }) => {
+      await installSelectedEventApi(browser, weekStart);
+      const windows: { start: string | null; end: string | null }[] = [];
+      browser.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.pathname.endsWith("/events/occurrences"))
+          windows.push({
+            start: url.searchParams.get("window_start"),
+            end: url.searchParams.get("window_end"),
+          });
+      });
+      await browser.goto(`/boards?board=${boardId}&section=calendar`);
+      const calendar = browser.getByRole("region", {
+        name: "September 2026 calendar",
+        exact: true,
+      });
+      await expect(calendar).toBeVisible();
+      await expect(
+        calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
+      ).toHaveText(
+        weekStart === "monday"
+          ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+          : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+      );
+      const tuesday = await calendar
+        .getByText("Tue", { exact: true })
+        .boundingBox();
+      const firstDay = await calendar
+        .getByRole("button", { name: "View Tue, Sep 1, 0 events", exact: true })
+        .boundingBox();
+      expect(tuesday).not.toBeNull();
+      expect(firstDay).not.toBeNull();
+      expect(
+        Math.abs(
+          firstDay!.x + firstDay!.width / 2 - (tuesday!.x + tuesday!.width / 2),
+        ),
+      ).toBeLessThan(2);
+      const selected = calendar.getByRole("button", {
+        name: "View Wed, Sep 16, 0 events",
+        exact: true,
+      });
+      await selected.click();
+      await expect(selected).toHaveAttribute("aria-pressed", "true");
+      await expect
+        .poll(() => windows.at(-1))
+        .toEqual({ start: "2026-09-01", end: "2026-09-30" });
+      await expect(
+        browser.getByRole("heading", { name: "Wed, Sep 16", exact: true }),
+      ).toBeVisible();
+    });
+  }
+});
 
 test("URL-selected event opens outside the month, survives reload, and closes only its target", async ({
   page: browser,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { queryOpenViewWindowRecords } from "../adapters/window-api";
 import type {
@@ -25,6 +26,13 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { LoadingRegion } from "@/components/ui/loading-region";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  workspaceCalendarQueryOptions,
+  type WorkspaceCalendarSettings,
+} from "../../manage/adapters/workspace-api";
+import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
 
 const WINDOW_PAGE_SIZE = 25;
 const DAY_MILLISECONDS = 24 * 60 * 60 * 1000;
@@ -92,7 +100,10 @@ function localToday(): string {
   return dateString(today.getFullYear(), today.getMonth() + 1, today.getDate());
 }
 
-export function initialDateWindow(range: LiveWindowBaseProps["dateRange"]): {
+export function initialDateWindow(
+  range: LiveWindowBaseProps["dateRange"],
+  weekStart: WorkspaceCalendarSettings["week_start"] = "monday",
+): {
   start: string;
   end: string;
 } {
@@ -101,8 +112,9 @@ export function initialDateWindow(range: LiveWindowBaseProps["dateRange"]): {
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth();
   if (range === "week") {
-    const mondayOffset = (date.getUTCDay() + 6) % 7;
-    const start = shiftDate(today, -mondayOffset);
+    const weekdayOffset =
+      (date.getUTCDay() + (weekStart === "monday" ? 6 : 0)) % 7;
+    const start = shiftDate(today, -weekdayOffset);
     return { start, end: shiftDate(start, 6) };
   }
   if (range === "quarter") {
@@ -425,7 +437,92 @@ function recordText(value: unknown): string {
   return "Untitled record";
 }
 
-export function LiveCalendar({
+type LiveCalendarProps = LiveWindowBaseProps & {
+  scale?: "month" | "list" | null;
+  dateField: CalendarDateField;
+  titleField: OpenViewDataSourceField | undefined;
+  detailFields: readonly OpenViewDataSourceField[];
+};
+
+export function LiveCalendar(props: LiveCalendarProps) {
+  const workspace = useQuery(workspaceCalendarQueryOptions());
+  const client = useQueryClient();
+  useEffect(() => {
+    const queryKey = workspaceCalendarQueryOptions().queryKey;
+    const refreshSettings = () => {
+      const cold = client
+        .getQueryCache()
+        .findAll({ queryKey, fetchStatus: "fetching" })
+        .filter((query) => query.state.data === undefined);
+      void Promise.all(
+        cold.map((query) => query.cancel({ revert: true })),
+      ).then(() => client.invalidateQueries({ queryKey }));
+    };
+    return subscribeOpenViewInvalidations((event) => {
+      if (event.type === "resync" || event.entity === "workspace_profiles")
+        refreshSettings();
+    }, refreshSettings);
+  }, [client]);
+
+  const retrySettings = () => {
+    void workspace.refetch();
+  };
+  if (!workspace.data)
+    return (
+      <Card
+        className="min-w-0 self-auto overflow-hidden"
+        aria-label={props.scale === "list" ? "Calendar list view" : "Calendar"}
+      >
+        <header data-slot="card-header" className="border-b px-4 py-3">
+          <h2 data-slot="section-title" className="font-medium">
+            Calendar · {props.dateField.name}
+          </h2>
+          <p className="text-muted-foreground text-sm">
+            Live records grouped by their selected schedule date.
+          </p>
+        </header>
+        <LoadingRegion
+          loading={workspace.isPending}
+          label="Loading calendar settings"
+          skeleton={
+            <div className="space-y-4 p-4">
+              <div className="flex flex-wrap gap-3">
+                <Skeleton className="h-11 w-44" />
+                <Skeleton className="h-11 w-44" />
+              </div>
+              <Skeleton className="h-72 w-full" />
+            </div>
+          }
+        >
+          <Alert
+            role="alert"
+            variant="warning"
+            className="m-4 flex flex-wrap items-center justify-between gap-3"
+          >
+            <p>Organization calendar settings could not be loaded.</p>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={retrySettings}
+            >
+              Retry calendar settings
+            </Button>
+          </Alert>
+        </LoadingRegion>
+      </Card>
+    );
+  return (
+    <ResolvedLiveCalendar
+      {...props}
+      weekStart={workspace.data.week_start}
+      settingsError={workspace.isError}
+      onRetrySettings={retrySettings}
+    />
+  );
+}
+
+function ResolvedLiveCalendar({
   moduleId,
   definition,
   dateRange,
@@ -435,16 +532,20 @@ export function LiveCalendar({
   titleField,
   detailFields,
   onOpenRecord,
-}: LiveWindowBaseProps & {
-  scale?: "month" | "list" | null;
-  dateField: CalendarDateField;
-  titleField: OpenViewDataSourceField | undefined;
-  detailFields: readonly OpenViewDataSourceField[];
+  weekStart,
+  settingsError,
+  onRetrySettings,
+}: LiveCalendarProps & {
+  weekStart: WorkspaceCalendarSettings["week_start"];
+  settingsError: boolean;
+  onRetrySettings: () => void;
 }) {
   const scale = savedScale ?? "month";
   const [windowDates, setWindowDates] = useState(() =>
-    initialDateWindow(dateRange),
+    initialDateWindow(dateRange, weekStart),
   );
+  const manualWindow = useRef(false);
+  const previousRange = useRef(dateRange);
   const [scope, setScope] = useState<CalendarWindowScope>("window");
   const [retry, setRetry] = useState(0);
   const [pagePosition, setPagePosition] = useState({ key: "", offset: 0 });
@@ -500,9 +601,13 @@ export function LiveCalendar({
   ]);
   const { result, loading, error } = useWindowPage(request, retry + refreshKey);
   useEffect(() => {
-    setWindowDates(initialDateWindow(dateRange));
-    setPagePosition({ key: "", offset: 0 });
-  }, [dateRange]);
+    if (previousRange.current !== dateRange) manualWindow.current = false;
+    previousRange.current = dateRange;
+    if (!manualWindow.current) {
+      setWindowDates(initialDateWindow(dateRange, weekStart));
+      setPagePosition({ key: "", offset: 0 });
+    }
+  }, [dateRange, weekStart]);
   const timezone = result?.timezone ?? null;
   const dateFieldTitle = dateField.name;
   const shownRows = result?.items ?? [];
@@ -544,6 +649,7 @@ export function LiveCalendar({
     setPagePosition({ key: "", offset: 0 });
   };
   const shiftWindow = (direction: -1 | 1) => {
+    manualWindow.current = true;
     const span = daysInWindow(windowDates.start, windowDates.end);
     setWindowDates((current) => ({
       start: shiftDate(current.start, direction * span),
@@ -566,6 +672,26 @@ export function LiveCalendar({
           Live records grouped by their selected schedule date.
         </p>
       </header>
+      {settingsError ? (
+        <Alert
+          role="alert"
+          variant="warning"
+          className="m-4 flex flex-wrap items-center justify-between gap-3"
+        >
+          <p>
+            Organization calendar settings could not be refreshed. The last
+            loaded settings are still in use.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={onRetrySettings}
+          >
+            Retry calendar settings
+          </Button>
+        </Alert>
+      ) : null}
       <WindowControls
         startDate={windowDates.start}
         endDate={windowDates.end}
@@ -574,10 +700,12 @@ export function LiveCalendar({
         windowLabel="Scheduled window"
         undatedLabel="Undated records"
         onStartDateChange={(start) => {
+          manualWindow.current = true;
           setWindowDates((current) => ({ ...current, start }));
           setPagePosition({ key: "", offset: 0 });
         }}
         onEndDateChange={(end) => {
+          manualWindow.current = true;
           setWindowDates((current) => ({ ...current, end }));
           setPagePosition({ key: "", offset: 0 });
         }}
@@ -601,7 +729,12 @@ export function LiveCalendar({
             const dayCount = new Date(
               Date.UTC(yearValue, monthValue, 0),
             ).getUTCDate();
-            const leadingDays = firstDay.getUTCDay();
+            const leadingDays =
+              (firstDay.getUTCDay() + (weekStart === "monday" ? 6 : 0)) % 7;
+            const weekdays =
+              weekStart === "monday"
+                ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
             const monthLabel = new Intl.DateTimeFormat("en", {
               timeZone: "UTC",
               month: "long",
@@ -627,16 +760,14 @@ export function LiveCalendar({
                 >
                   <div className="min-w-[46rem]">
                     <div className="bg-muted/25 grid grid-cols-7 border-b">
-                      {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
-                        (day) => (
-                          <div
-                            key={day}
-                            className="text-muted-foreground px-2 py-2 text-center text-xs font-medium"
-                          >
-                            {day}
-                          </div>
-                        ),
-                      )}
+                      {weekdays.map((day) => (
+                        <div
+                          key={day}
+                          className="text-muted-foreground px-2 py-2 text-center text-xs font-medium"
+                        >
+                          {day}
+                        </div>
+                      ))}
                     </div>
                     <div className="grid grid-cols-7">
                       {cells.map((day, index) => {

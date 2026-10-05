@@ -111,7 +111,9 @@ async function installArchivedBoard(page: Page) {
         json: { id: actorId, role: "admin", access: [] },
       });
     if (path === "/api/workspace")
-      return route.fulfill({ json: { today: "2026-09-25" } });
+      return route.fulfill({
+        json: { today: "2026-09-25", week_start: "monday" },
+      });
     if (path === "/api/boards")
       return route.fulfill({
         json: {

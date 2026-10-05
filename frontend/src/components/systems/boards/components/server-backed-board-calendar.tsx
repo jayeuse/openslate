@@ -49,7 +49,10 @@ import {
 } from "../adapters/board-events-api";
 import type { BoardAttachmentVersions } from "../adapters/board-files-api";
 import { readBoard } from "../adapters/board-management-api";
-import { getBoardWorkspaceToday } from "../adapters/board-workspace-date-api";
+import {
+  getWorkspaceCalendarSettings,
+  type WorkspaceCalendarSettings,
+} from "../../manage/adapters/workspace-api";
 import {
   getMyBoardAccess,
   type BoardMyAccess,
@@ -168,7 +171,9 @@ export function ServerBackedBoardCalendar({
     event: BoardEvent | null;
     error: string | null;
   } | null>(null);
-  const [workspaceToday, setWorkspaceToday] = useState<string | null>(null);
+  const [workspaceCalendar, setWorkspaceCalendar] =
+    useState<WorkspaceCalendarSettings | null>(null);
+  const workspaceToday = workspaceCalendar?.today ?? null;
   const [workspaceDateError, setWorkspaceDateError] = useState<string | null>(
     null,
   );
@@ -286,12 +291,12 @@ export function ServerBackedBoardCalendar({
     let active = true;
     async function refreshWorkspaceDate() {
       try {
-        const today = await getBoardWorkspaceToday();
+        const workspace = await getWorkspaceCalendarSettings();
         if (!active) return;
-        setWorkspaceToday(today);
+        setWorkspaceCalendar(workspace);
         setWorkspaceDateError(null);
-        setMonth((current) => current ?? today.slice(0, 7));
-        setSelectedDate((current) => current ?? today);
+        setMonth((current) => current ?? workspace.today.slice(0, 7));
+        setSelectedDate((current) => current ?? workspace.today);
       } catch {
         if (active) setWorkspaceDateError("Could not load the Workspace date.");
       }
@@ -1497,13 +1502,16 @@ export function ServerBackedBoardCalendar({
             >
               <div className="min-w-0">
                 {view === "month" ? (
-                  <MonthGrid
-                    window={calendarWindow}
-                    page={calendarPage}
-                    selectedDate={selectedCalendarDate}
-                    today={workspaceToday}
-                    onSelect={setSelectedDate}
-                  />
+                  workspaceCalendar ? (
+                    <MonthGrid
+                      window={calendarWindow}
+                      page={calendarPage}
+                      selectedDate={selectedCalendarDate}
+                      today={workspaceToday}
+                      weekStart={workspaceCalendar.week_start}
+                      onSelect={setSelectedDate}
+                    />
+                  ) : null
                 ) : (
                   <div id="server-board-calendar-day">
                     {displayCalendarEvents()}
