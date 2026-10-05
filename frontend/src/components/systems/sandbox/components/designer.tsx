@@ -221,6 +221,7 @@ export function Designer({
   onStartFromTemplate,
   pending,
   bindings,
+  purgeEnabled,
   onLifecycle,
   onDraftStateChange,
 }: {
@@ -243,6 +244,7 @@ export function Designer({
   onStartFromTemplate: () => void;
   pending: boolean;
   bindings: readonly SandboxBinding[] | null;
+  purgeEnabled: boolean;
   onLifecycle: (
     binding: SandboxLifecycleBinding,
     operation: SandboxLifecycleOperation,
@@ -661,7 +663,7 @@ export function Designer({
           : projectedField(design, target.id)?.field.closed;
     return {
       closed: binding?.is_deleted ?? draftClosed ?? false,
-      canPurge: Boolean(binding?.is_deleted),
+      canPurge: purgeEnabled && Boolean(binding?.is_deleted),
       disabled:
         pending || bindings === null || Boolean(binding && localDraftDirty),
     };
@@ -670,7 +672,11 @@ export function Designer({
     target: SandboxInspectorTarget,
   ): Promise<SandboxCommandResult<Design>> {
     const binding = bindingFor(target);
-    if (!binding?.is_deleted || lifecycleState(target).disabled)
+    if (
+      !lifecycleState(target).canPurge ||
+      lifecycleState(target).disabled ||
+      !binding
+    )
       return {
         ok: false,
         error:

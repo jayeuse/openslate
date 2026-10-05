@@ -5,6 +5,10 @@ import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Redo2, Undo2 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  subscribeWorkspaceLifecycleSettings,
+  workspaceLifecycleQueryOptions,
+} from "../manage/adapters/workspace-api";
 import { ApiContractError, ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -255,6 +259,12 @@ export default function SandboxPage() {
   const router = useRouter();
   const [session, setSession] = useState<SandboxDocumentSession | null>(null);
   const queryClient = useQueryClient();
+  const workspace = useQuery(workspaceLifecycleQueryOptions());
+  const purgeEnabled = workspace.isSuccess && workspace.data.purge_enabled;
+  useEffect(
+    () => subscribeWorkspaceLifecycleSettings(queryClient),
+    [queryClient],
+  );
   const bindingsQuery = useQuery(
     sandboxBindingsOptions(session?.revision ?? 0),
   );
@@ -264,6 +274,17 @@ export default function SandboxPage() {
   const [designerDraftDirty, setDesignerDraftDirty] = useState(false);
   const lifecycleLock = useRef(false);
   const commandPending = useRef(false);
+  useEffect(() => {
+    if (
+      !purgeEnabled &&
+      lifecycleRequest?.operation === "purge" &&
+      !commandPending.current
+    ) {
+      setLifecycleRequest(null);
+      lifecycleLock.current = false;
+      setLifecycleRecovery(false);
+    }
+  }, [purgeEnabled, lifecycleRequest]);
   const [versions, setVersions] = useState<SandboxVersion[]>([]);
   const [testRuns, setTestRuns] = useState<SandboxTestRun[]>([]);
   const [triggerRuns, setTriggerRuns] = useState<SandboxTriggerRun[]>([]);
@@ -610,6 +631,8 @@ export default function SandboxPage() {
     binding: SandboxLifecycleBinding,
     operation: SandboxLifecycleOperation,
   ): Promise<SandboxCommandResult<Design>> {
+    if (operation === "purge" && !purgeEnabled)
+      return { ok: false, error: "Permanent deletion is unavailable." };
     if (
       !session ||
       !bindingsReady ||
@@ -638,7 +661,12 @@ export default function SandboxPage() {
     lifecycleLock.current = false;
   }
   async function confirmLifecycle(input?: LifecyclePurgeInput) {
-    if (!lifecycleRequest || commandPending.current) return;
+    if (
+      !lifecycleRequest ||
+      commandPending.current ||
+      (lifecycleRequest.operation === "purge" && !purgeEnabled)
+    )
+      return;
     commandPending.current = true;
     try {
       await confirmSandboxLifecycle(lifecycleRequest, input);
@@ -1121,6 +1149,7 @@ export default function SandboxPage() {
               Boolean(conflict)
             }
             bindings={bindingsReady ? bindingsQuery.data!.items : null}
+            purgeEnabled={purgeEnabled}
             onLifecycle={requestLifecycle}
             onDraftStateChange={setDesignerDraftDirty}
           />
@@ -1291,7 +1320,11 @@ export default function SandboxPage() {
           />
         ) : null}
         <SandboxLifecycleDialog
-          request={lifecycleRequest}
+          request={
+            lifecycleRequest?.operation === "purge" && !purgeEnabled
+              ? null
+              : lifecycleRequest
+          }
           onCancel={cancelLifecycle}
           onConfirm={confirmLifecycle}
         />

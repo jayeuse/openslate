@@ -9,6 +9,7 @@ from babel.numbers import is_currency
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from app.common.normalization import normalize_email
+from app.core.config import get_settings
 
 _LOCALE_TAG_PATTERN = re.compile(
     r"^[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?"
@@ -166,3 +167,7 @@ class WorkspaceResponse(BaseModel):
     @computed_field
     def today(self) -> date:
         return datetime.now(ZoneInfo(self.timezone)).date()
+
+    @computed_field
+    def purge_enabled(self) -> bool:
+        return get_settings().lifecycle_purge_enabled

@@ -8,11 +8,15 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getApiFieldErrors } from "@/lib/api";
 import { lifecycleErrorMessage } from "@/lib/lifecycle";
 import { LifecyclePurgeReview } from "@/components/systems/shared/lifecycle-purge-review";
 import { authMeOptions } from "../adapters/openview-queries";
+import {
+  subscribeWorkspaceLifecycleSettings,
+  workspaceLifecycleQueryOptions,
+} from "../../manage/adapters/workspace-api";
 import type {
   OpenViewDataSourceField,
   OpenViewRecord,
@@ -107,6 +111,20 @@ export function RecordDetailsControls({
   const id = useId();
   const identity = useQuery(authMeOptions());
   const isAdmin = identity.data?.role === "admin";
+  const client = useQueryClient();
+  const workspace = useQuery({
+    ...workspaceLifecycleQueryOptions(),
+    enabled: isAdmin && record.isDeleted,
+  });
+  const canPurge =
+    isAdmin &&
+    record.isDeleted &&
+    workspace.isSuccess &&
+    workspace.data.purge_enabled;
+  useEffect(() => {
+    if (isAdmin && record.isDeleted)
+      return subscribeWorkspaceLifecycleSettings(client);
+  }, [client, isAdmin, record.isDeleted]);
   const isEditing = editing !== null;
   useEffect(() => {
     onEditingChange?.(isEditing);
@@ -135,6 +153,13 @@ export function RecordDetailsControls({
   const [purgePassword, setPurgePassword] = useState("");
   const [purgeReviewAgain, setPurgeReviewAgain] = useState(false);
   const busy = pending !== null;
+  useEffect(() => {
+    if (canPurge) return;
+    setPurgePreview(null);
+    setPurgeConfirmationName("");
+    setPurgePassword("");
+    setPurgeReviewAgain(false);
+  }, [canPurge]);
 
   const startEditing = async (reload = false) => {
     setPending(reload ? "reload" : "open");
@@ -247,7 +272,7 @@ export function RecordDetailsControls({
   };
 
   const beginPurgeReview = async () => {
-    if (!isAdmin || !record.isDeleted || busy) return;
+    if (!canPurge || busy) return;
     setPending("purge-preview");
     setError("");
     clearPurgeReview();
@@ -271,8 +296,7 @@ export function RecordDetailsControls({
 
   const confirmPurge = async () => {
     if (
-      !isAdmin ||
-      !record.isDeleted ||
+      !canPurge ||
       !purgePreview ||
       purgePreview.impact.blockers.length > 0 ||
       purgeConfirmationName !== purgePreview.confirmation_name ||
@@ -425,7 +449,7 @@ export function RecordDetailsControls({
                   {pending === "restore" ? "Restoring…" : "Restore record"}
                 </Button>
               ) : null}
-              {isAdmin ? (
+              {canPurge ? (
                 <Button
                   type="button"
                   variant="outline"
@@ -442,7 +466,7 @@ export function RecordDetailsControls({
               ) : null}
             </div>
           ) : null}
-          {isAdmin && record.isDeleted && purgePreview ? (
+          {canPurge && purgePreview ? (
             <div className="border-border space-y-4 rounded-lg border p-4">
               <LifecyclePurgeReview impact={purgePreview.impact} />
               {purgePreview.impact.blockers.length > 0 ? null : (

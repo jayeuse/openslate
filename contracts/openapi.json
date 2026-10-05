@@ -13206,6 +13206,11 @@
             ],
             "title": "Postal Address"
           },
+          "purge_enabled": {
+            "readOnly": true,
+            "title": "Purge Enabled",
+            "type": "boolean"
+          },
           "revision": {
             "title": "Revision",
             "type": "integer"
@@ -13254,7 +13259,8 @@
           "revision",
           "created_at",
           "updated_at",
-          "today"
+          "today",
+          "purge_enabled"
         ],
         "title": "WorkspaceResponse",
         "type": "object"

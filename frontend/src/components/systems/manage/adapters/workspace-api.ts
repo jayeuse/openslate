@@ -1,7 +1,8 @@
 import { z } from "zod";
-import { queryOptions } from "@tanstack/react-query";
+import { queryOptions, type QueryClient } from "@tanstack/react-query";
 
 import { ApiError, apiFetch } from "@/lib/api";
+import { subscribeOpenViewInvalidations } from "../../openview/adapters/invalidation-events";
 
 const workspaceProfileSchema = z.object({
   id: z.uuid(),
@@ -59,6 +60,47 @@ export function workspaceCalendarQueryOptions() {
     // A return from Organization settings rechecks its persisted preference.
     staleTime: 0,
   });
+}
+
+const workspaceLifecycleSchema = z.object({ purge_enabled: z.boolean() });
+
+/** The server owns permanent-deletion availability; it is not a workspace edit. */
+export function getWorkspaceLifecycleSettings(signal?: AbortSignal) {
+  return apiFetch("/workspace", workspaceLifecycleSchema, {
+    cache: "no-store",
+    signal,
+  });
+}
+
+export function workspaceLifecycleQueryOptions() {
+  return queryOptions({
+    queryKey: ["workspace", "lifecycle"] as const,
+    queryFn: ({ signal }) => getWorkspaceLifecycleSettings(signal),
+    // The operator setting may change when the API restarts.
+    staleTime: 0,
+  });
+}
+
+/** Refresh the shared flag after server reconnects and workspace invalidations. */
+export function subscribeWorkspaceLifecycleSettings(client: QueryClient) {
+  const queryKey = workspaceLifecycleQueryOptions().queryKey;
+  const refresh = () => {
+    const cold = client
+      .getQueryCache()
+      .findAll({ queryKey, fetchStatus: "fetching" })
+      .filter((query) => query.state.data === undefined);
+    void Promise.all(cold.map((query) => query.cancel({ revert: true }))).then(
+      () => client.invalidateQueries({ queryKey }),
+    );
+  };
+  const unsubscribe = subscribeOpenViewInvalidations((event) => {
+    if (event.type === "resync" || event.entity === "workspace_profiles")
+      refresh();
+  }, refresh);
+  return () => {
+    unsubscribe();
+    void client.invalidateQueries({ queryKey, refetchType: "none" });
+  };
 }
 
 export type ManageWorkspaceSettingsPatch = z.output<

@@ -346,6 +346,7 @@ async function installViewsApi(
   const workspace = {
     today: "2026-09-20",
     week_start: options.weekStart ?? "monday",
+    purge_enabled: true as boolean | undefined,
   };
   let workspaceFailure = false;
   let denyRecordQueries = false;
@@ -4309,7 +4310,7 @@ test("record details delete only after confirmation", async ({ page }) => {
 test("an administrator can preview and confirm deleted-record purging with a fresh password for each attempt", async ({
   page,
 }) => {
-  await installViewsApi(page, {
+  const api = await installViewsApi(page, {
     disableInitialSearch: true,
     deletedRecord: true,
   });
@@ -4448,6 +4449,18 @@ test("an administrator can preview and confirm deleted-record purging with a fre
       exact: true,
     }),
   ).toHaveCount(0);
+  api.workspace.purge_enabled = false;
+  await api.triggerInvalidation("workspace_profiles");
+  await expect(details.getByLabel("Administrator password")).toHaveCount(0);
+  await expect(
+    details.getByRole("button", { name: "Restore record" }),
+  ).toBeEnabled();
+  api.workspace.purge_enabled = true;
+  await api.triggerInvalidation("workspace_profiles");
+  await details
+    .getByRole("button", { name: "Permanently delete", exact: true })
+    .click();
+  await expect(details.getByLabel("Administrator password")).toBeVisible();
   await details.getByLabel("Type the record ID").fill(recordOneId);
   await details
     .getByLabel("Administrator password")
@@ -4455,6 +4468,7 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await details.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(details.getByText("Links to other records")).toHaveCount(0);
   expect(recordPurgeCalls.map(({ path }) => path)).toEqual([
+    `/api/records/${recordOneId}/purge/preview`,
     `/api/records/${recordOneId}/purge/preview`,
   ]);
   await details.getByRole("button", { name: "Permanently delete" }).click();
@@ -4489,16 +4503,17 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   expect(recordPurgeCalls.map(({ method, path }) => [method, path])).toEqual([
     ["POST", `/api/records/${recordOneId}/purge/preview`],
     ["POST", `/api/records/${recordOneId}/purge/preview`],
+    ["POST", `/api/records/${recordOneId}/purge/preview`],
     ["POST", `/api/records/${recordOneId}/purge`],
     ["POST", `/api/records/${recordOneId}/purge/preview`],
     ["POST", `/api/records/${recordOneId}/purge`],
   ]);
-  expect(recordPurgeCalls[2]?.body).toEqual({
+  expect(recordPurgeCalls[3]?.body).toEqual({
     token: preview.token,
     confirmation_name: recordOneId,
     password: "synthetic-test-passphrase",
   });
-  expect(recordPurgeCalls[4]?.body).toEqual({
+  expect(recordPurgeCalls[5]?.body).toEqual({
     token: preview.token,
     confirmation_name: recordOneId,
     password: "synthetic-test-passphrase",
@@ -4602,6 +4617,30 @@ test("members with write access can restore a deleted record but cannot see perm
     details.getByRole("button", { name: "Permanently delete" }),
   ).toHaveCount(0);
 });
+
+for (const state of ["disabled", "unknown", "unavailable"] as const) {
+  test(`a deleted record remains restorable while permanent deletion is ${state}`, async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, {
+      disableInitialSearch: true,
+      deletedRecord: true,
+    });
+    await installRecordCommands(page);
+    api.workspace.purge_enabled = state === "unknown" ? undefined : false;
+    api.failWorkspaceRead(state === "unavailable");
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
+    );
+    const details = page.getByRole("dialog", { name: "Record details" });
+    await expect(
+      details.getByRole("button", { name: "Restore record" }),
+    ).toBeEnabled();
+    await expect(
+      details.getByRole("button", { name: "Permanently delete", exact: true }),
+    ).toHaveCount(0);
+  });
+}
 
 test("New record checks required values, then opens the created record", async ({
   page,

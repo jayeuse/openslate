@@ -2,6 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../../src/lib/api";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
 import type {
   BoardManagementBoard,
   BoardPurgePreview,
@@ -88,6 +92,13 @@ function purgeRow(entityType: string, entityId: string) {
 }
 
 async function installArchivedBoard(page: Page) {
+  await installOpenViewEventSource(page);
+  const workspace = {
+    today: "2026-09-25",
+    week_start: "monday",
+    purge_enabled: true as boolean | undefined,
+  };
+  let workspaceFailure = false;
   const archived = {
     id: boardId,
     scope: "project",
@@ -111,9 +122,11 @@ async function installArchivedBoard(page: Page) {
         json: { id: actorId, role: "admin", access: [] },
       });
     if (path === "/api/workspace")
-      return route.fulfill({
-        json: { today: "2026-09-25", week_start: "monday" },
-      });
+      return route.fulfill(
+        workspaceFailure
+          ? { status: 503, json: { detail: "Workspace unavailable" } }
+          : { json: workspace },
+      );
     if (path === "/api/boards")
       return route.fulfill({
         json: {
@@ -151,6 +164,12 @@ async function installArchivedBoard(page: Page) {
       },
     });
   });
+  return {
+    workspace,
+    failWorkspaceRead: (failed: boolean) => {
+      workspaceFailure = failed;
+    },
+  };
 }
 
 test("a new Board is a project Board with only a name and description", () => {
@@ -372,6 +391,33 @@ test("archived Board permanent-deletion controls are hidden from non-admins", ()
   expect(html).toContain("Restore Board");
 });
 
+for (const state of ["disabled", "unknown", "unavailable"] as const) {
+  test(`an archived Board remains restorable while permanent deletion is ${state}`, async ({
+    page,
+  }) => {
+    const api = await installArchivedBoard(page);
+    api.workspace.purge_enabled = state === "unknown" ? undefined : false;
+    api.failWorkspaceRead(state === "unavailable");
+    await page.goto(
+      `/boards?board=${boardId}&section=overview&status=archived`,
+    );
+    await page.getByRole("button", { name: "Board menu", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+      .click();
+    const manage = page.getByRole("dialog", { name: "Manage Board" });
+    await expect(
+      manage.getByRole("button", { name: "Restore Board" }),
+    ).toBeEnabled();
+    await expect(
+      manage.getByRole("button", {
+        name: "Permanently delete Board",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+  });
+}
+
 test("Board purge preserves safe lifecycle messages when the server returns their actual status", async () => {
   const management =
     (await import("../../src/components/systems/boards/components/server-backed-board-management")) as unknown as {
@@ -408,7 +454,7 @@ test("Board purge preserves safe lifecycle messages when the server returns thei
 test("Board purge explains its impact and keeps stale challenges recoverable without losing access", async ({
   page,
 }) => {
-  await installArchivedBoard(page);
+  const api = await installArchivedBoard(page);
   let previews = 0;
   let deletions = 0;
   const preview: BoardPurgePreview = {
@@ -439,7 +485,7 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
       previews += 1;
       return route.fulfill({
         json:
-          previews < 3
+          previews < 4
             ? preview
             : {
                 ...preview,
@@ -495,6 +541,17 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
     manage.getByText("This permanently removes 1 Board and 2 posts."),
   ).toBeVisible();
   await expect(manage.getByText(boardId, { exact: true })).toBeVisible();
+  await expect(manage.getByLabel("Administrator password")).toBeVisible();
+  api.failWorkspaceRead(true);
+  await sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" });
+  await expect(manage.getByLabel("Administrator password")).toHaveCount(0);
+  await expect(
+    manage.getByRole("button", { name: "Restore Board" }),
+  ).toBeEnabled();
+  expect(deletions).toBe(0);
+  api.failWorkspaceRead(false);
+  await sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" });
+  await begin.click();
   await expect(manage.getByLabel("Administrator password")).toBeVisible();
   await expect(manage.getByText(/Dispatch records.*Operations/)).toBeVisible();
   await expect(

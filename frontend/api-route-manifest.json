@@ -625,6 +625,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
+    "function": "getWorkspaceLifecycleSettings",
+    "method": "GET",
+    "path": "/api/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
     "function": "updateManageWorkspace",
     "method": "PATCH",
     "path": "/api/workspace"

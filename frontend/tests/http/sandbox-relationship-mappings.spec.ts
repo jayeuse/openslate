@@ -8,6 +8,10 @@ import {
 import { publicationFieldKey } from "../../src/components/systems/sandbox/components/publish-change-groups";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
+import {
   configuredSandboxDesign,
   sandboxDocumentFromDesign,
 } from "../helpers/sandbox-fixtures";
@@ -73,6 +77,16 @@ async function openAuthenticatedSandbox(
   designFixture: Design = configuredSandboxDesign,
   options: SandboxOptions = {},
 ) {
+  await installOpenViewEventSource(page);
+  const workspace = { purge_enabled: true as boolean | undefined };
+  let workspaceFailure = false;
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill(
+      workspaceFailure
+        ? { status: 503, json: { detail: "Workspace unavailable" } }
+        : { json: workspace },
+    ),
+  );
   let revision = options.revision ?? 1;
   let documentReads = 0;
   let documentWrites = 0;
@@ -257,6 +271,12 @@ async function openAuthenticatedSandbox(
     page.getByRole("heading", { name: "Sandbox", exact: true }),
   ).toBeVisible();
   return {
+    workspace,
+    failWorkspaceRead: (failed: boolean) => {
+      workspaceFailure = failed;
+    },
+    refreshWorkspace: () =>
+      sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" }),
     document: () => structuredClone(document),
     documentReads: () => documentReads,
     documentWrites: () => documentWrites,
@@ -633,6 +653,12 @@ test("bound field lifecycle resolves its parent and preserves dirty settings", a
   await expect(
     settings.getByRole("button", { name: "Reopen field", exact: true }),
   ).toBeVisible();
+  await expect(
+    settings.getByRole("button", {
+      name: "Permanently delete field",
+      exact: true,
+    }),
+  ).toBeVisible();
   expect(requests).toEqual([
     {
       token: "owned-field-review",
@@ -706,6 +732,21 @@ test("bound module purge reviews stale challenges and refreshes removal without 
     name: "Permanently delete module",
     exact: true,
   });
+  await expect(
+    dialog.getByLabel("Administrator password", { exact: true }),
+  ).toBeVisible();
+  sandbox.workspace.purge_enabled = false;
+  await sandbox.refreshWorkspace();
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Reopen module", exact: true }),
+  ).toBeEnabled();
+  expect(attempts).toBe(0);
+  sandbox.workspace.purge_enabled = true;
+  await sandbox.refreshWorkspace();
+  await page
+    .getByRole("button", { name: "Permanently delete module", exact: true })
+    .click();
   await dialog
     .getByLabel("Type the module name", { exact: true })
     .fill("Requests");
@@ -762,6 +803,118 @@ test("bound module purge reviews stale challenges and refreshes removal without 
   expect(sandbox.documentWrites()).toBe(0);
   expect(attempts).toBe(2);
 });
+
+for (const state of ["disabled", "unknown", "unavailable"] as const) {
+  test(`closed Sandbox items remain reopenable while permanent deletion is ${state}`, async ({
+    page,
+  }) => {
+    const design = structuredClone(configuredSandboxDesign);
+    const targetModule = design.modules[0];
+    const department = design.departments[0];
+    const field = targetModule?.fields[0];
+    if (!targetModule || !department || !field)
+      throw new Error("A department, module and field are required");
+    targetModule.closed = true;
+    department.closed = true;
+    field.closed = true;
+    const sandbox = await openAuthenticatedSandbox(page, design, {
+      bindings: [
+        {
+          kind: "department",
+          sandbox_id: department.id,
+          parent_sandbox_id: null,
+          live_id: "00000000-0000-4000-8000-000000000551",
+          is_deleted: true,
+        },
+        {
+          kind: "module",
+          sandbox_id: targetModule.id,
+          parent_sandbox_id: null,
+          live_id: "00000000-0000-4000-8000-000000000552",
+          is_deleted: true,
+        },
+        {
+          kind: "field",
+          sandbox_id: field.id,
+          parent_sandbox_id: targetModule.id,
+          live_id: "00000000-0000-4000-8000-000000000553",
+          is_deleted: true,
+        },
+      ],
+    });
+    sandbox.workspace.purge_enabled = state === "unknown" ? undefined : false;
+    sandbox.failWorkspaceRead(state === "unavailable");
+    await sandbox.refreshWorkspace();
+    await expect(
+      page.getByRole("button", { name: "Reopen module", exact: true }),
+    ).toBeEnabled();
+    await expect(
+      page.getByRole("button", {
+        name: "Permanently delete module",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    const settings = page.getByLabel(`${field.name} field settings`, {
+      exact: true,
+    });
+    await settings
+      .getByRole("button", { name: `Show ${field.name} settings`, exact: true })
+      .click();
+    await expect(
+      settings.getByRole("button", { name: "Reopen field", exact: true }),
+    ).toBeEnabled();
+    await expect(
+      settings.getByRole("button", {
+        name: "Permanently delete field",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("tablist", { name: "Workbench view" })
+      .getByRole("tab", { name: "Structure" })
+      .click();
+    for (const [kind, item] of [
+      ["department", department],
+      ["module", targetModule],
+    ] as const) {
+      const row = page.getByRole("button", {
+        name: `Select ${kind} ${item.name}`,
+        exact: true,
+      });
+      await row.click({ button: "right" });
+      await expect(
+        page.getByRole("menuitem", { name: `Reopen ${kind}`, exact: true }),
+      ).toBeEnabled();
+      await expect(
+        page.getByRole("menuitem", {
+          name: `Permanently delete ${kind}`,
+          exact: true,
+        }),
+      ).toHaveCount(0);
+      await page.keyboard.press("Escape");
+    }
+    await page
+      .getByRole("button", {
+        name: `Select department ${department.name}`,
+        exact: true,
+      })
+      .click();
+    await page
+      .getByRole("tablist", { name: "Workbench view" })
+      .getByRole("tab", { name: "Properties" })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Reopen department", exact: true }),
+    ).toBeEnabled();
+    await expect(
+      page.getByRole("button", {
+        name: "Permanently delete department",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    expect(sandbox.documentWrites()).toBe(0);
+  });
+}
 
 test("the bound department outline reviews blockers and reopens with explicit confirmation", async ({
   page,
