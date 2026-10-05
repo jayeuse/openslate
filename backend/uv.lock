@@ -257,15 +257,6 @@ wheels = [
 ]
 
 [[package]]
-name = "clamdpy"
-version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1f/19/6f476637b3cda052c7fd1be5224b7d2f30c09dc5717c51c02145c145a51c/clamdpy-0.2.0.tar.gz", hash = "sha256:6e157f49fc64dc239fe1f662db31009aca92b33486b3124b7863e808edf5cd1f", size = 24183, upload-time = "2025-12-14T11:15:34.328Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/46/05/3b20a4a4674e8a80cfcef97e7bb15c35b4937ca1e6502071d8796a6175bd/clamdpy-0.2.0-py3-none-any.whl", hash = "sha256:51631e0455309f74090876cce989153729f7a5319ad89164f65ec5276759d584", size = 8223, upload-time = "2025-12-14T11:15:33.561Z" },
-]
-
-[[package]]
 name = "click"
 version = "8.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -783,7 +774,6 @@ source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
     { name = "babel" },
-    { name = "clamdpy" },
     { name = "cryptography" },
     { name = "defusedxml" },
     { name = "fastapi" },
@@ -818,7 +808,6 @@ manager = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.20.0" },
     { name = "babel", specifier = ">=2.18.0,<3" },
-    { name = "clamdpy", specifier = "==0.2.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "defusedxml", specifier = ">=0.7.1,<1" },
     { name = "fastapi", specifier = ">=0.141.1" },

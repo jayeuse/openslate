@@ -144,7 +144,7 @@ def test_published_revision_retains_file_snapshot_after_draft_detach(
         purpose="board_attachment", board_id=board.id, record_id=None,
         creator_id=owner.id, filename="notice.pdf", object_key=uuid7().hex,
         expected_size=3, actual_size=3, digest="a" * 64,
-        scanner_version="test", signature_version="test", state="ready",
+        state="ready",
     )
     db.add_all((item, file))
     db.flush()

@@ -1,4 +1,4 @@
-"""Quarantine admission bounds never prevent safe cleanup of existing inventory."""
+"""Pending-upload admission bounds never prevent safe cleanup of existing inventory."""
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -6,15 +6,19 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.core.database.session import AuditSession
+from app.systems.access.users.models import User
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.platform.files import service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.purge import purge_confirmed
-from app.systems.platform.files.quota import lock_quota
+from app.systems.platform.files.quota import QUOTA_LOCK, lock_quota
 from app.systems.platform.files.schemas import FileCreate
 from app.systems.platform.files.validation import ValidatedContent
-from app.systems.platform.files.worker import expire_unused_reservations
 from tests.files.test_integration import Store, reserve
 
 pytestmark = pytest.mark.integration
@@ -39,14 +43,29 @@ def inventory(db, actor, *, count, size=1, state="awaiting_upload"):
     return rows
 
 
-def test_hundred_archived_rejected_entries_block_new_reservation(guarded_db, actor):
+def test_hundred_archived_pending_uploads_block_new_reservation(guarded_db, actor):
     db = guarded_db
-    inventory(db, actor, count=100, state="rejected")
+    inventory(db, actor, count=100)
     with pytest.raises(HTTPException) as caught:
         service.reserve(
             db, actor, FileCreate(purpose="library_document", filename="new.pdf", expected_size=1)
         )
-    assert caught.value.detail["code"] == "file_quarantine_full"
+    assert caught.value.detail["code"] == "file_uploads_full"
+
+
+def test_rejected_rows_do_not_use_pending_upload_capacity(guarded_db, actor):
+    db = guarded_db
+    inventory(db, actor, count=100, state="rejected")
+    inventory(db, actor, count=99)
+    item = service.reserve(
+        db, actor, FileCreate(purpose="library_document", filename="new.pdf", expected_size=1)
+    )
+    assert item.state == "awaiting_upload"
+    with pytest.raises(HTTPException) as caught:
+        service.reserve(
+            db, actor, FileCreate(purpose="library_document", filename="over.pdf", expected_size=1)
+        )
+    assert caught.value.detail["code"] == "file_uploads_full"
 
 
 def test_gibibyte_boundary_uses_declared_bytes_and_logo_canonical_charge(guarded_db, actor):
@@ -71,7 +90,7 @@ def test_gibibyte_boundary_uses_declared_bytes_and_logo_canonical_charge(guarded
             actor,
             FileCreate(purpose="library_document", filename="excess.pdf", expected_size=1),
         )
-    assert caught.value.detail["code"] == "file_quarantine_full"
+    assert caught.value.detail["code"] == "file_uploads_full"
 
 
 def test_advisory_lock_rejects_parallel_admission_without_waiting(guarded_db):
@@ -93,13 +112,94 @@ def test_expiration_only_purges_never_admitted_reservations(guarded_db, actor):
         row.created_at = now - timedelta(hours=25)
     rows[1].state = "uploading"
     rows[1].operation_id = uuid4()
-    rows[2].scan_requested_by = actor.id
+    rows[2].created_at = now - timedelta(hours=23)
     db.commit()
-    assert expire_unused_reservations(db, now) == 1
+    assert service.expire_unused_reservations(db, now) == 1
     assert db.get(File, rows[0].id).state == "purged"
-    assert db.get(File, rows[0].id).performed_by is None
+    assert db.get(File, rows[0].id).failure_code == "file_reservation_expired"
     assert db.get(File, rows[1].id).state == "uploading"
     assert db.get(File, rows[2].id).state == "awaiting_upload"
+
+
+def _holds_quota_lock(db) -> bool:
+    # Read through the session's connection: the audit listener refuses raw ORM SQL.
+    return bool(
+        db.connection().scalar(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' "
+                "AND classid = CAST(:classid AS oid) AND objid = CAST(:objid AS oid) "
+                "AND objsubid = 1 AND pid = pg_backend_pid() AND granted)"
+            ),
+            {"classid": QUOTA_LOCK >> 32, "objid": QUOTA_LOCK & 0xFFFFFFFF},
+        )
+    )
+
+
+def test_reserve_expires_stale_reservations_and_keeps_the_quota_lock(guarded_db, monkeypatch):
+    # The guarded fixture commits only savepoints, which never release a transaction lock.
+    # Commit this owned fixture through real transactions so expiry commits are real.
+    engine = guarded_db.get_bind().engine
+    actor_id, stale_id = uuid4(), uuid4()
+    context = AuditContext(request_id=uuid4(), request_method="POST", request_path="/api/test")
+    with AuditSession(engine) as db:
+        db.info[AUDIT_CONTEXT_KEY] = context
+        db.add(
+            User(
+                id=actor_id,
+                email=f"quota-lock-{actor_id}@example.com",
+                username=f"quota_{actor_id.hex[:12]}",
+                role="admin",
+                status="active",
+            )
+        )
+        db.flush()
+        db.add(
+            File(
+                id=stale_id,
+                purpose="library_document",
+                creator_id=actor_id,
+                filename="stale.pdf",
+                expected_size=1,
+                object_key=uuid4().hex,
+                state="awaiting_upload",
+            )
+        )
+        db.flush()
+        db.get(File, stale_id).created_at = datetime.now(UTC) - timedelta(hours=25)
+        db.commit()
+    checks = []
+    require_capacity = service.require_capacity
+
+    def checked(db, purpose, expected_size):
+        checks.append(_holds_quota_lock(db))
+        require_capacity(db, purpose, expected_size)
+
+    monkeypatch.setattr(service, "require_capacity", checked)
+    created = None
+    try:
+        with AuditSession(engine) as db:
+            db.info[AUDIT_CONTEXT_KEY] = context
+            created = service.reserve(
+                db,
+                db.get(User, actor_id),
+                FileCreate(purpose="library_document", filename="new.pdf", expected_size=1),
+            ).id
+            expired = db.get(File, stale_id)
+            assert expired.state == "purged"
+            assert expired.failure_code == "file_reservation_expired"
+        assert checks == [True]
+    finally:
+        with AuditSession(engine) as db:
+            db.info[AUDIT_CONTEXT_KEY] = context
+            for file_id in (stale_id, created):
+                file = db.get(File, file_id) if file_id is not None else None
+                if file is not None:
+                    db.delete(file)
+            db.flush()
+            actor = db.get(User, actor_id)
+            if actor is not None:
+                db.delete(actor)
+            db.commit()
 
 
 def test_upload_rechecks_reservation_expiry_after_parser(guarded_db, actor, monkeypatch):
@@ -121,10 +221,10 @@ def test_upload_rechecks_reservation_expiry_after_parser(guarded_db, actor, monk
     assert not storage.objects
 
 
-def test_full_quarantine_does_not_prevent_confirmed_cleanup(guarded_db, actor, monkeypatch):
+def test_full_pending_uploads_do_not_prevent_confirmed_cleanup(guarded_db, actor, monkeypatch):
     db = guarded_db
     actor_id = actor.id
-    inventory(db, actor, count=100, state="rejected")
+    inventory(db, actor, count=100)
     ready = File(
         purpose="library_document",
         creator_id=actor_id,
@@ -132,8 +232,6 @@ def test_full_quarantine_does_not_prevent_confirmed_cleanup(guarded_db, actor, m
         expected_size=1,
         actual_size=1,
         digest="a" * 64,
-        scanner_version="test",
-        signature_version="test",
         object_key=uuid4().hex,
         state="ready",
         is_deleted=True,
@@ -146,3 +244,117 @@ def test_full_quarantine_does_not_prevent_confirmed_cleanup(guarded_db, actor, m
         lambda: SimpleNamespace(lifecycle_purge_enabled=True),
     )
     assert purge_confirmed(db, actor_id, file_id, Store(db)).state == "purged"
+
+
+def test_expiration_skips_a_locked_reservation_without_waiting(guarded_db):
+    # Real transactions: the second session must hold its row lock independently.
+    engine = guarded_db.get_bind().engine
+    actor_id, stale_id = uuid4(), uuid4()
+    context = AuditContext(request_id=uuid4(), request_method="POST", request_path="/api/test")
+    now = datetime.now(UTC)
+    with AuditSession(engine) as db:
+        db.info[AUDIT_CONTEXT_KEY] = context
+        db.add(
+            User(
+                id=actor_id,
+                email=f"expiry-lock-{actor_id}@example.com",
+                username=f"expiry_{actor_id.hex[:12]}",
+                role="admin",
+                status="active",
+            )
+        )
+        db.flush()
+        db.add(
+            File(
+                id=stale_id,
+                purpose="library_document",
+                creator_id=actor_id,
+                filename="locked.pdf",
+                expected_size=1,
+                object_key=uuid4().hex,
+                state="awaiting_upload",
+            )
+        )
+        db.flush()
+        db.get(File, stale_id).created_at = now - timedelta(hours=25)
+        db.commit()
+    try:
+        with Session(engine) as holder:
+            holder.get(File, stale_id, with_for_update=True)
+            with AuditSession(engine) as db:
+                db.info[AUDIT_CONTEXT_KEY] = context
+                assert service.expire_unused_reservations(db, now) == 0
+            holder.rollback()
+        with AuditSession(engine) as db:
+            assert db.get(File, stale_id).state == "awaiting_upload"
+    finally:
+        with AuditSession(engine) as db:
+            db.info[AUDIT_CONTEXT_KEY] = context
+            file = db.get(File, stale_id)
+            if file is not None:
+                db.delete(file)
+            db.flush()
+            actor = db.get(User, actor_id)
+            if actor is not None:
+                db.delete(actor)
+            db.commit()
+
+
+def test_expiration_skips_a_reservation_whose_parent_refuses_and_expires_the_rest(
+    guarded_db, actor, monkeypatch
+):
+    db = guarded_db
+    blocked, stale = inventory(db, actor, count=2)
+    for row in (blocked, stale):
+        row.is_deleted = False
+        row.created_at = datetime.now(UTC) - timedelta(hours=25)
+    db.commit()
+    blocked_id, stale_id = blocked.id, stale.id
+    original = service.load
+
+    def load(session, file_id, **options):
+        if file_id == blocked_id:
+            raise HTTPException(409, detail={"code": "file_parent_closed"})
+        return original(session, file_id, **options)
+
+    monkeypatch.setattr(service, "load", load)
+    assert service.expire_unused_reservations(db, datetime.now(UTC)) == 1
+    assert db.get(File, blocked_id).state == "awaiting_upload"
+    assert db.get(File, stale_id).state == "purged"
+
+
+def test_expiry_during_a_reservation_is_attributed_to_the_system(guarded_db, actor):
+    # Review finding A: expiring other people's stale reservations inside a user's request
+    # recorded that user as the actor in the audit log.
+    db = guarded_db
+    request = AuditContext(
+        performed_by=actor.id, request_id=uuid4(), request_method="POST", request_path="/api/f"
+    )
+    db.info[AUDIT_CONTEXT_KEY] = request
+    (stale,) = inventory(db, actor, count=1)
+    stale.created_at = datetime.now(UTC) - timedelta(hours=25)
+    db.commit()
+
+    created = service.reserve(
+        db, actor, FileCreate(purpose="library_document", filename="new.pdf", expected_size=1)
+    )
+
+    assert db.get(File, stale.id).state == "purged"
+    assert db.info[AUDIT_CONTEXT_KEY] is request
+
+    def entries(file_id, action):
+        return db.scalars(
+            select(AuditLog).where(
+                AuditLog.entity_type == File.__tablename__,
+                AuditLog.entity_id == file_id,
+                AuditLog.action == action,
+            )
+        ).all()
+
+    (expiry,) = entries(stale.id, AuditAction.UPDATE)
+    assert expiry.performed_by is None
+    assert (expiry.request_method, expiry.request_path) == ("SYSTEM", "/internal/files/expire")
+    assert expiry.request_id != request.request_id
+    (reservation,) = entries(created.id, AuditAction.CREATE)
+    assert reservation.performed_by == actor.id
+    assert reservation.request_id == request.request_id

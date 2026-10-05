@@ -11,8 +11,8 @@ from operations.reset.storage import ResetStorage
 
 def _storage_api(*, public_bucket: str | None = None):
     buckets = {
-        "openslate-quarantine": {"folder/orphan", "folder/deep/unlinked"},
-        "openslate-ready": {f"root-{index:03d}" for index in range(101)},
+        "openslate-ready": {"folder/orphan", "folder/deep/unlinked"}
+        | {f"root-{index:03d}" for index in range(101)},
     }
     deleted: list[tuple[str, tuple[str, ...]]] = []
 
@@ -59,11 +59,11 @@ def test_storage_reset_lists_every_private_object_across_pages_and_nested_paths(
     keys = storage.list_object_keys()
 
     assert len(keys) == 103
-    assert "openslate-quarantine/folder/deep/unlinked" in keys
-    assert "openslate-quarantine/folder/orphan" in keys
+    assert "openslate-ready/folder/deep/unlinked" in keys
+    assert "openslate-ready/folder/orphan" in keys
     assert "openslate-ready/root-100" in keys
     storage.delete_and_verify_empty(keys)
-    assert buckets == {"openslate-quarantine": set(), "openslate-ready": set()}
+    assert buckets == {"openslate-ready": set()}
     assert {bucket for bucket, _ in deleted} == set(buckets)
     assert storage.list_object_keys() == ()
 
@@ -75,7 +75,7 @@ def test_storage_reset_rejects_public_bucket_without_deleting_anything() -> None
     with pytest.raises(ResetError, match="private"):
         storage.list_object_keys()
 
-    assert len(buckets["openslate-ready"]) == 101
+    assert len(buckets["openslate-ready"]) == 103
     assert deleted == []
 
 

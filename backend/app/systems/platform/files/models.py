@@ -4,16 +4,7 @@ from datetime import datetime
 from typing import ClassVar
 from uuid import UUID
 
-from sqlalchemy import (
-    CheckConstraint,
-    DateTime,
-    ForeignKey,
-    Index,
-    Integer,
-    SmallInteger,
-    String,
-    text,
-)
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, SmallInteger, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base_model import BaseModel
@@ -22,13 +13,6 @@ from app.core.base_model import BaseModel
 class File(BaseModel):
     __tablename__ = "files"
     __table_args__ = (
-        CheckConstraint("scan_attempts >= 0", name="ck_files_scan_attempts"),
-        Index(
-            "ix_files_scan_due",
-            "scan_next_attempt_at",
-            "id",
-            postgresql_where=text("state = 'pending_scan' AND operation_id IS NULL"),
-        ),
         CheckConstraint(
             "(purpose = 'record_attachment' AND record_id IS NOT NULL AND board_id IS NULL) OR "
             "(purpose = 'board_attachment' AND board_id IS NOT NULL AND record_id IS NULL) OR "
@@ -37,8 +21,7 @@ class File(BaseModel):
             name="ck_files_purpose_parent",
         ),
         CheckConstraint(
-            "state IN ('awaiting_upload','uploading','pending_scan','ready',"
-            "'rejected','deleting','purged')",
+            "state IN ('awaiting_upload','uploading','ready','rejected','deleting','purged')",
             name="ck_files_state",
         ),
         CheckConstraint(
@@ -52,8 +35,7 @@ class File(BaseModel):
             "purpose != 'workspace_logo' OR expected_size <= 2097152", name="ck_files_logo_size"
         ),
         CheckConstraint(
-            "state != 'ready' OR (digest IS NOT NULL AND actual_size IS NOT NULL "
-            "AND scanner_version IS NOT NULL AND signature_version IS NOT NULL)",
+            "state != 'ready' OR (digest IS NOT NULL AND actual_size IS NOT NULL)",
             name="ck_files_ready_verdict",
         ),
         CheckConstraint(
@@ -66,8 +48,6 @@ class File(BaseModel):
             "object_key",
             "digest",
             "operation_id",
-            "scanner_version",
-            "signature_version",
         }
     )
     purpose: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
@@ -95,16 +75,3 @@ class File(BaseModel):
     operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
     operation_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failure_code: Mapped[str | None] = mapped_column(String(60))
-    scanner_version: Mapped[str | None] = mapped_column(String(200))
-    signature_version: Mapped[str | None] = mapped_column(String(200))
-
-    scan_requested_by: Mapped[UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    scan_attempts: Mapped[int] = mapped_column(
-        Integer, default=0, server_default=text("0"), nullable=False
-    )
-    scan_next_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )

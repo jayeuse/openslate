@@ -11,7 +11,6 @@ from app.core.config import get_settings
 from app.systems.platform.files.access import error, load, require_unlinked
 from app.systems.platform.files.providers import ProviderUnavailable, StorageBackend
 from app.systems.platform.files.quota import lock_quota
-from app.systems.platform.files.scan_queue import UNRESOLVED
 from app.systems.platform.files.schemas import FileResponse
 from app.systems.platform.files.service import _claim, _current
 
@@ -39,8 +38,6 @@ def purge_confirmed(
         require_unlinked(db, file.id)
     elif board_id is not None:
         raise error("file_not_found", "File not found", 404)
-    if file.failure_code == UNRESOLVED:
-        raise error(UNRESOLVED, "Scanner execution requires operator recovery")
     if file.state == "purged":
         return FileResponse.model_validate(file)
     if not file.is_deleted:
@@ -48,7 +45,7 @@ def purge_confirmed(
     if file.state == "uploading":
         raise error("upload_unresolved", "An unresolved upload blocks permanent purge")
     if file.operation_id is not None and file.state != "deleting":
-        # An active scan must finish or have its token explicitly fenced by reconciliation.
+        # An active operation must finish or be fenced by reconciliation first.
         raise error("file_operation_active", "Reconcile the file operation before purging")
     if (
         file.state == "deleting"

@@ -1,6 +1,5 @@
 """Storage API boundary: immutable private objects and explicit uncertainty."""
 
-from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,8 +12,7 @@ from app.systems.platform.files.providers import ProviderRejected, ProviderUnava
 from app.systems.platform.files.supabase_storage import SupabaseStorage
 
 KEY = "a" * 32
-CONTENT = b"scanned bytes"
-DIGEST = sha256(CONTENT).hexdigest()
+CONTENT = b"stored bytes"
 
 
 class StorageAPI:
@@ -23,7 +21,6 @@ class StorageAPI:
         self.missing_status = 404
         self.duplicate_status = 409
         self.duplicate_code = "ResourceAlreadyExists"
-        self.fail_copy: int | None = None
         self.fail_delete: int | None = None
         self.requests: list[httpx.Request] = []
 
@@ -32,21 +29,6 @@ class StorageAPI:
         assert request.headers["apikey"] == "server-secret"
         assert request.headers["authorization"] == "Bearer server-secret"
         parts = request.url.path.removeprefix("/storage/v1/").split("/")
-        if parts[:2] == ["object", "copy"]:
-            assert request.headers.get("x-upsert") != "true"
-            if self.fail_copy is not None:
-                return httpx.Response(self.fail_copy, json={"code": "DatabaseError"})
-            data = __import__("json").loads(request.content)
-            source = (data["bucketId"], data["sourceKey"])
-            target = (data["destinationBucket"], data["destinationKey"])
-            if source not in self.objects:
-                return httpx.Response(self.missing_status, json={"code": "NoSuchKey"})
-            if target in self.objects:
-                return httpx.Response(
-                    self.duplicate_status, json={"code": self.duplicate_code}
-                )
-            self.objects[target] = self.objects[source]
-            return httpx.Response(200, json={"Key": "/".join(target)})
         if parts[:2] == ["object", "authenticated"]:
             bucket, key = parts[2:]
         else:
@@ -77,49 +59,19 @@ def make_storage(api: StorageAPI) -> SupabaseStorage:
     return SupabaseStorage("http://storage.internal", "server-secret", 2, client=client)
 
 
-def test_upload_is_immutable_and_ready_bytes_require_promotion() -> None:
+def test_upload_writes_one_immutable_ready_object() -> None:
     api = StorageAPI()
     storage = make_storage(api)
     storage.upload(KEY, CONTENT, "application/octet-stream")
-    assert storage.read_quarantine(KEY) == CONTENT
-    assert storage.download(KEY) is None
+    assert api.objects == {("openslate-ready", KEY): CONTENT}
+    assert storage.download(KEY) == CONTENT
     with pytest.raises(ProviderRejected):
         storage.upload(KEY, b"replacement", "application/octet-stream")
-    assert storage.read_quarantine(KEY) == CONTENT
-    storage.promote(KEY, expected_digest=DIGEST, expected_size=len(CONTENT))
     assert storage.download(KEY) == CONTENT
-    assert storage.read_quarantine(KEY) is None
-    assert storage.stat(KEY, quarantine=False).digest == DIGEST
 
 
-def test_promotion_recovers_exact_ready_copy_after_quarantine_was_removed() -> None:
+def test_delete_confirms_the_object_is_absent_and_retries_idempotently() -> None:
     api = StorageAPI()
-    api.objects[("openslate-ready", KEY)] = CONTENT
-    make_storage(api).promote(KEY, expected_digest=DIGEST, expected_size=len(CONTENT))
-    assert api.objects == {("openslate-ready", KEY): CONTENT}
-
-
-def test_promotion_rejects_conflicting_ready_bytes_without_overwriting() -> None:
-    api = StorageAPI()
-    api.objects[("openslate-quarantine", KEY)] = CONTENT
-    api.objects[("openslate-ready", KEY)] = b"different"
-    with pytest.raises(ProviderRejected):
-        make_storage(api).promote(KEY, expected_digest=DIGEST, expected_size=len(CONTENT))
-    assert api.objects[("openslate-ready", KEY)] == b"different"
-
-
-def test_copy_failure_retains_quarantine_for_retry() -> None:
-    api = StorageAPI()
-    api.objects[("openslate-quarantine", KEY)] = CONTENT
-    api.fail_copy = 503
-    with pytest.raises(ProviderUnavailable):
-        make_storage(api).promote(KEY, expected_digest=DIGEST, expected_size=len(CONTENT))
-    assert api.objects == {("openslate-quarantine", KEY): CONTENT}
-
-
-def test_delete_confirms_both_locations_absent_and_retries_idempotently() -> None:
-    api = StorageAPI()
-    api.objects[("openslate-quarantine", KEY)] = CONTENT
     api.objects[("openslate-ready", KEY)] = CONTENT
     storage = make_storage(api)
     storage.delete(KEY)
@@ -127,11 +79,19 @@ def test_delete_confirms_both_locations_absent_and_retries_idempotently() -> Non
     assert api.objects == {}
 
 
+def test_failed_delete_keeps_the_object_and_reports_uncertainty() -> None:
+    api = StorageAPI()
+    api.objects[("openslate-ready", KEY)] = CONTENT
+    api.fail_delete = 503
+    with pytest.raises(ProviderUnavailable):
+        make_storage(api).delete(KEY)
+    assert api.objects == {("openslate-ready", KEY): CONTENT}
+
+
 def test_confirmed_missing_object_code_at_live_provider_status_is_absent() -> None:
     api = StorageAPI()
     api.missing_status = 400
     storage = make_storage(api)
-    assert storage.read_quarantine(KEY) is None
     assert storage.download(KEY) is None
     storage.delete(KEY)
     assert api.objects == {}
@@ -145,7 +105,7 @@ def test_live_provider_duplicate_code_rejects_without_replacing_bytes() -> None:
     storage.upload(KEY, CONTENT, "application/octet-stream")
     with pytest.raises(ProviderRejected):
         storage.upload(KEY, b"replacement", "application/octet-stream")
-    assert storage.read_quarantine(KEY) == CONTENT
+    assert storage.download(KEY) == CONTENT
 
 
 def test_bucket_or_auth_404_is_not_object_absence() -> None:

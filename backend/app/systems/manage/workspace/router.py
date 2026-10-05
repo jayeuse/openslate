@@ -86,8 +86,6 @@ def _ready_logo(
         or file.state != "ready"
         or file.actual_size is None
         or not file.digest
-        or not file.scanner_version
-        or not file.signature_version
     ):
         raise _logo_not_ready()
     return file

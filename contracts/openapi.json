@@ -4421,7 +4421,6 @@
         "enum": [
           "awaiting_upload",
           "uploading",
-          "pending_scan",
           "ready",
           "rejected",
           "deleting",
@@ -18997,64 +18996,6 @@
         ]
       }
     },
-    "/api/boards/{board_id}/files/{file_id}/scan": {
-      "post": {
-        "operationId": "scan_unlinked_board_file_api_boards__board_id__files__file_id__scan_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "board_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Board Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "file_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "File Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FileResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Scan Unlinked Board File",
-        "tags": [
-          "board files"
-        ]
-      }
-    },
     "/api/boards/{board_id}/groups": {
       "get": {
         "operationId": "list_board_groups_api_boards__board_id__groups_get",
@@ -23347,54 +23288,6 @@
           }
         ],
         "summary": "Reopen File",
-        "tags": [
-          "files"
-        ]
-      }
-    },
-    "/api/files/{file_id}/scan": {
-      "post": {
-        "operationId": "scan_file_api_files__file_id__scan_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "file_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "File Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FileResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Scan File",
         "tags": [
           "files"
         ]

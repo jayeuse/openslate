@@ -98,8 +98,6 @@ def _logo(*, state: str = "ready", purpose: str = "workspace_logo", deleted: boo
         digest="a" * 64,
         object_key="logo-object",
         state=state,
-        scanner_version="scanner-1",
-        signature_version="signatures-1",
         is_deleted=deleted,
     )
 
@@ -386,7 +384,7 @@ def test_workspace_patch_sets_only_a_ready_clean_workspace_logo(
 @pytest.mark.parametrize(
     ("state", "purpose", "deleted"),
     [
-        ("pending_scan", "workspace_logo", False),
+        ("uploading", "workspace_logo", False),
         ("ready", "library_document", False),
         ("ready", "workspace_logo", True),
     ],

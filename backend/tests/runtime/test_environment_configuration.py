@@ -7,7 +7,6 @@ from pydantic import ValidationError
 import app.core.config.settings as settings_module
 from app.core.config import (
     ConfigurationError,
-    ScannerSettings,
     Settings,
     get_admin_settings,
     get_migration_settings,
@@ -176,22 +175,6 @@ def test_migration_requires_its_owner_url_without_runtime_fallback(
     assert "private" not in str(error.value)
 
 
-def test_scanner_configuration_is_not_required_by_api_settings() -> None:
-    settings = Settings(**settings_values(), _env_file=None)
-
-    assert settings.database_url.endswith("/test")
-
-
-def test_scanner_settings_reject_missing_manifest_before_worker_startup(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError) as error:
-        ScannerSettings(
-            files_clamav_host="scanner.test",
-            files_clamav_port=3310,
-            files_clamav_manifest_path=tmp_path / "missing-manifest.json",
-            _env_file=None,
-        )
-
-    assert "files_clamav_manifest_path" in str(error.value)
 
 
 def test_module_entrypoint_passes_each_server_option_explicitly(

@@ -49,7 +49,7 @@ def test_guest_cannot_reserve_attachment(client):
     assert response.status_code == 403
 
 
-def test_clients_cannot_submit_scan_verdict_or_storage_identity(client):
+def test_clients_cannot_submit_file_state_or_storage_identity(client):
     response = client.post(
         "/api/files",
         json={

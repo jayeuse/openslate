@@ -240,8 +240,8 @@ def test_file_capacity_is_acquired_before_buffering_and_released_on_denial() -> 
         assert busy.status_code == 503
         assert busy.json()["detail"]["code"] == "files_busy"
         assert client.get("/api/health").status_code == 200
-        # Enqueue is metadata: it reaches authentication while binary slots are busy.
-        assert client.post(url.replace("/content", "/scan")).status_code == 401
+        # Metadata routes reach authentication while binary slots are busy.
+        assert client.post(url.replace("/content", "/archive")).status_code == 401
     assert client.get(url).status_code == 401
     assert client.get(url).status_code == 401
     assert client.get(url).status_code == 401
@@ -257,7 +257,6 @@ def test_readiness_returns_generic_status_and_disables_caching(monkeypatch) -> N
             "auth": {"status": "ready", "required": True},
             "storage": {"status": "ready", "required": True},
             "smtp": {"status": "ready", "required": True},
-            "scanner": {"status": "not_configured", "required": False},
         },
     }
     monkeypatch.setattr(main, "get_readiness_snapshot", lambda: snapshot)

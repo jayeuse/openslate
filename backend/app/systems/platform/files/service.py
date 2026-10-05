@@ -4,9 +4,14 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID, uuid4
 
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 from app.systems.access.users.models import User
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import (
@@ -30,13 +35,86 @@ from app.systems.platform.files.providers import (
     ProviderWriteRejected,
     StorageBackend,
 )
-from app.systems.platform.files.quota import lock_quota, require_capacity, require_live_reservation
+from app.systems.platform.files.quota import (
+    RESERVATION_TTL,
+    lock_quota,
+    require_capacity,
+    require_live_reservation,
+)
 from app.systems.platform.files.schemas import BoardFileCreate, FileCreate, FileResponse
 from app.systems.platform.files.validation_worker import validate_bounded
 
 
+def expire_unused_reservations(db: Session, now: datetime) -> int:
+    """Purge stale empty reservations, committing each row; call before ``lock_quota``.
+
+    The quota lock is transaction-scoped, so these commits would release it. Expiry only
+    lowers occupancy and needs no quota lock. The rows can belong to anyone, so they are
+    audited as system work; the caller's audit context is restored before returning.
+    """
+    caller = db.info.get(AUDIT_CONTEXT_KEY)
+    db.info[AUDIT_CONTEXT_KEY] = AuditContext(
+        request_id=uuid7(), request_method="SYSTEM", request_path="/internal/files/expire"
+    )
+    try:
+        return _expire(db, now)
+    finally:
+        if caller is None:
+            db.info.pop(AUDIT_CONTEXT_KEY, None)
+        else:
+            db.info[AUDIT_CONTEXT_KEY] = caller
+
+
+def _expire(db: Session, now: datetime) -> int:
+    identities = list(
+        db.scalars(
+            select(File.id)
+            .where(
+                File.state == "awaiting_upload",
+                File.created_at <= now - RESERVATION_TTL,
+                File.operation_id.is_(None),
+                File.digest.is_(None),
+                File.actual_size.is_(None),
+            )
+            .order_by(File.created_at, File.id)
+            .limit(100)
+        )
+    )
+    expired = 0
+    for identity in identities:
+        try:
+            file = load(db, identity, lock=True)
+        except OperationalError as exc:
+            db.rollback()
+            if getattr(exc.orig, "sqlstate", None) == "55P03":
+                continue
+            raise
+        except HTTPException:
+            # A closed or missing parent must not block every new reservation.
+            db.rollback()
+            continue
+        if (
+            file.state != "awaiting_upload"
+            or file.operation_id is not None
+            or file.digest is not None
+            or file.actual_size is not None
+            or file.created_at > now - RESERVATION_TTL
+        ):
+            continue
+        file.state = "purged"
+        file.is_deleted = True
+        file.deleted_at = now
+        file.failure_code = "file_reservation_expired"
+        db.commit()
+        expired += 1
+    db.rollback()
+    return expired
+
+
 def reserve(db: Session, user: User, payload: FileCreate) -> FileResponse:
     authorize(db, user, payload.purpose, write=True, record_id=payload.record_id)
+    # Authorization takes no locks, so the expiry commits cannot release any.
+    expire_unused_reservations(db, datetime.now(UTC))
     lock_quota(db)
     require_capacity(db, payload.purpose, payload.expected_size)
     parent(db, payload.record_id, active=True, lock=True)
@@ -51,7 +129,10 @@ def reserve(db: Session, user: User, payload: FileCreate) -> FileResponse:
 def reserve_board(
     db: Session, user: User, board_id: UUID, payload: BoardFileCreate
 ) -> FileResponse:
-    """Reserve quarantine capacity only after the owning Board permits editing."""
+    """Reserve pending-upload capacity only after the owning Board permits editing."""
+    # Unlocked check first, so a caller without Board access triggers no expiry commits.
+    authorize_board_file(db, fresh_user(db, user.id), board_id, write=True)
+    expire_unused_reservations(db, datetime.now(UTC))
     lock_quota(db)
     authorize_board_file(db, fresh_user(db, user.id), board_id, write=True, lock=True)
     require_capacity(db, "board_attachment", payload.expected_size)
@@ -108,7 +189,6 @@ def upload(
     if file.is_deleted or file.state != "awaiting_upload":
         raise error("file_upload_conflict", "File cannot accept an upload")
     require_live_reservation(file)
-    file.scan_requested_by = actor_id
     file.actual_size = len(validated.content)
     file.media_type = validated.media_type
     file.digest = sha256(validated.content).hexdigest()
@@ -130,7 +210,6 @@ def upload(
         file.actual_size = None
         file.digest = None
         file.media_type = None
-        file.scan_requested_by = None
         db.commit()
         raise error(
             "upload_storage_unavailable",
@@ -162,20 +241,17 @@ def upload(
     parent(db, file.record_id, active=True, board_id=file.board_id)
     if file.is_deleted:
         raise error("file_archived", "File was archived during upload")
-    from app.systems.platform.files.scan_queue import enqueue_uploaded
-
-    enqueue_uploaded(file)
+    _finish_ready(file)
     db.commit()
     return FileResponse.model_validate(file)
 
 
-def scan(
-    db: Session, actor_id: UUID, file_id: UUID, *, board_id: UUID | None = None
-) -> FileResponse:
-    """Enqueue or adopt a retry; processing happens only in the deployment worker."""
-    from app.systems.platform.files.scan_queue import request_scan
-
-    return request_scan(db, actor_id, file_id, board_id=board_id)
+def _finish_ready(file: File) -> None:
+    """The exact validated bytes are stored, so the file is downloadable."""
+    file.state = "ready"
+    file.operation_id = None
+    file.operation_expires_at = None
+    file.failure_code = None
 
 
 def download(
@@ -275,7 +351,7 @@ def reconcile(
         key, digest, size, token = file.object_key, file.digest, file.actual_size, file.operation_id
         db.commit()
         try:
-            content = storage.read_quarantine(key)
+            content = storage.download(key)
         except ProviderUnavailable as exc:
             raise error("upload_unresolved", "Upload outcome remains unresolved", 503) from exc
         if content is None or sha256(content).hexdigest() != digest or len(content) != size:
@@ -286,46 +362,6 @@ def reconcile(
             raise error("upload_unresolved", "Upload outcome remains unresolved")
         file = _current(db, file_id, token, "uploading")
         authorize(db, fresh_user(db, actor_id), "library_document", write=True)
-        from app.systems.platform.files.scan_queue import enqueue_uploaded
-
-        enqueue_uploaded(file)
-        db.commit()
-    elif file.state == "pending_scan" and file.operation_id is not None:
-        key, digest, size, token = file.object_key, file.digest, file.actual_size, file.operation_id
-        if (
-            file.failure_code != "promotion_metadata_unresolved"
-            or file.operation_expires_at is None
-            or file.operation_expires_at > datetime.now(UTC)
-        ):
-            raise error("scan_execution_unresolved", "Scanner execution requires operator recovery")
-        db.commit()
-        try:
-            quarantine = storage.stat(key, quarantine=True)
-            ready = storage.stat(key, quarantine=False)
-        except ProviderUnavailable as exc:
-            raise error("scan_recovery_unavailable", "Scan recovery is unavailable", 503) from exc
-        if (
-            token is None
-            or digest is None
-            or size is None
-            or ready is None
-            or (
-                quarantine is not None
-                and (quarantine.size, quarantine.digest) != (size, digest)
-            )
-            or (ready.size, ready.digest) != (size, digest)
-        ):
-            raise error("scan_execution_unresolved", "Scanner execution requires operator recovery")
-        # Exact ready bytes establish promotion; any remaining quarantine copy must match.
-        # Re-run the scanner under a fresh claim instead of trusting an uncommitted verdict.
-        file = _current(db, file_id, token, "pending_scan")
-        if file.is_deleted:
-            db.rollback()
-            raise error("file_archived", "File was archived during scan recovery")
-        authorize(db, fresh_user(db, actor_id), "library_document", write=True)
-        file.operation_id = None
-        file.operation_expires_at = None
-        file.failure_code = None
-        file.scan_next_attempt_at = datetime.now(UTC)
+        _finish_ready(file)
         db.commit()
     return FileResponse.model_validate(file)

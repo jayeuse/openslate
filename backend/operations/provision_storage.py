@@ -1,4 +1,4 @@
-"""Create and verify the two private OpenSlate Storage buckets."""
+"""Create and verify the private OpenSlate Storage bucket."""
 
 import argparse
 import sys
@@ -14,7 +14,7 @@ from app.core.config.environment import environment_inputs
 from app.core.config.provider_instance import assert_provider_instance
 from app.core.config.settings import DOTENV_PATH
 
-BUCKETS = ("openslate-quarantine", "openslate-ready")
+BUCKETS = ("openslate-ready",)
 
 
 class StorageProvisionError(RuntimeError):
@@ -54,7 +54,7 @@ def provision_storage(
                     response.status_code != 200 or body.get("id") != bucket
                     or body.get("public") is not False
                 ):
-                    raise StorageProvisionError("Both OpenSlate buckets must exist and be private")
+                    raise StorageProvisionError("The OpenSlate bucket must exist and be private")
     except httpx.HTTPError:
         raise StorageProvisionError("Storage initialization is unavailable") from None
 
@@ -73,7 +73,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise
     except Exception:
         raise SystemExit("Unable to initialize private Storage buckets") from None
-    print("Both OpenSlate Storage buckets are private and ready")
+    print("The OpenSlate Storage bucket is private and ready")
 
 
 if __name__ == "__main__":
