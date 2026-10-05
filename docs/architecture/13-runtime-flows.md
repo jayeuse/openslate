@@ -4,14 +4,14 @@
 
 ## Development startup
 
-1. The developer keeps a private root `.env` with a unique `OPENSLATE_INSTANCE_ID`, instance root, loopback ports, provider values, application connection URLs, and scanner paths. `scripts/environment.py` validates it before a Compose mutation.
+1. The developer keeps a private root `.env` with a unique `OPENSLATE_INSTANCE_ID`, instance root, loopback ports, provider values, and application connection URLs. `scripts/environment.py` validates it before a Compose mutation.
 2. `./scripts/dev.py db` starts the pinned Supabase development stack. Project labels, expected image, database volume, provider network, role, and live database target are checked by the instance guard before mutations are admitted.
 3. From `backend/`, `uv run python operations/provision_database_role.py` provisions `openslate_owner` and `openslate_runtime` using `DATABASE_BOOTSTRAP_URL`. Alembic then applies application schema with `uv run alembic upgrade head`; `uv run alembic check` verifies model/schema alignment.
-4. `uv run python operations/provision_storage.py` creates and verifies the private quarantine and ready buckets. It requires the admitted runtime database and server-only Supabase credentials.
+4. `uv run python operations/provision_storage.py` creates and verifies the private `openslate-ready` bucket. It requires the admitted runtime database and server-only Supabase credentials.
 5. `uv run python operations/bootstrap_admin.py` reserves the first administrator profile and sends a Supabase Auth invitation. The recipient sets a password through the OpenSlate invite page.
-6. FastAPI starts with `uv run python -m app --reload`; the frontend starts with `npm run dev`. Next forwards only its same-origin `/api` requests to FastAPI. The scanner worker is started only after verified ClamAV definitions and its manifest are available.
+6. FastAPI starts with `uv run python -m app --reload`; the frontend starts with `npm run dev`. Next forwards only its same-origin `/api` requests to FastAPI.
 
-The checked-in development commands and production sequence are in [`infra/supabase/README.md`](../../infra/supabase/README.md). API readiness reports Database, Auth, Storage, SMTP configuration, and scanner components. The development/test API can start before its optional scanner worker; production readiness requires both worker leadership and engine health. The worker depends on API liveness, so readiness does not create a startup cycle. Schema checks, actual email delivery, and restore verification remain separate operations.
+The checked-in development commands and production sequence are in [`infra/supabase/README.md`](../../infra/supabase/README.md). API readiness reports Database, Auth, Storage, and SMTP configuration components. Schema checks, actual email delivery, and restore verification remain separate operations.
 
 ## Sign-in and application authorization
 
@@ -32,12 +32,12 @@ The provider adapter and session boundary live in [`supabase_auth.py`](../../bac
 
 FastAPI does not keep local password hashes, a local invitation/recovery token store, or a local SMTP outbox. Auth delivery and profile authorization remain separate operations.
 
-## File upload, scan, and download
+## File upload and download
 
 1. FastAPI checks the caller's file and parent-resource permissions and reserves metadata in PostgreSQL.
-2. The server writes bytes through the Storage API to the private quarantine bucket. The provider stores the bytes in the installation's Storage volume.
-3. The serial scanner worker claims the queued file, verifies its size and digest against stored bytes, and scans it with the configured ClamAV service. A clean result is promoted to the private ready bucket and committed with the file state. A timeout, mismatch, infection, or uncertain Storage operation leaves access denied and the operation visible for retry or reconciliation.
-4. Download again checks the caller and parent-resource permissions, fetches the complete ready object through the server-side adapter, verifies it, and rechecks authorization after I/O. The browser receives bytes only in the authorized FastAPI response; it never receives Storage credentials or a direct bucket URL.
+2. The upload request validates the file type in a bounded parser subprocess. An invalid file is refused with 422, and its reservation stays unused.
+3. The server writes the validated bytes through the Storage API to the private `openslate-ready` bucket, then commits the file as `ready` with its digest and size in the same request. The provider stores the bytes in the installation's Storage volume. A timeout or uncertain Storage operation leaves access denied and the operation visible for reconciliation, which sets `ready` only when the exact bytes exist.
+4. Download again checks the caller and parent-resource permissions, fetches the complete ready object through the server-side adapter, verifies it, and rechecks authorization after I/O. The browser receives bytes only in the authorized FastAPI response, as an attachment with `nosniff`; it never receives Storage credentials or a direct bucket URL.
 
 ## Mutation and invalidation
 

@@ -79,14 +79,6 @@ def upload_file(
         return service.upload(db, user.id, file_id, content, storage)
 
 
-@router.post("/{file_id}/scan", response_model=FileResponse, status_code=202)
-def scan_file(file_id: UUID, user: Actor, db: DB, response: Response) -> FileResponse:
-    item = service.scan(db, user.id, file_id)
-    response.headers["Location"] = f"/api/files/{file_id}"
-    response.headers["Cache-Control"] = "no-store"
-    return item
-
-
 @router.get("/{file_id}/content")
 def download_file(request: Request, file_id: UUID, user: Actor, db: DB, storage: Store) -> Response:
     with hold_file_worker(request):

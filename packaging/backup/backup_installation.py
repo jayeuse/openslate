@@ -57,7 +57,7 @@ _BASE_SERVICES = {
     "api-gw",
     "provider-volume-init",
 }
-_PRODUCTION_SERVICES = {"api", "scanner-worker", "clamav", "caddy"}
+_PRODUCTION_SERVICES = {"api", "caddy"}
 
 
 class BackupError(RuntimeError):

@@ -12,7 +12,7 @@ The base provider project contains Supabase PostgreSQL, Auth, Storage, Studio, p
 
 The development overlay publishes the database, gateway, and Mailpit UI on loopback host ports. `./scripts/dev.py db` starts the development provider stack through [`scripts/environment.py`](../../scripts/environment.py), which validates the private root `.env`, limits the environment passed to Docker, and records the selected instance. FastAPI and `next dev` remain host processes. The browser calls FastAPI through Next's development-only `/api` proxy; FastAPI calls Auth and Storage through the loopback Supabase gateway. The optional root `gateway` profile is a local production-style Caddy preview, not the customer deployment.
 
-The production overlay adds the unified FastAPI/static-frontend API image, the scanner worker, ClamAV, and Caddy. Caddy is the only public listener and forwards the UI, API, and SSE to FastAPI. The production database has no published host port. Provider services, the API, and scanner use private Compose networks; provider Studio access stays loopback-bound behind gateway authentication. Production requires separate owner-only provider and application environment files, real Auth SMTP, existing private paths, and prepared images. See the [production input contract](../../infra/supabase/README.md#production-application-overlay).
+The production overlay adds the unified FastAPI/static-frontend API image and Caddy. Caddy is the only public listener and forwards the UI, API, and SSE to FastAPI. The production database has no published host port. Provider services and the API use private Compose networks; provider Studio access stays loopback-bound behind gateway authentication. Production requires separate owner-only provider and application environment files, real Auth SMTP, existing private paths, and prepared images. See the [production input contract](../../infra/supabase/README.md#production-application-overlay).
 
 The stack has no pgweb service or `openslate_inspector` login. Supabase Studio replaces pgweb as the provider operator interface and has broader administrative power than a read-only database viewer. Keep it on its loopback-only gateway path and use its configured operator credentials.
 
@@ -24,7 +24,7 @@ The application database uses three separate connections:
 
 - `DATABASE_BOOTSTRAP_URL` uses the pinned provider's `supabase_admin` login to provision application roles and grants. It is an operator-only input.
 - `MIGRATION_DATABASE_URL` uses `openslate_owner` for Alembic operations.
-- `DATABASE_URL` uses the constrained `openslate_runtime` role for FastAPI and workers.
+- `DATABASE_URL` uses the constrained `openslate_runtime` role for FastAPI and its in-process workers.
 
 The role provisioner, [`backend/operations/provision_database_role.py`](../../backend/operations/provision_database_role.py), verifies the runtime grants and installs a narrowly scoped read-only `auth.sessions` policy. The runtime role can read only the provider session identifiers it needs to confirm that an Auth session remains live. It receives no Auth mutation rights. Application tables remain inaccessible to browser provider keys, and ordinary domain reads and mutations go through FastAPI's SQLAlchemy boundary.
 
@@ -34,19 +34,19 @@ Supabase Auth answers who signed in. OpenSlate keeps its own application user, i
 
 Provider roles and user metadata do not grant application permissions. Workspace capabilities, roles, groups, Board groups, Report audiences, and account lifecycle rules remain backend decisions. The browser never receives the Supabase secret key or direct credentials for application tables. Relevant code is in [`supabase_auth.py`](../../backend/app/core/integrations/supabase_auth.py), [`provider_sessions.py`](../../backend/app/systems/access/identity/provider_sessions.py), and the Access authorization modules.
 
-## Storage and scanning
+## Storage
 
-The application creates two private buckets, `openslate-quarantine` and `openslate-ready`, through [`backend/operations/provision_storage.py`](../../backend/operations/provision_storage.py). File metadata and application authorization remain in PostgreSQL; bytes move through the server-side Supabase Storage API and persist in the provider's `supabase-storage-data` volume. There is no local-filesystem storage mode and no direct browser access to object bytes.
+The application creates one private bucket, `openslate-ready`, through [`backend/operations/provision_storage.py`](../../backend/operations/provision_storage.py). File metadata and application authorization remain in PostgreSQL; bytes move through the server-side Supabase Storage API and persist in the provider's `supabase-storage-data` volume. There is no local-filesystem storage mode and no direct browser access to object bytes.
 
-FastAPI authorizes upload and download. New content enters quarantine, the separate scanner worker checks the stored bytes against the upload metadata and scans them with ClamAV, and only a verified clean object is promoted to ready storage. The application denies reads until the clean result is committed and rechecks access on download. The provider adapter is [`supabase_storage.py`](../../backend/app/systems/platform/files/supabase_storage.py); scan and promotion behavior remains in the platform file service and worker.
+FastAPI authorizes upload and download. The upload request validates the file type with an allowlist and a bounded parser subprocess, writes the bytes to the ready bucket, and commits the file as `ready` with its digest and size. There is no antivirus scan. The application denies reads in every other state and rechecks access on download. The provider adapter is [`supabase_storage.py`](../../backend/app/systems/platform/files/supabase_storage.py); upload, reconciliation, and purge behavior remains in the platform file service.
 
-The checked-in ClamAV image currently targets Linux amd64. Its definitions and manifest are mounted read-only in the production overlay. Windows server operation uses Linux containers through Docker Desktop/WSL2, but Windows startup, reboot, scanner, and restore acceptance is still pending. macOS remains available as a development workstation; it is no longer a supported server target.
+Windows server operation uses Linux containers through Docker Desktop/WSL2, but Windows startup, reboot, and restore acceptance is still pending. macOS remains available as a development workstation; it is no longer a supported server target.
 
 ## Events and readiness
 
 OpenSlate continues to publish opaque PostgreSQL invalidations to authenticated SSE clients. The listener uses a direct session-affine PostgreSQL `LISTEN` connection. SSE sends invalidation or resync signals only; clients refetch through authorized FastAPI endpoints. Supabase Realtime is a future feature decision, not the current transport.
 
-`/api/health` reports that the API process can answer a request. `/api/ready` reports separate Database, Auth, Storage, SMTP configuration, and scanner states. Database checks use a bounded read-only transaction; provider checks use their health endpoints. SMTP readiness means required configuration is present, not that delivery succeeded. Scanner readiness requires both a direct ClamAV probe and the worker's exact database advisory lock; it does not measure queue progress. The scanner is required in production and optional in development/test. The production API joins the private scanner network and mounts the generation manifest read-only. A disposable production Compose rehearsal exercised all-required readiness and bounded Auth, Storage, and scanner failure/recovery. These checks do not establish schema compatibility, backup currency, SMTP delivery, scanner queue progress, native Linux host boot/reboot behavior, or Windows operation.
+`/api/health` reports that the API process can answer a request. `/api/ready` reports separate Database, Auth, Storage, and SMTP configuration states, all required. Database checks use a bounded read-only transaction; provider checks use their health endpoints. SMTP readiness means required configuration is present, not that delivery succeeded. A disposable production Compose rehearsal exercised all-required readiness and bounded Auth and Storage failure/recovery. These checks do not establish schema compatibility, backup currency, SMTP delivery, native Linux host boot/reboot behavior, or Windows operation.
 
 ## Operational boundary
 

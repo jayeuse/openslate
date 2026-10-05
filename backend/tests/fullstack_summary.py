@@ -66,12 +66,10 @@ def write_fullstack_summary(
     batch: str | None,
     backend_only: bool,
     acceptance_only: bool,
-    scanner_only: bool,
     stage: str,
     browser_completed: bool,
     admission: dict[str, Any],
     checker_exit: int | None,
-    scanner_observations: dict[str, Any],
     failure_type: str | None,
     failure_message: str | None,
     browser_only: bool = False,
@@ -93,13 +91,9 @@ def write_fullstack_summary(
                     if backend_only
                     else "acceptance-only"
                     if acceptance_only
-                    else "scanner-only"
-                    if scanner_only
                     else "full"
                 ),
-                "backend_tests_rerun": not scanner_only
-                and not acceptance_only
-                and not browser_only,
+                "backend_tests_rerun": not acceptance_only and not browser_only,
                 "stage": stage,
                 "browser_tests": browser_results,
                 "browser_completed": browser_completed,
@@ -108,7 +102,6 @@ def write_fullstack_summary(
                 "resource_observations": resource_observations,
                 "admission_observations": admission,
                 "checker_exit": checker_exit,
-                "scanner_observations": scanner_observations,
                 "failure_type": failure_type,
                 "failure_message": failure_message,
             },

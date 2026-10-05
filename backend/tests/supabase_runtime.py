@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import fcntl
+import ipaddress
 import json
 import re
 import socket
 import subprocess
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from secrets import token_urlsafe
 from typing import IO, Any
@@ -24,6 +29,14 @@ COMPOSE_DIRECTORY = ROOT / "infra" / "supabase"
 DB_PORT = 5432
 DB_NAME = "postgres"
 DB_ALIAS = "db"
+# Test networks use their own /24 per stack, outside Docker's default address pools,
+# so parallel shards do not exhaust them ("all predefined address pools ... subnetted").
+TEST_NETWORK_PREFIX = "10.199"
+NETWORK_LOCK = Path(tempfile.gettempdir()) / "openslate-e2e-networks.lock"
+# A stack without the runner API's template port gets TEMPLATE_PORT_BASE + its network
+# block: unique per live stack, below the ephemeral ranges (Linux 32768+, macOS 49152+)
+# and the Kubernetes NodePort range (30000-32767).
+TEMPLATE_PORT_BASE = 29000
 DOCKER_ENV_NAMES = frozenset(
     {
         "PATH",
@@ -61,10 +74,29 @@ def _available_port() -> int:
         return int(probe.getsockname()[1])
 
 
+@contextmanager
+def _network_allocation() -> Iterator[None]:
+    """Serialize test network allocation across concurrent runner processes."""
+    with NETWORK_LOCK.open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 class DisposablePostgres:
     """Preserve the runner API while owning the full pinned Supabase provider stack."""
 
-    def __init__(self, private: Path, run_id: str, env: dict[str, str], log: IO[str]) -> None:
+    def __init__(
+        self,
+        private: Path,
+        run_id: str,
+        env: dict[str, str],
+        log: IO[str],
+        *,
+        template_port: int | None = None,
+    ) -> None:
         if re.fullmatch(r"[a-f0-9]{32}", run_id) is None:
             raise ValueError("Invalid disposable Supabase run identity")
         self.private, self.run_id, self.log = private, run_id, log
@@ -83,8 +115,13 @@ class DisposablePostgres:
         self.port: int | None = None
         self.api_port: int | None = None
         self.mail_port: int | None = None
+        # Auth fetches email templates from a host listener: the runner API's fixed port
+        # when one serves them, otherwise a port derived from this stack's network block.
+        self.fixed_template_port = template_port
+        self.template_port: int | None = None
         self.env_file = private / "supabase.env"
         self.overlay_file = private / "supabase.test.yaml"
+        self.network_block: int | None = None
 
     def _run(
         self, arguments: list[str], *, capture: bool = False, timeout: int = 60
@@ -151,7 +188,9 @@ class DisposablePostgres:
             "API_EXTERNAL_URL": f"{api_url}/auth/v1",
             "SUPABASE_PUBLIC_URL": api_url,
             "SITE_URL": "https://localhost:3448",
-            "AUTH_TEMPLATE_BASE_URL": "http://host.docker.internal:8008/api/auth/email-templates",
+            "AUTH_TEMPLATE_BASE_URL": (
+                f"http://host.docker.internal:{self.template_port}/api/auth/email-templates"
+            ),
             "SMTP_ADMIN_EMAIL": "noreply@openslate.test",
             "SMTP_HOST": "mailpit",
             "SMTP_PORT": "1025",
@@ -177,14 +216,80 @@ class DisposablePostgres:
         overlay = ["services:"]
         for service in PROVIDER_IMAGES:
             overlay.extend([f"  {service}:", "    labels:", label_lines])
+            if service == "db":
+                # A disposable test cluster needs no crash durability. Parallel shards
+                # otherwise serialize on fsync through Docker Desktop's virtual disk.
+                overlay.extend(
+                    f"    {line}"
+                    for line in (
+                        "command:",
+                        "  - postgres",
+                        "  - -c",
+                        "  - config_file=/etc/postgresql/postgresql.conf",
+                        "  - -c",
+                        "  - cluster_name=${OPENSLATE_INSTANCE_ID}",
+                        "  - -c",
+                        "  - log_min_messages=fatal",
+                        "  - -c",
+                        "  - fsync=off",
+                        "  - -c",
+                        "  - synchronous_commit=off",
+                        "  - -c",
+                        "  - full_page_writes=off",
+                    )
+                )
         overlay.append("volumes:")
         for volume in PROVIDER_VOLUMES:
             overlay.extend([f"  {volume}:", "    labels:", label_lines])
         overlay.append("networks:")
-        for network in PROVIDER_NETWORKS:
-            overlay.extend([f"  {network}:", "    labels:", label_lines])
+        if self.network_block is None:
+            raise RuntimeError("Disposable Supabase network block is unassigned")
+        for index, network in enumerate(sorted(PROVIDER_NETWORKS)):
+            subnet = f"{TEST_NETWORK_PREFIX}.{self.network_block}.{index * 32}/27"
+            overlay.extend(
+                [
+                    f"  {network}:",
+                    "    labels:",
+                    label_lines,
+                    "    ipam:",
+                    "      config:",
+                    f"        - subnet: {subnet}",
+                ]
+            )
         self.overlay_file.write_text("\n".join(overlay) + "\n", encoding="utf-8")
         self.overlay_file.chmod(0o600)
+
+    def _used_subnets(self) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+        # Another runner may remove a network between listing and inspection; retry.
+        for _ in range(3):
+            ids = self._run(["network", "ls", "-q"], capture=True, timeout=15).stdout.split()
+            if not ids:
+                return []
+            try:
+                values = self._run(
+                    ["network", "inspect", "-f", "{{range .IPAM.Config}}{{.Subnet}} {{end}}", *ids],
+                    capture=True,
+                    timeout=15,
+                ).stdout.split()
+            except subprocess.CalledProcessError:
+                continue
+            used = []
+            for value in values:
+                try:
+                    used.append(ipaddress.ip_network(value, strict=False))
+                except ValueError:
+                    continue
+            return used
+        raise RuntimeError("Docker networks changed during disposable network allocation")
+
+    def _free_network_block(self) -> int:
+        """Return the lowest test /24 that no existing Docker network overlaps."""
+        used = self._used_subnets()
+        for block in range(1, 255):
+            candidate = ipaddress.ip_network(f"{TEST_NETWORK_PREFIX}.{block}.0/24")
+            if not any(candidate.overlaps(network) for network in used):
+                return block
+        raise RuntimeError("No free disposable Supabase network block")
 
     def start(self) -> None:
         self.port, self.api_port, self.mail_port = (
@@ -192,10 +297,17 @@ class DisposablePostgres:
             _available_port(),
             _available_port(),
         )
-        if len({self.port, self.api_port, self.mail_port}) != 3:
-            raise RuntimeError("Disposable Supabase host ports collided")
-        self._write_inputs()
-        self._compose(["config", "--quiet"], timeout=30)
+        with _network_allocation():
+            # Hold the lock only until Compose has created this stack's networks.
+            self.network_block = self._free_network_block()
+            self.template_port = self.fixed_template_port or (
+                TEMPLATE_PORT_BASE + self.network_block
+            )
+            if len({self.port, self.api_port, self.mail_port, self.template_port}) != 4:
+                raise RuntimeError("Disposable Supabase host ports collided")
+            self._write_inputs()
+            self._compose(["config", "--quiet"], timeout=30)
+            self._compose(["create"], timeout=120)
         try:
             self._compose(["up", "-d", "--wait", "--wait-timeout", "180"], timeout=210)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):

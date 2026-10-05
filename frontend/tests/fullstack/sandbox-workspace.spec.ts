@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Page, Request, Response } from "@playwright/test";
+import { dummyFile } from "../helpers/dummy-files";
 
 type Fixture = Readonly<{
   runId: string;
@@ -606,8 +606,16 @@ async function exerciseConnectedBoard(
   const postTitle = `Supplier update ${runId.slice(0, 8)}`;
   const recordLinkTitle = `Record ${supplier.recordId.slice(0, 8)}`;
   const recordLinkTarget = `/openview?module=${supplier.moduleId}&record=${supplier.recordId}`;
-  const imagePath = join(process.cwd(), "../references/image.png");
-  const imageBytes = readFileSync(imagePath);
+  const layout = dummyFile("Yard layout.png");
+  const plan = dummyFile("Dock 3 loading plan.pdf");
+  const checklist = dummyFile("Forklift inspection checklist.docx");
+  const postImage = dummyFile("Berth photo.png");
+  // The name says PDF, but the bytes are plain text, so validation refuses it.
+  const damaged = {
+    name: "Damaged manifest.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("This is a plain text note, not a PDF.\n", "utf8"),
+  };
 
   await page.goto("/boards");
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
@@ -653,15 +661,65 @@ async function exerciseConnectedBoard(
   await expect(
     eventEditor.getByRole("checkbox", { name: "1 day before" }),
   ).toBeChecked();
-  await eventEditor.getByLabel("Add an attachment").setInputFiles(imagePath);
-  await expect(eventEditor.getByText("image.png attached.")).toBeVisible({
-    timeout: 70_000,
-  });
+  const attachmentInput = eventEditor.getByLabel("Add an attachment");
+  for (const file of [layout, plan, checklist]) {
+    await attachmentInput.setInputFiles(file);
+    await expect(eventEditor.getByText(`${file.name} attached.`)).toBeVisible();
+    await expect(
+      eventEditor.getByRole("button", { name: `Download ${file.name}` }),
+    ).toBeVisible();
+  }
   const [download] = await Promise.all([
     page.waitForEvent("download"),
-    eventEditor.getByRole("button", { name: "Download image.png" }).click(),
+    eventEditor
+      .getByRole("button", { name: `Download ${layout.name}` })
+      .click(),
   ]);
-  expect(readFileSync(await download.path())).toEqual(imageBytes);
+  expect(download.suggestedFilename()).toBe(layout.name);
+  expect(readFileSync(await download.path())).toEqual(layout.buffer);
+  const [detached] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname.startsWith(
+          `/api/boards/${boardId}/events/${eventId}/attachments/`,
+        ) && response.request().method() === "DELETE",
+    ),
+    eventEditor.getByRole("button", { name: `Remove ${plan.name}` }).click(),
+  ]);
+  expect(detached.ok()).toBe(true);
+  await expect(eventEditor.getByText(`${plan.name} removed.`)).toBeVisible();
+  await expect(
+    eventEditor.getByRole("button", { name: `Download ${plan.name}` }),
+  ).toBeHidden();
+  await attachmentInput.setInputFiles(damaged);
+  await expect(eventEditor.getByRole("alert")).toHaveText(
+    "This file could not be stored. Check the file and try again.",
+  );
+  await expect(
+    eventEditor.getByRole("button", { name: `Download ${damaged.name}` }),
+  ).toBeHidden();
+  await eventEditor
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(eventEditor).toBeHidden();
+
+  // The remaining attachments are stored on the event, not in page state.
+  await page.reload();
+  await page.getByRole("link", { name: "Calendar", exact: true }).click();
+  await page.getByRole("button", { name: "Event lists" }).click();
+  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
+  await page
+    .getByRole("region", { name: "My events" })
+    .getByRole("button", { name: `Edit ${eventTitle}` })
+    .click();
+  const attachedFiles = eventEditor.getByRole("list", {
+    name: "Attached files",
+  });
+  for (const file of [layout, checklist])
+    await expect(
+      attachedFiles.getByRole("button", { name: `Download ${file.name}` }),
+    ).toBeVisible();
+  await expect(attachedFiles.getByRole("listitem")).toHaveCount(2);
   await eventEditor
     .getByLabel("Record data source")
     .selectOption({ label: "Suppliers" });
@@ -755,14 +813,8 @@ async function exerciseConnectedBoard(
   expect(createdPost.status()).toBe(201);
   const postId = ((await createdPost.json()) as { id: string }).id;
   await expect(page.getByText("Draft saved.")).toBeVisible();
-  await page.getByLabel("Add an attachment").setInputFiles({
-    name: "post.png",
-    mimeType: "image/png",
-    buffer: imageBytes,
-  });
-  await expect(page.getByText("post.png attached.")).toBeVisible({
-    timeout: 70_000,
-  });
+  await page.getByLabel("Add an attachment").setInputFiles(postImage);
+  await expect(page.getByText(`${postImage.name} attached.`)).toBeVisible();
   await page
     .getByLabel("Record data source")
     .selectOption({ label: "Suppliers" });

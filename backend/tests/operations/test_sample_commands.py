@@ -66,7 +66,7 @@ def test_populate_refuses_orphans_before_password_or_run_creation(
     assert not root.exists()
 
 
-def test_nonfile_population_does_not_require_optional_scanner(
+def test_population_accepts_the_ready_core_components(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -77,11 +77,8 @@ def test_nonfile_population_does_not_require_optional_scanner(
             json={
                 "status": "ready",
                 "components": {
-                    **{
-                        name: {"status": "ready"}
-                        for name in ("database", "auth", "storage", "smtp")
-                    },
-                    "scanner": {"status": "unavailable", "required": False},
+                    name: {"status": "ready"}
+                    for name in ("database", "auth", "storage", "smtp")
                 },
             },
         )

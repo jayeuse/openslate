@@ -4,8 +4,8 @@
 
 `app/main.py` assembles API routers, configuration, database lifecycle, audit
 listeners, the event hub, and process-local record trigger, report-scheduling, and
-provider-signout workers. Supabase Auth delivers invitation and recovery mail;
-the file scanner is a separate operator-started process. The stack is FastAPI
+provider-signout workers. Supabase Auth delivers invitation and recovery mail.
+The stack is FastAPI
 with synchronous SQLAlchemy 2; browsers never access the application database
 directly.
 
@@ -35,9 +35,10 @@ subscribers and bounds queues. Event streams contain invalidation data only.
 Supabase Realtime is not the current transport.
 
 File services use the server-only [Supabase Storage adapter](../../backend/app/systems/platform/files/supabase_storage.py)
-and private quarantine/ready buckets. They verify digest and size, invoke the
-separate [scanner worker](../../backend/app/systems/platform/files/worker.py),
-and expose only verified clean bytes. Every public file operation is
+and the private `openslate-ready` bucket. They validate the file type in a
+bounded [parser subprocess](../../backend/app/systems/platform/files/validation_worker.py),
+record digest and size, and mark the file ready when the upload request
+finishes. Downloads are served as attachments with `nosniff`. Every public file operation is
 authorized by FastAPI; no local-filesystem storage mode is supported.
 
 ## Process and request lifetimes
@@ -56,9 +57,8 @@ services own commits and rollbacks. Middleware supplies request IDs, request-bod
 and transfer admission controls, safe database/error responses, response headers
 and duration logging. `/api/ready` uses a separate read-only database pool and shared
 bounded probe work in [`readiness.py`](../../backend/app/core/readiness.py). It reports
-Database, Auth, Storage, SMTP configuration, and scanner states without provider bodies
-or credentials. Production requires scanner engine health and worker leadership;
-the scanner is optional in development/test. Mail delivery and deployment acceptance
+Database, Auth, Storage, and SMTP configuration states without provider bodies
+or credentials. Mail delivery and deployment acceptance
 need separate verification. See
 [configuration](17-configuration.md) for the resource settings.
 
@@ -133,8 +133,7 @@ the trigger. Its changes have no user in `performed_by`; their audit entries
 carry `actor_label = "Trigger: <name>"`. Loop protection limits a chain of
 trigger events to depth 10 and 100 applied actions.
 Invitation and recovery email use Supabase Auth rather than an application SMTP
-outbox. The separate `app.systems.platform.files.worker` process owns scanner
-leadership and file-job recovery.
+outbox.
 
 Audit records share the business transaction. Invalidation publication happens
 after commit and is best effort: publication failure cannot roll back the

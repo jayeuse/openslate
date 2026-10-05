@@ -2,7 +2,7 @@
 
 > **Scope:** OpenSlate's self-hosted server contract, ownership boundaries, and implementation status.
 
-OpenSlate is a self-hosted web application installed separately for each client. The selected deployment topology is Docker Compose with Linux containers on Linux servers or Windows through Docker Desktop and WSL2. The checked-in Supabase Compose stack supplies PostgreSQL, Auth, Storage, and Studio. FastAPI remains the application API and authorization authority. It serves a statically exported Next.js frontend, uses SQLAlchemy for application data, and mediates private file access. The production Compose overlay adds Caddy, ClamAV, and the file-scanning worker. Production and Windows runtime acceptance remain pending.
+OpenSlate is a self-hosted web application installed separately for each client. The selected deployment topology is Docker Compose with Linux containers on Linux servers or Windows through Docker Desktop and WSL2. The checked-in Supabase Compose stack supplies PostgreSQL, Auth, Storage, and Studio. FastAPI remains the application API and authorization authority. It serves a statically exported Next.js frontend, uses SQLAlchemy for application data, and mediates private file access. The production Compose overlay adds Caddy. Production and Windows runtime acceptance remain pending.
 
 ## Server runtime contract
 
@@ -16,8 +16,8 @@ OpenSlate is a self-hosted web application installed separately for each client.
 | Application schema | Alembic using the owner connection; the active fresh-install root is `089c54b88aa6` |
 | Authentication | Supabase Auth verifies email/password and issues provider sessions and JWTs |
 | Application identity and sessions | FastAPI maps provider subjects to local users and keeps revocable `identity_sessions` |
-| Files | PostgreSQL file metadata; private Supabase Storage `openslate-quarantine` and `openslate-ready` objects, mediated by FastAPI |
-| Malware scanning | OpenSlate worker and ClamAV before ready-file access |
+| Files | PostgreSQL file metadata; private Supabase Storage `openslate-ready` objects, mediated by FastAPI |
+| File-type validation | FastAPI allowlist and bounded parser subprocess before the Storage write |
 | Invalidation | Authenticated SSE using PostgreSQL `LISTEN`/`NOTIFY`; Supabase Realtime integration is future work |
 | Operator database UI | Supabase Studio, loopback-bound behind gateway Basic Auth |
 
@@ -29,16 +29,16 @@ The application runtime role has normal application-table privileges needed by F
 
 The pinned self-hosted provider stack is also the Compose-based development and test database/Auth/Storage environment. Its development overlay publishes the database and provider gateway on loopback and adds Mailpit; host-run FastAPI and `next dev` can remain the daily application workflow. Installation-specific environment, project names, ports, and volumes keep each instance isolated.
 
-Production uses `infra/supabase/compose.production.yaml` to add the unified FastAPI/static-UI image, scanner worker, ClamAV, and Caddy. The database is not published to the host; Studio's provider gateway remains loopback-only. This Compose path is documented and implemented in configuration, while production TLS, complete operator acceptance, Windows startup/restart, and restore on Windows remain unverified release work. No Node.js or Next.js process runs as a production application service.
+Production uses `infra/supabase/compose.production.yaml` to add the unified FastAPI/static-UI image and Caddy. The database is not published to the host; Studio's provider gateway remains loopback-only. This Compose path is documented and implemented in configuration, while production TLS, complete operator acceptance, Windows startup/restart, and restore on Windows remain unverified release work. No Node.js or Next.js process runs as a production application service.
 
 ## Status boundaries
 
 - The repository contains a per-installation self-hosted Supabase Compose stack for PostgreSQL, Auth, Storage, and Studio, plus OpenSlate's PostgreSQL, Auth, and Storage adapters.
 - Supabase Auth owns password verification, provider tokens, invitations, and password-recovery email actions. FastAPI owns application identity binding, sessions, authorization, and session revocation.
-- Private Supabase Storage buckets and the FastAPI/ClamAV scan path replace the former local-filesystem file adapter. File authorization stays in OpenSlate.
+- A private Supabase Storage bucket replaces the former local-filesystem file adapter. FastAPI validates each upload's file type, and the file is ready when its upload request finishes. File authorization stays in OpenSlate.
 - Alembic owns only OpenSlate's application schema. The prior Supabase/schema-redesign and vanilla PostgreSQL chains are retained as history; the active root is for fresh installations and does not import an existing database.
 - The OpenSlate event endpoint remains authenticated SSE over PostgreSQL notifications. Supabase Realtime is not part of the current application contract.
 - The selected server target is Linux and Windows with Linux containers. Windows acceptance remains pending; macOS is a workstation platform, not a server target.
-- `/api/ready` reports Database, Auth, Storage, SMTP configuration, and scanner states. Production requires scanner engine health and worker leadership; development/test treats the scanner as optional. These probes do not establish mail delivery, backup integrity, or complete deployment acceptance.
+- `/api/ready` reports Database, Auth, Storage, and SMTP configuration states. All four are required. These probes do not establish mail delivery, backup integrity, or complete deployment acceptance.
 
 See [system context](02-system-context.md), [data architecture](06-data-architecture.md), [authentication and authorization](08-authentication-authorization.md), and [deployment architecture](12-deployment-architecture.md).

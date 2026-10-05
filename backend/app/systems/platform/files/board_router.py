@@ -134,19 +134,6 @@ def upload_unlinked_board_file(
         return service.upload(db, actor.id, file_id, content, storage, board_id=board_id)
 
 
-@router.post("/{board_id}/files/{file_id}/scan", response_model=FileResponse, status_code=202)
-def scan_unlinked_board_file(
-    board_id: UUID,
-    file_id: UUID,
-    actor: Writer,
-    db: Database,
-    response: Response,
-) -> FileResponse:
-    _unlinked(db, actor, board_id, file_id)
-    response.headers["Location"] = f"/api/boards/{board_id}/files/{file_id}"
-    return service.scan(db, actor.id, file_id, board_id=board_id)
-
-
 @router.post("/{board_id}/files/{file_id}/archive", response_model=FileResponse)
 def archive_unlinked_board_file(
     board_id: UUID, file_id: UUID, actor: Writer, db: Database

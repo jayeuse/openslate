@@ -21,7 +21,6 @@ from operations.reset.models import (
     _COUNT_STATEMENTS,
     _LOCK_APPLICATION_STATEMENT,
     _RESET_ADVISORY_LOCK_KEY,
-    _SCANNER_LEADER_LOCK_KEY,
     DELETE_ORDER,
     NON_PRESERVED_TABLES,
     ResetError,
@@ -180,7 +179,6 @@ def apply_reset(
     provider_cleanup_started = False
     provider_cleanup_completed = False
     reset_lock_held = False
-    scanner_lock_held = False
     try:
         # The dry run may have left a read transaction open. Session advisory
         # locks survive transaction boundaries, so no table lock spans HTTP.
@@ -194,14 +192,6 @@ def apply_reset(
         if not reset_lock_held:
             raise ResetError("Another application reset is running")
         require_no_unresolved_backup(connection, plan.backup_snapshot.installation_id)
-        scanner_lock_held = (
-            _single_value(
-                connection, "SELECT pg_try_advisory_lock(%s)", (_SCANNER_LEADER_LOCK_KEY,)
-            )
-            is True
-        )
-        if not scanner_lock_held:
-            raise ResetError("The scanner worker must be stopped before reset")
         connection.commit()
 
         preflight_plan = (build_plan_fn or build_reset_plan)(
@@ -326,17 +316,12 @@ def apply_reset(
             ) from None
         raise ResetError("Unable to apply application-data reset") from None
     finally:
-        if scanner_lock_held or reset_lock_held:
+        if reset_lock_held:
             _rollback_safely(connection)
             try:
-                if scanner_lock_held:
-                    _execute(
-                        connection, "SELECT pg_advisory_unlock(%s)", (_SCANNER_LEADER_LOCK_KEY,)
-                    )
-                if reset_lock_held:
-                    _execute(
-                        connection, "SELECT pg_advisory_unlock(%s)", (_RESET_ADVISORY_LOCK_KEY,)
-                    )
+                _execute(
+                    connection, "SELECT pg_advisory_unlock(%s)", (_RESET_ADVISORY_LOCK_KEY,)
+                )
                 connection.commit()
             except Exception:
                 _rollback_safely(connection)

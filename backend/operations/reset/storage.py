@@ -14,7 +14,7 @@ import httpx
 
 from operations.reset.models import ResetError
 
-_BUCKETS = ("openslate-quarantine", "openslate-ready")
+_BUCKETS = ("openslate-ready",)
 _PAGE_SIZE = 100
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
@@ -49,7 +49,7 @@ def require_api_stopped(backend_host: str, backend_port: str) -> None:
 
 
 class ResetStorage:
-    """Inventory and delete every object in only OpenSlate's two private buckets."""
+    """Inventory and delete every object in only OpenSlate's private bucket."""
 
     def __init__(
         self,

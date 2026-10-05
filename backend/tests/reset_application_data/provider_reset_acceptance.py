@@ -133,16 +133,11 @@ def _create_reset_fixture(
     admin_id: UUID,
     storage_objects: SupabaseStorage,
 ) -> tuple[tuple[str, str], tuple[bytes, bytes]]:
-    quarantine_key, ready_key = uuid4().hex, uuid4().hex
-    quarantine_bytes = b"reset-acceptance-quarantine-object"
+    uploading_key, ready_key = uuid4().hex, uuid4().hex
+    uploading_bytes = b"reset-acceptance-uploading-object"
     ready_bytes = b"reset-acceptance-ready-object"
-    storage_objects.upload(quarantine_key, quarantine_bytes, "application/octet-stream")
+    storage_objects.upload(uploading_key, uploading_bytes, "application/octet-stream")
     storage_objects.upload(ready_key, ready_bytes, "application/octet-stream")
-    storage_objects.promote(
-        ready_key,
-        expected_digest=hashlib.sha256(ready_bytes).hexdigest(),
-        expected_size=len(ready_bytes),
-    )
 
     engine = guarded_create_engine(owner_url)
     try:
@@ -158,11 +153,11 @@ def _create_reset_fixture(
                     File(
                         purpose="library_document",
                         creator_id=admin_id,
-                        filename="quarantine-fixture.bin",
+                        filename="uploading-fixture.bin",
                         media_type="application/octet-stream",
-                        expected_size=len(quarantine_bytes),
-                        object_key=quarantine_key,
-                        state="pending_scan",
+                        expected_size=len(uploading_bytes),
+                        object_key=uploading_key,
+                        state="uploading",
                     ),
                     File(
                         purpose="library_document",
@@ -170,15 +165,17 @@ def _create_reset_fixture(
                         filename="ready-fixture.bin",
                         media_type="application/octet-stream",
                         expected_size=len(ready_bytes),
+                        actual_size=len(ready_bytes),
+                        digest=hashlib.sha256(ready_bytes).hexdigest(),
                         object_key=ready_key,
-                        state="pending_scan",
+                        state="ready",
                     ),
                 )
             )
             database.commit()
     finally:
         engine.dispose()
-    return (quarantine_key, ready_key), (quarantine_bytes, ready_bytes)
+    return (uploading_key, ready_key), (uploading_bytes, ready_bytes)
 
 
 def _login_seeded_admin(admin_email: str, password: str, settings: Any) -> tuple[str, TestClient]:
@@ -205,13 +202,7 @@ def _storage_bytes(
         bucket, separator, object_key = full_key.partition("/")
         if not separator:
             raise RuntimeError("The disposable Storage inventory was invalid")
-        content = (
-            objects.read_quarantine(object_key)
-            if bucket == "openslate-quarantine"
-            else objects.download(object_key)
-            if bucket == "openslate-ready"
-            else None
-        )
+        content = objects.download(object_key) if bucket == "openslate-ready" else None
         if content is None:
             raise RuntimeError("A listed disposable Storage object could not be read")
         observed.append((full_key, len(content), hashlib.sha256(content).hexdigest()))
@@ -342,13 +333,14 @@ def test_reset_cli_dry_run_confirmation_and_execute_against_fresh_provider() -> 
             )
         if before[1] != (True, True):
             raise RuntimeError("The disposable reset fixture did not bind both Auth identities")
+        expected_objects = sorted(
+            zip((f"openslate-ready/{key}" for key in object_keys), content, strict=True)
+        )
         if tuple(key for key, _size, _digest in before[2]) != tuple(
-            sorted((f"openslate-quarantine/{object_keys[0]}", f"openslate-ready/{object_keys[1]}"))
+            key for key, _content in expected_objects
         ):
-            raise RuntimeError(
-                "The disposable Storage fixture did not populate both private buckets"
-            )
-        for actual, expected in zip(before[2], content, strict=True):
+            raise RuntimeError("The disposable Storage fixture did not populate the private bucket")
+        for actual, (_key, expected) in zip(before[2], expected_objects, strict=True):
             if actual[1] != len(expected) or actual[2] != hashlib.sha256(expected).hexdigest():
                 raise RuntimeError("The disposable Storage bytes did not match their test fixture")
 
@@ -382,10 +374,8 @@ def test_reset_cli_dry_run_confirmation_and_execute_against_fresh_provider() -> 
         pytest.fail("The real reset CLI did not complete after the exact TTY confirmation")
     after_reset = observed_state()
     _assert_after_reset(after_reset, admin_id, admin_email, admin_provider_id, member_provider_id)
-    if objects.read_quarantine(object_keys[0]) is not None:
-        pytest.fail("The reset left the known quarantine object readable")
-    if objects.download(object_keys[1]) is not None:
-        pytest.fail("The reset left the known ready object readable")
+    if any(objects.download(key) is not None for key in object_keys):
+        pytest.fail("The reset left a known Storage object readable")
 
     from app.main import create_app
 

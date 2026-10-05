@@ -1,18 +1,21 @@
 """Run the backend coverage gate as parallel shards on this machine, then combine them.
 
 CI runs five shards on separate runners. Locally, three disposable stacks fit beside the
-development stack (10 CPUs, 8 GB for Docker, six networks per stack from about 30 address
-pools), and the gate takes about 11 minutes instead of 16. Each shard writes to its own
-folder; the combine step applies the same 90% overall and changed-line gates as CI and
-writes the usual test-results/coverage evidence.
+development stack (10 CPUs, 8 GB for Docker); each test stack takes its own network block
+outside Docker's default address pools. Each shard writes to its own folder; the combine
+step applies the same 90% overall and changed-line gates as CI and writes the usual
+test-results/coverage evidence. A stop (Ctrl-C, SIGTERM, SIGHUP) reaches each shard once
+and waits for it to remove its stack.
 
 From backend/:  uv run python -m tests.parallel_coverage [--shards 3]
-Do not run it beside another heavy job (a live sample run, the frontend suite).
+The pre-push gate runs it beside the frontend lane once its stacks have booted. Do not
+start another heavy job beside it (for example a live sample run).
 """
 
 import argparse
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -20,13 +23,37 @@ from pathlib import Path
 
 if __package__:
     from .backend_coverage import OUTPUT_OVERRIDE, combine_backend_coverage
-    from .runner_console import relay, stop_on_signals
+    from .runner_console import relay, stop_on_signals, stop_process_groups
 else:
     from backend_coverage import OUTPUT_OVERRIDE, combine_backend_coverage
-    from runner_console import relay, stop_on_signals
+    from runner_console import relay, stop_on_signals, stop_process_groups
 
 BACKEND = Path(__file__).resolve().parents[1]
 SHARDS_ROOT = BACKEND / "test-results/coverage-shards"
+# A stopped shard stops pytest and removes its stack (several bounded Docker calls of up
+# to 30 s each); after this long, its process group is killed.
+SHARD_STOP_SECONDS = 180.0
+
+
+def shard_command(group: int, total: int) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "tests.fullstack_runner",
+        "--backend-coverage-shard",
+        f"{group}/{total}",
+    ]
+
+
+def stop_shards(processes: list[subprocess.Popen[str]]) -> None:
+    """Ask each running shard's group to stop once and wait for every teardown.
+
+    A repeated Ctrl-C, SIGTERM, or SIGHUP must not abandon a shard mid-teardown.
+    """
+    for name in ("SIGINT", "SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), signal.SIG_IGN)
+    stop_process_groups(processes, SHARD_STOP_SECONDS)
 
 
 def main(arguments: list[str]) -> int:
@@ -42,10 +69,8 @@ def main(arguments: list[str]) -> int:
         for group in range(1, total + 1):
             log = (SHARDS_ROOT / f"shard-{group}.log").open("w")
             environment = {**os.environ, OUTPUT_OVERRIDE: str(SHARDS_ROOT / f"shard-{group}")}
-            command = [sys.executable, "-m", "tests.fullstack_runner"]
-            command += ["--backend-coverage-shard", f"{group}/{total}"]
             process = subprocess.Popen(
-                command,
+                shard_command(group, total),
                 cwd=BACKEND,
                 env=environment,
                 stdout=subprocess.PIPE,
@@ -53,6 +78,9 @@ def main(arguments: list[str]) -> int:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                # Its own group: a stop reaches each shard once, from stop_shards below,
+                # never a second time through the caller's group signal mid-teardown.
+                start_new_session=True,
             )
             # Show what each shard prints (stage names; test results on request) at once.
             reader = threading.Thread(
@@ -69,11 +97,9 @@ def main(arguments: list[str]) -> int:
             failed = failed or code != 0
     finally:
         # A stopped run stops every shard; each one then removes its own stack.
-        for _, process, _, _ in runs:
-            if process.poll() is None:
-                process.terminate()
-        for _, process, _, _ in runs:
-            process.wait()
+        running = [process for _, process, _, _ in runs if process.poll() is None]
+        if running:
+            stop_shards(running)
     if failed:
         print(f"Backend coverage FAIL; shard logs are in {SHARDS_ROOT}")
         return 1

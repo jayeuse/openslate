@@ -15,7 +15,8 @@ Agreed decisions:
 - Fresh application database, accounts, and files. No legacy account/password/data import and no seamless session migration. Fresh-start scope is not permission to delete an existing volume automatically.
 - Email-only password login, invitation-only onboarding, and Supabase email invitations/password recovery. Preserve session listing/revocation, application authorization, account eligibility, and privileged-action reauthentication.
 - Supabase Database, Auth, Storage, and Studio now. Supabase Realtime integration is a later feature; preserve working SSE in this migration.
-- Retain synchronous SQLAlchemy, audited ORM transactions, Alembic, the static Next.js export, FastAPI, Caddy, and malware scanning.
+- Retain synchronous SQLAlchemy, audited ORM transactions, Alembic, the static Next.js export, FastAPI, and Caddy.
+- No antivirus file scanning (decided 2026-10-05). FastAPI validates each upload's file type, and the file is ready when its upload request finishes.
 
 Supabase Database is PostgreSQL. This replaces its distribution and operating topology, not the relational engine. Self-hosting also retains responsibility for patching, capacity, backups, email, and availability. Supabase Storage will initially use its supported file backend on a persistent volume; OpenSlate accesses bytes through the Storage API rather than reading that volume directly.
 
@@ -28,7 +29,7 @@ Supabase Database is PostgreSQL. This replaces its distribution and operating to
 | Database privileges | `backend/operations/provision_database_role.py`, baseline revision `1ae6c84fce12` | Current provisioning changes database ownership and PUBLIC privileges; the baseline revokes privileges across `public`. Do not apply this indiscriminately to Supabase-owned objects/services. |
 | Authentication | `backend/app/systems/access/identity/`, `backend/app/common/dependencies/auth.py`, `frontend/src/lib/auth-api.ts` | Local hashes, JWTs, refresh replay handling, invitations/recovery, account setup, session administration, and cookies require replacement or adaptation. |
 | Authorization | `backend/app/systems/access/policy/authorization.py`, user/role models and permissions | Preserve application IDs, roles, groups, Workspace rules, Board grants/audiences, and Report recipient checks. |
-| Files | `backend/app/systems/platform/files/providers.py`, `storage.py`, `service.py`, `scan_processing.py`, `purge.py` | A usable storage protocol already exists; preserve immutable keys, quarantine, integrity checks, and reconciliation. |
+| Files | `backend/app/systems/platform/files/providers.py`, `storage.py`, `service.py`, `purge.py` | A usable storage protocol already exists; preserve immutable keys, integrity checks, and reconciliation. |
 | Events | `backend/app/systems/platform/events/` and audit listeners | Existing direct PostgreSQL LISTEN/NOTIFY feeds authorized SSE. Keep this functioning on Supabase PostgreSQL. |
 | Operations and tests | `backend/tests/postgres_runtime.py`, `fullstack_runner.py`, reset operations, `packaging/backup/` | Replace container assumptions and local-file inventory; prove restore of provider identity and Storage bytes as well as application data. |
 
@@ -40,12 +41,12 @@ Planning estimate for one experienced engineer familiar with this repository:
 | --- | ---: |
 | Compose, configuration, ownership guards, database/schema setup | 3–5 |
 | Authentication, onboarding/recovery, session and frontend adaptation | 5–8 |
-| Storage adapter, scanner integration, reconciliation and cleanup | 3–5 |
+| Storage adapter, reconciliation and cleanup | 3–5 |
 | Reset, backup/restore, Windows/Linux operating procedures | 3–5 |
 | Integrated tests, security review, documentation and release rehearsal | 4–7 |
 | Total | 18–30 |
 
-Budget roughly **4–6 engineering weeks**, allowing **5–7 calendar weeks** for integration surprises and review. A developer milestone with real login, CRUD, and scanned upload/download should be achievable earlier, approximately 1–2 weeks, but is not client-release readiness. These are judgment-based estimates, not measured task durations. Realtime features and native installers are excluded. Windows container behavior, provider/session failure handling, and restore validation are the largest uncertainties.
+Budget roughly **4–6 engineering weeks**, allowing **5–7 calendar weeks** for integration surprises and review. A developer milestone with real login, CRUD, and file upload/download should be achievable earlier, approximately 1–2 weeks, but is not client-release readiness. These are judgment-based estimates, not measured task durations. Realtime features and native installers are excluded. Windows container behavior, provider/session failure handling, and restore validation are the largest uncertainties.
 
 ## 3. Target architecture and contracts
 
@@ -53,7 +54,7 @@ Budget roughly **4–6 engineering weeks**, allowing **5–7 calendar weeks** fo
 
 - Maintain one versioned Compose definition for Supabase services, with development and production overlays. Pin the official self-hosted release and image digests; use `self-hosted/v0.8.2` as the initial reviewed reference, not floating `latest`. Preserve its necessary initialization assets and service dependencies.
 - Required services are Supabase PostgreSQL, Auth, Storage, API gateway, Studio and postgres-meta, plus PostgREST/imgproxy where required by the selected upstream Storage configuration. Disable Edge Functions and optional analytics; keep Realtime stopped until its feature phase. Use direct internal PostgreSQL connections, so a pooler is unnecessary for the first topology.
-- Development retains host-run FastAPI/Next. Production Compose runs the unified FastAPI/static-UI image, Caddy, file worker, and ClamAV alongside Supabase. Studio is an operator-only administration surface, loopback-bound and password protected. It replaces pgweb but is more privileged than the former read-only inspector.
+- Development retains host-run FastAPI/Next. Production Compose runs the unified FastAPI/static-UI image and Caddy alongside Supabase. Studio is an operator-only administration surface, loopback-bound and password protected. It replaces pgweb but is more privileged than the former read-only inspector.
 - Keep application HTTP traffic same-origin through FastAPI. Keep database, Storage, PostgREST, metadata, and administrative APIs on private networks. Expose only the Auth paths necessary for email verification through the configured TLS ingress; never expose the entire administrative gateway as a shortcut.
 - Generate unique secrets per installation. Keep database owner/bootstrap credentials, Auth administration keys, Storage keys, and refresh-token encryption material out of frontend builds, the public Manager configuration, logs, and shared examples.
 - Preserve `DATABASE_URL` for the constrained runtime role and `MIGRATION_DATABASE_URL` for the application owner. Supabase service roles retain their own databases/schema privileges. Do not transfer ownership of the provider database or revoke provider-wide access. Ordinary domain queries never use a service-role API key.
@@ -85,19 +86,19 @@ Budget roughly **4–6 engineering weeks**, allowing **5–7 calendar weeks** fo
 - Adapt login/setup/recovery screens and invitation status to the new contract. Remove obsolete temporary-secret and local delivery-status controls while retaining useful account and session controls. Do not redesign the Access page.
 - Replace lifecycle `LocalPasswordGrantClient` with a fresh Supabase password verification of the current actor for close and purge, including file purge. Map the verified provider subject back to the same application ID, retain challenge expiry/digest/locks, and discard/revoke any temporary verification session. Wrong actor/password or provider failure never permits the protected operation.
 
-### Files, scanning and consistency
+### Files and consistency
 
-- Implement Supabase Storage against the existing `StorageBackend` protocol. Use two private buckets, quarantine and ready; preserve opaque immutable keys and forbid overwrites. No public bucket or direct browser upload/download in this phase.
-- All ordinary files, Board files and workspace logos continue through FastAPI authorization and scan-state checks. Use a server-only Storage client with no mutable shared user session. A private bucket plus a privileged key does not itself enforce OpenSlate permissions.
-- Preserve upload-intent commit before external upload, bounded errors/timeouts, orphan reconciliation, scanner leadership locks and download denial until the clean verdict is committed.
-- Treat promotion as an idempotent cross-service operation: verify exact quarantine bytes, copy/create ready bytes without overwrite, verify ready size/SHA-256, then remove quarantine. Do not treat an object-store ETag as the application's SHA-256. If metadata commit fails, the existing promotion reconciliation must also accept an exact ready object with an absent quarantine copy. Any remaining quarantine copy must match. A fresh scanner claim may read those exact ready bytes when quarantine is absent and must scan them again before committing ready metadata. Idempotent promotion accepts an already matching ready object; a conflicting copy fails closed. No uncommitted scan verdict becomes authoritative and pending metadata never permits user download.
-- Deletion removes both locations, confirms absence and preserves the existing durable deleting/uncertain states. Provider outage or partial deletion remains visible and retryable.
-- Supabase Storage does not replace ClamAV. Retain the scanner and worker, with bytes fetched through Storage and bounded by current upload limits. Durable files belong only to the Supabase Storage volume; any scanner temporary files are private and disposable.
+- Implement Supabase Storage against the existing `StorageBackend` protocol. Use one private bucket, `openslate-ready`; preserve opaque immutable keys and forbid overwrites. No public bucket or direct browser upload/download in this phase.
+- All ordinary files, Board files and workspace logos continue through FastAPI authorization and file state checks. Use a server-only Storage client with no mutable shared user session. A private bucket plus a privileged key does not itself enforce OpenSlate permissions.
+- Preserve upload-intent commit before external upload, file-type validation in a bounded subprocess before the Storage write, bounded errors/timeouts, and orphan reconciliation. An upload commits ready metadata in the same request after the Storage write succeeds; pending metadata never permits user download.
+- Treat an uncertain upload as a cross-service reconciliation: read the exact object from the ready bucket and verify its size and SHA-256 before committing ready metadata. Do not treat an object-store ETag as the application's SHA-256. A missing or conflicting object fails closed.
+- Deletion removes the object, confirms absence and preserves the existing durable deleting/uncertain states. Provider outage or partial deletion remains visible and retryable.
+- Durable files belong only to the Supabase Storage volume, with bytes bounded by current upload limits.
 - Remove the POSIX/Windows application storage adapters and filesystem-specific tests after equivalent protocol behavior passes against real Storage. Do not retain a selectable local-storage product mode.
 
 ### Realtime boundary
 
-Keep `/api/events`, opaque invalidations, reconnect behavior, and per-user authorization. Connect its LISTEN subscriber and scanner advisory locks directly to Supabase PostgreSQL; do not route these session-affine connections through transaction pooling.
+Keep `/api/events`, opaque invalidations, reconnect behavior, and per-user authorization. Connect its LISTEN subscriber directly to Supabase PostgreSQL; do not route this session-affine connection through transaction pooling.
 
 For a future Supabase Realtime phase, first select the actual product feature and its audience semantics. The default transport migration is server-side private Broadcast feeding the existing FastAPI-authorized SSE boundary. Direct browser subscriptions require an explicit channel admission/revocation contract; database row-change subscriptions can bypass backend-only authorization. No placeholder channels, broad row publications, JWT permission copies, or new realtime token endpoint are added now.
 
@@ -105,7 +106,7 @@ For a future Supabase Realtime phase, first select the actual product feature an
 
 1. **Contract and foundation:** lock this spec; inventory preserved tests; pin upstream artifacts; implement isolated Supabase startup, secrets, application role provisioning, fresh Alembic lineage and target guards. Prove a blank installation and application CRUD/audit with Supabase services intact.
 2. **Auth vertical slice:** drive email login, provider verification and local session admission with real Auth tests, then implement refresh/logout/revocation. Add invitations, recovery, profile binding, reauthentication and their frontend flows. Remove replaced local-identity code only after all callers are migrated.
-3. **Storage vertical slice:** implement upload/quarantine/scan/download first, then promotion failures, purge and reconciliation. Auth and Storage editing can proceed independently after shared configuration contracts settle; serialize shared model/config changes.
+3. **Storage vertical slice:** implement upload/validation/download first, then upload failures, purge and reconciliation. Auth and Storage editing can proceed independently after shared configuration contracts settle; serialize shared model/config changes.
 4. **Operations:** replace pgweb commands with Studio; adapt bootstrap, seeding, reset, health/readiness, backup and restore; remove old Compose PostgreSQL services, inspector role/passfile setup, and direct-filesystem operating assumptions. Preserve unrelated gateway and Manager behavior.
 5. **Integration and release evidence:** update test runners/classification/CI, verify Windows and Linux Compose, run the canonical gate once, review trust boundaries, and publish the operating runbook. Update current-state architecture and scoped guidance only when the corresponding implementation is verified.
 
@@ -114,11 +115,11 @@ Keep coherent commits per work unit, including relevant tests. Use the current S
 ## 5. Operations and cutover
 
 - Development and tests use disposable isolated instances of the same pinned self-hosted stack, not a hosted project. Separate ports, networks, volumes, keys, mail catcher and run manifests for concurrent work. Keep teardown limited to the owned run.
-- Startup order: validate configuration/ownership → start provider database and initialize Supabase services → provision app roles/schema → create private buckets → bootstrap invitation → start API/worker → check readiness. Migration/provisioning are explicit operator steps, not container-entrypoint side effects on every restart.
-- Readiness reports Database/Auth/Storage/SMTP configuration/scanner state separately. Provider outage produces a useful unavailable state; it is not invalid credentials or a successful upload. No synthetic mutation is needed on every health poll.
-- Reset uses Storage APIs to inventory/delete objects with pagination, preserving dry-run, exact plan confirmation, worker/API quiescence, and partial-cleanup reporting. Account cleanup uses Auth APIs. Never delete `storage.objects` rows as a substitute for deleting bytes. Preserve the configured administrator according to the existing reset contract.
+- Startup order: validate configuration/ownership → start provider database and initialize Supabase services → provision app roles/schema → create the private bucket → bootstrap invitation → start API → check readiness. Migration/provisioning are explicit operator steps, not container-entrypoint side effects on every restart.
+- Readiness reports Database/Auth/Storage/SMTP configuration state separately. Provider outage produces a useful unavailable state; it is not invalid credentials or a successful upload. No synthetic mutation is needed on every health poll.
+- Reset uses Storage APIs to inventory/delete objects with pagination, preserving dry-run, exact plan confirmation, API quiescence, and partial-cleanup reporting. Account cleanup uses Auth APIs. Never delete `storage.objects` rows as a substitute for deleting bytes. Preserve the configured administrator according to the existing reset contract.
 - Adapt the encrypted backup foundation to capture a coherent recovery set: application and required provider schemas, Auth users, Storage metadata and bytes, pinned stack versions, and encrypted installation secrets/configuration. Quiesce API, Auth/Storage writes and workers during the first supported backup procedure. A database dump alone is not a complete backup.
-- Restore into a fresh isolated target with matching provider versions, then verify login, permissions, scanned file download, session revocation and new writes. Preserve mappings and audit actors; invalidate restored application sessions so users authenticate again. Document scheduled backups, off-host destinations and retention as operator responsibilities until automation exists.
+- Restore into a fresh isolated target with matching provider versions, then verify login, permissions, file download, session revocation and new writes. Preserve mappings and audit actors; invalidate restored application sessions so users authenticate again. Document scheduled backups, off-host destinations and retention as operator responsibilities until automation exists.
 - Fresh cutover uses new named volumes and explicit initialization. Retain the old stopped volumes until separately approved for removal. Before new writes, rollback is switching back to the previous code/configuration/volumes. After new writes, rollback needs a tested recovery procedure and cannot simply switch databases without losing work.
 - Support Linux Docker Engine/Compose and Windows Docker Desktop with WSL2/Linux containers, persistent volumes, reboot recovery and documented ports. This is an operator-installed Compose release, not a native Windows service/installer. macOS server certification is removed from the target roadmap/docs.
 
@@ -136,12 +137,12 @@ Inspect existing coverage first. Reuse it where it proves retained behavior; int
 | Invitations / recovery | Email link completes once; preview GET does not consume it; expired/replayed link fails; partial provider/application failure is recoverable without duplicate users or grants. |
 | Authorization regression | Existing role/group/Workspace deny, Board visibility, Report audience, guest expiry and last-admin restrictions remain enforced. |
 | Privileged operation | Correct actor/password can satisfy the existing purge challenge; wrong actor, stale proof or unavailable Auth cannot. |
-| Files | Authorized upload → quarantine → real scan → ready download works; guessed keys, unauthorized users, infected/unscanned files and direct provider requests cannot expose bytes. |
-| Storage failures | Upload timeout, duplicate retry, promotion split failure, digest mismatch, scanner crash and partial delete converge safely under existing reconciliation. |
+| Files | Authorized upload → file-type validation → ready download works; guessed keys, unauthorized users, files with a disallowed or mismatched type, and direct provider requests cannot expose bytes. |
+| Storage failures | Upload timeout, duplicate retry, uncertain upload, digest mismatch and partial delete converge safely under existing reconciliation. |
 | SSE | Cross-process invalidation/refetch works on the new DB; denied/revoked users receive no protected payloads and reconnect rechecks access. |
 | Restore / operating systems | Windows and Linux startup/restart work; isolated restore proves Auth, application relationships, file bytes and subsequent writes together. |
 
-Adapt `backend/tests/postgres_runtime.py` and `fullstack_runner.py` to runner-owned Supabase rather than weakening ownership guards. Update scanner networking, real Auth fixtures, SMTP capture and Storage fixtures. Keep retained targeted HTTP/isolated tests, frontend static checks/build, and backend 90% overall and changed-line coverage gates. Run each applicable full suite at its owning gate; repair narrowly and reuse valid passing evidence.
+Adapt `backend/tests/postgres_runtime.py` and `fullstack_runner.py` to runner-owned Supabase rather than weakening ownership guards. Update real Auth fixtures, SMTP capture and Storage fixtures. Keep retained targeted HTTP/isolated tests, frontend static checks/build, and backend 90% overall and changed-line coverage gates. Run each applicable full suite at its owning gate; repair narrowly and reuse valid passing evidence.
 
 Final integration command remains `python3 scripts/prepush.py --base <recorded-base>`, after updating its change classification and provisioning to the new stack. Retain E2E command, working directory, revision, prerequisites, result and trace/report paths. Windows evidence must come from a Windows host; a Linux container on the current workstation is not Windows acceptance.
 
@@ -149,7 +150,7 @@ Implementation evidence is recorded in `.agent-runtime/supabase-implementation.m
 
 ## 7. External references
 
-- [Supabase self-hosting with Docker](https://supabase.com/docs/guides/self-hosting/docker): deployment responsibilities and published resource baseline. Current guidance lists 4 GB RAM/2 cores/40 GB SSD minimum and 8 GB+/4 cores+/80 GB+ SSD recommended for Supabase components; budget additional capacity for OpenSlate, ClamAV and customer data, then measure.
+- [Supabase self-hosting with Docker](https://supabase.com/docs/guides/self-hosting/docker): deployment responsibilities and published resource baseline. Current guidance lists 4 GB RAM/2 cores/40 GB SSD minimum and 8 GB+/4 cores+/80 GB+ SSD recommended for Supabase components; budget additional capacity for OpenSlate and customer data, then measure.
 - [Pinned self-hosted Compose reference](https://github.com/supabase/supabase/blob/self-hosted/v0.8.2/docker/docker-compose.yml): service dependencies, PostgreSQL distribution and file-backed Storage configuration.
 - [Self-hosted asymmetric authentication](https://supabase.com/docs/guides/self-hosting/self-hosted-auth-keys): configure and verify JWKS, signing keys and server-only API keys.
 - [Auth sign-out](https://supabase.com/docs/reference/javascript/auth-signout): issued JWTs remain usable until expiry without an additional revocation check.

@@ -31,7 +31,7 @@ def test_storage_initialization_creates_private_buckets_and_repeats_without_over
 
     for _ in range(2):
         operation.provision_storage(VALUES, transport=httpx.MockTransport(handler))
-    assert created == ["openslate-quarantine", "openslate-ready"]
+    assert created == ["openslate-ready"]
 
 
 def test_public_bucket_is_refused_without_mutation(monkeypatch):
@@ -39,7 +39,7 @@ def test_public_bucket_is_refused_without_mutation(monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
-        return httpx.Response(200, json={"id": "openslate-quarantine", "public": True})
+        return httpx.Response(200, json={"id": "openslate-ready", "public": True})
 
     with pytest.raises(operation.StorageProvisionError):
         operation.provision_storage(VALUES, transport=httpx.MockTransport(handler))

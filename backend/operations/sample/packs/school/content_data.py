@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from operations.sample.packs.content_types import BoardLinkSpec, ContentSpec, MoneySpec
+from operations.sample.packs.content_types import (
+    BoardFileSpec,
+    BoardLinkSpec,
+    ContentSpec,
+    MoneySpec,
+)
 from operations.sample.packs.school import content_text as text
 from operations.sample.packs.school.people import DEPARTMENT_KEYS, TEAM_GROUPS
 
@@ -20,6 +25,25 @@ _PROJECTS = (
 _POST_STATES = ("draft", "published", "scheduled", "archived")
 _LAYOUTS = ("table", "grid", "gallery", "kanban", "calendar", "timeline")
 _REMINDERS = ("start", "15m", "1d")
+
+# Blank attachments on seeded posts (indexes 0-5 stay visible) and events. None sit on
+# the control anchor Board (Site Safety Review), whose files the controls add and remove.
+_BOARD_FILES = tuple(
+    BoardFileSpec(f"file:{board}:{kind}:{index}", board, kind, index, filename)
+    for board, kind, index, filename in (
+        ("department:student_affairs", "post", 0, "Year 9 trip consent form.docx"),
+        ("department:facilities", "post", 2, "Fire drill route.pdf"),
+        ("department:facilities", "event", 4, "Boiler room inspection photo.jpeg"),
+        ("department:academic", "post", 4, "Spring timetable changes.xlsx"),
+        ("department:admissions", "event", 1, "Open morning campus map.png"),
+        ("department:health", "post", 2, "Allergy action plan template.docx"),
+        ("department:finance", "post", 0, "Lunch account top-up guide.pdf"),
+        ("department:hr", "event", 2, "Staff induction slides.pptx"),
+        ("project:academic:parents-evening-planning", "event", 0, "Evening room plan.pptx"),
+        ("project:student_affairs:clubs-and-enrichment-programme", "post", 1, "Clubs fair.jpg"),
+        ("company", "post", 3, "Term dates for next year.pdf"),
+    )
+)
 
 
 def content_spec() -> ContentSpec:
@@ -65,6 +89,7 @@ def content_spec() -> ContentSpec:
                 ("students:000001", "class_sections:000001"),
             ),
         ),
+        board_files=_BOARD_FILES,
         post_states=_POST_STATES,
         posts_per_board=8,
         events_per_board=12,

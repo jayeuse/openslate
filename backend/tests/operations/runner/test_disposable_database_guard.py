@@ -20,11 +20,8 @@ from app.core.config.instance import (
     instance_target_for_process,
 )
 from tests import postgres_runtime
-from tests.conftest import _guard_integration_database
-from tests.postgres_runtime import (
-    DisposablePostgres,
-    assert_scanner_worker_database,
-)
+from tests.conftest import _guard_for_test, _guard_integration_database
+from tests.postgres_runtime import DisposablePostgres, assert_runner_database_url
 
 
 def test_runner_resource_inventory_matches_provider_compose() -> None:
@@ -323,7 +320,7 @@ def test_swapped_authorized_roles_are_refused_before_connect(
     monkeypatch.setenv("MIGRATION_DATABASE_URL", url)
     engine = MagicMock(side_effect=AssertionError("Guard allowed a swapped role to connect"))
     monkeypatch.setattr(conftest, "create_engine", engine)
-    fixture = getattr(conftest, fixture_name).__wrapped__()
+    fixture = getattr(conftest, fixture_name).__wrapped__(_TestItem())
     with pytest.raises(RuntimeError, match="runner-owned"):
         next(fixture)
     engine.assert_not_called()
@@ -392,13 +389,78 @@ def test_live_resource_inspections_are_batched_and_accept_reordered_results(disp
     }
 
 
-def test_scanner_startup_rechecks_live_database_ownership(disposable_target):
+class _TestItem:
+    def __init__(self) -> None:
+        self.node = MagicMock(stash=pytest.Stash())
+
+
+def test_fixture_guards_verify_docker_once_per_process_and_identity_every_test(
+    disposable_target, monkeypatch
+):
+    from tests import conftest
+
     url, facts = disposable_target
-    application_env = {**os.environ, "DATABASE_URL": url}
-    assert_scanner_worker_database(application_env)
+    calls, connection = facts["inspection_calls"], facts["connection"]
+    monkeypatch.setattr(conftest, "_OWNERSHIP_CACHE", {})
+    item = _TestItem()
+
+    _guard_for_test(item, url)
+    _guard_for_test(item, url)
+    assert (len(calls), connection.exec_driver_sql.call_count) == (4, 1)
+
+    # The next test reuses live Docker ownership but rechecks the database identity.
+    _guard_for_test(_TestItem(), url)
+    assert (len(calls), connection.exec_driver_sql.call_count) == (4, 2)
+
+    # Unrelated settings that tests change do not discard the verdict.
+    monkeypatch.setenv("AUTH_REFRESH_TOKEN_DAYS", "3")
+    _guard_for_test(_TestItem(), url)
+    assert (len(calls), connection.exec_driver_sql.call_count) == (4, 3)
+
+    # A changed ownership input is a new verdict, and here a refusal.
+    monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:59000")
+    with pytest.raises(RuntimeError, match="runner-owned"):
+        _guard_for_test(_TestItem(), url)
+
+
+def test_a_cached_owner_is_still_refused_when_the_database_identity_changes(
+    disposable_target, monkeypatch
+):
+    from tests import conftest
+
+    url, facts = disposable_target
+    monkeypatch.setattr(conftest, "_OWNERSHIP_CACHE", {})
+    _guard_for_test(_TestItem(), url)
+    facts["connection"].exec_driver_sql.return_value.one.return_value = (
+        "postgres",
+        "openslate_runtime",
+        "another-cluster",
+    )
+
+    with pytest.raises(RuntimeError, match="matching live database identity"):
+        _guard_for_test(_TestItem(), url)
+
+
+def test_a_refused_guard_is_never_reused_within_a_test(disposable_target, monkeypatch):
+    from tests import conftest
+
+    url, facts = disposable_target
+    monkeypatch.setattr(conftest, "_OWNERSHIP_CACHE", {})
+    item = _TestItem()
     facts["volume"]["Labels"]["openslate.test.run"] = "other-run"
-    with pytest.raises(RuntimeError, match="exact disposable runtime credentials"):
-        assert_scanner_worker_database(application_env)
+
+    for _attempt in range(2):
+        with pytest.raises(RuntimeError, match="live runner-owned"):
+            _guard_for_test(item, url)
+
+
+def test_runtime_database_guard_rechecks_live_database_ownership(disposable_target):
+    url, facts = disposable_target
+    runtime = frozenset({"openslate_runtime"})
+    assert_runner_database_url(url, dict(os.environ), allowed_roles=runtime)
+    facts["volume"]["Labels"]["openslate.test.run"] = "other-run"
+    with pytest.raises(RuntimeError, match="live runner-owned instance"):
+        assert_runner_database_url(url, dict(os.environ), allowed_roles=runtime)
 
 
 @pytest.mark.parametrize(
@@ -426,7 +488,7 @@ def test_disposable_supabase_starts_pinned_compose_and_writes_private_manifest(
 
     with (tmp_path / "process.log").open("w") as log:
         runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
-        ports = iter((49152, 49153, 49154))
+        ports = iter((49152, 49153, 49154, 49155))
         monkeypatch.setattr(supabase_runtime, "_available_port", lambda: next(ports))
         commands: list[list[str]] = []
 
@@ -437,6 +499,7 @@ def test_disposable_supabase_starts_pinned_compose_and_writes_private_manifest(
             return subprocess.CompletedProcess(arguments, 0, output)
 
         monkeypatch.setattr(runtime, "_compose", compose)
+        monkeypatch.setattr(runtime, "_free_network_block", lambda: 7)
         monkeypatch.setattr(
             runtime, "_ownership",
             lambda: {
@@ -454,7 +517,9 @@ def test_disposable_supabase_starts_pinned_compose_and_writes_private_manifest(
         manifest = runtime.write_manifest()
 
     assert commands[0] == ["config", "--quiet"]
-    assert commands[1] == ["up", "-d", "--wait", "--wait-timeout", "180"]
+    assert commands[1] == ["create"]
+    assert commands[2] == ["up", "-d", "--wait", "--wait-timeout", "180"]
+    assert "subnet: 10.199.7.0/27" in runtime.overlay_file.read_text()
     assert {tuple(command) for command in commands if command[0] == "port"} == {
         ("port", "db", "5432"), ("port", "api-gw", "8000"), ("port", "mailpit", "8025"),
     }
@@ -494,7 +559,7 @@ def test_disposable_supabase_rejects_non_loopback_provider_mapping(
 
     with (tmp_path / "process.log").open("w") as log:
         runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
-        ports = iter((49152, 49153, 49154))
+        ports = iter((49152, 49153, 49154, 49155))
         monkeypatch.setattr(supabase_runtime, "_available_port", lambda: next(ports))
         monkeypatch.setattr(
             runtime,
@@ -503,6 +568,7 @@ def test_disposable_supabase_rejects_non_loopback_provider_mapping(
                 arguments, 0, "0.0.0.0:49152\n" if arguments[0] == "port" else ""
             ),
         )
+        monkeypatch.setattr(runtime, "_free_network_block", lambda: 7)
         with pytest.raises(RuntimeError, match="unexpected host port"):
             runtime.start()
 

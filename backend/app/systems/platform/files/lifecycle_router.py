@@ -77,9 +77,6 @@ def purge_impact(
                 "parent": str(file.record_id),
                 "board": str(file.board_id),
                 "bytes": file.actual_size,
-                "scan_requested_by": str(file.scan_requested_by),
-                "scan_attempts": file.scan_attempts,
-                "scan_next_attempt_at": str(file.scan_next_attempt_at),
             },
             sort_keys=True,
         ).encode()

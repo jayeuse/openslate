@@ -52,6 +52,7 @@ EXPECTED_CONTENT = {
 def test_content_readback_rejects_each_missing_required_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_key: str
 ) -> None:
+    from operations.sample.population import board_files as sample_board_files
     from operations.sample.population import boards as sample_boards
     from operations.sample.population import openview as sample_openview
 
@@ -74,6 +75,11 @@ def test_content_readback_rejects_each_missing_required_outcome(
         sample_boards,
         "verify_boards",
         lambda _admin, *, mappings, organization=None: {key: observed[key] for key in board_keys},
+    )
+    monkeypatch.setattr(
+        sample_board_files,
+        "verify_seeded_attachments",
+        lambda _admin, *, mappings, organization=None: (7, []),
     )
     monkeypatch.setattr(
         sample_openview,

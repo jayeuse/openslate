@@ -102,19 +102,12 @@ def test_lost_final_ack_replays_identical_outcome_without_second_archive(tmp_pat
     assert sum("stop" in args for args, _ in commands.calls) == 1
 
 
-def test_halted_scanner_and_failed_readiness_keep_caddy_closed(tmp_path: Path) -> None:
+def test_failed_readiness_keeps_caddy_closed(tmp_path: Path) -> None:
     config, state = runner_config(tmp_path)
     commands = SyntheticCommands(config)
-    scanner = next(
-        item
-        for item in commands.containers
-        if item["Config"]["Labels"]["com.docker.compose.service"] == "scanner-worker"
-    )
-    scanner["State"] = {"Status": "exited", "Running": False}
     commands.readiness = False
     with pytest.raises(RunnerError, match="readiness_failed"):
         execute(config, state, commands)
-    assert scanner["State"]["Status"] == "exited"
     caddy = next(
         item
         for item in commands.containers

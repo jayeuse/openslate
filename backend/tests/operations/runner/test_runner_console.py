@@ -2,6 +2,7 @@
 
 import io
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -26,9 +27,9 @@ def test_pytest_results_reach_the_terminal_as_one_short_line_each() -> None:
 
 
 def test_a_huge_parametrized_id_is_shortened_and_keeps_its_outcome() -> None:
-    line = progress_line(f"tests/files/test_clamav.py::test_id[{'x' * 26_000_000}] PASSED [  3%]")
+    line = progress_line(f"tests/files/test_routes.py::test_id[{'x' * 26_000_000}] PASSED [  3%]")
 
-    assert line is not None and line.startswith("  3% PASSED  tests/files/test_clamav.py")
+    assert line is not None and line.startswith("  3% PASSED  tests/files/test_routes.py")
     assert len(line) < 160
 
 
@@ -98,7 +99,7 @@ def test_e2e_browsers_are_headless_unless_requested_and_always_headless_in_ci(
 
 def test_a_stopped_runner_still_runs_its_cleanup() -> None:
     # TaskStop and `kill` send SIGTERM; Python's default action skipped every finally
-    # block, so the disposable Supabase stack and scanner kept running.
+    # block, so the disposable Supabase stack kept running.
     saved = {number: signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGHUP)}
     cleaned = []
     try:
@@ -122,8 +123,11 @@ def test_a_shard_line_is_logged_and_shown_with_its_shard_name(
 
     relay(io.StringIO(" 50% PASSED  tests/a.py::test_b\n"), log, "[2/3]")
 
-    assert log.getvalue() == " 50% PASSED  tests/a.py::test_b\n"
-    assert capsys.readouterr().out == "[2/3]  50% PASSED  tests/a.py::test_b\n"
+    # Each line carries its wall-clock time so shard stage durations can be read back.
+    assert re.fullmatch(r"\d\d:\d\d:\d\d  50% PASSED  tests/a.py::test_b\n", log.getvalue())
+    assert re.fullmatch(
+        r"\[2/3\] \d\d:\d\d:\d\d  50% PASSED  tests/a.py::test_b\n", capsys.readouterr().out
+    )
 
 
 class _Installed(Exception):
@@ -253,7 +257,7 @@ class _Group:
 @pytest.mark.parametrize(
     ("group", "missing_from", "signals"),
     [
-        (_Group(exited=True), 0, []),
+        (_Group(exited=True), 0, [signal.SIGTERM, signal.SIGKILL]),
         (_Group(), 1, [signal.SIGTERM, signal.SIGKILL]),
         (_Group(waits=1), 9, [signal.SIGTERM, signal.SIGKILL, signal.SIGKILL]),
         (_Group(waits=1), 2, [signal.SIGTERM, signal.SIGKILL, signal.SIGKILL]),
@@ -277,6 +281,41 @@ def test_a_group_that_ends_during_a_stop_counts_as_stopped(
     runner_console.stop_process_group(group)  # type: ignore[arg-type]
 
     assert sent == signals
+
+
+_LEADER = """
+import subprocess, sys
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+open(sys.argv[1], "w").write(str(child.pid))
+"""
+
+
+def test_a_stop_reaches_what_an_exited_leader_left_running(tmp_path: Path) -> None:
+    # Review finding 4: stop_process_group returned once the leader had exited, so a
+    # child still holding the output pipe kept running.
+    import time
+
+    pid_file = tmp_path / "child"
+    leader = subprocess.Popen(
+        [sys.executable, "-c", _LEADER, str(pid_file)], start_new_session=True
+    )
+    child = 0
+    try:
+        leader.wait(timeout=30)
+        child = int(pid_file.read_text())
+        assert not _gone(child), "the child ended before the stop"
+
+        runner_console.stop_process_group(leader, timeout=5)
+
+        deadline = time.monotonic() + 10
+        while not _gone(child):
+            assert time.monotonic() < deadline, f"still running: {child}"
+            time.sleep(0.05)
+    finally:
+        try:
+            os.killpg(leader.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def test_smoke_evidence_keeps_each_test_outcome_without_other_output(tmp_path: Path) -> None:

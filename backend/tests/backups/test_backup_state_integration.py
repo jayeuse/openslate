@@ -27,6 +27,11 @@ def _queue(db: Session, name: str = "Boundary backup"):
     return db.get(BackupRun, UUID(response.json()["id"]))
 
 
+def _after_database_now(db: Session) -> datetime:
+    """One second after the database clock; Docker's VM clock can run ahead of the host."""
+    return db.connection().scalar(text("SELECT clock_timestamp()")) + timedelta(seconds=1)
+
+
 def _identity(db: Session) -> str:
     return db.connection().scalar(text("SELECT current_setting('cluster_name')"))
 
@@ -40,7 +45,7 @@ def test_claim_replay_outcome_cas_and_failed_claim_remains_unresolved(
     run = _queue(integration_db)
     second = _queue(integration_db, "Waiting")
     instance, claim_id = _identity(integration_db), uuid4()
-    current = datetime.now(UTC) + timedelta(seconds=1)
+    current = _after_database_now(integration_db)
     claimed = service.claim_run(integration_db, instance, claim_id, now=current)
     assert claimed.id == run.id and claimed.state == "running"
     assert service.claim_run(integration_db, instance, claim_id, now=current).id == run.id
@@ -180,7 +185,7 @@ def test_database_excludes_second_unresolved_claim_independently_of_service(
     from app.systems.manage.backups import service
 
     first, second = _queue(integration_db), _queue(integration_db, "Second claim")
-    started = datetime.now(UTC) + timedelta(seconds=1)
+    started = _after_database_now(integration_db)
     service.claim_run(integration_db, _identity(integration_db), uuid4(), now=started)
     assert first.started_at is not None
     second.started_at, second.claim_id, second.state = started, uuid4(), "running"
@@ -265,12 +270,17 @@ def test_version_failure_preserves_success_and_retention_protects_latest(
     assert observed.status == "unavailable" and observed.latest_version == "9.0.0"
     assert observed.observed_at == NOW
     rows = []
-    start = datetime.now(UTC) + timedelta(seconds=1)
+    previous = None
     for index in range(2):
         run = _queue(integration_db, f"Completed {index}")
+        # After the queue request: its requested_at comes from the database clock.
+        at = _after_database_now(integration_db)
+        if previous is not None:
+            at = max(at, previous + timedelta(seconds=10))
+        previous = at
         claim = uuid4()
         service.claim_run(
-            integration_db, instance, claim, now=start + timedelta(seconds=index * 10)
+            integration_db, instance, claim, now=at
         )
         service.record_outcome(
             integration_db,
@@ -282,11 +292,11 @@ def test_version_failure_preserves_success_and_retention_protects_latest(
                 run_id=run.id,
                 claim_id=claim,
                 state="succeeded",
-                finished_at=start + timedelta(seconds=index * 10 + 3),
-                reconciled_at=start + timedelta(seconds=index * 10 + 4),
+                finished_at=at + timedelta(seconds=3),
+                reconciled_at=at + timedelta(seconds=4),
                 snapshot_id=str(index) * 64,
                 manifest_sha256="a" * 64,
-                verified_at=start + timedelta(seconds=index * 10 + 2),
+                verified_at=at + timedelta(seconds=2),
                 failure_code=None,
             ),
         )
@@ -299,7 +309,7 @@ def test_version_failure_preserves_success_and_retention_protects_latest(
         run_id=latest.id,
         claim_id=latest.claim_id,
         snapshot_id=latest.snapshot_id,
-        expired_at=start + timedelta(days=90),
+        expired_at=at + timedelta(days=90),
     )
     with pytest.raises(service.BackupStateError, match="backup_latest_protected"):
         service.record_expiry(integration_db, instance, expiry)
@@ -326,7 +336,7 @@ def test_heartbeat_refreshes_last_seen_only_for_the_running_claim(
     _queue(integration_db)
     instance, claim_id = _identity(integration_db), uuid4()
     service.claim_run(
-        integration_db, instance, claim_id, now=datetime.now(UTC) + timedelta(seconds=1)
+        integration_db, instance, claim_id, now=_after_database_now(integration_db)
     )
     policy = integration_db.scalar(select(BackupPolicy))
     assert policy is not None

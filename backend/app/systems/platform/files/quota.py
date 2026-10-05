@@ -1,4 +1,4 @@
-"""Serialize quarantine admission without blocking cleanup of existing inventory."""
+"""Serialize pending-upload admission without blocking cleanup of existing inventory."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 from app.systems.platform.files.access import error
 from app.systems.platform.files.models import File
 
-QUARANTINE_COUNT = 100
-QUARANTINE_BYTES = 1024 * 1024 * 1024
+PENDING_UPLOAD_COUNT = 100
+PENDING_UPLOAD_BYTES = 1024 * 1024 * 1024
 LOGO_CHARGE = 2 * 1024 * 1024
 RESERVATION_TTL = timedelta(hours=24)
-# Stable application namespace, distinct from the worker leadership lock.
+# Stable application advisory-lock namespace for file admission.
 QUOTA_LOCK = 57168423129478011
 
 
@@ -36,11 +36,11 @@ def require_capacity(db: Session, purpose: str, expected_size: int) -> None:
                 ),
                 0,
             ),
-        ).where(File.state.not_in(("ready", "purged")))
+        ).where(File.state.in_(("awaiting_upload", "uploading")))
     ).one()
     charge = LOGO_CHARGE if purpose == "workspace_logo" else expected_size
-    if count >= QUARANTINE_COUNT or size + charge > QUARANTINE_BYTES:
-        raise error("file_quarantine_full", "Pending file capacity is full", 409)
+    if count >= PENDING_UPLOAD_COUNT or size + charge > PENDING_UPLOAD_BYTES:
+        raise error("file_uploads_full", "Pending upload capacity is full", 409)
 
 
 def require_live_reservation(file: File, *, now: datetime | None = None) -> None:

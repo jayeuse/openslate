@@ -12,7 +12,7 @@ def test_reset_phase_selects_only_its_fixed_target_without_starting_application(
     tmp_path, monkeypatch
 ):
     commands = []
-    scanner = _stub_fullstack_prerequisites(
+    _stub_fullstack_prerequisites(
         monkeypatch, tmp_path, lambda command, **_kwargs: commands.append(command) or MagicMock()
     )
     observed = {}
@@ -31,7 +31,6 @@ def test_reset_phase_selects_only_its_fixed_target_without_starting_application(
     assert observed["environment"]["OPENSLATE_TEST_RESET_ACCEPTANCE"] == "1"
     assert observed["environment"]["OPENSLATE_ENV_SOURCE"] == "process"
     assert "OPENSLATE_TEST_DATABASE_MANIFEST" in observed["environment"]
-    scanner.start.assert_not_called()
     assert not any(command[:2] == ["npm", "run"] for command in commands)
 
 

@@ -7,7 +7,7 @@ import pytest
 from tests import fullstack_runner as runner
 
 
-@pytest.mark.parametrize("mode", ["coverage", "batch", "acceptance", "full", "scanner"])
+@pytest.mark.parametrize("mode", ["coverage", "batch", "acceptance", "full"])
 @pytest.mark.parametrize("occupied_port", [8008, 3448])
 def test_runner_requires_only_ports_used_by_selected_mode(
     tmp_path, monkeypatch, mode, occupied_port
@@ -21,7 +21,6 @@ def test_runner_requires_only_ports_used_by_selected_mode(
         "batch": ["--backend-batch", "tests/test_sample.py"],
         "acceptance": ["--acceptance-only"],
         "full": [],
-        "scanner": ["--scanner-only"],
     }[mode]
 
     def bind(address):
@@ -43,7 +42,7 @@ def test_runner_requires_only_ports_used_by_selected_mode(
         prepare.assert_not_called()
 
 
-@pytest.mark.parametrize("mode", ["acceptance", "full", "scanner"])
+@pytest.mark.parametrize("mode", ["acceptance", "full"])
 def test_runner_does_not_reserve_the_retired_frontend_server_port(
     tmp_path, monkeypatch, mode
 ):
@@ -51,7 +50,6 @@ def test_runner_does_not_reserve_the_retired_frontend_server_port(
     arguments = {
         "acceptance": ["--acceptance-only"],
         "full": [],
-        "scanner": ["--scanner-only"],
     }[mode]
 
     listener = MagicMock()

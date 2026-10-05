@@ -57,8 +57,6 @@ def committed_logo(guarded_db):
             digest=sha256(content).hexdigest(),
             object_key=uuid4().hex,
             state="ready",
-            scanner_version="fixture",
-            signature_version="fixture",
         )
         db.add(file)
         db.flush()

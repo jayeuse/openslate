@@ -132,7 +132,7 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
         reports = [
             f"--splits={total}",
             f"--group={group}",
-            "--splitting-algorithm=duration_based_chunks",
+            "--splitting-algorithm=least_duration",
             f"--durations-path={durations}",
             "--store-durations",
             "--clean-durations",

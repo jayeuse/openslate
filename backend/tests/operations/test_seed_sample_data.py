@@ -396,7 +396,7 @@ def test_plan_summary_reports_exact_profile_counts_and_fixed_supporting_catalogu
         "posts": 96,
         "events": 144,
         "reminders": 24,
-        "attachments": 0,
+        "attachments": 11,
         "views": 36,
         "dashboards": 6,
         "dashboard_widgets": 24,

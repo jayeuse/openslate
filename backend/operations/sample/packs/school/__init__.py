@@ -185,7 +185,7 @@ PACK = OrganizationPack(
             "posts": 88,
             "events": 132,
             "reminders": 22,
-            "attachments": 0,
+            "attachments": 11,
             "views": 42,
             "dashboards": 7,
             "dashboard_widgets": 28,

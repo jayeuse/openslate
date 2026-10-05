@@ -30,34 +30,17 @@ pytestmark = pytest.mark.integration
 class _Store:
     def __init__(self, db):
         self.db = db
-        self.quarantine: dict[str, bytes] = {}
         self.objects: dict[str, bytes] = {}
 
     def upload(self, key: str, content: bytes, _media_type: str) -> None:
         assert not self.db.in_transaction()
-        self.quarantine[key] = content
-
-    def read_quarantine(self, key: str) -> bytes | None:
-        assert not self.db.in_transaction()
-        return self.quarantine.get(key)
-
-    def promote(self, key: str, *, expected_digest: str, expected_size: int) -> None:
-        assert not self.db.in_transaction()
-        content = self.quarantine.get(key)
-        assert content is not None
-        assert (sha256(content).hexdigest(), len(content)) == (expected_digest, expected_size)
         self.objects[key] = content
 
     def download(self, key: str) -> bytes | None:
         assert not self.db.in_transaction()
         return self.objects.get(key)
 
-    def stat(self, key: str, *, quarantine: bool):
-        del key, quarantine
-        raise AssertionError("The attachment policy test does not reconcile storage")
-
     def delete(self, key: str) -> None:
-        self.quarantine.pop(key, None)
         self.objects.pop(key, None)
 
 
@@ -97,8 +80,6 @@ def _ready_file(db, actor: User, record: Record, content: bytes) -> File:
         digest=sha256(content).hexdigest(),
         object_key=uuid4().hex,
         state="ready",
-        scanner_version="test",
-        signature_version="test",
     )
     db.add(file)
     db.commit()
@@ -152,18 +133,7 @@ def test_record_attachment_routes_allow_a_member_who_can_write_the_module(guarde
             headers={"Content-Type": "application/octet-stream"},
         )
         assert uploaded.status_code == 200, uploaded.text
-
-        file = db.get(File, file_id)
-        assert file is not None and file.digest is not None and file.actual_size is not None
-        key, digest, size = file.object_key, file.digest, file.actual_size
-        db.commit()
-        storage.promote(key, expected_digest=digest, expected_size=size)
-        file = db.get(File, file_id)
-        assert file is not None
-        file.state = "ready"
-        file.scanner_version = "test"
-        file.signature_version = "test"
-        db.commit()
+        assert uploaded.json()["state"] == "ready"
         downloaded = client.get(path + "/content")
         assert downloaded.status_code == 200 and downloaded.content == content
         archived = client.post(path + "/archive")

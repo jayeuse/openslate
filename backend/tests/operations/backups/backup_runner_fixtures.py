@@ -30,8 +30,6 @@ SERVICES = (
     "api-gw",
     "provider-volume-init",
     "api",
-    "scanner-worker",
-    "clamav",
     "caddy",
 )
 

@@ -170,7 +170,7 @@ def test_close_does_not_archive_file_or_view(query_db):
         filename="private.pdf",
         expected_size=100,
         object_key=uuid7().hex,
-        state="pending_scan",
+        state="awaiting_upload",
     )
     view = SavedView(
         module_id=module.id,
@@ -182,5 +182,5 @@ def test_close_does_not_archive_file_or_view(query_db):
     plan = plan_lifecycle(query_db, "module", module.id, "close", None)
     assert not any(row.entity_type in {"files", "saved_views"} for row in plan.rows)
     execute_lifecycle(query_db, plan)
-    assert not attachment.is_deleted and attachment.state == "pending_scan"
+    assert not attachment.is_deleted and attachment.state == "awaiting_upload"
     assert not view.is_deleted

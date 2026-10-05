@@ -1,4 +1,4 @@
-"""Revisioned Board posts, events, and record links without file insertion."""
+"""Revisioned Board posts, events, and record links."""
 
 from __future__ import annotations
 

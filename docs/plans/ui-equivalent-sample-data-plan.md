@@ -6,7 +6,7 @@
 
 ## Contract and current limit
 
-The user subsequently excluded **all file insertion and scanner-dependent sample acceptance**. Small and Standard create zero attachments. Remove no scanner feature or application scan enforcement as part of this task; only omit file seeding. Existing partial uploads are cleaned through the guarded reset.
+File scanning was removed on 2026-10-05: an upload is ready when its request finishes. Sample runs therefore include the Board attachment controls (reserve, upload, attach, download, remove) with generated blank-but-valid dummy files, and the Harbor and School packs seed named attachments on posts and events. The `/api/files` routes have no UI control, so sample runs do not seed them. Existing partial uploads are cleaned through the guarded reset.
 
 Every populated value must be enterable through an existing supported UI control. Population must use that control's authenticated API operation with the same validation, authorization, concurrency, and audit behavior. Do not insert application rows directly, call internal services, provision identities through provider-admin APIs, or fabricate audit entries.
 
@@ -50,12 +50,12 @@ Retain Harbor Operations Group with six departments and 24 modules. Use the exis
 | Boards | Built-in Company Board, six department Boards, and five project Boards; project access uses groups, department access follows its department |
 | Board content | 96 posts, 144 events, genuine post revisions, and 24 event reminder configurations using supported timings |
 | OpenView | 36 shared module Views across supported layouts, six department Dashboards with four widgets each, and 12 shared Reports; configure only outputs available through current controls |
-| Files | Excluded by user instruction; zero inserted files or attachments |
+| Files | Board post and event attachments from the pack's named entries, uploaded through the Board attachment controls with generated dummy files |
 | History | Genuine user-attributed mutations and supported publication, scheduling, notification, and report-run history |
 
 Counts are proposed targets, not evidence of created data. `plan` must report the exact admitted counts and exclusions before any future population. Chart settings are page-local and are not persistent sample entities. Report runs against empty modules may demonstrate empty-output behavior, not populated business results.
 
-Exclude file insertion and scanner acceptance, removed custom roles, service identities, access rules/defaults/deny policies, Board grants/templates/favorites/homes/personal read or bookmark states, content audiences, private Dashboards, and saved chart preferences. Workspace execution is not represented as a fabricated service account. Include real record links, live record-trigger scenarios, populated CSV/report outputs, and cross-module business journeys after the authoring prerequisite passes.
+Exclude `/api/files` record, library, and logo uploads (no UI control), removed custom roles, service identities, access rules/defaults/deny policies, Board grants/templates/favorites/homes/personal read or bookmark states, content audiences, private Dashboards, and saved chart preferences. Workspace execution is not represented as a fabricated service account. Include real record links, live record-trigger scenarios, populated CSV/report outputs, and cross-module business journeys after the authoring prerequisite passes.
 
 Use the counts the run manifest records. Harbor Standard uses each old module count divided by four and rounded upward (5,001 records). Small uses each Standard count divided by five and rounded upward, with a minimum of one (1,001 records). Large uses four times each Standard count (20,004 records) and remains opt-in. The table below records the frozen version 1 distribution: Small used five percent rounded upward, Standard used 20,000, and Large used five times Standard. Retain deterministic business values with seed 42 and an explicit pack-local business-date anchor; server IDs, passwords and authentication timestamps remain newly generated.
 
@@ -135,7 +135,7 @@ Use the existing HTTP client, normal login/refresh flow, isolated cookie jars, O
 
 Write sequentially, respect rate limits, and retain logical/server ID mappings and completed-operation status in a private journal without credentials. Do not blindly replay an uncertain POST or silently overwrite a partial run. A timeout is an incomplete outcome, not successful population.
 
-Run from `backend/` with the owned API available (the optional development scanner is not a seeding prerequisite):
+Run from `backend/` with the owned API available:
 
 ```sh
 uv run python operations/seed_sample_data.py plan --profile standard

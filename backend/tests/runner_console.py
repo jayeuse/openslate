@@ -11,6 +11,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import IO
 
@@ -98,23 +99,35 @@ def _signal_group(group: int, number: int) -> None:
         os.killpg(group, number)
     except ProcessLookupError:
         pass  # The group has ended already.
+    except PermissionError:
+        # macOS answers EPERM when only unreaped zombies remain in our own group.
+        pass
 
 
 def stop_process_group(process: subprocess.Popen[str], timeout: float = 10) -> None:
     """Stop a group leader and everything it started; a group that has ended counts as stopped.
 
-    The process must have started with start_new_session=True.
+    The process must have started with start_new_session=True. An exited leader does not
+    prove its group has ended, so the group is always signalled.
     """
-    if process.poll() is not None:
-        return
-    _signal_group(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    stop_process_groups([process], timeout)
+
+
+def stop_process_groups(processes: list[subprocess.Popen[str]], timeout: float) -> None:
+    """Stop several group leaders at once: SIGTERM each group once, wait for all of them
+    against one deadline, then SIGKILL every group that is still running."""
+    for process in processes:
+        _signal_group(process.pid, signal.SIGTERM)
+    deadline = time.monotonic() + timeout
+    for process in processes:
+        try:
+            process.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            _signal_group(process.pid, signal.SIGKILL)
+            process.wait()
+    for process in processes:
+        # Descendants that outlive the leader are still in its group.
         _signal_group(process.pid, signal.SIGKILL)
-        process.wait()
-    # Descendants that outlive the leader are still in its group.
-    _signal_group(process.pid, signal.SIGKILL)
 
 
 PLAYWRIGHT_OUTCOMES = {"✓": "passed", "ok": "passed", "✘": "failed", "x": "failed", "-": "skipped"}
@@ -163,9 +176,13 @@ def stop_on_signals() -> None:
 
 
 def relay(lines: IO[str], log: IO[str], prefix: str) -> None:
-    """Copy a shard's output to its log and to the terminal with the shard name in front."""
+    """Copy a shard's output to its log and to the terminal with the shard name in front.
+
+    Each line carries its wall-clock time, so per-shard stage durations can be read back.
+    """
     for line in lines:
-        log.write(line)
+        stamped = f"{time.strftime('%H:%M:%S')} {line}"
+        log.write(stamped)
         log.flush()
-        sys.stdout.write(f"{prefix} {line}")
+        sys.stdout.write(f"{prefix} {stamped}")
         sys.stdout.flush()

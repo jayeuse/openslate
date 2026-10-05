@@ -57,7 +57,7 @@ prepared:
 
 For a client installation, follow the Supabase operator guide for production
 Compose. It specifies when to start the provider services, provision roles and
-schema, create Storage buckets, and then start the API, scanner, and production
+schema, create the Storage bucket, and then start the API and the production
 Caddy service. Do not use the preview action as a substitute for that sequence.
 
 When adding a command:

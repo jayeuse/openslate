@@ -15,9 +15,9 @@ by a developer's persistent Supabase project.
 
 Focused pytest cases support repair; the owning backend gate runs the complete
 disposable backend suite. Separate runner modes include `--backend-coverage-only`,
-`--scanner-only`, `--acceptance-only`, and `--browser-only`. From `backend/`, `uv run
+`--acceptance-only`, and `--browser-only`. From `backend/`, `uv run
 python -m tests.fullstack_runner --acceptance-only` exercises the isolated provider,
-scanner, FastAPI, Caddy gateway, and browser flow under `ENVIRONMENT=test`; that is
+FastAPI, Caddy gateway, and browser flow under `ENVIRONMENT=test`; that is
 local gateway evidence, not public TLS or customer-host acceptance. The root
 [`prepush.py`](../../scripts/prepush.py) plan and [backend
 workflow](../../.github/workflows/backend.yml) retain Ruff, mypy, backup contract tests,
@@ -36,17 +36,30 @@ different source tree fails the gate. `pytest-split` balances the shards with
 `backend-coverage` artifact; commit that file again when a shard takes much longer than
 the others. Local `prepush.py` runs `python -m tests.parallel_coverage`: three shards on
 their own disposable stacks at the same time, then the same combine step and gates. Each
-shard writes to its own folder under `backend/test-results/coverage-shards/`. Each shard
-stack creates six Docker networks, and Docker Desktop's default address pools hold about
-30, so three shards fit beside the development stack. A shard that fails at PostgreSQL
-startup with "all predefined address pools have been fully subnetted" means networks from
-another stack still exist; `docker network ls` shows them. On a machine with less memory,
+shard writes to its own folder under `backend/test-results/coverage-shards/`. Each test
+stack gets its own `/24` in `10.199.0.0/16`, outside Docker's default address pools, under
+a short cross-process allocation lock, so parallel stacks never exhaust those pools. Test
+stacks run PostgreSQL without crash durability (`fsync`, `synchronous_commit`, and
+`full_page_writes` off) and memoize repeated `docker inspect` answers inside one pytest
+process; the per-test guard still checks the connected database identity every time.
+Backend-only stacks (coverage, its shards, and batches) point Auth's email templates at
+their own host port, `29000` plus the stack's network block, which is unique per live
+stack and below the ephemeral and Kubernetes NodePort ranges. Full-stack and smoke runs
+keep port `8008`, where the runner's API serves the templates. On a machine with less memory,
 run `prepush.py --coverage-stacks 1` (one stack, the single `--backend-coverage-only` run)
 or `--coverage-stacks 2`; the coverage gates do not change.
 
 The committed Auth/Storage reset acceptance has its own mandatory
 `--reset-acceptance-only` invocation in both gates. Local `prepush.py` runs it after
-ordinary backend coverage; CI runs it as a parallel job.
+ordinary backend coverage; CI runs it as a parallel job. Locally, the frontend and
+backend lanes run at the same time, and the server image builds after the frontend build
+in the frontend lane. The other lanes wait until the backend coverage stacks have
+booted, so stack startup does not share the host with heavy work. When more than one
+lane runs, each lane logs to `backend/test-results/prepush/<lane>.log`; `--serial` runs
+the lanes one after another on the terminal. Ctrl-C, SIGTERM, or SIGHUP stops every
+running lane so its runner tears down its stacks; `tests.parallel_coverage` passes the
+stop to each shard once and waits for its teardown (bounded, then killed). A lane that
+breaks, or a planned step that never ran, fails the gate.
 This mode creates a new disposable stack and selects one fixed, noninteractive
 acceptance target. The target is outside ordinary pytest filename discovery because
 the reset CLI commits installation-wide cleanup. Public batch target validation and
@@ -55,7 +68,7 @@ or failing reset acceptance cannot pass the dedicated gate.
 
 Provider acceptance should cover identity binding, revoked-session rejection, invitation
 and recovery links, application authorization, denied provider-key access to application
-tables, private Storage transfers, integrity checks, scanner failure, and
+tables, private Storage transfers, file-type validation, integrity checks, and
 cleanup/reconciliation. These journeys use only an isolated disposable stack and test
 identities. Provider container health alone does not establish application readiness or
 prove a user journey. Database-backed tests require the runner-owned target and its
@@ -133,7 +146,7 @@ desktop app's terminal slowed the whole machine, so speed comes first:
   `npm test` to watch the `http` project.
 
 The runners turn SIGTERM and SIGHUP into an interrupt, and they stop each command's whole
-process group before they remove the disposable stack and scanner, so a stopped run leaves
+process group before they remove the disposable stack, so a stopped run leaves
 nothing behind.
 
 ## Acceptance boundaries
@@ -144,13 +157,12 @@ A guarded isolated production Compose rehearsal exercised a real five-volume enc
 backup and restore, TLS trust, authorization and file access, and service restart using
 Linux containers on macOS Docker Desktop. Native Linux host installation and post-reboot
 recovery remain unaccepted. Windows Docker Desktop/WSL2 startup, reboot, persistent-volume
-recovery, scanner, and restore checks remain pending because no Windows acceptance host is
+recovery, and restore checks remain pending because no Windows acceptance host is
 available. macOS is a development workstation only, not a supported server target.
 
-`/api/ready` reports Database, Auth, Storage, SMTP configuration, and scanner states.
-Acceptance must exercise provider outages, missing mail configuration, required versus
-optional scanners, engine and worker absence, and caller deadlines without spawning
-replacement work. Production readiness still requires live acceptance; its response
+`/api/ready` reports Database, Auth, Storage, and SMTP configuration states.
+Acceptance must exercise provider outages, missing mail configuration, and caller
+deadlines without spawning replacement work. Production readiness still requires live acceptance; its response
 does not establish mail delivery, schema compatibility, or backup integrity. Supabase
 Realtime is not started; its future use needs its own authorization and acceptance design.
 Documentation-only edits require diff and link review, not application test execution.

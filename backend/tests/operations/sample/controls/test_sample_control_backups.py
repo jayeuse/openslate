@@ -29,7 +29,7 @@ def test_backup_plan_adds_one_action_per_public_operation_with_authored_name(pac
         "review_backup_history",
         "review_version",
     ]
-    assert len(actions) == 89
+    assert len(actions) == 95
     assert all(row.actor_key == "admin" and row.phase == "reorganization" for row in backups)
     queue = backups[2]
     assert queue.expected_status == 201

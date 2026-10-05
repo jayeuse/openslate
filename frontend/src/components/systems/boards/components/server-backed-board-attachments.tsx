@@ -11,9 +11,7 @@ import {
   downloadBoardAttachment,
   listBoardAttachments,
   MAX_BOARD_ATTACHMENT_BYTES,
-  readBoardFile,
   reserveBoardFile,
-  scanBoardFile,
   uploadBoardFile,
   type BoardAttachmentFile,
   type BoardAttachmentTarget,
@@ -50,15 +48,28 @@ type EditableProps = {
 };
 type Props = ReadOnlyProps | EditableProps;
 
+// An uploaded, ready file whose attach request failed; it can be retried.
 type PendingFile = {
   id: string;
   filename: string;
-  expectedSize: number;
-  state: "pending_scan" | "ready";
 };
 
-const AUTOMATIC_SCAN_CHECKS = 100;
-const SCAN_CHECK_INTERVAL_MS = 500;
+// A stored-file state that the user can act on; its message is shown as is.
+class AttachmentFileError extends Error {}
+
+// File validation refuses the bytes (422), or the file is stored as rejected.
+const REJECTED_UPLOAD =
+  "This file could not be stored. Check the file and try again.";
+// The bytes may have been stored even though the response was unusable.
+const UNCLEAR_UPLOAD =
+  "The upload result is unclear. Use Attach file to finish, or choose the file again.";
+
+function ambiguousUpload(error: unknown): boolean {
+  if (error instanceof ApiError) return error.status >= 500;
+  return !(error instanceof AttachmentFileError);
+}
+// Matches the backend extension allowlist in files/validation.py.
+const ATTACHMENT_ACCEPT = ".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.pptx";
 
 function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -66,33 +77,19 @@ function isAbort(error: unknown): boolean {
 
 function messageFor(error: unknown, action: string): string {
   if (error instanceof ApiError) {
+    if (String(error.code) === "file_uploads_full")
+      return "Too many uploads are still unfinished. Try again later.";
     if (error.status === 409)
-      return "This content changed. The latest versions were checked; retry the attachment action or reload the editor.";
+      return "This content changed. Try again, or reload the editor.";
     if ([401, 403, 404].includes(error.status))
       return "This content or file is no longer available to you.";
-    if (error.status === 413) return "This file is too large to upload.";
+    if (error.status === 413) return "This file is larger than 25 MiB.";
     if (error.status === 422)
       return "The file or attachment request was rejected. Check the file and try again.";
   }
   if (error instanceof ApiContractError)
     return "The server returned an invalid attachment response. Refresh and try again.";
   return `Could not ${action}. Try again.`;
-}
-
-function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted)
-    return Promise.reject(new DOMException("Request canceled", "AbortError"));
-  return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
-      signal.removeEventListener("abort", abort);
-      resolve();
-    }, milliseconds);
-    function abort() {
-      window.clearTimeout(timeout);
-      reject(new DOMException("Request canceled", "AbortError"));
-    }
-    signal.addEventListener("abort", abort, { once: true });
-  });
 }
 
 function formatSize(bytes: number): string {
@@ -113,14 +110,15 @@ function targetKey(target: BoardAttachmentTarget): string {
     : `post:${target.boardId}:${target.contentId}:${target.view}`;
 }
 
-function scanFailure(file: BoardAttachmentFile): Error | null {
+function uploadFailure(file: BoardAttachmentFile): Error | null {
+  if (file.state === "ready") return null;
   if (file.state === "rejected")
-    return new Error(
-      "The security scan rejected this file. It was not attached.",
-    );
+    return new AttachmentFileError(REJECTED_UPLOAD);
   if (file.state === "purged" || file.state === "deleting")
-    return new Error("This file is no longer available to attach.");
-  return null;
+    return new AttachmentFileError(
+      "This file is no longer available to attach.",
+    );
+  return new ApiContractError();
 }
 
 export function ServerBoardAttachments(props: Props) {
@@ -225,7 +223,7 @@ export function ServerBoardAttachments(props: Props) {
   }
 
   async function attachReadyFile(file: PendingFile) {
-    if (!editable || editable.locked || file.state !== "ready") return;
+    if (!editable || editable.locked) return;
     setOperation(`Attaching ${file.filename}…`);
     setError(null);
     setNotice(null);
@@ -248,6 +246,7 @@ export function ServerBoardAttachments(props: Props) {
         try {
           await refreshVersions();
         } catch {
+          setPendingFile(file);
           setError(
             "The content changed. Reload it before attaching this file.",
           );
@@ -259,19 +258,6 @@ export function ServerBoardAttachments(props: Props) {
     } finally {
       setOperation(null);
     }
-  }
-
-  async function waitForScan(file: PendingFile, signal: AbortSignal) {
-    for (let attempt = 0; attempt < AUTOMATIC_SCAN_CHECKS; attempt += 1) {
-      await delay(SCAN_CHECK_INTERVAL_MS, signal);
-      const current = await readBoardFile(boardId, file.id, signal);
-      const failure = scanFailure(current);
-      if (failure) throw failure;
-      if (current.state === "ready")
-        return { ...file, state: "ready" as const };
-      setPendingFile({ ...file, state: "pending_scan" });
-    }
-    return null;
   }
 
   async function uploadSelectedFile(file: File) {
@@ -293,103 +279,38 @@ export function ServerBoardAttachments(props: Props) {
     operationController.current = controller;
     setError(null);
     setNotice(null);
-    setOperation(`Uploading and scanning ${file.name}…`);
-    let reserved: BoardAttachmentFile | null = null;
+    setOperation(`Uploading ${file.name}…`);
+    let reserved: PendingFile | null = null;
     try {
       reserved = await reserveBoardFile(boardId, {
         filename: file.name,
         expectedSize: file.size,
       });
-      await uploadBoardFile(boardId, reserved.id, file, controller.signal);
-      const scan = await scanBoardFile(boardId, reserved.id, controller.signal);
-      const failure = scanFailure(scan);
-      if (failure) throw failure;
-      const candidate: PendingFile = {
-        id: reserved.id,
-        filename: reserved.filename,
-        expectedSize: reserved.expectedSize,
-        state: scan.state === "ready" ? "ready" : "pending_scan",
-      };
-      setPendingFile(candidate);
-      if (candidate.state === "ready") {
-        await attachReadyFile(candidate);
-        return;
-      }
-      const ready = await waitForScan(candidate, controller.signal);
-      if (ready) {
-        setPendingFile(ready);
-        await attachReadyFile(ready);
-      } else {
-        setNotice(
-          "The file is still being scanned. Check its status to continue.",
-        );
-      }
-    } catch (uploadError) {
-      if (isAbort(uploadError)) return;
-      if (
-        reserved &&
-        uploadError instanceof ApiError &&
-        uploadError.status === 409
-      ) {
-        setPendingFile({
-          id: reserved.id,
-          filename: reserved.filename,
-          expectedSize: reserved.expectedSize,
-          state: "pending_scan",
-        });
-      }
-      setError(
-        uploadError instanceof Error &&
-          uploadError.message.includes("security scan")
-          ? uploadError.message
-          : messageFor(uploadError, "upload and scan the file"),
-      );
-    } finally {
-      operationController.current = null;
-      setOperation(null);
-    }
-  }
-
-  async function checkPendingScan() {
-    if (
-      !editable ||
-      editable.locked ||
-      !pendingFile ||
-      pendingFile.state !== "pending_scan" ||
-      busy
-    )
-      return;
-    const controller = new AbortController();
-    operationController.current = controller;
-    setError(null);
-    setNotice(null);
-    setOperation(`Checking ${pendingFile.filename}…`);
-    try {
-      const file = await readBoardFile(
+      const uploaded = await uploadBoardFile(
         boardId,
-        pendingFile.id,
+        reserved.id,
+        file,
         controller.signal,
       );
-      const failure = scanFailure(file);
-      if (failure) {
-        setPendingFile(null);
-        throw failure;
+      const failure = uploadFailure(uploaded);
+      if (failure) throw failure;
+      await attachReadyFile({ id: uploaded.id, filename: uploaded.filename });
+    } catch (uploadError) {
+      if (isAbort(uploadError)) return;
+      if (reserved && ambiguousUpload(uploadError)) {
+        // Keep the reservation so the user can finish; attach refuses a file that
+        // never became ready.
+        setPendingFile({ id: reserved.id, filename: reserved.filename });
+        setError(UNCLEAR_UPLOAD);
+        return;
       }
-      if (file.state === "ready") {
-        const ready = { ...pendingFile, state: "ready" as const };
-        setPendingFile(ready);
-        await attachReadyFile(ready);
-      } else {
-        setNotice("The file is still being scanned. Check again shortly.");
-      }
-    } catch (scanError) {
-      if (!isAbort(scanError))
-        setError(
-          scanError instanceof Error &&
-            scanError.message.includes("security scan")
-            ? scanError.message
-            : messageFor(scanError, "check the file scan"),
-        );
+      setError(
+        uploadError instanceof AttachmentFileError
+          ? uploadError.message
+          : uploadError instanceof ApiError && uploadError.status === 422
+            ? REJECTED_UPLOAD
+            : messageFor(uploadError, "upload the file"),
+      );
     } finally {
       operationController.current = null;
       setOperation(null);
@@ -408,10 +329,10 @@ export function ServerBoardAttachments(props: Props) {
       await detachBoardFile(stableTarget, file.id, versions);
       try {
         await refreshVersions();
-        setNotice(`${file.filename} detached.`);
+        setNotice(`${file.filename} removed.`);
       } catch {
         setError(
-          "The file was detached, but the editor could not refresh its versions. Reload the editor before saving more changes.",
+          "The file was removed, but the editor could not refresh its versions. Reload the editor before saving more changes.",
         );
       }
       await refreshList();
@@ -485,7 +406,20 @@ export function ServerBoardAttachments(props: Props) {
 
   const title =
     props.target.kind === "event" ? "Event attachments" : "Post attachments";
-  const bytes = pendingFile?.expectedSize ?? null;
+  // Edit mode shows feedback next to the upload control; read mode at the top.
+  // The status region stays mounted so screen readers announce text changes.
+  const feedback = (
+    <>
+      {error ? (
+        <Alert role="alert" variant="destructive">
+          {error}
+        </Alert>
+      ) : null}
+      <p role="status" className="text-muted-foreground text-sm">
+        {operation ?? notice ?? ""}
+      </p>
+    </>
+  );
 
   return (
     <section aria-label={title} className="mt-3 min-w-0">
@@ -504,21 +438,7 @@ export function ServerBoardAttachments(props: Props) {
       )}
       {expanded ? (
         <div className="mt-2 flex min-w-0 flex-col gap-3">
-          {error ? (
-            <Alert variant="destructive">
-              <p role="alert">{error}</p>
-            </Alert>
-          ) : null}
-          {notice ? (
-            <p role="status" className="text-muted-foreground text-sm">
-              {notice}
-            </p>
-          ) : null}
-          {operation ? (
-            <p role="status" className="text-muted-foreground text-sm">
-              {operation}
-            </p>
-          ) : null}
+          {editable ? null : feedback}
           {listStatus === "loading" ? (
             <p role="status" className="text-muted-foreground text-sm">
               Loading attachments…
@@ -566,9 +486,14 @@ export function ServerBoardAttachments(props: Props) {
                       disabled={downloadingId !== null}
                       onClick={() => void download(file)}
                     >
-                      {downloadingId === file.id
-                        ? "Downloading…"
-                        : `Download ${file.filename}`}
+                      {downloadingId === file.id ? (
+                        "Downloading…"
+                      ) : (
+                        <>
+                          Download
+                          <span className="sr-only"> {file.filename}</span>
+                        </>
+                      )}
                     </Button>
                     {editable ? (
                       <Button
@@ -578,7 +503,8 @@ export function ServerBoardAttachments(props: Props) {
                         disabled={busy || editable.locked === true}
                         onClick={() => void removeAttachment(file)}
                       >
-                        Remove {file.filename}
+                        Remove
+                        <span className="sr-only"> {file.filename}</span>
                       </Button>
                     ) : null}
                   </div>
@@ -608,7 +534,9 @@ export function ServerBoardAttachments(props: Props) {
               <Input
                 id={`board-file-${sourceKey}`}
                 type="file"
-                className="min-h-11 max-w-full"
+                accept={ATTACHMENT_ACCEPT}
+                aria-describedby={`board-file-${sourceKey}-help`}
+                className="min-h-11 max-w-full py-2"
                 disabled={busy || editable.locked === true}
                 onChange={(event) => {
                   const file = event.currentTarget.files?.[0];
@@ -616,32 +544,17 @@ export function ServerBoardAttachments(props: Props) {
                   if (file) void uploadSelectedFile(file);
                 }}
               />
-              <p className="text-muted-foreground text-sm">
-                Files up to 25 MiB are scanned before attachment. Only scanned
-                files can be attached.
+              <p
+                id={`board-file-${sourceKey}-help`}
+                className="text-muted-foreground text-sm"
+              >
+                Files up to 25 MiB. PDF, PNG, JPEG, DOCX, XLSX or PPTX.
               </p>
-              {pendingFile?.state === "pending_scan" ? (
+              {feedback}
+              {pendingFile ? (
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <span className="text-sm break-words">
-                    Waiting for the scan of {pendingFile.filename}
-                    {bytes !== null ? ` (${formatSize(bytes)})` : ""}.
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11"
-                    disabled={busy || editable.locked === true}
-                    onClick={() => void checkPendingScan()}
-                  >
-                    Check scan status
-                  </Button>
-                </div>
-              ) : null}
-              {pendingFile?.state === "ready" ? (
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="text-sm break-words">
-                    {pendingFile.filename} passed the scan and is ready to
-                    attach.
+                    {pendingFile.filename} is uploaded but not attached yet.
                   </span>
                   <Button
                     type="button"
@@ -650,7 +563,7 @@ export function ServerBoardAttachments(props: Props) {
                     disabled={busy || editable.locked === true}
                     onClick={() => void attachReadyFile(pendingFile)}
                   >
-                    Attach scanned file
+                    Attach file
                   </Button>
                 </div>
               ) : null}

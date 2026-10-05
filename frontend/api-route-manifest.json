@@ -259,21 +259,9 @@
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
-    "function": "readBoardFile",
-    "method": "GET",
-    "path": "/api/boards/{param}/files/{param}"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "reserveBoardFile",
     "method": "POST",
     "path": "/api/boards/{param}/files"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
-    "function": "scanBoardFile",
-    "method": "POST",
-    "path": "/api/boards/{param}/files/{param}/scan"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",

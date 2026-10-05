@@ -73,7 +73,7 @@ def test_event_file_context_hides_bare_id_other_board_and_outsiders(
         purpose="board_attachment", board_id=board.id, record_id=None,
         creator_id=actor.id, filename="notice.pdf", expected_size=len(content),
         actual_size=len(content), digest=sha256(content).hexdigest(),
-        scanner_version="test", signature_version="test", object_key=uuid4().hex,
+        object_key=uuid4().hex,
         media_type="application/pdf", state="ready",
     )
     db.add(file)
@@ -147,7 +147,7 @@ def test_published_post_file_uses_the_published_snapshot_for_readers(
         purpose="board_attachment", board_id=board.id, record_id=None,
         creator_id=actor.id, filename="published.pdf", expected_size=len(content),
         actual_size=len(content), digest=sha256(content).hexdigest(),
-        scanner_version="test", signature_version="test", object_key=uuid4().hex,
+        object_key=uuid4().hex,
         state="ready", media_type="application/pdf",
     )
     db.add_all((notice, file))
@@ -225,8 +225,6 @@ def test_viewer_can_read_linked_event_attachment_after_board_archive_but_cannot_
         expected_size=len(content),
         actual_size=len(content),
         digest=sha256(content).hexdigest(),
-        scanner_version="test",
-        signature_version="test",
         object_key=uuid4().hex,
         media_type="application/pdf",
         state="ready",
@@ -294,8 +292,6 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
         expected_size=3,
         actual_size=3,
         digest=sha256(b"own").hexdigest(),
-        scanner_version="test",
-        signature_version="test",
         object_key=uuid4().hex,
         state="ready",
         media_type="application/pdf",
@@ -330,3 +326,50 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
 
     assert listing.status_code == 404
     assert downloaded.status_code == 404
+
+
+def test_a_detached_file_cannot_move_to_other_content(guarded_db, actor):
+    """One lifetime owner per file: sample runs upload a second file for the event."""
+    db = guarded_db
+    board = Board(scope="project", name="Single owner", status=BoardStatus.ACTIVE)
+    db.add(board)
+    db.flush()
+    first, second = (
+        BoardEvent(
+            board_id=board.id, author_id=actor.id, title=title, all_day=True,
+            start_date=date(2026, 9, 24), end_date=date(2026, 9, 24),
+            timezone_name="Asia/Manila",
+        )
+        for title in ("First owner", "Second owner")
+    )
+    content = b"single owner bytes"
+    file = File(
+        purpose="board_attachment", board_id=board.id, record_id=None,
+        creator_id=actor.id, filename="owner.pdf", expected_size=len(content),
+        actual_size=len(content), digest=sha256(content).hexdigest(),
+        object_key=uuid4().hex, media_type="application/pdf", state="ready",
+    )
+    db.add_all((first, second, file))
+    db.commit()
+
+    def versions(event: BoardEvent) -> dict[str, int]:
+        db.refresh(board)
+        db.refresh(event)
+        return {"board_revision": board.revision, "content_revision": event.revision}
+
+    with _client(db, actor, Store(db)) as client:
+        base = f"/api/boards/{board.id}/events"
+        attached = client.post(
+            f"{base}/{first.id}/attachments", json={"file_id": str(file.id), **versions(first)}
+        )
+        detached = client.request(
+            "DELETE", f"{base}/{first.id}/attachments/{file.id}", json=versions(first)
+        )
+        moved = client.post(
+            f"{base}/{second.id}/attachments", json={"file_id": str(file.id), **versions(second)}
+        )
+
+    assert attached.status_code == 200, attached.text
+    assert detached.status_code == 204
+    assert moved.status_code == 409
+    assert moved.json()["detail"]["code"] == "file_already_owned"

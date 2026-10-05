@@ -39,7 +39,7 @@ def test_platform_plan_uses_disposable_structure_and_preserves_lifecycle_order(p
     document = copy.deepcopy(dataset.document)
     actions = plan_controls(dataset)
     platform = [action for action in actions if action.kind == "platform_controls"]
-    assert len(actions) == 89
+    assert len(actions) == 95
     assert [action.values["operation"] for action in platform] == [
         "import_csv_rows",
         "search_workspace",

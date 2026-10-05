@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from app.systems.access.users.models import User
 from app.systems.platform.files.access import authorize
-from app.systems.platform.files.providers import ProviderUnavailable, get_scanner, transfer_slot
+from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.schemas import FileCreate
 from app.systems.platform.files.validation import validate_content
 
@@ -69,11 +69,6 @@ def test_office_rejects_dangerous_containers_as_controlled_error(name, payload):
     with pytest.raises(HTTPException) as caught:
         validate_content("document.docx", office(name, payload))
     assert caught.value.status_code == 422
-
-
-def test_missing_scanner_never_accepts_content():
-    with pytest.raises(ProviderUnavailable):
-        get_scanner().scan(png(), digest="digest", operation_id=uuid4())
 
 
 def test_third_buffer_operation_is_rejected_and_capacity_recovers():

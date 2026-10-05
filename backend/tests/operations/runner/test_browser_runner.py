@@ -1,4 +1,4 @@
-"""Narrow browser repair runs retain owned infrastructure without scanner claims."""
+"""Narrow browser repair runs retain owned infrastructure without the backend suite."""
 
 import json
 import subprocess
@@ -11,7 +11,7 @@ from tests import fullstack_runner as runner
 from tests.operations.runner.test_fullstack_runner import _stub_fullstack_prerequisites
 
 
-def test_browser_only_owns_provider_api_gateway_but_does_not_run_scanner_or_backend_suite(
+def test_browser_only_owns_provider_api_gateway_but_does_not_run_backend_suite(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     commands = []
@@ -20,7 +20,7 @@ def test_browser_only_owns_provider_api_gateway_but_does_not_run_scanner_or_back
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "")
 
-    scanner = _stub_fullstack_prerequisites(monkeypatch, tmp_path, execute)
+    _stub_fullstack_prerequisites(monkeypatch, tmp_path, execute)
     backend = MagicMock(side_effect=AssertionError("backend suite must not run"))
     monkeypatch.setattr(runner, "run_backend_coverage", backend)
     process = MagicMock()
@@ -34,8 +34,6 @@ def test_browser_only_owns_provider_api_gateway_but_does_not_run_scanner_or_back
     monkeypatch.setenv("CI", "true")
 
     assert runner.main(("--browser-only",)) == 0
-    scanner.start.assert_not_called()
-    scanner.start_worker.assert_not_called()
     backend.assert_not_called()
     gateway.start.assert_called_once()
     gateway.stop.assert_called_once()
@@ -55,5 +53,4 @@ def test_browser_only_owns_provider_api_gateway_but_does_not_run_scanner_or_back
     report = json.loads((tmp_path / "frontend/test-results/fullstack-summary.json").read_text())
     assert report["scope"] == "browser-only"
     assert report["backend_tests_rerun"] is False
-    assert report["scanner_observations"] == {}
     assert report["browser_completed"] is True

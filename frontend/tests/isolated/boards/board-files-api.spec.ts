@@ -6,8 +6,6 @@ import {
   downloadBoardAttachment,
   listBoardAttachments,
   reserveBoardFile,
-  readBoardFile,
-  scanBoardFile,
   uploadBoardFile,
   type BoardAttachmentTarget,
 } from "../../../src/components/systems/boards/adapters/board-files-api";
@@ -72,7 +70,13 @@ function fileList(items: unknown[]) {
 }
 
 test("Board attachment upload stays on authenticated Board-scoped binary routes", async () => {
-  const mock = installFetch(() => Response.json(readyFile));
+  const mock = installFetch((request) =>
+    Response.json(
+      path(request).endsWith("/content")
+        ? readyFile
+        : { ...readyFile, state: "awaiting_upload", actual_size: null },
+    ),
+  );
   try {
     const reserved = await reserveBoardFile(boardId, {
       filename: readyFile.filename,
@@ -81,21 +85,22 @@ test("Board attachment upload stays on authenticated Board-scoped binary routes"
     expect(reserved).toMatchObject({
       id: fileId,
       boardId,
-      state: "ready",
+      state: "awaiting_upload",
       filename: readyFile.filename,
     });
 
     const bytes = new Blob(["hello"], { type: "application/pdf" });
-    await uploadBoardFile(boardId, fileId, bytes);
-    await scanBoardFile(boardId, fileId);
-    const current = await readBoardFile(boardId, fileId);
+    const uploaded = await uploadBoardFile(boardId, fileId, bytes);
 
-    expect(current.state).toBe("ready");
+    expect(uploaded).toMatchObject({
+      id: fileId,
+      boardId,
+      state: "ready",
+      actualSize: 5,
+    });
     expect(mock.requests.map(path)).toEqual([
       `/api/boards/${boardId}/files`,
       `/api/boards/${boardId}/files/${fileId}/content`,
-      `/api/boards/${boardId}/files/${fileId}/scan`,
-      `/api/boards/${boardId}/files/${fileId}`,
     ]);
     const reservation = init(mock.requests[0]!);
     expect(reservation.method).toBe("POST");
@@ -110,8 +115,6 @@ test("Board attachment upload stays on authenticated Board-scoped binary routes"
       "application/octet-stream",
     );
     expect(upload.body).toBe(bytes);
-    expect(init(mock.requests[2]!).method).toBe("POST");
-    expect(init(mock.requests[3]!).method).toBeUndefined();
     expect(
       mock.requests.every((request) => !path(request).includes("/api/files/")),
     ).toBe(true);
@@ -221,15 +224,20 @@ test("attachment mutations send the current dual revisions and preserve 409 conf
 });
 
 test("file adapter rejects another Board's metadata and oversized content responses", async () => {
-  const wrongBoard = installFetch(() =>
-    Response.json({ ...readyFile, board_id: eventId }),
-  );
-  try {
-    await expect(readBoardFile(boardId, fileId)).rejects.toBeInstanceOf(
-      ApiContractError,
-    );
-  } finally {
-    wrongBoard.restore();
+  const bytes = new Blob(["hello"], { type: "application/pdf" });
+  for (const response of [
+    { ...readyFile, board_id: eventId },
+    { ...readyFile, id: eventId },
+    { ...readyFile, state: "archived" },
+  ]) {
+    const wrongFile = installFetch(() => Response.json(response));
+    try {
+      await expect(
+        uploadBoardFile(boardId, fileId, bytes),
+      ).rejects.toBeInstanceOf(ApiContractError);
+    } finally {
+      wrongFile.restore();
+    }
   }
 
   const oversized = installFetch(

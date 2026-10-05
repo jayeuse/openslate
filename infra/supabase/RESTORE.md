@@ -6,7 +6,7 @@ The backup is an offline physical set of PostgreSQL, Storage, and other named vo
 
 ## Back up the source installation
 
-Schedule an outage and identify the exact source Compose project, `OPENSLATE_INSTANCE_ID`, and release checkout. The [version 3 configuration example](../../packaging/backup/backup-config.example.json) lists every required JSON field. Create a new owner-only config file outside the checkout for this backup run; replace all example values with real absolute paths. Set `installation_id` to the source instance ID, `project_name` to the source Compose project, `deployment` to `production` or `development`, and `compose_root` to this checkout's `infra/supabase` directory. Supply the source provider environment and, for production, the source application environment, Caddyfile, and TLS directory. Development requires those three production-only entries to be `null`. The command copies these inputs, the matching Compose files, and the named volumes into one encrypted snapshot. It does not copy scanner definitions or their manifest; retain and verify those separately for recovery.
+Schedule an outage and identify the exact source Compose project, `OPENSLATE_INSTANCE_ID`, and release checkout. The [version 3 configuration example](../../packaging/backup/backup-config.example.json) lists every required JSON field. Create a new owner-only config file outside the checkout for this backup run; replace all example values with real absolute paths. Set `installation_id` to the source instance ID, `project_name` to the source Compose project, `deployment` to `production` or `development`, and `compose_root` to this checkout's `infra/supabase` directory. Supply the source provider environment and, for production, the source application environment, Caddyfile, and TLS directory. Development requires those three production-only entries to be `null`. The command copies these inputs, the matching Compose files, and the named volumes into one encrypted snapshot.
 
 Create distinct absolute directories for the Restic repository, staging, and completion-marker parent. They must not overlap each other or the recursively copied Compose/TLS inputs. Keep the repository and staging directory outside the installation's named volumes, and keep the marker outside both. Create a strong Restic password in a separate owner-only regular file; protect the config, environment files, Caddyfile, and password file with owner-only permissions. The tool rejects symlinks in protected paths, group/world-writable directories, and group/world-readable private files. Initialize the empty repository **once** with that password file before the first backup; for later runs, reuse the repository and password without reinitializing it:
 
@@ -15,7 +15,7 @@ RESTIC_REPOSITORY=ABSOLUTE_REPOSITORY_PATH \
   RESTIC_PASSWORD_FILE=ABSOLUTE_PASSWORD_FILE restic init
 ```
 
-Set `completion_marker` in each new config to a **new, nonexistent** absolute filename under its private parent. The backup command refuses to overwrite a marker. Retain prior markers because each contains the full snapshot ID needed for restore. Validate the source provider environment and release Compose files with `docker compose --project-name SOURCE_PROJECT --env-file SOURCE_PROVIDER_ENV -f infra/supabase/compose.yaml -f infra/supabase/compose.production.yaml config --quiet` (use the development overlay for development). Confirm the project identity and expected four development or five production named volumes. Use the same project name, provider environment, and Compose files throughout the outage. Before stopping anything, record `ps --all` output and the state of any host-run API or worker in the private outage record. In particular, distinguish a running scanner worker from one deliberately halted for inspection. Stop all source services, including PostgreSQL, without deleting containers or volumes:
+Set `completion_marker` in each new config to a **new, nonexistent** absolute filename under its private parent. The backup command refuses to overwrite a marker. Retain prior markers because each contains the full snapshot ID needed for restore. Validate the source provider environment and release Compose files with `docker compose --project-name SOURCE_PROJECT --env-file SOURCE_PROVIDER_ENV -f infra/supabase/compose.yaml -f infra/supabase/compose.production.yaml config --quiet` (use the development overlay for development). Confirm the project identity and expected four development or five production named volumes. Use the same project name, provider environment, and Compose files throughout the outage. Before stopping anything, record `ps --all` output and the state of any host-run API in the private outage record. Stop all source services, including PostgreSQL, without deleting containers or volumes:
 
 ```sh
 docker compose --project-name SOURCE_PROJECT --env-file SOURCE_PROVIDER_ENV \
@@ -31,7 +31,7 @@ PYTHONPATH=packaging python3 -m backup.backup_installation \
 
 The command admits the initialized repository, writes one Restic snapshot, runs `restic check --read-data`, restores the manifest for a hash comparison, and only then creates the owner-only completion marker. Record the full `snapshot_id` from that marker with the matching config and release. If the command fails or the marker is absent, treat this run as incomplete; inspect the failure before relying on any snapshot or restarting writes.
 
-After a completed backup, use the original source project, environment and overlay. Resume only services recorded as running before the outage. Keep public Caddy stopped while restoring dependencies, the API and scanning. Use explicit service names and `--no-deps` at each stage, so Compose cannot implicitly start a deliberately halted service:
+After a completed backup, use the original source project, environment and overlay. Resume only services recorded as running before the outage. Keep public Caddy stopped while restoring dependencies and the API. Use explicit service names and `--no-deps` at each stage, so Compose cannot implicitly start a service that was stopped before the outage:
 
 ```sh
 docker compose --project-name SOURCE_PROJECT --env-file SOURCE_PROVIDER_ENV \
@@ -39,7 +39,7 @@ docker compose --project-name SOURCE_PROJECT --env-file SOURCE_PROVIDER_ENV \
   up -d --no-deps PREVIOUSLY_RUNNING_SERVICE_NAMES
 ```
 
-Replace the final placeholder with the services for the current stage: first `db`, then its previously running provider dependants; wait for their health checks. In production, restore previously running `clamav` and `api` next. Inspect scanner health, definitions and any recorded worker failure before explicitly resuming `scanner-worker`. A worker that was halted before backup remains halted until the operator resolves its cause and authorizes resumption. Development installations similarly resume only their intended host-run API and worker processes.
+Replace the final placeholder with the services for the current stage: first `db`, then its previously running provider dependants; wait for their health checks. In production, restore a previously running `api` next. Development installations similarly resume only their intended host-run API process.
 
 Check `/api/ready` through an operator-only/internal path with the configured Host header, while Caddy remains stopped. If any required component is unready, keep ingress closed and investigate. Only after readiness succeeds may the operator explicitly start `caddy` with `--no-deps`, and only if it was running before the outage. Verify the public endpoint before ending the outage. A previously stopped installation remains stopped.
 
@@ -90,7 +90,7 @@ Use the same release checkout, template and state directory for every invocation
 
 Caution: after a failed or interrupted backup, the runner leaves the services stopped on purpose. The installation stays offline until an operator runs `recover` (see "Reconcile an interrupted host run"). Alert on exit 3 so a night-time failure does not stay unnoticed until the morning. At most one missed occurrence catches up before advancing strictly into the future. Disabled scheduling still permits manual requests. Saving policy alone does not prove a runner is available.
 
-The host admits Docker ownership and application identity, uses the constrained release image on the provider network to admit the connected database and commit one claim, then durably records the original service states and per-run configuration before stopping services. The bridge has no Docker socket or private host mounts. The existing archive function verifies the encrypted snapshot. Restart uses the exact admitted existing container IDs, preserving configuration/labels and avoiding implicit dependencies or recreation. Only previously running services resume, with bounded health waits and required API readiness before Caddy. A deliberately halted scanner worker stays halted; unready required components keep ingress closed.
+The host admits Docker ownership and application identity, uses the constrained release image on the provider network to admit the connected database and commit one claim, then durably records the original service states and per-run configuration before stopping services. The bridge has no Docker socket or private host mounts. The existing archive function verifies the encrypted snapshot. Restart uses the exact admitted existing container IDs, preserving configuration/labels and avoiding implicit dependencies or recreation. Only previously running services resume, with bounded health waits and required API readiness before Caddy. Unready required components keep ingress closed.
 
 Private state is under `STATE/INSTALLATION_ID/`: `active.json` identifies `claims/CLAIM_ID/journal.json`. Actual runs retain `backup.json` and `backup-complete.json` there. The runner writes a fresh per-claim marker rather than the template marker. Keep these files and the matching release with recovery material. Journals contain allowlisted identity/state fields and exact pending acknowledgements, never raw Docker environment/config output, credentials or vendor diagnostics. Exit 0 reports an idle/succeeded/adopted/not-claimed result; exit 2 refuses admission or recovery prerequisites; exit 3 reports failure/interruption or uncertain operations. Output is safe JSON.
 
@@ -148,9 +148,9 @@ The confirmation binds the source, snapshot, target project, target instance ID,
 
 ## Rebind while ingress is closed
 
-Prepare a separate owner-only **target** provider environment from the restored source material. Retain the restored secrets required to read the physical database and provider data, including the PostgreSQL password and Auth signing keys; set `OPENSLATE_INSTANCE_ID` to `NEW_TARGET_INSTANCE_ID`. Change the target's site/origin/issuer/gateway URLs and any host ports so they belong only to this installation. For production, prepare a separate owner-only application environment using the restored application secrets that still protect stored data, the target `OPENSLATE_INSTANCE_ID`, target `PUBLIC_ORIGIN`, and the target database/provider endpoints. Set `API_EXTERNAL_URL` and `SUPABASE_AUTH_ISSUER` consistently. Do not point either environment at the source installation or put bootstrap/provider secrets in the API or worker environment. Review every restored path and replace it with an existing target-owned absolute path where the production overlay expects one.
+Prepare a separate owner-only **target** provider environment from the restored source material. Retain the restored secrets required to read the physical database and provider data, including the PostgreSQL password and Auth signing keys; set `OPENSLATE_INSTANCE_ID` to `NEW_TARGET_INSTANCE_ID`. Change the target's site/origin/issuer/gateway URLs and any host ports so they belong only to this installation. For production, prepare a separate owner-only application environment using the restored application secrets that still protect stored data, the target `OPENSLATE_INSTANCE_ID`, target `PUBLIC_ORIGIN`, and the target database/provider endpoints. Set `API_EXTERNAL_URL` and `SUPABASE_AUTH_ISSUER` consistently. Do not point either environment at the source installation or put bootstrap/provider secrets in the API environment. Review every restored path and replace it with an existing target-owned absolute path where the production overlay expects one.
 
-Prepare the release-specific server, ClamAV, and Caddy images referenced by `OPENSLATE_SERVER_IMAGE`, `OPENSLATE_CLAMAV_IMAGE`, and `OPENSLATE_CADDY_IMAGE`. Create the target log directory, verified immutable scanner definitions and matching manifest, and the intended TLS material. Render the target Caddyfile with `infra/caddy/generate_config.py` for the target public host, HTTPS port, certificate mode, and `api:8000` upstream. Keep `CADDY_CONFIG_PATH`, `CADDY_TLS_DIR`, `SCANNER_DEFINITIONS_DIR`, `SCANNER_MANIFEST_PATH`, and `OPENSLATE_LOG_ROOT` on target-owned paths. The archived Caddyfile and TLS files are source recovery material, not automatically safe target ingress configuration. See [README.md](README.md) for the production input contract and scanner/TLS requirements.
+Prepare the release-specific server and Caddy images referenced by `OPENSLATE_SERVER_IMAGE` and `OPENSLATE_CADDY_IMAGE`. Create the target log directory and the intended TLS material. Render the target Caddyfile with `infra/caddy/generate_config.py` for the target public host, HTTPS port, certificate mode, and `api:8000` upstream. Keep `CADDY_CONFIG_PATH`, `CADDY_TLS_DIR`, and `OPENSLATE_LOG_ROOT` on target-owned paths. The archived Caddyfile and TLS files are source recovery material, not automatically safe target ingress configuration. See [README.md](README.md) for the production input contract and TLS requirements.
 
 From the matching release checkout, validate both the base and production overlay with the **target** environment. `config --quiet` avoids printing interpolated secrets:
 
@@ -159,7 +159,7 @@ docker compose --project-name NEW_TARGET_PROJECT --env-file TARGET_PROVIDER_ENV 
   -f infra/supabase/compose.yaml -f infra/supabase/compose.production.yaml config --quiet
 ```
 
-Start only PostgreSQL using the base Compose file. It has internal provider and operator networks and no published database port. Do not use the development overlay or start Auth, API, worker, gateway, or Caddy yet:
+Start only PostgreSQL using the base Compose file. It has internal provider and operator networks and no published database port. Do not use the development overlay or start Auth, API, gateway, or Caddy yet:
 
 ```sh
 docker compose --project-name NEW_TARGET_PROJECT --env-file TARGET_PROVIDER_ENV \
@@ -185,14 +185,11 @@ docker compose --project-name NEW_TARGET_PROJECT --env-file TARGET_PROVIDER_ENV 
   up -d auth rest storage imgproxy meta studio api-gw
 ```
 
-Check their health, confirm target database/schema admission and application roles, verify the two private Storage buckets, and confirm the target's provider configuration. Do not rerun initialization or a migration that changes restored data without a release-specific migration decision. Start the API and verify its target identity, authenticated behavior, file access, and email-template route. Then start ClamAV and the scanner worker and verify the scanner generation and worker state:
+Check their health, confirm target database/schema admission and application roles, verify the private `openslate-ready` Storage bucket, and confirm the target's provider configuration. Do not rerun initialization or a migration that changes restored data without a release-specific migration decision. Start the API and verify its target identity, authenticated behavior, file access, and email-template route:
 
 ```sh
 docker compose --project-name NEW_TARGET_PROJECT --env-file TARGET_PROVIDER_ENV \
   -f infra/supabase/compose.yaml -f infra/supabase/compose.production.yaml up -d api
-docker compose --project-name NEW_TARGET_PROJECT --env-file TARGET_PROVIDER_ENV \
-  -f infra/supabase/compose.yaml -f infra/supabase/compose.production.yaml \
-  up -d clamav scanner-worker
 ```
 
 Bring up public Caddy only after target TLS, origin, ports, application health, and the absence of source routes have been checked:

@@ -21,9 +21,8 @@ from app.systems.platform.files.access import authorize
 from app.systems.platform.files.lifecycle_router import purge_impact
 from app.systems.platform.files.models import File
 from app.systems.platform.files.purge import purge_confirmed
-from app.systems.platform.files.scan_processing import process_next
 from app.systems.platform.files.schemas import BoardFileCreate, FileCreate
-from tests.files.test_integration import Clean, Store
+from tests.files.test_integration import Store
 
 pytestmark = pytest.mark.integration
 
@@ -90,7 +89,7 @@ def test_board_file_purpose_is_not_granted_by_generic_file_authorization(guarded
     assert caught.value.status_code == 403
 
 
-def test_board_file_requires_context_for_reserve_upload_scan_and_download(
+def test_board_file_requires_context_for_reserve_upload_and_download(
     guarded_db, actor, monkeypatch
 ):
     db = guarded_db
@@ -114,13 +113,7 @@ def test_board_file_requires_context_for_reserve_upload_scan_and_download(
         assert caught.value.status_code == 404
         db.rollback()
     uploaded = service.upload(db, actor.id, reserved.id, content, store, board_id=board.id)
-    assert uploaded.state == "pending_scan"
-    with pytest.raises(HTTPException) as caught:
-        service.scan(db, actor.id, reserved.id)
-    assert caught.value.status_code == 404
-    db.rollback()
-    assert service.scan(db, actor.id, reserved.id, board_id=board.id).state == "pending_scan"
-    assert process_next(db, store, Clean()) is True
+    assert uploaded.state == "ready"
     assert db.get(File, reserved.id).state == "ready"
     with pytest.raises(HTTPException) as caught:
         service.download(db, actor.id, reserved.id, store)
@@ -133,26 +126,6 @@ def test_board_file_requires_context_for_reserve_upload_scan_and_download(
     with pytest.raises(HTTPException) as caught:
         purge_impact(db, actor.id, reserved.id)
     assert caught.value.status_code == 404
-
-
-def test_board_archive_suspends_pending_scan(guarded_db, actor):
-    db = guarded_db
-    board = Board(scope="project", name="Paused files", status="active")
-    db.add(board)
-    db.commit()
-    output = BytesIO()
-    Image.new("RGB", (2, 2)).save(output, format="PNG")
-    content = output.getvalue()
-    reserved = service.reserve_board(
-        db, actor, board.id, BoardFileCreate(filename="image.png", expected_size=len(content))
-    )
-    store = Store(db)
-    service.upload(db, actor.id, reserved.id, content, store, board_id=board.id)
-    board.status = "archived"
-    db.commit()
-    assert process_next(db, store, Clean()) is False
-    item = db.get(File, reserved.id)
-    assert item.state == "pending_scan" and item.failure_code == "scan_suspended"
 
 
 def test_board_file_uncertain_upload_reconciles_only_in_owning_board(guarded_db, actor):
@@ -179,7 +152,7 @@ def test_board_file_uncertain_upload_reconciles_only_in_owning_board(guarded_db,
         db.rollback()
     assert (
         service.reconcile(db, actor.id, reserved.id, store, board_id=board.id).state
-        == "pending_scan"
+        == "ready"
     )
 
 
@@ -237,8 +210,6 @@ def test_board_file_purge_waits_for_content_unlink_then_removes_bytes(
         expected_size=3,
         actual_size=3,
         digest="a" * 64,
-        scanner_version="test",
-        signature_version="test",
         object_key=uuid4().hex,
         state="ready",
     )

@@ -21,23 +21,22 @@ Provider metadata does not grant application roles or permissions. See [Authenti
 and Authorization](08-authentication-authorization.md) and
 [Infrastructure](11-infrastructure.md).
 
-## Private files and scanning
+## Private files
 
 OpenSlate stores file metadata in PostgreSQL and bytes in the private Supabase Storage
-buckets. FastAPI authorizes transfers; browsers receive no Storage credentials or direct
-object URLs. Uploaded bytes enter quarantine, where the worker verifies the stored size
-and digest and scans the exact content with ClamAV. Only a verified clean object may be
-promoted to the ready bucket and made downloadable.
+`openslate-ready` bucket. FastAPI authorizes transfers; browsers receive no Storage
+credentials or direct object URLs. The upload request validates the file type, writes the
+bytes, and commits the file as `ready` with its digest and size.
 
-Storage, scanner, and database changes do not share a transaction. A timeout, digest
-mismatch, rejected write, scanner failure, uncertain promotion, or uncertain cleanup
-therefore fails closed: the application does not expose an unverified object as ready.
+Storage and database changes do not share a transaction. A timeout, digest mismatch,
+rejected write, uncertain upload, or uncertain cleanup therefore fails closed: the
+application does not expose an unverified object as ready.
 Durable operation and object state remain available for reconciliation. Retrying a
 partially completed operation must verify the existing immutable bytes rather than
-assume that the prior request did nothing. The Storage adapter and scan state machine
+assume that the prior request did nothing. The Storage adapter and file state machine
 are implemented in
 [`supabase_storage.py`](../../backend/app/systems/platform/files/supabase_storage.py)
-and [`scan_processing.py`](../../backend/app/systems/platform/files/scan_processing.py).
+and [`service.py`](../../backend/app/systems/platform/files/service.py).
 File access and recovery flows are described in [Runtime Flows](13-runtime-flows.md).
 
 Invitation and recovery email are sent through Supabase Auth using the configured SMTP

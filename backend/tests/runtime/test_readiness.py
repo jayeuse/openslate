@@ -11,9 +11,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from app.core import readiness
-from app.core.config import ConfigurationError, Settings
+from app.core.config import Settings
 from app.main import create_app
-from app.systems.platform.files.providers import ProviderUnavailable
 from tests.config_support import settings_values
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
@@ -74,14 +73,9 @@ def _install_provider_transport(monkeypatch, handler):
 def _install_readiness_settings(monkeypatch, settings: Settings) -> None:
     import app.main as main
 
-    def missing_scanner_configuration(*, require_configuration: bool = False):
-        assert require_configuration
-        raise ConfigurationError("test scanner configuration is absent")
-
     monkeypatch.setattr(readiness, "get_settings", lambda: settings)
     monkeypatch.setattr(main, "get_settings", lambda: settings)
     monkeypatch.setattr(readiness, "_probe_database", lambda: True)
-    monkeypatch.setattr(readiness, "get_scanner", missing_scanner_configuration, raising=False)
 
 
 def _component(status: str, *, required: bool = True) -> dict[str, object]:
@@ -124,7 +118,6 @@ def test_readiness_route_reports_auth_and_storage_as_separate_components(monkeyp
             "auth": _component("ready"),
             "storage": _component("ready"),
             "smtp": _component("ready"),
-            "scanner": _component("not_configured", required=False),
         },
     }
     assert response.status_code == 200
@@ -163,7 +156,6 @@ def test_readiness_provider_outage_is_component_specific_and_redacted(monkeypatc
             "auth": _component("unavailable"),
             "storage": _component("ready"),
             "smtp": _component("ready"),
-            "scanner": _component("not_configured", required=False),
         },
     }
     assert response.headers["Cache-Control"] == "no-store"
@@ -199,144 +191,18 @@ def test_smtp_readiness_requires_configuration_without_sending_mail(
 
     assert response.status_code == 503
     assert response.json()["components"]["smtp"] == _component("not_configured")
-    assert response.json()["components"]["scanner"] == _component("not_configured", required=False)
     assert requests == [
         ("GET", "/auth/v1/health"),
         ("GET", "/storage/v1/status"),
     ]
 
 
-def test_production_scanner_configuration_is_required(monkeypatch) -> None:
-    def provider(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, request=request)
-
-    settings = _readiness_settings(
-        environment="production",
-        public_origin="https://openslate.test",
-        web_assets_root="/tmp",
-    )
-    _install_readiness_settings(monkeypatch, settings)
-    _install_provider_transport(monkeypatch, provider)
-
-    snapshot = readiness._probe_components()
-
-    assert snapshot["status"] == "not_ready"
-    assert snapshot["components"]["scanner"] == _component("not_configured")
-
-
-@pytest.mark.parametrize(
-    ("environment", "leader_present", "required", "scanner_status", "overall"),
-    [
-        ("test", False, False, "unavailable", "ready"),
-        ("production", False, True, "unavailable", "not_ready"),
-        ("test", True, False, "ready", "ready"),
-        ("production", True, True, "ready", "ready"),
-    ],
-)
-def test_configured_scanner_requires_the_worker_leader(
-    monkeypatch,
-    environment: str,
-    leader_present: bool,
-    required: bool,
-    scanner_status: str,
-    overall: str,
-) -> None:
-    def provider(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, request=request)
-
-    class Scanner:
-        probe_calls = 0
-
-        def probe(self) -> None:
-            self.probe_calls += 1
-
-    scanner = Scanner()
-    settings_overrides = (
-        {"public_origin": "https://openslate.test", "web_assets_root": "/tmp"}
-        if environment == "production"
-        else {}
-    )
-    settings = _readiness_settings(environment=environment, **settings_overrides)
-    _install_readiness_settings(monkeypatch, settings)
-    _install_provider_transport(monkeypatch, provider)
-    monkeypatch.setattr(readiness, "get_scanner", lambda *, require_configuration: scanner)
-    monkeypatch.setattr(
-        readiness,
-        "_probe_scanner_worker_leader",
-        lambda: leader_present,
-        raising=False,
-    )
-
-    snapshot = readiness._probe_components()
-
-    assert snapshot["status"] == overall
-    assert snapshot["components"]["scanner"] == _component(scanner_status, required=required)
-    assert scanner.probe_calls == int(leader_present)
-
-
-def test_scanner_engine_probe_failure_cannot_be_hidden_by_a_live_worker_lock(monkeypatch) -> None:
-    def provider(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, request=request)
-
-    class Scanner:
-        def probe(self) -> None:
-            raise ProviderUnavailable("scanner canary must not be returned")
-
-    _install_readiness_settings(
-        monkeypatch,
-        _readiness_settings(
-            environment="production",
-            public_origin="https://openslate.test",
-            web_assets_root="/tmp",
-        ),
-    )
-    _install_provider_transport(monkeypatch, provider)
-    monkeypatch.setattr(readiness, "get_scanner", lambda *, require_configuration: Scanner())
-    monkeypatch.setattr(readiness, "_probe_scanner_worker_leader", lambda: True, raising=False)
-
-    snapshot = readiness._probe_components()
-
-    assert snapshot["status"] == "not_ready"
-    assert snapshot["components"]["scanner"] == _component("unavailable")
-    assert "canary" not in repr(snapshot)
-
-
-@pytest.mark.parametrize("leader_present", [True, False])
-def test_scanner_leader_probe_is_read_only_and_matches_the_worker_lock(
-    monkeypatch,
-    leader_present: bool,
-) -> None:
-    from app.systems.platform.files.worker import LEADER_LOCK
-
-    connection = MagicMock()
-    connection.scalar.return_value = leader_present
-    engine = MagicMock()
-    engine.connect.return_value.__enter__.return_value = connection
-    monkeypatch.setattr(readiness, "get_readiness_engine", lambda: engine)
-
-    assert readiness._probe_scanner_worker_leader() is leader_present
-
-    statements = [call.args[0].text for call in connection.execute.call_args_list]
-    assert statements == ["SET TRANSACTION READ ONLY"]
-    sql, parameters = connection.scalar.call_args.args
-    normalized_sql = " ".join(sql.text.casefold().split())
-    assert "from pg_locks" in normalized_sql
-    assert "locktype = 'advisory'" in normalized_sql
-    assert "objsubid = 1" in normalized_sql
-    assert "granted" in normalized_sql
-    assert "mode = 'exclusivelock'" in normalized_sql
-    assert "database" in normalized_sql
-    assert "pg_backend_pid()" in normalized_sql
-    assert "pg_try_advisory_lock" not in normalized_sql
-    assert parameters == {
-        "lock_classid": LEADER_LOCK >> 32,
-        "lock_objid": LEADER_LOCK & 0xFFFFFFFF,
-    }
-
-
 def test_readiness_deadline_callers_share_the_same_in_flight_provider_probe(monkeypatch) -> None:
     # Isolate sharing from probe-start scheduling; Future.result still times out in real time.
     monkeypatch.setattr(readiness, "monotonic", lambda: 0.0)
+    # A real database connection under parallel coverage load can outlast the 0.5 s
+    # wait below before the Auth probe starts; sharing does not depend on it.
+    monkeypatch.setattr(readiness, "_probe_database", lambda: True)
     started = Event()
     release = Event()
     completed = Event()
@@ -349,7 +215,9 @@ def test_readiness_deadline_callers_share_the_same_in_flight_provider_probe(monk
             with request_lock:
                 request_count += 1
             started.set()
-            assert release.wait(1)
+            # Held well past the 5 s bounds below: a caller that blocked on this in-flight
+            # probe instead of answering at its own deadline would fail the test.
+            assert release.wait(10)
             completed.set()
         return httpx.Response(200, request=request)
 
@@ -367,8 +235,10 @@ def test_readiness_deadline_callers_share_the_same_in_flight_provider_probe(monk
         with ThreadPoolExecutor(max_workers=2) as callers:
             futures = [callers.submit(call_readiness) for _ in range(2)]
             gate.wait(timeout=1)
-            assert started.wait(0.5), "readiness did not probe the configured Auth health path"
-            responses = [future.result(timeout=0.5) for future in futures]
+            # Generous bounds tolerate thread scheduling under parallel load; the held probe
+            # above keeps them a latency proof, and one provider request proves sharing.
+            assert started.wait(5), "readiness did not probe the configured Auth health path"
+            responses = [future.result(timeout=5) for future in futures]
 
         assert [response.status_code for response in responses] == [503, 503]
         assert request_count == 1
@@ -437,8 +307,7 @@ def test_timed_out_readiness_call_does_not_start_a_replacement_and_recovers(
                 "auth": _component(status),
                 "storage": _component(status),
                 "smtp": _component(status),
-                "scanner": _component("not_configured", required=False),
-            },
+                },
         }
 
     def probe(_partial=None) -> readiness.ReadinessSnapshot:
@@ -446,7 +315,9 @@ def test_timed_out_readiness_call_does_not_start_a_replacement_and_recovers(
         call_count += 1
         if call_count == 1:
             started.set()
-            assert release.wait(1)
+            # Held well past the 5 s bounds below: a caller that blocked on this in-flight
+            # probe instead of answering at its own deadline would fail the test.
+            assert release.wait(10)
             completed.set()
             return report(False)
         return report(True)

@@ -2,7 +2,7 @@
 
 > **Scope:** Supabase provider settings, OpenSlate application settings, and secret boundaries.
 
-Configuration has three owners. Local development uses the private root `.env` described by [`.env.example`](../../.env.example). A production Compose installation has an owner-only provider environment file consumed for Compose interpolation and a separate owner-only application environment file mounted into the API and worker. Offline backup and restore use a separate strict version 3 JSON operations file. Do not merge the application and provider credentials into a browser or shared process environment.
+Configuration has three owners. Local development uses the private root `.env` described by [`.env.example`](../../.env.example). A production Compose installation has an owner-only provider environment file consumed for Compose interpolation and a separate owner-only application environment file mounted into the API. Offline backup and restore use a separate strict version 3 JSON operations file. Do not merge the application and provider credentials into a browser or shared process environment.
 
 The root validator is [`backend/app/core/config/environment.py`](../../backend/app/core/config/environment.py), invoked by [`scripts/environment.py`](../../scripts/environment.py). The helper requires an owner-only local environment file, limits which values are passed to Docker, fixes the Compose project and file set, and rejects unknown or unresolved values. The production input paths and responsibilities are listed in [`infra/supabase/README.md`](../../infra/supabase/README.md#per-installation-inputs).
 
@@ -13,9 +13,9 @@ The root validator is [`backend/app/core/config/environment.py`](../../backend/a
 | `OPENSLATE_INSTANCE_ID` | Compose project, database `cluster_name`, application/provider admission | Installation identity; unique per client/worktree. |
 | `OPENSLATE_INSTANCE_ROOT` | Local instance paths and log-root validation | Private absolute path. Production overlay has separately named absolute paths below. |
 | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE` | Direct SQLAlchemy/Psycopg connection and instance admission | Internal endpoint; use `db:5432/postgres` inside the production Compose network and the admitted loopback mapping in development. `POSTGRES_PORT` must match `SUPABASE_DB_PORT`. |
-| `DATABASE_BOOTSTRAP_URL` | `operations/provision_database_role.py` only | High-privilege `supabase_admin` URL using the provider bootstrap password. Never pass it to the API, worker, frontend, or tests as a runtime connection. |
+| `DATABASE_BOOTSTRAP_URL` | `operations/provision_database_role.py` only | High-privilege `supabase_admin` URL using the provider bootstrap password. Never pass it to the API, frontend, or tests as a runtime connection. |
 | `MIGRATION_DATABASE_URL` | Alembic and guarded operator/reset commands | Secret URL for `openslate_owner`; owns application schema changes. |
-| `DATABASE_URL` | FastAPI, scanner worker, and Storage provisioning | Secret URL for constrained `openslate_runtime` in normal runtime. Direct PostgreSQL access remains server-side. |
+| `DATABASE_URL` | FastAPI and Storage provisioning | Secret URL for constrained `openslate_runtime` in normal runtime. Direct PostgreSQL access remains server-side. |
 
 `POSTGRES_PASSWORD` is the provider bootstrap password, not the application runtime password. The key generator [`backend/operations/supabase_keys.py`](../../backend/operations/supabase_keys.py) writes generated per-installation key material to a new owner-only file and refuses to overwrite an existing file. Connection URLs must target the same admitted installation and use their intended role; no SQLite or legacy inspector connection is supported.
 
@@ -48,17 +48,15 @@ FastAPI settings are defined by [`backend/app/core/config/settings.py`](../../ba
 
 The development `.env` also contains `BACKEND_URL`, `FRONTEND_DEV_PORT`, `ADMIN_EMAIL`, `ADMIN_USERNAME`, and `SEED_ACCESS_TOKEN` for local launch and first-admin invitation. `SEED_ACCESS_TOKEN` is reserved for sample-data tooling, which is retired during the schema redesign. `BACKEND_BIND_HOST` and `BACKEND_PORT` are local FastAPI settings; `FRONTEND_DEV_PORT` is the Next hot-reload port. The Next launcher receives only the required direct nonsecret development values and its derived HMR origin, never the complete root environment.
 
-## Production Compose inputs and scanner paths
+## Production Compose inputs
 
 The production overlay adds Compose-only inputs in addition to the provider file and application file:
 
 | Setting group | Names | Contract |
 | --- | --- | --- |
-| Versioned images | `OPENSLATE_SERVER_IMAGE`, `OPENSLATE_CLAMAV_IMAGE`, `OPENSLATE_CADDY_IMAGE` | Release-specific image names for the FastAPI/static UI, ClamAV, and Caddy builds. The Compose files do not publish these images. |
-| Application file and logs | `OPENSLATE_APP_ENV_FILE`, `OPENSLATE_LOG_ROOT` | Existing owner-only application environment file and private host log directory. API and scanner worker use separate log subdirectories. |
-| Scanner | `SCANNER_DEFINITIONS_DIR`, `SCANNER_MANIFEST_PATH`, `FILES_CLAMAV_HOST`, `FILES_CLAMAV_PORT` | Existing verified immutable definition generation and matching manifest. Mounts are read-only. A failed or unverified scanner does not admit clean file state. |
+| Versioned images | `OPENSLATE_SERVER_IMAGE`, `OPENSLATE_CADDY_IMAGE` | Release-specific image names for the FastAPI/static UI and Caddy builds. The Compose files do not publish these images. |
+| Application file and logs | `OPENSLATE_APP_ENV_FILE`, `OPENSLATE_LOG_ROOT` | Existing owner-only application environment file and private host log directory. The API writes to a log subdirectory under it. |
 | Caddy listener and TLS | `CADDY_CONFIG_PATH`, `CADDY_TLS_DIR`, `CADDY_PUBLIC_BIND_HOST`, `CADDY_HTTPS_PORT` | Existing rendered Caddyfile, optional existing custom TLS directory, intended public bind, and HTTPS port. The Caddy generator is `infra/caddy/generate_config.py`. |
-| Local resource bounds | `CLAMAV_MEMORY_LIMIT`, `CLAMAV_CPUS`, `CLAMAV_PIDS_LIMIT`, `FILES_CLAMAV_PORT` | Developer Compose/container limits, not browser configuration. |
 
 Production application environment files use the current `Settings` fields, including the database connection, provider endpoints and keys, application signing/encryption keys, `PUBLIC_ORIGIN`, `WEB_ASSETS_ROOT`, runtime limits, and log path. Do not put `POSTGRES_PASSWORD`, `JWT_KEYS`, `JWT_JWKS`, Studio credentials, or Auth SMTP credentials into the application file. Exact paths and environment relationships are documented in the [production overlay contract](../../infra/supabase/README.md#production-application-overlay).
 

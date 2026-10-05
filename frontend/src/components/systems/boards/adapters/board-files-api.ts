@@ -8,7 +8,6 @@ const timestamp = z.iso.datetime({ offset: true });
 const fileState = z.enum([
   "awaiting_upload",
   "uploading",
-  "pending_scan",
   "ready",
   "rejected",
   "deleting",
@@ -223,7 +222,7 @@ export async function uploadBoardFile(
   rawFileId: string,
   content: Blob,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<BoardAttachmentFile> {
   const boardId = uuid.parse(rawBoardId);
   const fileId = uuid.parse(rawFileId);
   if (
@@ -243,40 +242,14 @@ export async function uploadBoardFile(
     },
   );
   if (!response.ok) return throwRequestError(response);
-  await response.body?.cancel().catch(() => undefined);
-}
-
-export async function scanBoardFile(
-  rawBoardId: string,
-  rawFileId: string,
-  signal?: AbortSignal,
-): Promise<BoardAttachmentFile> {
-  const boardId = uuid.parse(rawBoardId);
-  const fileId = uuid.parse(rawFileId);
-  const file = await apiFetch(
-    `/boards/${boardId}/files/${fileId}/scan`,
-    fileWire,
-    {
-      method: "POST",
-      cache: "no-store",
-      signal,
-    },
-  );
-  return checkedFile(file, boardId);
-}
-
-export async function readBoardFile(
-  rawBoardId: string,
-  rawFileId: string,
-  signal?: AbortSignal,
-): Promise<BoardAttachmentFile> {
-  const boardId = uuid.parse(rawBoardId);
-  const fileId = uuid.parse(rawFileId);
-  const file = await apiFetch(`/boards/${boardId}/files/${fileId}`, fileWire, {
-    cache: "no-store",
-    signal,
+  const body: unknown = await response.json().catch((error: unknown) => {
+    if (signal?.aborted) throw error;
+    throw new ApiContractError();
   });
-  return checkedFile(file, boardId);
+  const result = fileWire.safeParse(body);
+  if (!result.success || result.data.id !== fileId)
+    throw new ApiContractError();
+  return checkedFile(result.data, boardId);
 }
 
 export async function listBoardAttachments(

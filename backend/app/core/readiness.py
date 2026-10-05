@@ -10,18 +10,13 @@ import httpx
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.core.config import ConfigurationError, Settings, get_settings
+from app.core.config import Settings, get_settings
 from app.core.observability import log_event
-from app.systems.platform.files.providers import ProviderUnavailable, get_scanner
 
 _probe_lock = Lock()
 _probe_executor: ThreadPoolExecutor | None = None
 _snapshot_future: Future["ReadinessSnapshot"] | None = None
 _snapshot_partial: tuple[Future["ReadinessSnapshot"], dict[str, "ComponentReadiness"]] | None = None
-
-# Keep this in sync with app.systems.platform.files.worker.LEADER_LOCK. The
-# readiness test compares the split words with that runtime-owned constant.
-_SCANNER_WORKER_LEADER_LOCK = 57_168_423_129_478_012
 
 
 class ComponentReadiness(TypedDict):
@@ -117,10 +112,6 @@ def _unavailable_snapshot(
         "auth": _component(False),
         "storage": _component(False),
         "smtp": _smtp_component(settings),
-        "scanner": _component(
-            False,
-            required=_scanner_required(settings.environment),
-        ),
     }
     components.update(completed or {})
     return _snapshot(components)
@@ -143,10 +134,9 @@ def _probe_components(
 ) -> ReadinessSnapshot:
     settings = get_settings()
     deadline = monotonic() + settings.readiness_caller_timeout_seconds
-    database_ready = _probe_database()
 
     provider_components: dict[str, ComponentReadiness] = {}
-    _record_component(provider_components, partial, "database", _component(database_ready))
+    _record_component(provider_components, partial, "database", _component(_probe_database()))
     provider_key = settings.supabase_publishable_key.get_secret_value()
     try:
         with httpx.Client(follow_redirects=False, trust_env=False) as client:
@@ -171,14 +161,7 @@ def _probe_components(
         if "storage" not in provider_components:
             _record_component(provider_components, partial, "storage", _component(False))
     _record_component(provider_components, partial, "smtp", _smtp_component(settings))
-    _record_component(
-        provider_components, partial, "scanner", _probe_scanner(settings, deadline, database_ready)
-    )
     return _snapshot(provider_components)
-
-
-def _scanner_required(environment: str) -> bool:
-    return environment not in {"development", "test"}
 
 
 def _smtp_component(settings: Settings) -> ComponentReadiness:
@@ -186,67 +169,6 @@ def _smtp_component(settings: Settings) -> ComponentReadiness:
     if not configured:
         return _not_configured(required=True)
     return _component(True)
-
-
-def _probe_scanner(
-    settings: Settings,
-    deadline: float,
-    database_ready: bool,
-) -> ComponentReadiness:
-    required = _scanner_required(settings.environment)
-    try:
-        scanner = get_scanner(require_configuration=True)
-    except ConfigurationError:
-        return _not_configured(required=required)
-
-    if not database_ready or monotonic() >= deadline:
-        return _component(False, required=required)
-    if not _probe_scanner_worker_leader() or monotonic() >= deadline:
-        return _component(False, required=required)
-    try:
-        scanner.probe()
-    except ProviderUnavailable:
-        return _component(False, required=required)
-    return _component(True, required=required)
-
-
-def _probe_scanner_worker_leader() -> bool:
-    lock_key = _SCANNER_WORKER_LEADER_LOCK
-    try:
-        with get_readiness_engine().connect() as connection:
-            with connection.begin():
-                connection.execute(text("SET TRANSACTION READ ONLY"))
-                return bool(
-                    connection.scalar(
-                        text(
-                            """
-                            SELECT EXISTS (
-                                SELECT 1
-                                FROM pg_locks
-                                WHERE locktype = 'advisory'
-                                  AND database = (
-                                      SELECT oid
-                                      FROM pg_database
-                                      WHERE datname = current_database()
-                                  )
-                                  AND classid = CAST(:lock_classid AS oid)
-                                  AND objid = CAST(:lock_objid AS oid)
-                                  AND objsubid = 1
-                                  AND mode = 'ExclusiveLock'
-                                  AND granted IS TRUE
-                                  AND pid IS NOT NULL
-                                  AND pid <> pg_backend_pid()
-                            )
-                            """
-                        ),
-                        {
-                            "lock_classid": lock_key >> 32,
-                            "lock_objid": lock_key & 0xFFFFFFFF,
-                        },
-                    )
-                )
-    except SQLAlchemyError:
-        return False
 
 
 def _probe_provider_health(

@@ -9,7 +9,7 @@ from typing import ClassVar, Literal
 from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
-from pydantic import Field, FilePath, SecretStr, ValidationError, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -302,12 +302,6 @@ class AdminSettings(EnvironmentSettings):
     admin_username: str = Field(validation_alias="ADMIN_USERNAME")
 
 
-class ScannerSettings(EnvironmentSettings):
-    files_clamav_host: str = Field(validation_alias="FILES_CLAMAV_HOST")
-    files_clamav_port: int = Field(ge=1, le=65535, validation_alias="FILES_CLAMAV_PORT")
-    files_clamav_manifest_path: FilePath = Field(validation_alias="FILES_CLAMAV_MANIFEST_PATH")
-
-
 class SeedSettings(EnvironmentSettings):
     backend_url: str = Field(validation_alias="BACKEND_URL")
     seed_access_token: SecretStr = Field(validation_alias="SEED_ACCESS_TOKEN")
@@ -344,10 +338,6 @@ def get_instance_settings() -> InstanceSettings:
 
 def get_admin_settings() -> AdminSettings:
     return _load(AdminSettings)
-
-
-def get_scanner_settings() -> ScannerSettings:
-    return _load(ScannerSettings)
 
 
 def get_seed_settings() -> SeedSettings:

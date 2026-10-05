@@ -1,16 +1,12 @@
-"""Explicit provider contracts. Missing scanning never produces a clean result."""
+"""Explicit private storage contract, provider errors, and transfer slots."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from threading import BoundedSemaphore, Lock
 from types import TracebackType
-from typing import Literal, Protocol
-from uuid import UUID
+from typing import Protocol
 
 from fastapi import HTTPException, Request
-
-from app.core.config import ConfigurationError, get_scanner_settings
 
 
 class ProviderUnavailable(RuntimeError):
@@ -29,89 +25,19 @@ class ProviderWriteRejected(ProviderRejected):
     """Local storage definitively failed before installing an immutable object."""
 
 
-class ScannerExecutionUncertain(ProviderUnavailable):
-    """The engine may still be executing; fence scans until operator replacement."""
-
-
-class ScannerPolicyRejected(ProviderUnavailable):
-    """The engine definitively rejected inspection under its resource policy."""
-
-
-@dataclass(frozen=True)
-class ScanVerdict:
-    outcome: Literal["clean", "infected", "unknown"]
-    digest: str
-    scanner_version: str
-    signature_version: str
-
-
-class Scanner(Protocol):
-    def probe(self) -> None:
-        """Check fixed engine readiness without submitting file bytes."""
-        ...
-
-    def scan(self, content: bytes, *, digest: str, operation_id: UUID) -> ScanVerdict:
-        """Return a verdict on exactly these bytes within 60 seconds."""
-        ...
-
-
-class UnavailableScanner:
-    def probe(self) -> None:
-        raise ProviderUnavailable("Scanner is not configured")
-
-    def scan(self, content: bytes, *, digest: str, operation_id: UUID) -> ScanVerdict:
-        raise ProviderUnavailable("Scanner is not configured")
-
-
-def get_scanner(*, require_configuration: bool = False) -> Scanner:
-    from app.systems.platform.files.clamav import ClamAVScanner
-
-    try:
-        settings = get_scanner_settings()
-    except ConfigurationError:
-        if require_configuration:
-            raise
-        return UnavailableScanner()
-    return ClamAVScanner(
-        settings.files_clamav_host,
-        settings.files_clamav_port,
-        settings.files_clamav_manifest_path,
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class StorageStat:
-    """Integrity metadata for one immutable private object."""
-
-    size: int
-    digest: str
-
-
 class StorageBackend(Protocol):
-    """Private immutable bytes; quarantined objects are never downloadable."""
+    """Private immutable bytes, read only through FastAPI after authorization."""
 
     def upload(self, key: str, content: bytes, media_type: str) -> None:
-        """Create a new immutable quarantined object."""
-        ...
-
-    def read_quarantine(self, key: str) -> bytes | None:
-        """Read an object before a scan verdict; never expose it to callers."""
-        ...
-
-    def promote(self, key: str, *, expected_digest: str, expected_size: int) -> None:
-        """Make a clean quarantined object available in ready storage."""
+        """Create a new immutable private object."""
         ...
 
     def download(self, key: str) -> bytes | None:
-        """Read only a ready object."""
-        ...
-
-    def stat(self, key: str, *, quarantine: bool) -> StorageStat | None:
-        """Return exact local object integrity metadata when it exists."""
+        """Read an object, or return None when it does not exist."""
         ...
 
     def delete(self, key: str) -> None:
-        """Idempotently remove an object from both private locations."""
+        """Idempotently remove an object."""
         ...
 
 

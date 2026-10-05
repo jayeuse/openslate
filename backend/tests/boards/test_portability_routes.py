@@ -1,8 +1,10 @@
 """Board portability: managers export, administrators import or duplicate into project Boards."""
 
 import json
+from datetime import date
+from hashlib import sha256
 from unittest.mock import Mock
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,10 +14,13 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
+from app.systems.boards.attachment_models import BoardAttachment
+from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board, BoardGroup, BoardWidget
 from app.systems.boards.portability_router import router
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditAction, AuditLog
+from app.systems.platform.files.models import File
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
@@ -392,3 +397,68 @@ def test_import_rolls_back_board_and_widgets_after_commit_conflict(
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "board_import_conflict"
     assert db.scalar(select(func.count()).select_from(Board)) == before
+
+
+@pytest.mark.integration
+def test_duplicate_and_import_copy_no_board_files(integration_owner_db: Session) -> None:
+    """A copied file would block the copy's purge, which refuses unpurged files."""
+    db = integration_owner_db
+    administrator = admin(db)
+    department, module, field = _source(db)
+    board = project_board(db, "Source with files")
+    db.add(
+        BoardWidget(
+            board_id=board.id,
+            position=0,
+            name="First",
+            widget_type="records",
+            module_id=module.id,
+            config=_config(field),
+        )
+    )
+    event = BoardEvent(
+        board_id=board.id,
+        author_id=administrator.id,
+        title="Inspection",
+        all_day=True,
+        start_date=date(2026, 9, 24),
+        end_date=date(2026, 9, 24),
+        timezone_name="Asia/Manila",
+    )
+    content = b"source board bytes"
+    file = File(
+        purpose="board_attachment",
+        board_id=board.id,
+        record_id=None,
+        creator_id=administrator.id,
+        filename="plan.pdf",
+        expected_size=len(content),
+        actual_size=len(content),
+        digest=sha256(content).hexdigest(),
+        object_key=uuid4().hex,
+        media_type="application/pdf",
+        state="ready",
+    )
+    db.add_all((event, file))
+    db.flush()
+    db.add(BoardAttachment(board_id=board.id, file_id=file.id, event_id=event.id))
+    db.commit()
+    set_audit_actor(db, administrator.id)
+    api = client(db, administrator, router)
+
+    duplicated = api.post(f"/api/boards/{board.id}/duplicate")
+    exported = api.get(f"/api/boards/{board.id}/configuration")
+    imported = _upload(api, exported.json())
+
+    assert duplicated.status_code == 201 and imported.status_code == 201, imported.text
+    for copy_id in (UUID(duplicated.json()["id"]), UUID(imported.json()["id"])):
+        for model in (File, BoardAttachment, BoardEvent):
+            count = select(func.count()).select_from(model).where(model.board_id == copy_id)
+            assert db.scalar(count) == 0, model.__name__
+        assert (
+            db.scalar(
+                select(func.count()).select_from(BoardWidget).where(BoardWidget.board_id == copy_id)
+            )
+            == 1
+        )
+    assert db.scalar(select(func.count()).select_from(File).where(File.board_id == board.id)) == 1

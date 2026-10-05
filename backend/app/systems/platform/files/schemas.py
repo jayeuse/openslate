@@ -17,7 +17,6 @@ class FilePurpose(StrEnum):
 class FileState(StrEnum):
     AWAITING_UPLOAD = "awaiting_upload"
     UPLOADING = "uploading"
-    PENDING_SCAN = "pending_scan"
     READY = "ready"
     REJECTED = "rejected"
     DELETING = "deleting"

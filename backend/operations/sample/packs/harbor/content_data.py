@@ -2,7 +2,12 @@
 
 from decimal import Decimal
 
-from operations.sample.packs.content_types import BoardLinkSpec, ContentSpec, MoneySpec
+from operations.sample.packs.content_types import (
+    BoardFileSpec,
+    BoardLinkSpec,
+    ContentSpec,
+    MoneySpec,
+)
 from operations.sample.packs.harbor import content_text as text
 
 _DEPARTMENT_GROUPS = {
@@ -47,6 +52,25 @@ _REMINDERS = ("start", "15m", "1d")
 
 _LEADS = {key: f"internal_{key}_lead" for key in _DEPARTMENT_KEYS}
 
+# Blank attachments on seeded posts (indexes 0-5 stay visible) and events. None sit on
+# the control anchor Board (Fleet Reliability), whose files the controls add and remove.
+_BOARD_FILES = tuple(
+    BoardFileSpec(f"file:{board}:{kind}:{index}", board, kind, index, filename)
+    for board, kind, index, filename in (
+        ("department:field", "post", 0, "Dock 3 loading plan.pdf"),
+        ("department:field", "event", 3, "Pallet damage photo.jpeg"),
+        ("department:inventory", "post", 2, "Forklift inspection checklist.xlsx"),
+        ("department:inventory", "event", 1, "Yard layout.png"),
+        ("department:service", "post", 4, "Service van route map.jpg"),
+        ("department:sales", "event", 0, "Customer renewal pricing.pptx"),
+        ("department:purchasing", "post", 0, "Supplier delivery schedule.docx"),
+        ("department:finance", "post", 2, "Month-end close checklist.xlsx"),
+        ("project:sales:customer-renewal", "post", 2, "Renewal terms summary.docx"),
+        ("project:inventory:inventory-resilience", "event", 2, "Safety stock review.pptx"),
+        ("company", "post", 1, "Quarterly operations update.pdf"),
+    )
+)
+
 
 def content_spec() -> ContentSpec:
     return ContentSpec(
@@ -90,6 +114,7 @@ def content_spec() -> ContentSpec:
                 ("equipment:000001", "work_orders:000001"),
             ),
         ),
+        board_files=_BOARD_FILES,
         post_states=_POST_STATES,
         posts_per_board=8,
         events_per_board=12,

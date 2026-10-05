@@ -38,7 +38,6 @@ if __package__:
     from .fullstack_summary import summary_path, write_fullstack_summary
     from .postgres_runtime import DisposablePostgres
     from .runner_console import e2e_browser_flags, run_streamed, stop_on_signals
-    from .scanner_runtime import DisposableScanner
 else:
     from backend_batches import parse_batch, run_backend_batches
     from backend_coverage import coverage_output, parse_shard, run_backend_coverage
@@ -51,7 +50,6 @@ else:
     from fullstack_summary import summary_path, write_fullstack_summary
     from postgres_runtime import DisposablePostgres
     from runner_console import e2e_browser_flags, run_streamed, stop_on_signals
-    from scanner_runtime import DisposableScanner
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
@@ -69,7 +67,7 @@ __all__ = (
 
 
 def browser_acceptance_command(*, browser_only: bool = False) -> list[str]:
-    """Keep scanner-free auth repair separate from complete scanner-backed acceptance."""
+    """Keep the auth-only repair run separate from complete browser acceptance."""
     command = [
         "npx",
         "playwright",
@@ -193,7 +191,6 @@ def main(arguments=()):
         shard = parse_shard(arguments[1])
     elif not batch and arguments not in (
         (),
-        ("--scanner-only",),
         ("--backend-coverage-only",),
         ("--acceptance-only",),
         ("--browser-only",),
@@ -202,10 +199,9 @@ def main(arguments=()):
     backend_only = (
         batch is not None or shard is not None or arguments == ("--backend-coverage-only",)
     )
-    scanner_only = arguments == ("--scanner-only",)
     acceptance_only = arguments == ("--acceptance-only",)
     browser_only = arguments == ("--browser-only",)
-    if not scanner_only and batch is None and not acceptance_only and not browser_only:
+    if batch is None and not acceptance_only and not browser_only:
         output = coverage_output(BACKEND)
         if output.exists():
             shutil.rmtree(output)
@@ -221,8 +217,7 @@ def main(arguments=()):
     processes = []
     stage = "prepare"
     result = 1
-    admission, checker_exit, scanner, postgres, caddy = {}, None, None, None, None
-    scanner_observations = {}
+    admission, checker_exit, postgres, caddy = {}, None, None, None
     browser_completed = False
     failure_type = failure_message = None
     result_path = summary_path(BACKEND, FRONTEND, batch=batch, backend_only=backend_only)
@@ -248,7 +243,9 @@ def main(arguments=()):
 
     try:
         stage = "PostgreSQL startup"
-        postgres = DisposablePostgres(private, run_id, base_env, log)
+        postgres = DisposablePostgres(
+            private, run_id, base_env, log, template_port=None if backend_only else 8008
+        )
         postgres.start()
         database_env = postgres.urls()
         provider_env = postgres.provider_environment()
@@ -289,7 +286,7 @@ def main(arguments=()):
             BACKEND,
             api_env,
         )
-        if not scanner_only and not acceptance_only and not browser_only:
+        if not acceptance_only and not browser_only:
             stage = "backend batch" if batch else "backend regression and coverage gate"
             execute = run_backend_batches if batch else run_backend_coverage
             result = execute(
@@ -307,11 +304,6 @@ def main(arguments=()):
         if backend_only:
             result = result if batch else 0
         else:
-            if not browser_only:
-                stage = "official scanner generation"
-                scanner = DisposableScanner(ROOT, private, run_id, base_env, log)
-                scanner_observations = scanner.observations
-                scanner.start()
             stage = "dedicated identities"
             identities = seed(owner_url, run_id, migration_env)
             fixture = private / "fixture.json"
@@ -353,28 +345,12 @@ def main(arguments=()):
                 )
             )
             wait_for(API + "/api/ready", processes[-1])
-            if scanner is not None:
-                stage = "automatic scan worker"
-                scanner.start_worker(api_env, postgres.network)
             stage = "bounded admission and recovery"
             admission = measure_admission()
             stage = "Caddy gateway startup"
             caddy = DisposableCaddy(private, run_id, base_env, log)
             caddy.start()
             wait_for(WEB + "/login", caddy, verify=False)
-            if scanner is not None:
-                stage = "scanned private downloads"
-                if __package__:
-                    from .scanner_acceptance import verify_scanned_downloads
-                else:
-                    from scanner_acceptance import verify_scanned_downloads
-                verify_scanned_downloads(scanner, api_env, identities)
-                stage = "real worker crash recovery"
-                if __package__:
-                    from .scanner_recovery import verify_worker_recovery
-                else:
-                    from scanner_recovery import verify_worker_recovery
-                verify_worker_recovery(scanner, api_env, identities["admin"])
             stage = "browser acceptance"
             test_env = {
                 **base_env,
@@ -420,12 +396,6 @@ def main(arguments=()):
                     except ProcessLookupError:
                         pass
                     process.wait()
-            if scanner is not None:
-                try:
-                    scanner.stop()
-                except Exception:
-                    print("Disposable scanner cleanup failed; operator attention required.")
-                    result = 1
             if postgres is not None:
                 try:
                     postgres.stop()
@@ -446,13 +416,11 @@ def main(arguments=()):
                 batch=batch,
                 backend_only=backend_only,
                 acceptance_only=acceptance_only,
-                scanner_only=scanner_only,
                 stage=stage,
                 browser_completed=browser_completed,
                 browser_only=browser_only,
                 admission=admission,
                 checker_exit=checker_exit,
-                scanner_observations=scanner_observations,
                 failure_type=failure_type,
                 failure_message=failure_message,
             )

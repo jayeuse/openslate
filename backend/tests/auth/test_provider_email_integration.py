@@ -53,7 +53,10 @@ def provider_mail():
     listener = socket.socket()
     # Back-to-back fixtures leave the previous server's closed connections in TIME_WAIT.
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listener.bind((bind_host, 8008))
+    # Each runner stack points Auth at its own template port (see supabase_runtime).
+    template_port = urlsplit(values["GOTRUE_MAILER_TEMPLATES_INVITE"]).port
+    assert template_port is not None, "Auth template URL lacks a port"
+    listener.bind((bind_host, template_port))
     listener.listen(128)
     server = uvicorn.Server(
         uvicorn.Config(

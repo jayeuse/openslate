@@ -387,7 +387,7 @@ def run_once(
             host.resume(journal)
         except RunnerError as error:
             if journal["phase"] == "restarting":
-                host.compose(["stop", "caddy", "api", "scanner-worker"], failure="restart_failed")
+                host.compose(["stop", "caddy", "api"], failure="restart_failed")
             failure = cast(
                 FailureCode,
                 error.code if error.code in get_args(FailureCode) else "backup_interrupted",

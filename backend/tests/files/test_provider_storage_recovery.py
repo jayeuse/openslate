@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
-from hashlib import sha256
 from uuid import uuid4
 
 import httpx
@@ -18,7 +17,6 @@ from tests.conftest import _guard_integration_database
 
 pytestmark = pytest.mark.integration
 
-_QUARANTINE = "openslate-quarantine"
 _READY = "openslate-ready"
 _MEDIA_TYPE = "application/octet-stream"
 
@@ -75,7 +73,7 @@ def live_provider_storage() -> Iterator[tuple[Settings, SupabaseStorage, httpx.C
 
 
 @pytest.fixture
-def quarantine_object(
+def stored_object(
     live_provider_storage,
 ) -> Iterator[tuple[Settings, SupabaseStorage, httpx.Client, str, bytes]]:
     settings, storage, client = live_provider_storage
@@ -88,57 +86,13 @@ def quarantine_object(
         storage.delete(key)
 
 
-def _copy_to_ready(settings: Settings, key: str, client: httpx.Client) -> None:
-    secret = settings.supabase_secret_key.get_secret_value()
-    response = client.post(
-        f"{str(settings.supabase_url).rstrip('/')}/storage/v1/object/copy",
-        headers={
-            "apikey": secret,
-            "authorization": f"Bearer {secret}",
-            "x-upsert": "false",
-        },
-        json={
-            "bucketId": _QUARANTINE,
-            "sourceKey": key,
-            "destinationBucket": _READY,
-            "destinationKey": key,
-        },
-        timeout=float(settings.supabase_timeout_seconds),
-    )
-    assert 200 <= response.status_code < 300, "Live Supabase Storage copy failed"
-
-
-def test_promotion_retries_after_copy_succeeded_but_quarantine_delete_failed(
-    quarantine_object,
-) -> None:
-    settings, storage, _client, key, content = quarantine_object
-    digest = sha256(content).hexdigest()
-    injected = FailOneStorageDelete(_QUARANTINE, key)
-    failing_storage, client = _new_storage(settings, injected)
-    try:
-        with pytest.raises(ProviderUnavailable):
-            failing_storage.promote(key, expected_digest=digest, expected_size=len(content))
-        assert injected.failures == 1
-    finally:
-        client.close()
-
-    # The real copy remains in Ready and the failed cleanup preserves Quarantine bytes.
-    assert storage.read_quarantine(key) == content
-    assert storage.download(key) == content
-
-    storage.promote(key, expected_digest=digest, expected_size=len(content))
-    assert storage.read_quarantine(key) is None
+def test_upload_lands_in_the_private_ready_bucket(stored_object) -> None:
+    _settings, storage, _client, key, content = stored_object
     assert storage.download(key) == content
 
 
-def test_delete_retries_after_quarantine_was_removed_but_ready_delete_failed(
-    quarantine_object,
-) -> None:
-    settings, storage, client, key, content = quarantine_object
-    _copy_to_ready(settings, key, client)
-
-    assert storage.read_quarantine(key) == content
-    assert storage.download(key) == content
+def test_delete_retries_after_a_failed_provider_delete(stored_object) -> None:
+    settings, storage, _client, key, content = stored_object
 
     injected = FailOneStorageDelete(_READY, key)
     failing_storage, client = _new_storage(settings, injected)
@@ -149,10 +103,8 @@ def test_delete_retries_after_quarantine_was_removed_but_ready_delete_failed(
     finally:
         client.close()
 
-    # Quarantine deletion reached the provider; the targeted Ready delete did not.
-    assert storage.read_quarantine(key) is None
+    # The failed delete kept the bytes; a retry removes them.
     assert storage.download(key) == content
 
     storage.delete(key)
-    assert storage.read_quarantine(key) is None
     assert storage.download(key) is None
