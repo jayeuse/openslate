@@ -14,6 +14,8 @@ import {
 } from "./helpers/boards-api";
 import { dummyFile, type DummyFile } from "../helpers/dummy-files";
 
+const UNCLEAR_UPLOAD =
+  "The upload result is unclear. Use Attach file to finish, or choose the file again.";
 const postId = "00000000-0000-4000-8000-000000000061";
 const now = "2026-09-25T00:00:00Z";
 const title = "Dock 3 handover";
@@ -83,6 +85,7 @@ function listPage(items: unknown[], extra: Record<string, unknown> = {}) {
 type Options = {
   status: "draft" | "published";
   uploadStatus?: number;
+  uploadBody?: "truncated";
   uploadState?: string;
   failFirstAttach?: boolean;
   seeded?: string[];
@@ -161,6 +164,12 @@ async function installAttachmentApi(page: Page, options: Options) {
       if (options.uploadStatus === 422)
         return reply(422, {
           detail: { code: "file_invalid", message: "File is not inspectable" },
+        });
+      if (options.uploadBody === "truncated")
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: '{"id":',
         });
       return reply(200, fileWire(stored, options.uploadState ?? "ready", true));
     }
@@ -334,6 +343,27 @@ test("a failed attach keeps the uploaded file ready for a retry", async ({
   await expect(
     panel.getByText(`${name} is uploaded but not attached yet.`),
   ).toHaveCount(0);
+  expect(api.mutations.filter(({ method }) => method === "PUT")).toHaveLength(
+    1,
+  );
+});
+
+test("an upload with an unreadable response keeps the file for a retry", async ({
+  page,
+}) => {
+  const api = await installAttachmentApi(page, {
+    status: "draft",
+    uploadBody: "truncated",
+  });
+  const panel = await openDraftAttachments(page);
+  const name = "Dock 3 loading plan.pdf";
+  await panel.getByLabel("Add an attachment").setInputFiles(dummyFile(name));
+  await expect(panel.getByRole("alert")).toHaveText(UNCLEAR_UPLOAD);
+  await expect(
+    panel.getByText(`${name} is uploaded but not attached yet.`),
+  ).toBeVisible();
+  await panel.getByRole("button", { name: "Attach file", exact: true }).click();
+  await expect(panel.getByText(`${name} attached.`)).toBeVisible();
   expect(api.mutations.filter(({ method }) => method === "PUT")).toHaveLength(
     1,
   );

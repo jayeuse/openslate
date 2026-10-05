@@ -60,6 +60,14 @@ class AttachmentFileError extends Error {}
 // File validation refuses the bytes (422), or the file is stored as rejected.
 const REJECTED_UPLOAD =
   "This file could not be stored. Check the file and try again.";
+// The bytes may have been stored even though the response was unusable.
+const UNCLEAR_UPLOAD =
+  "The upload result is unclear. Use Attach file to finish, or choose the file again.";
+
+function ambiguousUpload(error: unknown): boolean {
+  if (error instanceof ApiError) return error.status >= 500;
+  return !(error instanceof AttachmentFileError);
+}
 // Matches the backend extension allowlist in files/validation.py.
 const ATTACHMENT_ACCEPT = ".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.pptx";
 
@@ -272,8 +280,9 @@ export function ServerBoardAttachments(props: Props) {
     setError(null);
     setNotice(null);
     setOperation(`Uploading ${file.name}…`);
+    let reserved: PendingFile | null = null;
     try {
-      const reserved = await reserveBoardFile(boardId, {
+      reserved = await reserveBoardFile(boardId, {
         filename: file.name,
         expectedSize: file.size,
       });
@@ -288,6 +297,13 @@ export function ServerBoardAttachments(props: Props) {
       await attachReadyFile({ id: uploaded.id, filename: uploaded.filename });
     } catch (uploadError) {
       if (isAbort(uploadError)) return;
+      if (reserved && ambiguousUpload(uploadError)) {
+        // Keep the reservation so the user can finish; attach refuses a file that
+        // never became ready.
+        setPendingFile({ id: reserved.id, filename: reserved.filename });
+        setError(UNCLEAR_UPLOAD);
+        return;
+      }
       setError(
         uploadError instanceof AttachmentFileError
           ? uploadError.message
