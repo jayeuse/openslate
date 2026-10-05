@@ -148,7 +148,8 @@ SELECT id, supabase_user_id FROM public.users WHERE id <> %s ORDER BY id
 _WORKSPACE_STATEMENT = """
 SELECT id, singleton_key, display_name, legal_name, description, contact_email,
        contact_phone, postal_address, logo_file_id, timezone, locale, revision,
-       deleted_at, is_deleted, performed_by, invitation_expiry_days, guest_duration_days
+       deleted_at, is_deleted, performed_by, invitation_expiry_days, guest_duration_days,
+       currency, week_start, business_hours, mark
   FROM public.workspace_profiles
 """
 _EFFECTIVE_ADMIN_PROFILES_STATEMENT = """
@@ -244,6 +245,10 @@ class WorkspaceSnapshot:
     performed_by: object
     invitation_expiry_days: object
     guest_duration_days: object
+    currency: object
+    week_start: object
+    business_hours: object
+    mark: object
 
 
 def stable_snapshot_payload(snapshot: object) -> dict[str, object]:

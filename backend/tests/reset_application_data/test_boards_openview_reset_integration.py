@@ -40,12 +40,19 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
     report_id, run_id, work_id = uuid4(), uuid4(), uuid4()
     admin_email = f"reset-admin-{admin_id}@example.test"
     auth.list_account_ids.return_value = (member_provider_id,)
+    workspace_settings_before_test = None
 
     def cleanup() -> None:
         _guard_integration_database(runtime_url)
         _guard_integration_database(owner_url)
         with connect(database_url) as database:
             with database.cursor() as cursor:
+                if workspace_settings_before_test is not None:
+                    cursor.execute(
+                        "UPDATE public.workspace_profiles SET currency = %s, week_start = %s, "
+                        "business_hours = %s, mark = %s",
+                        workspace_settings_before_test,
+                    )
                 cursor.execute(
                     "UPDATE public.workspace_profiles SET logo_file_id = NULL "
                     "WHERE logo_file_id = %s",
@@ -102,6 +109,10 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
     request.addfinalizer(cleanup)
     with connect(database_url) as database:
         with database.cursor() as cursor:
+            cursor.execute(
+                "SELECT currency, week_start, business_hours, mark FROM public.workspace_profiles"
+            )
+            workspace_settings_before_test = cursor.fetchone()
             cursor.execute(
                 "INSERT INTO public.users (id, email, supabase_user_id, username, status, role) "
                 "VALUES (%s, %s, %s, %s, 'active', 'admin'), "
@@ -182,7 +193,11 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "VALUES (%s, 'workspace_logo', %s, 'reset.png', 1, %s, 'awaiting_upload')",
                 (file_id, admin_id, uuid4().hex),
             )
-            cursor.execute("UPDATE public.workspace_profiles SET logo_file_id = %s", (file_id,))
+            cursor.execute(
+                "UPDATE public.workspace_profiles SET logo_file_id = %s, currency = 'USD', "
+                "week_start = 'sunday', business_hours = '10:00–16:00', mark = 'ACME'",
+                (file_id,),
+            )
             plan_before_dashboard = reset.build_reset_plan(
                 database, admin_email, storage_object_keys=storage.list_object_keys()
             )
@@ -310,6 +325,72 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
         assert plan.counts["fields"] == 1
         assert plan.counts["modules"] == 1
         assert plan.impact_digest != plan_before_dashboard.impact_digest
+        for column, original, changed in (
+            ("currency", "USD", "EUR"),
+            ("week_start", "sunday", "monday"),
+            ("business_hours", "10:00–16:00", "08:00–17:00"),
+            ("mark", "ACME", "CHANGED"),
+        ):
+            with database.cursor() as cursor:
+                cursor.execute(f"UPDATE public.workspace_profiles SET {column} = %s", (changed,))
+            database.commit()
+            try:
+                changed_plan = reset.build_reset_plan(
+                    database, admin_email, storage_object_keys=storage.list_object_keys()
+                )
+                assert changed_plan.impact_digest != plan.impact_digest, column
+                with pytest.raises(reset.ResetError, match="reset plan changed"):
+                    execution.apply_reset(
+                        database,
+                        plan,
+                        execute=True,
+                        stdin_is_tty=True,
+                        confirmation=plan.impact_digest,
+                        storage=storage,
+                        auth=auth,
+                    )
+                auth.delete_and_verify_missing.assert_not_called()
+            finally:
+                database.rollback()
+                with database.cursor() as cursor:
+                    cursor.execute(
+                        f"UPDATE public.workspace_profiles SET {column} = %s", (original,)
+                    )
+                database.commit()
+        restore_company_board = execution._reset_company_board
+        for column, value in (
+            ("currency", "USD"),
+            ("week_start", "sunday"),
+            ("business_hours", "10:00–16:00"),
+            ("mark", "ACME"),
+        ):
+
+            def invalidate_workspace_setting(connection, *, column=column, value=value) -> None:
+                restore_company_board(connection)
+                with connection.cursor() as cursor:
+                    cursor.execute(f"UPDATE public.workspace_profiles SET {column} = %s", (value,))
+
+            with monkeypatch.context() as injected_failure:
+                injected_failure.setattr(
+                    execution, "_reset_company_board", invalidate_workspace_setting
+                )
+                auth.list_account_ids.side_effect = ((member_provider_id,), ())
+                with pytest.raises(
+                    reset.ResetError, match="Provider accounts.*profiles were retained"
+                ):
+                    execution.apply_reset(
+                        database,
+                        plan,
+                        execute=True,
+                        stdin_is_tty=True,
+                        confirmation=plan.impact_digest,
+                        storage=storage,
+                        auth=auth,
+                    )
+            assert execution._read_workspace(database) == plan.workspace_snapshot
+            storage.delete_and_verify_empty.assert_not_called()
+        # Restart the mocked provider fixture for the successful attempt.
+        auth.reset_mock()
         auth.list_account_ids.side_effect = ((member_provider_id,), ())
         execution.apply_reset(
             database,
@@ -346,6 +427,11 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             assert cursor.fetchall() == [("company", "active")]
             cursor.execute("SELECT logo_file_id FROM public.workspace_profiles")
             assert cursor.fetchone() == (None,)
+            cursor.execute(
+                "SELECT currency, week_start, business_hours, mark FROM public.workspace_profiles"
+            )
+            workspace_settings = cursor.fetchone()
+            assert workspace_settings == ("PHP", "monday", "09:00–18:00", "RS"), workspace_settings
             cursor.execute(
                 "SELECT revision, document->>'schemaVersion', performed_by "
                 "FROM public.sandbox_documents"
