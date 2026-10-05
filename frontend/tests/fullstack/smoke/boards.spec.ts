@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+
+import { dummyFile } from "../../helpers/dummy-files";
 import { asRole, expect, openWorkspace, test } from "./smoke-fixture";
 
 asRole("manager");
@@ -85,4 +88,76 @@ test("A Board calendar shows a seeded event in its month @boards", async ({
     calendar.getByRole("heading", { name: target, exact: true }),
   ).toBeVisible();
   await expect(calendar.getByText(seeded.title).first()).toBeVisible();
+});
+
+type SeededAttachment = { id: string; filename: string };
+
+test("A seeded Board post shows its attachment and downloads it @boards", async ({
+  page,
+}) => {
+  // Seeded attachments can sit on any Board the manager reads, so the test finds
+  // one through the API and opens its post by URL.
+  await openWorkspace(page, "/boards?section=posts");
+  const boards = await page.request.get("/api/boards?limit=100");
+  expect(boards.status()).toBe(200);
+  let found:
+    | { boardId: string; postId: string; title: string; file: SeededAttachment }
+    | undefined;
+  for (const board of ((await boards.json()) as { items: { id: string }[] })
+    .items) {
+    const posts = await page.request.get(
+      `/api/boards/${board.id}/posts?view=published&limit=100&offset=0`,
+    );
+    expect(posts.status()).toBe(200);
+    for (const post of (
+      (await posts.json()) as { items: { id: string; title: string }[] }
+    ).items) {
+      const attachments = await page.request.get(
+        `/api/boards/${board.id}/posts/${post.id}/attachments?view=published&limit=25&offset=0`,
+      );
+      expect(attachments.status()).toBe(200);
+      const [file] = (
+        (await attachments.json()) as {
+          items: SeededAttachment[];
+        }
+      ).items;
+      if (file) {
+        found = { boardId: board.id, postId: post.id, title: post.title, file };
+        break;
+      }
+    }
+    if (found) break;
+  }
+  if (!found)
+    throw new Error("Harbor Small seeds a published post with an attachment");
+
+  await openWorkspace(
+    page,
+    `/boards?board=${encodeURIComponent(found.boardId)}&section=posts&post=${encodeURIComponent(found.postId)}`,
+  );
+  const reader = page.getByRole("dialog", { name: found.title });
+  await expect(reader).toBeVisible();
+  const attachments = reader.getByRole("region", { name: "Post attachments" });
+  await attachments
+    .getByRole("button", { name: "Attachments", exact: true })
+    .click();
+  const downloadButton = attachments.getByRole("button", {
+    name: `Download ${found.file.filename}`,
+    exact: true,
+  });
+  await expect(downloadButton).toBeVisible();
+  await expect(
+    attachments.getByRole("button", { name: /^Remove / }),
+  ).toHaveCount(0);
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    downloadButton.click(),
+  ]);
+  expect(download.suggestedFilename()).toBe(found.file.filename);
+  // The seeder uploads the shared blank file, so the bytes prove the round trip.
+  expect(
+    readFileSync(await download.path()).equals(
+      dummyFile(found.file.filename).buffer,
+    ),
+  ).toBe(true);
 });
