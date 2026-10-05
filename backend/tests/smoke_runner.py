@@ -159,7 +159,7 @@ def main() -> int:
 
     try:
         timed("PostgreSQL startup")
-        postgres = DisposablePostgres(private, run_id, base_env, log)
+        postgres = DisposablePostgres(private, run_id, base_env, log, template_port=8008)
         postgres.start()
         database_env = postgres.urls()
         provider_env = postgres.provider_environment()

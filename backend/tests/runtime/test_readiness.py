@@ -215,7 +215,9 @@ def test_readiness_deadline_callers_share_the_same_in_flight_provider_probe(monk
             with request_lock:
                 request_count += 1
             started.set()
-            assert release.wait(1)
+            # Held well past the 5 s bounds below: a caller that blocked on this in-flight
+            # probe instead of answering at its own deadline would fail the test.
+            assert release.wait(10)
             completed.set()
         return httpx.Response(200, request=request)
 
@@ -233,8 +235,10 @@ def test_readiness_deadline_callers_share_the_same_in_flight_provider_probe(monk
         with ThreadPoolExecutor(max_workers=2) as callers:
             futures = [callers.submit(call_readiness) for _ in range(2)]
             gate.wait(timeout=1)
-            assert started.wait(0.5), "readiness did not probe the configured Auth health path"
-            responses = [future.result(timeout=0.5) for future in futures]
+            # Generous bounds tolerate thread scheduling under parallel load; the held probe
+            # above keeps them a latency proof, and one provider request proves sharing.
+            assert started.wait(5), "readiness did not probe the configured Auth health path"
+            responses = [future.result(timeout=5) for future in futures]
 
         assert [response.status_code for response in responses] == [503, 503]
         assert request_count == 1
@@ -311,7 +315,9 @@ def test_timed_out_readiness_call_does_not_start_a_replacement_and_recovers(
         call_count += 1
         if call_count == 1:
             started.set()
-            assert release.wait(1)
+            # Held well past the 5 s bounds below: a caller that blocked on this in-flight
+            # probe instead of answering at its own deadline would fail the test.
+            assert release.wait(10)
             completed.set()
             return report(False)
         return report(True)

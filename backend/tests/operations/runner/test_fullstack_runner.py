@@ -69,7 +69,9 @@ def _stub_fullstack_prerequisites(
 ) -> None:
     monkeypatch.setattr(runner, "BACKEND", tmp_path / "backend")
     monkeypatch.setattr(runner, "FRONTEND", tmp_path / "frontend")
-    monkeypatch.setattr(runner, "DisposablePostgres", lambda *_args: _RunnerPostgres(tmp_path))
+    monkeypatch.setattr(
+        runner, "DisposablePostgres", lambda *_args, **_kwargs: _RunnerPostgres(tmp_path)
+    )
     monkeypatch.setattr(runner, "instance_target_for_process", lambda *_args: object())
     monkeypatch.setattr(runner, "run_backend_coverage", lambda *_args: 0)
     monkeypatch.setattr(

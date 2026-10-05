@@ -2,6 +2,7 @@
 
 import io
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -122,8 +123,11 @@ def test_a_shard_line_is_logged_and_shown_with_its_shard_name(
 
     relay(io.StringIO(" 50% PASSED  tests/a.py::test_b\n"), log, "[2/3]")
 
-    assert log.getvalue() == " 50% PASSED  tests/a.py::test_b\n"
-    assert capsys.readouterr().out == "[2/3]  50% PASSED  tests/a.py::test_b\n"
+    # Each line carries its wall-clock time so shard stage durations can be read back.
+    assert re.fullmatch(r"\d\d:\d\d:\d\d  50% PASSED  tests/a.py::test_b\n", log.getvalue())
+    assert re.fullmatch(
+        r"\[2/3\] \d\d:\d\d:\d\d  50% PASSED  tests/a.py::test_b\n", capsys.readouterr().out
+    )
 
 
 class _Installed(Exception):

@@ -36,17 +36,30 @@ different source tree fails the gate. `pytest-split` balances the shards with
 `backend-coverage` artifact; commit that file again when a shard takes much longer than
 the others. Local `prepush.py` runs `python -m tests.parallel_coverage`: three shards on
 their own disposable stacks at the same time, then the same combine step and gates. Each
-shard writes to its own folder under `backend/test-results/coverage-shards/`. Each shard
-stack creates six Docker networks, and Docker Desktop's default address pools hold about
-30, so three shards fit beside the development stack. A shard that fails at PostgreSQL
-startup with "all predefined address pools have been fully subnetted" means networks from
-another stack still exist; `docker network ls` shows them. On a machine with less memory,
+shard writes to its own folder under `backend/test-results/coverage-shards/`. Each test
+stack gets its own `/24` in `10.199.0.0/16`, outside Docker's default address pools, under
+a short cross-process allocation lock, so parallel stacks never exhaust those pools. Test
+stacks run PostgreSQL without crash durability (`fsync`, `synchronous_commit`, and
+`full_page_writes` off) and memoize repeated `docker inspect` answers inside one pytest
+process; the per-test guard still checks the connected database identity every time.
+Backend-only stacks (coverage, its shards, and batches) point Auth's email templates at
+their own host port, `29000` plus the stack's network block, which is unique per live
+stack and below the ephemeral and Kubernetes NodePort ranges. Full-stack and smoke runs
+keep port `8008`, where the runner's API serves the templates. On a machine with less memory,
 run `prepush.py --coverage-stacks 1` (one stack, the single `--backend-coverage-only` run)
 or `--coverage-stacks 2`; the coverage gates do not change.
 
 The committed Auth/Storage reset acceptance has its own mandatory
 `--reset-acceptance-only` invocation in both gates. Local `prepush.py` runs it after
-ordinary backend coverage; CI runs it as a parallel job.
+ordinary backend coverage; CI runs it as a parallel job. Locally, the frontend and
+backend lanes run at the same time, and the server image builds after the frontend build
+in the frontend lane. The other lanes wait until the backend coverage stacks have
+booted, so stack startup does not share the host with heavy work. When more than one
+lane runs, each lane logs to `backend/test-results/prepush/<lane>.log`; `--serial` runs
+the lanes one after another on the terminal. Ctrl-C, SIGTERM, or SIGHUP stops every
+running lane so its runner tears down its stacks; `tests.parallel_coverage` passes the
+stop to each shard once and waits for its teardown (bounded, then killed). A lane that
+breaks, or a planned step that never ran, fails the gate.
 This mode creates a new disposable stack and selects one fixed, noninteractive
 acceptance target. The target is outside ordinary pytest filename discovery because
 the reset CLI commits installation-wide cleanup. Public batch target validation and

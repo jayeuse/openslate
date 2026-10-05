@@ -243,7 +243,9 @@ def main(arguments=()):
 
     try:
         stage = "PostgreSQL startup"
-        postgres = DisposablePostgres(private, run_id, base_env, log)
+        postgres = DisposablePostgres(
+            private, run_id, base_env, log, template_port=None if backend_only else 8008
+        )
         postgres.start()
         database_env = postgres.urls()
         provider_env = postgres.provider_environment()

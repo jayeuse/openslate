@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import stat
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -104,12 +106,48 @@ def write_worker_database_manifest(
     return destination
 
 
+OwnershipCache = dict[tuple[object, ...], object]
+# Every process setting the live ownership verdict reads (load_disposable_target).
+_OWNERSHIP_INPUTS = (
+    "ENVIRONMENT",
+    "E2E_ALLOW_MUTATIONS",
+    "OPENSLATE_FULLSTACK_RUN_ID",
+    "OPENSLATE_TEST_DATABASE_MANIFEST",
+    "SUPABASE_URL",
+    "SUPABASE_AUTH_ISSUER",
+    "SUPABASE_STORAGE_URL",
+)
+
+
+def _ownership_key(database_url: str, user: str, values: Mapping[str, str]) -> tuple[object, ...]:
+    """Identify one ownership verdict: its URL, role, inputs, and manifest file.
+
+    The manifest counts by contents, mode, and inode, so a replaced or re-permissioned
+    file is a new verdict even with the same bytes.
+    """
+    path = Path(values.get("OPENSLATE_TEST_DATABASE_MANIFEST", ""))
+    try:
+        details = path.lstat()
+        identity: tuple[int, int] | None = (details.st_mode, details.st_ino)
+        manifest = path.read_bytes()
+    except OSError:
+        identity, manifest = None, b""
+    inputs = tuple(values.get(name) for name in _OWNERSHIP_INPUTS)
+    return (database_url, user, inputs, identity, hashlib.sha256(manifest).hexdigest())
+
+
 def assert_runner_database_url(
     database_url: str,
     environment: dict[str, str] | None = None,
     allowed_roles: frozenset[str] = _DATABASE_ROLES,
+    ownership_cache: OwnershipCache | None = None,
 ) -> None:
-    """Reject every integration URL except an exact private runner manifest entry."""
+    """Reject every integration URL except an exact private runner manifest entry.
+
+    With ``ownership_cache``, a verified live Docker ownership verdict is reused for the
+    same URL and unchanged environment; the connected database identity is still checked
+    on every call. Refusals are never cached.
+    """
     values = os.environ if environment is None else environment
     try:
         run_id = values.get("OPENSLATE_FULLSTACK_RUN_ID", "")
@@ -132,12 +170,15 @@ def assert_runner_database_url(
         allowed = False
     if not allowed:
         raise RuntimeError("Database tests require the runner-owned disposable database manifest")
-    try:
-        target = instance_target_for_process(database_url, parsed.username or "", values)
-    except (InstanceTargetError, DisposableTargetError):
-        raise RuntimeError("Database tests require a live runner-owned instance") from None
+    key = _ownership_key(database_url, parsed.username or "", values)
+    target = ownership_cache.get(key) if ownership_cache is not None else None
     if target is None:
-        raise RuntimeError("Database tests require a live runner-owned instance")
+        try:
+            target = instance_target_for_process(database_url, parsed.username or "", values)
+        except (InstanceTargetError, DisposableTargetError):
+            raise RuntimeError("Database tests require a live runner-owned instance") from None
+        if target is None:
+            raise RuntimeError("Database tests require a live runner-owned instance")
     engine = create_engine(database_url, poolclass=pool.NullPool)
     try:
         with engine.connect() as connection:
@@ -146,6 +187,8 @@ def assert_runner_database_url(
         raise RuntimeError("Database tests require matching live database identity") from None
     finally:
         engine.dispose()
+    if ownership_cache is not None:
+        ownership_cache[key] = target
 
 
 DisposablePostgres = _supabase_runtime.DisposablePostgres
