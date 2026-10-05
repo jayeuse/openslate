@@ -88,7 +88,7 @@ export function UpdatesPanel({
             disabled={maintenance.version.isFetching}
             onClick={() => void maintenance.refreshVersion()}
           >
-            <Search data-icon="inline-start" /> Check for updates
+            <Search data-icon="inline-start" /> Refresh release status
           </Button>
           <Button asChild variant="outline" className="min-h-11">
             <a href={updateProcedureUrl} target="_blank" rel="noreferrer">
@@ -104,9 +104,9 @@ export function UpdatesPanel({
           ) : null}
         </div>
         <p className="text-muted-foreground text-sm">
-          Check for updates refreshes the release status recorded by the host
-          runner. Software updates are applied by a server operator using the
-          procedure included with this release. Repository access may be
+          Refresh release status refreshes the release status recorded by the
+          host runner. Software updates are applied by a server operator using
+          the procedure included with this release. Repository access may be
           required.
         </p>
         {version ? (

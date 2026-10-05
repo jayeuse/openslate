@@ -493,7 +493,7 @@ test("Manage preserves section drafts without saving on leave or discard, valida
   await expect(name).toHaveValue("Accepted journey workspace");
 });
 
-test("Manage reset cancellation retains drafts and confirmation requires draft acknowledgement", async ({
+test("Manage organization retains draft controls without the sample Reset Manage action", async ({
   page,
 }) => {
   await page.goto("/manage?view=organization");
@@ -501,37 +501,21 @@ test("Manage reset cancellation retains drafts and confirmation requires draft a
     name: "Organization name",
     exact: true,
   });
-  await expect(name).toBeVisible();
-  const original = await name.inputValue();
+  await expect(name).toHaveValue("Riverside Services");
+  await expect(
+    page.getByRole("button", { name: "Manage options", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: "Reset Manage", exact: true }),
+  ).toHaveCount(0);
   await name.fill("Keep this draft");
-  const options = page.getByRole("button", {
-    name: "Manage options",
-    exact: true,
-  });
-  await options.click();
-  const reset = page.getByRole("menuitem", {
-    name: "Reset Manage",
-    exact: true,
-  });
-  await reset.click();
-  const dialog = page.getByRole("alertdialog");
-  const confirm = dialog.getByRole("button", {
-    name: "Reset Manage configuration",
-    exact: true,
-  });
-  await expect(confirm).toBeDisabled();
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toBeHidden();
-  await expect(name).toHaveValue("Keep this draft");
-  await expect(options).toBeFocused();
-  await options.click();
-  await reset.click();
-  await dialog
-    .getByRole("checkbox", { name: "Discard affected unsaved drafts" })
-    .check();
-  await confirm.click();
-  await expect(dialog).toBeHidden();
-  await expect(name).toHaveValue(original);
+  await expect(
+    page.getByRole("button", { name: "Discard changes", exact: true }),
+  ).toBeEnabled();
+  await page
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(name).toHaveValue("Riverside Services");
 });
 
 test("Backup request name validation and cancel restore focus without any local snapshot mutation", async ({
@@ -599,7 +583,7 @@ test("Updates and licensing share a real read-only destination and never simulat
     }),
   ).toHaveCount(0);
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software).toContainText("Release information unavailable");
   expect(state.versionReads).toBeGreaterThanOrEqual(2);
@@ -619,7 +603,7 @@ test("Updates and licensing share a real read-only destination and never simulat
     release_url: "https://github.com/jayeuse/openslate/releases/tag/v0.2.0",
   };
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software).toContainText("Version 0.2.0 is available");
   await expect(
@@ -647,7 +631,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
   await expect(software.getByText("1.4.2", { exact: true })).toHaveCount(0);
   state.versionReadStatus = 200;
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software.getByText("0.1.0", { exact: true })).toBeVisible();
   state.version.status = "stale";
@@ -660,7 +644,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
   );
   state.versionReadStatus = 403;
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software).toContainText(
     "Only administrators can review version status",
@@ -672,7 +656,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
   state.version.failure_code = null;
   state.version.observed_at = "2026-10-08T04:00:00Z";
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software.getByText("Up to date", { exact: true })).toBeVisible();
   await expect(software).toContainText("Host runner observation");
@@ -684,7 +668,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
   state.version.release_url =
     "https://github.com/jayeuse/openslate/releases/tag/v2.7.1";
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(
     software.getByText("2.7.1-development", { exact: true }),
@@ -706,7 +690,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
   state.version.checked_at = null;
   state.version.release_url = null;
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software).toContainText("No release observation recorded");
   await expect(

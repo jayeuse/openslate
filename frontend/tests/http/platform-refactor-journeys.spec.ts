@@ -263,7 +263,7 @@ test("Search queries four kinds, pages within cards and uses typed destinations"
   for (const name of ["Conversations", "Files"])
     await expect(
       page.getByRole("region", { name: `${name} search results` }),
-    ).toContainText("Unavailable");
+    ).toHaveCount(0);
 });
 test("CSV preview and import use sequential complete batches, typed defaults and row errors", async ({
   page,
@@ -520,39 +520,6 @@ test("Export sends the saved-view query and downloads the complete server CSV", 
   expect(Buffer.concat(chunks).toString("utf8")).toBe(csv);
   expect(requests).toHaveLength(1);
 });
-test("Real Platform tabs remain available when the sample resource fails", async ({
-  page,
-}) => {
-  await catalog(page);
-  await page.addInitScript(() => {
-    const clone = window.structuredClone.bind(window);
-    window.structuredClone = (value, options) => {
-      const stack = new Error().stack ?? "";
-      if (
-        stack.includes("readPlatformSnapshot") &&
-        /at (?:Object\.)?load \(/.test(stack)
-      ) {
-        document.documentElement.dataset.sampleLoadFault = "triggered";
-        throw new Error("Synthetic sample loader unavailable");
-      }
-      return clone(value, options);
-    };
-  });
-  await page.goto("/platform?section=import-export");
-  await expect(page.locator("html")).toHaveAttribute(
-    "data-sample-load-fault",
-    "triggered",
-  );
-  await expect(page.getByLabel("CSV file", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("Platform could not load", { exact: true }),
-  ).toHaveCount(0);
-  await page.getByRole("link", { name: "Search", exact: true }).click();
-  await expect(
-    page.getByRole("searchbox", { name: "Search workspace" }),
-  ).toBeVisible();
-});
-
 test("CSV input rejects invalid UTF-8, row limits and widths while accepting one-column CSV", async ({
   page,
 }) => {

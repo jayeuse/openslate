@@ -357,21 +357,22 @@ for (const delayed of ["GET", "PATCH"] as const) {
   });
 }
 
-test("deferred language and presence stay visible and disabled without fake outcomes", async ({
+test("Account has working theme preferences without language and presence stubs", async ({
   page,
 }) => {
   await installIdentity(page);
   await page.goto("/platform?section=account");
+  const theme = page.getByRole("combobox", { name: "Theme", exact: true });
+  await expect(theme).toBeEnabled();
   await expect(
     page.getByRole("combobox", { name: "Display language", exact: true }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await expect(
     page.getByRole("combobox", { name: "My presence", exact: true }),
-  ).toBeDisabled();
-  await expect(page.getByText("Team presence", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("Not available yet.", { exact: true }),
-  ).toHaveCount(3);
+  ).toHaveCount(0);
+  await expect(page.getByText("Team presence", { exact: true })).toHaveCount(0);
+  await theme.selectOption("dark");
+  await expect(page.locator("html")).toHaveClass(/dark/);
   await expect(page.getByText("Morgan Kim", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Your status:")).toHaveCount(0);
   await expect(page.getByText("Maligayang pagdating")).toHaveCount(0);

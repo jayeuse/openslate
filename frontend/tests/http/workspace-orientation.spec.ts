@@ -51,7 +51,7 @@ test("the breadcrumb names the workspace and its open section", async ({
     breadcrumb.getByRole("link", { name: "Platform" }),
   ).toBeVisible();
   await expect(breadcrumb.locator('[aria-current="page"]')).toHaveText(
-    "File library",
+    "Search",
   );
 });
 

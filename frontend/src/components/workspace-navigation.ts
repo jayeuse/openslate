@@ -96,7 +96,7 @@ const workspaceNavigationDefinitions = [
   {
     id: "platform",
     label: "Platform",
-    description: "Account, files, and alerts",
+    description: "Account, search, and alerts",
     pathname: "/platform",
     queryKey: "section",
     defaultItem: "search",
@@ -104,8 +104,7 @@ const workspaceNavigationDefinitions = [
       { id: "search", label: "Search" },
       { id: "notifications", label: "Notifications" },
       { id: "import-export", label: "Import & export" },
-      { id: "account", label: "Account & presence" },
-      { id: "files", label: "File library" },
+      { id: "account", label: "Account" },
     ],
   },
 ] as const satisfies readonly WorkspaceNavigationDefinition[];
@@ -191,7 +190,6 @@ function sectionFor(
   if (definition.id === "platform") {
     if (hash === "#account") return "account";
     if (hash === "#notifications") return "notifications";
-    if (params.has("file")) return "files";
   }
   return definition.defaultItem;
 }
@@ -232,10 +230,6 @@ function paramsFor(
         const dashboard = searchParams.get("dashboard");
         if (dashboard) params.set("dashboard", dashboard);
       }
-    }
-    if (definition.id === "platform" && itemId === "files") {
-      const file = searchParams.get("file");
-      if (file) params.set("file", file);
     }
   }
 

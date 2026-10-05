@@ -70,7 +70,7 @@ type SecurityPanelProps = {
 
 type SecurityPolicyFormProps = {
   form: SettingsPanelForm;
-  onPreviewMfa: (event?: MouseEvent<HTMLButtonElement>) => void;
+  onManageMfa: (event?: MouseEvent<HTMLButtonElement>) => void;
 };
 
 export function SecurityPanel({
@@ -473,7 +473,7 @@ export function SecurityPanel({
 
 export function SecurityPolicyForm({
   form,
-  onPreviewMfa,
+  onManageMfa,
 }: SecurityPolicyFormProps) {
   const { dirty, saveSection, current, errors, changeSetting, clearDraft } =
     form;
@@ -525,7 +525,7 @@ export function SecurityPolicyForm({
             type="button"
             variant="outline"
             className="min-h-11"
-            onClick={onPreviewMfa}
+            onClick={onManageMfa}
           >
             <KeyRound data-icon="inline-start" /> Manage MFA
           </Button>

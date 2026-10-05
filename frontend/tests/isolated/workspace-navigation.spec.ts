@@ -232,7 +232,7 @@ test("sidebar section links retain only each screen's relevant deep-link context
   ).toBe("/sandbox?section=triggers&rule=approval&inspect=orders");
   expect(
     item("/platform", "file=contract.pdf", "platform", "files")?.href,
-  ).toBe("/platform?section=files&file=contract.pdf");
+  ).toBeUndefined();
   expect(
     item("/platform", "file=contract.pdf", "platform", "search")?.href,
   ).toBe("/platform?section=search");
@@ -311,7 +311,7 @@ test("Platform highlights legacy account and notification links until an explici
   expect(
     isWorkspaceNavigationItemActive(
       "platform",
-      "files",
+      "search",
       "/platform",
       new URLSearchParams("file=contract.pdf"),
     ),
@@ -393,7 +393,7 @@ test("the workspace location names the open section and links its workspace", ()
     ),
   ).toEqual({
     workspace: { label: "Platform", href: "/platform?section=search" },
-    section: "File library",
+    section: "Search",
   });
   expect(
     getWorkspaceLocation("/comms", new URLSearchParams(), "", "all"),
@@ -413,7 +413,7 @@ test("every workspace describes what it holds in one short line", () => {
     ["access", "Who can see and change what"],
     ["openview", "Browse records and reports"],
     ["manage", "Organization settings and audit"],
-    ["platform", "Account, files, and alerts"],
+    ["platform", "Account, search, and alerts"],
   ]);
 });
 

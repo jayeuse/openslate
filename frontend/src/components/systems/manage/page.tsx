@@ -4,11 +4,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
-  MoreHorizontal,
   LockKeyhole,
   Database,
   X,
-  RotateCcw,
 } from "lucide-react";
 import {
   Suspense,
@@ -30,14 +28,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SampleDataNote } from "@/components/sample-data-note";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import { DiscardChangesDialog } from "../access/components/people-fields";
 import { ApiError } from "@/lib/api";
@@ -45,14 +36,10 @@ import { requestSessionRecheck } from "@/lib/auth-api";
 import { useMfaFlow } from "@/components/mfa-flow";
 import ManageAudit from "./components/audit";
 import {
-  decodeManageSettings,
-  diffManageSettings,
   initialManageSettings,
-  useManageController,
   type ManageSection,
   type ManageSettings,
-} from "./state/state";
-import { SettingsChanges } from "./components/panel-ui";
+} from "./state/model";
 import {
   ManageMfaDialog,
   ManageConfirmationDialog,
@@ -135,13 +122,6 @@ function manageTabFromQuery(value: string | null): ViewTab {
   );
 }
 
-function sectionForTab(tab: ViewTab): ManageSection | null {
-  if (tab === "Organization") return "organization";
-  if (tab === "Security") return "security";
-  if (tab === "Backup") return "backup";
-  return null;
-}
-
 export default function Manage() {
   return (
     <Suspense
@@ -162,9 +142,7 @@ function ManageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const requestedTab = manageTabFromQuery(searchParams.get("view"));
-  const manage = useManageController();
   const queryClient = useQueryClient();
-  const { settings, storageUnavailable } = manage;
   const maintenance = useManageMaintenance({
     recoveryActive: requestedTab === "Security" || requestedTab === "Backup",
     historyActive: requestedTab === "Backup",
@@ -258,20 +236,11 @@ function ManageContent() {
   const confirmOpener = useRef<HTMLElement | null>(null);
   const mfaOpener = useRef<HTMLButtonElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
-  const optionsOpener = useRef<HTMLButtonElement | null>(null);
   const sessionConfirmationRefused =
     sessionsDenied && confirm?.origin === "admin-sessions";
   if (sessionConfirmationRefused) setConfirm(null);
   const recoveryView = tab === "Security" || tab === "Backup";
   const pageTitle = recoveryView ? "Security & recovery" : tab;
-  const sampleSubject =
-    tab === "Audit"
-      ? "Audit entries"
-      : tab === "Updates & licensing"
-        ? "Versions and licenses"
-        : recoveryView
-          ? "Sessions and snapshots"
-          : "Settings";
   const liveSourceStatus =
     tab === "Organization"
       ? "Settings save to the organization."
@@ -289,53 +258,38 @@ function ManageContent() {
           ? "Your running version and license status, together in one place."
           : "Review sessions and manage backup requests.";
 
-  const section = sectionForTab(tab);
   const workspacePatch = workspaceQuery.data
     ? workspaceSettingsPatch(workspaceQuery.data, workspaceDraft)
     : null;
   const workspaceDraftDirty = workspacePatch !== null;
   const allDraftsDirty =
     securityDirty || maintenance.dirty || workspaceDraftDirty;
-  const currentFor = (view: ViewTab): ManageSettings => {
-    const currentSection = sectionForTab(view);
-    return currentSection ? manage.getDraft(currentSection) : settings;
-  };
-  const sampleCurrent = currentFor(tab);
   const workspaceFields = workspaceQuery.data
     ? workspaceSettingsFormFields(workspaceQuery.data)
     : null;
-  const current =
-    tab === "Organization" && workspaceFields
-      ? { ...sampleCurrent, ...workspaceFields, ...workspaceDraft }
-      : sampleCurrent;
-  const previewSettings =
-    tab === "Organization" && workspaceFields
-      ? current
-      : decodeManageSettings(current);
-  const dirty =
-    tab === "Organization"
-      ? workspaceDraftDirty
-      : section
-        ? manage.dirty(section)
-        : false;
-  const sectionErrors = section ? manage.errors(section) : {};
-  const errors =
-    tab === "Organization"
-      ? organizationErrors(workspaceDraft, workspaceQuery.data !== undefined)
-      : sectionErrors;
+  const current: ManageSettings = {
+    ...initialManageSettings,
+    ...workspaceFields,
+    ...workspaceDraft,
+  };
+  const dirty = workspaceDraftDirty;
+  const errors = organizationErrors(
+    workspaceDraft,
+    workspaceQuery.data !== undefined,
+  );
   const localeCode = organizationLocaleTag(current.locale);
   const regionalDate = new Intl.DateTimeFormat(localeCode, {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: previewSettings.timezone,
+    timeZone: current.timezone,
   }).format(new Date("2026-09-11T09:00:00Z"));
   const regionalCurrency = new Intl.NumberFormat(localeCode, {
     style: "currency",
-    currency: previewSettings.currency,
+    currency: current.currency,
   }).format(12500);
 
   useWorkspaceNavigationGuard((href, resume) => {
-    if (manage.pending || livePending) {
+    if (livePending) {
       setNavigationNotice(
         "Finish the current change before leaving this page.",
       );
@@ -424,19 +378,17 @@ function ManageContent() {
       setError("");
       return;
     }
-    manage.change(target, key, value);
     setNotice("");
     setError("");
   }
 
   function clearDraft(target: ManageSection) {
-    if (manage.pending || livePending) return;
+    if (livePending) return;
     if (target === "security") {
       setSecurityDraft({});
       setSecurityStale(false);
       setSecurityRefreshRequired(false);
     } else if (target === "backup") maintenance.discardDraft();
-    else manage.discard(target);
     if (target === "organization") {
       setWorkspaceDraft({});
       setWorkspaceStale(false);
@@ -459,17 +411,6 @@ function ManageContent() {
       await maintenance.savePolicy();
       return;
     }
-    const result = await manage.save(target);
-    if (!result.ok) {
-      setError(result.message);
-      return;
-    }
-    setError("");
-    setNotice(
-      storageUnavailable
-        ? "Settings updated in memory only. Browser storage is unavailable."
-        : result.message,
-    );
   }
 
   async function retryWorkspace() {
@@ -486,7 +427,7 @@ function ManageContent() {
   }
 
   async function saveOrganization() {
-    if (manage.pending || livePending) return;
+    if (livePending) return;
     const validationError = Object.values(
       organizationErrors(workspaceDraft, workspaceQuery.data !== undefined),
     )[0];
@@ -564,7 +505,7 @@ function ManageContent() {
   }
 
   async function saveSecurity() {
-    if (manage.pending || livePending) return;
+    if (livePending) return;
     if (!securityQuery.data || securityDenied || securityRefreshRequired) {
       setError("Account policy could not be loaded. Retry before saving.");
       return;
@@ -619,48 +560,8 @@ function ManageContent() {
     setConfirm(next);
   }
 
-  function requestReset(event: MouseEvent<HTMLElement>) {
-    requestConfirm(
-      {
-        title: "Reset Manage configuration",
-        description:
-          "Restore browser preview settings to bundled defaults and discard unsaved Manage drafts. Persisted organization and account policy are unchanged.",
-        confirmLabel: "Reset Manage configuration",
-        requiresDraftAck: allDraftsDirty,
-        body: (
-          <SettingsChanges
-            differences={diffManageSettings(settings, initialManageSettings)}
-          />
-        ),
-        action: async () => {
-          const result = await manage.reset({
-            discardDrafts: allDraftsDirty,
-          });
-          if (result.ok) {
-            setWorkspaceDraft({});
-            setWorkspaceStale(false);
-            setWorkspaceRefreshRequired(false);
-            maintenance.discardDraft();
-            setSecurityDraft({});
-            setSecurityStale(false);
-            setSecurityRefreshRequired(false);
-          }
-          setError(result.ok ? "" : result.message);
-          setNotice(
-            result.ok
-              ? "Preview settings restored. Organization and account policy are unchanged."
-              : "",
-          );
-
-          return result.ok;
-        },
-      },
-      event,
-    );
-  }
-
   async function runSessionEnd(action: () => Promise<null>, all: boolean) {
-    if (manage.pending || livePending) return false;
+    if (livePending) return false;
     setSessionEndPending(true);
     setError("");
     setNotice("");
@@ -725,29 +626,6 @@ function ManageContent() {
   const panelClass =
     "min-w-0 w-full rounded-[var(--radius)] border-border bg-card";
 
-  if (
-    manage.resource.status !== "ready" &&
-    tab !== "Backup" &&
-    tab !== "Updates & licensing"
-  )
-    return (
-      <section className="space-y-4">
-        <h1 data-slot="page-title" className="text-2xl font-semibold">
-          Manage
-        </h1>
-        {manage.resource.status === "loading" ? (
-          <p role="status">Loading management settings…</p>
-        ) : (
-          <Alert role="alert" variant="destructive">
-            <p>{manage.resource.error}</p>
-            <Button variant="outline" onClick={manage.resource.reload}>
-              Try again
-            </Button>
-          </Alert>
-        )}
-      </section>
-    );
-
   const renderPageHeader = (actions?: ReactNode) => (
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0 flex-1">
@@ -764,91 +642,42 @@ function ManageContent() {
         <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
           {pageDescription}
         </p>
-        <SampleDataNote
-          ariaLabel={
+        <p
+          role="note"
+          aria-label={
             tab === "Backup" || tab === "Updates & licensing"
               ? "Server data"
-              : liveSourceStatus
-                ? "Organization data"
-                : undefined
+              : "Organization data"
           }
-          className="mt-3"
-          sourceLabel={
-            tab === "Backup" || tab === "Updates & licensing"
-              ? "Server"
-              : liveSourceStatus
-                ? "Organization"
-                : undefined
-          }
-          suffix={liveSourceStatus ? "" : undefined}
+          className="text-muted-foreground mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
         >
-          {liveSourceStatus ?? `${sampleSubject} here are examples.`}
-        </SampleDataNote>
+          <Badge variant="outline">
+            {tab === "Backup" || tab === "Updates & licensing"
+              ? "Server"
+              : "Organization"}
+          </Badge>
+          <span> {liveSourceStatus}</span>
+        </p>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {actions}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                ref={optionsOpener}
-                type="button"
-                variant="outline"
-                size="icon"
-                className="size-11"
-                aria-label="Manage options"
-              />
-            }
-          >
-            <MoreHorizontal aria-hidden="true" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              onClick={(event) => {
-                requestReset(event);
-                confirmOpener.current = optionsOpener.current;
-              }}
-            >
-              <RotateCcw aria-hidden="true" /> Reset Manage
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      {actions ? (
+        <div className="flex shrink-0 items-center gap-2">{actions}</div>
+      ) : null}
     </header>
   );
 
   return (
     <div className="min-w-0 space-y-6">
       <fieldset
-        disabled={manage.pending || livePending}
-        aria-busy={manage.pending || livePending}
+        disabled={livePending}
+        aria-busy={livePending}
         className="min-w-0 space-y-6"
       >
-        {manage.pending || livePending ? (
+        {livePending ? (
           <p role="status" className="text-muted-foreground text-sm">
             Saving changes…
           </p>
         ) : null}
-        {manage.resource.error ? (
-          <Alert role="alert" variant="warning">
-            <p>
-              {manage.resource.error} Your last loaded settings are still shown.
-            </p>
-            <Button variant="outline" onClick={manage.resource.reload}>
-              Retry refresh
-            </Button>
-          </Alert>
-        ) : null}
         {tab !== "Audit" ? renderPageHeader() : null}
-
-        {storageUnavailable &&
-        tab !== "Backup" &&
-        tab !== "Updates & licensing" ? (
-          <Alert role="note" variant="warning">
-            Browser storage is unavailable. Your latest changes exist in memory
-            only and may be lost on reload.
-          </Alert>
-        ) : null}
 
         <div className="flex flex-col gap-6">
           {navigationNotice ? (
@@ -1005,7 +834,7 @@ function ManageContent() {
               <Tabs
                 value={tab === "Backup" ? "snapshots" : "sessions"}
                 onValueChange={(value) => {
-                  if (!manage.pending && !livePending)
+                  if (!livePending)
                     router.push(
                       `/manage?view=${value === "snapshots" ? "backup" : "security"}`,
                       { scroll: false },
@@ -1083,7 +912,7 @@ function ManageContent() {
       <Dialog
         open={policyOpen}
         onOpenChange={setPolicyOpen}
-        dismissible={!manage.pending && !livePending}
+        dismissible={!livePending}
       >
         <DialogContent
           className="max-w-3xl"
@@ -1096,7 +925,7 @@ function ManageContent() {
                 variant="ghost"
                 size="icon"
                 aria-label="Close account policy"
-                disabled={manage.pending || livePending}
+                disabled={livePending}
                 onClick={() => setPolicyOpen(false)}
               >
                 <X aria-hidden="true" />
@@ -1108,8 +937,8 @@ function ManageContent() {
             </DialogDescription>
           </DialogHeader>
           <fieldset
-            disabled={manage.pending || livePending}
-            aria-busy={manage.pending || livePending}
+            disabled={livePending}
+            aria-busy={livePending}
             className="min-w-0 space-y-4"
           >
             {error ? (
@@ -1148,13 +977,17 @@ function ManageContent() {
               <SecurityPolicyForm
                 form={{
                   dirty: securityDirty,
-                  current: { ...settings, ...securityFields, ...securityDraft },
+                  current: {
+                    ...initialManageSettings,
+                    ...securityFields,
+                    ...securityDraft,
+                  },
                   errors: {},
                   saveSection,
                   clearDraft,
                   changeSetting,
                 }}
-                onPreviewMfa={() => {
+                onManageMfa={() => {
                   setPolicyOpen(false);
                   openMfa();
                   mfaOpener.current = policyOpener.current;
@@ -1213,7 +1046,7 @@ function ManageContent() {
       <ManageMfaDialog opener={mfaOpener} />
       <ManageConfirmationDialog
         confirm={sessionConfirmationRefused ? null : confirm}
-        pending={manage.pending || livePending}
+        pending={livePending}
         error={error}
         draftAcknowledged={draftAcknowledged}
         confirmOpener={confirmOpener}

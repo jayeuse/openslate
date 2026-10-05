@@ -104,8 +104,8 @@ test("connected Report notifications show reference status and refetch after mar
   expect(listReadsAfterMutation).toBeGreaterThanOrEqual(1);
   await expect(
     page.getByText("Preview notifications", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Preview preferences")).toBeVisible();
+  ).toHaveCount(0);
+  await expect(page.getByText("Preview preferences")).toHaveCount(0);
 });
 
 test("connected inbox shows Board publication and reminder references without content", async ({

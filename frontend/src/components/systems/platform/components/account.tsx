@@ -248,10 +248,6 @@ export default function Account() {
         <p className="text-muted-foreground text-sm">
           Theme saves to your signed-in account and follows you across devices.
         </p>
-        <Choice label="Display language" value="unavailable" disabled>
-          <option value="unavailable">Not available yet</option>
-        </Choice>
-        <p className="text-muted-foreground text-sm">Not available yet.</p>
         <Choice
           label="Theme"
           value={theme.mode ?? ""}
@@ -267,16 +263,6 @@ export default function Account() {
           <option value="dark">Dark</option>
         </Choice>
         <UserThemeStatus />
-        <Choice label="My presence" value="unavailable" disabled>
-          <option value="unavailable">Not available yet</option>
-        </Choice>
-        <p className="text-muted-foreground text-sm">Not available yet.</p>
-        <div className="space-y-3 border-t pt-4">
-          <h3 data-slot="section-title" className="font-medium">
-            Team presence
-          </h3>
-          <p className="text-muted-foreground text-sm">Not available yet.</p>
-        </div>
       </Panel>
       <Panel title="Account security">
         <div className="space-y-3">
