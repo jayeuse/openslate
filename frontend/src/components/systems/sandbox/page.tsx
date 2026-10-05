@@ -1113,9 +1113,6 @@ export default function SandboxPage() {
             change={change}
             initializeLayout={initializeLayout}
             notify={setMessage}
-            onViewPreferenceChange={() => undefined}
-            createRequest={null}
-            onCreateRequestHandled={() => undefined}
             onStartFromTemplate={() => setTemplatesOpen(true)}
             pending={
               commandBusy ||

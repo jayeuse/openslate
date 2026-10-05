@@ -1021,12 +1021,6 @@
   },
   {
     "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
-    "function": "getSandboxTest",
-    "method": "GET",
-    "path": "/api/sandbox/tests/{param}"
-  },
-  {
-    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
     "function": "getSandboxVersion",
     "method": "GET",
     "path": "/api/sandbox/versions/{param}"

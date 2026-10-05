@@ -88,27 +88,6 @@ def api(integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch) -> Itera
     app.dependency_overrides.clear()
 
 
-def test_rollback_route_is_gone_with_rollback_removed_and_changes_nothing(api: Api) -> None:
-    draft = _draft(api)
-    first_published = _published_versions(api)[0]
-    versions_before = _versions(api)["total"]
-
-    response = api.client.post(
-        f"/api/sandbox/versions/{first_published['id']}/rollbacks",
-        json={"expectedRevision": draft["revision"]},
-    )
-
-    assert response.status_code == 410, response.text
-    assert response.json()["detail"] == {
-        "code": "rollback_removed",
-        "message": "Restore changes only the draft",
-    }
-    after = _draft(api)
-    assert after["revision"] == draft["revision"]
-    assert after["contentHash"] == draft["contentHash"]
-    assert _versions(api)["total"] == versions_before
-
-
 def test_restoration_over_http_replaces_only_the_draft_and_checkpoints_first(
     api: Api,
 ) -> None:

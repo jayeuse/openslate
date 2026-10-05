@@ -118,7 +118,6 @@ import {
   SandboxCommandError,
   type SandboxCommandResult,
 } from "../state/commands";
-import type { SandboxCreateRequest } from "./sandbox-controls";
 import { EmptyCanvasPanel } from "./empty-canvas-panel";
 import {
   SANDBOX_WORKBENCH_MAX_WIDTH,
@@ -219,9 +218,6 @@ export function Designer({
   change,
   initializeLayout,
   notify,
-  onViewPreferenceChange,
-  createRequest,
-  onCreateRequestHandled,
   onStartFromTemplate,
   pending,
   bindings,
@@ -244,9 +240,6 @@ export function Designer({
   ) => Promise<SandboxCommandResult<Design>>;
   initializeLayout: (layout: SandboxCanvasLayout) => void;
   notify: (s: string) => void;
-  onViewPreferenceChange: () => void;
-  createRequest: SandboxCreateRequest | null;
-  onCreateRequestHandled: (id: number) => void;
   onStartFromTemplate: () => void;
   pending: boolean;
   bindings: readonly SandboxBinding[] | null;
@@ -332,7 +325,6 @@ export function Designer({
     );
     if (unchanged) return;
     const next = { ...current, ...patch };
-    onViewPreferenceChange();
     viewPreferencesRef.current = next;
     setViewPreferences(next);
     saveSandboxViewPreferences(next);
@@ -439,7 +431,6 @@ export function Designer({
   >([]);
   const [relationshipError, setRelationshipError] = useState("");
   const [editorError, setEditorError] = useState("");
-  const handledCreateRequest = useRef<number | null>(null);
   const handledFocusTarget = useRef<string | null>(null);
   const selectedField = projectedField(design, selected);
   const selectedRelationship = design.relationships.find(
@@ -505,66 +496,6 @@ export function Designer({
     });
     return () => cancelAnimationFrame(frame);
   }, [design, focusTargetId, pane]);
-  useEffect(() => {
-    if (
-      !createRequest ||
-      createRequest.kind === "trigger-rule" ||
-      handledCreateRequest.current === createRequest.id
-    )
-      return;
-    handledCreateRequest.current = createRequest.id;
-
-    const requestedField = projectedField(design, selected);
-    const requestedRelationship = design.relationships.find(
-      (item) => item.id === selected,
-    );
-    const currentModule = design.modules.find(
-      (item) =>
-        item.id ===
-        (requestedField?.moduleId ?? requestedRelationship?.source ?? selected),
-    );
-    const currentDepartment =
-      design.departments.find(
-        (item) => item.id === (currentModule?.department ?? selected),
-      ) ?? design.departments[0];
-    const parentModule = currentModule ?? design.modules[0];
-
-    setEditingRelationship(null);
-    setName("");
-    setType("Text");
-    setRequired(false);
-    setValue("");
-    setOptions("");
-    setRelationshipError("");
-    setEditorError("");
-    setFieldMappings([]);
-    showPane("Inspector");
-
-    if (createRequest.kind === "department") {
-      setEditor("department");
-      onCreateRequestHandled(createRequest.id);
-      return;
-    }
-    if (createRequest.kind === "module") {
-      if (currentDepartment) setSelected(currentDepartment.id);
-      setEditor("module");
-      onCreateRequestHandled(createRequest.id);
-      return;
-    }
-    if (createRequest.kind === "field") {
-      if (parentModule) setSelected(parentModule.id);
-      setEditor("field");
-      onCreateRequestHandled(createRequest.id);
-      return;
-    }
-
-    const sourceId = parentModule?.id ?? "";
-    setSelected(sourceId);
-    setSource(sourceId);
-    setTarget(design.modules.find((item) => item.id !== sourceId)?.id ?? "");
-    setEditor("relationship");
-    onCreateRequestHandled(createRequest.id);
-  }, [createRequest, design, onCreateRequestHandled, selected]);
   // The canvas re-syncs its whole graph whenever this object changes, so keep
   // it stable across renders that do not change the design or selection.
   const projected = useMemo(
@@ -1556,7 +1487,6 @@ export function Designer({
       className="h-full min-w-0 p-3 [&_section]:w-full [&_section]:min-w-0"
     >
       <SandboxInspector
-        mode="outline"
         state={projected}
         onSelect={selectItem}
         onEdit={(id) => {
@@ -1575,20 +1505,6 @@ export function Designer({
             `sandbox.design.field:${id}`,
           )
         }
-        onUpdateLinkLabel={(id, label) =>
-          change((previous) => {
-            if (!previous.relationships.some((item) => item.id === id))
-              throw new SandboxCommandError(
-                "This relationship was deleted. Keep the edit open and try again.",
-              );
-            return {
-              ...previous,
-              relationships: previous.relationships.map((item) =>
-                item.id === id ? { ...item, name: label } : item,
-              ),
-            };
-          }, `sandbox.design.link:${id}`)
-        }
         onDeleteSelected={requestDelete}
         onDuplicate={duplicateTarget}
         onToggleLifecycle={toggleLifecycle}
@@ -1605,7 +1521,6 @@ export function Designer({
           open("field");
           setType(fieldTypeNames[fieldType]);
         }}
-        onMoveModule={moveModule}
         pending={pending}
         onAddRelationship={() => {
           setSelected(selectedModule?.id ?? design.modules[0]?.id ?? "");

@@ -15,8 +15,6 @@ export type SandboxInspectorTargetKind = SandboxDesignTarget["kind"];
 export type SandboxInspectorTarget = SandboxDesignTarget;
 
 export interface SandboxInspectorProps {
-  /** Render the persistent outline, properties, or both for legacy callers. */
-  mode?: "combined" | "outline" | "properties";
   state: SandboxState;
   onRenameDepartment: (departmentId: string, name: string) => SandboxCommand;
   onRenameModule: (moduleId: string, name: string) => SandboxCommand;
@@ -24,12 +22,10 @@ export interface SandboxInspectorProps {
     fieldId: string,
     patch: UpdateSandboxFieldPatch,
   ) => SandboxCommand;
-  onUpdateLinkLabel: (linkId: string, label: string) => SandboxCommand;
   onDeleteSelected: (target: SandboxInspectorTarget) => void;
   onAddField: (moduleId: string, type: SandboxFieldType) => void;
   onAddModule: (departmentId: string) => void;
   onAddDepartment: () => void;
-  onMoveModule?: (moduleId: string, departmentId: string) => SandboxCommand;
   onSelect: (cellId: string) => void;
   onEdit?: (cellId: string) => void;
   onAddRelationship?: () => void;
