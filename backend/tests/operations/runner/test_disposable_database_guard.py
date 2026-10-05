@@ -21,10 +21,7 @@ from app.core.config.instance import (
 )
 from tests import postgres_runtime
 from tests.conftest import _guard_integration_database
-from tests.postgres_runtime import (
-    DisposablePostgres,
-    assert_scanner_worker_database,
-)
+from tests.postgres_runtime import DisposablePostgres, assert_runner_database_url
 
 
 def test_runner_resource_inventory_matches_provider_compose() -> None:
@@ -392,13 +389,13 @@ def test_live_resource_inspections_are_batched_and_accept_reordered_results(disp
     }
 
 
-def test_scanner_startup_rechecks_live_database_ownership(disposable_target):
+def test_runtime_database_guard_rechecks_live_database_ownership(disposable_target):
     url, facts = disposable_target
-    application_env = {**os.environ, "DATABASE_URL": url}
-    assert_scanner_worker_database(application_env)
+    runtime = frozenset({"openslate_runtime"})
+    assert_runner_database_url(url, dict(os.environ), allowed_roles=runtime)
     facts["volume"]["Labels"]["openslate.test.run"] = "other-run"
-    with pytest.raises(RuntimeError, match="exact disposable runtime credentials"):
-        assert_scanner_worker_database(application_env)
+    with pytest.raises(RuntimeError, match="live runner-owned instance"):
+        assert_runner_database_url(url, dict(os.environ), allowed_roles=runtime)
 
 
 @pytest.mark.parametrize(

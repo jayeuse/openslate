@@ -76,7 +76,7 @@ def admit_docker(host: Host, values: dict[str, str]) -> None:
         or any(
             "@sha256:" not in images[name]
             for name in SERVICES
-            - {"provider-volume-init", "api", "scanner-worker", "clamav", "caddy"}
+            - {"provider-volume-init", "api", "caddy"}
         )
     ):
         raise RunnerError("admission_failed")
@@ -169,8 +169,7 @@ def resume_existing(host: Host, journal: Json) -> None:
     for stage in (
         {"db"},
         {"auth", "rest", "storage", "imgproxy", "meta", "studio", "api-gw"},
-        {"clamav", "api"},
-        {"scanner-worker"},
+        {"api"},
     ):
         start_existing(host, journal, stage)
     if "api" in services:

@@ -66,14 +66,11 @@ class _RunnerPostgres:
 
 def _stub_fullstack_prerequisites(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run: object
-) -> MagicMock:
-    scanner = MagicMock()
-    scanner.observations = {}
+) -> None:
     monkeypatch.setattr(runner, "BACKEND", tmp_path / "backend")
     monkeypatch.setattr(runner, "FRONTEND", tmp_path / "frontend")
     monkeypatch.setattr(runner, "DisposablePostgres", lambda *_args: _RunnerPostgres(tmp_path))
     monkeypatch.setattr(runner, "instance_target_for_process", lambda *_args: object())
-    monkeypatch.setattr(runner, "DisposableScanner", lambda *_args: scanner)
     monkeypatch.setattr(runner, "run_backend_coverage", lambda *_args: 0)
     monkeypatch.setattr(
         runner,
@@ -86,7 +83,6 @@ def _stub_fullstack_prerequisites(
         "run_streamed",
         lambda command, cwd, env, log, capture=False: run(command, cwd=cwd, env=env),
     )
-    return scanner
 
 
 def test_disposable_caddy_uses_a_pinned_image_loopback_gateway_and_owned_cleanup(
@@ -237,7 +233,7 @@ def test_gateway_config_preserves_single_origin_routes_with_container_host_upstr
     assert "{{" not in rendered
 
 
-def test_browser_acceptance_command_runs_full_suite_for_scanner_backed_acceptance(
+def test_browser_acceptance_command_runs_full_suite_for_complete_acceptance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CI", "true")
@@ -383,13 +379,12 @@ def test_fullstack_stops_before_fastapi_when_static_build_fails(
             raise subprocess.CalledProcessError(1, command)
         return MagicMock()
 
-    scanner = _stub_fullstack_prerequisites(monkeypatch, tmp_path, run)
+    _stub_fullstack_prerequisites(monkeypatch, tmp_path, run)
     monkeypatch.setattr(runner.subprocess, "Popen", start_fastapi)
 
     assert runner.main([]) == 1
     assert ["npm", "run", "build", "--", "--webpack"] in commands
     start_fastapi.assert_not_called()
-    scanner.stop.assert_called_once()
 
 
 def test_fullstack_assigns_static_assets_after_a_successful_build(
@@ -439,12 +434,10 @@ def test_fullstack_summary_preserves_result_and_observations_contract(tmp_path: 
         batch=None,
         backend_only=False,
         acceptance_only=True,
-        scanner_only=False,
         stage="browser acceptance",
         browser_completed=False,
         admission={"recovered": True},
         checker_exit=1,
-        scanner_observations={"ready": True},
         failure_type="RuntimeError",
         failure_message="expected failure",
     )
@@ -461,7 +454,6 @@ def test_fullstack_summary_preserves_result_and_observations_contract(tmp_path: 
         "resource_observations": {"pool_checkout_wait_seconds": 0.25},
         "admission_observations": {"recovered": True},
         "checker_exit": 1,
-        "scanner_observations": {"ready": True},
         "failure_type": "RuntimeError",
         "failure_message": "expected failure",
     }
@@ -477,12 +469,10 @@ def test_completed_browser_command_does_not_invent_a_named_test_result(tmp_path:
         batch=None,
         backend_only=False,
         acceptance_only=True,
-        scanner_only=False,
         stage="browser acceptance",
         browser_completed=True,
         admission={},
         checker_exit=None,
-        scanner_observations={},
         failure_type=None,
         failure_message=None,
     )

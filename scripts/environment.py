@@ -104,7 +104,6 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         "POSTGRES_DATABASE",
         "FRONTEND_DEV_PORT",
         "WEB_ASSETS_ROOT",
-        "FILES_CLAMAV_PORT",
         "SUPABASE_DB_PORT",
         "SUPABASE_API_PORT",
         "SUPABASE_MAIL_PORT",
@@ -119,12 +118,6 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         "ADMIN_EMAIL",
         "ADMIN_USERNAME",
         "SEED_ACCESS_TOKEN",
-        "CLAMAV_MEMORY_LIMIT",
-        "CLAMAV_CPUS",
-        "CLAMAV_PIDS_LIMIT",
-        "FILES_CLAMAV_HOST",
-        "SCANNER_DEFINITIONS",
-        "FILES_CLAMAV_MANIFEST_PATH",
     )
 )
 DOCKER_PROCESS_KEYS = frozenset(
@@ -160,7 +153,6 @@ PORT_KEYS = (
     "SUPABASE_API_PORT",
     "SUPABASE_MAIL_PORT",
     "SMTP_PORT",
-    "FILES_CLAMAV_PORT",
 )
 
 
@@ -890,7 +882,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "check":
             if args.arguments:
                 parser.error("check does not accept extra arguments")
-            print("Environment configuration is valid; scanner provisioning is a separate check.")
+            print("Environment configuration is valid.")
             return 0
         services = {"caddy"} if "caddy" in args.arguments or "gateway" in args.arguments else {"db"}
         if "caddy" not in services and required(values, "ENVIRONMENT") != "development":

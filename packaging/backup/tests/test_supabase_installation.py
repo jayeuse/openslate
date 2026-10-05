@@ -29,7 +29,7 @@ _BASE_SERVICES = (
     "provider-volume-init",
 )
 _DEV_SERVICES = (*_BASE_SERVICES, "mailpit")
-_PRODUCTION_SERVICES = (*_BASE_SERVICES, "api", "scanner-worker", "clamav", "caddy")
+_PRODUCTION_SERVICES = (*_BASE_SERVICES, "api", "caddy")
 _DEV_VOLUMES = (
     "supabase-db-data",
     "supabase-db-config",

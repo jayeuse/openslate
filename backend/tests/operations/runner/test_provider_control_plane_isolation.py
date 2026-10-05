@@ -23,12 +23,10 @@ def test_application_network_cannot_reach_meta_or_studio() -> None:
     )
     services = base["services"]
     networks = {name: set(service.get("networks", [])) for name, service in services.items()}
-    for name in ("api", "scanner-worker"):
-        networks[name] = set(production["services"][name]["networks"])
+    networks["api"] = set(production["services"]["api"]["networks"])
 
-    for app in ("api", "scanner-worker"):
-        assert networks[app].isdisjoint(networks["meta"])
-        assert networks[app].isdisjoint(networks["studio"])
+    assert networks["api"].isdisjoint(networks["meta"])
+    assert networks["api"].isdisjoint(networks["studio"])
     assert networks["meta"] == {"operator"}
     assert "operator" in networks["db"] & networks["studio"]
     assert "studio-ingress" in networks["studio"] & networks["api-gw"]
