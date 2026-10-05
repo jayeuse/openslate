@@ -227,6 +227,10 @@ test("file adapter rejects another Board's metadata and oversized content respon
   const bytes = new Blob(["hello"], { type: "application/pdf" });
   for (const response of [
     { ...readyFile, board_id: eventId },
+    { ...readyFile, board_id: null },
+    { ...readyFile, purpose: "record_attachment" },
+    { ...readyFile, record_id: eventId },
+    { ...readyFile, is_deleted: true },
     { ...readyFile, id: eventId },
     { ...readyFile, state: "archived" },
   ]) {
@@ -240,27 +244,26 @@ test("file adapter rejects another Board's metadata and oversized content respon
     }
   }
 
-  const oversized = installFetch(
-    () =>
-      new Response(new Uint8Array(6), {
-        headers: {
-          "Content-Type": "application/pdf",
-          "Content-Disposition":
-            "attachment; filename*=UTF-8''building-map.pdf",
-          "X-Content-Type-Options": "nosniff",
-          "Content-Length": "6",
-        },
-      }),
-  );
-  try {
-    await expect(
-      downloadBoardAttachment(
-        { kind: "event", boardId, contentId: eventId },
-        fileId,
-        5,
-      ),
-    ).rejects.toBeInstanceOf(ApiContractError);
-  } finally {
-    oversized.restore();
+  for (const declaredLength of ["6", null]) {
+    const headers = new Headers({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": "attachment; filename*=UTF-8''building-map.pdf",
+      "X-Content-Type-Options": "nosniff",
+    });
+    if (declaredLength !== null) headers.set("Content-Length", declaredLength);
+    const oversized = installFetch(
+      () => new Response(new Uint8Array(6), { headers }),
+    );
+    try {
+      await expect(
+        downloadBoardAttachment(
+          { kind: "event", boardId, contentId: eventId },
+          fileId,
+          5,
+        ),
+      ).rejects.toBeInstanceOf(ApiContractError);
+    } finally {
+      oversized.restore();
+    }
   }
 });

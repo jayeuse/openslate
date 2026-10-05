@@ -5,6 +5,8 @@ import { ApiContractError, ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { fileErrorMessage } from "../../shared/adapters/files-api";
+import { FileList } from "../../shared/components/file-list";
 import {
   attachBoardFile,
   detachBoardFile,
@@ -73,35 +75,6 @@ const ATTACHMENT_ACCEPT = ".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.pptx";
 
 function isAbort(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
-}
-
-function messageFor(error: unknown, action: string): string {
-  if (error instanceof ApiError) {
-    if (String(error.code) === "file_uploads_full")
-      return "Too many uploads are still unfinished. Try again later.";
-    if (error.status === 409)
-      return "This content changed. Try again, or reload the editor.";
-    if ([401, 403, 404].includes(error.status))
-      return "This content or file is no longer available to you.";
-    if (error.status === 413) return "This file is larger than 25 MiB.";
-    if (error.status === 422)
-      return "The file or attachment request was rejected. Check the file and try again.";
-  }
-  if (error instanceof ApiContractError)
-    return "The server returned an invalid attachment response. Refresh and try again.";
-  return `Could not ${action}. Try again.`;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} bytes`;
-  const units = ["KB", "MB"];
-  let value = bytes / 1024;
-  let unit = units[0] ?? "KB";
-  if (value >= 1024) {
-    value /= 1024;
-    unit = units[1] ?? "MB";
-  }
-  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)} ${unit}`;
 }
 
 function targetKey(target: BoardAttachmentTarget): string {
@@ -254,7 +227,7 @@ export function ServerBoardAttachments(props: Props) {
         }
       }
       setPendingFile(file);
-      setError(messageFor(attachError, "attach the file"));
+      setError(fileErrorMessage(attachError, "attach the file"));
     } finally {
       setOperation(null);
     }
@@ -309,7 +282,7 @@ export function ServerBoardAttachments(props: Props) {
           ? uploadError.message
           : uploadError instanceof ApiError && uploadError.status === 422
             ? REJECTED_UPLOAD
-            : messageFor(uploadError, "upload the file"),
+            : fileErrorMessage(uploadError, "upload the file"),
       );
     } finally {
       operationController.current = null;
@@ -348,7 +321,7 @@ export function ServerBoardAttachments(props: Props) {
           return;
         }
       }
-      setError(messageFor(detachError, "remove the file"));
+      setError(fileErrorMessage(detachError, "remove the file"));
       await refreshList();
     } finally {
       operationController.current = null;
@@ -398,7 +371,7 @@ export function ServerBoardAttachments(props: Props) {
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (downloadError) {
-      setError(messageFor(downloadError, "download the file"));
+      setError(fileErrorMessage(downloadError, "download the file"));
     } finally {
       setDownloadingId(null);
     }
@@ -463,54 +436,20 @@ export function ServerBoardAttachments(props: Props) {
             <p className="text-muted-foreground text-sm">No attachments yet.</p>
           ) : null}
           {items.length > 0 ? (
-            <ul
-              aria-label="Attached files"
-              className="flex min-w-0 flex-col gap-2"
-            >
-              {items.map((file) => (
-                <li
-                  key={file.id}
-                  className="border-border flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2"
-                >
-                  <span className="min-w-0 text-sm break-words">
-                    {file.filename}{" "}
-                    <span className="text-muted-foreground">
-                      ({formatSize(file.actualSize ?? file.expectedSize)})
-                    </span>
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={downloadingId !== null}
-                      onClick={() => void download(file)}
-                    >
-                      {downloadingId === file.id ? (
-                        "Downloading…"
-                      ) : (
-                        <>
-                          Download
-                          <span className="sr-only"> {file.filename}</span>
-                        </>
-                      )}
-                    </Button>
-                    {editable ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={busy || editable.locked === true}
-                        onClick={() => void removeAttachment(file)}
-                      >
-                        Remove
-                        <span className="sr-only"> {file.filename}</span>
-                      </Button>
-                    ) : null}
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <FileList
+              items={items}
+              adapter={{ download: (file) => void download(file) }}
+              downloadingId={downloadingId}
+              secondaryAction={
+                editable
+                  ? {
+                      label: "Remove",
+                      disabled: busy || editable.locked === true,
+                      run: (file) => void removeAttachment(file),
+                    }
+                  : undefined
+              }
+            />
           ) : null}
           {hasMore ? (
             <Button

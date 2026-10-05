@@ -348,6 +348,56 @@ test("a failed attach keeps the uploaded file ready for a retry", async ({
   );
 });
 
+test("an unfinished upload guards removal while existing downloads remain available", async ({
+  page,
+}) => {
+  await installAttachmentApi(page, { status: "draft" });
+  const panel = await openDraftAttachments(page);
+  const input = panel.getByLabel("Add an attachment");
+  const existingName = "Dock 3 loading plan.pdf";
+  await input.setInputFiles(dummyFile(existingName));
+  await expect(panel.getByText(`${existingName} attached.`)).toBeVisible();
+
+  let releaseUpload = () => {};
+  const uploadReleased = new Promise<void>((resolve) => {
+    releaseUpload = resolve;
+  });
+  await page.route(
+    `**/api/boards/${boardId}/files/*/content`,
+    async (route) => {
+      await uploadReleased;
+      await route.fallback();
+    },
+  );
+  const nextName = "Yard layout.png";
+  const remove = panel.getByRole("button", {
+    name: `Remove ${existingName}`,
+  });
+  try {
+    await Promise.all([
+      page.waitForRequest(
+        (request) =>
+          request.method() === "PUT" &&
+          new URL(request.url()).pathname.startsWith(
+            `/api/boards/${boardId}/files/`,
+          ),
+      ),
+      input.setInputFiles(dummyFile(nextName)),
+    ]);
+    await expect(panel.getByText(`Uploading ${nextName}…`)).toBeVisible();
+    await expect(input).toBeDisabled();
+    await expect(remove).toBeDisabled();
+    await expect(
+      panel.getByRole("button", { name: `Download ${existingName}` }),
+    ).toBeEnabled();
+    releaseUpload();
+    await expect(panel.getByText(`${nextName} attached.`)).toBeVisible();
+    await expect(remove).toBeEnabled();
+  } finally {
+    releaseUpload();
+  }
+});
+
 test("an upload with an unreadable response keeps the file for a retry", async ({
   page,
 }) => {

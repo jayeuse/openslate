@@ -1,53 +1,29 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
+import { ApiContractError, apiFetch, apiRequest } from "@/lib/api";
+import {
+  fileDetails,
+  fileWireSchema,
+  MAX_FILE_BYTES,
+  requestFileContent,
+  reserveFile,
+  throwFileRequestError,
+  uploadFileContent,
+} from "../../shared/adapters/files-api";
 
-export const MAX_BOARD_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+export const MAX_BOARD_ATTACHMENT_BYTES = MAX_FILE_BYTES;
 
 const uuid = z.string().uuid();
-const timestamp = z.iso.datetime({ offset: true });
-const fileState = z.enum([
-  "awaiting_upload",
-  "uploading",
-  "ready",
-  "rejected",
-  "deleting",
-  "purged",
-]);
-const fileWire = z
-  .object({
-    id: uuid,
+const BOARD_FILE_REQUEST_ERROR = "Board file request could not be completed";
+const fileWire = fileWireSchema
+  .extend({
     purpose: z.literal("board_attachment"),
     record_id: z.null(),
     board_id: uuid,
-    creator_id: uuid,
-    filename: z.string().min(1).max(255),
-    media_type: z.string().max(255).nullable(),
-    expected_size: z.number().int().min(1).max(MAX_BOARD_ATTACHMENT_BYTES),
-    actual_size: z
-      .number()
-      .int()
-      .min(0)
-      .max(MAX_BOARD_ATTACHMENT_BYTES)
-      .nullable(),
-    state: fileState,
-    failure_code: z.string().max(48).nullable(),
     is_deleted: z.literal(false),
-    created_at: timestamp,
-    updated_at: timestamp,
   })
-  .strict()
   .transform((file) => ({
-    id: file.id,
+    ...fileDetails(file),
     boardId: file.board_id,
-    creatorId: file.creator_id,
-    filename: file.filename,
-    mediaType: file.media_type,
-    expectedSize: file.expected_size,
-    actualSize: file.actual_size,
-    state: file.state,
-    failureCode: file.failure_code,
-    createdAt: file.created_at,
-    updatedAt: file.updated_at,
   }));
 const attachmentListWire = z
   .object({
@@ -62,23 +38,6 @@ const attachmentListWire = z
     ...page,
     hasMore: has_more,
   }));
-const reservationInput = z
-  .object({
-    filename: z.string().min(1).max(255),
-    expectedSize: z.number().int().min(1).max(MAX_BOARD_ATTACHMENT_BYTES),
-  })
-  .strict()
-  .superRefine(({ filename }, context) => {
-    if (
-      filename === "." ||
-      filename === ".." ||
-      /[\\/\u0000-\u001f\u007f]/.test(filename)
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Choose a plain file name.",
-      });
-  });
 const listOptions = z
   .object({
     limit: z.number().int().min(1).max(100).default(25),
@@ -134,69 +93,7 @@ function checkWritableTarget(target: BoardAttachmentTarget): void {
 }
 
 async function throwRequestError(response: Response): Promise<never> {
-  await response.body?.cancel().catch(() => undefined);
-  throw new ApiError(
-    response.status,
-    "Board file request could not be completed",
-  );
-}
-
-async function requestFileContent(
-  path: string,
-  expectedSize: number,
-  signal?: AbortSignal,
-): Promise<Blob> {
-  if (
-    !Number.isInteger(expectedSize) ||
-    expectedSize < 1 ||
-    expectedSize > MAX_BOARD_ATTACHMENT_BYTES
-  )
-    throw new ApiContractError();
-  const response = await apiRequest(path, { cache: "no-store", signal });
-  if (!response.ok) return throwRequestError(response);
-  const disposition = response.headers.get("Content-Disposition") ?? "";
-  const sniffing = response.headers.get("X-Content-Type-Options") ?? "";
-  if (
-    !/^attachment\s*;/i.test(disposition) ||
-    sniffing.toLowerCase() !== "nosniff"
-  )
-    throw new ApiContractError();
-  const declared = response.headers.get("Content-Length");
-  if (
-    declared !== null &&
-    (!/^\d+$/.test(declared) || Number(declared) !== expectedSize)
-  ) {
-    await response.body?.cancel().catch(() => undefined);
-    throw new ApiContractError();
-  }
-  if (!response.body) throw new ApiContractError();
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > expectedSize || size > MAX_BOARD_ATTACHMENT_BYTES) {
-        await reader.cancel().catch(() => undefined);
-        throw new ApiContractError();
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  if (size !== expectedSize) throw new ApiContractError();
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  const mediaType =
-    response.headers.get("Content-Type") ?? "application/octet-stream";
-  return new Blob([bytes.buffer], { type: mediaType });
+  return throwFileRequestError(response, BOARD_FILE_REQUEST_ERROR);
 }
 
 export async function reserveBoardFile(
@@ -204,15 +101,13 @@ export async function reserveBoardFile(
   rawInput: { filename: string; expectedSize: number },
 ): Promise<BoardAttachmentFile> {
   const boardId = uuid.parse(rawBoardId);
-  const input = reservationInput.parse(rawInput);
-  const result = await apiFetch(`/boards/${boardId}/files`, fileWire, {
-    method: "POST",
-    cache: "no-store",
-    body: JSON.stringify({
-      filename: input.filename,
-      expected_size: input.expectedSize,
+  const result = await reserveFile(rawInput, (body) =>
+    apiFetch(`/boards/${boardId}/files`, fileWire, {
+      method: "POST",
+      cache: "no-store",
+      body: JSON.stringify(body),
     }),
-  });
+  );
   if (result.boardId !== boardId) throw new ApiContractError();
   return checkedFile(result, boardId);
 }
@@ -225,31 +120,27 @@ export async function uploadBoardFile(
 ): Promise<BoardAttachmentFile> {
   const boardId = uuid.parse(rawBoardId);
   const fileId = uuid.parse(rawFileId);
-  if (
-    !(content instanceof Blob) ||
-    content.size < 1 ||
-    content.size > MAX_BOARD_ATTACHMENT_BYTES
-  )
-    throw new ApiContractError();
-  const response = await apiRequest(
-    `/boards/${boardId}/files/${fileId}/content`,
-    {
-      method: "PUT",
-      cache: "no-store",
-      body: content,
-      headers: { "Content-Type": "application/octet-stream" },
-      signal,
+  const result = await uploadFileContent(
+    fileId,
+    content,
+    fileWire,
+    async () => {
+      const response = await apiRequest(
+        `/boards/${boardId}/files/${fileId}/content`,
+        {
+          method: "PUT",
+          cache: "no-store",
+          body: content,
+          headers: { "Content-Type": "application/octet-stream" },
+          signal,
+        },
+      );
+      if (!response.ok) return throwRequestError(response);
+      return response;
     },
+    signal,
   );
-  if (!response.ok) return throwRequestError(response);
-  const body: unknown = await response.json().catch((error: unknown) => {
-    if (signal?.aborted) throw error;
-    throw new ApiContractError();
-  });
-  const result = fileWire.safeParse(body);
-  if (!result.success || result.data.id !== fileId)
-    throw new ApiContractError();
-  return checkedFile(result.data, boardId);
+  return checkedFile(result, boardId);
 }
 
 export async function listBoardAttachments(
@@ -334,5 +225,6 @@ export async function downloadBoardAttachment(
     `${path}/${fileId}/content${suffix}`,
     expectedSize,
     signal,
+    BOARD_FILE_REQUEST_ERROR,
   );
 }
