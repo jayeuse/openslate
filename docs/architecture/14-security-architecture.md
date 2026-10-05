@@ -49,12 +49,14 @@ The browser receives no database credentials, and provider user metadata is
 never an authorization source.
 
 File metadata and authorization state remain application-owned. File bytes use
-opaque keys in private Supabase Storage quarantine and ready buckets through a
+opaque keys in the private Supabase Storage `openslate-ready` bucket through a
 server-only [Storage client](../../backend/app/systems/platform/files/supabase_storage.py).
-FastAPI authorizes every transfer; the [scanner workflow](../../backend/app/systems/platform/files/scan_processing.py)
-checks stored bytes and integrity before promotion, and only a durable clean
-verdict permits download. A private bucket or privileged Storage key does not
-replace application authorization.
+FastAPI authorizes every transfer. Uploads pass a file-extension
+allowlist, and a [bounded parser subprocess](../../backend/app/systems/platform/files/validation_worker.py)
+checks that each file is a real PDF, PNG, JPEG, DOCX, XLSX, or PPTX before the
+Storage write. Downloads are served as attachments with `nosniff`. OpenSlate
+runs no antivirus scan; type validation is not malware detection. A private
+bucket or privileged Storage key does not replace application authorization.
 
 Audit history is also scope-aware. Administrators can list across departments;
 other users must hold department-level `manage` and explicitly filter one
@@ -73,13 +75,12 @@ not a Node.js frontend process. Audit redacts sensitive fields and does not
 record raw passwords, tokens, object paths, or bytes.
 
 [`/api/ready`](../../backend/app/main.py) reports bounded Database, Auth,
-Storage, SMTP-configuration, and scanner component states
-([`readiness.py`](../../backend/app/core/readiness.py)). Scanner presence is
-required in production and optional in development/test. This component report
+Storage, and SMTP-configuration component states
+([`readiness.py`](../../backend/app/core/readiness.py)). This component report
 does not establish mail delivery, schema compatibility, backup integrity, or
 complete stack readiness. The encrypted [Restic backup](../../packaging/backup/backup_installation.py)
 and [restore](../../packaging/backup/restore_installation.py) commands exist,
-but production TLS, the complete five-volume backup/restore path, scanned-file
+but production TLS, the complete five-volume backup/restore path, file
 access through the restored API, reboot recovery, and final release acceptance
 remain unverified. Windows Docker Desktop/WSL2 is the intended Windows server
 path, but Windows-host startup, reboot, and restore acceptance are pending.

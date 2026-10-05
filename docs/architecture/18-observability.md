@@ -9,19 +9,14 @@ dependencies. `/api/ready` returns a bounded, no-store snapshot with fixed compo
 states (`ready`, `unavailable`, or `not_configured`) and a `required` flag; see
 [`main.py`](../../backend/app/main.py) and
 [`readiness.py`](../../backend/app/core/readiness.py). The components are the
-application PostgreSQL connection, Supabase Auth health, Supabase Storage health, SMTP
-configuration, and ClamAV scanner readiness. Database, Auth, Storage, and SMTP are
-required. Scanner readiness is required outside development and test, and optional in
-those environments. Overall readiness is 200 only when every required component is
+application PostgreSQL connection, Supabase Auth health, Supabase Storage health, and SMTP
+configuration. All four are required. Overall readiness is 200 only when every required component is
 ready; otherwise it is 503.
 
 SMTP readiness means the host, port, and sender address are configured; it does not
-test email delivery. Scanner readiness requires a successful ClamAV engine probe and a
-read-only observation of the scanner worker's existing PostgreSQL advisory lock. It
-does not establish queue progress or successful processing of pending files. The
-snapshot does not check application-schema compatibility, backups, restore behavior, or
+test email delivery. The snapshot does not check application-schema compatibility, backups, restore behavior, or
 production installation acceptance. A guarded production Compose rehearsal exercised
-all-required readiness plus bounded Auth, Storage, and scanner failure/recovery paths.
+all-required readiness plus bounded Auth and Storage failure/recovery paths.
 That container-level evidence does not establish native Linux host boot/reboot behavior,
 Windows operation, or whole-installation readiness for a customer deployment.
 
@@ -60,7 +55,7 @@ The repository does not provide centralized telemetry, alerting, backup freshnes
 reporting, a packaged-host diagnostics bundle, or a customer support export workflow.
 `/api/ready` is a bounded component signal, not a full installation or release check.
 Operators must monitor provider services, disk and volume capacity, SMTP delivery,
-ClamAV definitions, worker queue progress, and backup repository/restore readiness
+and backup repository/restore readiness
 separately. No scheduled backup or hosted operations service is implemented.
 
 ## Performance investigation

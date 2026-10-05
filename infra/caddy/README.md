@@ -3,7 +3,7 @@
 Caddy is the HTTPS gateway for production-level testing and Windows/macOS
 installations. It is not part of ordinary local development. It is the only
 component that may bind to a LAN address.
-FastAPI binds to `127.0.0.1`; PostgreSQL and the file scanner are never exposed
+FastAPI binds to `127.0.0.1`; PostgreSQL and Storage are never exposed
 through this gateway.
 
 The repository retains Caddy as an installed, configured, disabled `gateway`

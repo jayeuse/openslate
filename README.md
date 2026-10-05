@@ -2,8 +2,8 @@
 
 OpenSlate is a self-hosted, single-installation application for each client. Its
 server stack runs with Docker Compose and includes Supabase Database, Auth,
-Storage, and Studio alongside the OpenSlate API, static frontend, Caddy, and
-ClamAV. Development uses the same pinned Supabase services with FastAPI and
+Storage, and Studio alongside the OpenSlate API, static frontend, and
+Caddy. Development uses the same pinned Supabase services with FastAPI and
 Next.js run on the host. Supabase Database is PostgreSQL, so SQLAlchemy and
 Alembic remain the application persistence layer.
 
@@ -14,7 +14,7 @@ persistent-volume recovery, and restore acceptance still need a Windows host.
 The production path is not accepted for general client use. A guarded
 production Compose rehearsal using Linux containers on Docker Desktop for
 macOS exercised readiness, Caddy CA trust, encrypted five-volume restore with
-database-only session finalization, authorization and scanned-file access after
+database-only session finalization, authorization and file access after
 restore, and full-stack stop/start. This confirms those paths in the rehearsal
 environment; it does not prove native Linux host boot/reboot behavior. Native
 Linux host boot/reboot acceptance, Windows acceptance (no test host is
@@ -34,9 +34,9 @@ pending. See the
   provider subject to an OpenSlate profile, maintains revocable application
   sessions, and decides access from OpenSlate roles, groups, and permissions.
   Provider claims and metadata do not grant application permissions.
-- **Files:** Supabase Storage holds private quarantine and ready objects. All
-  upload and download authorization remains in FastAPI; ClamAV scanning is
-  still required before download.
+- **Files:** Supabase Storage holds file bytes in one private bucket. FastAPI
+  checks the file type, decides upload and download authorization, and serves
+  each download as an attachment. A file is ready when its upload request ends.
 - **Events:** Authenticated SSE remains the browser event stream. PostgreSQL
   `LISTEN`/`NOTIFY` carries opaque invalidations without row snapshots.
   Supabase Realtime is a future feature and is not part of the active stack.
@@ -117,7 +117,7 @@ in `.env` for Studio. Studio has broader privileges than the removed read-only
 pgweb inspector.
 
 Provision the application roles, apply the fresh-install schema, check for
-drift, and create the private Storage buckets:
+drift, and create the private Storage bucket:
 
 ```bash
 # backend/
@@ -163,30 +163,27 @@ whose data should be retained.
 
 `/api/health` remains an API-process response. `/api/ready` returns a bounded,
 no-store component snapshot for the application database, Supabase Auth and
-Storage health, SMTP configuration, and ClamAV. It returns 200 only when every
-required component is ready and 503 otherwise. Database, Auth, Storage, and
-SMTP are required; the scanner is required in production and optional in
-development and tests. SMTP reports configuration presence, not email delivery.
-Scanner readiness requires both an engine probe and the scanner worker's
-existing PostgreSQL advisory lock; it does not establish queue progress.
-A guarded production Compose rehearsal exercised all-required-component
-readiness and bounded Auth, Storage, and scanner failure/recovery responses.
-`/api/ready` remains a component signal, not a whole-installation or release
-check; it does not establish SMTP delivery or scanner queue progress.
+Storage health, and SMTP configuration. All four components are required. It
+returns 200 only when every component is ready and 503 otherwise. SMTP reports
+configuration presence, not email delivery. A guarded production Compose
+rehearsal exercised all-required-component readiness and bounded Auth and
+Storage failure/recovery responses. `/api/ready` remains a component signal,
+not a whole-installation or release check; it does not establish SMTP
+delivery.
 
 ## Production Compose
 
-The production overlay adds the unified FastAPI/static-frontend image, the
-scanner worker, ClamAV, and Caddy. Provider services remain on private Compose
+The production overlay adds the unified FastAPI/static-frontend image and
+Caddy. Provider services remain on private Compose
 networks; the Studio gateway is loopback-bound for operator access, and only
 the configured Caddy listener is public. Production needs separate provider and
-application environment files, real SMTP, verified immutable ClamAV
-definitions and manifest, TLS materials, and release-specific image tags.
+application environment files, real SMTP, TLS materials, and
+release-specific image tags.
 
 Follow [infra/supabase/README.md](infra/supabase/README.md) for the exact
 Compose inputs and startup sequence. Apply database roles, Alembic schema, and
-private Storage bucket provisioning explicitly before starting the API,
-scanner, or Caddy. Container health and `/api/ready` are operational signals,
+private Storage bucket provisioning explicitly before starting the API or
+Caddy. Container health and `/api/ready` are operational signals,
 not substitutes for installation checks or release acceptance. Do not run
 unrestricted `up` on a fresh production installation or remove named volumes as
 a reset shortcut.
@@ -199,7 +196,7 @@ acceptance is pending, and macOS server deployment is out of scope.
 ## Application data reset
 
 The guarded reset operation is only for local development or disposable test
-instances. Stop FastAPI and the scanner first. Run a dry plan, review the
+instances. Stop FastAPI first. Run a dry plan, review the
 preserved administrator and impact, then use `--execute` in a TTY and enter the
 exact displayed impact digest:
 
@@ -225,9 +222,9 @@ and lifecycle constraints. Session revocation and current application
 eligibility are checked independently of Supabase's authentication result.
 
 File metadata lives in the application schema; object bytes live in private
-Supabase Storage buckets. The scanner worker fetches bytes through Storage,
-and only a clean, committed verdict permits authorized download. Keep upload,
-scan, promotion, reconciliation, and deletion behind the existing FastAPI file
+Supabase Storage bucket. An upload passes the file-type check before FastAPI
+stores it, and the file is ready when the upload request ends. Keep upload,
+reconciliation, download, and deletion behind the existing FastAPI file
 contracts.
 
 ## Verification

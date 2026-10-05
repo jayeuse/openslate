@@ -15,9 +15,9 @@ by a developer's persistent Supabase project.
 
 Focused pytest cases support repair; the owning backend gate runs the complete
 disposable backend suite. Separate runner modes include `--backend-coverage-only`,
-`--scanner-only`, `--acceptance-only`, and `--browser-only`. From `backend/`, `uv run
+`--acceptance-only`, and `--browser-only`. From `backend/`, `uv run
 python -m tests.fullstack_runner --acceptance-only` exercises the isolated provider,
-scanner, FastAPI, Caddy gateway, and browser flow under `ENVIRONMENT=test`; that is
+FastAPI, Caddy gateway, and browser flow under `ENVIRONMENT=test`; that is
 local gateway evidence, not public TLS or customer-host acceptance. The root
 [`prepush.py`](../../scripts/prepush.py) plan and [backend
 workflow](../../.github/workflows/backend.yml) retain Ruff, mypy, backup contract tests,
@@ -55,7 +55,7 @@ or failing reset acceptance cannot pass the dedicated gate.
 
 Provider acceptance should cover identity binding, revoked-session rejection, invitation
 and recovery links, application authorization, denied provider-key access to application
-tables, private Storage transfers, integrity checks, scanner failure, and
+tables, private Storage transfers, file-type validation, integrity checks, and
 cleanup/reconciliation. These journeys use only an isolated disposable stack and test
 identities. Provider container health alone does not establish application readiness or
 prove a user journey. Database-backed tests require the runner-owned target and its
@@ -133,7 +133,7 @@ desktop app's terminal slowed the whole machine, so speed comes first:
   `npm test` to watch the `http` project.
 
 The runners turn SIGTERM and SIGHUP into an interrupt, and they stop each command's whole
-process group before they remove the disposable stack and scanner, so a stopped run leaves
+process group before they remove the disposable stack, so a stopped run leaves
 nothing behind.
 
 ## Acceptance boundaries
@@ -144,13 +144,12 @@ A guarded isolated production Compose rehearsal exercised a real five-volume enc
 backup and restore, TLS trust, authorization and file access, and service restart using
 Linux containers on macOS Docker Desktop. Native Linux host installation and post-reboot
 recovery remain unaccepted. Windows Docker Desktop/WSL2 startup, reboot, persistent-volume
-recovery, scanner, and restore checks remain pending because no Windows acceptance host is
+recovery, and restore checks remain pending because no Windows acceptance host is
 available. macOS is a development workstation only, not a supported server target.
 
-`/api/ready` reports Database, Auth, Storage, SMTP configuration, and scanner states.
-Acceptance must exercise provider outages, missing mail configuration, required versus
-optional scanners, engine and worker absence, and caller deadlines without spawning
-replacement work. Production readiness still requires live acceptance; its response
+`/api/ready` reports Database, Auth, Storage, and SMTP configuration states.
+Acceptance must exercise provider outages, missing mail configuration, and caller
+deadlines without spawning replacement work. Production readiness still requires live acceptance; its response
 does not establish mail delivery, schema compatibility, or backup integrity. Supabase
 Realtime is not started; its future use needs its own authorization and acceptance design.
 Documentation-only edits require diff and link review, not application test execution.
