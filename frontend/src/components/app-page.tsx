@@ -18,7 +18,7 @@ import {
   sessionRecheckEvent,
   signOut,
 } from "@/lib/auth-api";
-import { ApiError } from "@/lib/api";
+import { ApiError, refreshBrowserSession } from "@/lib/api";
 import { getMfaStatus, type MfaStatus } from "@/lib/mfa-api";
 import {
   MfaFlowContext,
@@ -33,6 +33,10 @@ type AppPageProps = {
 
 type SessionCheck =
   "valid" | "setup" | "invalid" | "unavailable" | "mfa" | "network";
+
+// The shortest persisted workspace idle policy is fifteen minutes. Renewal
+// is initiated by trusted input, never by a timer or background request.
+const activityRenewalInterval = 5 * 60_000;
 
 type CheckQueue = {
   active: boolean;
@@ -151,6 +155,8 @@ export function AppPage({ children }: AppPageProps) {
   const [verifiedUserId, setVerifiedUserId] = useState<string | null>(null);
   const verifiedUserIdRef = useRef<string | null>(null);
   const signOutAccepted = useRef(false);
+  const activityAttempt = useRef<{ userId: string; at: number } | null>(null);
+  const stopActivityRenewal = useRef<(() => void) | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
   const mounted = useRef(false);
   const curtain = useRef<HTMLDialogElement | null>(null);
@@ -172,6 +178,64 @@ export function AppPage({ children }: AppPageProps) {
       supersedeSessionCheck(queue.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (checking || unavailable || verifiedUserId === null) return;
+    if (activityAttempt.current?.userId !== verifiedUserId)
+      activityAttempt.current = { userId: verifiedUserId, at: Date.now() };
+    const controller = new AbortController();
+    let renewing = false;
+    function onActivity(event: Event) {
+      if (
+        !event.isTrusted ||
+        document.visibilityState !== "visible" ||
+        controller.signal.aborted ||
+        signOutAccepted.current ||
+        queue.current.active ||
+        verifiedUserIdRef.current !== verifiedUserId ||
+        renewing
+      )
+        return;
+      const now = Date.now();
+      if (
+        !activityAttempt.current ||
+        now - activityAttempt.current.at < activityRenewalInterval
+      )
+        return;
+      activityAttempt.current.at = now;
+      renewing = true;
+      void refreshBrowserSession({
+        userId: verifiedUserId!,
+        signal: controller.signal,
+      }).then((result) => {
+        renewing = false;
+        if (
+          controller.signal.aborted ||
+          !mounted.current ||
+          signOutAccepted.current ||
+          verifiedUserIdRef.current !== verifiedUserId
+        )
+          return;
+        if (result === "rejected" || result === "unavailable")
+          requestSessionRecheck();
+      });
+    }
+    const events = ["pointerdown", "keydown", "wheel"] as const;
+    for (const event of events)
+      document.addEventListener(event, onActivity, {
+        capture: true,
+        passive: true,
+      });
+    function cleanup() {
+      controller.abort();
+      for (const event of events)
+        document.removeEventListener(event, onActivity, true);
+      if (stopActivityRenewal.current === cleanup)
+        stopActivityRenewal.current = null;
+    }
+    stopActivityRenewal.current = cleanup;
+    return cleanup;
+  }, [checking, unavailable, verifiedUserId]);
 
   useEffect(() => {
     function concealWorkspace() {
@@ -421,6 +485,7 @@ export function AppPage({ children }: AppPageProps) {
   }
 
   function finishFactorRemoval() {
+    stopActivityRenewal.current?.();
     supersedeSessionCheck(queue.current);
     clearMfa();
     setMfaRequired(false);
@@ -517,6 +582,7 @@ export function AppPage({ children }: AppPageProps) {
     // The server has accepted sign-out. The shell owns cleanup/recovery now;
     // focus checks and responses started earlier must not replace that screen.
     signOutAccepted.current = true;
+    stopActivityRenewal.current?.();
     supersedeSessionCheck(queue.current);
     curtain.current?.close();
     setChecking(false);
