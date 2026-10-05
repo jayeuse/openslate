@@ -270,12 +270,17 @@ def test_version_failure_preserves_success_and_retention_protects_latest(
     assert observed.status == "unavailable" and observed.latest_version == "9.0.0"
     assert observed.observed_at == NOW
     rows = []
-    start = _after_database_now(integration_db)
+    previous = None
     for index in range(2):
         run = _queue(integration_db, f"Completed {index}")
+        # After the queue request: its requested_at comes from the database clock.
+        at = _after_database_now(integration_db)
+        if previous is not None:
+            at = max(at, previous + timedelta(seconds=10))
+        previous = at
         claim = uuid4()
         service.claim_run(
-            integration_db, instance, claim, now=start + timedelta(seconds=index * 10)
+            integration_db, instance, claim, now=at
         )
         service.record_outcome(
             integration_db,
@@ -287,11 +292,11 @@ def test_version_failure_preserves_success_and_retention_protects_latest(
                 run_id=run.id,
                 claim_id=claim,
                 state="succeeded",
-                finished_at=start + timedelta(seconds=index * 10 + 3),
-                reconciled_at=start + timedelta(seconds=index * 10 + 4),
+                finished_at=at + timedelta(seconds=3),
+                reconciled_at=at + timedelta(seconds=4),
                 snapshot_id=str(index) * 64,
                 manifest_sha256="a" * 64,
-                verified_at=start + timedelta(seconds=index * 10 + 2),
+                verified_at=at + timedelta(seconds=2),
                 failure_code=None,
             ),
         )
@@ -304,7 +309,7 @@ def test_version_failure_preserves_success_and_retention_protects_latest(
         run_id=latest.id,
         claim_id=latest.claim_id,
         snapshot_id=latest.snapshot_id,
-        expired_at=start + timedelta(days=90),
+        expired_at=at + timedelta(days=90),
     )
     with pytest.raises(service.BackupStateError, match="backup_latest_protected"):
         service.record_expiry(integration_db, instance, expiry)
