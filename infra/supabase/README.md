@@ -91,6 +91,25 @@ Apply updates through the installation operator procedure. Read the selected rel
 
 Restart the selected services in the documented order, verify installation/schema admission, authentication and `/api/ready`, then admit Caddy only after required readiness succeeds. Check the running version and public endpoint before ending the outage. Release observation does not prove deployment. Recovery uses the separate [offline backup and restore procedure](RESTORE.md); upgrades do not promise automatic rollback.
 
+### Upgrade from a release with file scanning
+
+Releases before 2026-10-05 ran a `clamav` service, a `scanner-worker` service and a second private bucket for unscanned uploads. Do these steps once, inside the normal update outage, after the offline backup and before you start the new application services:
+
+1. Stop the application: `docker compose --project-name <instance> --env-file <private-env-path> -f infra/supabase/compose.yaml -f infra/supabase/compose.production.yaml stop caddy api`.
+2. List the retired containers of this installation only. The project label limits the result to `<instance>`:
+
+   ```sh
+   docker ps -a --filter label=com.docker.compose.project=<instance> --filter label=com.docker.compose.service=scanner-worker --format '{{.ID}} {{.Names}} {{.Status}}'
+   docker ps -a --filter label=com.docker.compose.project=<instance> --filter label=com.docker.compose.service=clamav --format '{{.ID}} {{.Names}} {{.Status}}'
+   ```
+
+3. Remove each listed container with `docker rm -f <container-id>`. These services had no named volumes, so this keeps all installation data. Then remove the unused network with `docker network rm <instance>_scanner-private` if `docker network ls` lists it. Backup admission refuses any container of a service that the current Compose files do not define, so do not skip this step.
+4. Remove the retired names from the installation env file: `FILES_CLAMAV_HOST`, `FILES_CLAMAV_PORT`, `FILES_CLAMAV_MANIFEST_PATH`, `OPENSLATE_CLAMAV_IMAGE`, `SCANNER_MANIFEST_PATH` and `SCANNER_DEFINITIONS_DIR`. Keep every other line.
+5. Run the provisioning job above. Its `alembic upgrade head` retires rows of uploads that never became ready.
+6. In the same kind of short-lived provisioning container, run `python operations/retire_legacy_upload_bucket.py`. This dry run reports the old bucket and its object count.
+7. Caution: the next command permanently deletes the old bucket and its bytes. Those uploads never became available, so no user can open them. Run `python operations/retire_legacy_upload_bucket.py --execute --confirm`. It succeeds only after the provider confirms that no object and no bucket remain.
+8. Start `api caddy` as above, verify `/api/ready`, and run one backup to prove backup admission.
+
 The [bounded backup runner](RESTORE.md#run-the-installation-backup-policy) executes queued production requests and saved cadence/retention through a constrained release-image bridge. It installs no scheduler, mounts no Docker socket into application/operator containers and emits safe JSON. Its private journal and explicit recovery procedure handle interrupted backup/restart and uncertain acknowledgements.
 
 ## Production application overlay

@@ -127,6 +127,28 @@ uv run alembic check
 uv run python operations/provision_storage.py
 ```
 
+### Update a development checkout from before 2026-10-05
+
+Releases before 2026-10-05 had antivirus file scanning. If your `.env` and
+local stack come from such a release, do these steps once after you update the
+checkout:
+
+1. Stop FastAPI.
+2. Remove these seven lines from your private `.env`. Do not change other
+   lines; they hold your installation identity and credentials.
+   `FILES_CLAMAV_PORT`, `FILES_CLAMAV_HOST`, `FILES_CLAMAV_MANIFEST_PATH`,
+   `SCANNER_DEFINITIONS`, `CLAMAV_MEMORY_LIMIT`, `CLAMAV_CPUS`,
+   `CLAMAV_PIDS_LIMIT`.
+3. Run `uv run python ../scripts/environment.py check` in `backend/`. It
+   must print "Environment configuration is valid." While a retired name stays
+   in `.env`, every wrapper stops with "Unknown configuration names".
+4. Run `uv run alembic upgrade head` in `backend/`.
+5. Run `uv run python operations/retire_legacy_upload_bucket.py` in
+   `backend/`. This dry run reports the old upload bucket and its object count.
+6. Caution: the next step permanently deletes the old bucket and its bytes.
+   Those uploads never became available, so no user can open them.
+   Run `uv run python operations/retire_legacy_upload_bucket.py --execute`.
+
 Start FastAPI and Next.js in separate terminals:
 
 ```bash

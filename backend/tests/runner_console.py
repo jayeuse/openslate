@@ -103,10 +103,9 @@ def _signal_group(group: int, number: int) -> None:
 def stop_process_group(process: subprocess.Popen[str], timeout: float = 10) -> None:
     """Stop a group leader and everything it started; a group that has ended counts as stopped.
 
-    The process must have started with start_new_session=True.
+    The process must have started with start_new_session=True. An exited leader does not
+    prove its group has ended, so the group is always signalled.
     """
-    if process.poll() is not None:
-        return
     _signal_group(process.pid, signal.SIGTERM)
     try:
         process.wait(timeout=timeout)
