@@ -1070,9 +1070,7 @@ export default function ServerBackedViewsWorkspace({
       field.id !== draft.presentation.secondaryFieldId,
   );
   const presentationLayoutLabel = SAVED_VIEW_LAYOUT_LABELS[presentationLayout];
-  const activeLayout: LiveRecordLayout = isLiveRecordLayout(presentationLayout)
-    ? presentationLayout
-    : "table";
+  const activeLayout = presentationLayout;
   const cardLayout =
     presentationLayout === "grid" || presentationLayout === "gallery"
       ? presentationLayout
@@ -2457,7 +2455,7 @@ export default function ServerBackedViewsWorkspace({
                         </Badge>
                       ) : null}
                       {activeSaved?.isDefault ? (
-                        <Badge variant="outline">Department default</Badge>
+                        <Badge variant="outline">Module default</Badge>
                       ) : null}
                       {dirty ? (
                         <Badge variant="outline">Temporary changes</Badge>
@@ -2784,18 +2782,6 @@ export default function ServerBackedViewsWorkspace({
                       </Button>
                     </div>
                   </div>
-
-                  {!isLiveRecordLayout(presentationLayout) ? (
-                    <Alert role="note">
-                      <p className="font-medium">
-                        {presentationLayoutLabel} layout is saved
-                      </p>
-                      <p className="mt-1">
-                        This layout is not available yet. Records are shown in a
-                        Table preview while the saved presentation stays intact.
-                      </p>
-                    </Alert>
-                  ) : null}
 
                   <Tabs
                     value={activeLayout}
@@ -3129,11 +3115,6 @@ export default function ServerBackedViewsWorkspace({
                             value={presentationLayout}
                             onValueChange={changeLayout}
                           >
-                            {!isLiveRecordLayout(presentationLayout) ? (
-                              <option value={presentationLayout} disabled>
-                                {presentationLayoutLabel} (not available)
-                              </option>
-                            ) : null}
                             <option value="table">Table</option>
                             <option value="grid">Grid</option>
                             <option value="gallery">Gallery</option>
@@ -3576,7 +3557,7 @@ export default function ServerBackedViewsWorkspace({
   );
 }
 
-function OpenViewHeader() {
+export function OpenViewHeader() {
   return (
     <header className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
       <div className="min-w-0">

@@ -1646,9 +1646,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await expect(
     page.getByRole("status").filter({ hasText: "default" }),
   ).toBeVisible();
-  await expect(
-    page.getByText("Department default", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("Module default", { exact: true })).toBeVisible();
   expect(api.defaultView()).toBe(viewId);
   expect(
     api.requests.some((request) => request.includes("deleted=include")),
@@ -4475,4 +4473,27 @@ test("New record checks required values, then opens the created record", async (
     module_id: moduleId,
     data: { [nameFieldId]: "Booster pump 09" },
   });
+});
+
+test("a Comms example record link shows a notice and returns to live Views", async ({
+  page,
+}) => {
+  await installViewsApi(page, { initialDefault: true });
+  await page.goto("/openview?record=sample-sr-1004");
+
+  const notice = page
+    .getByRole("status")
+    .filter({ hasText: "This example record is not in OpenView" });
+  await expect(notice).toBeVisible();
+  const views = notice.getByRole("link", { name: "Views", exact: true });
+  await expect(views).toHaveAttribute("href", "/openview?section=views");
+  await views.click();
+
+  await expect(page).toHaveURL(/\/openview\?section=views$/);
+  await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
+    viewId,
+  );
+  await expect(
+    page.getByText("This example record is not in OpenView", { exact: true }),
+  ).toHaveCount(0);
 });
