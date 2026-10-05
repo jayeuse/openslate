@@ -13,6 +13,7 @@ import type { OpenViewWindowQueryRequest } from "../adapters/window-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
 import { RecordDetailsControls } from "./record-details-controls";
 import { RecordHistoryPanel } from "./record-history-panel";
+import { RecordFilesPanel } from "./record-files-panel";
 import { RecordLinksPanel } from "./record-links-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -169,12 +170,18 @@ export function LiveRecordInspector({
           </div>
           {controls ? (
             <Tabs defaultValue="details" className="min-w-0 pt-4">
-              <TabsList aria-label="Record sections" className="max-w-full">
+              <TabsList
+                aria-label="Record sections"
+                className="max-w-full flex-wrap"
+              >
                 <TabsTrigger value="details" className="min-h-11">
                   Details
                 </TabsTrigger>
                 <TabsTrigger value="links" className="min-h-11">
                   Linked records
+                </TabsTrigger>
+                <TabsTrigger value="files" className="min-h-11">
+                  Files
                 </TabsTrigger>
                 {controls.canReadHistory ? (
                   <TabsTrigger value="history" className="min-h-11">
@@ -202,6 +209,13 @@ export function LiveRecordInspector({
                   dataSources={controls.dataSources}
                   canWrite={controls.canWrite}
                   onChanged={controls.onChanged}
+                />
+              </TabsContent>
+              <TabsContent value="files" className="mt-0">
+                <RecordFilesPanel
+                  key={record.id}
+                  record={record}
+                  canWrite={controls.canWrite}
                 />
               </TabsContent>
               {controls.canReadHistory ? (

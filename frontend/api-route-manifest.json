@@ -702,6 +702,42 @@
     "path": "/api/events"
   },
   {
+    "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
+    "function": "archiveRecordFile",
+    "method": "POST",
+    "path": "/api/files/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
+    "function": "downloadRecordFile",
+    "method": "GET",
+    "path": "/api/files/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
+    "function": "getRecordFile",
+    "method": "GET",
+    "path": "/api/files/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
+    "function": "listRecordFiles",
+    "method": "GET",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
+    "function": "reserveRecordFile",
+    "method": "POST",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
+    "function": "uploadRecordFile",
+    "method": "PUT",
+    "path": "/api/files/{param}/content"
+  },
+  {
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
     "function": "assignOpenViewRecordLink",
     "method": "PUT",
