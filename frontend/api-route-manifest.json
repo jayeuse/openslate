@@ -619,6 +619,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
+    "function": "getWorkspaceCalendarSettings",
+    "method": "GET",
+    "path": "/api/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
     "function": "updateManageWorkspace",
     "method": "PATCH",
     "path": "/api/workspace"
@@ -1183,7 +1189,7 @@
   },
   {
     "adapter": "frontend/src/lib/api.ts",
-    "function": "hasAuthenticatedSession",
+    "function": "checkedSession",
     "method": "GET",
     "path": "/api/auth/session"
   },

@@ -195,7 +195,11 @@ def issue_bearer_token(
         db.commit()
     except IdentityRateLimited as error:
         db.rollback()
-        raise HTTPException(status_code=401, detail="Invalid authentication credentials") from error
+        raise HTTPException(
+            status_code=429,
+            detail="Invalid authentication credentials",
+            headers={"Retry-After": "900"},
+        ) from error
     except InvalidCredentials as error:
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid authentication credentials") from error
@@ -276,10 +280,7 @@ def invite(
         ) from error
     except InvitationError as error:
         raise HTTPException(status_code=409, detail="Unable to create invitation") from error
-    return InvitationResponse(
-        user=UserResponse.model_validate(user),
-        delivery="email",
-    )
+    return InvitationResponse(user=UserResponse.model_validate(user), delivery="email")
 
 
 @auth_router.post("/invitations/{user_id}/resend", response_model=InvitationResponse)
