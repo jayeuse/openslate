@@ -232,7 +232,7 @@ test("sidebar section links retain only each screen's relevant deep-link context
   ).toBe("/sandbox?section=triggers&rule=approval&inspect=orders");
   expect(
     item("/platform", "file=contract.pdf", "platform", "files")?.href,
-  ).toBeUndefined();
+  ).toBe("/platform?section=files");
   expect(
     item("/platform", "file=contract.pdf", "platform", "search")?.href,
   ).toBe("/platform?section=search");

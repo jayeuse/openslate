@@ -1014,6 +1014,48 @@
     "path": "/api/auth/sessions"
   },
   {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "archiveLibraryFile",
+    "method": "POST",
+    "path": "/api/files/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "downloadLibraryFile",
+    "method": "GET",
+    "path": "/api/files/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "getLibraryFile",
+    "method": "GET",
+    "path": "/api/files/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "listLibraryFiles",
+    "method": "GET",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "reopenLibraryFile",
+    "method": "POST",
+    "path": "/api/files/{param}/reopen"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "reserveLibraryFile",
+    "method": "POST",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "uploadLibraryFile",
+    "method": "PUT",
+    "path": "/api/files/{param}/content"
+  },
+  {
     "adapter": "frontend/src/components/systems/platform/adapters/platform-search-api.ts",
     "function": "readPlatformSearch",
     "method": "GET",

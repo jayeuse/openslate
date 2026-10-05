@@ -102,6 +102,7 @@ const workspaceNavigationDefinitions = [
     defaultItem: "search",
     items: [
       { id: "search", label: "Search" },
+      { id: "files", label: "Files" },
       { id: "notifications", label: "Notifications" },
       { id: "import-export", label: "Import & export" },
       { id: "account", label: "Account" },
@@ -212,6 +213,10 @@ function paramsFor(
     if (definition.id === "boards") {
       const board = searchParams.get("board");
       if (board) params.set("board", board);
+    }
+    if (definition.id === "platform") {
+      const department = searchParams.get("department");
+      if (department) params.set("department", department);
     }
     if (definition.id === "access") {
       if (itemId === "people") {

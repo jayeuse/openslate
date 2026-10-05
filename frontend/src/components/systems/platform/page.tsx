@@ -10,9 +10,11 @@ import ImportExport from "./components/import-export";
 import Account from "./components/account";
 import Notifications from "./components/notifications";
 import Search from "./components/search";
+import Files from "./components/files";
 
 const PLATFORM_SECTIONS = {
   search: "Search",
+  files: "Files",
   notifications: "Notifications",
   "import-export": "Import & export",
   account: "Account",
@@ -65,7 +67,7 @@ export default function Platform() {
     <div className="space-y-6">
       <PageHeader
         title="Platform"
-        description="Search, notifications, and your account."
+        description="Files, search, notifications, and your account."
       />
       {tab === "Account" ? (
         <p
@@ -82,6 +84,8 @@ export default function Platform() {
         <Account />
       ) : tab === "Search" ? (
         <Search query={query} onQueryChange={setQuery} />
+      ) : tab === "Files" ? (
+        <Files />
       ) : tab === "Notifications" ? (
         <Notifications />
       ) : null}

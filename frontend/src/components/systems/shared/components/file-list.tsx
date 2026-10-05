@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { formatFileSize, type FileDetails } from "../adapters/files-api";
 
@@ -12,6 +13,8 @@ type FileListProps<T extends FileListItem> = {
   items: readonly T[];
   adapter: { download: (file: T) => void };
   downloadingId: string | null;
+  label?: string;
+  metadata?: (file: T) => ReactNode;
   secondaryAction?: {
     label: string;
     disabled: boolean;
@@ -23,10 +26,12 @@ export function FileList<T extends FileListItem>({
   items,
   adapter,
   downloadingId,
+  label = "Attached files",
+  metadata,
   secondaryAction,
 }: FileListProps<T>) {
   return (
-    <ul aria-label="Attached files" className="flex min-w-0 flex-col gap-2">
+    <ul aria-label={label} className="flex min-w-0 flex-col gap-2">
       {items.map((file) => (
         <li
           key={file.id}
@@ -37,6 +42,11 @@ export function FileList<T extends FileListItem>({
             <span className="text-muted-foreground">
               ({formatFileSize(file.actualSize ?? file.expectedSize)})
             </span>
+            {metadata ? (
+              <span className="text-muted-foreground mt-1 block text-xs">
+                {metadata(file)}
+              </span>
+            ) : null}
           </span>
           <div className="flex flex-wrap gap-2">
             <Button
