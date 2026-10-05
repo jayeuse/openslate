@@ -28,6 +28,7 @@ function fileWire(stored: StoredFile, state: string, uploaded: boolean) {
     id: stored.id,
     purpose: "board_attachment",
     record_id: null,
+    department_id: null,
     board_id: boardId,
     creator_id: userId,
     filename: stored.file.name,

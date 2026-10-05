@@ -4226,6 +4226,18 @@
       "FileCreate": {
         "additionalProperties": false,
         "properties": {
+          "department_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department Id"
+          },
           "expected_size": {
             "exclusiveMinimum": 0.0,
             "maximum": 26214400.0,
@@ -4327,6 +4339,18 @@
             "title": "Creator Id",
             "type": "string"
           },
+          "department_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department Id"
+          },
           "expected_size": {
             "title": "Expected Size",
             "type": "integer"
@@ -4395,6 +4419,7 @@
           "purpose",
           "record_id",
           "board_id",
+          "department_id",
           "creator_id",
           "filename",
           "media_type",
@@ -5150,6 +5175,53 @@
         ],
         "title": "LayoutBox",
         "type": "object"
+      },
+      "LibraryFileListResponse": {
+        "properties": {
+          "creator_labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "format": "uuid"
+            },
+            "title": "Creator Labels",
+            "type": "object"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FileResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          },
+          "storage_used_bytes": {
+            "minimum": 0.0,
+            "title": "Storage Used Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "pagination",
+          "creator_labels",
+          "storage_used_bytes"
+        ],
+        "title": "LibraryFileListResponse",
+        "type": "object"
+      },
+      "LibraryFileSortField": {
+        "enum": [
+          "created_at",
+          "updated_at",
+          "name",
+          "size"
+        ],
+        "title": "LibraryFileSortField",
+        "type": "string"
       },
       "LifecycleBlocker": {
         "additionalProperties": false,
@@ -22750,7 +22822,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/FileSortField"
+                  "$ref": "#/components/schemas/LibraryFileSortField"
                 },
                 {
                   "type": "null"
@@ -22818,6 +22890,23 @@
               ],
               "title": "Record Id"
             }
+          },
+          {
+            "in": "query",
+            "name": "department_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Department Id"
+            }
           }
         ],
         "responses": {
@@ -22825,7 +22914,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FileListResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/LibraryFileListResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FileListResponse"
+                    }
+                  ],
+                  "title": "Response List Files Api Files Get"
                 }
               }
             },

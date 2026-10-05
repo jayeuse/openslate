@@ -10,7 +10,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.users.models import User
+from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -112,12 +112,28 @@ def _expire(db: Session, now: datetime) -> int:
 
 
 def reserve(db: Session, user: User, payload: FileCreate) -> FileResponse:
-    authorize(db, user, payload.purpose, write=True, record_id=payload.record_id)
+    authorize(
+        db,
+        user,
+        payload.purpose,
+        write=True,
+        record_id=payload.record_id,
+        department_id=payload.department_id,
+    )
     # Authorization takes no locks, so the expiry commits cannot release any.
     expire_unused_reservations(db, datetime.now(UTC))
     lock_quota(db)
+    # Expiry may commit; recheck the current actor and grants at final admission.
+    authorize(
+        db,
+        fresh_user(db, user.id),
+        payload.purpose,
+        write=True,
+        record_id=payload.record_id,
+        department_id=payload.department_id,
+    )
     require_capacity(db, payload.purpose, payload.expected_size)
-    parent(db, payload.record_id, active=True, lock=True)
+    parent(db, payload.record_id, active=True, lock=True, department_id=payload.department_id)
     file = File(
         **payload.model_dump(), creator_id=user.id, object_key=uuid4().hex, state="awaiting_upload"
     )
@@ -137,9 +153,14 @@ def reserve_board(
     authorize_board_file(db, fresh_user(db, user.id), board_id, write=True, lock=True)
     require_capacity(db, "board_attachment", payload.expected_size)
     file = File(
-        purpose="board_attachment", board_id=board_id, record_id=None,
-        creator_id=user.id, filename=payload.filename, expected_size=payload.expected_size,
-        object_key=uuid4().hex, state="awaiting_upload",
+        purpose="board_attachment",
+        board_id=board_id,
+        record_id=None,
+        creator_id=user.id,
+        filename=payload.filename,
+        expected_size=payload.expected_size,
+        object_key=uuid4().hex,
+        state="awaiting_upload",
     )
     db.add(file)
     db.commit()
@@ -163,10 +184,15 @@ def _current(db: Session, file_id: UUID, token: UUID, state: str) -> File:
 
 
 def upload(
-    db: Session, actor_id: UUID, file_id: UUID, content: bytes, storage: StorageBackend,
-    *, board_id: UUID | None = None,
+    db: Session,
+    actor_id: UUID,
+    file_id: UUID,
+    content: bytes,
+    storage: StorageBackend,
+    *,
+    board_id: UUID | None = None,
 ) -> FileResponse:
-    candidate = load(db, file_id, active_parent=True)
+    candidate = load(db, file_id)
     authorize_contextual_file(
         db, fresh_user(db, actor_id), candidate, board_id=board_id, write=True
     )
@@ -180,7 +206,7 @@ def upload(
     filename, logo = file.filename, file.purpose == "workspace_logo"
     db.rollback()
     validated = validate_bounded(filename, content, logo=logo)
-    candidate = load(db, file_id, active_parent=True)
+    candidate = load(db, file_id)
     authorize_contextual_file(
         db, fresh_user(db, actor_id), candidate, board_id=board_id, write=True
     )
@@ -232,13 +258,15 @@ def upload(
         raise error(
             "upload_unresolved", "Upload outcome needs administrator reconciliation", 503
         ) from exc
-    candidate = load(db, file_id, active_parent=True)
+    candidate = load(db, file_id)
     authorize_contextual_file(
         db, fresh_user(db, actor_id), candidate, board_id=board_id, write=True
     )
     file = _current(db, file_id, token, "uploading")
     authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True)
-    parent(db, file.record_id, active=True, board_id=file.board_id)
+    parent(
+        db, file.record_id, active=True, board_id=file.board_id, department_id=file.department_id
+    )
     if file.is_deleted:
         raise error("file_archived", "File was archived during upload")
     _finish_ready(file)
@@ -269,7 +297,13 @@ def download(
         if candidate.purpose != "workspace_logo" or candidate.is_deleted:
             raise error("file_not_found", "Logo not found", 404)
     else:
-        authorize(db, user, candidate.purpose, record_id=candidate.record_id)
+        authorize(
+            db,
+            user,
+            candidate.purpose,
+            record_id=candidate.record_id,
+            department_id=candidate.department_id,
+        )
     file = load(db, file_id, lock=True, shared_lock=True)
     if file.state != "ready":
         raise error("file_not_ready", "File is not available")
@@ -286,7 +320,13 @@ def download(
     candidate = load(db, file_id)
     fresh_actor = fresh_user(db, actor_id)
     if not current_logo:
-        authorize(db, fresh_actor, candidate.purpose, record_id=candidate.record_id)
+        authorize(
+            db,
+            fresh_actor,
+            candidate.purpose,
+            record_id=candidate.record_id,
+            department_id=candidate.department_id,
+        )
     file = load(db, file_id, lock=True, shared_lock=True)
     if file.state != "ready":
         raise error("file_not_ready", "File is not available")
@@ -310,15 +350,31 @@ def download(
 
 
 def archive(
-    db: Session, actor_id: UUID, file_id: UUID, *, reopen: bool = False,
+    db: Session,
+    actor_id: UUID,
+    file_id: UUID,
+    *,
+    reopen: bool = False,
     board_id: UUID | None = None,
 ) -> FileResponse:
-    candidate = load(db, file_id, active_parent=reopen)
+    candidate = load(db, file_id)
     authorize_contextual_file(
-        db, fresh_user(db, actor_id), candidate, board_id=board_id, write=True
+        db,
+        fresh_user(db, actor_id),
+        candidate,
+        board_id=board_id,
+        write=True,
+        manage=candidate.purpose == "library_document",
     )
     file = load(db, file_id, active_parent=reopen, lock=True)
-    authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True)
+    authorize_contextual_file(
+        db,
+        fresh_user(db, actor_id),
+        file,
+        board_id=board_id,
+        write=True,
+        manage=file.purpose == "library_document",
+    )
     if file.purpose == "board_attachment":
         require_unlinked(db, file.id)
     if file.state in {"deleting", "purged"}:
@@ -330,12 +386,16 @@ def archive(
 
 
 def reconcile(
-    db: Session, actor_id: UUID, file_id: UUID, storage: StorageBackend,
-    *, board_id: UUID | None = None,
+    db: Session,
+    actor_id: UUID,
+    file_id: UUID,
+    storage: StorageBackend,
+    *,
+    board_id: UUID | None = None,
 ) -> FileResponse:
     lock_quota(db)
-    user = fresh_user(db, actor_id)
-    authorize(db, user, "library_document", write=True)
+    if fresh_user(db, actor_id).role != UserRole.ADMIN.value:
+        raise error("forbidden", "Forbidden", 403)
     file = load(db, file_id, lock=True)
     if file.purpose == "board_attachment":
         if board_id is None or file.board_id != board_id:
@@ -361,7 +421,8 @@ def reconcile(
         if token is None:
             raise error("upload_unresolved", "Upload outcome remains unresolved")
         file = _current(db, file_id, token, "uploading")
-        authorize(db, fresh_user(db, actor_id), "library_document", write=True)
+        if fresh_user(db, actor_id).role != UserRole.ADMIN.value:
+            raise error("forbidden", "Forbidden", 403)
         _finish_ready(file)
         db.commit()
     return FileResponse.model_validate(file)

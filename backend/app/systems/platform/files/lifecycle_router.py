@@ -76,6 +76,7 @@ def purge_impact(
                 "purpose": file.purpose,
                 "parent": str(file.record_id),
                 "board": str(file.board_id),
+                "department": str(file.department_id),
                 "bytes": file.actual_size,
             },
             sort_keys=True,

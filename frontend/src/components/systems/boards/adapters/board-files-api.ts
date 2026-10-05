@@ -18,6 +18,7 @@ const fileWire = fileWireSchema
   .extend({
     purpose: z.literal("board_attachment"),
     record_id: z.null(),
+    department_id: z.null(),
     board_id: uuid,
     is_deleted: z.literal(false),
   })

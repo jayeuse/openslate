@@ -14,10 +14,14 @@ class File(BaseModel):
     __tablename__ = "files"
     __table_args__ = (
         CheckConstraint(
-            "(purpose = 'record_attachment' AND record_id IS NOT NULL AND board_id IS NULL) OR "
-            "(purpose = 'board_attachment' AND board_id IS NOT NULL AND record_id IS NULL) OR "
-            "(purpose IN ('library_document', 'workspace_logo') "
-            "AND record_id IS NULL AND board_id IS NULL)",
+            "(purpose = 'record_attachment' AND record_id IS NOT NULL "
+            "AND board_id IS NULL AND department_id IS NULL) OR "
+            "(purpose = 'board_attachment' AND board_id IS NOT NULL "
+            "AND record_id IS NULL AND department_id IS NULL) OR "
+            "(purpose = 'library_document' AND department_id IS NOT NULL "
+            "AND record_id IS NULL AND board_id IS NULL) OR "
+            "(purpose = 'workspace_logo' AND record_id IS NULL "
+            "AND board_id IS NULL AND department_id IS NULL)",
             name="ck_files_purpose_parent",
         ),
         CheckConstraint(
@@ -38,9 +42,7 @@ class File(BaseModel):
             "state != 'ready' OR (digest IS NOT NULL AND actual_size IS NOT NULL)",
             name="ck_files_ready_verdict",
         ),
-        CheckConstraint(
-            "enc_version IS NULL OR enc_version > 0", name="ck_files_enc_version"
-        ),
+        CheckConstraint("enc_version IS NULL OR enc_version > 0", name="ck_files_enc_version"),
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset(
         {
@@ -58,6 +60,9 @@ class File(BaseModel):
     )
     board_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("boards.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    department_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     creator_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"),

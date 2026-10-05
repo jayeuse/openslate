@@ -102,11 +102,13 @@ def test_third_buffer_operation_is_rejected_and_capacity_recovers():
     ],
 )
 def test_reservation_rejects_parent_forgery_limits_and_provider_keys(payload):
+    if payload["purpose"] == "library_document":
+        payload = {"department_id": str(uuid4()), **payload}
     with pytest.raises(ValidationError):
         FileCreate.model_validate(payload)
 
 
-@pytest.mark.parametrize("purpose", ["library_document", "workspace_logo"])
+@pytest.mark.parametrize("purpose", ["workspace_logo"])
 def test_members_do_not_get_admin_documents(purpose):
     actor = user()
     with pytest.raises(HTTPException) as caught:

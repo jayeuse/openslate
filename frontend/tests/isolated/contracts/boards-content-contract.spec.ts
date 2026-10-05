@@ -102,6 +102,7 @@ const readyFile = {
   board_id: boardId,
   state: "ready",
   record_id: null,
+  department_id: null,
   is_deleted: false,
 };
 const recordLink = { record_id: recordId, available: false, url: null };

@@ -3,13 +3,15 @@ from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Query, Request, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.dependencies import get_current_user
 from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.database import get_db
+from app.systems.access.identity.eligibility import identity_eligible_clause
+from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.models import User
 from app.systems.platform.files import service
 from app.systems.platform.files.access import authorize, error, load, parent
@@ -21,6 +23,8 @@ from app.systems.platform.files.schemas import (
     FileListResponse,
     FileResponse,
     FileSortField,
+    LibraryFileListResponse,
+    LibraryFileSortField,
 )
 from app.systems.platform.files.storage import get_storage
 
@@ -37,6 +41,20 @@ SPEC = ListQuerySpec(
     tie_breaker=cast(ColumnElement[Any], File.id),
     deleted_field=cast(ColumnElement[bool], File.is_deleted),
 )
+LIBRARY_SPEC = ListQuerySpec(
+    sort_fields={
+        LibraryFileSortField.CREATED_AT: cast(ColumnElement[Any], File.created_at),
+        LibraryFileSortField.UPDATED_AT: cast(ColumnElement[Any], File.updated_at),
+        LibraryFileSortField.NAME: cast(ColumnElement[Any], File.filename),
+        LibraryFileSortField.SIZE: cast(
+            ColumnElement[Any], func.coalesce(File.actual_size, File.expected_size)
+        ),
+    },
+    default_sort=LibraryFileSortField.CREATED_AT,
+    tie_breaker=cast(ColumnElement[Any], File.id),
+    deleted_field=cast(ColumnElement[bool], File.is_deleted),
+    search_fields=(cast(ColumnElement[str], File.filename),),
+)
 
 
 @router.post("", response_model=FileResponse, status_code=201)
@@ -44,25 +62,71 @@ def create_file(payload: FileCreate, user: Actor, db: DB) -> FileResponse:
     return service.reserve(db, user, payload)
 
 
-@router.get("", response_model=FileListResponse)
+@router.get("", response_model=LibraryFileListResponse | FileListResponse)
 def list_files(
-    params: Annotated[FileListRequest, Query()], user: Actor, db: DB
-) -> FileListResponse:
-    authorize(db, user, params.purpose, record_id=params.record_id)
+    params: Annotated[FileListRequest, Query()], user: Actor, db: DB, response: Response
+) -> LibraryFileListResponse | FileListResponse:
+    authorize(
+        db, user, params.purpose, record_id=params.record_id, department_id=params.department_id
+    )
     if (params.purpose == "record_attachment") != (params.record_id is not None):
         raise error("file_parent_required", "Only attachment lists require a record", 422)
-    parent(db, params.record_id, active=False)
+    library = params.purpose == "library_document"
+    if library != (params.department_id is not None):
+        raise error("file_parent_required", "Only library lists require a department", 422)
+    if not library and params.sort_by is not None and params.sort_by.value not in FileSortField:
+        raise error("file_sort_invalid", "This file purpose does not support this sort", 422)
+    parent(db, params.record_id, active=False, department_id=params.department_id)
     statement = select(File).where(File.purpose == params.purpose)
     if params.record_id is not None:
         statement = statement.where(File.record_id == params.record_id)
-    result = execute_standard_list(db, statement, params, SPEC)
+    if library:
+        statement = statement.where(File.department_id == params.department_id)
+    # The generic-purpose allowlist above keeps the existing Board/Record specification.
+    spec = LIBRARY_SPEC if library else cast(ListQuerySpec[LibraryFileSortField], SPEC)
+    result = execute_standard_list(db, statement, params, spec)
+    if library:
+        response.headers["Cache-Control"] = "private, no-store"
+        creator_ids = {file.creator_id for file in result.items}
+        labels = (
+            {
+                creator_id: display_name or username
+                for creator_id, display_name, username in (
+                    db.execute(
+                        select(User.id, User.display_name, User.username).where(
+                            User.id.in_(creator_ids),
+                            User.status == "active",
+                            established_user_clause(),
+                            identity_eligible_clause(),
+                        )
+                    ).tuples()
+                )
+            }
+            if creator_ids
+            else {}
+        )
+        usage = db.scalar(
+            select(func.coalesce(func.sum(File.actual_size), 0)).where(
+                File.purpose == "library_document",
+                File.department_id == params.department_id,
+                File.state == "ready",
+            )
+        )
+        return LibraryFileListResponse.model_validate(
+            {
+                "items": result.items,
+                "pagination": result.pagination,
+                "creator_labels": labels,
+                "storage_used_bytes": usage,
+            }
+        )
     return FileListResponse.model_validate({"items": result.items, "pagination": result.pagination})
 
 
 @router.get("/{file_id}", response_model=FileResponse)
 def get_file(file_id: UUID, user: Actor, db: DB) -> FileResponse:
     file = load(db, file_id)
-    authorize(db, user, file.purpose, record_id=file.record_id)
+    authorize(db, user, file.purpose, record_id=file.record_id, department_id=file.department_id)
     return FileResponse.model_validate(file)
 
 

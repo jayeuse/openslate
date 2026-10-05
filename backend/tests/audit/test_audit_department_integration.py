@@ -396,3 +396,56 @@ def test_department_manager_lists_only_the_explicitly_managed_department(
         "/api/security-events",
     ):
         assert _client(api, manager, integration_db).get(restricted).status_code == 403
+
+
+def test_library_file_audit_uses_its_direct_department_through_archive_and_delete(integration_db):
+    db = integration_db
+    creator = add_user(db)
+    department = add_department(db)
+    file = File(
+        purpose="library_document",
+        department_id=department.id,
+        creator_id=creator.id,
+        filename="private.pdf",
+        expected_size=1,
+        object_key=uuid7().hex,
+        state="awaiting_upload",
+    )
+    db.add(file)
+    db.flush()
+    assert _created_log(db, file).department_id == department.id
+    department_id, file_id = department.id, file.id
+    file.is_deleted = True
+    file.deleted_at = datetime.now(UTC)
+    db.flush()
+    archived = db.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_type == "files",
+            AuditLog.entity_id == file_id,
+            AuditLog.action == AuditAction.DELETE,
+        )
+    )
+    assert archived is not None and archived.department_id == department_id
+    # The existing listener records soft deletion as DELETE and reopening as UPDATE.
+    file.is_deleted, file.deleted_at = False, None
+    db.flush()
+    updated = db.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_type == "files",
+            AuditLog.entity_id == file_id,
+            AuditLog.action == AuditAction.UPDATE,
+        )
+    )
+    assert updated is not None and updated.department_id == department_id
+    db.delete(file)
+    db.flush()
+    db.delete(department)
+    db.flush()
+    deleted = db.scalars(
+        select(AuditLog).where(
+            AuditLog.entity_type == "files",
+            AuditLog.entity_id == file_id,
+            AuditLog.action == AuditAction.DELETE,
+        )
+    ).all()
+    assert len(deleted) == 2 and all(log.department_id == department_id for log in deleted)

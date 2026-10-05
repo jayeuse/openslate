@@ -29,8 +29,8 @@ def client():
         yield client
 
 
-def test_non_admin_cannot_list_library_or_logos(client):
-    for purpose in ["library_document", "workspace_logo"]:
+def test_non_admin_cannot_list_logos(client):
+    for purpose in ["workspace_logo"]:
         response = client.get("/api/files", params={"purpose": purpose})
         assert response.status_code == 403
         assert response.json()["detail"]["code"] == "forbidden"
@@ -54,6 +54,7 @@ def test_clients_cannot_submit_file_state_or_storage_identity(client):
         "/api/files",
         json={
             "purpose": "library_document",
+            "department_id": str(uuid4()),
             "filename": "a.pdf",
             "expected_size": 10,
             "state": "ready",

@@ -16,6 +16,7 @@ function recordFileSchema(recordId: string) {
     .extend({
       purpose: z.literal("record_attachment"),
       record_id: z.literal(recordId),
+      department_id: z.null(),
       board_id: z.null(),
     })
     .superRefine((file, context) => {

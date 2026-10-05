@@ -15,6 +15,7 @@ from app.systems.platform.files.providers import (
     ProviderWriteRejected,
 )
 from app.systems.platform.files.schemas import FileCreate
+from tests.files.conftest import library_department
 
 pytestmark = pytest.mark.integration
 
@@ -47,15 +48,18 @@ def reserve(db, actor):
     item = service.reserve(
         db,
         actor,
-        FileCreate(purpose="library_document", filename="image.png", expected_size=len(content)),
+        FileCreate(
+            purpose="library_document",
+            department_id=library_department(db),
+            filename="image.png",
+            expected_size=len(content),
+        ),
     )
     db.commit()
     return item.id, content
 
 
-def test_upload_returns_ready_and_downloads_with_no_further_step(
-    guarded_db, actor, monkeypatch
-):
+def test_upload_returns_ready_and_downloads_with_no_further_step(guarded_db, actor, monkeypatch):
     db = guarded_db
     actor_id = actor.id
     file_id, content = reserve(db, actor)

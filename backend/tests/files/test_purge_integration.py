@@ -13,6 +13,29 @@ from tests.files.test_integration import Store, reserve
 pytestmark = pytest.mark.integration
 
 
+def test_library_purge_fingerprint_tracks_direct_department_ownership(
+    guarded_db, actor, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from app.systems.platform.files.lifecycle_router import purge_impact
+    from tests.files.test_library_routes import library_file
+    from tests.rbac.support import add_department
+
+    db = guarded_db
+    department, other = add_department(db), add_department(db)
+    file = library_file(db, actor, department, state="awaiting_upload", archived=True)
+    monkeypatch.setattr(
+        "app.systems.platform.files.lifecycle_router.get_settings",
+        lambda: SimpleNamespace(lifecycle_purge_enabled=True),
+    )
+    first = purge_impact(db, actor.id, file.id).rows[0].state_fingerprint
+    file.department_id = other.id
+    db.commit()
+    second = purge_impact(db, actor.id, file.id).rows[0].state_fingerprint
+    assert first != second
+
+
 def test_purge_rejects_active_or_current_logo_and_deletes_only_archived_inventory(
     guarded_db, actor, monkeypatch
 ):

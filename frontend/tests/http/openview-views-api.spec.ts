@@ -49,6 +49,7 @@ function recordAttachment(
     id,
     purpose: "record_attachment",
     record_id: parent,
+    department_id: null as string | null,
     board_id: null,
     creator_id: userId,
     filename,
@@ -76,7 +77,7 @@ async function installRecordFilesApi(
   const files = [recordAttachment()];
   const calls: { method: string; path: string; body: unknown }[] = [];
   let listStatus = 200;
-  let listBroken: "foreign" | "pagination" | null = null;
+  let listBroken: "foreign" | "department" | "pagination" | null = null;
   let archiveStatus = 200;
   let downloadBroken = false;
   let uploadMode:
@@ -176,6 +177,12 @@ async function installRecordFilesApi(
         ];
       if (listBroken === "pagination")
         response.pagination.count = items.length + 1;
+      if (listBroken === "department")
+        response.items = items.map((file) => ({
+          ...file,
+          department_id: departmentId,
+          filename: "Foreign private file.pdf",
+        }));
       return route.fulfill({ json: response });
     }
     if (url.pathname === "/api/files" && method === "POST") {
@@ -508,7 +515,7 @@ test("Record files: cached revisits and shared invalidations refresh file reads"
   expect(api.listReads.length).toBeGreaterThan(initialReads);
 });
 
-for (const broken of ["foreign", "pagination"] as const) {
+for (const broken of ["foreign", "department", "pagination"] as const) {
   test(`Record files: ${broken} list responses fail safely and pagination retries complete the list`, async ({
     page,
   }) => {

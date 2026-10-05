@@ -16,6 +16,7 @@ export const fileWireSchema = z
       "workspace_logo",
     ]),
     record_id: uuid.nullable(),
+    department_id: uuid.nullable(),
     board_id: uuid.nullable(),
     creator_id: uuid,
     filename: z.string().min(1).max(255),
