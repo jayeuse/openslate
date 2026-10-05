@@ -20,6 +20,17 @@ class BoardLinkSpec:
 
 
 @dataclass(frozen=True)
+class BoardFileSpec:
+    """A blank attachment a team member adds to one seeded post or event."""
+
+    key: str
+    board: str
+    kind: str  # post or event
+    index: int
+    filename: str  # meaningful name; the extension picks the file type
+
+
+@dataclass(frozen=True)
 class MoneySpec:
     key: str
     record: str
@@ -41,6 +52,7 @@ class ContentSpec:
     scenario_paid: Decimal
     scenario_balance: Decimal
     board_links: tuple[BoardLinkSpec, ...]
+    board_files: tuple[BoardFileSpec, ...]
     post_states: tuple[str, ...]
     posts_per_board: int
     events_per_board: int

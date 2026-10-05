@@ -7,6 +7,7 @@ from datetime import timedelta
 from typing import Any, cast
 
 from operations.sample.blueprint import SampleDataset
+from operations.sample.controls.board_files import board_author
 from operations.sample.controls.boards import _board_manager_and_record
 from operations.sample.controls.openview_queries import select_openview_target
 from operations.sample.packs.phase_types import PhaseAction, PhaseJsonValue
@@ -20,7 +21,6 @@ from operations.sample.phases.actions import (
     _request_object,
     _result,
 )
-from operations.sample.phases.planning import _board_level
 from operations.sample.population.boards import project_board_logical_id
 
 CONTROL_ROUTES = frozenset(
@@ -67,22 +67,7 @@ def _action(
 
 
 def _first_event_author(dataset: SampleDataset, department: str, board_name: str) -> str:
-    """Use the same authored rotation as the ordinary Board content queue."""
-    pack = dataset.organization
-    people = {person.key: person for person in pack.actors.people}
-    authors = [
-        key
-        for key in pack.actors.team_keys[department]
-        if people[key].status == "active"
-        and people[key].role == "member"
-        and _board_level(pack, key, department) >= 2
-    ] or ["admin"]
-    board_index = (
-        1
-        + len(pack.catalog.departments)
-        + pack.content.data.projects.index((board_name, department))
-    )
-    return authors[(board_index * 3 + 1) % len(authors)]
+    return board_author(dataset, department, board_name, 1)
 
 
 def plan_read_reviews(dataset: SampleDataset) -> tuple[PhaseAction, ...]:

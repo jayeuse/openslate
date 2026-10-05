@@ -151,6 +151,7 @@ def _request(
     json_body: Mapping[str, Any] | None = None,
     params: Mapping[str, Any] | None = None,
     headers: Mapping[str, str] | None = None,
+    content: bytes | None = None,
     expected_detail: str | None = None,
     primary_entity_type: str | None = None,
     primary_entity_id: str | None = None,
@@ -169,6 +170,7 @@ def _request(
         json_body=json_body,
         params=params,
         headers=headers,
+        content=content,
         refresh_first=refresh_first,
     )
     request_id = _request_id(response)

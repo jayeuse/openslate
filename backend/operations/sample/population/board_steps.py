@@ -1,6 +1,6 @@
 """Board work as small steps by team members, run between record sessions.
 
-Each post, event, record link and post life-cycle action is one step. Steps run in plan
+Each post, event, record link, attachment and post life-cycle action is one step. Steps run in plan
 order once their earlier steps and records exist; each write reads the current Board
 and item revisions first, so people working on the same Board never use a stale one.
 """
@@ -24,6 +24,7 @@ from operations.sample.population.board_entries import (
     finalize_post,
     validate_board_scenarios,
 )
+from operations.sample.population.board_files import attach_seeded_file
 from operations.sample.population.content import SampleContentError, _id
 
 
@@ -38,7 +39,7 @@ class BoardMeta:
 @dataclass(frozen=True)
 class StepSpec:
     key: str
-    kind: str  # post, event, link or lifecycle
+    kind: str  # post, event, link, file or lifecycle
     board: str
     index: int
     author_key: str
@@ -49,7 +50,8 @@ class StepSpec:
 def plan_board_steps(
     boards: Sequence[BoardMeta], *, organization: OrganizationPack | None = None
 ) -> list[StepSpec]:
-    """Interleave posts and events across Boards, then links, then post life cycles."""
+    """Interleave posts and events across Boards, then links and attachments, then post
+    life cycles. Attaching resets a post to draft, so it runs before the post's life cycle."""
     spec = (organization or default_pack()).content.data
     steps: list[StepSpec] = []
     for index in range(spec.events_per_board):
@@ -77,14 +79,22 @@ def plan_board_steps(
                     link.records,
                 )
             )
+    files: dict[str, list[str]] = {}
+    for item in spec.board_files:
+        parent = f"{item.kind}:{item.board}:{item.index}"
+        if parent in by_key:
+            steps.append(StepSpec(item.key, "file", item.board, item.index,
+                                  by_key[parent].author_key, (parent,)))  # fmt: skip
+            files.setdefault(parent, []).append(item.key)
     for index in range(spec.posts_per_board):
         if spec.post_states[index // 2] == "draft":
             continue
         for board in boards:
             post = by_key[f"post:{board.logical_id}:{index}"]
             key = f"lifecycle:{board.logical_id}:{index}"
+            needs = (post.key, *files.get(post.key, ()))
             steps.append(
-                StepSpec(key, "lifecycle", board.logical_id, index, post.author_key, (post.key,))
+                StepSpec(key, "lifecycle", board.logical_id, index, post.author_key, needs)
             )
     return steps
 
@@ -159,6 +169,13 @@ class BoardQueue:
             self.counts["reminders"] += len(reminders)
         elif step.kind == "link":
             self._link(step, board, client, records)
+        elif step.kind == "file":
+            parent = step.needs_steps[0]
+            filename = next(item.filename for item in spec.board_files if item.key == step.key)
+            file_id = attach_seeded_file(client, board["id"], parent.partition(":")[0],
+                                         self._items[parent]["id"], filename)  # fmt: skip
+            client.record_mapping("files", step.key, file_id)
+            self.counts["files"] += 1
         else:
             item = self._items[step.needs_steps[0]]
             post = {

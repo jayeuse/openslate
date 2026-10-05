@@ -239,6 +239,7 @@ def test_board_post_and_event_use_current_revision_and_ui_payloads(tmp_path: Pat
 def test_content_verify_combines_partial_failures_and_requires_saved_report_outputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from operations.sample.population import board_files as sample_board_files
     from operations.sample.population import boards as sample_boards
     from operations.sample.population import openview as sample_openview
 
@@ -246,6 +247,11 @@ def test_content_verify_combines_partial_failures_and_requires_saved_report_outp
         sample_boards,
         "verify_boards",
         lambda _admin, *, mappings, organization=None: {"boards": 1, "read_failures": 2},
+    )
+    monkeypatch.setattr(
+        sample_board_files,
+        "verify_seeded_attachments",
+        lambda _admin, *, mappings, organization=None: (6, ["download differs"]),
     )
     monkeypatch.setattr(
         sample_openview,
@@ -266,6 +272,7 @@ def test_content_verify_combines_partial_failures_and_requires_saved_report_outp
             mappings={},
         )
 
-    assert result["read_failures"] == 5
+    assert result["read_failures"] == 6
+    assert (result["attachment_downloads"], result["attachment_download_failures"]) == (6, 1)
     assert result["missing_report_outputs"] == 1
     assert result["content_complete"] == 0

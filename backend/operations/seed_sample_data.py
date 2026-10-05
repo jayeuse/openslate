@@ -352,10 +352,10 @@ def _print_plan(dataset: SampleDataset, preflight: Mapping[str, Any], mailpit_ur
         print(f"  {key}={count}")
     print(
         "prerequisites: empty/reset application baseline; matching admin credentials; "
-        "invitations delivered only to owned Mailpit; file insertion excluded"
+        "invitations delivered only to owned Mailpit"
     )
     print(
-        "exclusions: OpenComms; file insertion and scanner acceptance; custom roles; "
+        "exclusions: OpenComms; custom roles; "
         "service identities/metadata; access rules/defaults; "
         "saved chart preferences; direct database writes; provider-admin user creation"
     )

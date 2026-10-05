@@ -67,6 +67,7 @@ def _content_spec() -> ContentSpec:
         scenario_paid=Decimal(0),
         scenario_balance=Decimal(0),
         board_links=(),
+        board_files=(),
         post_states=(),
         posts_per_board=0,
         events_per_board=0,

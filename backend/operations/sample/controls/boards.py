@@ -24,6 +24,12 @@ from operations.sample.controls.board_execution import (
     BOARD_EXECUTION_ROUTES,
     execute_board_action,
 )
+from operations.sample.controls.board_files import (
+    BOARD_FILE_ROUTES,
+    FILE_OPERATIONS,
+    execute_board_file_action,
+    plan_board_file_controls,
+)
 from operations.sample.controls.board_record_links import (
     BOARD_LINK_ROUTES,
     execute_board_record_link_action,
@@ -51,6 +57,7 @@ CONTROL_ROUTES = (
     | BOARD_WIDGET_ROUTES
     | BOARD_CONTENT_ROUTES
     | BOARD_LINK_ROUTES
+    | BOARD_FILE_ROUTES
 )
 
 
@@ -363,7 +370,7 @@ def plan_board_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     )
     add("purge_duplicate", "purge-duplicate", "admin", primary_board, {}, {"purged": True})
     add("purge_import", "purge-import", "admin", imported_board, {}, {"purged": True})
-    return tuple(actions)
+    return (*actions, *plan_board_file_controls(dataset))
 
 
 def execute_board_control(
@@ -374,6 +381,8 @@ def execute_board_control(
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
     operation = action.values.get("operation")
+    if operation in FILE_OPERATIONS:
+        return execute_board_file_action(action, context, on_substep=on_substep)
     if operation in {
         "post_record_link_create",
         "post_record_link_delete",

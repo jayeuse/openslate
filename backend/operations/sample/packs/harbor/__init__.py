@@ -233,7 +233,7 @@ PACK = OrganizationPack(
             "posts": 96,
             "events": 144,
             "reminders": 24,
-            "attachments": 0,
+            "attachments": 11,
             "views": 36,
             "dashboards": 6,
             "dashboard_widgets": 24,

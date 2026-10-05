@@ -48,7 +48,7 @@ def test_every_frontend_operation_exists_and_has_simulated_run_coverage() -> Non
     assert not (interactive & (covered | deferred))
     uncovered = frontend - covered - deferred - interactive
     assert not uncovered, f"UI routes without simulated run coverage: {sorted(uncovered)}"
-    assert set(DEFERRED_ROUTES.values()) <= {"files", "notifications", "comms"}
+    assert set(DEFERRED_ROUTES.values()) <= {"notifications", "comms"}
 
 
 def test_route_evidence_contains_templates_without_identifiers_or_payloads(tmp_path: Path) -> None:

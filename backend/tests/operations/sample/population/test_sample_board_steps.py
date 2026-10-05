@@ -58,7 +58,7 @@ def test_life_cycle_and_links_are_done_by_the_post_or_event_author() -> None:
     steps = plan_board_steps(BOARDS)
     authors = {step.key: step.author_key for step in steps}
     for step in steps:
-        if step.kind in {"lifecycle", "link"}:
+        if step.kind in {"lifecycle", "link", "file"}:
             assert step.author_key == authors[step.needs_steps[0]], step.key
 
 

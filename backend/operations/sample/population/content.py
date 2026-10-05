@@ -241,14 +241,21 @@ def verify_content(
     mappings: Mapping[str, Mapping[str, str]],
     organization: OrganizationPack | None = None,
 ) -> Mapping[str, int]:
+    from operations.sample.population.board_files import verify_seeded_attachments
     from operations.sample.population.boards import verify_boards
     from operations.sample.population.openview import verify_openview
 
     board_counts = verify_boards(admin, mappings=mappings, organization=organization)
     openview_counts = verify_openview(admin, mappings=mappings)
-    observed = {**board_counts, **openview_counts}
-    observed["read_failures"] = board_counts.get("read_failures", 0) + openview_counts.get(
-        "read_failures", 0
+    downloads, download_issues = verify_seeded_attachments(
+        admin, mappings=mappings, organization=organization
+    )
+    observed = {**board_counts, **openview_counts, "attachment_downloads": downloads}
+    observed["attachment_download_failures"] = len(download_issues)
+    observed["read_failures"] = (
+        board_counts.get("read_failures", 0)
+        + openview_counts.get("read_failures", 0)
+        + len(download_issues)
     )
     expected = run_manifest.get("expected", {})
     content_keys = (
