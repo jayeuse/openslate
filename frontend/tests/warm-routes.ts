@@ -9,7 +9,6 @@ const routes = [
   "/setup",
   "/auth/setup",
   "/auth/recovery",
-  "/access-restricted",
   "/openview",
   "/sandbox",
   "/boards",

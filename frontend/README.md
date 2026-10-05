@@ -1,16 +1,14 @@
 # OpenSlate Frontend
 
-The workspace is currently UI-first: business data, roles, permissions, branding, and interaction state are local sample state. Workspace screens do not fetch business APIs or subscribe to server events. Existing-account sign-in, session validation/refresh, and logout call FastAPI Identity through the same-origin API.
+Sandbox, Boards, Access, OpenView, Manage, and Platform use authorized FastAPI adapters for their implemented data and actions. FastAPI owns application authorization and durable state; browser drafts and cached reads do not replace those decisions. OpenComms alone retains browser-local example conversations, preferences, and tools. Its sample interactions do not provide durable messaging. Sign-in, session validation/refresh, logout, and invitation/recovery actions use the same-origin API.
 
-Browser-held workspace snapshots and Comms drafts are scoped to the verified
-account in each tab. Older snapshots without an account owner remain stored but
-are not loaded automatically.
+`AppPage` mounts the verified-account identity and query/theme providers once for authenticated routes. The sample provider is scoped to `src/app/(app)/(workspace)/comms/layout.tsx`; its recovery and storage states affect only OpenComms. Comms snapshots and drafts are scoped to the verified account in each tab. Older snapshots without an account owner remain stored but are not loaded automatically. Shared session cleanup removes owned Comms drafts and snapshots even after leaving that route.
 
-FastAPI must be running for identity actions. Invitation onboarding uses the protected FastAPI setup flow. Current workspace controls do not call business APIs; later integrations use the shared same-origin `apiFetch()` contract. Production serves the static Next export through FastAPI. For daily frontend development, run `npm run dev` in this directory and open `http://localhost:<FRONTEND_DEV_PORT>`. Next forwards same-origin `/api/*` requests to loopback FastAPI on `BACKEND_PORT`; the launcher parses `FRONTEND_DEV_PORT`, `BACKEND_BIND_HOST`, `BACKEND_PORT`, and `PUBLIC_ORIGIN` from the process or root configuration, then passes only the three direct nonsecret values and the derived exact HMR-origin hostname to Next. The configured `PUBLIC_ORIGIN` hostname becomes that HMR allowlist entry; root environment validation and the launcher limit it to a permitted local or LAN browser address. An IPv6 `BACKEND_BIND_HOST=::1` uses `localhost` with IPv6-first resolution because Next cannot compile a literal IPv6 rewrite host. Developers may pass Next host or port overrides with `npm run dev -- --hostname <host> --port <port>` and use frontend-local `.env*` files during development. Production builds reject frontend-local environment files.
+FastAPI must be running for identity actions. Invitation onboarding uses the protected FastAPI setup flow. Feature adapters use the shared same-origin `apiFetch()` contract, including cookie mutation CSRF and session refresh behavior. Production serves the static Next export through FastAPI. For daily frontend development, run `npm run dev` in this directory and open `http://localhost:<FRONTEND_DEV_PORT>`. Next forwards same-origin `/api/*` requests to loopback FastAPI on `BACKEND_PORT`; the launcher parses `FRONTEND_DEV_PORT`, `BACKEND_BIND_HOST`, `BACKEND_PORT`, and `PUBLIC_ORIGIN` from the process or root configuration, then passes only the three direct nonsecret values and the derived exact HMR-origin hostname to Next. The configured `PUBLIC_ORIGIN` hostname becomes that HMR allowlist entry; root environment validation and the launcher limit it to a permitted local or LAN browser address. An IPv6 `BACKEND_BIND_HOST=::1` uses `localhost` with IPv6-first resolution because Next cannot compile a literal IPv6 rewrite host. Developers may pass Next host or port overrides with `npm run dev -- --hostname <host> --port <port>` and use frontend-local `.env*` files during development. Production builds reject frontend-local environment files.
 
 Frontend-specific commands and architecture are documented in the repository root [`README.md`](../README.md).
 
-Workspace pages use `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`. The URL prefix is independent of the local placeholder data.
+Workspace pages use `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`. OpenComms is the only route that mounts the local sample runtime.
 
 The active workspace implementation lives in `src/components/systems/`.
 The sidebar owns top-level section navigation for Sandbox, Boards, Access,
@@ -19,7 +17,9 @@ bottom of the navigation area, above the footer divider. The
 group labels expand or collapse their child links without navigating; choose a
 child link to open a section. The selected section is encoded in each page's
 existing `view` or `section` query parameter, including `section` on Sandbox and
-Platform. Existing Platform hash and file links remain supported.
+Platform. Existing Platform account/notification hash links remain supported. Retired File library links resolve to Search until a real library is implemented.
+
+Live features share authenticated SSE invalidations through `subscribeOpenViewInvalidations`; events ask for authorized refetches and contain no row snapshots. OpenView Views, Charts, and Reports use the cache bridge, while Boards widgets/record links, Manage maintenance, and Platform connected notifications have their own consumers of that same stream.
 
 ## Shared interface contract
 

@@ -10,7 +10,7 @@ no Route Handlers, Server Actions, request-time cookie/header access, runtime
 rewrites, standalone output, or production server-side proxy. FastAPI serves
 its exact generated routes, assets, and 404 page from `WEB_ASSETS_ROOT`.
 
-Retired `/workspace`, `/departments`, `/modules`, `/administration`, `/onboarding`, and `/settings/workspace` paths have no compatibility redirect or alias. They resolve through the exported 404 page.
+Retired `/workspace`, `/departments`, `/modules`, `/administration`, `/onboarding`, `/settings/workspace`, and `/access-restricted` paths have no compatibility redirect or alias. They resolve through the exported 404 page.
 
 Authenticated routes live under `src/app/(app)/`; `AppPage` owns the one browser-side application gate and shell. Browser security headers, route/asset cache policy, and static-content delivery belong to FastAPI and Caddy, never the frontend runtime.
 
@@ -35,12 +35,25 @@ corresponding form action. Logout reports server failure rather than silently
 discarding browser state. See [authentication and authorization](08-authentication-authorization.md)
 for session admission and account eligibility.
 
-Some workspace surfaces remain browser-local sample state. Sandbox is an
-exception: its Build, Triggers, Test, History, and Review & Publish workflow
-uses authenticated FastAPI contracts and PostgreSQL. Its temporary Test inputs
-never create operational records. Authorized API adapters preserve loading,
-retry, revision-conflict, and unsaved-draft protection. SSE consumers treat
-events as cache invalidations and never as row data.
+Sandbox, Boards, Access, OpenView, Manage, and Platform use authenticated
+FastAPI adapters for their implemented data and actions. Sandbox's Build,
+Triggers, Test, History, and Review & Publish workflow uses PostgreSQL; temporary
+Test inputs never create operational records. API adapters preserve loading,
+retry, denial, revision-conflict, and unsaved-draft protection.
+
+OpenComms alone uses browser-local sample data. Its [route layout](../../frontend/src/app/(app)/(workspace)/comms/layout.tsx)
+mounts `SampleProvider`; live routes do not inherit sample snapshot recovery or
+storage state. The authenticated [application gate](../../frontend/src/components/app-page.tsx)
+retains the verified-account identity and [query/theme providers](../../frontend/src/components/query-provider.tsx)
+across route changes. Account-owned Comms snapshots and drafts are cleared by
+[shared session cleanup](../../frontend/src/components/systems/shared/runtime/workspace-identity.tsx),
+including when the Comms layout is unmounted. Comms sample roles, permissions,
+and messages are not authoritative application authorization or durable data.
+
+SSE consumers treat events as cache invalidations and never as row data.
+OpenView Views, Charts, and Reports use the cache bridge; Boards widgets/record
+links, Manage maintenance, and Platform connected notifications also use the
+[shared authenticated stream](../../frontend/src/components/systems/openview/adapters/invalidation-events.ts).
 
 OpenView's live Record inspector is read-only: it displays data returned through
 authorized query and Record-read APIs and exposes no Record mutation flow

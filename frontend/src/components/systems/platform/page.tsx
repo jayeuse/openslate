@@ -34,7 +34,7 @@ function platformSectionFromSearch(
   return "Search";
 }
 
-export default function SamplePlatform() {
+export default function Platform() {
   const searchParams = useSearchParams();
   const [hash, setHash] = useState(() =>
     typeof window === "undefined" ? "" : window.location.hash,
