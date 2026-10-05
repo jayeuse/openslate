@@ -14,9 +14,7 @@ import {
   detachBoardFile,
   downloadBoardAttachment,
   listBoardAttachments,
-  readBoardFile,
   reserveBoardFile,
-  scanBoardFile,
   uploadBoardFile,
 } from "../../../src/components/systems/boards/adapters/board-files-api";
 import { listBoardPostAuthors } from "../../../src/components/systems/boards/adapters/board-post-author-api";
@@ -376,18 +374,9 @@ describeContracts("Boards: events, posts, files and record links", [
   {
     name: "uploadBoardFile",
     run: () => uploadBoardFile(boardId, fileId, new Blob(["pdf"])),
-  },
-  {
-    name: "scanBoardFile",
-    run: () => scanBoardFile(boardId, fileId),
     responses: {
-      "POST /api/boards/{board_id}/files/{file_id}/scan": readyFile,
+      "PUT /api/boards/{board_id}/files/{file_id}/content": readyFile,
     },
-  },
-  {
-    name: "readBoardFile",
-    run: () => readBoardFile(boardId, fileId),
-    responses: { "GET /api/boards/{board_id}/files/{file_id}": readyFile },
   },
   {
     name: "listBoardAttachments",
