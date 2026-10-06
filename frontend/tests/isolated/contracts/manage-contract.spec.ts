@@ -186,6 +186,11 @@ describeContracts("Manage", [
       updateManageWorkspace({
         revision: 2,
         display_name: "Harbor Clinic",
+        legal_name: "Harbor Clinic Ltd",
+        description: "Organization profile",
+        contact_email: "clinic@example.com",
+        contact_phone: null,
+        postal_address: "Clinic Street",
         locale: "en-PH",
         timezone: "Asia/Manila",
         mark: "HC",

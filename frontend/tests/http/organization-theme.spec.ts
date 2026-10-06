@@ -11,6 +11,11 @@ type Theme = (typeof themes)[number];
 const initialWorkspace = {
   id: "44444444-4444-4444-8444-444444444444",
   display_name: "Organization theme journey",
+  legal_name: null,
+  description: null,
+  contact_email: null,
+  contact_phone: null,
+  postal_address: null,
   locale: "en-GB",
   timezone: "UTC",
   mark: "TH",
@@ -30,7 +35,8 @@ type State = {
   appearanceReads: number;
   refreshes: number;
   onAppearance: ((route: Route) => Promise<void>) | null;
-  onWorkspace: ((route: Route, snapshot: Workspace) => Promise<void>) | null;
+  onWorkspace:
+    ((route: Route, snapshot: Record<string, unknown>) => Promise<void>) | null;
   onPatch:
     ((route: Route, body: Record<string, unknown>) => Promise<void>) | null;
   onSession: ((route: Route) => Promise<void>) | null;
@@ -91,7 +97,12 @@ async function installApi(page: Page): Promise<State> {
   });
   await page.route("**/api/workspace", async (route) => {
     if (route.request().method() === "GET") {
-      const snapshot = { ...state.workspace };
+      const snapshot: Record<string, unknown> = { ...state.workspace };
+      if (state.role === "guest") {
+        delete snapshot.contact_email;
+        delete snapshot.contact_phone;
+        delete snapshot.postal_address;
+      }
       return state.onWorkspace
         ? state.onWorkspace(route, snapshot)
         : route.fulfill({ json: snapshot });

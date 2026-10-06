@@ -12,6 +12,7 @@ from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.schemas import (
     WorkspaceAppearanceResponse,
+    WorkspaceGuestResponse,
     WorkspaceResponse,
     WorkspaceUpdate,
 )
@@ -109,12 +110,15 @@ def get_workspace_appearance(
     return WorkspaceAppearanceResponse.model_validate({"theme": profile.theme})
 
 
-@router.get("", response_model=WorkspaceResponse)
+@router.get("", response_model=WorkspaceResponse | WorkspaceGuestResponse)
 def get_workspace(
-    _: WorkspaceReadUser,
+    actor: WorkspaceReadUser,
     db: Annotated[Session, Depends(get_db)],
-) -> WorkspaceProfile:
-    return _workspace(db)
+) -> WorkspaceResponse | WorkspaceGuestResponse:
+    profile = _workspace(db)
+    if actor.role == "guest":
+        return WorkspaceGuestResponse.model_validate(profile)
+    return WorkspaceResponse.model_validate(profile)
 
 
 @router.patch("", response_model=WorkspaceResponse)
@@ -122,7 +126,7 @@ def update_workspace(
     payload: WorkspaceUpdate,
     actor: WorkspaceReadUser,
     db: Annotated[Session, Depends(get_db)],
-) -> WorkspaceProfile:
+) -> WorkspaceResponse:
     require_fresh_exact_admin(db, actor.id)
     try:
         profile = _workspace(db, lock=True)
@@ -143,7 +147,7 @@ def update_workspace(
     except (IntegrityError, SQLAlchemyError) as error:
         db.rollback()
         raise _workspace_unavailable() from error
-    return profile
+    return WorkspaceResponse.model_validate(profile)
 
 
 @router.get("/logo")

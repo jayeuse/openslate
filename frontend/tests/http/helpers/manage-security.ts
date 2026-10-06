@@ -14,6 +14,11 @@ export async function mockManageSecurity(page: Page) {
     workspace: {
       id: "00000000-0000-4000-8000-000000000090",
       display_name: "Harbor School",
+      legal_name: null,
+      description: null,
+      contact_email: null,
+      contact_phone: null,
+      postal_address: null,
       locale: "en-PH",
       timezone: "Asia/Manila",
       mark: "HS",

@@ -22,9 +22,11 @@ export function getWorkspaceAppearance(signal?: AbortSignal) {
   });
 }
 
-const workspaceProfileSchema = z.object({
+const workspaceCommonProfileSchema = z.object({
   id: z.uuid(),
   display_name: z.string().min(1).max(200),
+  legal_name: z.string().nullable(),
+  description: z.string().nullable(),
   locale: z.string().min(1).max(35),
   timezone: z.string().min(1).max(64),
   mark: z.string().max(32),
@@ -34,11 +36,38 @@ const workspaceProfileSchema = z.object({
   theme: organizationThemeSchema,
   revision: z.number().int().positive(),
 });
+const workspaceFullProfileSchema = workspaceCommonProfileSchema.extend({
+  contact_email: z.string().nullable(),
+  contact_phone: z.string().nullable(),
+  postal_address: z.string().nullable(),
+});
+// Test raw keys before the non-strict common projection can erase evidence
+// of a partial or malformed full response.
+const workspaceGuestProfileSchema = z
+  .unknown()
+  .refine(
+    (raw) =>
+      typeof raw === "object" &&
+      raw !== null &&
+      !["contact_email", "contact_phone", "postal_address"].some((key) =>
+        Object.hasOwn(raw, key),
+      ),
+  )
+  .pipe(workspaceCommonProfileSchema);
+const workspaceProfileSchema = z.union([
+  workspaceFullProfileSchema,
+  workspaceGuestProfileSchema,
+]);
 
 const workspaceSettingsPatchSchema = z
   .object({
     revision: z.number().int().positive(),
     display_name: z.string().trim().min(1).max(200).optional(),
+    legal_name: z.string().trim().max(200).nullable().optional(),
+    description: z.string().trim().max(2000).nullable().optional(),
+    contact_email: z.string().trim().max(254).nullable().optional(),
+    contact_phone: z.string().trim().max(50).nullable().optional(),
+    postal_address: z.string().trim().max(2000).nullable().optional(),
     locale: z.string().trim().min(1).max(35).optional(),
     timezone: z.string().trim().min(1).max(64).optional(),
     mark: z.string().trim().max(32).optional(),
@@ -58,7 +87,17 @@ const workspaceSettingsPatchSchema = z
   );
 
 export type ManageWorkspaceProfile = z.output<typeof workspaceProfileSchema>;
-const workspaceCalendarSchema = workspaceProfileSchema
+export type ManageWorkspaceFullProfile = z.output<
+  typeof workspaceFullProfileSchema
+>;
+
+export function workspaceHasContacts(
+  workspace: ManageWorkspaceProfile,
+): workspace is ManageWorkspaceFullProfile {
+  return "contact_email" in workspace;
+}
+
+const workspaceCalendarSchema = workspaceCommonProfileSchema
   .pick({ week_start: true })
   .extend({ today: z.iso.date() });
 export type WorkspaceCalendarSettings = z.output<
@@ -136,8 +175,23 @@ export type WorkspaceSettingsFormFields = {
   week: "Monday" | "Sunday";
   hours: string;
   theme: OrganizationTheme;
+  legalName: string;
+  description: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  postalAddress?: string;
 };
 export type WorkspaceSettingsFormDraft = Partial<WorkspaceSettingsFormFields>;
+export type WorkspaceProfileField =
+  | "legalName"
+  | "description"
+  | "contactEmail"
+  | "contactPhone"
+  | "postalAddress";
+export type WorkspaceProfileFormFields = Pick<
+  WorkspaceSettingsFormFields,
+  WorkspaceProfileField
+>;
 
 const ORGANIZATION_LOCALE_TAGS = {
   "English (Philippines)": "en-PH",
@@ -184,6 +238,15 @@ export function workspaceSettingsFormFields(
     week: workspace.week_start === "monday" ? "Monday" : "Sunday",
     hours: workspace.business_hours,
     theme: workspace.theme,
+    legalName: workspace.legal_name ?? "",
+    description: workspace.description ?? "",
+    ...(workspaceHasContacts(workspace)
+      ? {
+          contactEmail: workspace.contact_email ?? "",
+          contactPhone: workspace.contact_phone ?? "",
+          postalAddress: workspace.postal_address ?? "",
+        }
+      : {}),
   };
 }
 
@@ -215,6 +278,21 @@ export function workspaceSettingsPatch(
   if (draft.theme !== undefined && draft.theme !== committedTheme)
     patch.theme = draft.theme;
 
+  const profileKeys = {
+    legalName: "legal_name",
+    description: "description",
+    contactEmail: "contact_email",
+    contactPhone: "contact_phone",
+    postalAddress: "postal_address",
+  } as const;
+  for (const key of Object.keys(profileKeys) as WorkspaceProfileField[]) {
+    const value = draft[key];
+    if (value === undefined) continue;
+    const normalized = value.trim() || null;
+    if (normalized !== (fields[key]?.trim() || null))
+      patch[profileKeys[key]] = normalized;
+  }
+
   if (Object.keys(patch).length === 1) return null;
   return patch;
 }
@@ -231,8 +309,8 @@ export function getManageWorkspace(
 export function updateManageWorkspace(
   patch: ManageWorkspaceSettingsPatch,
   signal?: AbortSignal,
-): Promise<ManageWorkspaceProfile> {
-  return apiFetch("/workspace", workspaceProfileSchema, {
+): Promise<ManageWorkspaceFullProfile> {
+  return apiFetch("/workspace", workspaceFullProfileSchema, {
     method: "PATCH",
     body: JSON.stringify(workspaceSettingsPatchSchema.parse(patch)),
     signal,

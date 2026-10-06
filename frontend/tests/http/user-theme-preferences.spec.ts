@@ -53,6 +53,11 @@ async function installIdentity(
       json: {
         id: "44444444-4444-4444-8444-444444444444",
         display_name: "Theme journey",
+        legal_name: null,
+        description: null,
+        ...(role === "guest"
+          ? {}
+          : { contact_email: null, contact_phone: null, postal_address: null }),
         locale: "en-GB",
         timezone: "UTC",
         mark: "TH",

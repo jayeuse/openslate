@@ -69,8 +69,11 @@ import {
   organizationLocaleTag,
   workspaceSettingsFormFields,
   workspaceSettingsPatch,
+  workspaceHasContacts,
   updateManageWorkspace,
   type WorkspaceSettingsFormDraft,
+  type WorkspaceSettingsFormFields,
+  type WorkspaceProfileField,
 } from "./adapters/workspace-api";
 import {
   defaultManageSessionsRequest,
@@ -99,8 +102,8 @@ type ViewTab =
 function organizationErrors(
   draft: WorkspaceSettingsFormDraft,
   workspaceReady: boolean,
-): Partial<Record<keyof ManageSettings, string>> {
-  const errors: Partial<Record<keyof ManageSettings, string>> = {};
+): Partial<Record<keyof WorkspaceSettingsFormFields, string>> {
+  const errors: Partial<Record<keyof WorkspaceSettingsFormFields, string>> = {};
   if (!workspaceReady) return errors;
   if (draft.name !== undefined) {
     if (!draft.name.trim()) errors.name = "Enter an organization name.";
@@ -111,6 +114,53 @@ function organizationErrors(
     errors.logo = "Use 32 characters or fewer.";
   if (draft.hours !== undefined && draft.hours.trim().length > 200)
     errors.hours = "Use 200 characters or fewer.";
+  const limits = {
+    legalName: 200,
+    description: 2000,
+    contactEmail: 254,
+    contactPhone: 50,
+    postalAddress: 2000,
+  } as const;
+  for (const key of Object.keys(limits) as WorkspaceProfileField[]) {
+    if ((draft[key]?.trim().length ?? 0) > limits[key])
+      errors[key] = `Use ${limits[key]} characters or fewer.`;
+  }
+  return errors;
+}
+
+function profileResponseErrors(
+  error: ApiError,
+): Partial<Record<WorkspaceProfileField, string>> {
+  if (!Array.isArray(error.details)) return {};
+  const keys = {
+    legal_name: "legalName",
+    description: "description",
+    contact_email: "contactEmail",
+    contact_phone: "contactPhone",
+    postal_address: "postalAddress",
+  } as const;
+  const errors: Partial<Record<WorkspaceProfileField, string>> = {};
+  for (const detail of error.details) {
+    if (
+      typeof detail !== "object" ||
+      detail === null ||
+      !("loc" in detail) ||
+      !Array.isArray(detail.loc)
+    )
+      continue;
+    const name: unknown = detail.loc[1];
+    if (
+      detail.loc[0] !== "body" ||
+      typeof name !== "string" ||
+      !Object.hasOwn(keys, name)
+    )
+      continue;
+    const key = keys[name as keyof typeof keys];
+    errors[key] =
+      key === "contactEmail"
+        ? "Enter a valid email address."
+        : "Check this field and try again.";
+  }
   return errors;
 }
 
@@ -242,6 +292,9 @@ function ManageContent() {
   const [workspaceRefreshRequired, setWorkspaceRefreshRequired] =
     useState(false);
   const [workspaceSavePending, setWorkspaceSavePending] = useState(false);
+  const [profileServerErrors, setProfileServerErrors] = useState<
+    Partial<Record<WorkspaceProfileField, string>>
+  >({});
   const workspaceQuery = useQuery({
     ...manageWorkspaceOptions(),
     enabled: tab === "Organization" && !suspended,
@@ -261,10 +314,31 @@ function ManageContent() {
       return workspace;
     },
   });
+  const verifiedOrganizationRole =
+    !suspended &&
+    !roleAwaitingVerification &&
+    !identity.isError &&
+    identity.data?.id === userId
+      ? identity.data.role
+      : null;
+  const profileMismatch =
+    workspaceQuery.data !== undefined &&
+    (verifiedOrganizationRole === "admin" ||
+      verifiedOrganizationRole === "member") &&
+    !workspaceHasContacts(workspaceQuery.data);
+  const canEditLoadedOrganization = canEditOrganization && !profileMismatch;
+  const contactsVisible =
+    (verifiedOrganizationRole === "admin" ||
+      verifiedOrganizationRole === "member") &&
+    workspaceQuery.data !== undefined &&
+    workspaceHasContacts(workspaceQuery.data);
   useLayoutEffect(() => {
     const previous = workspaceAdmission.current;
-    workspaceAdmission.current = { suspended, canEdit: canEditOrganization };
-    if (suspended || (previous.canEdit && !canEditOrganization)) {
+    workspaceAdmission.current = {
+      suspended,
+      canEdit: canEditLoadedOrganization,
+    };
+    if (suspended || (previous.canEdit && !canEditLoadedOrganization)) {
       workspaceEpoch.current += 1;
       workspaceCommand.current?.abort();
       if (workspaceWriting.current) {
@@ -274,12 +348,12 @@ function ManageContent() {
         setWorkspaceRefreshRequired(true);
       }
     }
-  }, [suspended, canEditOrganization]);
+  }, [suspended, canEditLoadedOrganization]);
   useLayoutEffect(() => {
     const owner = workspaceOwner.current;
     if (
       tab === "Organization" &&
-      canEditOrganization &&
+      canEditLoadedOrganization &&
       workspaceDraft.theme !== undefined
     )
       previewTheme(owner, workspaceDraft.theme);
@@ -287,7 +361,7 @@ function ManageContent() {
     return () => releaseTheme(owner);
   }, [
     tab,
-    canEditOrganization,
+    canEditLoadedOrganization,
     workspaceDraft.theme,
     previewTheme,
     releaseTheme,
@@ -460,6 +534,7 @@ function ManageContent() {
     setWorkspaceDraft({});
     setWorkspaceStale(false);
     setWorkspaceRefreshRequired(false);
+    setProfileServerErrors({});
     maintenance.discardDraft();
     setSecurityDraft({});
     setSecurityStale(false);
@@ -472,12 +547,38 @@ function ManageContent() {
       !workspaceAdmission.current.canEdit ||
       workspaceWriting.current ||
       !workspaceQuery.data ||
-      workspaceQuery.isError
+      workspaceQuery.isError ||
+      profileMismatch
     )
       return;
     setWorkspaceDraft((draft) => {
       const next: WorkspaceSettingsFormDraft = { ...draft, theme };
       if (theme === getCommittedTheme()) delete next.theme;
+      return next;
+    });
+    setNotice("");
+    setError("");
+  }
+
+  function changeProfileField(key: WorkspaceProfileField, value: string) {
+    if (
+      !workspaceAdmission.current.canEdit ||
+      workspaceWriting.current ||
+      !workspaceQuery.data ||
+      workspaceQuery.isError ||
+      profileMismatch
+    )
+      return;
+    const saved = workspaceSettingsFormFields(workspaceQuery.data);
+    setWorkspaceDraft((draft) => {
+      const next = { ...draft, [key]: value };
+      if ((value.trim() || null) === (saved[key]?.trim() || null))
+        delete next[key];
+      return next;
+    });
+    setProfileServerErrors((currentErrors) => {
+      const next = { ...currentErrors };
+      delete next[key];
       return next;
     });
     setNotice("");
@@ -549,6 +650,7 @@ function ManageContent() {
       setWorkspaceDraft({});
       setWorkspaceStale(false);
       setWorkspaceRefreshRequired(false);
+      setProfileServerErrors({});
     }
     setError("");
     setNotice("Unsaved changes discarded.");
@@ -597,7 +699,8 @@ function ManageContent() {
       livePending ||
       workspaceWriting.current ||
       !workspaceAdmission.current.canEdit ||
-      workspaceQuery.isError
+      workspaceQuery.isError ||
+      profileMismatch
     )
       return;
     const validationError = Object.values(
@@ -625,6 +728,7 @@ function ManageContent() {
       workspaceAdmission.current.canEdit;
     setNotice("");
     setError("");
+    setProfileServerErrors({});
     try {
       // Older reads cannot undo this command. An uncertain previous write
       // requires confirmed readback before another explicit write.
@@ -689,6 +793,8 @@ function ManageContent() {
         (caught.status === 401 || caught.status === 403)
       )
         requestSessionRecheck();
+      if (caught instanceof ApiError && caught.status === 422)
+        setProfileServerErrors(profileResponseErrors(caught));
       setError(
         caught instanceof ApiError && caught.status === 403
           ? "Only administrators can change these settings. Reload the page to check your access."
@@ -939,7 +1045,15 @@ function ManageContent() {
               regionalCurrency={regionalCurrency}
               workspace={workspaceQuery.data}
               workspaceLoading={workspaceQuery.isPending}
-              workspaceLoadFailed={workspaceQuery.isError}
+              workspaceLoadFailed={workspaceQuery.isError || profileMismatch}
+              profile={
+                workspaceFields && !profileMismatch
+                  ? { ...workspaceFields, ...workspaceDraft }
+                  : undefined
+              }
+              profileErrors={{ ...errors, ...profileServerErrors }}
+              onProfileChange={changeProfileField}
+              contactsVisible={contactsVisible}
               onRetryWorkspace={retryWorkspace}
               staleRevision={workspaceStale}
               theme={
@@ -947,9 +1061,9 @@ function ManageContent() {
                 organizationTheme.theme
               }
               onThemeChange={changeOrganizationTheme}
-              readOnly={!canEditOrganization}
+              readOnly={!canEditLoadedOrganization}
               editDisabled={
-                !canEditOrganization ||
+                !canEditLoadedOrganization ||
                 !workspaceQuery.data ||
                 workspaceQuery.isError
               }

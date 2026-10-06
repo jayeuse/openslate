@@ -14,10 +14,12 @@ import {
 import {
   Field,
   FieldGroup,
+  FieldError,
   FieldLabel,
   FieldLegend,
   FieldSet,
 } from "@/components/ui/field";
+import { Textarea } from "@/components/ui/textarea";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -33,6 +35,8 @@ import {
   organizationLocaleLabel,
   workspaceSettingsFormFields,
   type ManageWorkspaceProfile,
+  type WorkspaceProfileFormFields,
+  type WorkspaceProfileField,
 } from "../adapters/workspace-api";
 
 type OrganizationPanelProps = {
@@ -49,6 +53,10 @@ type OrganizationPanelProps = {
   onThemeChange: (theme: OrganizationTheme) => void;
   readOnly: boolean;
   editDisabled: boolean;
+  profile: WorkspaceProfileFormFields | undefined;
+  profileErrors: Partial<Record<WorkspaceProfileField, string>>;
+  onProfileChange: (key: WorkspaceProfileField, value: string) => void;
+  contactsVisible: boolean;
 };
 
 export function OrganizationPanel({
@@ -65,6 +73,10 @@ export function OrganizationPanel({
   onThemeChange,
   readOnly,
   editDisabled,
+  profile,
+  profileErrors,
+  onProfileChange,
+  contactsVisible,
 }: OrganizationPanelProps) {
   const { dirty, saveSection, current, changeSetting, errors, clearDraft } =
     form;
@@ -174,6 +186,79 @@ export function OrganizationPanel({
                 />
               )}
             </FieldGroup>
+          </FieldSet>
+
+          <FieldSet className="border-border min-w-0 gap-0 border-b pb-6">
+            <FieldLegend className="mb-1 text-lg font-semibold tracking-tight">
+              Organization profile
+            </FieldLegend>
+            <p className="text-muted-foreground mb-4 text-sm leading-6">
+              Add optional details for your organization.
+            </p>
+            {profile ? (
+              <FieldGroup className="grid min-w-0 gap-4 sm:grid-cols-2">
+                <SettingInput
+                  id="organization-legal-name"
+                  label="Legal name"
+                  value={profile.legalName}
+                  maxLength={200}
+                  error={profileErrors.legalName}
+                  onChange={(value) => onProfileChange("legalName", value)}
+                />
+                <div className="min-w-0 sm:col-span-2">
+                  <ProfileTextarea
+                    id="organization-description"
+                    label="Description"
+                    value={profile.description}
+                    maxLength={2000}
+                    error={profileErrors.description}
+                    onChange={(value) => onProfileChange("description", value)}
+                  />
+                </div>
+                {contactsVisible ? (
+                  <>
+                    <SettingInput
+                      id="organization-contact-email"
+                      label="Contact email"
+                      value={profile.contactEmail ?? ""}
+                      maxLength={254}
+                      error={profileErrors.contactEmail}
+                      onChange={(value) =>
+                        onProfileChange("contactEmail", value)
+                      }
+                    />
+                    <SettingInput
+                      id="organization-contact-phone"
+                      label="Contact phone"
+                      value={profile.contactPhone ?? ""}
+                      maxLength={50}
+                      error={profileErrors.contactPhone}
+                      onChange={(value) =>
+                        onProfileChange("contactPhone", value)
+                      }
+                    />
+                    <div className="min-w-0 sm:col-span-2">
+                      <ProfileTextarea
+                        id="organization-postal-address"
+                        label="Postal address"
+                        value={profile.postalAddress ?? ""}
+                        maxLength={2000}
+                        error={profileErrors.postalAddress}
+                        onChange={(value) =>
+                          onProfileChange("postalAddress", value)
+                        }
+                      />
+                    </div>
+                  </>
+                ) : null}
+              </FieldGroup>
+            ) : (
+              <WorkspaceSettingsPlaceholder
+                id="organization-profile-loading"
+                label="Profile details"
+                loading={workspaceLoading}
+              />
+            )}
           </FieldSet>
 
           <FieldSet className="border-border min-w-0 gap-0 border-b pb-6">
@@ -419,6 +504,38 @@ export function OrganizationPanel({
         disabled={editDisabled}
       />
     </section>
+  );
+}
+
+function ProfileTextarea({
+  id,
+  label,
+  value,
+  maxLength,
+  error,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  maxLength: number;
+  error?: string;
+  onChange: (value: string) => void;
+}) {
+  const errorId = `${id}-error`;
+  return (
+    <Field data-invalid={Boolean(error)}>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Textarea
+        id={id}
+        value={value}
+        maxLength={maxLength}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? errorId : undefined}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <FieldError id={errorId}>{error}</FieldError>
+    </Field>
   );
 }
 

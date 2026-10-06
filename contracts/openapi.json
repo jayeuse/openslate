@@ -13734,7 +13734,143 @@
         "title": "WorkspaceAppearanceResponse",
         "type": "object"
       },
+      "WorkspaceGuestResponse": {
+        "description": "Guests receive the common profile without any contact keys.",
+        "properties": {
+          "business_hours": {
+            "title": "Business Hours",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "guest_duration_days": {
+            "title": "Guest Duration Days",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invitation_expiry_days": {
+            "title": "Invitation Expiry Days",
+            "type": "integer"
+          },
+          "legal_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Name"
+          },
+          "locale": {
+            "title": "Locale",
+            "type": "string"
+          },
+          "logo_file_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo File Id"
+          },
+          "mark": {
+            "title": "Mark",
+            "type": "string"
+          },
+          "purge_enabled": {
+            "readOnly": true,
+            "title": "Purge Enabled",
+            "type": "boolean"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "theme": {
+            "$ref": "#/components/schemas/WorkspaceTheme"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "today": {
+            "format": "date",
+            "readOnly": true,
+            "title": "Today",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "week_start": {
+            "enum": [
+              "monday",
+              "sunday"
+            ],
+            "title": "Week Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "legal_name",
+          "description",
+          "logo_file_id",
+          "timezone",
+          "locale",
+          "mark",
+          "currency",
+          "week_start",
+          "business_hours",
+          "theme",
+          "invitation_expiry_days",
+          "guest_duration_days",
+          "revision",
+          "created_at",
+          "updated_at",
+          "today",
+          "purge_enabled"
+        ],
+        "title": "WorkspaceGuestResponse",
+        "type": "object"
+      },
       "WorkspaceResponse": {
+        "description": "Full profile for members and administrators, including intentional nulls.",
         "properties": {
           "business_hours": {
             "title": "Business Hours",
@@ -13882,9 +14018,6 @@
           "display_name",
           "legal_name",
           "description",
-          "contact_email",
-          "contact_phone",
-          "postal_address",
           "logo_file_id",
           "timezone",
           "locale",
@@ -13898,6 +14031,9 @@
           "revision",
           "created_at",
           "updated_at",
+          "contact_email",
+          "contact_phone",
+          "postal_address",
           "today",
           "purge_enabled"
         ],
@@ -29806,7 +29942,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WorkspaceResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkspaceResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkspaceGuestResponse"
+                    }
+                  ],
+                  "title": "Response Get Workspace Api Workspace Get"
                 }
               }
             },

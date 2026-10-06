@@ -238,6 +238,15 @@ async function installLibrary(
           json: {
             id: libraryUuid(900),
             display_name: "Library test workspace",
+            legal_name: null,
+            description: null,
+            ...(state.role === "guest"
+              ? {}
+              : {
+                  contact_email: null,
+                  contact_phone: null,
+                  postal_address: null,
+                }),
             locale: "en-GB",
             timezone: "Asia/Manila",
             mark: "RS",

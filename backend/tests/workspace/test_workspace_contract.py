@@ -70,7 +70,7 @@ class _Session:
 def _client(
     monkeypatch: pytest.MonkeyPatch,
     database: _Session,
-    actor: object = type("Actor", (), {"id": uuid7()})(),
+    actor: object = type("Actor", (), {"id": uuid7(), "role": "admin"})(),
 ) -> TestClient:
     from app.common.dependencies import get_current_user
     from app.core.database import get_db

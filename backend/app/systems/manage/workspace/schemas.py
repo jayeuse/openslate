@@ -144,14 +144,11 @@ class WorkspaceUpdate(_WorkspaceRequest):
         return self
 
 
-class WorkspaceResponse(BaseModel):
+class WorkspaceCommonResponse(BaseModel):
     id: UUID
     display_name: str
     legal_name: str | None
     description: str | None
-    contact_email: str | None
-    contact_phone: str | None
-    postal_address: str | None
     logo_file_id: UUID | None
     timezone: str
     locale: str
@@ -175,6 +172,18 @@ class WorkspaceResponse(BaseModel):
     @computed_field
     def purge_enabled(self) -> bool:
         return get_settings().lifecycle_purge_enabled
+
+
+class WorkspaceResponse(WorkspaceCommonResponse):
+    """Full profile for members and administrators, including intentional nulls."""
+
+    contact_email: str | None
+    contact_phone: str | None
+    postal_address: str | None
+
+
+class WorkspaceGuestResponse(WorkspaceCommonResponse):
+    """Guests receive the common profile without any contact keys."""
 
 
 class WorkspaceAppearanceResponse(BaseModel):
