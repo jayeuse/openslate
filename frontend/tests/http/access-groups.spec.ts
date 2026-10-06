@@ -229,6 +229,15 @@ test("a department manager changes members only, from the candidates list", asyn
       ],
     },
   });
+  api.on("GET", "/api/auth/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user_id: ids.ben,
+        setup_required: false,
+      },
+    }),
+  );
   // The backend lists only the groups this manager may change.
   api.on("GET", "/api/access/groups", (route) =>
     route.fulfill({

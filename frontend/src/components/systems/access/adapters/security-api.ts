@@ -50,8 +50,8 @@ const securityPatchSchema = z
   .strict()
   .refine((patch) => Object.keys(patch).length > 1);
 
-export type ManageSecurityPolicy = z.output<typeof securityPolicySchema>;
-export type ManageSecurityPatch = z.output<typeof securityPatchSchema>;
+export type AccessSecurityPolicy = z.output<typeof securityPolicySchema>;
+export type AccessSecurityPatch = z.output<typeof securityPatchSchema>;
 export type SecuritySettingsFormFields = {
   password: keyof typeof passwordChoices;
   timeout: keyof typeof timeoutChoices;
@@ -61,7 +61,7 @@ export type SecuritySettingsFormFields = {
 export type SecuritySettingsFormDraft = Partial<SecuritySettingsFormFields>;
 
 export function securitySettingsFormFields(
-  policy: ManageSecurityPolicy,
+  policy: AccessSecurityPolicy,
 ): SecuritySettingsFormFields {
   const password = (
     Object.keys(passwordChoices) as (keyof typeof passwordChoices)[]
@@ -85,11 +85,11 @@ export function securitySettingsFormFields(
 }
 
 export function securitySettingsPatch(
-  policy: ManageSecurityPolicy,
+  policy: AccessSecurityPolicy,
   draft: SecuritySettingsFormDraft,
-): ManageSecurityPatch | null {
+): AccessSecurityPatch | null {
   const saved = securitySettingsFormFields(policy);
-  const patch: ManageSecurityPatch = { revision: policy.revision };
+  const patch: AccessSecurityPatch = { revision: policy.revision };
   if (draft.password !== undefined && draft.password !== saved.password) {
     const [length, mixed, number] = passwordChoices[draft.password];
     patch.password_min_length = length;
@@ -111,17 +111,21 @@ export function securitySettingsPatch(
   return Object.keys(patch).length > 1 ? patch : null;
 }
 
-export function getManageSecurityPolicy(signal?: AbortSignal) {
+export function getAccessSecurityPolicy(signal?: AbortSignal) {
   return apiFetch("/workspace/security", securityPolicySchema, {
     cache: "no-store",
     signal,
   });
 }
 
-export function updateManageSecurityPolicy(patch: ManageSecurityPatch) {
+export function updateAccessSecurityPolicy(
+  patch: AccessSecurityPatch,
+  signal?: AbortSignal,
+) {
   return apiFetch("/workspace/security", securityPolicySchema, {
     method: "PATCH",
     body: JSON.stringify(securityPatchSchema.parse(patch)),
+    signal,
   });
 }
 
@@ -153,9 +157,9 @@ const adminSessionsSchema = z.object({
     has_more: z.boolean(),
   }),
 });
-export type ManageAdminSession = z.output<typeof adminSessionSchema>;
-export type ManageAdminSessions = z.output<typeof adminSessionsSchema>;
-export type ManageSessionsRequest = {
+export type AccessAdminSession = z.output<typeof adminSessionSchema>;
+export type AccessAdminSessions = z.output<typeof adminSessionsSchema>;
+export type AccessSessionsRequest = {
   limit: number;
   offset: number;
   search: string;
@@ -164,7 +168,7 @@ export type ManageSessionsRequest = {
   status: "all" | "current" | "remote";
   device: "all" | z.output<typeof sessionDeviceSchema>;
 };
-export const defaultManageSessionsRequest: ManageSessionsRequest = {
+export const defaultAccessSessionsRequest: AccessSessionsRequest = {
   limit: 4,
   offset: 0,
   search: "",
@@ -174,8 +178,8 @@ export const defaultManageSessionsRequest: ManageSessionsRequest = {
   device: "all",
 };
 
-export function listManageSessions(
-  request: ManageSessionsRequest,
+export function listAccessSessions(
+  request: AccessSessionsRequest,
   signal?: AbortSignal,
 ) {
   const params = new URLSearchParams();
@@ -187,16 +191,23 @@ export function listManageSessions(
   });
 }
 
-export function endManageSession(session: ManageAdminSession) {
+export function endAccessSession(
+  session: AccessAdminSession,
+  signal?: AbortSignal,
+) {
   return apiFetch(
     `/users/${session.user_id}/sessions/${session.id}`,
     z.null(),
     {
       method: "DELETE",
+      signal,
     },
   );
 }
 
-export function endAllManageRemoteSessions() {
-  return apiFetch("/auth/admin-sessions", z.null(), { method: "DELETE" });
+export function endAllAccessRemoteSessions(signal?: AbortSignal) {
+  return apiFetch("/auth/admin-sessions", z.null(), {
+    method: "DELETE",
+    signal,
+  });
 }

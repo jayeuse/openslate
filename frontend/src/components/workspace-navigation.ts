@@ -63,6 +63,7 @@ const workspaceNavigationDefinitions = [
       { id: "overview", label: "Overview" },
       { id: "people", label: "People" },
       { id: "groups", label: "Groups" },
+      { id: "security", label: "Security" },
     ],
   },
   {
@@ -88,7 +89,7 @@ const workspaceNavigationDefinitions = [
     defaultItem: "organization",
     items: [
       { id: "organization", label: "Organization" },
-      { id: "security", label: "Security & recovery" },
+      { id: "backup", label: "Backup" },
       { id: "audit", label: "Audit" },
       { id: "updates", label: "Updates & licensing" },
     ],
@@ -173,7 +174,7 @@ function sectionFor(
         requested.toLowerCase())
       : requested;
   if (definition.id === "manage" && requested?.toLowerCase() === "backup")
-    return "security";
+    return "backup";
   if (definition.id === "manage" && requested?.toLowerCase() === "licensing")
     return "updates";
   if (

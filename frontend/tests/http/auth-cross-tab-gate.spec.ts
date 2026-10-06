@@ -20,8 +20,7 @@ test("MFA gate stays accessible over an unrelated dialog and restores its same-a
   const policy = await mockManageSecurity(page);
   const backups = await mockManageBackups(page);
   const state = await mockMfa(page, { verified: true, aal2: true });
-  await page.goto("/manage?view=security");
-  await page.getByRole("tab", { name: /Backups/ }).click();
+  await page.goto("/manage?view=backup");
   await page.getByRole("button", { name: "Back up now", exact: true }).click();
   const dialog = page.getByRole("dialog", {
     name: "Back up now",

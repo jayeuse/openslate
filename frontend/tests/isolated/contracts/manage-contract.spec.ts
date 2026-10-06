@@ -13,13 +13,6 @@ import {
   updateManageBackupPolicy,
 } from "../../../src/components/systems/manage/adapters/backup-api";
 import {
-  endAllManageRemoteSessions,
-  endManageSession,
-  getManageSecurityPolicy,
-  listManageSessions,
-  updateManageSecurityPolicy,
-} from "../../../src/components/systems/manage/adapters/security-api";
-import {
   getManageWorkspace,
   getWorkspaceAppearance,
   updateManageWorkspace,
@@ -28,7 +21,6 @@ import { describeContracts } from "./openapi-contract";
 
 const auditId = "00000000-0000-4000-8000-000000000001";
 const userId = "00000000-0000-4000-8000-000000000002";
-const sessionId = "00000000-0000-4000-8000-000000000003";
 const auditFilters = {
   search: "pump",
   action: "update",
@@ -39,13 +31,6 @@ const auditFilters = {
   sortOrder: "desc",
 } as const;
 
-// The frontend accepts only the policy values the settings screen can show.
-const securityPolicy = {
-  session_timeout_minutes: 30,
-  password_min_length: 12,
-  password_require_mixed_case: true,
-  password_require_number: false,
-};
 // Backups keep 7, 30 or 90 days; the screen offers only those.
 const backupRun = { retention_days: 30 };
 // Release links must point at a tagged OpenSlate release.
@@ -122,58 +107,6 @@ describeContracts("Manage", [
     name: "getManageVersion",
     run: () => getManageVersion(),
     responses: { "GET /api/version": version },
-  },
-  {
-    name: "getManageSecurityPolicy",
-    run: () => getManageSecurityPolicy(),
-    responses: { "GET /api/workspace/security": securityPolicy },
-  },
-  {
-    name: "updateManageSecurityPolicy",
-    run: () =>
-      updateManageSecurityPolicy({
-        revision: 2,
-        session_timeout_minutes: 30,
-        password_min_length: 16,
-        password_require_mixed_case: true,
-        password_require_number: true,
-        mfa_policy: "admins",
-        ip_allow_list: ["10.0.0.0/8"],
-      }),
-    responses: { "PATCH /api/workspace/security": securityPolicy },
-  },
-  {
-    name: "listManageSessions",
-    run: () =>
-      listManageSessions({
-        limit: 4,
-        offset: 0,
-        search: "ana",
-        sort_by: "person_name",
-        sort_order: "asc",
-        status: "remote",
-        device: "Desktop",
-      }),
-  },
-  {
-    name: "endManageSession",
-    run: () =>
-      endManageSession({
-        id: sessionId,
-        user_id: userId,
-        person_name: "Ana",
-        user_agent: null,
-        device: "Desktop",
-        browser: "Firefox",
-        created_at: "2026-01-01T00:00:00Z",
-        refreshed_at: "2026-01-01T00:00:00Z",
-        expires_at: "2026-01-02T00:00:00Z",
-        current: false,
-      }),
-  },
-  {
-    name: "endAllManageRemoteSessions",
-    run: () => endAllManageRemoteSessions(),
   },
   {
     name: "getManageWorkspace",

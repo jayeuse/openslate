@@ -33,9 +33,10 @@ export type ConfirmState = {
   action: () => Promise<boolean>;
 };
 
-type ManageConfirmationDialogProps = {
+type AccessConfirmationDialogProps = {
   confirm: ConfirmState | null;
   pending: boolean;
+  actionsDisabled: boolean;
   error: string;
   draftAcknowledged: boolean;
   confirmOpener: RefObject<HTMLElement | null>;
@@ -44,16 +45,17 @@ type ManageConfirmationDialogProps = {
   onDraftAcknowledgedChange: (checked: boolean) => void;
 };
 
-export function ManageConfirmationDialog({
+export function AccessConfirmationDialog({
   confirm,
   pending,
+  actionsDisabled,
   error,
   draftAcknowledged,
   confirmOpener,
   headingRef,
   onClose,
   onDraftAcknowledgedChange,
-}: ManageConfirmationDialogProps) {
+}: AccessConfirmationDialogProps) {
   return (
     <AlertDialog
       open={confirm !== null}
@@ -116,10 +118,12 @@ export function ManageConfirmationDialog({
             variant="destructive"
             className="min-h-11"
             disabled={Boolean(
-              pending || (confirm?.requiresDraftAck && !draftAcknowledged),
+              pending ||
+              actionsDisabled ||
+              (confirm?.requiresDraftAck && !draftAcknowledged),
             )}
             onClick={async () => {
-              if (!confirm || pending) return;
+              if (!confirm || pending || actionsDisabled) return;
               if (await confirm.action()) onClose();
             }}
           >
@@ -131,14 +135,14 @@ export function ManageConfirmationDialog({
   );
 }
 
-type ManageMfaDialogProps = {
+type AccessMfaDialogProps = {
   opener: RefObject<HTMLButtonElement | null>;
 };
 
-export function ManageMfaDialog({ opener }: ManageMfaDialogProps) {
+export function AccessMfaDialog({ opener }: AccessMfaDialogProps) {
   const flow = useMfaFlow();
   // Visibility changes belong to the AppPage identity gate, not cancellation.
-  // Only actual dialog dismissal or leaving Manage removes owned setup.
+  // Only actual dialog dismissal or leaving Access removes owned setup.
   return (
     <Dialog
       open={flow.open && flow.mode === "workspace"}

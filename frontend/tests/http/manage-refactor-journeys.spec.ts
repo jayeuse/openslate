@@ -606,9 +606,7 @@ test("Manage preserves section drafts without saving on leave or discard, valida
   await mark.selectOption("Compass");
   await week.selectOption("Sunday");
   await hours.fill("10:00–19:00");
-  await page
-    .getByRole("link", { name: "Security & recovery", exact: true })
-    .click();
+  await page.getByRole("link", { name: "Audit", exact: true }).click();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
   await expect(name).toHaveValue("Refactor journey workspace");
   await expect(currency).toContainText("USD");

@@ -25,18 +25,17 @@ import { PaginationControls } from "@/components/ui/pagination-controls";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import type { PageResult } from "../../shared/helpers/sample-collections";
 import {
-  defaultManageSessionsRequest,
+  defaultAccessSessionsRequest,
   sessionDeviceSchema,
-  type ManageAdminSession,
-  type ManageAdminSessions,
-  type ManageSessionsRequest,
+  type AccessAdminSession,
+  type AccessAdminSessions,
+  type AccessSessionsRequest,
 } from "../adapters/security-api";
 import {
   SettingActions,
   SettingInput,
   SettingSelect,
-  type SettingsPanelForm,
-} from "./panel-ui";
+} from "../../manage/components/panel-ui";
 
 type SessionSort = "activity" | "person-asc" | "person-desc";
 
@@ -54,22 +53,37 @@ const SESSION_PAGE_SIZES = [4, 10, 25] as const;
 type SecurityPanelProps = {
   sessions:
     | { status: "loading" }
-    | { status: "error"; message: string; page?: ManageAdminSessions }
-    | { status: "ready"; page: ManageAdminSessions };
-  request: ManageSessionsRequest;
-  onRequestChange: (request: ManageSessionsRequest) => void;
+    | { status: "error"; message: string; page?: AccessAdminSessions }
+    | { status: "ready"; page: AccessAdminSessions };
+  request: AccessSessionsRequest;
+  onRequestChange: (request: AccessSessionsRequest) => void;
   onRetry: () => void;
   actions: {
     endAllRemoteSessions: (event: MouseEvent<HTMLElement>) => void;
     endSession: (
-      session: ManageAdminSession,
+      session: AccessAdminSession,
       event: MouseEvent<HTMLElement>,
     ) => void;
   };
 };
 
 type SecurityPolicyFormProps = {
-  form: SettingsPanelForm;
+  form: {
+    dirty: boolean;
+    current: import("../adapters/security-api").SecuritySettingsFormFields;
+    errors: Partial<
+      Record<
+        keyof import("../adapters/security-api").SecuritySettingsFormFields,
+        string
+      >
+    >;
+    changeSetting: (
+      key: keyof import("../adapters/security-api").SecuritySettingsFormFields,
+      value: string,
+    ) => void;
+    saveSection: () => Promise<void>;
+    clearDraft: () => void;
+  };
   onManageMfa: (event?: MouseEvent<HTMLButtonElement>) => void;
 };
 
@@ -81,7 +95,7 @@ export function SecurityPanel({
   actions,
 }: SecurityPanelProps) {
   const response = sessions.status === "loading" ? undefined : sessions.page;
-  const page: PageResult<ManageAdminSession> | undefined = response
+  const page: PageResult<AccessAdminSession> | undefined = response
     ? {
         kind: "page",
         queryKey: JSON.stringify(request),
@@ -112,11 +126,11 @@ export function SecurityPanel({
     );
   const activeFilterCount =
     Number(request.status !== "all") + Number(request.device !== "all");
-  function changeRequest(change: Partial<ManageSessionsRequest>) {
+  function changeRequest(change: Partial<AccessSessionsRequest>) {
     onRequestChange({ ...request, ...change, offset: 0 });
   }
   function clearFilters() {
-    onRequestChange({ ...defaultManageSessionsRequest, limit: request.limit });
+    onRequestChange({ ...defaultAccessSessionsRequest, limit: request.limit });
   }
   function refreshedAt(value: string) {
     return new Intl.DateTimeFormat(undefined, {
@@ -125,7 +139,7 @@ export function SecurityPanel({
     }).format(new Date(value));
   }
 
-  const columns: DataTableColumn<ManageAdminSession>[] = [
+  const columns: DataTableColumn<AccessAdminSession>[] = [
     {
       id: "person-device",
       header: "Person & device",
@@ -188,6 +202,7 @@ export function SecurityPanel({
             variant="outline"
             className="min-h-11"
             aria-label={`End session for ${row.original.person_name}`}
+            disabled={sessions.status !== "ready"}
             onClick={(event) => actions.endSession(row.original, event)}
           >
             End
@@ -253,7 +268,7 @@ export function SecurityPanel({
             value={request.status}
             onChange={(event) => {
               changeRequest({
-                status: event.target.value as ManageSessionsRequest["status"],
+                status: event.target.value as AccessSessionsRequest["status"],
               });
             }}
           >
@@ -273,7 +288,7 @@ export function SecurityPanel({
             value={request.device}
             onChange={(event) => {
               changeRequest({
-                device: event.target.value as ManageSessionsRequest["device"],
+                device: event.target.value as AccessSessionsRequest["device"],
               });
             }}
           >
@@ -382,6 +397,7 @@ export function SecurityPanel({
                               variant="outline"
                               className="min-h-11 w-full"
                               aria-label={`End session for ${session.person_name}`}
+                              disabled={sessions.status !== "ready"}
                               onClick={(event) =>
                                 actions.endSession(session, event)
                               }
@@ -483,7 +499,7 @@ export function SecurityPolicyForm({
       className="flex flex-col gap-5"
       onSubmit={(event) => {
         event.preventDefault();
-        saveSection("security");
+        saveSection();
       }}
     >
       <div className="grid gap-4 sm:grid-cols-2">
@@ -497,7 +513,7 @@ export function SecurityPolicyForm({
             "16 characters + mixed case + number",
             "20-character passphrase",
           ]}
-          onChange={(value) => changeSetting("security", "password", value)}
+          onChange={(value) => changeSetting("password", value)}
         />
         <SettingSelect
           id="session-timeout"
@@ -505,7 +521,7 @@ export function SecurityPolicyForm({
           value={current.timeout}
           error={errors.timeout}
           options={["15 minutes", "30 minutes", "60 minutes", "8 hours"]}
-          onChange={(value) => changeSetting("security", "timeout", value)}
+          onChange={(value) => changeSetting("timeout", value)}
         />
         <div className="grid min-w-0 gap-3 sm:col-span-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
           <SettingSelect
@@ -518,7 +534,7 @@ export function SecurityPolicyForm({
               "Required for administrators",
               "Required for everyone",
             ]}
-            onChange={(value) => changeSetting("security", "mfa", value)}
+            onChange={(value) => changeSetting("mfa", value)}
             description="Required accounts must verify an authenticator before using the workspace."
           />
           <Button
@@ -535,7 +551,7 @@ export function SecurityPolicyForm({
             id="ip-allow-list"
             label="IP allow list"
             value={current.ips}
-            onChange={(value) => changeSetting("security", "ips", value)}
+            onChange={(value) => changeSetting("ips", value)}
             placeholder="192.0.2.0/24"
             error={errors.ips ?? null}
             description="Separate IP addresses or CIDR ranges with commas. An empty list allows all addresses. Include your current address to keep access."
@@ -544,8 +560,8 @@ export function SecurityPolicyForm({
       </div>
       <SettingActions
         dirty={dirty}
-        onDiscard={() => clearDraft("security")}
-        onSave={() => saveSection("security")}
+        onDiscard={() => clearDraft()}
+        onSave={() => saveSection()}
       />
     </form>
   );

@@ -78,7 +78,7 @@ test("Access navigation follows the signed-in role and manage access", () => {
   expect(accessNavigationFor(undefined)).toBe("none");
 });
 
-test("Access lists Overview, People and Groups for administrators", () => {
+test("Access lists Overview, People, Groups and Security for administrators", () => {
   const access = getWorkspaceNavigation(
     "/access",
     new URLSearchParams("view=groups"),
@@ -91,6 +91,7 @@ test("Access lists Overview, People and Groups for administrators", () => {
     ["overview", "Overview", "/access?view=overview"],
     ["people", "People", "/access?view=people"],
     ["groups", "Groups", "/access?view=groups"],
+    ["security", "Security", "/access?view=security"],
   ]);
   expect(access?.href).toBe("/access?view=overview");
   expect(

@@ -5,6 +5,13 @@ import {
   type QueryClient,
   type QueryKey,
 } from "@tanstack/react-query";
+import { ApiError } from "@/lib/api";
+import {
+  getAccessSecurityPolicy,
+  listAccessSessions,
+  type AccessSecurityPolicy,
+  type AccessSessionsRequest,
+} from "./security-api";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import {
   getAccessInvitationSettings,
@@ -33,6 +40,10 @@ import { loadAllAccessPages } from "../state/pagination";
 
 export const accessKeys = {
   all: ["access"] as const,
+  security: () => ["access", "security"] as const,
+  adminSessions: () => ["access", "admin-sessions"] as const,
+  adminSessionList: (request: AccessSessionsRequest) =>
+    ["access", "admin-sessions", request] as const,
   users: ["access", "users"] as const,
   userList: (deleted: AccessDeletedFilter) =>
     ["access", "users", "list", deleted] as const,
@@ -182,4 +193,91 @@ async function invalidateAll(
   await Promise.all(
     queryKeys.map((queryKey) => client.invalidateQueries({ queryKey })),
   );
+}
+
+// Privileged-read refusal belongs to the verified account's existing client.
+// Ordinary successes cannot clear it; only the owner's explicit fresh Retry can.
+type SecurityRead = "policy" | "sessions";
+type ReadAdmission = { sequence: number; accepted: number; denied: boolean };
+const securityReads = new WeakMap<
+  QueryClient,
+  Record<SecurityRead, ReadAdmission>
+>();
+function securityRead(client: QueryClient, kind: SecurityRead) {
+  let reads = securityReads.get(client);
+  if (!reads) {
+    reads = {
+      policy: { sequence: 0, accepted: 0, denied: false },
+      sessions: { sequence: 0, accepted: 0, denied: false },
+    };
+    securityReads.set(client, reads);
+  }
+  return reads[kind];
+}
+export function isAccessSecurityDenied(
+  client: QueryClient,
+  kind: SecurityRead,
+) {
+  return securityRead(client, kind).denied;
+}
+export function setAccessSecurityDenied(
+  client: QueryClient,
+  kind: SecurityRead,
+  denied: boolean,
+) {
+  securityRead(client, kind).denied = denied;
+}
+async function readSecurity<T>(
+  client: QueryClient,
+  kind: SecurityRead,
+  signal: AbortSignal,
+  read: () => Promise<T>,
+): Promise<T> {
+  const admission = securityRead(client, kind);
+  const sequence = ++admission.sequence;
+  try {
+    const result = await read();
+    if (!signal.aborted)
+      admission.accepted = Math.max(admission.accepted, sequence);
+    return result;
+  } catch (error) {
+    if (
+      !signal.aborted &&
+      sequence >= admission.accepted &&
+      error instanceof ApiError &&
+      error.status === 403
+    ) {
+      securityRead(client, "policy").denied = true;
+      securityRead(client, "sessions").denied = true;
+    }
+    throw error;
+  }
+}
+export const accessSecurityOptions = (client: QueryClient) =>
+  queryOptions({
+    queryKey: accessKeys.security(),
+    queryFn: ({ signal }) =>
+      readSecurity(client, "policy", signal, () =>
+        getAccessSecurityPolicy(signal),
+      ),
+  });
+export const accessAdminSessionsOptions = (
+  client: QueryClient,
+  request: AccessSessionsRequest,
+) =>
+  queryOptions({
+    queryKey: accessKeys.adminSessionList(request),
+    queryFn: ({ signal }) =>
+      readSecurity(client, "sessions", signal, () =>
+        listAccessSessions(request, signal),
+      ),
+  });
+export function afterAccessSecurityChange(
+  client: QueryClient,
+  policy: AccessSecurityPolicy,
+) {
+  client.setQueryData(accessKeys.security(), policy);
+}
+export function afterAccessAdminSessionsChange(client: QueryClient) {
+  return client.invalidateQueries({ queryKey: accessKeys.adminSessions() });
 }

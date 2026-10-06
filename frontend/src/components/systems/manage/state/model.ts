@@ -6,10 +6,6 @@ export type ManageSettings = {
   currency: string;
   week: string;
   hours: string;
-  password: string;
-  timeout: string;
-  mfa: string;
-  ips: string;
   schedule: string;
   retention: string;
   version: string;
@@ -17,7 +13,7 @@ export type ManageSettings = {
   tier: string;
   expiry: string;
 };
-export type ManageSection = "organization" | "security" | "backup";
+export type ManageSection = "organization" | "backup";
 export type ManageValidationErrors = Partial<
   Record<keyof ManageSettings, string>
 >;
@@ -41,10 +37,6 @@ export const initialManageSettings: ManageSettings = {
   currency: "PHP",
   week: "Monday",
   hours: "09:00–18:00",
-  password: "12 characters + mixed case",
-  timeout: "60 minutes",
-  mfa: "Optional",
-  ips: "192.0.2.0/24",
   schedule: "Daily at 02:00",
   retention: "30 days",
   version: "1.4.2",

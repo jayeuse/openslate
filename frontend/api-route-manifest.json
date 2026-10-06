@@ -582,32 +582,32 @@
     "path": "/api/backups/status"
   },
   {
-    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
-    "function": "endAllManageRemoteSessions",
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "endAllAccessRemoteSessions",
     "method": "DELETE",
     "path": "/api/auth/admin-sessions"
   },
   {
-    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
-    "function": "endManageSession",
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "endAccessSession",
     "method": "DELETE",
     "path": "/api/users/{param}/sessions/{param}"
   },
   {
-    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
-    "function": "getManageSecurityPolicy",
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "getAccessSecurityPolicy",
     "method": "GET",
     "path": "/api/workspace/security"
   },
   {
-    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
-    "function": "listManageSessions",
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "listAccessSessions",
     "method": "GET",
     "path": "/api/auth/admin-sessions"
   },
   {
-    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
-    "function": "updateManageSecurityPolicy",
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "updateAccessSecurityPolicy",
     "method": "PATCH",
     "path": "/api/workspace/security"
   },

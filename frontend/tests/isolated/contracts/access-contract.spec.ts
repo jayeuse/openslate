@@ -1,4 +1,11 @@
 import {
+  endAllAccessRemoteSessions,
+  endAccessSession,
+  getAccessSecurityPolicy,
+  listAccessSessions,
+  updateAccessSecurityPolicy,
+} from "../../../src/components/systems/access/adapters/security-api";
+import {
   createAccessGroup,
   deleteAccessGroup,
   deleteAccessUser,
@@ -40,7 +47,68 @@ const list = {
   deleted: "exclude",
 } as const;
 
+// The frontend accepts only the policy values the settings screen can show.
+const securityPolicy = {
+  session_timeout_minutes: 30,
+  password_min_length: 12,
+  password_require_mixed_case: true,
+  password_require_number: false,
+};
+
 describeContracts("Access", [
+  {
+    name: "getAccessSecurityPolicy",
+    run: () => getAccessSecurityPolicy(),
+    responses: { "GET /api/workspace/security": securityPolicy },
+  },
+  {
+    name: "updateAccessSecurityPolicy",
+    run: () =>
+      updateAccessSecurityPolicy({
+        revision: 2,
+        session_timeout_minutes: 30,
+        password_min_length: 16,
+        password_require_mixed_case: true,
+        password_require_number: true,
+        mfa_policy: "admins",
+        ip_allow_list: ["10.0.0.0/8"],
+      }),
+    responses: { "PATCH /api/workspace/security": securityPolicy },
+  },
+  {
+    name: "listAccessSessions",
+    run: () =>
+      listAccessSessions({
+        limit: 4,
+        offset: 0,
+        search: "ana",
+        sort_by: "person_name",
+        sort_order: "asc",
+        status: "remote",
+        device: "Desktop",
+      }),
+  },
+  {
+    name: "endAccessSession",
+    run: () =>
+      endAccessSession({
+        id: sessionId,
+        user_id: userId,
+        person_name: "Ana",
+        user_agent: null,
+        device: "Desktop",
+        browser: "Firefox",
+        created_at: "2026-01-01T00:00:00Z",
+        refreshed_at: "2026-01-01T00:00:00Z",
+        expires_at: "2026-01-02T00:00:00Z",
+        current: false,
+      }),
+  },
+  {
+    name: "endAllAccessRemoteSessions",
+    run: () => endAllAccessRemoteSessions(),
+  },
+
   {
     name: "listAccessUsers",
     run: () =>
