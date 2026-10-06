@@ -87,6 +87,10 @@ def test_main_app_bearer_reminder_reaches_readers_and_inbox_rechecks_the_board(
             assert inbox.status_code == 200, inbox.text
             [notice] = inbox.json()["items"]
             assert notice["kind"] == "event-reminder"
+            assert notice["subject_type"] == "board_event" and notice["subject_id"] == event_id
+            assert client.get("/api/notifications/unread-count", headers=outsider).json() == {
+                "unread_count": 1
+            }
             assert notice["event_id"] == event_id
             assert notice["occurrence_id"].startswith(f"{event_id}:")
             read_path = f"/api/notifications/{notice['id']}/read"
@@ -105,6 +109,12 @@ def test_main_app_bearer_reminder_reaches_readers_and_inbox_rechecks_the_board(
                 == 0
             )
             assert client.post(read_path, headers=outsider).status_code == 404
+            assert client.get("/api/notifications/unread-count", headers=outsider).json() == {
+                "unread_count": 0
+            }
+            assert client.post("/api/notifications/read-all", headers=outsider).json() == {
+                "updated_count": 0
+            }
     finally:
         with AuditSession(subject.owner_engine) as db:
             db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())

@@ -14,6 +14,7 @@ const utcTimestampSchema = z.iso
 
 const commonNotification = {
   id: uuidSchema,
+  subject_id: uuidSchema,
   status: z.enum(["unread", "read"]),
   scheduled_for: utcTimestampSchema,
   created_at: utcTimestampSchema,
@@ -25,33 +26,46 @@ const wireNotificationSchema = z
       .object({
         ...commonNotification,
         kind: z.literal("report-run"),
+        subject_type: z.literal("report_run"),
         report_id: uuidSchema,
         run_id: uuidSchema,
       })
-      .strict(),
+      .strict()
+      .refine(
+        (notification) => notification.subject_id === notification.run_id,
+      ),
     z
       .object({
         ...commonNotification,
         kind: z.literal("post-publish"),
+        subject_type: z.literal("board_post"),
         board_id: uuidSchema,
         post_id: uuidSchema,
         publication_revision_id: uuidSchema,
       })
-      .strict(),
+      .strict()
+      .refine(
+        (notification) => notification.subject_id === notification.post_id,
+      ),
     z
       .object({
         ...commonNotification,
         kind: z.literal("event-reminder"),
+        subject_type: z.literal("board_event"),
         board_id: uuidSchema,
         event_id: uuidSchema,
         occurrence_id: z.string().min(1).max(100),
         occurrence_start_at: utcTimestampSchema,
       })
-      .strict(),
+      .strict()
+      .refine(
+        (notification) => notification.subject_id === notification.event_id,
+      ),
   ])
   .transform((notification) => {
     const common = {
       id: notification.id,
+      subjectId: notification.subject_id,
       kind: notification.kind,
       status: notification.status,
       scheduledFor: notification.scheduled_for,
@@ -62,6 +76,7 @@ const wireNotificationSchema = z
       return {
         ...common,
         kind: notification.kind,
+        subjectType: notification.subject_type,
         reportId: notification.report_id,
         runId: notification.run_id,
       };
@@ -69,6 +84,7 @@ const wireNotificationSchema = z
       return {
         ...common,
         kind: notification.kind,
+        subjectType: notification.subject_type,
         boardId: notification.board_id,
         postId: notification.post_id,
         publicationRevisionId: notification.publication_revision_id,
@@ -76,6 +92,7 @@ const wireNotificationSchema = z
     return {
       ...common,
       kind: notification.kind,
+      subjectType: notification.subject_type,
       boardId: notification.board_id,
       eventId: notification.event_id,
       occurrenceId: notification.occurrence_id,

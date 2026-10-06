@@ -23,6 +23,7 @@ from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.platform.scheduling.materializer import materialize_event_reminders
 from app.systems.platform.scheduling.models import (
     InAppNotification,
+    NotificationKind,
     ScheduledWork,
     WorkKind,
     WorkState,
@@ -197,7 +198,13 @@ def finalize_reminder_claim(
         )
     )
     notices = [
-        InAppNotification(work_id=work.id, recipient_id=recipient_id)
+        InAppNotification(
+            work_id=work.id,
+            recipient_id=recipient_id,
+            kind=NotificationKind.EVENT_REMINDER,
+            subject_type="board_event",
+            subject_id=event.id,
+        )
         for recipient_id in sorted(board_reader_ids(db, board))
         if recipient_id not in delivered
     ]

@@ -101,6 +101,11 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
     assert len(notifications) == 1
     assert notifications[0].work_id == work.id
     assert notifications[0].recipient_id == owner.id
+    assert (notifications[0].kind, notifications[0].subject_type, notifications[0].subject_id) == (
+        "report-run",
+        "report_run",
+        run.id,
+    )
     audit = db.scalar(
         select(AuditLog).where(
             AuditLog.entity_type == "in_app_notifications",
@@ -111,11 +116,22 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
     assert audit.performed_by is None
     assert audit.after == {
         "work_id": str(work.id),
+        "kind": "report-run",
+        "subject_type": "report_run",
+        "subject_id": str(run.id),
         "recipient_id": str(owner.id),
         "read_at": None,
     }
     with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(InAppNotification(work_id=work.id, recipient_id=owner.id))
+        db.add(
+            InAppNotification(
+                work_id=work.id,
+                recipient_id=owner.id,
+                kind="report-run",
+                subject_type="report_run",
+                subject_id=run.id,
+            )
+        )
         db.flush()
     with pytest.raises(IntegrityError), db.begin_nested():
         db.delete(work)
@@ -280,10 +296,13 @@ def test_scheduling_tables_grant_runtime_access_and_block_provider_roles(integra
     statement = text("SELECT has_table_privilege(:role, :table_name, :privilege)")
     for table_name in ("public.scheduled_work", "public.in_app_notifications"):
         for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-            assert connection.scalar(
-                statement,
-                {"role": "openslate_runtime", "table_name": table_name, "privilege": privilege},
-            ) is True
+            assert (
+                connection.scalar(
+                    statement,
+                    {"role": "openslate_runtime", "table_name": table_name, "privilege": privilege},
+                )
+                is True
+            )
             for role in ("anon", "authenticated", "service_role"):
                 assert (
                     connection.scalar(

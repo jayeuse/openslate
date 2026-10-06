@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -26,7 +26,12 @@ from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.post_models import BoardPost
 from app.systems.boards.reminder_models import BoardEventReminder
 from app.systems.boards.reminder_service import occurrence_at
-from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkKind
+from app.systems.platform.scheduling.models import (
+    InAppNotification,
+    NotificationKind,
+    ScheduledWork,
+    WorkKind,
+)
 from app.systems.platform.scheduling.service import current_user_notification_query
 
 
@@ -47,6 +52,7 @@ class NotificationSort(StrEnum):
 
 class NotificationListRequest(StandardListRequest[NotificationSort]):
     sort_order: Literal[SortOrder.DESC] = SortOrder.DESC
+    status: Literal["unread"] | None = None
 
 
 class NotificationResponse(BaseModel):
@@ -55,16 +61,20 @@ class NotificationResponse(BaseModel):
     scheduled_for: datetime
     created_at: datetime
     read_at: datetime | None
+    subject_type: str
+    subject_id: UUID
 
 
 class ReportNotificationResponse(NotificationResponse):
     kind: Literal["report-run"]
+    subject_type: Literal["report_run"]
     report_id: UUID
     run_id: UUID
 
 
 class PostNotificationResponse(NotificationResponse):
     kind: Literal["post-publish"]
+    subject_type: Literal["board_post"]
     board_id: UUID
     post_id: UUID
     publication_revision_id: UUID
@@ -72,6 +82,7 @@ class PostNotificationResponse(NotificationResponse):
 
 class EventReminderNotificationResponse(NotificationResponse):
     kind: Literal["event-reminder"]
+    subject_type: Literal["board_event"]
     board_id: UUID
     event_id: UUID
     occurrence_id: str
@@ -79,9 +90,7 @@ class EventReminderNotificationResponse(NotificationResponse):
 
 
 NotificationItem = Annotated[
-    ReportNotificationResponse
-    | PostNotificationResponse
-    | EventReminderNotificationResponse,
+    ReportNotificationResponse | PostNotificationResponse | EventReminderNotificationResponse,
     Field(discriminator="kind"),
 ]
 
@@ -130,15 +139,29 @@ def _response(
         scheduled_for=work.scheduled_for,
         created_at=notification.created_at,
         read_at=notification.read_at,
+        subject_type=notification.subject_type,
+        subject_id=notification.subject_id,
     )
     if work.kind == WorkKind.REPORT_RUN:
-        if work.report_id is None or work.run_id is None:
+        if (
+            work.report_id is None
+            or work.run_id is None
+            or notification.kind != NotificationKind.REPORT_RUN
+            or notification.subject_type != "report_run"
+            or notification.subject_id != work.run_id
+        ):
             raise _not_found()
         return ReportNotificationResponse(
             **common, kind="report-run", report_id=work.report_id, run_id=work.run_id
         )
     if work.kind == WorkKind.POST_PUBLISH:
-        if work.post_id is None or work.publication_result_id is None:
+        if (
+            work.post_id is None
+            or work.publication_result_id is None
+            or notification.kind != NotificationKind.POST_PUBLISH
+            or notification.subject_type != "board_post"
+            or notification.subject_id != work.post_id
+        ):
             raise _not_found()
         if post_board_ids is None:
             post = db.get(BoardPost, work.post_id)
@@ -167,7 +190,12 @@ def _response(
             if reminder_events is not None
             else _reminder_events(db, {work.reminder_id}).get(work.reminder_id)
         )
-        if event is None:
+        if (
+            event is None
+            or notification.kind != NotificationKind.EVENT_REMINDER
+            or notification.subject_type != "board_event"
+            or notification.subject_id != event.id
+        ):
             raise _not_found()
         occurrence = occurrence_at(event, work.occurrence_start_at)
         return EventReminderNotificationResponse(
@@ -193,9 +221,10 @@ def list_notifications(
 ) -> NotificationListResponse:
     """Count and page only references currently visible to the recipient."""
 
-    result = execute_standard_list(
-        db, current_user_notification_query(db, user.id), params, NOTIFICATION_LIST_SPEC
-    )
+    statement = current_user_notification_query(db, user.id)
+    if params.status == "unread":
+        statement = statement.where(InAppNotification.read_at.is_(None))
+    result = execute_standard_list(db, statement, params, NOTIFICATION_LIST_SPEC)
     work_by_id = {
         work.id: work
         for work in db.scalars(
@@ -204,7 +233,11 @@ def list_notifications(
             )
         )
     }
-    page_entries = [(item, work_by_id[item.work_id]) for item in result.items]
+    page_entries = []
+    for item in result.items:
+        if item.work_id is None or item.work_id not in work_by_id:
+            raise _not_found()
+        page_entries.append((item, work_by_id[item.work_id]))
 
     post_ids = {
         work.post_id
@@ -240,6 +273,42 @@ def list_notifications(
         for item, work in page_entries
     ]
     return NotificationListResponse(items=items, pagination=result.pagination)
+
+
+class UnreadCountResponse(BaseModel):
+    unread_count: int = Field(ge=0)
+
+
+class ReadAllResponse(BaseModel):
+    updated_count: int = Field(ge=0)
+
+
+@router.get("/unread-count", response_model=UnreadCountResponse)
+def unread_notification_count(user: Reader, db: Database) -> UnreadCountResponse:
+    statement = current_user_notification_query(db, user.id, lock_user=False).where(
+        InAppNotification.read_at.is_(None)
+    )
+    count = db.scalar(select(func.count()).select_from(statement.subquery()))
+    return UnreadCountResponse(unread_count=count or 0)
+
+
+@router.post("/read-all", response_model=ReadAllResponse)
+def mark_all_notifications_read(user: Reader, db: Database) -> ReadAllResponse:
+    notifications = list(
+        db.scalars(
+            current_user_notification_query(db, user.id)
+            .where(InAppNotification.read_at.is_(None))
+            .order_by(InAppNotification.id)
+            .with_for_update(of=InAppNotification)
+            .execution_options(populate_existing=True)
+        )
+    )
+    if notifications:
+        read_at = utc_now()
+        for notification in notifications:
+            notification.read_at = read_at
+        db.commit()
+    return ReadAllResponse(updated_count=len(notifications))
 
 
 @router.post("/{notification_id}/read", response_model=NotificationItem)

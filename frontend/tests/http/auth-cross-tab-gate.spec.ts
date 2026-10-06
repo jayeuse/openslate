@@ -399,6 +399,8 @@ test("a returning tab conceals the old account before revalidation and ignores d
             {
               id: "00000000-0000-4000-8000-000000000102",
               kind: "report-run",
+              subject_type: "report_run",
+              subject_id: "00000000-0000-4000-8000-000000000104",
               report_id: "00000000-0000-4000-8000-000000000103",
               run_id: "00000000-0000-4000-8000-000000000104",
               status: "unread",

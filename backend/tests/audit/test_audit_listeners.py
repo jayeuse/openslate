@@ -197,7 +197,13 @@ def test_audit_stages_recipient_from_notification_row_and_suppresses_report_subj
     from app.systems.openview.reports.models import Report
 
     recipient_id = uuid7()
-    notification = InAppNotification(work_id=uuid7(), recipient_id=recipient_id)
+    notification = InAppNotification(
+        work_id=uuid7(),
+        recipient_id=recipient_id,
+        kind="report-run",
+        subject_type="report_run",
+        subject_id=uuid7(),
+    )
     notification.id = uuid7()
     report = Report(module_id=uuid7(), name="Private", recipe={})
     report.id = uuid7()

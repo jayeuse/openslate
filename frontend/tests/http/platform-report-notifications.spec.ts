@@ -48,6 +48,8 @@ function notification(status: "unread" | "read") {
   return {
     id: notificationId,
     kind: "report-run",
+    subject_type: "report_run",
+    subject_id: runId,
     report_id: reportId,
     run_id: runId,
     status,
@@ -121,6 +123,8 @@ test("connected inbox shows Board publication and reminder references without co
           {
             id: notificationId,
             kind: "post-publish",
+            subject_type: "board_post",
+            subject_id: postId,
             board_id: boardId,
             post_id: postId,
             publication_revision_id: revisionId,
@@ -132,6 +136,8 @@ test("connected inbox shows Board publication and reminder references without co
           {
             id: runId,
             kind: "event-reminder",
+            subject_type: "board_event",
+            subject_id: eventId,
             board_id: boardId,
             event_id: eventId,
             occurrence_id: `${eventId}:2026-09-23`,

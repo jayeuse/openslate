@@ -45,6 +45,8 @@ function wireNotification(overrides: Record<string, unknown> = {}) {
   return {
     id: notificationId,
     kind: "report-run",
+    subject_type: "report_run",
+    subject_id: runId,
     report_id: reportId,
     run_id: runId,
     status: "unread",
@@ -79,6 +81,8 @@ test("lists current-user notification references with bounded paging and no cach
         {
           id: notificationId,
           kind: "report-run",
+          subjectType: "report_run",
+          subjectId: runId,
           reportId,
           runId,
           status: "unread",
@@ -124,6 +128,8 @@ test("marks one notification read without a body or inferred report authority", 
     ).resolves.toEqual({
       id: notificationId,
       kind: "report-run",
+      subjectType: "report_run",
+      subjectId: runId,
       reportId,
       runId,
       status: "read",
@@ -149,6 +155,8 @@ test("accepts reference-only Board post and Event reminder variants", async () =
         {
           id: notificationId,
           kind: "post-publish",
+          subject_type: "board_post",
+          subject_id: postId,
           board_id: boardId,
           post_id: postId,
           publication_revision_id: publicationRevisionId,
@@ -160,6 +168,8 @@ test("accepts reference-only Board post and Event reminder variants", async () =
         {
           id: otherNotificationId,
           kind: "event-reminder",
+          subject_type: "board_event",
+          subject_id: eventId,
           board_id: boardId,
           event_id: eventId,
           occurrence_id: `${eventId}:2026-09-23`,
@@ -179,6 +189,8 @@ test("accepts reference-only Board post and Event reminder variants", async () =
       {
         id: notificationId,
         kind: "post-publish",
+        subjectType: "board_post",
+        subjectId: postId,
         boardId,
         postId,
         publicationRevisionId,
@@ -190,6 +202,8 @@ test("accepts reference-only Board post and Event reminder variants", async () =
       {
         id: otherNotificationId,
         kind: "event-reminder",
+        subjectType: "board_event",
+        subjectId: eventId,
         boardId,
         eventId,
         occurrenceId: `${eventId}:2026-09-23`,
@@ -233,6 +247,47 @@ test("rejects malformed or mismatched private notification response data", async
       items: [wireNotification({ created_at: "2026-09-23T08:00:00+08:00" })],
       pagination,
     },
+    { items: [wireNotification({ subject_type: undefined })], pagination },
+    { items: [wireNotification({ subject_id: undefined })], pagination },
+    { items: [wireNotification({ subject_type: "board_post" })], pagination },
+    { items: [wireNotification({ subject_id: postId })], pagination },
+    {
+      items: [
+        {
+          id: notificationId,
+          kind: "post-publish",
+          subject_type: "board_post",
+          subject_id: eventId,
+          board_id: boardId,
+          post_id: postId,
+          publication_revision_id: publicationRevisionId,
+          status: "unread",
+          scheduled_for: timestamp,
+          created_at: timestamp,
+          read_at: null,
+        },
+      ],
+      pagination,
+    },
+    {
+      items: [
+        {
+          id: notificationId,
+          kind: "event-reminder",
+          subject_type: "board_event",
+          subject_id: postId,
+          board_id: boardId,
+          event_id: eventId,
+          occurrence_id: `${eventId}:2026-09-23`,
+          occurrence_start_at: timestamp,
+          status: "unread",
+          scheduled_for: timestamp,
+          created_at: timestamp,
+          read_at: null,
+        },
+      ],
+      pagination,
+    },
     wireNotification({
       id: otherNotificationId,
       status: "read",
@@ -241,12 +296,11 @@ test("rejects malformed or mismatched private notification response data", async
   ];
   const mock = installFetch(() => jsonResponse(responses.shift()));
   try {
-    await expect(listOpenViewReportNotifications()).rejects.toBeInstanceOf(
-      ApiContractError,
-    );
-    await expect(listOpenViewReportNotifications()).rejects.toBeInstanceOf(
-      ApiContractError,
-    );
+    while (responses.length > 1) {
+      await expect(listOpenViewReportNotifications()).rejects.toBeInstanceOf(
+        ApiContractError,
+      );
+    }
     await expect(
       markOpenViewReportNotificationRead(notificationId),
     ).rejects.toBeInstanceOf(ApiContractError);

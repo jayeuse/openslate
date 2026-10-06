@@ -3700,6 +3700,16 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "board_event",
+            "title": "Subject Type",
+            "type": "string"
           }
         },
         "required": [
@@ -3708,6 +3718,8 @@
           "scheduled_for",
           "created_at",
           "read_at",
+          "subject_type",
+          "subject_id",
           "kind",
           "board_id",
           "event_id",
@@ -7029,6 +7041,16 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "board_post",
+            "title": "Subject Type",
+            "type": "string"
           }
         },
         "required": [
@@ -7037,6 +7059,8 @@
           "scheduled_for",
           "created_at",
           "read_at",
+          "subject_type",
+          "subject_id",
           "kind",
           "board_id",
           "post_id",
@@ -8092,6 +8116,20 @@
         "title": "QuerySort",
         "type": "object"
       },
+      "ReadAllResponse": {
+        "properties": {
+          "updated_count": {
+            "minimum": 0.0,
+            "title": "Updated Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated_count"
+        ],
+        "title": "ReadAllResponse",
+        "type": "object"
+      },
       "RecordCreate": {
         "additionalProperties": false,
         "properties": {
@@ -9080,6 +9118,16 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "report_run",
+            "title": "Subject Type",
+            "type": "string"
           }
         },
         "required": [
@@ -9088,6 +9136,8 @@
           "scheduled_for",
           "created_at",
           "read_at",
+          "subject_type",
+          "subject_id",
           "kind",
           "report_id",
           "run_id"
@@ -11701,6 +11751,20 @@
           "attempts"
         ],
         "title": "TriggerRunResponse",
+        "type": "object"
+      },
+      "UnreadCountResponse": {
+        "properties": {
+          "unread_count": {
+            "minimum": 0.0,
+            "title": "Unread Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unread_count"
+        ],
+        "title": "UnreadCountResponse",
         "type": "object"
       },
       "UnspecifiedGroupSelector": {
@@ -24129,6 +24193,23 @@
               "$ref": "#/components/schemas/DeletedFilter",
               "default": "exclude"
             }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "unread",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
           }
         ],
         "responses": {
@@ -24159,6 +24240,58 @@
           }
         ],
         "summary": "List Notifications",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/notifications/read-all": {
+      "post": {
+        "operationId": "mark_all_notifications_read_api_notifications_read_all_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadAllResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mark All Notifications Read",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/notifications/unread-count": {
+      "get": {
+        "operationId": "unread_notification_count_api_notifications_unread_count_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadCountResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unread Notification Count",
         "tags": [
           "notifications"
         ]

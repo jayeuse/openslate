@@ -295,9 +295,10 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 (work_id, report_id, run_id),
             )
             cursor.execute(
-                "INSERT INTO public.in_app_notifications (id, work_id, recipient_id) "
-                "VALUES (%s, %s, %s)",
-                (uuid4(), work_id, member_id),
+                "INSERT INTO public.in_app_notifications (id, work_id, recipient_id, kind"
+                ", subject_type, subject_id) "
+                "VALUES (%s, %s, %s, 'report-run', 'report_run', %s)",
+                (uuid4(), work_id, member_id, run_id),
             )
         database.commit()
         with pytest.raises(reset.ResetError, match="reset plan changed"):

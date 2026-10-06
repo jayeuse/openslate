@@ -23,6 +23,7 @@ from app.systems.manage.audit.context import get_audit_context
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunEligibleUser
 from app.systems.platform.scheduling.models import (
     InAppNotification,
+    NotificationKind,
     ScheduledWork,
     WorkKind,
     WorkState,
@@ -223,7 +224,15 @@ def complete_report_work(
     for recipient_id in db.scalars(
         select(ReportRunEligibleUser.user_id).where(ReportRunEligibleUser.run_id == run.id)
     ):
-        db.add(InAppNotification(work_id=work.id, recipient_id=recipient_id))
+        db.add(
+            InAppNotification(
+                work_id=work.id,
+                recipient_id=recipient_id,
+                kind=NotificationKind.REPORT_RUN,
+                subject_type="report_run",
+                subject_id=run.id,
+            )
+        )
     return True
 
 
@@ -246,15 +255,15 @@ def fail_report_work(db: Session, claim: WorkClaim, *, now: datetime | None = No
     return True
 
 
-def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[InAppNotification]]:
-    """Apply current source, Board and content policy before notification paging."""
+def current_user_notification_query(
+    db: Session, user_id: UUID, *, lock_user: bool = True
+) -> Select[tuple[InAppNotification]]:
+    """Apply one current visibility policy; count reads do not lock the recipient."""
 
-    user = db.scalar(
-        select(User)
-        .where(User.id == user_id)
-        .with_for_update(of=User)
-        .execution_options(populate_existing=True)
-    )
+    user_query = select(User).where(User.id == user_id).execution_options(populate_existing=True)
+    if lock_user:
+        user_query = user_query.with_for_update(of=User)
+    user = db.scalar(user_query)
     if (
         user is None
         or user.is_deleted
@@ -276,6 +285,9 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
             InAppNotification.is_deleted.is_(False),
             ScheduledWork.state == WorkState.SUCCEEDED,
             ScheduledWork.kind == WorkKind.REPORT_RUN,
+            InAppNotification.kind == NotificationKind.REPORT_RUN,
+            InAppNotification.subject_type == "report_run",
+            InAppNotification.subject_id == ScheduledWork.run_id,
             ReportRun.report_id == Report.id,
             ReportRun.is_deleted.is_(False),
             module_filter(db, user, AccessLevel.READ, Report.module_id),
@@ -295,6 +307,9 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
             InAppNotification.recipient_id == user_id,
             InAppNotification.is_deleted.is_(False),
             ScheduledWork.kind == WorkKind.EVENT_REMINDER,
+            InAppNotification.kind == NotificationKind.EVENT_REMINDER,
+            InAppNotification.subject_type == "board_event",
+            InAppNotification.subject_id == BoardEvent.id,
             ScheduledWork.state == WorkState.SUCCEEDED,
             BoardEventReminder.is_deleted.is_(False),
             BoardEventReminder.deleted_at.is_(None),
@@ -321,12 +336,14 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
             InAppNotification.recipient_id == user_id,
             InAppNotification.is_deleted.is_(False),
             ScheduledWork.kind == WorkKind.POST_PUBLISH,
+            InAppNotification.kind == NotificationKind.POST_PUBLISH,
+            InAppNotification.subject_type == "board_post",
+            InAppNotification.subject_id == ScheduledWork.post_id,
             ScheduledWork.state == WorkState.SUCCEEDED,
             BoardPost.is_deleted.is_(False),
             BoardPost.deleted_at.is_(None),
             BoardPost.status == "published",
-            BoardPost.displayed_publication_number
-            == BoardPostRevision.publication_number,
+            BoardPost.displayed_publication_number == BoardPostRevision.publication_number,
             BoardPostRevision.post_id == BoardPost.id,
             BoardPostRevision.is_deleted.is_(False),
             BoardPostRevision.deleted_at.is_(None),
@@ -342,11 +359,13 @@ def current_user_notification_query(db: Session, user_id: UUID) -> Select[tuple[
     )
 
     return select(InAppNotification).where(
+        InAppNotification.recipient_id == user_id,
+        InAppNotification.is_deleted.is_(False),
         or_(
             InAppNotification.id.in_(report_ids),
             InAppNotification.id.in_(reminder_ids),
             InAppNotification.id.in_(post_ids),
-        )
+        ),
     )
 
 
