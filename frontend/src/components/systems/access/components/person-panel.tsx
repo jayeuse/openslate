@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,9 +24,10 @@ import { DiscardChangesDialog } from "./people-fields";
 import { PersonAccess } from "./person-access";
 import { PersonAccount } from "./person-account";
 import { PersonDetails } from "./person-details";
+import { PersonSecurity } from "./person-security";
 import { PersonSessions } from "./person-sessions";
 
-type PanelTab = "details" | "access" | "sessions";
+type PanelTab = "details" | "access" | "sessions" | "security";
 
 /**
  * One person, opened from the directory. On a phone it fills the screen.
@@ -43,12 +45,18 @@ export function PersonPanel({
   onClose: () => void;
 }) {
   const signedInId = useVerifiedWorkspaceUserId();
-  const { hasUnsavedDraft, discardUnsavedDrafts } = useAccessDraftNavigation();
+  const { hasUnsavedDraft, hasPendingOperation, discardUnsavedDrafts } =
+    useAccessDraftNavigation();
+  const [blocked, setBlocked] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
   const [tab, setTab] = useState<PanelTab>("details");
   const person = row?.user ?? null;
 
   function requestClose() {
+    if (hasPendingOperation) {
+      setBlocked(true);
+      return;
+    }
     if (hasUnsavedDraft) setConfirmClose(true);
     else {
       setTab("details");
@@ -98,13 +106,23 @@ export function PersonPanel({
               >
                 <X aria-hidden="true" />
               </SheetClose>
+              {blocked && hasPendingOperation ? (
+                <Alert className="m-5 mb-0">
+                  Finish the current change before closing or switching tabs.
+                </Alert>
+              ) : null}
               <Tabs
                 value={tab}
                 onValueChange={(value) => {
+                  if (hasPendingOperation) {
+                    setBlocked(true);
+                    return;
+                  }
                   if (
                     value === "details" ||
                     value === "access" ||
-                    value === "sessions"
+                    value === "sessions" ||
+                    value === "security"
                   )
                     setTab(value);
                 }}
@@ -113,7 +131,7 @@ export function PersonPanel({
                 <div className="border-b px-5 py-3">
                   <TabsList
                     aria-label="Person"
-                    className="grid w-full grid-cols-3 sm:w-fit"
+                    className="grid w-full grid-cols-4 sm:w-fit"
                   >
                     <TabsTrigger className="min-h-9" value="details">
                       Details
@@ -132,6 +150,9 @@ export function PersonPanel({
                     </TabsTrigger>
                     <TabsTrigger className="min-h-9" value="sessions">
                       Sessions
+                    </TabsTrigger>
+                    <TabsTrigger className="min-h-11" value="security">
+                      Security
                     </TabsTrigger>
                   </TabsList>
                 </div>
@@ -160,6 +181,12 @@ export function PersonPanel({
                   <PersonSessions
                     person={person}
                     self={person.id === signedInId}
+                  />
+                </TabsContent>
+                <TabsContent value="security" className="p-5">
+                  <PersonSecurity
+                    key={`${signedInId}-${person.id}`}
+                    person={person}
                   />
                 </TabsContent>
               </Tabs>

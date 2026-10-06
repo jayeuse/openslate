@@ -5,9 +5,11 @@ import {
   type QueryClient,
   type QueryKey,
 } from "@tanstack/react-query";
+import { getMfaStatus } from "@/lib/mfa-api";
 import { ApiError } from "@/lib/api";
 import {
   getAccessSecurityPolicy,
+  getPersonSecurity,
   listAccessSessions,
   type AccessSecurityPolicy,
   type AccessSessionsRequest,
@@ -50,6 +52,8 @@ export const accessKeys = {
   userAccessAll: ["access", "users", "access"] as const,
   userAccess: (userId: string) =>
     ["access", "users", "access", userId] as const,
+  personSecurity: (userId: string) =>
+    ["access", "users", "security", userId] as const,
   userSessions: (userId: string) =>
     ["access", "users", "sessions", userId] as const,
   groups: ["access", "groups"] as const,
@@ -280,4 +284,28 @@ export function afterAccessSecurityChange(
 }
 export function afterAccessAdminSessionsChange(client: QueryClient) {
   return client.invalidateQueries({ queryKey: accessKeys.adminSessions() });
+}
+
+export const personSecurityOptions = (userId: string, actorId: string) =>
+  queryOptions({
+    queryKey: accessKeys.personSecurity(userId),
+    queryFn: async ({ signal }) => {
+      const [status, actor] = await Promise.all([
+        getPersonSecurity(userId, signal),
+        getMfaStatus(signal),
+      ]);
+      if (actor.user_id !== actorId)
+        throw new Error("Security identity changed.");
+      return { status, assurance: actor.assurance_level };
+    },
+  });
+export function afterPersonSecurityChange(client: QueryClient, userId: string) {
+  return Promise.all([
+    client.fetchQuery({ ...userSessionsOptions(userId), staleTime: 0 }),
+    client.invalidateQueries({ queryKey: accessKeys.adminSessions() }),
+    client.invalidateQueries({
+      queryKey: accessKeys.personSecurity(userId),
+      refetchType: "none",
+    }),
+  ]);
 }

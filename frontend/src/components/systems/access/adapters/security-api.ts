@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 
 const passwordChoices = {
   "12 characters + mixed case": [12, true, false],
@@ -210,4 +210,88 @@ export function endAllAccessRemoteSessions(signal?: AbortSignal) {
     method: "DELETE",
     signal,
   });
+}
+
+const personSecuritySchema = z
+  .object({
+    user_id: z.uuid(),
+    verified_factor_count: z.number().int().nonnegative(),
+    target_eligible: z.boolean(),
+    smtp_configured: z.boolean(),
+  })
+  .strict();
+const effectIdentity = { operation_id: z.uuid(), user_id: z.uuid() };
+const recoveryResponseSchema = z.discriminatedUnion("local_revocation", [
+  z
+    .object({
+      ...effectIdentity,
+      email_request: z.literal("accepted"),
+      local_revocation: z.literal("not_requested"),
+      revoked_sessions: z.null(),
+    })
+    .strict(),
+  z
+    .object({
+      ...effectIdentity,
+      email_request: z.literal("accepted"),
+      local_revocation: z.literal("committed"),
+      revoked_sessions: z.number().int().nonnegative(),
+    })
+    .strict(),
+]);
+const mfaResetResponseSchema = z
+  .object({
+    ...effectIdentity,
+    factors_cleared: z.literal(true),
+    local_revocation: z.literal("committed"),
+    revoked_sessions: z.number().int().nonnegative(),
+  })
+  .strict();
+const partialSecuritySchema = z.object({
+  code: z.literal("security_action_incomplete"),
+  operation_id: z.uuid(),
+  email_request: z.enum(["not_attempted", "accepted", "unconfirmed"]),
+  local_revocation: z.enum(["not_requested", "committed", "unconfirmed"]),
+  factors_cleared: z.boolean().nullable(),
+});
+export type PersonSecurityStatus = z.output<typeof personSecuritySchema>;
+export function getPersonSecurity(userId: string, signal?: AbortSignal) {
+  return apiFetch(
+    `/users/${userId}/security`,
+    personSecuritySchema.refine((value) => value.user_id === userId),
+    { signal, cache: "no-store", refreshOnUnauthorized: false },
+  );
+}
+export function recoverPerson(
+  userId: string,
+  revokeSessions: boolean,
+  signal?: AbortSignal,
+) {
+  return apiFetch(
+    `/users/${userId}/recovery`,
+    recoveryResponseSchema.refine((value) => value.user_id === userId),
+    {
+      method: "POST",
+      signal,
+      body: JSON.stringify({ revoke_sessions: revokeSessions }),
+      refreshOnUnauthorized: false,
+    },
+  );
+}
+export function resetPersonMfa(userId: string, signal?: AbortSignal) {
+  return apiFetch(
+    `/users/${userId}/mfa/reset`,
+    mfaResetResponseSchema.refine((value) => value.user_id === userId),
+    {
+      method: "POST",
+      signal,
+      body: JSON.stringify({}),
+      refreshOnUnauthorized: false,
+    },
+  );
+}
+export function personSecurityPartial(error: unknown) {
+  if (!(error instanceof ApiError)) return null;
+  const partial = partialSecuritySchema.safeParse(error.details);
+  return partial.success ? partial.data : null;
 }

@@ -583,6 +583,24 @@
   },
   {
     "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "getPersonSecurity",
+    "method": "GET",
+    "path": "/api/users/{param}/security"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "recoverPerson",
+    "method": "POST",
+    "path": "/api/users/{param}/recovery"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "resetPersonMfa",
+    "method": "POST",
+    "path": "/api/users/{param}/mfa/reset"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
     "function": "endAllAccessRemoteSessions",
     "method": "DELETE",
     "path": "/api/auth/admin-sessions"

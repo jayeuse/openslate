@@ -4,13 +4,15 @@ from enum import StrEnum
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.dependencies import get_current_user, require_admin
+from app.common.dependencies.auth import CurrentIdentity, get_current_identity
 from app.common.listing import (
     ListQuerySpec,
     StandardListRequest,
@@ -18,6 +20,7 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.database import get_db
+from app.systems.access.auth.cookies import clear_browser_session
 from app.systems.access.policy.scope import explain_access
 from app.systems.access.users.coordination import (
     InvitationConflict,
@@ -34,10 +37,16 @@ from app.systems.access.users.schemas import (
     InvitationResponse,
     UserAccessResponse,
     UserCreate,
+    UserMfaResetRequest,
+    UserMfaResetResponse,
     UserPreferencesResponse,
     UserPreferencesUpdate,
+    UserRecoveryRequest,
+    UserRecoveryResponse,
     UserResponse,
+    UserSecurityResponse,
 )
+from app.systems.access.users.security import read_security, recover_person, reset_person_mfa
 from app.systems.access.users.service import (
     invite_user,
 )
@@ -223,3 +232,70 @@ def create_user(
         user=UserResponse.model_validate(user),
         delivery="email",
     )
+
+
+@router.get("/{user_id}/security", response_model=UserSecurityResponse)
+def get_user_security(
+    user_id: UUID,
+    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+    response: Response,
+) -> UserSecurityResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return read_security(db, identity, request, user_id)
+
+
+@router.post("/{user_id}/recovery", response_model=UserRecoveryResponse)
+def recover_user(
+    user_id: UUID,
+    payload: UserRecoveryRequest,
+    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+    response: Response,
+) -> UserRecoveryResponse | Response:
+    response.headers["Cache-Control"] = "no-store"
+    self_effect = user_id == identity.user.id and payload.revoke_sessions
+    try:
+        result = recover_person(db, identity, request, user_id, payload.revoke_sessions)
+    except HTTPException as error:
+        return security_effect_error(error, self_effect)
+    if self_effect:
+        clear_browser_session(response)
+    return result
+
+
+@router.post("/{user_id}/mfa/reset", response_model=UserMfaResetResponse)
+def reset_user_mfa(
+    user_id: UUID,
+    payload: UserMfaResetRequest,
+    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+    response: Response,
+) -> UserMfaResetResponse | Response:
+    response.headers["Cache-Control"] = "no-store"
+    self_effect = user_id == identity.user.id
+    try:
+        result = reset_person_mfa(db, identity, request, user_id)
+    except HTTPException as error:
+        return security_effect_error(error, self_effect)
+    if self_effect:
+        clear_browser_session(response)
+    return result
+
+
+def security_effect_error(error: HTTPException, self_effect: bool) -> Response:
+    response = JSONResponse(
+        status_code=error.status_code,
+        content={"detail": error.detail},
+        headers={"Cache-Control": "no-store"},
+    )
+    if (
+        self_effect
+        and isinstance(error.detail, dict)
+        and error.detail.get("local_revocation") in {"committed", "unconfirmed"}
+    ):
+        clear_browser_session(response)
+    return response

@@ -12450,6 +12450,51 @@
         "title": "UserListResponse",
         "type": "object"
       },
+      "UserMfaResetRequest": {
+        "additionalProperties": false,
+        "properties": {},
+        "title": "UserMfaResetRequest",
+        "type": "object"
+      },
+      "UserMfaResetResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "factors_cleared": {
+            "const": true,
+            "default": true,
+            "title": "Factors Cleared",
+            "type": "boolean"
+          },
+          "local_revocation": {
+            "const": "committed",
+            "default": "committed",
+            "title": "Local Revocation",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "revoked_sessions": {
+            "minimum": 0.0,
+            "title": "Revoked Sessions",
+            "type": "integer"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "user_id",
+          "revoked_sessions"
+        ],
+        "title": "UserMfaResetResponse",
+        "type": "object"
+      },
       "UserPreferencesResponse": {
         "additionalProperties": false,
         "properties": {
@@ -12497,6 +12542,67 @@
           }
         },
         "title": "UserPreferencesUpdate",
+        "type": "object"
+      },
+      "UserRecoveryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "revoke_sessions": {
+            "default": false,
+            "title": "Revoke Sessions",
+            "type": "boolean"
+          }
+        },
+        "title": "UserRecoveryRequest",
+        "type": "object"
+      },
+      "UserRecoveryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "email_request": {
+            "const": "accepted",
+            "default": "accepted",
+            "title": "Email Request",
+            "type": "string"
+          },
+          "local_revocation": {
+            "enum": [
+              "not_requested",
+              "committed"
+            ],
+            "title": "Local Revocation",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "revoked_sessions": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked Sessions"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "user_id",
+          "local_revocation",
+          "revoked_sessions"
+        ],
+        "title": "UserRecoveryResponse",
         "type": "object"
       },
       "UserResponse": {
@@ -12645,6 +12751,37 @@
         ],
         "title": "UserRole",
         "type": "string"
+      },
+      "UserSecurityResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "smtp_configured": {
+            "title": "Smtp Configured",
+            "type": "boolean"
+          },
+          "target_eligible": {
+            "title": "Target Eligible",
+            "type": "boolean"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "verified_factor_count": {
+            "minimum": 0.0,
+            "title": "Verified Factor Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id",
+          "verified_factor_count",
+          "target_eligible",
+          "smtp_configured"
+        ],
+        "title": "UserSecurityResponse",
+        "type": "object"
       },
       "UserSortField": {
         "enum": [
@@ -28929,6 +29066,64 @@
         ]
       }
     },
+    "/api/users/{user_id}/mfa/reset": {
+      "post": {
+        "operationId": "reset_user_mfa_api_users__user_id__mfa_reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserMfaResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserMfaResetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reset User Mfa",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/api/users/{user_id}/preferences": {
       "get": {
         "operationId": "get_user_preferences_api_users__user_id__preferences_get",
@@ -29033,6 +29228,64 @@
         ]
       }
     },
+    "/api/users/{user_id}/recovery": {
+      "post": {
+        "operationId": "recover_user_api_users__user_id__recovery_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserRecoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRecoveryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Recover User",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/api/users/{user_id}/restore": {
       "post": {
         "operationId": "restore_user_api_users__user_id__restore_post",
@@ -29076,6 +29329,54 @@
           }
         ],
         "summary": "Restore User",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/security": {
+      "get": {
+        "operationId": "get_user_security_api_users__user_id__security_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSecurityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get User Security",
         "tags": [
           "users"
         ]

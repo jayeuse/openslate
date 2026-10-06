@@ -240,13 +240,14 @@ type PendingNavigation = { resume: () => void };
  * warning.
  */
 function useUnsavedDraftGuard(securityBusy: boolean): ReactNode {
-  const { hasUnsavedDraft, discardUnsavedDrafts } = useAccessDraftNavigation();
+  const { hasUnsavedDraft, hasPendingOperation, discardUnsavedDrafts } =
+    useAccessDraftNavigation();
   const [pending, setPending] = useState<PendingNavigation | null>(null);
   const [notice, setNotice] = useState("");
 
   const guard = useCallback(
     (href: string, resume: () => void) => {
-      if (securityBusy) {
+      if (securityBusy || hasPendingOperation) {
         setNotice("Finish the current change before leaving this page.");
         return false;
       }
@@ -257,19 +258,19 @@ function useUnsavedDraftGuard(securityBusy: boolean): ReactNode {
       setPending({ resume });
       return false;
     },
-    [hasUnsavedDraft, securityBusy],
+    [hasUnsavedDraft, securityBusy, hasPendingOperation],
   );
   useWorkspaceNavigationGuard(guard);
 
   useEffect(() => {
-    if (!hasUnsavedDraft && !securityBusy) return;
+    if (!hasUnsavedDraft && !securityBusy && !hasPendingOperation) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [hasUnsavedDraft, securityBusy]);
+  }, [hasUnsavedDraft, securityBusy, hasPendingOperation]);
 
   return (
     <>
@@ -286,6 +287,11 @@ function useUnsavedDraftGuard(securityBusy: boolean): ReactNode {
         onDiscard={() => {
           const next = pending;
           if (!next) return;
+          if (hasPendingOperation) {
+            setNotice("Finish the current change before leaving this page.");
+            setPending(null);
+            return;
+          }
           if (!discardUnsavedDrafts()) {
             setNotice(
               "Your draft could not be cleared from this browser. Keep editing, or try again.",

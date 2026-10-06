@@ -150,3 +150,39 @@ class UserUpdate(BaseModel):
     @classmethod
     def normalize_username(cls, value: Any) -> Any:
         return normalize_username(value)
+
+
+class UserSecurityResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: UUID
+    verified_factor_count: int = Field(ge=0)
+    target_eligible: StrictBool
+    smtp_configured: StrictBool
+
+
+class UserRecoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revoke_sessions: StrictBool = False
+
+
+class UserRecoveryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation_id: UUID
+    user_id: UUID
+    email_request: Literal["accepted"] = "accepted"
+    local_revocation: Literal["not_requested", "committed"]
+    revoked_sessions: int | None = Field(ge=0)
+
+
+class UserMfaResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class UserMfaResetResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation_id: UUID
+    user_id: UUID
+    factors_cleared: Literal[True] = True
+    local_revocation: Literal["committed"] = "committed"
+    revoked_sessions: int = Field(ge=0)
