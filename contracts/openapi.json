@@ -504,6 +504,50 @@
         "title": "AggregateSnapshotResponse",
         "type": "object"
       },
+      "AppearancePreferences": {
+        "additionalProperties": false,
+        "properties": {
+          "keyboard_shortcuts": {
+            "title": "Keyboard Shortcuts",
+            "type": "boolean"
+          },
+          "motion": {
+            "enum": [
+              "system",
+              "reduce"
+            ],
+            "title": "Motion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "motion",
+          "keyboard_shortcuts"
+        ],
+        "title": "AppearancePreferences",
+        "type": "object"
+      },
+      "AppearancePreferencesUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "keyboard_shortcuts": {
+            "default": true,
+            "title": "Keyboard Shortcuts",
+            "type": "boolean"
+          },
+          "motion": {
+            "default": "system",
+            "enum": [
+              "system",
+              "reduce"
+            ],
+            "title": "Motion",
+            "type": "string"
+          }
+        },
+        "title": "AppearancePreferencesUpdate",
+        "type": "object"
+      },
       "AssignTaskAction": {
         "additionalProperties": false,
         "properties": {
@@ -12407,11 +12451,16 @@
         "type": "object"
       },
       "UserPreferencesResponse": {
+        "additionalProperties": false,
         "properties": {
+          "appearance": {
+            "$ref": "#/components/schemas/AppearancePreferences"
+          },
           "theme": {
             "enum": [
               "light",
-              "dark"
+              "dark",
+              "system"
             ],
             "title": "Theme",
             "type": "string"
@@ -12424,7 +12473,8 @@
         },
         "required": [
           "user_id",
-          "theme"
+          "theme",
+          "appearance"
         ],
         "title": "UserPreferencesResponse",
         "type": "object"
@@ -12432,18 +12482,20 @@
       "UserPreferencesUpdate": {
         "additionalProperties": false,
         "properties": {
+          "appearance": {
+            "$ref": "#/components/schemas/AppearancePreferencesUpdate"
+          },
           "theme": {
+            "default": "system",
             "enum": [
               "light",
-              "dark"
+              "dark",
+              "system"
             ],
             "title": "Theme",
             "type": "string"
           }
         },
-        "required": [
-          "theme"
-        ],
         "title": "UserPreferencesUpdate",
         "type": "object"
       },

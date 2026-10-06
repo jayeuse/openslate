@@ -12,6 +12,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.common.normalization import normalize_email, normalize_username
@@ -44,7 +45,18 @@ class User(BaseModel):
             name="ck_users_status",
         ),
         CheckConstraint("role IN ('admin', 'member', 'guest')", name="ck_users_role"),
-        CheckConstraint("theme_preference IN ('light', 'dark')", name="ck_users_theme_preference"),
+        CheckConstraint(
+            "theme_preference IN ('light', 'dark', 'system')", name="ck_users_theme_preference"
+        ),
+        CheckConstraint(
+            "CASE WHEN jsonb_typeof(appearance) = 'object' THEN "
+            "(appearance ?& ARRAY['motion','keyboard_shortcuts'] AND "
+            "appearance - ARRAY['motion','keyboard_shortcuts'] = '{}'::jsonb AND "
+            "appearance ->> 'motion' IN ('system','reduce') AND "
+            "jsonb_typeof(appearance -> 'keyboard_shortcuts') = 'boolean') IS TRUE "
+            "ELSE false END",
+            name="ck_users_appearance",
+        ),
         CheckConstraint(
             "(role = 'guest') = (sponsor_user_id IS NOT NULL AND expires_at IS NOT NULL)",
             name="ck_users_guest",
@@ -59,7 +71,13 @@ class User(BaseModel):
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     role: Mapped[str] = mapped_column(Text, nullable=False)
     theme_preference: Mapped[str] = mapped_column(
-        Text, nullable=False, default="light", server_default=text("'light'")
+        Text, nullable=False, default="system", server_default=text("'system'")
+    )
+    appearance: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=lambda: {"motion": "system", "keyboard_shortcuts": True},
+        server_default=text('\'{"motion": "system", "keyboard_shortcuts": true}\'::jsonb'),
     )
     job_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     sponsor_user_id: Mapped[UUID | None] = mapped_column(

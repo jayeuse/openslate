@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 from app.common.normalization import normalize_email, normalize_username
 from app.systems.access.policy.models import AccessLevel
@@ -44,15 +44,33 @@ class AuthMeResponse(UserResponse):
     access: list[AccessEntryResponse]
 
 
+class AppearancePreferences(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    motion: Literal["system", "reduce"]
+    keyboard_shortcuts: StrictBool
+
+
+class AppearancePreferencesUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    motion: Literal["system", "reduce"] = "system"
+    keyboard_shortcuts: StrictBool = True
+
+
 class UserPreferencesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     user_id: UUID
-    theme: Literal["light", "dark"]
+    theme: Literal["light", "dark", "system"]
+    appearance: AppearancePreferences
 
 
 class UserPreferencesUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    theme: Literal["light", "dark"]
+    theme: Literal["light", "dark", "system"] = "system"
+    appearance: AppearancePreferencesUpdate = Field(default_factory=AppearancePreferencesUpdate)
 
 
 class AccessGroupResponse(BaseModel):

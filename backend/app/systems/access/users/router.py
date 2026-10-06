@@ -117,7 +117,7 @@ def get_user_preferences(
         )
     response.headers["Cache-Control"] = "no-store"
     return UserPreferencesResponse.model_validate(
-        {"user_id": actor.id, "theme": actor.theme_preference}
+        {"user_id": actor.id, "theme": actor.theme_preference, "appearance": actor.appearance}
     )
 
 
@@ -141,8 +141,16 @@ def update_user_preferences(
         # Authentication may have read an older preference. Serialize this
         # independent write before deciding whether a same-value update is harmless.
         db.refresh(actor, with_for_update=True)
-        if actor.theme_preference != payload.theme:
+        changed = False
+        if "theme" in payload.model_fields_set and actor.theme_preference != payload.theme:
             actor.theme_preference = payload.theme
+            changed = True
+        if "appearance" in payload.model_fields_set:
+            appearance = {**actor.appearance, **payload.appearance.model_dump(exclude_unset=True)}
+            if appearance != actor.appearance:
+                actor.appearance = appearance
+                changed = True
+        if changed:
             db.commit()
             db.refresh(actor)
     except SQLAlchemyError as error:
@@ -150,7 +158,7 @@ def update_user_preferences(
         raise HTTPException(status_code=503, detail="Unable to update preferences") from error
     response.headers["Cache-Control"] = "no-store"
     return UserPreferencesResponse.model_validate(
-        {"user_id": actor.id, "theme": actor.theme_preference}
+        {"user_id": actor.id, "theme": actor.theme_preference, "appearance": actor.appearance}
     )
 
 

@@ -179,7 +179,11 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
         assert initial.status_code == 200
         assert anonymous_read.status_code == 401
         assert anonymous_write.status_code == 401
-        assert initial.json() == {"user_id": str(local_id), "theme": "light"}
+        assert initial.json() == {
+            "user_id": str(local_id),
+            "theme": "system",
+            "appearance": {"motion": "system", "keyboard_shortcuts": True},
+        }
         assert "no-store" in initial.headers["Cache-Control"]
         assert client.patch(path, json={"theme": "dark"}).status_code == 401
         csrf = client.cookies.get("openslate_csrf")
@@ -193,9 +197,8 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
                 assert response.status_code == 403
                 assert response.json()["detail"]["code"] == "preferences_owner_mismatch"
         for invalid in (
-            {},
             {"theme": None},
-            {"theme": "system"},
+            {"theme": "sepia"},
             {"theme": "dark", "role": "admin"},
         ):
             assert client.patch(path, json=invalid).status_code == 422
@@ -219,7 +222,11 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
             security_ids = set(db.scalars(select(SecurityEvent.id)))
         saved = client.patch(path, json={"theme": "dark"})
         assert saved.status_code == 200
-        assert saved.json() == {"user_id": str(local_id), "theme": "dark"}
+        assert saved.json() == {
+            "user_id": str(local_id),
+            "theme": "dark",
+            "appearance": {"motion": "system", "keyboard_shortcuts": True},
+        }
         assert "no-store" in saved.headers["Cache-Control"]
         assert client.get(path).json() == saved.json()
         assert "theme_preference" not in client.get("/api/auth/me").json()
@@ -228,7 +235,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
             other = db.get(User, other_id)
             assert user is not None and other is not None
             assert user.theme_preference == "dark"
-            assert other.theme_preference == "light"
+            assert other.theme_preference == "system"
             assert (user.role, user.status, user.email, user.tokens_valid_after) == account
             assert (
                 list(
@@ -243,7 +250,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
             assert set(db.scalars(select(SecurityEvent.id))) == security_ids
             changes = list(db.scalars(audit_query))
             assert [(row.before, row.after, row.performed_by) for row in changes] == [
-                ({"theme_preference": "light"}, {"theme_preference": "dark"}, local_id)
+                ({"theme_preference": "system"}, {"theme_preference": "dark"}, local_id)
             ]
             audit_ids = {row.id for row in changes}
             updated_at = user.updated_at
@@ -263,7 +270,11 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
             user = db.get(User, local_id)
             assert user is not None and user.theme_preference == "dark"
             assert {row.id for row in db.scalars(audit_query)} == audit_ids
-        assert client.get(path).json() == {"user_id": str(local_id), "theme": "dark"}
+        assert client.get(path).json() == {
+            "user_id": str(local_id),
+            "theme": "dark",
+            "appearance": {"motion": "system", "keyboard_shortcuts": True},
+        }
 
         raced = []
 
@@ -282,7 +293,11 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
         try:
             accepted = client.patch(path, json={"theme": "dark"})
             assert raced and accepted.status_code == 200
-            assert accepted.json() == {"user_id": str(local_id), "theme": "dark"}
+            assert accepted.json() == {
+                "user_id": str(local_id),
+                "theme": "dark",
+                "appearance": {"motion": "system", "keyboard_shortcuts": True},
+            }
         finally:
             event.remove(AuditSession, "loaded_as_persistent", change_after_auth_read)
         with Session(owner) as db:
@@ -301,7 +316,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
             db.commit()
 
 
-def test_user_theme_storage_has_a_light_default_and_rejects_invalid_values(
+def test_user_theme_storage_has_a_system_default_and_rejects_invalid_values(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
@@ -317,7 +332,7 @@ def test_user_theme_storage_has_a_light_default_and_rejects_invalid_values(
         db.connection().scalar(
             text("SELECT theme_preference FROM users WHERE id = :id"), {"id": user.id}
         )
-        == "light"
+        == "system"
     )
     column = next(
         item
@@ -325,8 +340,8 @@ def test_user_theme_storage_has_a_light_default_and_rejects_invalid_values(
         if item["name"] == "theme_preference"
     )
     assert column["nullable"] is False
-    assert "light" in column["default"]
-    for invalid in (None, "system"):
+    assert "system" in column["default"]
+    for invalid in (None, "sepia"):
         with pytest.raises(IntegrityError), db.begin_nested():
             db.connection().execute(
                 text("UPDATE users SET theme_preference = :theme WHERE id = :id"),
@@ -336,7 +351,7 @@ def test_user_theme_storage_has_a_light_default_and_rejects_invalid_values(
         db.connection().scalar(
             text("SELECT theme_preference FROM users WHERE id = :id"), {"id": user.id}
         )
-        == "light"
+        == "system"
     )
 
 
