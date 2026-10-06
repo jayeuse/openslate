@@ -28,6 +28,11 @@ import {
   type AccessInvitationSettings,
 } from "../state/api";
 import { loadAllAccessPages } from "../state/pagination";
+import {
+  getAccessSecurityEvent,
+  listAccessSecurityEvents,
+  type AccessSecurityEventsRequest,
+} from "./security-events-api";
 
 // Section-level Access reads share the per-account client cache. Every key
 // starts with "access", so one prefix marks the area stale. Access lists are
@@ -43,6 +48,9 @@ import { loadAllAccessPages } from "../state/pagination";
 export const accessKeys = {
   all: ["access"] as const,
   security: () => ["access", "security"] as const,
+  securityEvents: () => ["access", "security-events"] as const,
+  securityEventList: (request: AccessSecurityEventsRequest) =>
+    ["access", "security-events", request] as const,
   adminSessions: () => ["access", "admin-sessions"] as const,
   adminSessionList: (request: AccessSessionsRequest) =>
     ["access", "admin-sessions", request] as const,
@@ -201,7 +209,7 @@ async function invalidateAll(
 
 // Privileged-read refusal belongs to the verified account's existing client.
 // Ordinary successes cannot clear it; only the owner's explicit fresh Retry can.
-type SecurityRead = "policy" | "sessions";
+type SecurityRead = "policy" | "sessions" | "events";
 type ReadAdmission = { sequence: number; accepted: number; denied: boolean };
 const securityReads = new WeakMap<
   QueryClient,
@@ -213,6 +221,7 @@ function securityRead(client: QueryClient, kind: SecurityRead) {
     reads = {
       policy: { sequence: 0, accepted: 0, denied: false },
       sessions: { sequence: 0, accepted: 0, denied: false },
+      events: { sequence: 0, accepted: 0, denied: false },
     };
     securityReads.set(client, reads);
   }
@@ -249,10 +258,11 @@ async function readSecurity<T>(
       !signal.aborted &&
       sequence >= admission.accepted &&
       error instanceof ApiError &&
-      error.status === 403
+      (error.status === 401 || error.status === 403)
     ) {
       securityRead(client, "policy").denied = true;
       securityRead(client, "sessions").denied = true;
+      securityRead(client, "events").denied = true;
     }
     throw error;
   }
@@ -276,6 +286,26 @@ export const accessAdminSessionsOptions = (
         listAccessSessions(request, signal),
       ),
   });
+export const accessSecurityEventsOptions = (
+  client: QueryClient,
+  request: AccessSecurityEventsRequest,
+) =>
+  queryOptions({
+    queryKey: accessKeys.securityEventList(request),
+    queryFn: ({ signal }) =>
+      readSecurity(client, "events", signal, () =>
+        listAccessSecurityEvents(request, signal),
+      ),
+  });
+export function readAccessSecurityEvent(
+  client: QueryClient,
+  eventId: string,
+  signal: AbortSignal,
+) {
+  return readSecurity(client, "events", signal, () =>
+    getAccessSecurityEvent(eventId, signal),
+  );
+}
 export function afterAccessSecurityChange(
   client: QueryClient,
   policy: AccessSecurityPolicy,

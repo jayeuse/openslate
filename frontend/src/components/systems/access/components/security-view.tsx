@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useReducer,
   useRef,
   useState,
   type MouseEvent,
@@ -62,6 +63,7 @@ import {
   type ConfirmState,
 } from "./security-dialogs";
 import { SecurityPanel, SecurityPolicyForm } from "./security-panel";
+import { SecurityEventsView } from "./security-events-view";
 
 type SecurityViewProps = {
   active: boolean;
@@ -109,10 +111,16 @@ export function SecurityView({
   const mfaOpener = useRef<HTMLButtonElement | null>(null);
   const confirmOpener = useRef<HTMLElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
+  const [, notifySecurityReads] = useReducer(
+    (version: number) => version + 1,
+    0,
+  );
+  const refusalRechecked = useRef(false);
   const mfa = useMfaFlow();
   const cancelMfa = mfa.cancel;
   const securityDenied = isAccessSecurityDenied(queryClient, "policy");
   const sessionsDenied = isAccessSecurityDenied(queryClient, "sessions");
+  const eventsDenied = isAccessSecurityDenied(queryClient, "events");
   const securityQuery = useQuery({
     ...accessSecurityOptions(queryClient),
     enabled: active && admitted && !securityDenied,
@@ -190,12 +198,14 @@ export function SecurityView({
       onBusyChange(false);
       void queryClient.cancelQueries({ queryKey: accessKeys.security() });
       void queryClient.cancelQueries({ queryKey: accessKeys.adminSessions() });
+      void queryClient.cancelQueries({ queryKey: accessKeys.securityEvents() });
     }
   }, [active, admitted, onBusyChange, queryClient]);
   useEffect(() => {
     for (const [denied, queryKey] of [
       [securityDenied, accessKeys.security()],
       [sessionsDenied, accessKeys.adminSessions()],
+      [eventsDenied, accessKeys.securityEvents()],
     ] as const) {
       if (denied)
         void queryClient
@@ -203,7 +213,52 @@ export function SecurityView({
           .then(() => queryClient.removeQueries({ queryKey }));
     }
     if (sessionsDenied) setConfirm(null);
-  }, [securityDenied, sessionsDenied, queryClient]);
+  }, [securityDenied, sessionsDenied, eventsDenied, queryClient]);
+  useEffect(() => {
+    if (!active || !admitted) return;
+    if (!securityDenied && !sessionsDenied && !eventsDenied) {
+      refusalRechecked.current = false;
+      return;
+    }
+    if (!refusalRechecked.current) {
+      let current = true;
+      const readEpoch = epoch.current;
+      queueMicrotask(() => {
+        if (
+          !current ||
+          !mounted.current ||
+          !admission.current.active ||
+          !admission.current.admitted ||
+          epoch.current !== readEpoch ||
+          refusalRechecked.current ||
+          (!isAccessSecurityDenied(queryClient, "policy") &&
+            !isAccessSecurityDenied(queryClient, "sessions") &&
+            !isAccessSecurityDenied(queryClient, "events"))
+        )
+          return;
+        refusalRechecked.current = true;
+        requestSessionRecheck();
+      });
+      return () => {
+        current = false;
+      };
+    }
+  }, [
+    active,
+    admitted,
+    securityDenied,
+    sessionsDenied,
+    eventsDenied,
+    queryClient,
+  ]);
+  const onEventsReadChange = useCallback(() => {
+    if (
+      mounted.current &&
+      admission.current.active &&
+      admission.current.admitted
+    )
+      notifySecurityReads();
+  }, []);
 
   function clearDraft() {
     if (operation.current) return false;
@@ -418,23 +473,28 @@ export function SecurityView({
     ])
       .then(async () => {
         if (!owns(next)) return;
-        const [policy, sessions] = await Promise.allSettled([
-          queryClient.fetchQuery({
-            ...accessSecurityOptions(queryClient),
-            staleTime: 0,
-          }),
-          queryClient.fetchQuery({
-            ...accessAdminSessionsOptions(queryClient, sessionRequest),
-            staleTime: 0,
-          }),
+        const [policy] = await Promise.allSettled([
+          isAccessSecurityDenied(queryClient, "policy")
+            ? Promise.resolve(null)
+            : queryClient.fetchQuery({
+                ...accessSecurityOptions(queryClient),
+                staleTime: 0,
+              }),
+          isAccessSecurityDenied(queryClient, "sessions")
+            ? Promise.resolve(null)
+            : queryClient.fetchQuery({
+                ...accessAdminSessionsOptions(queryClient, sessionRequest),
+                staleTime: 0,
+              }),
         ]);
         if (!owns(next)) return;
-        if (policy.status === "fulfilled") {
-          setAccessSecurityDenied(queryClient, "policy", false);
+        if (
+          policy.status === "fulfilled" &&
+          policy.value !== null &&
+          !isAccessSecurityDenied(queryClient, "policy")
+        ) {
           setSecurityRefreshRequired(false);
         } else setSecurityRefreshRequired(true);
-        if (sessions.status === "fulfilled")
-          setAccessSecurityDenied(queryClient, "sessions", false);
       })
       .finally(() => finish(next));
   }, [active, admitted, queryClient, sessionRequest, begin, finish, owns]);
@@ -698,6 +758,12 @@ export function SecurityView({
           }}
           onRetry={() => void retrySessions()}
           actions={{ endSession, endAllRemoteSessions }}
+        />
+        <SecurityEventsView
+          active={active}
+          admitted={admitted}
+          pending={livePending}
+          onReadChange={onEventsReadChange}
         />
       </fieldset>
       <Dialog

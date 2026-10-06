@@ -52,7 +52,7 @@ const accessViews = {
   security: {
     title: "Security",
     description:
-      "Review account policy and sign-in sessions across your organization.",
+      "Review account policy, sign-in sessions and recorded security events across your organization.",
   },
   overview: {
     title: "Access overview",

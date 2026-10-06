@@ -1,6 +1,7 @@
 """Provider password exchange admission and denial behavior."""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -12,7 +13,7 @@ from app.core.integrations.supabase_auth import (
     ProviderTokens,
 )
 from app.systems.access.identity.contracts import InvalidCredentials, IssuedSession
-from app.systems.access.identity.models import IdentityRateLimitBucket
+from app.systems.access.identity.models import IdentityRateLimitBucket, IdentitySession
 
 
 def test_password_grant_admits_only_the_bound_application_session(
@@ -25,6 +26,7 @@ def test_password_grant_admits_only_the_bound_application_session(
     tokens = ProviderTokens("provider-access", "provider-refresh", uuid4(), 600)
     issued = IssuedSession("provider-access", "local-handle", "csrf", uuid4(), False)
     client.password_grant.return_value = tokens
+    db.get.return_value = SimpleNamespace(user_id=uuid4())
     admit = Mock(return_value=issued)
     monkeypatch.setattr(provider_login, "admit_provider_session", admit)
 
@@ -65,5 +67,7 @@ def test_wrong_password_records_rate_limit_without_creating_local_session(
             db, "person@example.test", "wrong", client, source="127.0.0.1", now=now
         )
 
-    record.assert_called_once_with(db, "fingerprint", bucket, now, policy=unit_workspace_policy)
-    db.add.assert_not_called()
+    record.assert_called_once_with(
+        db, "fingerprint", bucket, now, policy=unit_workspace_policy, login=True, source="127.0.0.1"
+    )
+    assert all(not isinstance(call.args[0], IdentitySession) for call in db.add.call_args_list)

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 from app.common.dependencies import get_current_user, require_fresh_exact_admin
 from app.common.dependencies.auth import CurrentIdentity, get_current_identity
@@ -20,6 +21,9 @@ from app.core.integrations.supabase_auth import (
 )
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
+from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+from app.systems.manage.audit.security_failures import canonical_source
+from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import (
     clamp_session_deadlines,
@@ -160,6 +164,9 @@ def update_workspace_security(
                 },
             )
     old_deadlines = snapshot_deadlines(profile)
+    actual_changes = sorted(
+        field for field in changed if getattr(profile, field) != getattr(payload, field)
+    )
     for field in changed:
         setattr(profile, field, getattr(payload, field))
     profile.revision += 1
@@ -200,6 +207,24 @@ def update_workspace_security(
             raise HTTPException(401, detail="Invalid authentication credentials")
         if changed & {"session_timeout_minutes", "session_absolute_lifetime_minutes"}:
             clamp_session_deadlines(db, old_deadlines, profile)
+        if actual_changes:
+            append_security_event(
+                db,
+                SecurityEventIngestRequest(
+                    event_type="workspace.security_policy_change",
+                    outcome="success",
+                    source="workspace.security_policy",
+                    operation_id=uuid7(),
+                    actor_id=actor_id,
+                    metadata={
+                        "changed_fields": actual_changes,
+                        "revision": profile.revision,
+                        "ip_address": canonical_source(
+                            request.client.host if request.client else None
+                        ),
+                    },
+                ),
+            )
         db.commit()
     except SQLAlchemyError as error:
         db.rollback()

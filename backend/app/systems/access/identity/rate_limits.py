@@ -4,14 +4,19 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from hmac import digest as hmac_digest
 from math import ceil
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 from app.common.normalization import normalize_email, normalize_username
 from app.core.base_model import utc_now
 from app.core.config import get_settings
 from app.systems.access.identity.models import IdentityRateLimitBucket
+from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+from app.systems.manage.audit.security_failures import canonical_source
+from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.models import WorkspaceProfile
 
 LOGIN_WINDOW = timedelta(minutes=15)
@@ -78,6 +83,9 @@ def login_retry_after(
     bucket: IdentityRateLimitBucket | None,
     timestamp: datetime,
     profile: WorkspaceProfile,
+    *,
+    source: str | None = None,
+    actor_id: UUID | None = None,
 ) -> int | None:
     if bucket is None:
         return None
@@ -88,6 +96,7 @@ def login_retry_after(
         and bucket.attempt_count >= profile.login_failed_attempt_threshold
     ):
         bucket.blocked_until = timestamp + timedelta(minutes=profile.login_cooldown_minutes)
+        _record_login_lockout(db, timestamp, source, actor_id)
         db.commit()
         return profile.login_cooldown_minutes * 60
     return None
@@ -100,12 +109,18 @@ def record_attempt(
     timestamp: datetime,
     *,
     policy: WorkspaceProfile | None = None,
+    login: bool = False,
+    source: str | None = None,
+    actor_id: UUID | None = None,
 ) -> None:
     window = timedelta(minutes=policy.login_window_minutes) if policy is not None else LOGIN_WINDOW
     cooldown = (
         timedelta(minutes=policy.login_cooldown_minutes) if policy is not None else LOGIN_COOLDOWN
     )
     threshold = policy.login_failed_attempt_threshold if policy is not None else 5
+    was_blocked = (
+        bucket is not None and bucket.blocked_until is not None and bucket.blocked_until > timestamp
+    )
     if bucket is None:
         bucket = IdentityRateLimitBucket(
             fingerprint=fingerprint,
@@ -122,6 +137,27 @@ def record_attempt(
         bucket.attempt_count += 1
     if bucket.attempt_count >= threshold:
         bucket.blocked_until = timestamp + cooldown
+        if login and not was_blocked:
+            _record_login_lockout(db, timestamp, source, actor_id)
+
+
+def _record_login_lockout(
+    db: Session, timestamp: datetime, source: str | None, actor_id: UUID | None
+) -> None:
+    append_security_event(
+        db,
+        SecurityEventIngestRequest(
+            event_type="identity.lockout",
+            outcome="denied",
+            source="identity.login_budget",
+            operation_id=uuid7(),
+            occurred_at=timestamp,
+            actor_id=actor_id,
+            subject_id=actor_id,
+            reason="failed_attempt_limit",
+            metadata={"ip_address": canonical_source(source)},
+        ),
+    )
 
 
 def recovery_request_permitted(

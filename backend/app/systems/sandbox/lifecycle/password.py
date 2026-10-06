@@ -61,7 +61,9 @@ class ProviderPasswordGrantClient:
             tokens = self._client.password_grant(email, password)
         except InvalidProviderCredentials as error:
             if fingerprint is not None:
-                rate_limits.record_attempt(self._db, fingerprint, bucket, timestamp, policy=policy)
+                rate_limits.record_attempt(
+                    self._db, fingerprint, bucket, timestamp, policy=policy, login=True
+                )
                 self._db.commit()
             raise LifecycleInvalidCredentials("The supplied password is invalid") from error
         except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
@@ -90,12 +92,16 @@ class ProviderPasswordGrantClient:
             return local.id
         except InvalidProviderCredentials as error:
             if fingerprint is not None:
-                rate_limits.record_attempt(self._db, fingerprint, bucket, timestamp, policy=policy)
+                rate_limits.record_attempt(
+                    self._db, fingerprint, bucket, timestamp, policy=policy, login=True
+                )
                 self._db.commit()
             raise LifecycleInvalidCredentials("The supplied password is invalid") from error
         except LifecycleInvalidCredentials:
             if fingerprint is not None:
-                rate_limits.record_attempt(self._db, fingerprint, bucket, timestamp, policy=policy)
+                rate_limits.record_attempt(
+                    self._db, fingerprint, bucket, timestamp, policy=policy, login=True
+                )
                 self._db.commit()
             raise
         except (SupabaseAuthUnavailable, SQLAlchemyError) as error:

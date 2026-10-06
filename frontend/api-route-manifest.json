@@ -636,6 +636,18 @@
     "path": "/api/workspace/security"
   },
   {
+    "adapter": "frontend/src/components/systems/access/adapters/security-events-api.ts",
+    "function": "getAccessSecurityEvent",
+    "method": "GET",
+    "path": "/api/security-events/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/adapters/security-events-api.ts",
+    "function": "listAccessSecurityEvents",
+    "method": "GET",
+    "path": "/api/security-events"
+  },
+  {
     "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
     "function": "getManageWorkspace",
     "method": "GET",

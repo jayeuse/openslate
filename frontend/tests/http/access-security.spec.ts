@@ -530,7 +530,10 @@ test("Session search, filters and sorting use the full server collection", async
   await expect(table.locator("tbody tr")).toHaveCount(1);
   await expect(table).toContainText("Unknown · Unknown");
   await search.fill("");
-  await page.getByRole("button", { name: "More filters", exact: true }).click();
+  await page
+    .getByRole("region", { name: "Search sessions controls", exact: true })
+    .getByRole("button", { name: "More filters", exact: true })
+    .click();
   await page
     .getByLabel("Session device", { exact: true })
     .selectOption("Unknown");

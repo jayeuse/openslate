@@ -42,6 +42,7 @@ def _configure_api(
         application.dependency_overrides[get_db] = lambda: database
     return TestClient(application)
 
+
 def test_exact_admin_can_list_detail_and_bounded_export(api: FastAPI) -> None:
     event = _make_event()
     database = _SecurityEventDatabase([event])
@@ -60,14 +61,15 @@ def test_exact_admin_can_list_detail_and_bounded_export(api: FastAPI) -> None:
     assert "password" not in json.dumps(export.json()).lower()
 
 
-@pytest.mark.parametrize("path", [
-    "/api/security-events",
-    "/api/security-events/export",
-    f"/api/security-events/{uuid7()}",
-])
-def test_non_admin_cannot_list_detail_or_export_security_events(
-    api: FastAPI, path: str
-) -> None:
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/security-events",
+        "/api/security-events/export",
+        f"/api/security-events/{uuid7()}",
+    ],
+)
+def test_non_admin_cannot_list_detail_or_export_security_events(api: FastAPI, path: str) -> None:
     client = _configure_api(
         api,
         user=_user("operator"),

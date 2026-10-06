@@ -26,6 +26,13 @@ from tests.auth.test_auth_router_contracts import _user
 from tests.auth.test_mfa import mfa_context  # noqa: F401
 
 
+@pytest.fixture(autouse=True)
+def event_writers(monkeypatch):
+    # Real committed event behavior is covered by provider_outcomes_integration.
+    monkeypatch.setattr(provider_actions.audit_service, "append_committed_security_event", Mock())
+    monkeypatch.setattr(provider_actions.audit_service, "append_security_event", Mock())
+
+
 def _request() -> Request:
     return Request(
         {
@@ -100,7 +107,9 @@ def test_recovery_request_has_the_same_provider_path_for_unknown_email(
     provider = Mock()
     monkeypatch.setattr(auth_router, "get_supabase_auth_client", lambda: provider)
     monkeypatch.setattr(auth_router, "_require_browser_origin", lambda _request: None)
-    monkeypatch.setattr(auth_router, "recovery_request_permitted", lambda *_a, **_kw: True)
+    monkeypatch.setattr(
+        provider_actions.rate_limits, "recovery_request_permitted", lambda *_a, **_kw: True
+    )
     payload = RecoveryRequest(email="person@example.test")
 
     first = auth_router.request_recovery(payload, _request(), db)
@@ -121,7 +130,7 @@ def test_password_change_stops_before_provider_grant_when_backend_budget_blocked
         cleanup_expired_buckets=lambda *_a, **_kw: None,
         login_fingerprint=lambda *_a: "fingerprint",
         lock_bucket=lambda *_a: blocked,
-        login_retry_after=lambda *_a: 60,
+        login_retry_after=lambda *_a, **_kw: 60,
     )
     monkeypatch.setattr(provider_actions, "rate_limits", budget, raising=False)
 

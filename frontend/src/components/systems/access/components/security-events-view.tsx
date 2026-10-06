@@ -1,0 +1,1108 @@
+"use client";
+
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type MouseEvent,
+} from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { RefreshCw, X } from "lucide-react";
+import { z } from "zod";
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Field, FieldError, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { LoadingRegion } from "@/components/ui/loading-region";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import { PaginationControls } from "@/components/ui/pagination-controls";
+import { SearchFilterToolbar } from "@/components/ui/search-filter-toolbar";
+import { SearchSelect } from "@/components/ui/search-select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ApiError } from "@/lib/api";
+import {
+  accessKeys,
+  accessSecurityEventsOptions,
+  isAccessSecurityDenied,
+  readAccessSecurityEvent,
+  setAccessSecurityDenied,
+  userListOptions,
+} from "../adapters/access-queries";
+import {
+  defaultSecurityEventsRequest,
+  type AccessSecurityEvent,
+  type AccessSecurityEventOutcome,
+} from "../adapters/security-events-api";
+
+const eventLabels: Record<string, string> = {
+  "identity.sign_in": "Sign-in",
+  "identity.sign_in_failure": "Sign-in failure",
+  "identity.lockout": "Sign-in lockout",
+  "identity.ip_blocked": "Address blocked",
+  "identity.password_change": "Password change",
+  "identity.recovery_request": "Recovery request",
+  "identity.recovery_complete": "Recovery completion",
+  "workspace.security_policy_change": "Account policy change",
+};
+const outcomes = {
+  attempt: { label: "Attempt", variant: "outline" },
+  success: { label: "Success", variant: "success" },
+  denied: { label: "Denied", variant: "warning" },
+  failure: { label: "Failure", variant: "destructive" },
+  partial: { label: "Partial", variant: "warning" },
+} as const;
+const stageLabels: Record<string, string> = {
+  provider_update: "Provider password update",
+  provider_request: "Provider request",
+  provider_accepted: "Provider request accepted",
+  provider_request_unconfirmed: "Provider request could not be confirmed",
+  event_commit: "Local event recording",
+  local_commit: "Local changes",
+};
+const reasonLabels: Record<string, string> = {
+  request_accepted: "Recovery request accepted",
+  credentials_rejected: "Sign-in was not accepted",
+  source_not_allowed: "Address is outside the allowed list",
+  failed_attempt_limit: "Failed-attempt limit reached",
+};
+const policyLabels: Record<string, string> = {
+  session_timeout_minutes: "Session timeout",
+  session_absolute_lifetime_minutes: "Session lifetime",
+  session_concurrent_limit: "Maximum sessions",
+  password_min_length: "Minimum password length",
+  password_require_mixed_case: "Mixed-case password requirement",
+  password_require_number: "Password number requirement",
+  mfa_require_admin: "Administrator MFA requirement",
+  mfa_require_member: "Member MFA requirement",
+  mfa_require_guest: "Guest MFA requirement",
+  mfa_grace_days: "MFA enrollment grace",
+  login_failed_attempt_threshold: "Failed-attempt threshold",
+  login_window_minutes: "Attempt window",
+  login_cooldown_minutes: "Lockout duration",
+  ip_allow_list: "Allowed addresses",
+};
+const sorts = [
+  { value: "newest", label: "Newest first" },
+  { value: "oldest", label: "Oldest first" },
+  { value: "event", label: "Event name" },
+  { value: "outcome", label: "Outcome" },
+] as const;
+type EventSort = (typeof sorts)[number]["value"];
+type Filters = {
+  search: string;
+  type: string;
+  exactType: string;
+  outcome: AccessSecurityEventOutcome | "";
+  person: string;
+  from: string;
+  through: string;
+  sort: EventSort;
+};
+const initialFilters: Filters = {
+  search: "",
+  type: "",
+  exactType: "",
+  outcome: "",
+  person: "",
+  from: "",
+  through: "",
+  sort: "newest",
+};
+type Detail =
+  | { id: string; status: "loading" | "error" }
+  | { id: string; status: "ready"; event: AccessSecurityEvent };
+type SecurityEventsViewProps = {
+  active: boolean;
+  admitted: boolean;
+  pending: boolean;
+  onReadChange: () => void;
+};
+
+function eventName(event: AccessSecurityEvent) {
+  if (event.event_type === "identity.sign_in" && event.outcome === "success")
+    return "Sign-in accepted";
+  return Object.hasOwn(eventLabels, event.event_type)
+    ? eventLabels[event.event_type]
+    : event.event_type;
+}
+function utcTime(value: string) {
+  return `${new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "UTC",
+  }).format(new Date(value))} UTC`;
+}
+function address(event: AccessSecurityEvent) {
+  const parsed = z
+    .union([z.ipv4(), z.ipv6()])
+    .safeParse(event.metadata.ip_address);
+  return parsed.success ? parsed.data : "Address unknown";
+}
+function recordedPerson(event: AccessSecurityEvent) {
+  return event.subject_id ?? event.actor_id;
+}
+function Outcome({ outcome }: { outcome: AccessSecurityEventOutcome }) {
+  const style = outcomes[outcome];
+  return <Badge variant={style.variant}>{style.label}</Badge>;
+}
+function subscribeWide(notify: () => void) {
+  const query = window.matchMedia("(min-width: 64rem)");
+  query.addEventListener("change", notify);
+  return () => query.removeEventListener("change", notify);
+}
+
+/** Read-only child: the Security root retains draft, write and authority ownership. */
+export function SecurityEventsView({
+  active,
+  admitted,
+  pending,
+  onReadChange,
+}: SecurityEventsViewProps) {
+  const client = useQueryClient();
+  const id = useId();
+  const [filters, setFilters] = useState(initialFilters);
+  const [offset, setOffset] = useState(0);
+  const [personMode, setPersonMode] = useState<"directory" | "id">("directory");
+  const [directoryRequested, setDirectoryRequested] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const detailController = useRef<AbortController | null>(null);
+  const detailOpener = useRef<HTMLElement | null>(null);
+  const fallbackFocus = useRef<HTMLElement | null>(null);
+  const mounted = useRef(false);
+  const refreshOwner = useRef<{
+    queryKey: ReturnType<typeof accessKeys.securityEventList>;
+  } | null>(null);
+  const notifiedDenied = useRef(false);
+  const authority = useRef({ active, admitted });
+  const wide = useSyncExternalStore(
+    subscribeWide,
+    () => window.matchMedia("(min-width: 64rem)").matches,
+    () => false,
+  );
+  const denied = isAccessSecurityDenied(client, "events");
+  const uuidError =
+    filters.person && !z.uuid().safeParse(filters.person).success
+      ? "Enter a valid recorded person ID."
+      : "";
+  const typeError =
+    filters.type === "other" && !filters.exactType.trim()
+      ? "Enter an exact event type."
+      : "";
+  const dayError =
+    (filters.from && !z.iso.date().safeParse(filters.from).success) ||
+    (filters.through && !z.iso.date().safeParse(filters.through).success)
+      ? "Enter a valid UTC day."
+      : filters.from && filters.through && filters.from > filters.through
+        ? "Through must be on or after From."
+        : "";
+  const invalid = Boolean(uuidError || typeError || dayError);
+  const nextDay =
+    filters.through && !dayError
+      ? new Date(
+          Date.parse(`${filters.through}T00:00:00.000Z`) + 86_400_000,
+        ).toISOString()
+      : "";
+  const request = {
+    ...defaultSecurityEventsRequest,
+    offset,
+    search: filters.search.trim(),
+    event_type:
+      filters.type === "other" ? filters.exactType.trim() : filters.type,
+    outcome: filters.outcome,
+    person_id: filters.person,
+    occurred_after:
+      filters.from && !dayError ? `${filters.from}T00:00:00.000Z` : "",
+    occurred_before: nextDay,
+    sort_by:
+      filters.sort === "event"
+        ? ("event_type" as const)
+        : filters.sort === "outcome"
+          ? ("outcome" as const)
+          : ("occurred_at" as const),
+    sort_order:
+      filters.sort === "oldest" ||
+      filters.sort === "event" ||
+      filters.sort === "outcome"
+        ? ("asc" as const)
+        : ("desc" as const),
+  };
+  const stamp = JSON.stringify(request);
+  const currentStamp = useRef(stamp);
+  const events = useQuery({
+    ...accessSecurityEventsOptions(client, request),
+    enabled: active && admitted && !denied && !invalid,
+  });
+  const people = useQuery({
+    ...userListOptions("include"),
+    enabled: directoryRequested && active && admitted && !denied,
+  });
+  const page = denied || invalid ? undefined : events.data;
+  const narrowed = Boolean(
+    filters.search.trim() ||
+    filters.type ||
+    filters.outcome ||
+    filters.person ||
+    filters.from ||
+    filters.through,
+  );
+  const filterCount = [
+    filters.type,
+    filters.outcome,
+    filters.person,
+    filters.from,
+    filters.through,
+  ].filter(Boolean).length;
+  const personOptions = [
+    { value: "", label: "All people" },
+    ...(people.data?.map((person) => ({
+      value: person.id,
+      label: person.display_name || person.username,
+    })) ?? []),
+    ...(filters.person &&
+    !people.data?.some((person) => person.id === filters.person) &&
+    !uuidError
+      ? [{ value: filters.person, label: "Recorded person" }]
+      : []),
+  ];
+
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      refreshOwner.current = null;
+      detailController.current?.abort();
+    };
+  }, []);
+  useLayoutEffect(() => {
+    authority.current = { active, admitted };
+    currentStamp.current = stamp;
+    if (pending && refreshOwner.current) {
+      const owner = refreshOwner.current;
+      refreshOwner.current = null;
+      setRefreshing(false);
+      void client.cancelQueries({ queryKey: owner.queryKey, exact: true });
+    }
+    if (!active || !admitted || denied) {
+      detailController.current?.abort();
+      detailController.current = null;
+      setDetail(null);
+    }
+  }, [active, admitted, client, denied, pending, stamp]);
+  useEffect(() => {
+    if (!denied) {
+      notifiedDenied.current = false;
+      return;
+    }
+    if (!active || !admitted || notifiedDenied.current) return;
+    if (
+      events.error instanceof ApiError &&
+      (events.error.status === 401 || events.error.status === 403)
+    ) {
+      notifiedDenied.current = true;
+      onReadChange();
+    }
+  }, [active, admitted, denied, events.error, onReadChange]);
+
+  function changeFilters(patch: Partial<Filters>) {
+    if (pending) return;
+    setFilters((current) => ({ ...current, ...patch }));
+    setOffset(0);
+  }
+  function closeDetail() {
+    detailController.current?.abort();
+    detailController.current = null;
+    setDetail(null);
+  }
+  const loadDetail = useCallback(
+    async (eventId: string, opener?: MouseEvent<HTMLElement>) => {
+      if (pending || denied || !active || !admitted) return;
+      detailController.current?.abort();
+      const controller = new AbortController();
+      detailController.current = controller;
+      if (opener) detailOpener.current = opener.currentTarget;
+      setDetail({ id: eventId, status: "loading" });
+      const owns = () =>
+        mounted.current &&
+        detailController.current === controller &&
+        authority.current.active &&
+        authority.current.admitted &&
+        !controller.signal.aborted;
+      try {
+        const event = await readAccessSecurityEvent(
+          client,
+          eventId,
+          controller.signal,
+        );
+        if (owns()) setDetail({ id: eventId, status: "ready", event });
+      } catch (error) {
+        if (!owns()) return;
+        setDetail({ id: eventId, status: "error" });
+        if (
+          isAccessSecurityDenied(client, "events") &&
+          error instanceof ApiError &&
+          (error.status === 401 || error.status === 403)
+        )
+          onReadChange();
+      }
+    },
+    [active, admitted, client, denied, onReadChange, pending],
+  );
+  async function refresh(retry: boolean) {
+    if (pending || refreshing || invalid || !active || !admitted) return;
+    const options = accessSecurityEventsOptions(client, request);
+    const owner = { queryKey: options.queryKey };
+    refreshOwner.current = owner;
+    const readStamp = stamp;
+    setRefreshing(true);
+    try {
+      await client.cancelQueries({ queryKey: options.queryKey, exact: true });
+      await client.fetchQuery({ ...options, staleTime: 0 });
+      if (
+        mounted.current &&
+        refreshOwner.current === owner &&
+        authority.current.active &&
+        authority.current.admitted &&
+        currentStamp.current === readStamp &&
+        retry
+      ) {
+        setAccessSecurityDenied(client, "events", false);
+        onReadChange();
+      }
+    } catch {
+      // The query owns the safe same-key failure state. No raw server text.
+    } finally {
+      if (mounted.current && refreshOwner.current === owner) {
+        refreshOwner.current = null;
+        setRefreshing(false);
+      }
+    }
+  }
+  const columns = useMemo<DataTableColumn<AccessSecurityEvent>[]>(
+    () => [
+      {
+        id: "time",
+        header: "Time (UTC)",
+        cell: ({ row }) => (
+          <time dateTime={row.original.occurred_at}>
+            {utcTime(row.original.occurred_at)}
+          </time>
+        ),
+      },
+      {
+        id: "event",
+        header: "Event",
+        cell: ({ row }) => (
+          <span className="break-all">{eventName(row.original)}</span>
+        ),
+      },
+      {
+        id: "outcome",
+        header: "Outcome",
+        cell: ({ row }) => <Outcome outcome={row.original.outcome} />,
+      },
+      {
+        id: "person",
+        header: "Person",
+        cell: ({ row }) => (
+          <span title={recordedPerson(row.original) ?? undefined}>
+            {recordedPerson(row.original)
+              ? "Recorded person"
+              : "Person not identified"}
+          </span>
+        ),
+      },
+      {
+        id: "address",
+        header: "Network address",
+        cell: ({ row }) => (
+          <span className="break-all">{address(row.original)}</span>
+        ),
+      },
+      {
+        id: "details",
+        header: "Details",
+        cell: ({ row }) => (
+          <Button
+            variant="outline"
+            className="min-h-11"
+            aria-label={`Details for ${eventName(row.original)} at ${utcTime(row.original.occurred_at)}`}
+            onClick={(event) => void loadDetail(row.original.id, event)}
+          >
+            Details
+          </Button>
+        ),
+      },
+    ],
+    [loadDetail],
+  );
+  if (!active || !admitted) return null;
+  return (
+    <section
+      aria-labelledby={`${id}-heading`}
+      className="min-w-0 space-y-4"
+      ref={fallbackFocus}
+      tabIndex={-1}
+    >
+      <Card>
+        <CardHeader className="flex flex-wrap items-start justify-between gap-3 border-b">
+          <div className="min-w-0 space-y-1">
+            <CardTitle id={`${id}-heading`}>Security events</CardTitle>
+            <CardDescription>
+              Review recorded sign-ins, recovery and account policy changes.
+              Times and date filters use UTC.
+            </CardDescription>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            aria-label="Refresh security events"
+            disabled={pending || refreshing || invalid || denied}
+            onClick={() => void refresh(false)}
+          >
+            <RefreshCw aria-hidden="true" />
+            Refresh
+          </Button>
+        </CardHeader>
+        <CardContent className="min-w-0 space-y-4 pt-5">
+          <fieldset disabled={pending} className="min-w-0">
+            <SearchFilterToolbar
+              searchLabel="Search security events"
+              placeholder="Search recorded events"
+              searchMaxLength={200}
+              query={filters.search}
+              onQueryChange={(search) => changeFilters({ search })}
+              sortLabel="Sort security events"
+              sort={filters.sort}
+              sortOptions={sorts}
+              onSortChange={(sort) => changeFilters({ sort })}
+              activeFilterCount={filterCount}
+              sortInFiltersBelowMd
+            >
+              <Field>
+                <FieldLabel htmlFor={`${id}-type`}>Event type</FieldLabel>
+                <NativeSelect
+                  id={`${id}-type`}
+                  value={filters.type}
+                  className="w-full [&_select]:min-h-11"
+                  onChange={(event) =>
+                    changeFilters({ type: event.target.value })
+                  }
+                >
+                  <NativeSelectOption value="">
+                    All event types
+                  </NativeSelectOption>
+                  {Object.entries(eventLabels).map(([value, label]) => (
+                    <NativeSelectOption key={value} value={value}>
+                      {label}
+                    </NativeSelectOption>
+                  ))}
+                  <NativeSelectOption value="other">
+                    Other event type
+                  </NativeSelectOption>
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`${id}-outcome`}>Outcome</FieldLabel>
+                <NativeSelect
+                  id={`${id}-outcome`}
+                  value={filters.outcome}
+                  className="w-full [&_select]:min-h-11"
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    if (value === "" || value in outcomes)
+                      changeFilters({ outcome: value as Filters["outcome"] });
+                  }}
+                >
+                  <NativeSelectOption value="">All outcomes</NativeSelectOption>
+                  {Object.entries(outcomes).map(([value, item]) => (
+                    <NativeSelectOption key={value} value={value}>
+                      {item.label}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+              {filters.type === "other" ? (
+                <Field>
+                  <FieldLabel htmlFor={`${id}-exact-type`}>
+                    Exact event type
+                  </FieldLabel>
+                  <Input
+                    id={`${id}-exact-type`}
+                    value={filters.exactType}
+                    maxLength={100}
+                    className="min-h-11"
+                    aria-invalid={Boolean(typeError)}
+                    aria-describedby={
+                      typeError ? `${id}-type-error` : undefined
+                    }
+                    onChange={(event) =>
+                      changeFilters({ exactType: event.target.value })
+                    }
+                  />
+                  {typeError ? (
+                    <FieldError id={`${id}-type-error`}>{typeError}</FieldError>
+                  ) : null}
+                </Field>
+              ) : null}
+              <div
+                className="min-w-0 space-y-2"
+                onFocusCapture={() => setDirectoryRequested(true)}
+              >
+                {personMode === "directory" ? (
+                  <SearchSelect
+                    label="Person"
+                    value={filters.person}
+                    options={personOptions}
+                    onValueChange={(person) => changeFilters({ person })}
+                    disabled={pending || denied}
+                    placeholder="All people"
+                    emptyMessage={
+                      people.isPending
+                        ? "Loading people…"
+                        : "No recorded directory match."
+                    }
+                  />
+                ) : (
+                  <Field>
+                    <FieldLabel htmlFor={`${id}-person-id`}>
+                      Recorded person ID
+                    </FieldLabel>
+                    <Input
+                      id={`${id}-person-id`}
+                      value={filters.person}
+                      maxLength={36}
+                      className="min-h-11"
+                      aria-invalid={Boolean(uuidError)}
+                      aria-describedby={`${id}-person-help${uuidError ? ` ${id}-person-error` : ""}`}
+                      onChange={(event) =>
+                        changeFilters({ person: event.target.value })
+                      }
+                    />
+                    <p
+                      id={`${id}-person-help`}
+                      className="text-muted-foreground text-xs"
+                    >
+                      Use the ID recorded in an event, including people no
+                      longer in the directory.
+                    </p>
+                    {uuidError ? (
+                      <FieldError id={`${id}-person-error`}>
+                        {uuidError}
+                      </FieldError>
+                    ) : null}
+                  </Field>
+                )}
+                {people.isError && directoryRequested ? (
+                  <Alert
+                    role="alert"
+                    variant="destructive"
+                    className="space-y-2 text-sm"
+                  >
+                    <p>
+                      The person directory is unavailable. Use a recorded person
+                      ID or retry.
+                    </p>
+                    <Button
+                      variant="ghost"
+                      className="min-h-11 px-0"
+                      onClick={() => void people.refetch()}
+                    >
+                      Retry person list
+                    </Button>
+                  </Alert>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="min-h-11 justify-start px-0 text-sm"
+                  onClick={() =>
+                    setPersonMode(
+                      personMode === "directory" ? "id" : "directory",
+                    )
+                  }
+                >
+                  {personMode === "directory"
+                    ? "Use recorded person ID"
+                    : "Choose from directory"}
+                </Button>
+              </div>
+              <Field>
+                <FieldLabel htmlFor={`${id}-from`}>From (UTC)</FieldLabel>
+                <Input
+                  id={`${id}-from`}
+                  type="date"
+                  value={filters.from}
+                  className="min-h-11"
+                  aria-invalid={Boolean(dayError)}
+                  aria-describedby={dayError ? `${id}-day-error` : undefined}
+                  onChange={(event) =>
+                    changeFilters({ from: event.target.value })
+                  }
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`${id}-through`}>Through (UTC)</FieldLabel>
+                <Input
+                  id={`${id}-through`}
+                  type="date"
+                  value={filters.through}
+                  className="min-h-11"
+                  aria-invalid={Boolean(dayError)}
+                  aria-describedby={dayError ? `${id}-day-error` : undefined}
+                  onChange={(event) =>
+                    changeFilters({ through: event.target.value })
+                  }
+                />
+                {dayError ? (
+                  <FieldError id={`${id}-day-error`}>{dayError}</FieldError>
+                ) : null}
+              </Field>
+            </SearchFilterToolbar>
+          </fieldset>
+          {narrowed ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              disabled={pending}
+              onClick={() => {
+                setFilters(initialFilters);
+                setOffset(0);
+              }}
+              aria-label="Clear event filters"
+            >
+              Clear filters
+            </Button>
+          ) : null}
+          {denied || events.isError ? (
+            <Alert role="alert" variant="destructive" className="space-y-3">
+              <p>
+                {denied
+                  ? "Only administrators can review security events. Check your access, then retry."
+                  : page
+                    ? "Security events could not be refreshed. The previous results for these filters are still shown."
+                    : "Security events could not be loaded. Try again."}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={pending || refreshing || invalid}
+                onClick={() => void refresh(true)}
+                aria-label="Retry security events"
+              >
+                Retry
+              </Button>
+            </Alert>
+          ) : null}
+          {invalid ? (
+            <p className="text-muted-foreground text-sm">
+              Check the filter values to review security events.
+            </p>
+          ) : (
+            <LoadingRegion
+              loading={!denied && events.isPending}
+              label="Loading security events…"
+              skeleton={
+                <div className="space-y-3">
+                  {[0, 1, 2, 3].map((row) => (
+                    <Skeleton key={row} className="h-16 w-full" />
+                  ))}
+                </div>
+              }
+            >
+              {page && page.items.length === 0 ? (
+                <Empty className="border">
+                  <EmptyHeader>
+                    <EmptyTitle>
+                      {narrowed
+                        ? "No security events match these filters"
+                        : "No security events recorded"}
+                    </EmptyTitle>
+                    <EmptyDescription>
+                      {narrowed
+                        ? "Change or clear the filters to review other recorded events."
+                        : "Recorded security activity will appear here. Use Refresh to check for new events."}
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              ) : page ? (
+                <>
+                  {wide ? (
+                    <DataTable
+                      ariaLabel="Security events"
+                      className="table-fixed"
+                      cellClassName="align-top whitespace-normal"
+                      columns={columns}
+                      data={page.items}
+                      getRowId={(event) => event.id}
+                    />
+                  ) : (
+                    <ul
+                      aria-label="Security events"
+                      className="divide-y rounded-lg border"
+                    >
+                      {page.items.map((event) => (
+                        <li key={event.id} className="min-w-0 space-y-3 p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <span className="min-w-0 font-medium break-all">
+                              {eventName(event)}
+                            </span>
+                            <Outcome outcome={event.outcome} />
+                          </div>
+                          <time
+                            className="text-muted-foreground block text-sm"
+                            dateTime={event.occurred_at}
+                          >
+                            {utcTime(event.occurred_at)}
+                          </time>
+                          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
+                            <dt className="text-muted-foreground">Person</dt>
+                            <dd
+                              className="break-all"
+                              title={recordedPerson(event) ?? undefined}
+                            >
+                              {recordedPerson(event)
+                                ? "Recorded person"
+                                : "Person not identified"}
+                            </dd>
+                            <dt className="text-muted-foreground">Address</dt>
+                            <dd className="break-all">{address(event)}</dd>
+                          </dl>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="min-h-11 w-full"
+                            aria-label={`Details for ${eventName(event)} at ${utcTime(event.occurred_at)}`}
+                            onClick={(opener) =>
+                              void loadDetail(event.id, opener)
+                            }
+                          >
+                            Details
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-muted-foreground text-sm" role="status">
+                      {page.pagination.total} events · Showing{" "}
+                      {page.pagination.offset + 1}–
+                      {page.pagination.offset + page.pagination.count}
+                    </p>
+                    <PaginationControls
+                      ariaLabel="Security event pages"
+                      pageIndex={Math.floor(
+                        page.pagination.offset / page.pagination.limit,
+                      )}
+                      pageCount={Math.ceil(
+                        page.pagination.total / page.pagination.limit,
+                      )}
+                      onPageIndexChange={(index) => {
+                        if (!pending) setOffset(index * page.pagination.limit);
+                      }}
+                    />
+                  </div>
+                </>
+              ) : null}
+            </LoadingRegion>
+          )}
+        </CardContent>
+      </Card>
+      <Dialog
+        open={Boolean(detail) && !denied}
+        onOpenChange={(open) => {
+          if (!open) closeDetail();
+        }}
+      >
+        <DialogContent
+          className="max-h-[85dvh] max-w-2xl overflow-y-auto"
+          finalFocus={() =>
+            detailOpener.current?.isConnected
+              ? detailOpener.current
+              : fallbackFocus.current
+          }
+        >
+          <DialogHeader>
+            <div className="flex items-start justify-between gap-3">
+              <DialogTitle>Security event details</DialogTitle>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="min-h-11 min-w-11"
+                aria-label="Close security event details"
+                onClick={closeDetail}
+              >
+                <X aria-hidden="true" />
+              </Button>
+            </div>
+            <DialogDescription>
+              Recorded security facts. All times are shown in UTC.
+            </DialogDescription>
+          </DialogHeader>
+          {detail?.status === "error" ? (
+            <Alert role="alert" variant="destructive" className="space-y-3">
+              <p>Details could not be loaded. Try again.</p>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                disabled={pending}
+                onClick={() => void loadDetail(detail.id)}
+                aria-label="Retry event details"
+              >
+                Retry
+              </Button>
+            </Alert>
+          ) : (
+            <LoadingRegion
+              loading={detail?.status === "loading"}
+              label="Loading event details…"
+              skeleton={
+                <div className="space-y-3">
+                  <Skeleton className="h-8 w-2/3" />
+                  <Skeleton className="h-36 w-full" />
+                </div>
+              }
+            >
+              {detail?.status === "ready" ? (
+                <SecurityEventFacts
+                  event={detail.event}
+                  disabled={pending}
+                  onPersonFilter={(person) => {
+                    if (pending) return;
+                    closeDetail();
+                    setPersonMode("id");
+                    changeFilters({ person });
+                  }}
+                />
+              ) : null}
+            </LoadingRegion>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              onClick={closeDetail}
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </section>
+  );
+}
+
+function SecurityEventFacts({
+  event,
+  disabled,
+  onPersonFilter,
+}: {
+  event: AccessSecurityEvent;
+  disabled: boolean;
+  onPersonFilter: (personId: string) => void;
+}) {
+  const start = z.iso
+    .datetime({ offset: true })
+    .safeParse(event.metadata.bucket_start);
+  const end = z.iso
+    .datetime({ offset: true })
+    .safeParse(event.metadata.bucket_end);
+  const representative =
+    event.fingerprint !== null &&
+    start.success &&
+    end.success &&
+    Date.parse(start.data) < Date.parse(end.data) &&
+    (event.event_type === "identity.sign_in_failure" ||
+      event.event_type === "identity.ip_blocked");
+  const stage =
+    typeof event.metadata.stage === "string" &&
+    Object.hasOwn(stageLabels, event.metadata.stage)
+      ? stageLabels[event.metadata.stage]
+      : undefined;
+  const changed = Array.isArray(event.metadata.changed_fields)
+    ? event.metadata.changed_fields.flatMap((field) =>
+        typeof field === "string" && Object.hasOwn(policyLabels, field)
+          ? [policyLabels[field]]
+          : [],
+      )
+    : [];
+  const revision =
+    typeof event.metadata.revision === "number" &&
+    Number.isSafeInteger(event.metadata.revision) &&
+    event.metadata.revision > 0
+      ? event.metadata.revision
+      : null;
+  return (
+    <div className="min-w-0 space-y-4 py-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="min-w-0 font-semibold break-all">{eventName(event)}</h3>
+        <Outcome outcome={event.outcome} />
+      </div>
+      {event.outcome === "partial" ? (
+        <Alert variant="warning" role="note">
+          The provider action may have happened, but local changes were not
+          fully confirmed. Review the recorded stage before trying again.
+        </Alert>
+      ) : null}
+      {event.outcome === "attempt" ? (
+        <p className="text-muted-foreground text-sm">
+          An attempt was recorded. This does not confirm completion.
+        </p>
+      ) : null}
+      {event.event_type === "identity.sign_in" &&
+      event.outcome === "success" ? (
+        <p className="text-muted-foreground text-sm">
+          Local sign-in accepted. MFA completion is recorded separately.
+        </p>
+      ) : null}
+      {event.event_type === "identity.recovery_request" &&
+      event.outcome === "success" ? (
+        <p className="text-muted-foreground text-sm">
+          The recovery request was accepted. This does not confirm that an
+          account exists or an email was delivered.
+        </p>
+      ) : null}
+      {representative ? (
+        <div className="bg-muted space-y-2 rounded-lg p-4 text-sm">
+          <p className="font-medium">
+            {event.event_type === "identity.sign_in_failure"
+              ? "Sign-in failures from this address during this hour"
+              : "IP denials from this address during this hour"}
+          </p>
+          <p>
+            Repeated attempts are combined into this representative event. The
+            time is the first persisted occurrence.
+          </p>
+          <p>
+            {utcTime(start.data)} – {utcTime(end.data)}
+          </p>
+        </div>
+      ) : null}
+      <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-[9rem_minmax(0,1fr)]">
+        <dt className="text-muted-foreground">Recorded time</dt>
+        <dd className="break-words">{utcTime(event.occurred_at)}</dd>
+        <dt className="text-muted-foreground">Network address</dt>
+        <dd className="break-all">{address(event)}</dd>
+        <dt className="text-muted-foreground">Producer</dt>
+        <dd className="break-all">{event.source}</dd>
+        <dt className="text-muted-foreground">Actor</dt>
+        <dd className="break-all">
+          {event.actor_id
+            ? `Recorded person · ${event.actor_id}`
+            : "Person not identified"}
+          {event.actor_id ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-2 min-h-11"
+              disabled={disabled}
+              onClick={() => {
+                if (event.actor_id) onPersonFilter(event.actor_id);
+              }}
+            >
+              Filter by actor
+            </Button>
+          ) : null}
+        </dd>
+        <dt className="text-muted-foreground">Subject</dt>
+        <dd className="break-all">
+          {event.subject_id
+            ? `Recorded person · ${event.subject_id}`
+            : "Person not identified"}
+          {event.subject_id ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-2 min-h-11"
+              disabled={disabled}
+              onClick={() => {
+                if (event.subject_id) onPersonFilter(event.subject_id);
+              }}
+            >
+              Filter by subject
+            </Button>
+          ) : null}
+        </dd>
+        <dt className="text-muted-foreground">Operation ID</dt>
+        <dd className="break-all">{event.operation_id}</dd>
+        {event.request_id ? (
+          <>
+            <dt className="text-muted-foreground">Request ID</dt>
+            <dd className="break-all">{event.request_id}</dd>
+          </>
+        ) : null}
+        {stage ? (
+          <>
+            <dt className="text-muted-foreground">Stage</dt>
+            <dd>{stage}</dd>
+          </>
+        ) : null}
+        {event.reason && Object.hasOwn(reasonLabels, event.reason) ? (
+          <>
+            <dt className="text-muted-foreground">Reason</dt>
+            <dd>{reasonLabels[event.reason]}</dd>
+          </>
+        ) : null}
+        {event.event_type === "workspace.security_policy_change" &&
+        changed.length ? (
+          <>
+            <dt className="text-muted-foreground">Changed settings</dt>
+            <dd>
+              <ul className="list-inside list-disc space-y-1">
+                {changed.map((label) => (
+                  <li key={label}>{label}</li>
+                ))}
+              </ul>
+            </dd>
+          </>
+        ) : null}
+        {event.event_type === "workspace.security_policy_change" &&
+        revision !== null ? (
+          <>
+            <dt className="text-muted-foreground">Accepted revision</dt>
+            <dd>{revision}</dd>
+          </>
+        ) : null}
+      </dl>
+    </div>
+  );
+}

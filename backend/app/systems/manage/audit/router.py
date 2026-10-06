@@ -5,7 +5,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, Field, field_validator
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -20,7 +20,12 @@ from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit import listeners as _listeners  # noqa: F401
 from app.systems.manage.audit.export import encode_audit_csv
 from app.systems.manage.audit.labels import target_labels
-from app.systems.manage.audit.models import AuditAction, AuditLog, SecurityEvent
+from app.systems.manage.audit.models import (
+    AuditAction,
+    AuditLog,
+    SecurityEvent,
+    SecurityEventOutcome,
+)
 from app.systems.manage.audit.schemas import (
     AuditLogActorOption,
     AuditLogListResponse,
@@ -226,9 +231,31 @@ def get_security_events(
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[SecurityEventListRequest, Depends()],
+    response: Response,
     operation_id: UUID | None = None,
+    event_type: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
+    outcome: SecurityEventOutcome | None = None,
+    person_id: UUID | None = None,
+    occurred_after: AwareDatetime | None = None,
+    occurred_before: AwareDatetime | None = None,
 ) -> SecurityEventListResponse:
-    result = list_security_events(db, params, operation_id=operation_id)
+    if (
+        occurred_after is not None
+        and occurred_before is not None
+        and occurred_after > occurred_before
+    ):
+        raise HTTPException(422, detail="Security event date range is inverted")
+    response.headers["Cache-Control"] = "no-store"
+    result = list_security_events(
+        db,
+        params,
+        operation_id=operation_id,
+        event_type=event_type,
+        outcome=outcome,
+        person_id=person_id,
+        occurred_after=occurred_after,
+        occurred_before=occurred_before,
+    )
     return SecurityEventListResponse.model_validate(
         {"items": result.items, "pagination": result.pagination},
         from_attributes=True,
@@ -239,9 +266,11 @@ def get_security_events(
 def export_security_events(
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
+    response: Response,
     limit: Annotated[int, Query(ge=1, le=100)] = 100,
     operation_id: UUID | None = None,
 ) -> list[SecurityEventResponse]:
+    response.headers["Cache-Control"] = "no-store"
     result = list_security_events(
         db,
         SecurityEventListRequest(limit=limit),
@@ -255,7 +284,9 @@ def get_security_event(
     security_event_id: UUID,
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
+    response: Response,
 ) -> SecurityEventResponse:
+    response.headers["Cache-Control"] = "no-store"
     event = db.get(SecurityEvent, security_event_id)
     if event is None:
         raise HTTPException(

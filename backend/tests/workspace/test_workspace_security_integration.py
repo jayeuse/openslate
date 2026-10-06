@@ -323,3 +323,120 @@ def test_workspace_timeout_is_persisted_on_login_and_cached_browser_refresh(secu
         assert session.expires_at > expires_at
         assert isinstance(session.refreshed_at, datetime)
         assert (session.expires_at - session.refreshed_at).total_seconds() == 15 * 60
+
+
+def test_policy_event_records_only_actual_change_and_noop_stale_saves_do_not_emit(
+    security_workspace,
+):
+    from app.systems.manage.audit.models import SecurityEvent
+
+    client, actor_id, owner = security_workspace
+    with Session(owner) as db:
+        prior_ids = set(
+            db.scalars(
+                select(SecurityEvent.id).where(
+                    SecurityEvent.event_type == "workspace.security_policy_change",
+                    SecurityEvent.actor_id == actor_id,
+                )
+            )
+        )
+    initial = client.get("/api/workspace/security").json()
+    saved = client.patch(
+        "/api/workspace/security",
+        json={
+            "revision": initial["revision"],
+            "session_timeout_minutes": 30,
+            "password_require_mixed_case": initial["password_require_mixed_case"],
+        },
+    )
+    assert saved.status_code == 200
+    with Session(owner) as db:
+        rows = list(
+            db.scalars(
+                select(SecurityEvent).where(
+                    SecurityEvent.event_type == "workspace.security_policy_change",
+                    SecurityEvent.actor_id == actor_id,
+                )
+            )
+        )
+        rows = [r for r in rows if r.id not in prior_ids]
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.subject_id is None and row.outcome == "success"
+        assert row.event_metadata == {
+            "changed_fields": ["session_timeout_minutes"],
+            "revision": saved.json()["revision"],
+            "ip_address": "127.0.0.1",
+        }
+        event_id = row.id
+    assert (
+        client.patch(
+            "/api/workspace/security",
+            json={"revision": initial["revision"], "session_timeout_minutes": 60},
+        ).status_code
+        == 409
+    )
+    equal = client.patch(
+        "/api/workspace/security",
+        json={"revision": saved.json()["revision"], "session_timeout_minutes": 30},
+    )
+    assert equal.status_code == 200
+    empty = client.patch("/api/workspace/security", json={"revision": equal.json()["revision"]})
+    assert empty.status_code == 422
+    assert client.get("/api/workspace/security").json()["revision"] == equal.json()["revision"]
+    with Session(owner) as db:
+        current_ids = set(
+            db.scalars(
+                select(SecurityEvent.id).where(
+                    SecurityEvent.event_type == "workspace.security_policy_change",
+                    SecurityEvent.actor_id == actor_id,
+                )
+            )
+        )
+    assert current_ids - prior_ids == {event_id}
+
+
+def test_policy_and_event_rollback_together_when_commit_fails(security_workspace, monkeypatch):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.core.database.session import AuditSession
+    from app.systems.manage.audit.models import SecurityEvent
+
+    client, actor_id, owner = security_workspace
+    initial = client.get("/api/workspace/security").json()
+    with Session(owner) as db:
+        prior_ids = set(
+            db.scalars(
+                select(SecurityEvent.id).where(
+                    SecurityEvent.event_type == "workspace.security_policy_change",
+                    SecurityEvent.actor_id == actor_id,
+                )
+            )
+        )
+    original = AuditSession.commit
+    fault = [True]
+
+    def fail_once(db):
+        if fault.pop() if fault else False:
+            raise SQLAlchemyError("private commit failure")
+        return original(db)
+
+    monkeypatch.setattr(AuditSession, "commit", fail_once)
+    result = client.patch(
+        "/api/workspace/security",
+        json={"revision": initial["revision"], "session_timeout_minutes": 30},
+    )
+    assert result.status_code == 503
+    assert client.get("/api/workspace/security").json() == initial
+    with Session(owner) as db:
+        assert (
+            set(
+                db.scalars(
+                    select(SecurityEvent.id).where(
+                        SecurityEvent.event_type == "workspace.security_policy_change",
+                        SecurityEvent.actor_id == actor_id,
+                    )
+                )
+            )
+            == prior_ids
+        )

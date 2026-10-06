@@ -3,9 +3,13 @@
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 from app.core.base_model import utc_now
+from app.core.config import get_settings
+from app.core.config.development import is_relaxed_development
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
     ProviderTokens,
@@ -25,7 +29,27 @@ from app.systems.access.users.acceptance import accept_verified_invitation
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import User, UserStatus
+from app.systems.manage.audit import service as audit_service
+from app.systems.manage.audit.models import SecurityEventOutcome
+from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+from app.systems.manage.audit.security_failures import canonical_source
 from app.systems.manage.workspace.security_policy import load_workspace_policy, validate_password
+
+
+def try_commit_login_denial(db: Session) -> bool:
+    """Commit the denied attempt's budget/events; caller owns its HTTP failure mapping."""
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        return False
+    return True
+
+
+def anonymous_rate_limits_enabled() -> bool:
+    settings = get_settings()
+    seeding = getattr(settings, "e2e_seeding_without_anonymous_limits", False)
+    return not (is_relaxed_development(settings) or seeding)
 
 
 def _verified_action(
@@ -52,14 +76,101 @@ def _sign_out_verified_action(
         pass
 
 
+def _action_event(
+    kind: str,
+    outcome: SecurityEventOutcome,
+    operation_id: UUID,
+    person_id: UUID | None,
+    stage: str,
+    source: str | None,
+) -> SecurityEventIngestRequest:
+    return SecurityEventIngestRequest(
+        event_type=f"identity.{kind}",
+        outcome=outcome,
+        source="identity.provider_action",
+        operation_id=operation_id,
+        actor_id=person_id,
+        subject_id=person_id,
+        reason="request_accepted"
+        if kind == "recovery_request" and outcome == SecurityEventOutcome.SUCCESS
+        else None,
+        metadata={"stage": stage, "ip_address": canonical_source(source)},
+    )
+
+
+def request_recovery(
+    db: Session,
+    email: str,
+    client: SupabaseAuthClient,
+    *,
+    source: str | None,
+    enforce_rate_limit: bool,
+) -> None:
+    permitted = (
+        rate_limits.recovery_request_permitted(db, email, source=source)
+        if enforce_rate_limit
+        else True
+    )
+    db.commit()
+    if not permitted:
+        return
+    operation_id = uuid7()
+    audit_service.append_committed_security_event(
+        _action_event(
+            "recovery_request",
+            SecurityEventOutcome.ATTEMPT,
+            operation_id,
+            None,
+            "provider_request",
+            source,
+        )
+    )
+    stage = "provider_request_unconfirmed"
+    try:
+        client.request_recovery(email)
+        stage = "event_commit"
+        audit_service.append_committed_security_event(
+            _action_event(
+                "recovery_request",
+                SecurityEventOutcome.SUCCESS,
+                operation_id,
+                None,
+                "provider_accepted",
+                source,
+            )
+        )
+    except (SupabaseAuthUnavailable, audit_service.SecurityEventPersistenceError):
+        db.rollback()
+        audit_service.append_committed_security_event(
+            _action_event(
+                "recovery_request",
+                SecurityEventOutcome.PARTIAL,
+                operation_id,
+                None,
+                stage,
+                source,
+            )
+        )
+        raise
+
+
 def complete_recovery(
-    db: Session, token_hash: str, password: str, client: SupabaseAuthClient
+    db: Session,
+    token_hash: str,
+    password: str,
+    client: SupabaseAuthClient,
+    *,
+    source: str | None = None,
 ) -> None:
     """Change a bound active user's provider password without issuing an app session."""
 
     validate_password(load_workspace_policy(db), password)
     tokens, provider_user = _verified_action(client, token_hash, "recovery")
     password_updated = False
+    operation_id = None
+    effect_started = False
+    person_id = None
+    stage = "provider_update"
     try:
         local = db.scalar(
             select(User).where(User.supabase_user_id == provider_user.id).with_for_update(of=User)
@@ -72,12 +183,61 @@ def complete_recovery(
             or not is_established_user(local)
         ):
             raise ActionTokenInvalid("Recovery token is invalid")
+        person_id, operation_id = local.id, uuid7()
+        audit_service.append_committed_security_event(
+            _action_event(
+                "recovery_complete",
+                SecurityEventOutcome.ATTEMPT,
+                operation_id,
+                person_id,
+                stage,
+                source,
+            )
+        )
+        effect_started = True
         updated = client.update_password(tokens.access_token, password)
         if updated.id != provider_user.id:
             raise ActionTokenInvalid("Recovery token is invalid")
         password_updated = True
+        stage = "local_commit"
         revoke_user_sessions(db, local.id, except_session_id=None)
+        audit_service.append_security_event(
+            db,
+            _action_event(
+                "recovery_complete",
+                SecurityEventOutcome.SUCCESS,
+                operation_id,
+                person_id,
+                stage,
+                source,
+            ),
+        )
         db.commit()
+    except (
+        InvalidProviderCredentials,
+        ActionTokenInvalid,
+        SupabaseAuthUnavailable,
+        SQLAlchemyError,
+        audit_service.SecurityEventPersistenceError,
+    ) as error:
+        db.rollback()
+        if operation_id is not None and effect_started:
+            outcome = (
+                SecurityEventOutcome.FAILURE
+                if isinstance(error, InvalidProviderCredentials)
+                else SecurityEventOutcome.PARTIAL
+            )
+            audit_service.append_committed_security_event(
+                _action_event(
+                    "recovery_complete",
+                    outcome,
+                    operation_id,
+                    person_id,
+                    stage,
+                    source,
+                )
+            )
+        raise
     finally:
         _sign_out_verified_action(
             client, tokens.access_token, scope="global" if password_updated else "local"
@@ -133,32 +293,57 @@ def change_password(
     client: SupabaseAuthClient,
     *,
     enforce_rate_limit: bool = True,
+    source: str | None = None,
 ) -> None:
     """Verify the current provider password and retain only this app session."""
 
     policy = load_workspace_policy(db)
     validate_password(policy, new_password)
     timestamp = utc_now()
+    person_id = user.id
+    operation_id = None
+    effect_started = False
+    stage = "provider_update"
     fingerprint = None
     bucket = None
     if enforce_rate_limit:
         rate_limits.cleanup_expired_buckets(db, now_value=timestamp)
         fingerprint = rate_limits.login_fingerprint(user.email, None)
         bucket = rate_limits.lock_bucket(db, fingerprint)
-        retry_after = rate_limits.login_retry_after(db, bucket, timestamp, policy)
+        retry_after = rate_limits.login_retry_after(
+            db, bucket, timestamp, policy, source=source, actor_id=person_id
+        )
         if retry_after is not None:
             raise IdentityRateLimited("Too many attempts", retry_after=retry_after)
     try:
         temporary = client.password_grant(user.email, old_password)
     except InvalidProviderCredentials as error:
         if fingerprint is not None:
-            rate_limits.record_attempt(db, fingerprint, bucket, timestamp, policy=policy)
+            rate_limits.record_attempt(
+                db,
+                fingerprint,
+                bucket,
+                timestamp,
+                policy=policy,
+                login=True,
+                source=source,
+                actor_id=person_id,
+            )
             db.commit()
         raise InvalidCredentials("Invalid credentials") from error
     try:
         if temporary.user_id != user.supabase_user_id:
             if fingerprint is not None:
-                rate_limits.record_attempt(db, fingerprint, bucket, timestamp, policy=policy)
+                rate_limits.record_attempt(
+                    db,
+                    fingerprint,
+                    bucket,
+                    timestamp,
+                    policy=policy,
+                    login=True,
+                    source=source,
+                    actor_id=person_id,
+                )
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
         provider_user = client.get_user(temporary.access_token)
@@ -168,7 +353,16 @@ def change_password(
             or not provider_user.is_eligible()
         ):
             if fingerprint is not None:
-                rate_limits.record_attempt(db, fingerprint, bucket, timestamp, policy=policy)
+                rate_limits.record_attempt(
+                    db,
+                    fingerprint,
+                    bucket,
+                    timestamp,
+                    policy=policy,
+                    login=True,
+                    source=source,
+                    actor_id=person_id,
+                )
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
         locked = db.get(User, user.id, with_for_update=True)
@@ -179,16 +373,74 @@ def change_password(
             or not is_identity_eligible(locked)
         ):
             if fingerprint is not None:
-                rate_limits.record_attempt(db, fingerprint, bucket, timestamp, policy=policy)
+                rate_limits.record_attempt(
+                    db,
+                    fingerprint,
+                    bucket,
+                    timestamp,
+                    policy=policy,
+                    login=True,
+                    source=source,
+                    actor_id=person_id,
+                )
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
+        operation_id = uuid7()
+        audit_service.append_committed_security_event(
+            _action_event(
+                "password_change",
+                SecurityEventOutcome.ATTEMPT,
+                operation_id,
+                person_id,
+                stage,
+                source,
+            )
+        )
+        effect_started = True
         changed = client.update_password(current_access_token, new_password)
         if changed.id != temporary.user_id:
             raise InvalidCredentials("Invalid credentials")
+        stage = "local_commit"
         revoke_user_sessions(db, user.id, except_session_id=current_session_id)
         if bucket is not None:
             db.delete(bucket)
+        audit_service.append_security_event(
+            db,
+            _action_event(
+                "password_change",
+                SecurityEventOutcome.SUCCESS,
+                operation_id,
+                person_id,
+                stage,
+                source,
+            ),
+        )
         db.commit()
+    except (
+        InvalidProviderCredentials,
+        InvalidCredentials,
+        SupabaseAuthUnavailable,
+        SQLAlchemyError,
+        audit_service.SecurityEventPersistenceError,
+    ) as error:
+        db.rollback()
+        if operation_id is not None and effect_started:
+            outcome = (
+                SecurityEventOutcome.FAILURE
+                if isinstance(error, InvalidProviderCredentials)
+                else SecurityEventOutcome.PARTIAL
+            )
+            audit_service.append_committed_security_event(
+                _action_event(
+                    "password_change",
+                    outcome,
+                    operation_id,
+                    person_id,
+                    stage,
+                    source,
+                )
+            )
+        raise
     finally:
         try:
             client.sign_out(temporary.access_token, scope="local")
