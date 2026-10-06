@@ -12,6 +12,7 @@ from uuid6 import uuid7
 from app.core.base_model import utc_now
 from app.systems.access.policy.checks import module_filter
 from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.scope import module_reader_ids
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.access import visible_board_clause
@@ -28,6 +29,7 @@ from app.systems.platform.scheduling.models import (
     WorkKind,
     WorkState,
 )
+from app.systems.platform.scheduling.notification_sources import additional_notification_ids
 from app.systems.sandbox.modules.models import Module
 
 MAX_CLAIM_BATCH = 20
@@ -152,6 +154,7 @@ def claim_due_work(
             work.failure_code = "attempts_exhausted"
             work.lease_token = None
             work.lease_expires_at = None
+            _notify_failed_report(db, work)
             continue
         work.state = WorkState.RUNNING
         work.attempt_count += 1
@@ -252,7 +255,28 @@ def fail_report_work(db: Session, claim: WorkClaim, *, now: datetime | None = No
         work.failure_code = "run_failed"
     work.lease_token = None
     work.lease_expires_at = None
+    if work.state == WorkState.FAILED:
+        _notify_failed_report(db, work)
     return True
+
+
+def _notify_failed_report(db: Session, work: ScheduledWork) -> None:
+    """The locked terminal transition and notices share the caller's transaction."""
+    report = db.scalar(
+        select(Report).where(Report.id == work.report_id).execution_options(populate_existing=True)
+    )
+    if report_source(db, report, lock=False) is None or report is None:
+        return
+    for recipient_id in sorted(module_reader_ids(db, report.module_id), key=str):
+        db.add(
+            InAppNotification(
+                work_id=work.id,
+                recipient_id=recipient_id,
+                kind=NotificationKind.REPORT_RUN_FAILED,
+                subject_type="scheduled_work",
+                subject_id=work.id,
+            )
+        )
 
 
 def current_user_notification_query(
@@ -365,6 +389,7 @@ def current_user_notification_query(
             InAppNotification.id.in_(report_ids),
             InAppNotification.id.in_(reminder_ids),
             InAppNotification.id.in_(post_ids),
+            InAppNotification.id.in_(additional_notification_ids(db, user)),
         ),
     )
 

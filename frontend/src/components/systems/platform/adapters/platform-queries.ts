@@ -20,6 +20,10 @@ import {
   type Notification,
 } from "../../shared/adapters/notifications-api";
 import { getOpenViewReport } from "../../openview/adapters/reports-api";
+import {
+  listManageBackups,
+  defaultManageBackupsRequest,
+} from "../../manage/adapters/backup-api";
 import { readBoard } from "../../boards/adapters/board-management-api";
 import { readBoardEvent } from "../../boards/adapters/board-events-api";
 import {
@@ -367,21 +371,59 @@ export async function resetNotificationPages(
 
 export function notificationTitleOptions(item: Notification) {
   const source =
-    item.kind === "report-run"
+    item.kind === "report-run" || item.kind === "report-run-failed"
       ? ["report", item.reportId]
       : item.kind === "post-publish"
         ? ["board", item.boardId]
-        : ["event", item.boardId, item.eventId];
+        : item.kind === "event-reminder"
+          ? ["event", item.boardId, item.eventId]
+          : [item.kind, item.subjectId];
   return queryOptions({
     queryKey: [...notificationKeys.titles, ...source],
     queryFn: async ({ client, signal }): Promise<{ title: string }> => {
       try {
-        const title =
-          item.kind === "report-run"
-            ? (await getOpenViewReport(item.reportId)).name
-            : item.kind === "post-publish"
-              ? (await readBoard(item.boardId)).name
-              : (await readBoardEvent(item.boardId, item.eventId)).title;
+        let title: string;
+        switch (item.kind) {
+          case "report-run":
+          case "report-run-failed":
+            title = (await getOpenViewReport(item.reportId)).name;
+            break;
+          case "post-publish":
+            title = (await readBoard(item.boardId)).name;
+            break;
+          case "event-reminder":
+            title = (await readBoardEvent(item.boardId, item.eventId)).title;
+            break;
+          case "backup-failed": {
+            const page = await listManageBackups(
+              {
+                ...defaultManageBackupsRequest,
+                limit: 1,
+                offset: 0,
+                run_id: item.subjectId,
+              },
+              signal,
+            );
+            const run = page.items.find(
+              (candidate) => candidate.id === item.subjectId,
+            );
+            if (!run) throw new ApiError(404, "Source is unavailable");
+            title = run.name;
+            break;
+          }
+          case "record-assigned":
+            title = "Record assigned to you";
+            break;
+          case "invitation-accepted":
+            title = "Invitation accepted";
+            break;
+          case "sandbox-published":
+            title = `Sandbox version ${item.versionSequence} published`;
+            break;
+          case "access-changed":
+            title = "Your access changed";
+            break;
+        }
         if (signal.aborted)
           throw new DOMException("Read cancelled", "AbortError");
         return { title };

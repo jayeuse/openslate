@@ -9,7 +9,9 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.main import create_app
-from app.systems.access.users.models import UserRole
+from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.platform.scheduling.models import InAppNotification
+from tests.platform_scheduling.test_notification_routes import _client as notice_client
 from tests.rbac.support import _client, add_user
 
 pytestmark = pytest.mark.integration
@@ -69,6 +71,14 @@ def test_claim_replay_outcome_cas_and_failed_claim_remains_unresolved(
     )
     service.record_outcome(integration_db, instance, payload)
     assert run.state == "failed" and service.unresolved_run(integration_db, instance).id == run.id
+    assert (
+        list(
+            integration_db.scalars(
+                select(InAppNotification).where(InAppNotification.subject_id == run.id)
+            )
+        )
+        == []
+    )
     with pytest.raises(service.BackupStateError, match="backup_identity_conflict"):
         service.record_outcome(integration_db, "foreign-source", payload)
     with pytest.raises(service.BackupStateError, match="backup_identity_conflict"):
@@ -88,6 +98,14 @@ def test_claim_replay_outcome_cas_and_failed_claim_remains_unresolved(
     service.record_outcome(integration_db, instance, complete)
     assert service.unresolved_run(integration_db, instance) is None
     service.record_outcome(integration_db, instance, complete)
+    assert (
+        list(
+            integration_db.scalars(
+                select(InAppNotification).where(InAppNotification.subject_id == run.id)
+            )
+        )
+        == []
+    )
     with pytest.raises(service.BackupStateError, match="backup_outcome_conflict"):
         service.record_outcome(integration_db, instance, payload)
 
@@ -279,9 +297,7 @@ def test_version_failure_preserves_success_and_retention_protects_latest(
             at = max(at, previous + timedelta(seconds=10))
         previous = at
         claim = uuid4()
-        service.claim_run(
-            integration_db, instance, claim, now=at
-        )
+        service.claim_run(integration_db, instance, claim, now=at)
         service.record_outcome(
             integration_db,
             instance,
@@ -335,9 +351,7 @@ def test_heartbeat_refreshes_last_seen_only_for_the_running_claim(
 
     _queue(integration_db)
     instance, claim_id = _identity(integration_db), uuid4()
-    service.claim_run(
-        integration_db, instance, claim_id, now=_after_database_now(integration_db)
-    )
+    service.claim_run(integration_db, instance, claim_id, now=_after_database_now(integration_db))
     policy = integration_db.scalar(select(BackupPolicy))
     assert policy is not None
     claimed_at = datetime.now(UTC) - timedelta(minutes=30)
@@ -353,3 +367,98 @@ def test_heartbeat_refreshes_last_seen_only_for_the_running_claim(
 
     with pytest.raises(service.BackupStateError, match="backup_identity_conflict"):
         service.heartbeat(integration_db, instance, uuid4())
+
+
+@pytest.mark.parametrize(
+    ("audience", "terminal"),
+    [
+        ("manual", "failed"),
+        ("manual", "interrupted"),
+        ("fallback", "failed"),
+        ("scheduled", "interrupted"),
+    ],
+)
+@pytest.mark.parametrize("rollback", [False, True])
+def test_reconciled_backup_failure_notifies_authoritative_audience_atomically(
+    integration_db, audience, terminal, rollback
+):
+    from app.systems.manage.backups import service
+    from app.systems.manage.backups.schemas import OutcomeCommand
+
+    db = integration_db
+    run = _queue(db)
+    requester = db.get(User, run.requester_id)
+    fallback = add_user(db, role=UserRole.ADMIN)
+    excluded = add_user(db, role=UserRole.ADMIN, status=UserStatus.DISABLED)
+    current = _after_database_now(db)
+    if audience == "scheduled":
+        run.provenance, run.requester_id, run.idempotency_hash = "scheduled", None, None
+        run.scheduled_for = run.requested_at
+    elif audience == "fallback":
+        requester.status = UserStatus.DISABLED.value
+    db.commit()
+    instance, claim = _identity(db), uuid4()
+    assert service.claim_run(db, instance, claim, now=current).id == run.id
+    db.commit()
+    outcome = OutcomeCommand(
+        op="outcome",
+        installation_id=instance,
+        project="owned-project",
+        run_id=run.id,
+        claim_id=claim,
+        state=terminal,
+        finished_at=current + timedelta(seconds=2),
+        reconciled_at=current + timedelta(seconds=3),
+        snapshot_id=None,
+        manifest_sha256=None,
+        verified_at=None,
+        failure_code="backup_failed" if terminal == "failed" else "backup_interrupted",
+    )
+    service.record_outcome(db, instance, outcome)
+    db.flush()
+    notices = list(
+        db.scalars(
+            select(InAppNotification).where(
+                InAppNotification.kind == "backup-failed", InAppNotification.subject_id == run.id
+            )
+        )
+    )
+    expected = (
+        {requester.id}
+        if audience == "manual"
+        else ({fallback.id} if audience == "fallback" else {requester.id, fallback.id})
+    )
+    assert {item.recipient_id for item in notices} == expected
+    assert all(item.subject_type == "backup_run" and item.work_id is None for item in notices)
+    assert excluded.id not in expected
+    if rollback:
+        db.rollback()
+        db.expire_all()
+        assert run.state == "running" and run.reconciled_at is None
+        assert (
+            list(
+                db.scalars(select(InAppNotification).where(InAppNotification.subject_id == run.id))
+            )
+            == []
+        )
+        return
+    db.commit()
+    service.record_outcome(db, instance, outcome)
+    db.commit()
+    assert len(
+        list(db.scalars(select(InAppNotification).where(InAppNotification.subject_id == run.id)))
+    ) == len(expected)
+    recipient = requester if audience == "manual" else fallback
+    client = notice_client(db, recipient)
+    page = client.get("/api/notifications?status=unread")
+    assert page.status_code == 200, page.text
+    item = page.json()["items"][0]
+    assert item["subject_id"] == str(run.id) and item["kind"] == "backup-failed"
+    assert item["scheduled_for"] is None and "work_id" not in item
+    assert client.get("/api/notifications/unread-count").json() == {"unread_count": 1}
+    recipient.role = UserRole.MEMBER.value
+    db.commit()
+    assert client.get("/api/notifications").json()["items"] == []
+    assert client.get("/api/notifications/unread-count").json() == {"unread_count": 0}
+    assert client.post("/api/notifications/read-all").json() == {"updated_count": 0}
+    assert client.post(f"/api/notifications/{notices[0].id}/read").status_code == 404

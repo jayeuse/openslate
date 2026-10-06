@@ -26,6 +26,7 @@ from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.models import Board
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
+from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.models import SandboxVersion
@@ -94,6 +95,18 @@ def test_concurrent_key_and_token_races_resolve_deterministically() -> None:
         assert [status for status, _ in same_results] == ["ok", "ok"]
         assert len({value for _, value in same_results}) == 1
 
+        with Session(engine) as check:
+            notices = list(
+                check.scalars(
+                    select(InAppNotification).where(
+                        InAppNotification.recipient_id == actor_id,
+                        InAppNotification.kind == "sandbox-published",
+                    )
+                )
+            )
+            assert len(notices) == 1
+            publication = check.get(SandboxPublication, UUID(same_results[0][1]))
+            assert notices[0].subject_id == publication.version_id
         token_race = _prepare(engine, actor_id, "one-token-two-keys")
         token_results = _race(
             engine,
@@ -343,6 +356,9 @@ def _cleanup_committed_fixture(engine: Engine, actor_id: UUID, baseline: Baselin
     """Remove only rows committed by this concurrent test and restore its singleton edit."""
 
     with engine.begin() as connection:
+        connection.execute(
+            delete(InAppNotification).where(InAppNotification.recipient_id == actor_id)
+        )
         connection.execute(
             delete(SandboxPublication).where(SandboxPublication.actor_id == actor_id)
         )

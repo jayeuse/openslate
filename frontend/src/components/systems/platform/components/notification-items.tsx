@@ -102,30 +102,60 @@ function NotificationItem({
   const refused =
     source.error instanceof ApiError &&
     [401, 403, 404].includes(source.error.status);
-  const label =
-    item.kind === "report-run"
-      ? "Scheduled report run"
-      : item.kind === "post-publish"
-        ? "Board post"
-        : "Event reminder";
+  let label: string, href: string | null, actionLabel: string;
+  switch (item.kind) {
+    case "report-run":
+      label = "Scheduled report run";
+      href = `/openview?section=reports&report=${item.reportId}&run=${item.runId}`;
+      actionLabel = "Open Report output";
+      break;
+    case "report-run-failed":
+      label = "Report run failed";
+      href = `/openview?section=reports&report=${item.reportId}`;
+      actionLabel = "Open Report";
+      break;
+    case "post-publish":
+      label = "Board post";
+      href = `/boards?board=${item.boardId}&section=posts&post=${item.postId}`;
+      actionLabel = "Open Board posts";
+      break;
+    case "event-reminder":
+      label = "Event reminder";
+      href = `/boards?board=${item.boardId}&section=calendar&event=${item.eventId}`;
+      actionLabel = "Open Board calendar";
+      break;
+    case "backup-failed":
+      label = "Backup failed";
+      href = "/manage?view=backup";
+      actionLabel = "Open Backups";
+      break;
+    case "record-assigned":
+      label = "Record assignment";
+      href = `/openview?section=views&module=${item.moduleId}&record=${item.subjectId}`;
+      actionLabel = "Open Record";
+      break;
+    case "invitation-accepted":
+      label = "Invitation accepted";
+      href = `/access?view=people&user=${item.subjectId}`;
+      actionLabel = "Open People";
+      break;
+    case "sandbox-published":
+      label = "Sandbox publication";
+      href = "/sandbox?section=history";
+      actionLabel = "Open Sandbox history";
+      break;
+    case "access-changed":
+      label = "Access changed";
+      href = null;
+      actionLabel = "";
+      break;
+  }
   const timeLabel =
-    item.kind === "report-run"
-      ? "Scheduled"
-      : item.kind === "post-publish"
-        ? "Publication time"
-        : "Reminder due";
-  const href =
-    item.kind === "report-run"
-      ? `/openview?section=reports&report=${item.reportId}&run=${item.runId}`
-      : item.kind === "post-publish"
-        ? `/boards?board=${item.boardId}&section=posts&post=${item.postId}`
-        : `/boards?board=${item.boardId}&section=calendar&event=${item.eventId}`;
-  const actionLabel =
-    item.kind === "report-run"
-      ? "Open Report output"
-      : item.kind === "post-publish"
-        ? "Open Board posts"
-        : "Open Board calendar";
+    item.kind === "post-publish"
+      ? "Publication time"
+      : item.kind === "event-reminder"
+        ? "Reminder due"
+        : "Scheduled";
   return (
     <li
       className={
@@ -145,7 +175,9 @@ function NotificationItem({
           ) : (
             <p className="text-muted-foreground text-sm">Checking title…</p>
           )}
-          <p className="text-muted-foreground text-sm">{label}</p>
+          {title !== label && (
+            <p className="text-muted-foreground text-sm">{label}</p>
+          )}
         </div>
         <span className="text-muted-foreground shrink-0 text-sm">
           {item.status === "unread" ? "Unread" : "Read"}
@@ -154,7 +186,7 @@ function NotificationItem({
       <p className="text-muted-foreground text-xs">
         Delivered{" "}
         <time dateTime={item.createdAt}>{formatUtc(item.createdAt)}</time>
-        {!compact && (
+        {!compact && item.scheduledFor !== null && (
           <>
             {" "}
             · {timeLabel}{" "}
@@ -165,7 +197,7 @@ function NotificationItem({
         )}
       </p>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        {title && (
+        {title && href && (
           <GuardedWorkspaceLink
             href={href as Route}
             onAcceptedNavigate={onNavigate}

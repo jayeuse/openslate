@@ -36,6 +36,56 @@ const wireNotificationSchema = z
     z
       .object({
         ...commonNotification,
+        kind: z.literal("report-run-failed"),
+        subject_type: z.literal("scheduled_work"),
+        report_id: uuidSchema,
+      })
+      .strict(),
+    z
+      .object({
+        ...commonNotification,
+        kind: z.literal("backup-failed"),
+        subject_type: z.literal("backup_run"),
+        scheduled_for: z.null(),
+      })
+      .strict(),
+    z
+      .object({
+        ...commonNotification,
+        kind: z.literal("record-assigned"),
+        subject_type: z.literal("record"),
+        scheduled_for: z.null(),
+        module_id: uuidSchema,
+      })
+      .strict(),
+    z
+      .object({
+        ...commonNotification,
+        kind: z.literal("invitation-accepted"),
+        subject_type: z.literal("user"),
+        scheduled_for: z.null(),
+      })
+      .strict(),
+    z
+      .object({
+        ...commonNotification,
+        kind: z.literal("sandbox-published"),
+        subject_type: z.literal("sandbox_version"),
+        scheduled_for: z.null(),
+        version_sequence: z.number().int().positive(),
+      })
+      .strict(),
+    z
+      .object({
+        ...commonNotification,
+        kind: z.literal("access-changed"),
+        subject_type: z.literal("user"),
+        scheduled_for: z.null(),
+      })
+      .strict(),
+    z
+      .object({
+        ...commonNotification,
         kind: z.literal("post-publish"),
         subject_type: z.literal("board_post"),
         board_id: uuidSchema,
@@ -67,15 +117,60 @@ const wireNotificationSchema = z
       subjectId: notification.subject_id,
       kind: notification.kind,
       status: notification.status,
-      scheduledFor: notification.scheduled_for,
       createdAt: notification.created_at,
       readAt: notification.read_at,
     };
+    if (notification.kind === "report-run-failed")
+      return {
+        ...common,
+        kind: notification.kind,
+        subjectType: notification.subject_type,
+        scheduledFor: notification.scheduled_for,
+        reportId: notification.report_id,
+      };
+    if (notification.kind === "record-assigned")
+      return {
+        ...common,
+        kind: notification.kind,
+        subjectType: notification.subject_type,
+        scheduledFor: null,
+        moduleId: notification.module_id,
+      };
+    if (notification.kind === "sandbox-published")
+      return {
+        ...common,
+        kind: notification.kind,
+        subjectType: notification.subject_type,
+        scheduledFor: null,
+        versionSequence: notification.version_sequence,
+      };
+    if (notification.kind === "backup-failed")
+      return {
+        ...common,
+        kind: notification.kind,
+        subjectType: notification.subject_type,
+        scheduledFor: null,
+      };
+    if (notification.kind === "invitation-accepted")
+      return {
+        ...common,
+        kind: notification.kind,
+        subjectType: notification.subject_type,
+        scheduledFor: null,
+      };
+    if (notification.kind === "access-changed")
+      return {
+        ...common,
+        kind: notification.kind,
+        subjectType: notification.subject_type,
+        scheduledFor: null,
+      };
     if (notification.kind === "report-run")
       return {
         ...common,
         kind: notification.kind,
         subjectType: notification.subject_type,
+        scheduledFor: notification.scheduled_for,
         reportId: notification.report_id,
         runId: notification.run_id,
       };
@@ -84,6 +179,7 @@ const wireNotificationSchema = z
         ...common,
         kind: notification.kind,
         subjectType: notification.subject_type,
+        scheduledFor: notification.scheduled_for,
         boardId: notification.board_id,
         postId: notification.post_id,
         publicationRevisionId: notification.publication_revision_id,
@@ -92,6 +188,7 @@ const wireNotificationSchema = z
       ...common,
       kind: notification.kind,
       subjectType: notification.subject_type,
+      scheduledFor: notification.scheduled_for,
       boardId: notification.board_id,
       eventId: notification.event_id,
       occurrenceId: notification.occurrence_id,

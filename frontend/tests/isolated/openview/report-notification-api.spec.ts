@@ -325,3 +325,93 @@ test("does not expose untrusted server error text", async () => {
     mock.restore();
   }
 });
+
+test("accepts six new reference variants while retaining strict dates and metadata", async () => {
+  const base = {
+    id: notificationId,
+    status: "unread",
+    created_at: timestamp,
+    read_at: null,
+  };
+  const variants = [
+    {
+      ...base,
+      kind: "report-run-failed",
+      subject_type: "scheduled_work",
+      subject_id: otherNotificationId,
+      report_id: reportId,
+      scheduled_for: timestamp,
+    },
+    {
+      ...base,
+      kind: "backup-failed",
+      subject_type: "backup_run",
+      subject_id: otherNotificationId,
+      scheduled_for: null,
+    },
+    {
+      ...base,
+      kind: "record-assigned",
+      subject_type: "record",
+      subject_id: otherNotificationId,
+      module_id: reportId,
+      scheduled_for: null,
+    },
+    {
+      ...base,
+      kind: "invitation-accepted",
+      subject_type: "user",
+      subject_id: otherNotificationId,
+      scheduled_for: null,
+    },
+    {
+      ...base,
+      kind: "sandbox-published",
+      subject_type: "sandbox_version",
+      subject_id: otherNotificationId,
+      version_sequence: 8,
+      scheduled_for: null,
+    },
+    {
+      ...base,
+      kind: "access-changed",
+      subject_type: "user",
+      subject_id: otherNotificationId,
+      scheduled_for: null,
+    },
+  ];
+  let body: unknown;
+  const mock = installFetch(() => jsonResponse(body));
+  try {
+    for (const item of variants) {
+      body = { items: [item], pagination };
+      const result = await listNotifications();
+      expect(result.items[0]).toMatchObject({
+        kind: item.kind,
+        subjectId: item.subject_id,
+        scheduledFor: item.scheduled_for,
+      });
+      for (const malformed of [
+        {
+          ...item,
+          scheduled_for: item.scheduled_for === null ? timestamp : null,
+        },
+        { ...item, subject_type: "unknown" },
+        { ...item, work_id: otherNotificationId },
+        {
+          ...item,
+          module_id: item.kind === "record-assigned" ? undefined : reportId,
+        },
+      ]) {
+        body = { items: [malformed], pagination };
+        await expect(listNotifications()).rejects.toBeInstanceOf(
+          ApiContractError,
+        );
+      }
+    }
+    body = { items: [wireNotification({ scheduled_for: null })], pagination };
+    await expect(listNotifications()).rejects.toBeInstanceOf(ApiContractError);
+  } finally {
+    mock.restore();
+  }
+});

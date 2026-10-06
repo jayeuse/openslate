@@ -25,6 +25,7 @@ from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.fields.validation import parse_field_key, validate_record_data
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.record_triggers.outbox import enqueue_record_event
+from app.systems.sandbox.records.assignment_notifications import notify_record_assignments
 from app.systems.sandbox.records.display import FieldDisplayResolver, displayed_record
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.mutation_validation import (
@@ -279,6 +280,7 @@ def create_record(
     db.add(record)
     db.flush()
     enqueue_record_event(db, record, previous=None)
+    notify_record_assignments(db, record, previous=None, fields=fields)
     _commit(db, "Unable to create record")
     db.refresh(record)
     # The commit expired the fields; reading them again is one query, not one per field.
@@ -319,6 +321,9 @@ def update_record(
         except RecordValidationError as error:
             raise _record_validation_http_error(error) from error
         enqueue_record_event(db, record, previous=previous)
+        notify_record_assignments(
+            db, record, previous=previous, fields=_module_fields(db, record.module_id)
+        )
     _commit(db, "Unable to update record")
     return displayed_record(
         record, FieldDisplayResolver(db, record.module_id, _module_fields(db, record.module_id))

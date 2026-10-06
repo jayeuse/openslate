@@ -164,7 +164,12 @@ def test_event_snapshots_redact_secret_record_values(integration_owner_db: Sessi
     integration_owner_db.commit()
 
     logs = integration_owner_db.scalars(
-        select(AuditLog).where(AuditLog.entity_type == "record_trigger_events")
+        select(AuditLog).where(
+            AuditLog.entity_type == "record_trigger_events",
+            AuditLog.entity_id.in_(
+                select(RecordTriggerEvent.id).where(RecordTriggerEvent.record_id == record.id)
+            ),
+        )
     ).all()
     assert logs
     for log in logs:

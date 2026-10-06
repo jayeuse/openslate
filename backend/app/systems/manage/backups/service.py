@@ -29,6 +29,7 @@ from app.systems.manage.backups.schemas import (
 )
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.materializer import next_due_after
+from app.systems.platform.scheduling.notification_creation import notify_backup_failure
 
 
 class BackupStateError(RuntimeError):
@@ -332,6 +333,8 @@ def record_outcome(db: Session, instance: str, command: OutcomeCommand) -> Backu
         raise BackupStateError("backup_outcome_conflict")
     for field in fields:
         setattr(run, field, getattr(command, field))
+    if run.reconciled_at is not None and run.state in {"failed", "interrupted"}:
+        notify_backup_failure(db, run)
     db.flush()
     return run
 

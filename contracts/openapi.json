@@ -1,6 +1,71 @@
 {
   "components": {
     "schemas": {
+      "AccessChangedNotificationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "access-changed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "scheduled_for": {
+            "title": "Scheduled For",
+            "type": "null"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "user",
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at",
+          "subject_type",
+          "subject_id",
+          "kind"
+        ],
+        "title": "AccessChangedNotificationResponse",
+        "type": "object"
+      },
       "AccessEntryResponse": {
         "description": "The user's effective level on a department (``module_id`` null) or on one module.\n\nA module entry overrides its department entry. A module with neither is hidden.",
         "properties": {
@@ -1018,6 +1083,71 @@
           "name"
         ],
         "title": "BackupCreate",
+        "type": "object"
+      },
+      "BackupFailureNotificationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "backup-failed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "scheduled_for": {
+            "title": "Scheduled For",
+            "type": "null"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "backup_run",
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at",
+          "subject_type",
+          "subject_id",
+          "kind"
+        ],
+        "title": "BackupFailureNotificationResponse",
         "type": "object"
       },
       "BackupPolicyResponse": {
@@ -3955,6 +4085,78 @@
         "title": "FactorResponse",
         "type": "object"
       },
+      "FailedReportNotificationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "report-run-failed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "report_id": {
+            "format": "uuid",
+            "title": "Report Id",
+            "type": "string"
+          },
+          "scheduled_for": {
+            "format": "date-time",
+            "title": "Scheduled For",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "scheduled_work",
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at",
+          "subject_type",
+          "subject_id",
+          "kind",
+          "report_id"
+        ],
+        "title": "FailedReportNotificationResponse",
+        "type": "object"
+      },
       "FieldChangedTrigger": {
         "additionalProperties": false,
         "properties": {
@@ -5038,6 +5240,71 @@
           "bundle"
         ],
         "title": "ImportRequest",
+        "type": "object"
+      },
+      "InvitationAcceptedNotificationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "invitation-accepted",
+            "title": "Kind",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "scheduled_for": {
+            "title": "Scheduled For",
+            "type": "null"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "user",
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at",
+          "subject_type",
+          "subject_id",
+          "kind"
+        ],
+        "title": "InvitationAcceptedNotificationResponse",
         "type": "object"
       },
       "InvitationCreate": {
@@ -6141,9 +6408,15 @@
             "items": {
               "discriminator": {
                 "mapping": {
+                  "access-changed": "#/components/schemas/AccessChangedNotificationResponse",
+                  "backup-failed": "#/components/schemas/BackupFailureNotificationResponse",
                   "event-reminder": "#/components/schemas/EventReminderNotificationResponse",
+                  "invitation-accepted": "#/components/schemas/InvitationAcceptedNotificationResponse",
                   "post-publish": "#/components/schemas/PostNotificationResponse",
-                  "report-run": "#/components/schemas/ReportNotificationResponse"
+                  "record-assigned": "#/components/schemas/RecordAssignmentNotificationResponse",
+                  "report-run": "#/components/schemas/ReportNotificationResponse",
+                  "report-run-failed": "#/components/schemas/FailedReportNotificationResponse",
+                  "sandbox-published": "#/components/schemas/SandboxPublishedNotificationResponse"
                 },
                 "propertyName": "kind"
               },
@@ -6152,10 +6425,28 @@
                   "$ref": "#/components/schemas/ReportNotificationResponse"
                 },
                 {
+                  "$ref": "#/components/schemas/FailedReportNotificationResponse"
+                },
+                {
                   "$ref": "#/components/schemas/PostNotificationResponse"
                 },
                 {
                   "$ref": "#/components/schemas/EventReminderNotificationResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/BackupFailureNotificationResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/RecordAssignmentNotificationResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/InvitationAcceptedNotificationResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/SandboxPublishedNotificationResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/AccessChangedNotificationResponse"
                 }
               ]
             },
@@ -8130,6 +8421,77 @@
         "title": "ReadAllResponse",
         "type": "object"
       },
+      "RecordAssignmentNotificationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "record-assigned",
+            "title": "Kind",
+            "type": "string"
+          },
+          "module_id": {
+            "format": "uuid",
+            "title": "Module Id",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "scheduled_for": {
+            "title": "Scheduled For",
+            "type": "null"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "record",
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at",
+          "subject_type",
+          "subject_id",
+          "kind",
+          "module_id"
+        ],
+        "title": "RecordAssignmentNotificationResponse",
+        "type": "object"
+      },
       "RecordCreate": {
         "additionalProperties": false,
         "properties": {
@@ -9570,6 +9932,77 @@
           "schemaVersion"
         ],
         "title": "SandboxDocument",
+        "type": "object"
+      },
+      "SandboxPublishedNotificationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "sandbox-published",
+            "title": "Kind",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "scheduled_for": {
+            "title": "Scheduled For",
+            "type": "null"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "sandbox_version",
+            "title": "Subject Type",
+            "type": "string"
+          },
+          "version_sequence": {
+            "exclusiveMinimum": 0.0,
+            "title": "Version Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at",
+          "subject_type",
+          "subject_id",
+          "kind",
+          "version_sequence"
+        ],
+        "title": "SandboxPublishedNotificationResponse",
         "type": "object"
       },
       "SandboxSnapshot": {
@@ -24320,9 +24753,15 @@
                 "schema": {
                   "discriminator": {
                     "mapping": {
+                      "access-changed": "#/components/schemas/AccessChangedNotificationResponse",
+                      "backup-failed": "#/components/schemas/BackupFailureNotificationResponse",
                       "event-reminder": "#/components/schemas/EventReminderNotificationResponse",
+                      "invitation-accepted": "#/components/schemas/InvitationAcceptedNotificationResponse",
                       "post-publish": "#/components/schemas/PostNotificationResponse",
-                      "report-run": "#/components/schemas/ReportNotificationResponse"
+                      "record-assigned": "#/components/schemas/RecordAssignmentNotificationResponse",
+                      "report-run": "#/components/schemas/ReportNotificationResponse",
+                      "report-run-failed": "#/components/schemas/FailedReportNotificationResponse",
+                      "sandbox-published": "#/components/schemas/SandboxPublishedNotificationResponse"
                     },
                     "propertyName": "kind"
                   },
@@ -24331,10 +24770,28 @@
                       "$ref": "#/components/schemas/ReportNotificationResponse"
                     },
                     {
+                      "$ref": "#/components/schemas/FailedReportNotificationResponse"
+                    },
+                    {
                       "$ref": "#/components/schemas/PostNotificationResponse"
                     },
                     {
                       "$ref": "#/components/schemas/EventReminderNotificationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BackupFailureNotificationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RecordAssignmentNotificationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InvitationAcceptedNotificationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SandboxPublishedNotificationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AccessChangedNotificationResponse"
                     }
                   ],
                   "title": "Response Mark Notification Read Api Notifications  Notification Id  Read Post"

@@ -2,6 +2,7 @@
 
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -15,9 +16,10 @@ from app.systems.access.users.service import (
     _lock_profile,
     _security_event,
 )
-from app.systems.manage.audit.models import SecurityEventOutcome
+from app.systems.manage.audit.models import SecurityEvent, SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
+from app.systems.platform.scheduling.notification_creation import notify_invitation_accepted
 
 
 def begin_invitation_acceptance(user_id: UUID | None) -> UUID:
@@ -114,16 +116,30 @@ def accept_verified_invitation(
             subject_id=user_id,
         )
         return profile
-    if (
-        profile.status != UserStatus.PENDING.value
-        or profile.invitation_sent_at is None
-    ):
+    if profile.status != UserStatus.PENDING.value or profile.invitation_sent_at is None:
         db.rollback()
         record_invitation_acceptance_failure(operation_id, user_id, "invitation is not pending")
         raise InvitationError("Invitation is not pending")
     profile.status = UserStatus.ACTIVE.value
     profile.invitation_accepted_at = utc_now()
     try:
+        inviter_id = (
+            db.scalar(
+                select(SecurityEvent.actor_id)
+                .where(
+                    SecurityEvent.event_type == "user.invitation",
+                    SecurityEvent.outcome == SecurityEventOutcome.SUCCESS,
+                    SecurityEvent.source == "users.service",
+                    SecurityEvent.subject_id == profile.id,
+                    SecurityEvent.operation_id == profile.provider_invitation_operation_id,
+                )
+                .order_by(SecurityEvent.occurred_at, SecurityEvent.id)
+                .limit(1)
+            )
+            if profile.provider_invitation_operation_id is not None
+            else None
+        )
+        notify_invitation_accepted(db, profile, inviter_id)
         append_invitation_acceptance_success(db, operation_id, user_id)
         db.commit()
     except SQLAlchemyError:
