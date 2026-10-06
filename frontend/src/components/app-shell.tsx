@@ -24,6 +24,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { useUserPreferences } from "@/components/theme-provider";
 import { NotificationBell } from "@/components/systems/platform/components/notification-bell";
 import { AppNavigation } from "@/components/app-navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
@@ -80,6 +81,14 @@ export function AppShell({
   verifiedUserId: string | null;
   onSignOutAccepted: () => void;
 }) {
+  const { device } = useUserPreferences();
+  const [sidebarRemSize, setSidebarRemSize] = useState(16);
+  useLayoutEffect(() => {
+    setSidebarRemSize(
+      parseFloat(getComputedStyle(document.documentElement).fontSize),
+    );
+  }, [device.textSize]);
+  const sidebarScale = sidebarRemSize / 16;
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -212,7 +221,7 @@ export function AppShell({
   }
 
   const sidebarStyle = {
-    "--sidebar-width": `${sidebarWidth}px`,
+    "--sidebar-width": `${sidebarWidth / 16}rem`,
     "--sidebar-width-icon": "64px",
   } as CSSProperties;
 
@@ -296,10 +305,10 @@ export function AppShell({
                 aria-label="Resize sidebar"
                 aria-orientation="vertical"
                 aria-controls="primary-sidebar"
-                aria-valuemin={SIDEBAR_MIN_WIDTH}
-                aria-valuemax={SIDEBAR_MAX_WIDTH}
-                aria-valuenow={sidebarWidth}
-                aria-valuetext={`${sidebarWidth} pixels`}
+                aria-valuemin={SIDEBAR_MIN_WIDTH * sidebarScale}
+                aria-valuemax={SIDEBAR_MAX_WIDTH * sidebarScale}
+                aria-valuenow={sidebarWidth * sidebarScale}
+                aria-valuetext={`${Math.round(sidebarWidth * sidebarScale)} pixels`}
                 tabIndex={0}
                 title="Drag to resize. Double-click to reset."
                 className="hover:bg-primary/20 focus-visible:bg-primary/20 focus-visible:outline-ring absolute inset-y-0 -right-1 z-40 w-2 cursor-col-resize touch-none focus-visible:outline-2"
@@ -320,7 +329,9 @@ export function AppShell({
                   if (!start || start.pointerId !== event.pointerId) return;
                   setSidebarWidth(
                     clampSidebarWidth(
-                      Math.round(start.width + event.clientX - start.x),
+                      Math.round(
+                        start.width + (event.clientX - start.x) / sidebarScale,
+                      ),
                     ),
                   );
                 }}
@@ -437,6 +448,7 @@ export function AppShell({
             <main
               id="main-content"
               data-skin="page"
+              data-page-spacing={isComms ? "excluded" : undefined}
               className={cn(
                 isComms || isAccess
                   ? "flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden"

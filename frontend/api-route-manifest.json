@@ -1375,13 +1375,13 @@
   },
   {
     "adapter": "frontend/src/lib/user-theme-preferences.ts",
-    "function": "readUserTheme",
+    "function": "readUserPreferences",
     "method": "GET",
     "path": "/api/users/{param}/preferences"
   },
   {
     "adapter": "frontend/src/lib/user-theme-preferences.ts",
-    "function": "saveUserTheme",
+    "function": "saveUserPreferences",
     "method": "PATCH",
     "path": "/api/users/{param}/preferences"
   }

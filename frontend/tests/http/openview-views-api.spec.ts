@@ -5528,3 +5528,61 @@ test("OpenView request failures use safe destructive feedback without server det
     0,
   );
 });
+
+for (const layout of ["table", "kanban"] as const) {
+  for (const mode of ["light", "dark"] as const) {
+    test(`${layout} Saved view controls fit mobile Larger Spacious in ${mode}`, async ({
+      page,
+    }) => {
+      await installViewsApi(page, {
+        initialLayout: layout,
+        initialGroupByFieldId: statusFieldId,
+      });
+      await page.route(`**/api/users/${userId}/preferences`, (route) =>
+        route.fulfill({
+          json: {
+            user_id: userId,
+            theme: mode,
+            appearance: { motion: "system", keyboard_shortcuts: true },
+          },
+        }),
+      );
+      await page.addInitScript(() => {
+        localStorage.setItem("openslate-text-size", "125");
+        localStorage.setItem("openslate-density", "spacious");
+      });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      const saved = page.getByRole("combobox", {
+        name: "Saved view",
+        exact: true,
+      });
+      const archived = page.getByRole("button", {
+        name: "Archived views",
+        exact: true,
+      });
+      await expect(saved).toHaveValue(viewId);
+      await expect(saved).toBeEnabled();
+      await expect(archived).toBeEnabled();
+      for (const control of [
+        saved,
+        archived,
+        page.getByText("Saved view", { exact: true }),
+      ]) {
+        const box = await control.boundingBox();
+        if (!box) throw new Error("Saved view control geometry unavailable");
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(390);
+      }
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(390);
+      await archived.click();
+      await expect(
+        page.getByRole("dialog", { name: "Archived views", exact: true }),
+      ).toBeVisible();
+    });
+  }
+}

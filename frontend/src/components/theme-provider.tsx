@@ -2,24 +2,35 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   applyAppearancePreferences,
+  applyDeviceAppearancePreferences,
+  DEFAULT_APPEARANCE_PREFERENCES,
+  DEFAULT_DEVICE_APPEARANCE,
   persistAppearancePreferences,
+  persistDeviceAppearancePreferences,
   readBrowserAppearancePreferences,
+  readBrowserDeviceAppearancePreferences,
   type AppearanceMode,
+  type DeviceAppearancePreferences,
+  type MotionPreference,
 } from "@/lib/appearance-preferences";
 import {
-  saveUserTheme,
-  themeNeedsSessionRecheck,
-  userThemeKey,
-  userThemeOptions,
+  saveUserPreferences,
+  preferencesNeedSessionRecheck,
+  userPreferencesKey,
+  userPreferencesOptions,
+  type UserPreferencesPatch,
+  type UserPreferences,
 } from "@/lib/user-theme-preferences";
 import { Button } from "@/components/ui/button";
 import { requestSessionRecheck } from "@/lib/auth-api";
@@ -28,192 +39,328 @@ import {
   useWorkspaceInteractionSuspended,
 } from "@/components/systems/shared/runtime/workspace-identity";
 
-// The root browser initializer stays available before sign-in. While a
-// verified account owns the DOM, browser mode events cannot override it.
-let accountThemeOwner: symbol | null = null;
-let confirmedAccountMode: AppearanceMode | null = null;
+let accountPreferencesOwner: symbol | null = null;
+let confirmedAccountPreferences: UserPreferences | null = null;
 
-function applyBrowserAppearance() {
-  const browser = readBrowserAppearancePreferences();
-  applyAppearancePreferences({
-    ...browser,
-    mode: accountThemeOwner ? (confirmedAccountMode ?? "light") : browser.mode,
-  });
+function applyAccountAppearance() {
+  const preference = confirmedAccountPreferences;
+  applyAppearancePreferences(
+    preference
+      ? {
+          mode: preference.theme,
+          reduceMotion: preference.appearance.motion === "reduce",
+        }
+      : DEFAULT_APPEARANCE_PREFERENCES,
+  );
 }
 
+/** The existing public initializer owns bootstrap caches only before sign-in. */
 export function ThemeProvider() {
   useEffect(() => {
-    applyBrowserAppearance();
-    window.addEventListener("storage", applyBrowserAppearance);
-    return () => window.removeEventListener("storage", applyBrowserAppearance);
+    const apply = () => {
+      if (accountPreferencesOwner) return;
+      applyAppearancePreferences(readBrowserAppearancePreferences());
+      applyDeviceAppearancePreferences(
+        readBrowserDeviceAppearancePreferences(),
+      );
+    };
+    const sync = (event: StorageEvent) => {
+      if (
+        event.key === null ||
+        [
+          "openslate-theme",
+          "openslate-motion",
+          "openslate-text-size",
+          "openslate-density",
+        ].includes(event.key)
+      )
+        apply();
+    };
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    apply();
+    window.addEventListener("storage", sync);
+    media.addEventListener("change", apply);
+    return () => {
+      window.removeEventListener("storage", sync);
+      media.removeEventListener("change", apply);
+    };
   }, []);
   return null;
 }
 
-type UserThemePreference = {
+type PreferencesContextValue = {
   mode: AppearanceMode | undefined;
+  motion: MotionPreference | undefined;
+  keyboardShortcuts: boolean | undefined;
   loading: boolean;
   saving: boolean;
   disabled: boolean;
   error: string | null;
+  device: DeviceAppearancePreferences;
+  deviceStorageAvailable: boolean;
   setMode: (mode: AppearanceMode) => void;
+  setMotion: (motion: MotionPreference) => void;
+  setKeyboardShortcuts: (enabled: boolean) => void;
+  setDevice: (next: Partial<DeviceAppearancePreferences>) => void;
   retry: () => void;
 };
-
-const UserThemeContext = createContext<UserThemePreference | null>(null);
-
-export function useUserThemePreference(): UserThemePreference {
-  const preference = useContext(UserThemeContext);
-  if (!preference) throw new Error("Theme requires a verified account");
+const PreferencesContext = createContext<PreferencesContextValue | null>(null);
+export function useUserPreferences(): PreferencesContextValue {
+  const preference = useContext(PreferencesContext);
+  if (!preference) throw new Error("Preferences require a verified account");
   return preference;
 }
 
-/** Mounted inside the existing account-keyed QueryClient, never the auth gate. */
-export function UserThemeProvider({ children }: { children: ReactNode }) {
+/** One verified account, inside its existing QueryClient and interaction gate. */
+export function UserPreferencesProvider({ children }: { children: ReactNode }) {
   const userId = useVerifiedWorkspaceUserId();
   const suspended = useWorkspaceInteractionSuspended();
   const client = useQueryClient();
-  const query = useQuery(userThemeOptions(userId));
-  const owner = useRef(Symbol("user-theme"));
+  const query = useQuery(userPreferencesOptions(userId));
+  const owner = useRef(Symbol("user-preferences"));
   const live = useRef(false);
   const interactionSuspended = useRef(suspended);
-  useLayoutEffect(() => {
-    interactionSuspended.current = suspended;
-  }, [suspended]);
   const writePending = useRef(false);
   const recheckedError = useRef<unknown>(null);
   const readAfterVerification = useRef(false);
+  const [verifying, setVerifying] = useState(false);
+  const [acceptedPreferences, setAcceptedPreferences] =
+    useState<UserPreferences | null>(null);
+  const observedRead = useRef({
+    dataUpdatedAt: query.dataUpdatedAt,
+    errorUpdatedAt: query.errorUpdatedAt,
+  });
+  const [device, setDeviceState] = useState<DeviceAppearancePreferences>(
+    DEFAULT_DEVICE_APPEARANCE,
+  );
+  const [deviceStorageAvailable, setDeviceStorageAvailable] = useState(true);
+  useLayoutEffect(() => {
+    interactionSuspended.current = suspended;
+  }, [suspended]);
+  const ownsAppearance = useCallback(
+    () => live.current && accountPreferencesOwner === owner.current,
+    [],
+  );
   const mutation = useMutation({
-    mutationFn: async (mode: AppearanceMode) => {
-      // An older read must not replace the confirmed write in this cache.
+    mutationFn: async (patch: UserPreferencesPatch) => {
       await client.cancelQueries({
-        queryKey: userThemeKey(userId),
+        queryKey: userPreferencesKey(userId),
         exact: true,
       });
-      return saveUserTheme(userId, mode);
+      if (!ownsAppearance() || interactionSuspended.current)
+        throw new DOMException("Preference command cancelled", "AbortError");
+      return saveUserPreferences(userId, patch);
     },
     retry: false,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const token = owner.current;
     live.current = true;
-    accountThemeOwner = token;
-    confirmedAccountMode = null;
-    applyBrowserAppearance();
+    accountPreferencesOwner = token;
+    confirmedAccountPreferences = null;
+    applyAccountAppearance();
+    const browserDevice = readBrowserDeviceAppearancePreferences();
+    setDeviceState(browserDevice);
+    applyDeviceAppearancePreferences(browserDevice);
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const sync = () => {
+      if (live.current && accountPreferencesOwner === token)
+        applyAccountAppearance();
+    };
+    media.addEventListener("change", sync);
     return () => {
       live.current = false;
-      if (accountThemeOwner === token) {
-        accountThemeOwner = null;
-        confirmedAccountMode = null;
-        applyBrowserAppearance();
+      media.removeEventListener("change", sync);
+      if (accountPreferencesOwner === token) {
+        accountPreferencesOwner = null;
+        confirmedAccountPreferences = null;
+        applyAppearancePreferences(readBrowserAppearancePreferences());
       }
     };
   }, []);
 
   useEffect(() => {
-    if (suspended || accountThemeOwner !== owner.current) return;
-    if (query.data) {
-      confirmedAccountMode = query.data.theme;
-      // Local motion may have applied successfully even if browser
-      // storage rejected the write. A server response owns color mode only.
-      persistAppearancePreferences({
-        mode: query.data.theme,
-        reduceMotion: document.documentElement.dataset.motion === "reduced",
-      });
-      document.documentElement.classList.toggle(
-        "dark",
-        query.data.theme === "dark",
-      );
+    const readCompleted =
+      query.dataUpdatedAt !== observedRead.current.dataUpdatedAt ||
+      query.errorUpdatedAt !== observedRead.current.errorUpdatedAt;
+    observedRead.current = {
+      dataUpdatedAt: query.dataUpdatedAt,
+      errorUpdatedAt: query.errorUpdatedAt,
+    };
+    if (!ownsAppearance()) return;
+    if (suspended) {
+      if (readCompleted) {
+        readAfterVerification.current = true;
+        setVerifying(true);
+      }
+      return;
     }
     if (readAfterVerification.current) {
       readAfterVerification.current = false;
-      void query.refetch();
+      setVerifying(true);
+      void query.refetch().finally(() => {
+        if (ownsAppearance()) {
+          if (interactionSuspended.current)
+            readAfterVerification.current = true;
+          setVerifying(false);
+        }
+      });
+      return;
     }
-  }, [suspended, query.data, query.refetch]);
+    if (verifying || !query.data || query.error) return;
+    confirmedAccountPreferences = query.data;
+    setAcceptedPreferences(query.data);
+    const appearance = {
+      mode: query.data.theme,
+      reduceMotion: query.data.appearance.motion === "reduce",
+    };
+    persistAppearancePreferences(appearance);
+    applyAppearancePreferences(appearance);
+  }, [
+    suspended,
+    query.data,
+    query.dataUpdatedAt,
+    query.error,
+    query.errorUpdatedAt,
+    query.refetch,
+    verifying,
+    ownsAppearance,
+  ]);
 
   const failure = mutation.error ?? query.error;
   useEffect(() => {
     if (
+      !ownsAppearance() ||
       suspended ||
-      !themeNeedsSessionRecheck(failure) ||
+      !preferencesNeedSessionRecheck(failure) ||
       recheckedError.current === failure
     )
       return;
     recheckedError.current = failure;
     requestSessionRecheck();
-  }, [failure, suspended]);
+  }, [failure, suspended, ownsAppearance]);
 
   useEffect(() => {
     const sync = (event: StorageEvent) => {
-      if (event.key !== null && event.key !== "openslate-theme") return;
-      if (!interactionSuspended.current && !writePending.current)
+      if (!ownsAppearance()) return;
+      if (
+        event.key === null ||
+        ["openslate-text-size", "openslate-density"].includes(event.key)
+      ) {
+        const next = readBrowserDeviceAppearancePreferences();
+        setDeviceState(next);
+        applyDeviceAppearancePreferences(next);
+      }
+      if (
+        (event.key === null ||
+          ["openslate-theme", "openslate-motion"].includes(event.key)) &&
+        !interactionSuspended.current &&
+        !writePending.current
+      )
         void query.refetch();
     };
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
-  }, [query.refetch]);
+  }, [query.refetch, ownsAppearance]);
 
   const error = mutation.error
-    ? "Theme could not be saved. Retry to reload your saved preference."
+    ? "Preferences could not be saved. Retry to reload your saved preferences."
     : query.error
-      ? "Theme could not be loaded. Try again."
+      ? "Preferences could not be loaded. Try again."
       : null;
-
-  function setMode(mode: AppearanceMode) {
+  function save(patch: UserPreferencesPatch) {
     if (
-      suspended ||
+      !ownsAppearance() ||
+      interactionSuspended.current ||
       writePending.current ||
+      verifying ||
       !query.data ||
-      error ||
-      mode === query.data.theme
+      !acceptedPreferences ||
+      error
     )
       return;
     writePending.current = true;
     void mutation
-      .mutateAsync(mode)
+      .mutateAsync(patch)
       .then((preference) => {
-        if (!live.current || accountThemeOwner !== owner.current) return;
+        if (!ownsAppearance()) return;
         if (interactionSuspended.current) {
           readAfterVerification.current = true;
           return;
         }
-        client.setQueryData(userThemeKey(userId), preference);
+        client.setQueryData(userPreferencesKey(userId), preference);
       })
       .catch(() => {
-        // The shared status below offers an explicit read retry. No write retries.
+        /* Explicit read retry; never repeat a write automatically. */
       })
       .finally(() => {
         writePending.current = false;
       });
   }
-
   function retry() {
-    if (suspended || writePending.current) return;
+    if (
+      !ownsAppearance() ||
+      interactionSuspended.current ||
+      writePending.current ||
+      verifying
+    )
+      return;
+    setVerifying(true);
     mutation.reset();
-    void query.refetch();
+    void query.refetch().finally(() => {
+      if (!ownsAppearance()) return;
+      if (interactionSuspended.current) readAfterVerification.current = true;
+      setVerifying(false);
+    });
   }
-
+  function setDevice(next: Partial<DeviceAppearancePreferences>) {
+    if (!ownsAppearance()) return;
+    const values = { ...device, ...next };
+    setDeviceState(values);
+    applyDeviceAppearancePreferences(values);
+    setDeviceStorageAvailable(persistDeviceAppearancePreferences(values));
+  }
   return (
-    <UserThemeContext.Provider
+    <PreferencesContext.Provider
       value={{
-        mode: query.data?.theme,
-        loading: query.isPending,
+        mode: acceptedPreferences?.theme,
+        motion: acceptedPreferences?.appearance.motion,
+        keyboardShortcuts: acceptedPreferences?.appearance.keyboard_shortcuts,
+        loading: query.isPending || verifying,
         saving: mutation.isPending,
         disabled:
-          suspended || query.isPending || mutation.isPending || Boolean(error),
+          !acceptedPreferences ||
+          suspended ||
+          query.isPending ||
+          mutation.isPending ||
+          verifying ||
+          Boolean(error),
         error,
-        setMode,
+        device,
+        deviceStorageAvailable,
+        setMode: (mode) => {
+          if (mode !== query.data?.theme) save({ theme: mode });
+        },
+        setMotion: (motion) => {
+          if (motion !== query.data?.appearance.motion)
+            save({ appearance: { motion } });
+        },
+        setKeyboardShortcuts: (enabled) => {
+          if (enabled !== query.data?.appearance.keyboard_shortcuts)
+            save({ appearance: { keyboard_shortcuts: enabled } });
+        },
+        setDevice,
         retry,
       }}
     >
       {children}
-    </UserThemeContext.Provider>
+    </PreferencesContext.Provider>
   );
 }
 
-export function UserThemeStatus() {
-  const preference = useUserThemePreference();
+export function UserPreferencesStatus() {
+  const preference = useUserPreferences();
   if (preference.error)
     return (
       <div className="space-y-2">
@@ -227,14 +374,14 @@ export function UserThemeStatus() {
           onClick={preference.retry}
           disabled={preference.loading || preference.saving}
         >
-          Retry theme
+          Retry preferences
         </Button>
       </div>
     );
   if (!preference.loading && !preference.saving) return null;
   return (
     <p role="status" className="text-muted-foreground text-sm">
-      {preference.saving ? "Saving theme…" : "Loading theme…"}
+      {preference.saving ? "Saving preferences…" : "Loading preferences…"}
     </p>
   );
 }

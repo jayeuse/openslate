@@ -51,9 +51,7 @@ test("the breadcrumb names the workspace and its open section", async ({
   await expect(
     breadcrumb.getByRole("link", { name: "Platform" }),
   ).toBeVisible();
-  await expect(breadcrumb.locator('[aria-current="page"]')).toHaveText(
-    "Search",
-  );
+  await expect(breadcrumb.locator('[aria-current="page"]')).toHaveText("Files");
 });
 
 test("a phone breadcrumb drops the Workspace root", async ({ page }) => {
@@ -124,4 +122,69 @@ test("Comms snapshot recovery stays within Comms while live routes and returning
   await expect(recovery).toHaveCount(0);
   await page.getByRole("link", { name: "OpenComms", exact: true }).click();
   await expect(message).toHaveValue("Unsent route-owned Comms draft");
+});
+
+test("125 percent text scales the resizable sidebar and keeps resize units and sticky focus consistent", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await page.goto("/settings/appearance");
+  const textSize = page.getByRole("combobox", { name: "Text size" });
+  await expect(textSize).toHaveValue("100");
+  const sidebar = page.locator("#primary-sidebar");
+  const resize = page.getByRole("separator", { name: "Resize sidebar" });
+  const baseline = await sidebar.evaluate(
+    (el) => el.getBoundingClientRect().width,
+  );
+  await textSize.selectOption("125");
+  await expect
+    .poll(() => sidebar.evaluate((el) => el.getBoundingClientRect().width))
+    .toBeCloseTo(baseline * 1.25, 0);
+  await expect(
+    page.getByRole("heading", { name: "Appearance", exact: true }),
+  ).toHaveCSS("font-size", "37.5px");
+  await resize.focus();
+  await resize.press("ArrowRight");
+  await expect
+    .poll(() => sidebar.evaluate((el) => el.getBoundingClientRect().width))
+    .toBeCloseTo(baseline * 1.25 + 20, 0);
+  const increased = await sidebar.evaluate(
+    (el) => el.getBoundingClientRect().width,
+  );
+  expect(increased).toBeCloseTo(baseline * 1.25 + 20, 0);
+  expect(Number(await resize.getAttribute("aria-valuenow"))).toBeCloseTo(
+    increased,
+    0,
+  );
+  const handle = await resize.boundingBox();
+  if (!handle) throw new Error("Sidebar resize handle missing");
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    handle.y + handle.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    handle.x + handle.width / 2 + 40,
+    handle.y + handle.height / 2,
+  );
+  await page.mouse.up();
+  await expect
+    .poll(() => sidebar.evaluate((el) => el.getBoundingClientRect().width))
+    .toBeCloseTo(increased + 40, 0);
+  const stored = await page.evaluate(() =>
+    Number(localStorage.getItem("openslate-sidebar-width")),
+  );
+  expect(stored).toBeCloseTo((increased + 40) / 1.25, 0);
+  const keyboard = page.getByRole("switch", { name: "Convenience shortcuts" });
+  await keyboard.evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await keyboard.focus();
+  const top = await page
+    .locator('[data-skin="topbar"]')
+    .evaluate((el) => el.getBoundingClientRect().bottom);
+  expect((await keyboard.boundingBox())!.y).toBeGreaterThanOrEqual(top);
+  await page.reload();
+  await expect
+    .poll(() => sidebar.evaluate((el) => el.getBoundingClientRect().width))
+    .toBeCloseTo(increased + 40, 0);
 });

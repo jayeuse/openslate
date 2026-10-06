@@ -1,3 +1,4 @@
+import { useUserPreferences } from "@/components/theme-provider";
 import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import type {
   SandboxBinding,
@@ -251,6 +252,7 @@ export function Designer({
   ) => Promise<SandboxCommandResult<Design>>;
   onDraftStateChange: (dirty: boolean) => void;
 }) {
+  const { keyboardShortcuts } = useUserPreferences();
   const [viewPreferences, setViewPreferences] =
     useState<SandboxViewPreferences>(loadSandboxViewPreferences);
   // Narrow screens open on the canvas, the Sandbox's main surface.
@@ -524,11 +526,11 @@ export function Designer({
         document.querySelector('[role="dialog"], [role="alertdialog"]')
       )
         return;
-      if (event.key === "?") {
+      if (event.key === "?" && keyboardShortcuts === true) {
         event.preventDefault();
         setCanvasHelpOpen(true);
         setPane("Canvas");
-      } else if (event.key === "0") {
+      } else if (event.key === "0" && keyboardShortcuts === true) {
         event.preventDefault();
         setPane("Canvas");
         requestAnimationFrame(fitCanvas);
@@ -539,7 +541,7 @@ export function Designer({
     }
     window.addEventListener("keydown", handleDesignerShortcut);
     return () => window.removeEventListener("keydown", handleDesignerShortcut);
-  }, [keyboardTarget]);
+  }, [keyboardTarget, keyboardShortcuts]);
 
   function requestDelete(target: SandboxInspectorTarget): void {
     deleteFallbackId.current = null;
@@ -2371,10 +2373,13 @@ export function Designer({
                       Use Structure for complete keyboard editing.
                     </p>
                     <p className="text-muted-foreground mt-1">
-                      Designer shortcuts: press 0 to fit the canvas, ? for this
-                      help, and Delete to review removal of the selected item.
-                      Shortcuts are paused while editing or while a dialog is
-                      open.
+                      {keyboardShortcuts === true
+                        ? "Designer shortcuts: press 0 to fit the canvas and ? for this help. "
+                        : keyboardShortcuts === false
+                          ? "Convenience shortcuts are off in Appearance. Use the Fit and View buttons. "
+                          : "Convenience shortcuts are available once your account preferences load. "}
+                      Delete reviews removal of the selected item. Shortcuts
+                      ignore text editing and open dialogs.
                     </p>
                   </section>
                 ) : null}

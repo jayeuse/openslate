@@ -30,20 +30,44 @@ export const test = base.extend({
     );
     // Preferences are read under the verified session ID, which individual
     // journeys may override independently of this default navigation identity.
-    // Only UUID paths and the approved light/dark command are supported.
-    const themes = new Map<string, "light" | "dark">();
+    // Full preferences mirror the separate strict9a DTO; each context owns its state.
+    type Preference = {
+      theme: "light" | "dark" | "system";
+      appearance: { motion: "system" | "reduce"; keyboard_shortcuts: boolean };
+    };
+    const preferences = new Map<string, Preference>();
     await context.route(
       /\/api\/users\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/preferences$/,
       async (route) => {
         const userId = new URL(route.request().url()).pathname.split("/")[3];
+        let current: Preference = preferences.get(userId) ?? {
+          theme: "light",
+          appearance: { motion: "system", keyboard_shortcuts: true },
+        };
         if (route.request().method() === "PATCH") {
           const body: unknown = route.request().postDataJSON();
+          const object = (value: unknown): value is Record<string, unknown> =>
+            typeof value === "object" &&
+            value !== null &&
+            !Array.isArray(value);
           if (
-            typeof body !== "object" ||
-            body === null ||
-            !("theme" in body) ||
-            Object.keys(body).length !== 1 ||
-            (body.theme !== "light" && body.theme !== "dark")
+            !object(body) ||
+            Object.keys(body).some(
+              (key) => !["theme", "appearance"].includes(key),
+            ) ||
+            ("theme" in body &&
+              !["light", "dark", "system"].includes(String(body.theme))) ||
+            ("appearance" in body &&
+              (!object(body.appearance) ||
+                Object.keys(body.appearance).some(
+                  (key) => !["motion", "keyboard_shortcuts"].includes(key),
+                ) ||
+                ("motion" in body.appearance &&
+                  !["system", "reduce"].includes(
+                    String(body.appearance.motion),
+                  )) ||
+                ("keyboard_shortcuts" in body.appearance &&
+                  typeof body.appearance.keyboard_shortcuts !== "boolean")))
           ) {
             await route.fulfill({
               status: 422,
@@ -51,7 +75,18 @@ export const test = base.extend({
             });
             return;
           }
-          themes.set(userId, body.theme === "dark" ? "dark" : "light");
+          const appearance = object(body.appearance) ? body.appearance : {};
+          current = {
+            theme: (body.theme ?? current.theme) as Preference["theme"],
+            appearance: {
+              motion: (appearance.motion ??
+                current.appearance
+                  .motion) as Preference["appearance"]["motion"],
+              keyboard_shortcuts: (appearance.keyboard_shortcuts ??
+                current.appearance.keyboard_shortcuts) as boolean,
+            },
+          };
+          preferences.set(userId, current);
         } else if (route.request().method() !== "GET") {
           await route.fulfill({
             status: 405,
@@ -61,7 +96,7 @@ export const test = base.extend({
         }
         await route.fulfill({
           headers: { "Cache-Control": "no-store" },
-          json: { user_id: userId, theme: themes.get(userId) ?? "light" },
+          json: { user_id: userId, ...current },
         });
       },
     );

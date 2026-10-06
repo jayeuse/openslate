@@ -425,13 +425,15 @@ test("Manage organization keeps all its draft fields after a failed save", async
   await expect(
     page.getByRole("button", { name: "Discard changes", exact: true }),
   ).toBeDisabled();
-  expect(workspace.read()).toMatchObject({
-    display_name: "Pending workspace",
-    mark: "Compass",
-    currency: "USD",
-    week_start: "sunday",
-    business_hours: "10:00–19:00",
-  });
+  await expect
+    .poll(() => workspace.read())
+    .toMatchObject({
+      display_name: "Pending workspace",
+      mark: "Compass",
+      currency: "USD",
+      week_start: "sunday",
+      business_hours: "10:00–19:00",
+    });
 });
 
 test("Manage preserves section drafts without saving on leave or discard, validates saves, and retains accepted settings after reload", async ({
@@ -736,4 +738,51 @@ test("leaving Manage with an unsaved organization draft asks before discarding i
     .getByRole("button", { name: "Discard changes" })
     .click();
   await expect(page).toHaveURL(/\/access/);
+});
+
+test("Organization Larger text reflows at 1024 and phone widths with all settings reachable", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("openslate-text-size", "125");
+    localStorage.setItem("openslate-density", "spacious");
+  });
+  for (const width of [1024, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/manage?view=organization");
+    const name = page.getByRole("textbox", {
+      name: "Organization name",
+      exact: true,
+    });
+    await expect(name).toHaveValue("Riverside Services");
+    const settings = page.getByRole("region", {
+      name: "Organization settings",
+      exact: true,
+    });
+    const controls = settings.locator(
+      "input:not([type=radio]),select,textarea",
+    );
+    const boxes = await controls.evaluateAll((elements) =>
+      elements
+        .filter((el) => el.getBoundingClientRect().width > 0)
+        .map((el) => {
+          const box = el.getBoundingClientRect();
+          return { x: box.x, right: box.right };
+        }),
+    );
+    expect(boxes.length).toBeGreaterThanOrEqual(7);
+    for (const box of boxes) {
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.right).toBeLessThanOrEqual(width);
+    }
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+    await page
+      .getByRole("combobox", { name: "Timezone", exact: true })
+      .scrollIntoViewIfNeeded();
+    await expect(
+      page.getByRole("combobox", { name: "Timezone", exact: true }),
+    ).toBeInViewport();
+  }
 });

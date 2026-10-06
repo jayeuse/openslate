@@ -2215,7 +2215,7 @@ export default function ServerBackedViewsWorkspace({
               ) : null}
             </div>
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-              <Field className="min-w-56 flex-1 sm:flex-none">
+              <Field className="min-w-0 flex-1 basis-full sm:min-w-56 sm:flex-none">
                 <FieldLabel htmlFor="openview-saved-view">
                   Saved view
                 </FieldLabel>

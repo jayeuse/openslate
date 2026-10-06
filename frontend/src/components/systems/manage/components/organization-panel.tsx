@@ -88,7 +88,7 @@ export function OrganizationPanel({
 
   return (
     <section
-      className="grid min-w-0 gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)] lg:gap-10 xl:gap-12"
+      className="grid min-w-0 gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(18.75rem,0.9fr)] lg:gap-10 xl:gap-12"
       aria-label="Organization settings"
     >
       {workspaceLoadFailed ? (

@@ -254,7 +254,11 @@ async function installLibrary(
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/preferences"))
       return route.fulfill({
-        json: { user_id: path.split("/")[3], theme: state.theme },
+        json: {
+          user_id: path.split("/")[3],
+          theme: state.theme,
+          appearance: { motion: "system", keyboard_shortcuts: true },
+        },
       });
     state.directoryReads.push(path);
     return failure(route, 403);

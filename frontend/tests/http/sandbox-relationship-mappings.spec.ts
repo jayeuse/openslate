@@ -3833,3 +3833,214 @@ test("a Test run plays out on the canvas in three still steps", async ({
   await expect(row("Status")).not.toHaveAttribute("data-test-mark");
   await expect(page.getByText("Step 3 of 3: Result")).toBeHidden();
 });
+
+test("personal text scaling leaves canvas SVG key editor and geometry unchanged", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page);
+  const frame = page.getByLabel("Module design canvas");
+  await expect(frame.locator("[data-sandbox-body]").first()).toBeVisible();
+  await frame.getByText("Key", { exact: true }).click();
+  const node = frame.locator('.x6-cell[data-cell-id="sample-requests"]');
+  await node.locator("text").first().dblclick();
+  await expect(
+    page.getByRole("textbox", { name: "Canvas name editor" }),
+  ).toBeVisible();
+  const metrics = async () =>
+    page.evaluate(() => {
+      const frame = document.querySelector('[data-skin="canvas-frame"]')!;
+      const key = frame.querySelector("summary")!;
+      const editor = frame.querySelector(
+        'input[aria-label="Canvas name editor"]',
+      )!;
+      const body = frame.querySelector('[data-sandbox-kind="module"]')!;
+      const grid = frame.querySelector('[data-testid="sandbox-grid"]')!;
+      return {
+        keyFont: getComputedStyle(key).fontSize,
+        keyHeight: key.getBoundingClientRect().height,
+        editorFont: getComputedStyle(editor).fontSize,
+        editorHeight: editor.getBoundingClientRect().height,
+        editorRadius: getComputedStyle(editor).borderRadius,
+        nodeRadius: getComputedStyle(body).rx,
+        nodeWidth: body.getAttribute("width"),
+        grid: getComputedStyle(grid).backgroundSize,
+        svgFonts: [...frame.querySelectorAll("svg text")].map(
+          (text) => getComputedStyle(text).fontSize,
+        ),
+      };
+    });
+  const baseline = await metrics();
+  const zoom = await page
+    .getByRole("status", { name: "Canvas zoom" })
+    .innerText();
+  const title = page.getByRole("heading", { name: "Sandbox", exact: true });
+  const titleBefore = await title.evaluate((el) =>
+    parseFloat(getComputedStyle(el).fontSize),
+  );
+  // The browser CSS boundary is the real root font size that personal text controls set.
+  await page.evaluate(() => {
+    const root = document.documentElement;
+    root.dataset.textSize = "125";
+    root.dataset.density = "spacious";
+    root.style.fontSize = "125%";
+  });
+  await expect
+    .poll(() =>
+      title.evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
+    )
+    .toBeGreaterThan(titleBefore);
+  expect(await metrics()).toEqual(baseline);
+  // A real device-cache event also exercises the provider render boundary.
+  const resize = page.getByRole("separator", { name: "Resize sidebar" });
+  const priorUnits = Number(await resize.getAttribute("aria-valuenow"));
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "";
+    localStorage.setItem("openslate-text-size", "125");
+    localStorage.setItem("openslate-density", "spacious");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "openslate-text-size" }),
+    );
+  });
+  await expect
+    .poll(async () => Number(await resize.getAttribute("aria-valuenow")))
+    .toBeGreaterThan(priorUnits);
+  await expect(
+    page.getByRole("textbox", { name: "Canvas name editor" }),
+  ).toBeVisible();
+  expect(await metrics()).toEqual(baseline);
+  await expect(page.getByRole("status", { name: "Canvas zoom" })).toHaveText(
+    zoom,
+  );
+  await page
+    .getByRole("textbox", { name: "Canvas name editor" })
+    .press("Escape");
+  await expect(
+    page.getByRole("textbox", { name: "Canvas name editor" }),
+  ).toBeHidden();
+});
+
+test("empty canvas text and actions stay at their canvas baseline when page text grows", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, initialDesign);
+  const heading = page.getByRole("heading", {
+    name: "Design your organization",
+  });
+  await expect(heading).toBeVisible();
+  const start = page.getByRole("button", {
+    name: "Start from a template",
+    exact: true,
+  });
+  const before = await heading.evaluate((el) => getComputedStyle(el).fontSize);
+  const height = await start.evaluate(
+    (el) => el.getBoundingClientRect().height,
+  );
+  await page.evaluate(() => {
+    document.documentElement.dataset.textSize = "125";
+    document.documentElement.dataset.density = "compact";
+    document.documentElement.style.fontSize = "125%";
+  });
+  await expect(heading).toHaveCSS("font-size", before);
+  expect(await start.evaluate((el) => el.getBoundingClientRect().height)).toBe(
+    height,
+  );
+});
+
+test("disabled convenience shortcuts preserve canvas buttons and essential arrow editing", async ({
+  page,
+}) => {
+  await page.route("**/api/users/*/preferences", (route) =>
+    route.fulfill({
+      json: {
+        user_id: "00000000-0000-4000-8000-000000000001",
+        theme: "light",
+        appearance: { motion: "system", keyboard_shortcuts: false },
+      },
+    }),
+  );
+  await openAuthenticatedSandbox(page);
+  await page.keyboard.press("?");
+  await expect(
+    page.getByRole("heading", { name: "Canvas controls", exact: true }),
+  ).toBeHidden();
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  const zoom = await page
+    .getByRole("status", { name: "Canvas zoom" })
+    .innerText();
+  await page.keyboard.press("0");
+  await expect(page.getByRole("status", { name: "Canvas zoom" })).toHaveText(
+    zoom,
+  );
+  await page.getByRole("button", { name: "Fit canvas", exact: true }).click();
+  await expect(
+    page.getByRole("status", { name: "Canvas action" }),
+  ).toContainText("Canvas");
+  const node = page
+    .getByRole("region", { name: "Organization canvas" })
+    .locator('.x6-cell[data-cell-id="sample-requests"]');
+  await node.locator("text").first().click();
+  const before = await node.getAttribute("transform");
+  await page.keyboard.press("ArrowRight");
+  await expect(node).not.toHaveAttribute("transform", before ?? "");
+  await page.getByRole("button", { name: "View canvas", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Canvas help", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Canvas controls", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Canvas controls", exact: true }),
+  ).toContainText("Convenience shortcuts are off in Appearance");
+});
+
+test("Trigger Studio switch preserves geometry and its 44 pixel hit target with personal display choices", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => {
+    localStorage.setItem("openslate-text-size", "125");
+    localStorage.setItem("openslate-density", "spacious");
+  });
+  const sandbox = await openAuthenticatedSandbox(page);
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  const toggle = page.getByRole("switch", { name: "Enabled in draft" });
+  await expect(toggle).toBeVisible();
+  const track = await toggle.boundingBox();
+  const thumb = await toggle
+    .locator('[data-slot="switch-thumb"]')
+    .boundingBox();
+  if (!track || !thumb) throw new Error("Trigger switch geometry missing");
+  expect(thumb.height).toBeLessThanOrEqual(track.height);
+  const saved = sandbox.document().triggers;
+  await page.evaluate(() => {
+    localStorage.setItem("openslate-text-size", "100");
+    localStorage.setItem("openslate-density", "compact");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "openslate-text-size" }),
+    );
+  });
+  await expect
+    .poll(() =>
+      page.locator("html").evaluate((el) => getComputedStyle(el).fontSize),
+    )
+    .toBe("16px");
+  await expect
+    .poll(async () => {
+      const box = await toggle.boundingBox();
+      return box ? Math.round(box.height * 10) / 10 : null;
+    })
+    .toBe(18.4);
+  await toggle.scrollIntoViewIfNeeded();
+  await expect(toggle).toBeInViewport();
+  const checked = await toggle.getAttribute("aria-checked");
+  const box = await toggle.boundingBox();
+  if (!box) throw new Error("Trigger switch missing");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2 + 21);
+  await expect(toggle).toHaveAttribute(
+    "aria-checked",
+    checked === "true" ? "false" : "true",
+  );
+  expect(sandbox.document().triggers).toEqual(saved);
+});

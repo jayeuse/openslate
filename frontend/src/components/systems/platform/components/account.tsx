@@ -29,8 +29,8 @@ import {
   platformKeys,
 } from "../adapters/platform-queries";
 import {
-  useUserThemePreference,
-  UserThemeStatus,
+  useUserPreferences,
+  UserPreferencesStatus,
 } from "@/components/theme-provider";
 
 type AccountConfirmation =
@@ -117,7 +117,7 @@ function formatLastActive(
 }
 
 export default function Account() {
-  const theme = useUserThemePreference();
+  const theme = useUserPreferences();
   const queryClient = useQueryClient();
   const completeSignOut = useWorkspaceSignOut();
   const actionTrigger = useRef<HTMLButtonElement | null>(null);
@@ -253,7 +253,13 @@ export default function Account() {
           value={theme.mode ?? ""}
           disabled={theme.disabled}
           onChange={(event) =>
-            theme.setMode(event.target.value === "dark" ? "dark" : "light")
+            theme.setMode(
+              event.target.value === "system"
+                ? "system"
+                : event.target.value === "dark"
+                  ? "dark"
+                  : "light",
+            )
           }
         >
           <option value="" disabled>
@@ -261,8 +267,9 @@ export default function Account() {
           </option>
           <option value="light">Light</option>
           <option value="dark">Dark</option>
+          <option value="system">System</option>
         </Choice>
-        <UserThemeStatus />
+        <UserPreferencesStatus />
       </Panel>
       <Panel title="Account security">
         <div className="space-y-3">
