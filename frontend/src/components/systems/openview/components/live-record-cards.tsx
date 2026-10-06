@@ -5,10 +5,12 @@ import type {
   OpenViewRecord,
 } from "../adapters/views-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
+import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 
 type LiveRecordCardLayout = "grid" | "gallery";
 
 type LiveRecordCardsProps = {
+  region: WorkspaceRegion | undefined;
   layout: LiveRecordCardLayout;
   rows: readonly OpenViewRecord[];
   fields: readonly OpenViewDataSourceField[];
@@ -26,13 +28,15 @@ function recordValue(value: unknown): string {
   return "—";
 }
 
-function updatedDate(value: string): string {
-  return new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(
-    new Date(value),
-  );
+function updatedDate(
+  value: string,
+  region: WorkspaceRegion | undefined,
+): string {
+  return region ? formatWorkspaceDate(value, region) : "Date unavailable";
 }
 
 export function LiveRecordCards({
+  region,
   layout,
   rows,
   fields,
@@ -139,7 +143,7 @@ export function LiveRecordCards({
               <p className="text-muted-foreground mt-auto text-xs">
                 Updated{" "}
                 <time dateTime={row.updatedAt}>
-                  {updatedDate(row.updatedAt)}
+                  {updatedDate(row.updatedAt, region)}
                 </time>
               </p>
             </article>

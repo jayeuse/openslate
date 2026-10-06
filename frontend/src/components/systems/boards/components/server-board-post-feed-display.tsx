@@ -17,20 +17,25 @@ import type { BoardPost } from "../adapters/board-posts-api";
 import { ServerBoardPostHistory } from "./server-board-post-history";
 import { HydratedBoardAttachments } from "./server-backed-board-attachments";
 import { HydratedBoardRecordLinks } from "./hydrated-board-record-links";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 
 const SUMMARY_LIMIT = 280;
 const editedLinkClass =
   "text-primary focus-visible:outline-ring -my-3 inline-flex min-h-11 items-center rounded-sm underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2";
 
-function publishedLabel(timestamp: string): string {
-  return new Intl.DateTimeFormat(undefined, {
+function publishedLabel(
+  timestamp: string,
+  region: WorkspaceRegion | undefined,
+): string {
+  if (!region) return "Date unavailable";
+  return formatWorkspaceDateTime(timestamp, region, {
     year: "numeric",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
     timeZoneName: "short",
-  }).format(new Date(timestamp));
+  });
 }
 
 function postSummary(body: string): string {
@@ -112,6 +117,7 @@ export function ServerBoardPostReaderContent({ post }: { post: BoardPost }) {
 }
 
 export function ServerBoardPostReader({
+  region,
   post,
   authorLabel,
   onHistory,
@@ -122,6 +128,7 @@ export function ServerBoardPostReader({
   finalFocus,
 }: {
   post: BoardPost | null;
+  region: WorkspaceRegion | undefined;
   authorLabel: string;
   onHistory: (post: BoardPost) => void;
   onClose: () => void;
@@ -139,7 +146,7 @@ export function ServerBoardPostReader({
           ? createElement(
               "time",
               { key: "published", dateTime: post.publishedAt },
-              publishedLabel(post.publishedAt),
+              publishedLabel(post.publishedAt, region),
             )
           : null,
         post.pinned ? createElement("span", { key: "pinned" }, "Pinned") : null,
@@ -230,12 +237,14 @@ export function ServerBoardPostReader({
 }
 
 export function ServerBoardPostFeedDisplay({
+  region,
   page,
   appliedSearch = "",
   authorLabels = null,
   onReadPost,
 }: {
   page: BoardPostPage;
+  region: WorkspaceRegion | undefined;
   appliedSearch?: string;
   authorLabels?: Record<string, string> | null;
   onReadPost?: (postId: string) => void;
@@ -354,7 +363,7 @@ export function ServerBoardPostFeedDisplay({
                                 dateTime: item.publishedAt,
                                 className: "text-muted-foreground text-sm",
                               },
-                              publishedLabel(item.publishedAt),
+                              publishedLabel(item.publishedAt, region),
                             )
                           : null,
                         item.pinned
@@ -432,6 +441,7 @@ export function ServerBoardPostFeedDisplay({
           ),
     ),
     createElement(ServerBoardPostReader, {
+      region,
       post: readerPost,
       authorLabel: readerPost
         ? (authorLabels?.[readerPost.authorId] ?? "Author unavailable")
@@ -444,6 +454,7 @@ export function ServerBoardPostFeedDisplay({
     }),
     history
       ? createElement(ServerBoardPostHistory, {
+          region,
           boardId: history.boardId,
           postId: history.id,
           title: history.title,

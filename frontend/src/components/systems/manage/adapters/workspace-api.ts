@@ -98,7 +98,7 @@ export function workspaceHasContacts(
 }
 
 const workspaceCalendarSchema = workspaceCommonProfileSchema
-  .pick({ week_start: true })
+  .pick({ week_start: true, locale: true, timezone: true })
   .extend({ today: z.iso.date() });
 export type WorkspaceCalendarSettings = z.output<
   typeof workspaceCalendarSchema
@@ -197,6 +197,21 @@ const ORGANIZATION_LOCALE_TAGS = {
   "English (Philippines)": "en-PH",
   Filipino: "fil-PH",
   "English (US)": "en-US",
+  "English (UK)": "en-GB",
+  "French (France)": "fr-FR",
+  "German (Germany)": "de-DE",
+  "Spanish (Spain)": "es-ES",
+  "Portuguese (Brazil)": "pt-BR",
+  "Italian (Italy)": "it-IT",
+  "Japanese (Japan)": "ja-JP",
+  "Korean (South Korea)": "ko-KR",
+  "Chinese (China)": "zh-CN",
+  "Chinese (Taiwan)": "zh-TW",
+  "Arabic (Saudi Arabia)": "ar-SA",
+  "Hindi (India)": "hi-IN",
+  "Thai (Thailand)": "th-TH",
+  "Indonesian (Indonesia)": "id-ID",
+  "Vietnamese (Vietnam)": "vi-VN",
 } as const;
 
 export const organizationLocaleLabels = Object.keys(

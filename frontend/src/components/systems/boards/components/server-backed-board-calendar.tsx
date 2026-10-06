@@ -37,6 +37,7 @@ import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { reportDone } from "@/lib/feedback";
+import { formatWorkspaceDate } from "@/lib/date-time";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import {
   archiveBoardEvent,
@@ -51,10 +52,7 @@ import {
 } from "../adapters/board-events-api";
 import type { BoardAttachmentVersions } from "../adapters/board-files-api";
 import { readBoard } from "../adapters/board-management-api";
-import {
-  getWorkspaceCalendarSettings,
-  type WorkspaceCalendarSettings,
-} from "../../manage/adapters/workspace-api";
+import type { WorkspaceCalendarSettings } from "../../manage/adapters/workspace-api";
 import {
   getMyBoardAccess,
   type BoardMyAccess,
@@ -148,6 +146,9 @@ export function canEditBoardEvent(
 export function ServerBackedBoardCalendar({
   boardId,
   refreshKey,
+  workspaceCalendar,
+  workspaceDateError,
+  onRetryWorkspaceDate,
   boardActive = false,
   onDraftStateChange,
   selectedEventId = null,
@@ -155,6 +156,9 @@ export function ServerBackedBoardCalendar({
 }: {
   boardId: string;
   refreshKey: number;
+  workspaceCalendar: WorkspaceCalendarSettings | undefined;
+  workspaceDateError: boolean;
+  onRetryWorkspaceDate: () => void;
   boardActive?: boolean;
   selectedEventId?: string | null;
   onCloseSelectedEvent?: () => void;
@@ -173,13 +177,7 @@ export function ServerBackedBoardCalendar({
     event: BoardEvent | null;
     error: string | null;
   } | null>(null);
-  const [workspaceCalendar, setWorkspaceCalendar] =
-    useState<WorkspaceCalendarSettings | null>(null);
   const workspaceToday = workspaceCalendar?.today ?? null;
-  const [workspaceDateError, setWorkspaceDateError] = useState<string | null>(
-    null,
-  );
-  const [workspaceDateRetry, setWorkspaceDateRetry] = useState(0);
   const [month, setMonth] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [view, setView] = useState<CalendarView>("month");
@@ -227,7 +225,15 @@ export function ServerBackedBoardCalendar({
   } | null>(null);
   const calendarMonth = month ?? workspaceToday?.slice(0, 7) ?? null;
   const calendarWindow = calendarMonth
-    ? calendarWindowForMonth(calendarMonth)
+    ? {
+        ...calendarWindowForMonth(calendarMonth),
+        label: workspaceCalendar
+          ? formatWorkspaceDate(`${calendarMonth}-01`, workspaceCalendar, {
+              month: "long",
+              year: "numeric",
+            })
+          : "Date unavailable",
+      }
     : null;
   const selectedCalendarDate =
     selectedDate ?? workspaceToday ?? calendarWindow?.start ?? "";
@@ -289,29 +295,10 @@ export function ServerBackedBoardCalendar({
   }, [accessDenied, boardId, selectedEventId, selectedKey, viewerId]);
 
   useEffect(() => {
-    let active = true;
-    async function refreshWorkspaceDate() {
-      try {
-        const workspace = await getWorkspaceCalendarSettings();
-        if (!active) return;
-        setWorkspaceCalendar(workspace);
-        setWorkspaceDateError(null);
-        setMonth((current) => current ?? workspace.today.slice(0, 7));
-        setSelectedDate((current) => current ?? workspace.today);
-      } catch {
-        if (active) setWorkspaceDateError("Could not load the Workspace date.");
-      }
-    }
-    void refreshWorkspaceDate();
-    const timer = globalThis.window.setInterval(
-      () => void refreshWorkspaceDate(),
-      60_000,
-    );
-    return () => {
-      active = false;
-      globalThis.window.clearInterval(timer);
-    };
-  }, [refreshKey, workspaceDateRetry]);
+    if (!workspaceToday) return;
+    setMonth((current) => current ?? workspaceToday.slice(0, 7));
+    setSelectedDate((current) => current ?? workspaceToday);
+  }, [workspaceToday]);
 
   useEffect(() => {
     setView(
@@ -951,6 +938,7 @@ export function ServerBackedBoardCalendar({
     if (!calendarPage || !calendarWindow) return null;
     return (
       <ServerBoardCalendarDisplay
+        region={workspaceCalendar}
         page={calendarPage}
         window={calendarWindow}
         date={date}
@@ -989,7 +977,7 @@ export function ServerBackedBoardCalendar({
               </DialogTitle>
               <DialogDescription>
                 {selectedEvent
-                  ? boardEventTimeLabel(selectedEvent)
+                  ? boardEventTimeLabel(selectedEvent, workspaceCalendar)
                   : accessDenied
                     ? "This event is unavailable or you no longer have access."
                     : (currentSelectedDetail?.error ?? "Loading the event.")}
@@ -1108,13 +1096,13 @@ export function ServerBackedBoardCalendar({
               <span>
                 {workspaceToday
                   ? "The Workspace date could not be refreshed. The last loaded date is still in use."
-                  : workspaceDateError}
+                  : "Could not load the Workspace date."}
               </span>
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-11"
-                onClick={() => setWorkspaceDateRetry((value) => value + 1)}
+                onClick={onRetryWorkspaceDate}
               >
                 Retry Workspace date
               </Button>
@@ -1424,6 +1412,7 @@ export function ServerBackedBoardCalendar({
         myEventsState?.key === myEventsKey &&
         myEventsState.page && (
           <MyEventsDisplay
+            region={workspaceCalendar}
             page={myEventsState.page}
             onEdit={(event) => {
               if (!mayEditEvent(event)) return;
@@ -1510,6 +1499,7 @@ export function ServerBackedBoardCalendar({
                 {view === "month" ? (
                   workspaceCalendar ? (
                     <MonthGrid
+                      region={workspaceCalendar}
                       window={calendarWindow}
                       page={calendarPage}
                       selectedDate={selectedCalendarDate}

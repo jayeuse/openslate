@@ -52,19 +52,3 @@ export const initialManageSettings: ManageSettings = {
   tier: "Team",
   expiry: "2027-09-11",
 };
-export const manageOptions = {
-  logo: ["RS", "R", "Compass"],
-  locale: ["English (Philippines)", "Filipino", "English (US)"],
-  timezone: ["Asia/Manila", "UTC", "Asia/Singapore"],
-  currency: ["PHP", "USD", "SGD"],
-  week: ["Monday", "Sunday"],
-  password: [
-    "12 characters + mixed case",
-    "16 characters + mixed case + number",
-    "20-character passphrase",
-  ],
-  timeout: ["15 minutes", "30 minutes", "60 minutes", "8 hours"],
-  mfa: ["Optional", "Required for administrators", "Required for everyone"],
-  schedule: ["Disabled", "Daily at 02:00", "Weekly on Sunday at 02:00"],
-  retention: ["7 days", "30 days", "90 days"],
-};

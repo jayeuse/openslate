@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table";
 import { LiveRecordCards } from "./live-record-cards";
 import { openViewRecordFieldValue } from "../domain/record-display";
+import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 
 type RecordPage = {
   rows: readonly OpenViewRecord[];
@@ -32,6 +33,7 @@ type ResultsPresentation = Pick<
 >;
 
 type LiveRecordResultsProps = {
+  region: WorkspaceRegion | undefined;
   title: string;
   scopeLabel: string;
   layoutDescription: string;
@@ -56,6 +58,7 @@ function recordValue(value: unknown): string {
 }
 
 export function LiveRecordResults({
+  region,
   title,
   scopeLabel,
   layoutDescription,
@@ -101,6 +104,7 @@ export function LiveRecordResults({
       {cardLayout ? (
         <div className="overflow-x-auto">
           <LiveRecordCards
+            region={region}
             layout={cardLayout}
             rows={page.rows}
             fields={cardFields}
@@ -135,7 +139,7 @@ export function LiveRecordResults({
                 {tableFields.map((field, index) => (
                   <TableCell
                     key={field.id}
-                    className={`max-w-80 px-4 align-top ${presentation.density === "compact" ? "py-1.5" : "py-3"} ${presentation.wrap ? "break-words whitespace-normal" : "whitespace-nowrap"} ${field.id === pinnedFieldId ? "bg-card sticky left-0 z-10" : ""}`}
+                    className={`max-w-80 px-4 align-top ${presentation.density === "compact" ? "py-1.5" : "py-3"} ${presentation.wrap ? "break-words whitespace-normal" : "truncate"} ${field.id === pinnedFieldId ? "bg-card sticky left-0 z-10" : ""}`}
                   >
                     {index === 0 ? (
                       <button
@@ -153,9 +157,9 @@ export function LiveRecordResults({
                 <TableCell
                   className={`text-muted-foreground px-4 align-top ${presentation.density === "compact" ? "py-1.5" : "py-3"}`}
                 >
-                  {new Intl.DateTimeFormat("en", {
-                    dateStyle: "medium",
-                  }).format(new Date(row.updatedAt))}
+                  {region
+                    ? formatWorkspaceDate(row.updatedAt, region)
+                    : "Date unavailable"}
                 </TableCell>
               </TableRow>
             ))}

@@ -85,6 +85,7 @@ function intervalPosition(
 }
 
 export function LiveTimeline({
+  region,
   moduleId,
   definition,
   dateRange,
@@ -350,9 +351,15 @@ export function LiveTimeline({
                           startValue,
                           startField.type,
                           timezone,
+                          region?.locale,
                         )}
                         {" – "}
-                        {formatWindowDate(endValue, endField.type, timezone)}
+                        {formatWindowDate(
+                          endValue,
+                          endField.type,
+                          timezone,
+                          region?.locale,
+                        )}
                       </p>
                     ) : (
                       <p className="text-muted-foreground text-sm">
@@ -366,6 +373,7 @@ export function LiveTimeline({
                           row.data[deadlineField.id],
                           deadlineField.type,
                           timezone,
+                          region?.locale,
                         )}
                       </p>
                     ) : null}
@@ -407,14 +415,28 @@ export function LiveTimeline({
                   {scope === "window" ? (
                     <div className="flex min-w-0 flex-col justify-center gap-2">
                       <div className="text-muted-foreground flex justify-between text-xs">
-                        <span>{windowDates.start}</span>
-                        <span>{windowDates.end}</span>
+                        <span>
+                          {formatWindowDate(
+                            windowDates.start,
+                            "date",
+                            timezone,
+                            region?.locale,
+                          )}
+                        </span>
+                        <span>
+                          {formatWindowDate(
+                            windowDates.end,
+                            "date",
+                            timezone,
+                            region?.locale,
+                          )}
+                        </span>
                       </div>
                       <div
                         role="img"
                         aria-label={
                           position
-                            ? `${title} interval, ${formatWindowDate(startValue, startField.type, timezone)} to ${formatWindowDate(endValue, endField.type, timezone)}`
+                            ? `${title} interval, ${formatWindowDate(startValue, startField.type, timezone, region?.locale)} to ${formatWindowDate(endValue, endField.type, timezone, region?.locale)}`
                             : `${title} interval dates unavailable`
                         }
                         className="bg-muted relative h-3 overflow-hidden rounded-full"

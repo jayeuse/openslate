@@ -69,7 +69,14 @@ test("MFA gate stays accessible over an alert dialog and restores its typed conf
   };
   const writes: string[] = [];
   await page.route("**/api/workspace", (route) =>
-    route.fulfill({ json: { today: "2026-10-02" } }),
+    route.fulfill({
+      json: {
+        today: "2026-10-02",
+        week_start: "monday",
+        locale: "en-US",
+        timezone: "UTC",
+      },
+    }),
   );
   await page.route("**/api/boards**", (route) => {
     const path = new URL(route.request().url()).pathname;

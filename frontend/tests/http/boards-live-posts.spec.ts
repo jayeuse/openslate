@@ -154,7 +154,12 @@ async function installPostBrowserApi(page: Page) {
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ today: "2026-09-23", week_start: "monday" }),
+      body: JSON.stringify({
+        today: "2026-09-23",
+        week_start: "monday",
+        locale: "en-US",
+        timezone: "UTC",
+      }),
     }),
   );
   await page.route("**/api/views/data-sources**", (route) =>
@@ -686,6 +691,57 @@ test("an edited post links to its edit history and each earlier version", async 
   await expect(
     dialog.getByRole("heading", { name: "Safety update draft" }),
   ).toBeVisible();
+});
+
+test.describe("Boards workspace regional post dates", () => {
+  test.use({ locale: "en-US", timezoneId: "UTC" });
+  test("published feed, reader and edit history use the workspace date and timezone", async ({
+    page,
+  }) => {
+    const api = await installPostBrowserApi(page);
+    api.setPublishedItems([
+      { ...browserPost, publication_number: 2, edited: true },
+    ]);
+    await page.route(
+      `**/api/boards/${boardId}/posts/${postId}?view=published`,
+      (route) =>
+        route.fulfill({
+          json: { ...browserPost, publication_number: 2, edited: true },
+        }),
+    );
+    await page.route("**/api/workspace", (route) =>
+      route.fulfill({
+        json: {
+          today: "2026-09-23",
+          week_start: "monday",
+          locale: "fr-FR",
+          timezone: "America/Los_Angeles",
+        },
+      }),
+    );
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    await expect(page.locator("article time")).toHaveText(
+      /22 sept\. 2026.*17:00/,
+    );
+    await page.getByRole("button", { name: "Open post", exact: true }).click();
+    const reader = page.getByRole("dialog", {
+      name: "Published safety update",
+      exact: true,
+    });
+    await expect(reader.locator("time")).toHaveText(/22 sept\. 2026.*17:00/);
+    await reader.getByRole("button", { name: "Edited", exact: true }).click();
+    const history = page.getByRole("dialog", {
+      name: "Edit history",
+      exact: true,
+    });
+    await expect(
+      history.getByRole("button", { name: /Version 2/ }),
+    ).toContainText(/22 sept\. 2026.*17:00/);
+    await history.getByRole("button", { name: /Version 1/ }).click();
+    await expect(
+      history.getByRole("button", { name: /Version 1/ }),
+    ).toContainText(/22 sept\. 2026.*17:00/);
+  });
 });
 
 test("a post published once shows no edit history link", async ({ page }) => {

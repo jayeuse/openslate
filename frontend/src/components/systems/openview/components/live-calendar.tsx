@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  formatWorkspaceDate,
+  formatWorkspaceDateTime,
+  type WorkspaceRegion,
+} from "@/lib/date-time";
 import { ApiError } from "@/lib/api";
 import { queryOpenViewWindowRecords } from "../adapters/window-api";
 import type {
@@ -28,11 +32,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  workspaceCalendarQueryOptions,
-  type WorkspaceCalendarSettings,
-} from "../../manage/adapters/workspace-api";
-import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
+import type { WorkspaceCalendarSettings } from "../../manage/adapters/workspace-api";
 
 const WINDOW_PAGE_SIZE = 25;
 const DAY_MILLISECONDS = 24 * 60 * 60 * 1000;
@@ -44,6 +44,7 @@ export type CalendarDateField = OpenViewDataSourceField & {
 export type CalendarWindowScope = "window" | "undated";
 
 export type LiveWindowBaseProps = {
+  region: WorkspaceRegion | undefined;
   moduleId: string;
   definition: OpenViewQueryDefinition;
   dateRange: "week" | "month" | "quarter" | "year";
@@ -176,23 +177,21 @@ export function formatWindowDate(
   value: unknown,
   expectedType: "date" | "datetime",
   timezone: string | null,
+  locale: string | undefined,
 ): string {
   if (typeof value !== "string") return "—";
+  if (!locale) return "Date unavailable";
   const day = dateInTimezone(value, expectedType, timezone);
   if (!day) return "Date unavailable";
-  const date = new Date(`${day}T00:00:00.000Z`);
-  const dayLabel = new Intl.DateTimeFormat("en", {
-    timeZone: "UTC",
-    dateStyle: "medium",
-  }).format(date);
+  const region = { locale, timezone: timezone ?? "UTC" };
+  const dayLabel = formatWorkspaceDate(day, region);
   if (expectedType === "date") return dayLabel;
   const instant = recordDateTimeInstant(value);
   if (Number.isNaN(instant.getTime())) return "Date unavailable";
-  return new Intl.DateTimeFormat("en", {
-    timeZone: timezone ?? "UTC",
+  return formatWorkspaceDateTime(instant.toISOString(), region, {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(instant);
+  });
 }
 
 function recordDateTimeInstant(value: string): Date {
@@ -438,6 +437,10 @@ function recordText(value: unknown): string {
 }
 
 type LiveCalendarProps = LiveWindowBaseProps & {
+  workspaceCalendar: WorkspaceCalendarSettings | undefined;
+  settingsPending: boolean;
+  settingsError: boolean;
+  onRetrySettings: () => void;
   scale?: "month" | "list" | null;
   dateField: CalendarDateField;
   titleField: OpenViewDataSourceField | undefined;
@@ -445,29 +448,7 @@ type LiveCalendarProps = LiveWindowBaseProps & {
 };
 
 export function LiveCalendar(props: LiveCalendarProps) {
-  const workspace = useQuery(workspaceCalendarQueryOptions());
-  const client = useQueryClient();
-  useEffect(() => {
-    const queryKey = workspaceCalendarQueryOptions().queryKey;
-    const refreshSettings = () => {
-      const cold = client
-        .getQueryCache()
-        .findAll({ queryKey, fetchStatus: "fetching" })
-        .filter((query) => query.state.data === undefined);
-      void Promise.all(
-        cold.map((query) => query.cancel({ revert: true })),
-      ).then(() => client.invalidateQueries({ queryKey }));
-    };
-    return subscribeWorkspaceInvalidations((event) => {
-      if (event.type === "resync" || event.entity === "workspace_profiles")
-        refreshSettings();
-    }, refreshSettings);
-  }, [client]);
-
-  const retrySettings = () => {
-    void workspace.refetch();
-  };
-  if (!workspace.data)
+  if (!props.workspaceCalendar)
     return (
       <Card
         className="min-w-0 self-auto overflow-hidden"
@@ -482,7 +463,7 @@ export function LiveCalendar(props: LiveCalendarProps) {
           </p>
         </header>
         <LoadingRegion
-          loading={workspace.isPending}
+          loading={props.settingsPending}
           label="Loading calendar settings"
           skeleton={
             <div className="space-y-4 p-4">
@@ -504,7 +485,7 @@ export function LiveCalendar(props: LiveCalendarProps) {
               type="button"
               variant="outline"
               className="min-h-11"
-              onClick={retrySettings}
+              onClick={props.onRetrySettings}
             >
               Retry calendar settings
             </Button>
@@ -515,14 +496,14 @@ export function LiveCalendar(props: LiveCalendarProps) {
   return (
     <ResolvedLiveCalendar
       {...props}
-      weekStart={workspace.data.week_start}
-      settingsError={workspace.isError}
-      onRetrySettings={retrySettings}
+      region={props.workspaceCalendar}
+      weekStart={props.workspaceCalendar.week_start}
     />
   );
 }
 
 function ResolvedLiveCalendar({
+  region,
   moduleId,
   definition,
   dateRange,
@@ -536,6 +517,7 @@ function ResolvedLiveCalendar({
   settingsError,
   onRetrySettings,
 }: LiveCalendarProps & {
+  region: WorkspaceRegion;
   weekStart: WorkspaceCalendarSettings["week_start"];
   settingsError: boolean;
   onRetrySettings: () => void;
@@ -731,15 +713,18 @@ function ResolvedLiveCalendar({
             ).getUTCDate();
             const leadingDays =
               (firstDay.getUTCDay() + (weekStart === "monday" ? 6 : 0)) % 7;
-            const weekdays =
-              weekStart === "monday"
-                ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-                : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-            const monthLabel = new Intl.DateTimeFormat("en", {
-              timeZone: "UTC",
+            const firstWeekday = weekStart === "monday" ? 5 : 4;
+            const weekdays = Array.from({ length: 7 }, (_, index) =>
+              formatWorkspaceDate(
+                `2026-01-${String(firstWeekday + index).padStart(2, "0")}`,
+                region,
+                { weekday: "short" },
+              ),
+            );
+            const monthLabel = formatWorkspaceDate(`${monthKey}-01`, region, {
               month: "long",
               year: "numeric",
-            }).format(firstDay);
+            });
             const cells: (number | null)[] = [
               ...Array.from({ length: leadingDays }, () => null),
               ...Array.from({ length: dayCount }, (_, index) => index + 1),
@@ -804,6 +789,7 @@ function ResolvedLiveCalendar({
                                   rows[0].data[dateField.id],
                                   dateField.type,
                                   timezone,
+                                  region.locale,
                                 )}
                               </h4>
                             ) : null}
@@ -862,6 +848,7 @@ function ResolvedLiveCalendar({
                                           row.data[dateField.id],
                                           dateField.type,
                                           timezone,
+                                          region.locale,
                                         )}
                                       </span>
                                     </Button>
@@ -958,10 +945,7 @@ function ResolvedLiveCalendar({
                   ? day
                   : day === "Date unavailable"
                     ? day
-                    : new Intl.DateTimeFormat("en", {
-                        timeZone: "UTC",
-                        dateStyle: "medium",
-                      }).format(new Date(`${day}T00:00:00.000Z`))}
+                    : formatWorkspaceDate(day, region)}
               </h3>
               <ul className="divide-y">
                 {rows.map((row) => {
@@ -1017,6 +1001,7 @@ function ResolvedLiveCalendar({
                             row.data[dateField.id],
                             dateField.type,
                             timezone,
+                            region.locale,
                           )}
                         </time>
                       ) : null}

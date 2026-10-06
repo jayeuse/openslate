@@ -8,8 +8,10 @@ import {
   type OpenViewRecordHistoryEntry,
 } from "../adapters/records-api";
 import { Button } from "@/components/ui/button";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 
 type RecordHistoryPanelProps = {
+  region: WorkspaceRegion | undefined;
   recordId: string;
   moduleId: string;
   departmentId: string;
@@ -42,17 +44,19 @@ function describe(
   return `Changed ${[...new Set(changed)].join(", ")}`;
 }
 
-function when(value: string): string {
+function when(value: string, region: WorkspaceRegion | undefined): string {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return "Time unavailable";
-  return new Intl.DateTimeFormat("en", {
+  if (!region) return "Date unavailable";
+  return formatWorkspaceDateTime(value, region, {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(date);
+  });
 }
 
 /** The History tab: who changed the record, and when. */
 export function RecordHistoryPanel({
+  region,
   recordId,
   moduleId,
   departmentId,
@@ -117,7 +121,10 @@ export function RecordHistoryPanel({
             {(entry.performedBy && names.get(entry.performedBy)) ??
               entry.actorLabel ??
               "Someone"}{" "}
-            · <time dateTime={entry.createdAt}>{when(entry.createdAt)}</time>
+            ·{" "}
+            <time dateTime={entry.createdAt}>
+              {when(entry.createdAt, region)}
+            </time>
           </p>
         </li>
       ))}

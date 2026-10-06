@@ -13,6 +13,7 @@ import type { OpenViewWindowQueryRequest } from "../adapters/window-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
 import { RecordDetailsControls } from "./record-details-controls";
 import { RecordHistoryPanel } from "./record-history-panel";
+import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 import { RecordFilesPanel } from "./record-files-panel";
 import { RecordLinksPanel } from "./record-links-panel";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +72,7 @@ export type RecordControls = {
 };
 
 type LiveRecordInspectorProps = {
+  region: WorkspaceRegion | undefined;
   actions: ReactNode;
   controls?: RecordControls;
   record: OpenViewRecord | null;
@@ -90,13 +92,17 @@ function readableValue(value: unknown): string {
   return "—";
 }
 
-function updatedDate(value: string): string {
+function updatedDate(
+  value: string,
+  region: WorkspaceRegion | undefined,
+): string {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return "Date unavailable";
-  return new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(date);
+  return region ? formatWorkspaceDate(value, region) : "Date unavailable";
 }
 
 export function LiveRecordInspector({
+  region,
   actions,
   record,
   recordLoading,
@@ -221,6 +227,7 @@ export function LiveRecordInspector({
               {controls.canReadHistory ? (
                 <TabsContent value="history" className="mt-0">
                   <RecordHistoryPanel
+                    region={region}
                     recordId={record.id}
                     moduleId={controls.moduleId}
                     departmentId={controls.departmentId}
@@ -236,7 +243,7 @@ export function LiveRecordInspector({
           <p className="text-muted-foreground border-t pt-3 text-sm">
             Updated{" "}
             <time dateTime={record.updatedAt}>
-              {updatedDate(record.updatedAt)}
+              {updatedDate(record.updatedAt, region)}
             </time>
           </p>
         </>

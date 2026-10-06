@@ -15,7 +15,7 @@ import {
   useWorkspaceNavigationRequest,
   type WorkspaceNavigationGuard,
 } from "@/components/workspace-navigation-guard";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   Eye,
@@ -48,6 +48,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { SearchSelect } from "@/components/ui/search-select";
+import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 import {
   Sheet,
   SheetContent,
@@ -380,6 +382,37 @@ function ServerBackedBoardsContent() {
   const closeWidgets = useCallback(() => setWidgetSelection(null), []);
   const closePostManager = useCallback(() => setPostManagerSelection(null), []);
   const section = resolveBoardSection(route);
+  const regionActive = board !== null;
+  const workspaceCalendar = useQuery({
+    ...workspaceCalendarQueryOptions(),
+    enabled: regionActive,
+    // The server's current day rolls over without an ORM invalidation event.
+    // Preserve Calendar's existing minute refresh only while it is visible.
+    refetchInterval: regionActive && section === "calendar" ? 60_000 : false,
+  });
+  const queryClient = useQueryClient();
+  const refreshWorkspaceCalendar = useCallback(() => {
+    const queryKey = workspaceCalendarQueryOptions().queryKey;
+    const cold = queryClient
+      .getQueryCache()
+      .findAll({ queryKey, fetchStatus: "fetching" })
+      .filter((query) => query.state.data === undefined);
+    void Promise.all(cold.map((query) => query.cancel({ revert: true }))).then(
+      () => queryClient.invalidateQueries({ queryKey }),
+    );
+  }, [queryClient]);
+  useEffect(() => {
+    if (!regionActive) return;
+    const queryKey = workspaceCalendarQueryOptions().queryKey;
+    const unsubscribe = subscribeWorkspaceInvalidations((event) => {
+      if (event.type === "resync" || event.entity === "workspace_profiles")
+        refreshWorkspaceCalendar();
+    }, refreshWorkspaceCalendar);
+    return () => {
+      unsubscribe();
+      void queryClient.invalidateQueries({ queryKey, refetchType: "none" });
+    };
+  }, [regionActive, queryClient, refreshWorkspaceCalendar]);
 
   const currentDraftState =
     draftState !== null &&
@@ -742,7 +775,10 @@ function ServerBackedBoardsContent() {
                 className="size-11"
                 aria-label="Refresh"
                 title="Refresh board"
-                onClick={resource.refresh}
+                onClick={() => {
+                  resource.refresh();
+                  if (regionActive) refreshWorkspaceCalendar();
+                }}
               >
                 <RefreshCw aria-hidden="true" />
               </Button>
@@ -993,10 +1029,31 @@ function ServerBackedBoardsContent() {
             {board.status === "archived" && (
               <Alert>This Board is archived and read-only.</Alert>
             )}
+            {section !== "calendar" && workspaceCalendar.isError && (
+              <Alert variant="destructive">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {workspaceCalendar.data
+                      ? "Regional settings could not be refreshed. The last loaded settings are still in use."
+                      : "Could not load regional settings. Dates are unavailable."}
+                  </span>
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => void workspaceCalendar.refetch()}
+                  >
+                    Retry regional settings
+                  </Button>
+                </div>
+              </Alert>
+            )}
 
             {section === "calendar" ? (
               <ServerBackedBoardCalendar
                 key={board.id}
+                workspaceCalendar={workspaceCalendar.data}
+                workspaceDateError={workspaceCalendar.isError}
+                onRetryWorkspaceDate={() => void workspaceCalendar.refetch()}
                 boardId={board.id}
                 boardActive={board.status === "active"}
                 refreshKey={resource.detail.sequence}
@@ -1042,6 +1099,7 @@ function ServerBackedBoardsContent() {
                 </div>
                 <ServerBackedBoardPosts
                   key={board.id}
+                  region={workspaceCalendar.data}
                   boardId={board.id}
                   refreshKey={resource.detail.sequence}
                   selectedPostId={searchParams.get("post")}
@@ -1140,6 +1198,7 @@ function ServerBackedBoardsContent() {
                 {activityOpen && (
                   <ServerBackedBoardActivity
                     key={board.id}
+                    region={workspaceCalendar.data}
                     boardId={board.id}
                     refreshKey={resource.detail.sequence}
                     onAccessDenied={closeActivity}

@@ -1167,6 +1167,8 @@ async function installViewsApi(
   const workspace = {
     today: "2026-09-20",
     week_start: options.weekStart ?? "monday",
+    locale: "en-US",
+    timezone: "UTC",
     purge_enabled: true as boolean | undefined,
   };
   let workspaceFailure = false;
@@ -3032,6 +3034,37 @@ test("saved table presentation controls persist and drive the rendered table", a
     "Serial number",
     "Updated",
   ]);
+  const longCell = table.getByRole("cell").filter({ hasText: longName });
+  // Measure painted text against its own cell, allowing any local clipping
+  // mechanism. Page scroll width alone cannot detect overlap into a neighbour.
+  const noWrapBounds = await longCell.evaluate((cell) => {
+    const value = cell.querySelector("button") ?? cell;
+    const range = document.createRange();
+    range.selectNodeContents(value);
+    let paintedRight = range.getBoundingClientRect().right;
+    for (
+      let ancestor: Element | null = value;
+      ancestor && cell.contains(ancestor);
+      ancestor = ancestor.parentElement
+    ) {
+      if (getComputedStyle(ancestor).overflowX !== "visible")
+        paintedRight = Math.min(
+          paintedRight,
+          ancestor.getBoundingClientRect().right,
+        );
+    }
+    return {
+      rawText: cell.textContent,
+      paintedRight,
+      cellRight: cell.getBoundingClientRect().right,
+    };
+  });
+  await test.info().attach("table-no-wrap-paint-bounds", {
+    body: JSON.stringify(noWrapBounds),
+    contentType: "application/json",
+  });
+  expect(noWrapBounds.rawText).toBe(longName);
+  expect(noWrapBounds.paintedRight).toBeLessThanOrEqual(noWrapBounds.cellRight);
 
   const columnsDialog = await openColumns(page);
   await columnsDialog.getByRole("button", { name: "Move Status up" }).click();
@@ -4297,6 +4330,313 @@ test.describe("Calendar DATETIME rendering in a non-UTC browser timezone", () =>
       from_date: "2026-09-01",
       to_date: "2026-09-30",
     });
+  });
+});
+
+test.describe("OpenView workspace regional dates", () => {
+  test.use({ locale: "en-US", timezoneId: "UTC" });
+
+  for (const layout of ["table", "grid", "gallery", "kanban"] as const) {
+    test(`${layout} Updated dates use the workspace locale and cross-midnight date`, async ({
+      page,
+    }) => {
+      const api = await installViewsApi(page, {
+        initialLayout: layout,
+        initialGroupByFieldId: layout === "kanban" ? nameFieldId : undefined,
+        disableInitialSearch: true,
+      });
+      api.workspace.locale = "fr-FR";
+      api.workspace.timezone = "America/Los_Angeles";
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      if (layout === "kanban") {
+        await page
+          .getByRole("navigation", { name: "Kanban lane pages", exact: true })
+          .getByRole("button", { name: "Go to next page", exact: true })
+          .click();
+        await page
+          .getByRole("button", { name: "In service, 26 records", exact: true })
+          .click();
+        await expect(
+          page
+            .getByRole("list", { name: "Kanban lane records" })
+            .getByText("22 sept. 2026", { exact: false })
+            .first(),
+        ).toBeVisible();
+      } else {
+        await expect(
+          page
+            .getByLabel("Record results", { exact: true })
+            .getByText("22 sept. 2026", { exact: false })
+            .first(),
+        ).toBeVisible();
+      }
+    });
+  }
+
+  test("record details and history localize workspace timestamps with their existing precision", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, { disableInitialSearch: true });
+    api.workspace.locale = "fr-FR";
+    api.workspace.timezone = "America/Los_Angeles";
+    await page.route("**/api/audit-logs?**", (route) =>
+      route.fulfill({
+        json: pageResponse(
+          [
+            {
+              id: "00000000-0000-4000-8000-000000000199",
+              created_at: "2026-09-23T00:00:00Z",
+              performed_by: userId,
+              action: "update",
+              before: { data: { [nameFieldId]: "Earlier title" } },
+              after: { data: { [nameFieldId]: "Centrifugal pump 04" } },
+              actor_label: "Regional test actor",
+            },
+          ],
+          50,
+        ),
+      }),
+    );
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
+    );
+    const inspector = page.getByRole("dialog", {
+      name: "Record details",
+      exact: true,
+    });
+    await expect(
+      inspector.getByText("Updated 22 sept. 2026", { exact: false }),
+    ).toBeVisible();
+    await inspector.getByRole("tab", { name: "History", exact: true }).click();
+    await expect(
+      inspector.getByText(/22 sept\. 2026.*17:00/).first(),
+    ).toBeVisible();
+  });
+
+  test("Calendar localizes visible dates while retaining its response timezone and machine keys", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, {
+      initialLayout: "calendar",
+      calendarDateTimeValue: "2026-09-01T10:00:00",
+    });
+    api.workspace.locale = "fr-FR";
+    api.workspace.timezone = "America/Los_Angeles";
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    await page.getByLabel("Window starts").fill("2026-09-01");
+    await page.getByLabel("Window ends").fill("2026-09-30");
+    await expect(
+      page
+        .getByRole("heading", { name: "1 sept. 2026, 18:00", exact: true })
+        .first(),
+    ).toBeVisible();
+    await expect(page.getByText(/1 sept\. 2026.*18:00/).first()).toBeVisible();
+    await expect(
+      page.getByText("Workspace timezone: Asia/Manila", { exact: false }),
+    ).toBeVisible();
+    expect(api.windowQueryRequests.at(-1)).toMatchObject({
+      mode: "calendar",
+      scope: "window",
+      from_date: "2026-09-01",
+      to_date: "2026-09-30",
+    });
+  });
+
+  test("Timeline localizes date-only and response-zone intervals without changing window requests", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, {
+      initialLayout: "timeline",
+      initialPresentation: {
+        timeline_deadline_field_id: timelineTimestampDeadlineFieldId,
+      },
+    });
+    api.workspace.locale = "fr-FR";
+    api.workspace.timezone = "America/Los_Angeles";
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    await page.getByLabel("Window starts").fill("2026-08-25");
+    await page.getByLabel("Window ends").fill("2026-09-15");
+    const intervals = page.getByRole("list", {
+      name: "Timeline intervals",
+      exact: true,
+    });
+    await expect(
+      intervals.getByText("25 août 2026", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(
+      intervals.getByText("15 sept. 2026", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(page.getByLabel("Window starts")).toHaveValue("2026-08-25");
+    await expect(page.getByLabel("Window ends")).toHaveValue("2026-09-15");
+    await expect(
+      page.getByText("29 août 2026", { exact: false }).first(),
+    ).toBeVisible();
+    await expect(page.getByText(/7 sept\. 2026.*0?2:30/).first()).toBeVisible();
+    expect(api.windowQueryRequests.at(-1)).toMatchObject({
+      mode: "timeline",
+      from_date: "2026-08-25",
+      to_date: "2026-09-15",
+    });
+  });
+
+  test("failed regional reads keep record content usable and recover dates separately", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, { disableInitialSearch: true });
+    api.workspace.locale = "fr-FR";
+    api.workspace.timezone = "America/Los_Angeles";
+    api.failWorkspaceRead(true);
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    const results = page.getByLabel("Record results", { exact: true });
+    await expect(
+      results.getByRole("button", { name: "Centrifugal pump 04", exact: true }),
+    ).toBeVisible();
+    await expect(
+      results.getByText("Date unavailable", { exact: true }).first(),
+    ).toBeVisible();
+    api.failWorkspaceRead(false);
+    await page
+      .getByRole("button", { name: "Retry regional settings", exact: true })
+      .click();
+    await expect(
+      results.getByText("22 sept. 2026", { exact: false }).first(),
+    ).toBeVisible();
+    api.failWorkspaceRead(true);
+    await api.triggerInvalidation("workspace_profiles");
+    await expect(
+      page.getByRole("button", {
+        name: "Retry regional settings",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      results.getByText("22 sept. 2026", { exact: false }).first(),
+    ).toBeVisible();
+  });
+
+  test("regional invalidation replaces a cold old read without discarding a local view draft", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, { disableInitialSearch: true });
+    let release = () => {};
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let held = true;
+    await page.route("**/api/workspace", async (route) => {
+      if (held) {
+        await pending;
+        await route
+          .fulfill({
+            json: { ...api.workspace, locale: "en-US", timezone: "UTC" },
+          })
+          .catch(() => {});
+      } else await route.fulfill({ json: api.workspace });
+    });
+    try {
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      const results = page.getByLabel("Record results", { exact: true });
+      await expect(
+        results.getByRole("button", {
+          name: "Centrifugal pump 04",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        results.getByText("Date unavailable", { exact: true }).first(),
+      ).toBeVisible();
+      await page
+        .getByRole("searchbox", { name: "Search Equipment", exact: true })
+        .fill("Cooling");
+      held = false;
+      api.workspace.locale = "fr-FR";
+      api.workspace.timezone = "America/Los_Angeles";
+      await api.triggerInvalidation("workspace_profiles");
+      await expect(
+        results.getByText("22 sept. 2026", { exact: false }).first(),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("searchbox", { name: "Search Equipment", exact: true }),
+      ).toHaveValue("Cooling");
+      release();
+      await expect(
+        results.getByText("22 sept. 2026", { exact: false }).first(),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Save changes", exact: true }),
+      ).toBeEnabled();
+    } finally {
+      release();
+    }
+  });
+
+  test("a prior account regional response cannot replace the next account dates", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, { disableInitialSearch: true });
+    let actor = userId;
+    let release = () => {};
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/auth/session", (route) =>
+      route.fulfill({
+        json: { authenticated: true, user_id: actor, setup_required: false },
+      }),
+    );
+    await page.route("**/api/auth/me", (route) =>
+      route.fulfill({ json: { id: actor, role: "admin", access: [] } }),
+    );
+    await page.route("**/api/workspace", async (route) => {
+      if (actor === userId) {
+        await pending;
+        await route
+          .fulfill({
+            json: {
+              ...api.workspace,
+              locale: "fr-FR",
+              timezone: "America/Los_Angeles",
+            },
+          })
+          .catch(() => {});
+      } else
+        await route.fulfill({
+          json: { ...api.workspace, locale: "ja-JP", timezone: "Asia/Tokyo" },
+        });
+    });
+    try {
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      const results = page.getByLabel("Record results", { exact: true });
+      await expect(
+        results.getByText("Date unavailable", { exact: true }).first(),
+      ).toBeVisible();
+      actor = otherAccountId;
+      await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+      await expect(
+        results.getByText("2026/09/23", { exact: false }).first(),
+      ).toBeVisible();
+      release();
+      await expect(
+        results.getByText("2026/09/23", { exact: false }).first(),
+      ).toBeVisible();
+      await expect(
+        results.getByText("22 sept. 2026", { exact: false }),
+      ).toHaveCount(0);
+    } finally {
+      release();
+    }
   });
 });
 

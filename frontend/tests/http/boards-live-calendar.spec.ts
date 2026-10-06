@@ -123,7 +123,14 @@ async function installSelectedEventApi(
     }),
   );
   await browser.route("**/api/workspace", (route) =>
-    route.fulfill({ json: { today: "2026-09-14", week_start: weekStart } }),
+    route.fulfill({
+      json: {
+        today: "2026-09-14",
+        week_start: weekStart,
+        locale: "en-US",
+        timezone: "UTC",
+      },
+    }),
   );
   await browser.route("**/api/boards**", (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -166,6 +173,94 @@ async function installSelectedEventApi(
     });
   });
 }
+
+test.describe("Boards workspace regional dates", () => {
+  test.use({ locale: "en-US", timezoneId: "UTC" });
+
+  test("calendar localizes dates without shifting all-day dates or replacing the event timezone", async ({
+    page: browser,
+  }) => {
+    await installSelectedEventApi(browser);
+    await browser.route("**/api/workspace", (route) =>
+      route.fulfill({
+        json: {
+          today: "2026-09-14",
+          week_start: "monday",
+          locale: "fr-FR",
+          timezone: "America/Los_Angeles",
+        },
+      }),
+    );
+    const timedId = "00000000-0000-4000-8000-000000000099";
+    const items = [
+      {
+        id: `${eventId}:2026-09-14`,
+        event_id: eventId,
+        date: "2026-09-14",
+        start: "2026-09-14",
+        end: "2026-09-16",
+        event: {
+          ...selectedEventWire,
+          title: "Regional all-day event",
+          start_date: "2026-09-14",
+          end_date: "2026-09-16",
+        },
+      },
+      {
+        id: `${timedId}:2026-09-14T01:00:00Z`,
+        event_id: timedId,
+        date: "2026-09-14",
+        start: "2026-09-14T01:00:00Z",
+        end: "2026-09-14T02:00:00Z",
+        event: {
+          ...selectedEventWire,
+          id: timedId,
+          title: "Regional timed event",
+          all_day: false,
+          start_date: null,
+          end_date: null,
+          start_at: "2026-09-14T01:00:00Z",
+          end_at: "2026-09-14T02:00:00Z",
+          timezone_name: "Asia/Manila",
+        },
+      },
+    ];
+    await browser.route(
+      `**/api/boards/${boardId}/events/occurrences?**`,
+      (route) =>
+        route.fulfill({
+          json: {
+            items,
+            pagination: {
+              limit: 100,
+              offset: 0,
+              count: 2,
+              total: 2,
+              has_more: false,
+            },
+            board_revision: 1,
+          },
+        }),
+    );
+    await browser.goto(`/boards?board=${boardId}&section=calendar`);
+    await expect(
+      browser.getByRole("heading", { name: "septembre 2026", exact: true }),
+    ).toBeVisible();
+    const day = browser.getByRole("button", { name: /View lun\. 14 sept\./ });
+    await expect(day).toHaveAttribute("aria-current", "date");
+    await day.click();
+    await expect(
+      browser.getByText("All day · lun. 14 sept.–mer. 16 sept.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      browser.getByText(
+        /lun\. 14 sept\..*0?9:00.*lun\. 14 sept\..*10:00.*Asia\/Manila/,
+      ),
+    ).toBeVisible();
+  });
+});
 
 test.describe("organization calendar week start", () => {
   for (const weekStart of ["monday", "sunday"] as const) {
@@ -427,6 +522,7 @@ test("calendar compact default follows the 1024px boundary", async () => {
 test("calendar renders only returned occurrences and marks all-day range", () => {
   const html = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page,
       window: calendarWindowForMonth("2026-09"),
       date: "2026-09-15",
@@ -439,6 +535,7 @@ test("calendar renders only returned occurrences and marks all-day range", () =>
   expect(html).not.toContain("sample-board");
   const afterRange = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page,
       window: calendarWindowForMonth("2026-09"),
       date: "2026-09-17",
@@ -451,6 +548,7 @@ test("calendar shows an edit action only for an explicitly authorized returned e
   const window = calendarWindowForMonth("2026-09");
   const allowed = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page,
       window,
       date: "2026-09-15",
@@ -461,6 +559,7 @@ test("calendar shows an edit action only for an explicitly authorized returned e
   expect(allowed).toContain("Edit Visible planning session");
   const denied = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page,
       window,
       date: "2026-09-15",
@@ -471,6 +570,7 @@ test("calendar shows an edit action only for an explicitly authorized returned e
   expect(denied).not.toContain("Edit Visible planning session");
   const noAccess = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page,
       window,
       date: "2026-09-15",
@@ -483,6 +583,7 @@ test("calendar renders archive only when the supplied event policy allows it", (
   const window = calendarWindowForMonth("2026-09");
   const manager = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page,
       window,
       date: "2026-09-15",
@@ -495,6 +596,7 @@ test("calendar renders archive only when the supplied event policy allows it", (
   expect(manager).toContain("Archive Visible planning session");
   const editor = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page,
       window,
       date: "2026-09-15",
@@ -944,6 +1046,7 @@ test("calendar renders returned external event links as safe labelled anchors", 
   };
   const html = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page: { ...page, items: [linked] },
       window: calendarWindowForMonth("2026-09"),
       date: "2026-09-15",
@@ -967,6 +1070,7 @@ test("calendar shows returned event details as escaped plain text", () => {
   };
   const html = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page: { ...page, items: [detailed] },
       window: calendarWindowForMonth("2026-09"),
       date: "2026-09-15",
@@ -989,6 +1093,7 @@ test("calendar keeps Agenda details inline and offers compact event details on d
   const window = calendarWindowForMonth("2026-09");
   const agenda = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page: detailedPage,
       window,
       canEditEvent: () => true,
@@ -1000,6 +1105,7 @@ test("calendar keeps Agenda details inline and offers compact event details on d
   expect(agenda).not.toContain("<details");
 
   const compactProps = {
+    region: { locale: "en-US", timezone: "UTC" },
     page: detailedPage,
     window,
     date: "2026-09-14",
@@ -1035,6 +1141,7 @@ test("timed occurrence displays its event timezone without changing its date", (
   };
   const html = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page: { ...page, items: [timed] },
       window: calendarWindowForMonth("2026-09"),
     }),
@@ -1066,6 +1173,7 @@ test("overnight timed occurrence appears on the next local day across months, ex
   const september = calendarWindowForMonth("2026-09");
   const onSeptemberFirst = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page: { ...page, items: [overnight] },
       window: september,
       date: "2026-09-01",
@@ -1076,6 +1184,7 @@ test("overnight timed occurrence appears on the next local day across months, ex
   expect(onSeptemberFirst).toContain("Sep 1");
   const endsAtMidnight = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page: {
         ...page,
         items: [{ ...overnight, end: "2026-08-31T16:00:00Z" }],
@@ -1097,6 +1206,7 @@ test("partial occurrence page never presents exact day counts or a confirmed emp
   expect(calendarDayCountLabel(1, false)).toBe("1 event");
   const html = renderToStaticMarkup(
     createElement(ServerBoardCalendarDisplay, {
+      region: { locale: "en-US", timezone: "UTC" },
       page: partial,
       window: calendarWindowForMonth("2026-09"),
       date: "2026-09-17",

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { ApiError } from "@/lib/api";
+import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 import {
   queryOpenViewGroupedRecords,
   type OpenViewGroupSelector,
@@ -23,6 +24,7 @@ const RECORD_PAGE_SIZE = 25;
 type GroupedPage = Awaited<ReturnType<typeof queryOpenViewGroupedRecords>>;
 
 type LiveKanbanProps = {
+  region: WorkspaceRegion | undefined;
   moduleId: string;
   definition: OpenViewQueryDefinition;
   refreshKey?: number;
@@ -63,13 +65,12 @@ function valueText(value: unknown): string {
   return "—";
 }
 
-function dateText(value: string): string {
-  return new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(
-    new Date(value),
-  );
+function dateText(value: string, region: WorkspaceRegion | undefined): string {
+  return region ? formatWorkspaceDate(value, region) : "Date unavailable";
 }
 
 function KanbanMemberCards({
+  region,
   rows,
   fields,
   primaryFieldId,
@@ -78,6 +79,7 @@ function KanbanMemberCards({
   onOpenRecord,
 }: {
   rows: readonly OpenViewRecord[];
+  region: WorkspaceRegion | undefined;
   fields: readonly OpenViewDataSourceField[];
   primaryFieldId: string | null;
   secondaryFieldId: string | null;
@@ -139,7 +141,9 @@ function KanbanMemberCards({
               ) : null}
               <p className="text-muted-foreground mt-auto text-xs">
                 Updated{" "}
-                <time dateTime={row.updatedAt}>{dateText(row.updatedAt)}</time>
+                <time dateTime={row.updatedAt}>
+                  {dateText(row.updatedAt, region)}
+                </time>
               </p>
             </article>
           </li>
@@ -150,6 +154,7 @@ function KanbanMemberCards({
 }
 
 export function LiveKanban({
+  region,
   moduleId,
   definition,
   refreshKey = 0,
@@ -455,6 +460,7 @@ export function LiveKanban({
                 </p>
               ) : memberPage?.items.length ? (
                 <KanbanMemberCards
+                  region={region}
                   rows={memberPage.items}
                   fields={fields}
                   primaryFieldId={primaryFieldId}

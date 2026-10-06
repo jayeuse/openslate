@@ -16,6 +16,7 @@ import { PaginationControls } from "@/components/ui/pagination-controls";
 import { SearchSelect } from "@/components/ui/search-select";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import { ApiError } from "@/lib/api";
+import type { WorkspaceRegion } from "@/lib/date-time";
 import { readBoardPost, type BoardPost } from "../adapters/board-posts-api";
 import {
   postFeedQueryForSort,
@@ -44,12 +45,14 @@ const SORT_OPTIONS: readonly {
 ];
 
 export function ServerBackedBoardPosts({
+  region,
   boardId,
   refreshKey,
   selectedPostId = null,
   onSelectPost,
 }: {
   boardId: string;
+  region: WorkspaceRegion | undefined;
   refreshKey: number;
   selectedPostId?: string | null;
   onSelectPost?: (postId: string | null) => void;
@@ -57,6 +60,7 @@ export function ServerBackedBoardPosts({
   const actorId = useVerifiedWorkspaceUserId();
   return (
     <ScopedServerBackedBoardPosts
+      region={region}
       key={`${actorId}:${boardId}`}
       boardId={boardId}
       refreshKey={refreshKey}
@@ -67,12 +71,14 @@ export function ServerBackedBoardPosts({
 }
 
 function ScopedServerBackedBoardPosts({
+  region,
   boardId,
   refreshKey,
   selectedPostId,
   onSelectPost,
 }: {
   boardId: string;
+  region: WorkspaceRegion | undefined;
   refreshKey: number;
   selectedPostId: string | null;
   onSelectPost?: (postId: string | null) => void;
@@ -341,6 +347,7 @@ function ScopedServerBackedBoardPosts({
       )}
       {page && (
         <ServerBoardPostFeedDisplay
+          region={region}
           page={page}
           appliedSearch={appliedSearch}
           authorLabels={authorLabels}
@@ -415,6 +422,7 @@ function ScopedServerBackedBoardPosts({
       )}
       {actorId && selectedPostId !== null && !historyOpen && (
         <ServerBoardPostReader
+          region={region}
           post={selectedPost}
           authorLabel={
             selectedPost
@@ -431,6 +439,7 @@ function ScopedServerBackedBoardPosts({
       )}
       {historyOpen && selectedPost && (
         <ServerBoardPostHistory
+          region={region}
           boardId={boardId}
           postId={selectedPost.id}
           title={selectedPost.title}

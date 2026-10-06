@@ -9,7 +9,7 @@ import {
   useTransition,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Route } from "next";
 import { ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
@@ -41,6 +41,8 @@ import { isCalendarDateField } from "./live-calendar";
 import { LiveKanban } from "./live-kanban";
 import { LiveCalendar } from "./live-calendar";
 import { LiveTimeline } from "./live-timeline";
+import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -435,6 +437,28 @@ export default function ServerBackedViewsWorkspace({
     (view) => view.isDefault && !view.isDeleted,
   )?.id;
   const identity = useQuery(authMeOptions());
+  const workspaceCalendar = useQuery(workspaceCalendarQueryOptions());
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const queryKey = workspaceCalendarQueryOptions().queryKey;
+    const refreshSettings = () => {
+      const cold = queryClient
+        .getQueryCache()
+        .findAll({ queryKey, fetchStatus: "fetching" })
+        .filter((query) => query.state.data === undefined);
+      void Promise.all(
+        cold.map((query) => query.cancel({ revert: true })),
+      ).then(() => queryClient.invalidateQueries({ queryKey }));
+    };
+    const unsubscribe = subscribeWorkspaceInvalidations((event) => {
+      if (event.type === "resync" || event.entity === "workspace_profiles")
+        refreshSettings();
+    }, refreshSettings);
+    return () => {
+      unsubscribe();
+      void queryClient.invalidateQueries({ queryKey, refetchType: "none" });
+    };
+  }, [queryClient]);
   // Only a manager of the module creates, changes or archives its views.
   const canManageViews = canManageOpenView(
     identity.data,
@@ -2156,6 +2180,24 @@ export default function ServerBackedViewsWorkspace({
         }
       >
         <div className="flex min-w-0 flex-col gap-5">
+          {workspaceCalendar.isError && activeLayout !== "calendar" && (
+            <Alert variant="destructive">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  {workspaceCalendar.data
+                    ? "Regional settings could not be refreshed. The last loaded settings are still in use."
+                    : "Could not load regional settings. Dates are unavailable."}
+                </span>
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={() => void workspaceCalendar.refetch()}
+                >
+                  Retry regional settings
+                </Button>
+              </div>
+            </Alert>
+          )}
           <header
             data-slot="card"
             className="bg-card border-card-edge shadow-card flex flex-wrap items-end justify-between gap-3 rounded-[var(--radius)] border p-4 sm:p-5"
@@ -2885,6 +2927,7 @@ export default function ServerBackedViewsWorkspace({
                       ) : activeLayout === "kanban" ? (
                         groupByField && moduleId ? (
                           <LiveKanban
+                            region={workspaceCalendar.data}
                             key={
                               moduleId +
                               ":" +
@@ -2913,6 +2956,13 @@ export default function ServerBackedViewsWorkspace({
                       ) : activeLayout === "calendar" ? (
                         moduleId && calendarDateField ? (
                           <LiveCalendar
+                            region={workspaceCalendar.data}
+                            workspaceCalendar={workspaceCalendar.data}
+                            settingsPending={workspaceCalendar.isPending}
+                            settingsError={workspaceCalendar.isError}
+                            onRetrySettings={() =>
+                              void workspaceCalendar.refetch()
+                            }
                             key={moduleId + ":" + selectedViewId + ":calendar"}
                             moduleId={moduleId}
                             definition={normalizedDraftDefinition}
@@ -2933,6 +2983,7 @@ export default function ServerBackedViewsWorkspace({
                       ) : activeLayout === "timeline" ? (
                         moduleId && timelineStartField && timelineEndField ? (
                           <LiveTimeline
+                            region={workspaceCalendar.data}
                             key={moduleId + ":" + selectedViewId + ":timeline"}
                             moduleId={moduleId}
                             definition={normalizedDraftDefinition}
@@ -3002,6 +3053,7 @@ export default function ServerBackedViewsWorkspace({
                         </Empty>
                       ) : (
                         <LiveRecordResults
+                          region={workspaceCalendar.data}
                           title={activeSaved?.name ?? "Unsaved view"}
                           scopeLabel={
                             generalGroupedView && generalSelectedGroup
@@ -3183,6 +3235,7 @@ export default function ServerBackedViewsWorkspace({
                     </DialogHeader>
                     <div className="min-h-0 flex-1 overflow-y-auto">
                       <LiveRecordInspector
+                        region={workspaceCalendar.data}
                         actions={recordEditing ? null : inspectionActions}
                         record={linkedRecord}
                         recordLoading={linkedRecordLoading}

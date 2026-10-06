@@ -338,6 +338,223 @@ test("compact Calendar enters Agenda and permits manual Month selection", async 
   ).toHaveAttribute("aria-pressed", "true");
 });
 
+test.describe("Boards workspace regional activity", () => {
+  test.use({ locale: "en-US", timezoneId: "UTC" });
+  test("Board activity retains its timezone label while formatting the workspace timestamp", async ({
+    page,
+  }) => {
+    await installBoardApi(page, () => true);
+    await page.route("**/api/workspace", (route) =>
+      route.fulfill({
+        json: {
+          today: "2026-09-25",
+          week_start: "monday",
+          locale: "fr-FR",
+          timezone: "America/Los_Angeles",
+        },
+      }),
+    );
+    await page.route(`**/api/boards/${boardId}/activity?**`, (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: "00000000-0000-4000-8000-000000000199",
+              created_at: "2026-09-23T00:00:00Z",
+              kind: "board",
+              action: "update",
+              summary: "Regional activity",
+              actor_label: "Regional test actor",
+            },
+          ],
+          pagination: {
+            limit: 25,
+            offset: 0,
+            count: 1,
+            total: 1,
+            has_more: false,
+          },
+        },
+      }),
+    );
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    await page.getByRole("button", { name: "Board menu", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "View activity", exact: true })
+      .click();
+    const activity = page.getByRole("dialog", {
+      name: "Board activity",
+      exact: true,
+    });
+    await expect(
+      activity.getByText("Regional activity", { exact: true }),
+    ).toBeVisible();
+    await expect(activity.locator("time")).toHaveText(
+      /22 sept\. 2026.*17:00.*(?:UTC|GMT).*7/,
+    );
+  });
+
+  test("Calendar main Refresh replaces a held cold workspace read", async ({
+    page,
+  }) => {
+    await installOpenViewEventSource(page);
+    await installBoardApi(page, () => true);
+    const events: Array<Record<string, unknown>> = [];
+    let workspaceReads = 0;
+    let oldReleased = false;
+    let releaseOld!: () => void;
+    let markFirstStarted!: () => void;
+    let markOldDelivered!: () => void;
+    let markOldSettled!: () => void;
+    const heldOld = new Promise<void>((resolve) => {
+      releaseOld = resolve;
+    });
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const oldDelivered = new Promise<void>((resolve) => {
+      markOldDelivered = resolve;
+    });
+    const oldSettled = new Promise<void>((resolve) => {
+      markOldSettled = resolve;
+    });
+    await page.route("**/api/workspace", async (route) => {
+      const read = ++workspaceReads;
+      events.push({ event: "workspace-read", read, oldReleased });
+      if (read === 1) {
+        const oldRequest = route.request();
+        page.on("requestfinished", (request) => {
+          if (request !== oldRequest) return;
+          events.push({ event: "old-network-finished" });
+          markOldSettled();
+        });
+        page.on("requestfailed", (request) => {
+          if (request !== oldRequest) return;
+          events.push({
+            event: "old-network-failed",
+            failure: request.failure()?.errorText,
+          });
+          markOldSettled();
+        });
+        markFirstStarted();
+        await heldOld;
+        try {
+          await route.fulfill({
+            json: {
+              today: "2026-09-25",
+              week_start: "monday",
+              locale: "en-US",
+              timezone: "UTC",
+            },
+          });
+          events.push({ event: "old-delivery", fulfilled: true });
+        } catch (error) {
+          events.push({
+            event: "old-delivery",
+            fulfilled: false,
+            error: String(error),
+          });
+        } finally {
+          markOldDelivered();
+        }
+        return;
+      }
+      await route.fulfill({
+        json: {
+          today: "2026-09-26",
+          week_start: "monday",
+          locale: "en-US",
+          timezone: "UTC",
+        },
+      });
+      events.push({ event: "latest-delivery", read });
+    });
+    try {
+      await page.goto(`/boards?board=${boardId}&section=calendar`);
+      await firstStarted;
+      await expect(
+        page.getByRole("heading", { name: board.name, exact: true }),
+      ).toBeVisible();
+      const refresh = page.getByRole("button", {
+        name: "Refresh",
+        exact: true,
+      });
+      await expect(refresh).toBeEnabled();
+      await refresh.click();
+      await expect.poll(() => workspaceReads).toBeGreaterThan(1);
+      const latest = page.getByRole("button", { name: /View .*Sep 26/ });
+      await expect(latest).toHaveAttribute("aria-current", "date");
+      events.push({ event: "latest-day-before-old-release", workspaceReads });
+      oldReleased = true;
+      releaseOld();
+      await Promise.all([oldDelivered, oldSettled]);
+      await expect(latest).toHaveAttribute("aria-current", "date");
+      events.push({ event: "latest-day-after-old-settled", workspaceReads });
+    } finally {
+      if (!oldReleased) {
+        oldReleased = true;
+        releaseOld();
+      }
+      await test.info().attach("cold-main-refresh-observations", {
+        body: JSON.stringify({ workspaceReads, oldReleased, events }, null, 2),
+        contentType: "application/json",
+      });
+    }
+  });
+
+  test("Calendar manual Refresh and rollover keep the selected day and last-good settings", async ({
+    page,
+  }) => {
+    await page.clock.install({ time: new Date("2026-09-25T12:00:00Z") });
+    await installBoardApi(page, () => true);
+    let today = "2026-09-25";
+    let failRegionalRead = false;
+    await page.route("**/api/workspace", (route) =>
+      failRegionalRead
+        ? route.fulfill({ status: 503, json: { detail: "Unavailable" } })
+        : route.fulfill({
+            json: {
+              today,
+              week_start: "monday",
+              locale: "en-US",
+              timezone: "UTC",
+            },
+          }),
+    );
+    await page.goto(`/boards?board=${boardId}&section=calendar`);
+    const chosen = page.getByRole("button", { name: /View .*Sep 27/ });
+    await chosen.click();
+    today = "2026-09-26";
+    const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+    await refresh.click();
+    await expect(
+      page.getByRole("button", { name: /View .*Sep 26/ }),
+    ).toHaveAttribute("aria-current", "date");
+    await expect(chosen).toHaveAttribute("aria-pressed", "true");
+    failRegionalRead = true;
+    today = "2026-09-27";
+    await refresh.click();
+    const retry = page.getByRole("button", {
+      name: "Retry Workspace date",
+      exact: true,
+    });
+    await expect(retry).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /View .*Sep 26/ }),
+    ).toHaveAttribute("aria-current", "date");
+    await expect(chosen).toHaveAttribute("aria-pressed", "true");
+    failRegionalRead = false;
+    await retry.click();
+    await expect(chosen).toHaveAttribute("aria-current", "date");
+    today = "2026-09-28";
+    await page.clock.runFor(60_000);
+    await expect(
+      page.getByRole("button", { name: /View .*Sep 28/ }),
+    ).toHaveAttribute("aria-current", "date");
+    await expect(chosen).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
 test("post editor retains a canceled close and discards only on confirmation", async ({
   page,
 }) => {

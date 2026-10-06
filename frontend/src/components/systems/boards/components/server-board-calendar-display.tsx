@@ -11,52 +11,65 @@ import type {
 } from "../adapters/board-events-api";
 import type { CalendarWindow } from "../hooks/use-server-board-events";
 import type { WorkspaceCalendarSettings } from "../../manage/adapters/workspace-api";
+import {
+  formatWorkspaceDate,
+  formatWorkspaceDateTime,
+  type WorkspaceRegion,
+} from "@/lib/date-time";
 import { BoardEmpty } from "./ui";
 import { ServerBoardAttachments } from "./server-backed-board-attachments";
 import { ServerBoardRecordLinks } from "./server-backed-board-record-links";
 
 type Occurrence = BoardEventOccurrencePage["items"][number];
 
-function formatDate(date: string): string {
-  return new Intl.DateTimeFormat(undefined, {
+function formatDate(date: string, region: WorkspaceRegion | undefined): string {
+  if (!region) return "Date unavailable";
+  return formatWorkspaceDate(date, region, {
     weekday: "short",
     month: "short",
     day: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(`${date}T12:00:00Z`));
+  });
 }
 
 function formatOccurrenceTime(
   item: Pick<Occurrence, "event" | "start" | "end">,
+  region: WorkspaceRegion | undefined,
 ): string {
+  if (!region) return "Date unavailable";
   if (item.event.allDay) {
     return item.start === item.end
-      ? `All day · ${formatDate(item.start)}`
-      : `All day · ${formatDate(item.start)}–${formatDate(item.end)}`;
+      ? `All day · ${formatDate(item.start, region)}`
+      : `All day · ${formatDate(item.start, region)}–${formatDate(item.end, region)}`;
   }
   try {
-    const formatter = new Intl.DateTimeFormat(undefined, {
+    const options = {
       weekday: "short",
       month: "short",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
-      timeZone: item.event.timezoneName,
-    });
-    return `${formatter.format(new Date(item.start))}–${formatter.format(new Date(item.end))} · ${item.event.timezoneName.replaceAll("_", " ")}`;
+    } as const;
+    const eventRegion = { ...region, timezone: item.event.timezoneName };
+    return `${formatWorkspaceDateTime(item.start, eventRegion, options)}–${formatWorkspaceDateTime(item.end, eventRegion, options)} · ${item.event.timezoneName.replaceAll("_", " ")}`;
   } catch {
     return `${item.start}–${item.end} UTC`;
   }
 }
 
-function formatGridOccurrenceTime(item: Occurrence): string {
+function formatGridOccurrenceTime(
+  item: Occurrence,
+  region: WorkspaceRegion,
+): string {
   if (item.event.allDay) return "All day";
   try {
-    return new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone: item.event.timezoneName,
-    }).format(new Date(item.start));
+    return formatWorkspaceDateTime(
+      item.start,
+      { ...region, timezone: item.event.timezoneName },
+      {
+        hour: "numeric",
+        minute: "2-digit",
+      },
+    );
   } catch {
     return item.start.slice(11, 16) || "Time";
   }
@@ -198,12 +211,18 @@ function eventContent(
   return { details, location, links, attachments, recordLinks };
 }
 
-export function boardEventTimeLabel(event: BoardEvent): string {
-  return formatOccurrenceTime({
-    event,
-    start: event.startDate ?? event.startAt ?? "",
-    end: event.endDate ?? event.endAt ?? "",
-  });
+export function boardEventTimeLabel(
+  event: BoardEvent,
+  region: WorkspaceRegion | undefined,
+): string {
+  return formatOccurrenceTime(
+    {
+      event,
+      start: event.startDate ?? event.startAt ?? "",
+      end: event.endDate ?? event.endAt ?? "",
+    },
+    region,
+  );
 }
 
 export function ServerBoardEventReaderContent({
@@ -228,6 +247,7 @@ export function ServerBoardEventReaderContent({
 }
 
 export function ServerBoardCalendarDisplay({
+  region,
   page,
   window,
   date,
@@ -239,6 +259,7 @@ export function ServerBoardCalendarDisplay({
   includeAttachments = false,
 }: {
   page: BoardEventOccurrencePage;
+  region: WorkspaceRegion | undefined;
   window: CalendarWindow;
   date?: string;
   compact?: boolean;
@@ -251,7 +272,7 @@ export function ServerBoardCalendarDisplay({
   const items = date
     ? page.items.filter((item) => appearsOnDate(item, date))
     : page.items;
-  const label = date ? formatDate(date) : window.label;
+  const label = date ? formatDate(date, region) : window.label;
   return createElement(
     "section",
     { "aria-label": `${label} events` },
@@ -308,7 +329,7 @@ export function ServerBoardCalendarDisplay({
             const time = createElement(
               "p",
               { className: "text-muted-foreground mt-1 text-sm" },
-              formatOccurrenceTime(item),
+              formatOccurrenceTime(item, region),
             );
             const { details, location, links, attachments, recordLinks } =
               eventContent(item.event, compact, includeAttachments);
@@ -367,6 +388,7 @@ export function ServerBoardCalendarDisplay({
 }
 
 export function MonthGrid({
+  region,
   window,
   page,
   selectedDate,
@@ -375,6 +397,7 @@ export function MonthGrid({
   onSelect,
 }: {
   window: CalendarWindow;
+  region: WorkspaceRegion;
   page: BoardEventOccurrencePage;
   selectedDate: string;
   today: string | null;
@@ -383,10 +406,14 @@ export function MonthGrid({
 }) {
   const first = new Date(`${window.start}T12:00:00Z`);
   const leading = (first.getUTCDay() + (weekStart === "monday" ? 6 : 0)) % 7;
-  const weekdays =
-    weekStart === "monday"
-      ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-      : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const firstWeekday = weekStart === "monday" ? 5 : 4;
+  const weekdays = Array.from({ length: 7 }, (_, index) =>
+    formatWorkspaceDate(
+      `2026-01-${String(firstWeekday + index).padStart(2, "0")}`,
+      region,
+      { weekday: "short" },
+    ),
+  );
   const days = Number(window.end.slice(-2));
   const cells = Array.from(
     { length: Math.ceil((leading + days) / 7) * 7 },
@@ -442,7 +469,7 @@ export function MonthGrid({
                       type="button"
                       variant={selectedDate === date ? "secondary" : "ghost"}
                       className="min-h-11 w-full flex-col items-start justify-center gap-0.5 whitespace-normal"
-                      aria-label={`View ${formatDate(date)}, ${countLabel}`}
+                      aria-label={`View ${formatDate(date, region)}, ${countLabel}`}
                       aria-pressed={selectedDate === date}
                       aria-current={today === date ? "date" : undefined}
                       aria-controls="server-board-calendar-day"
@@ -457,7 +484,7 @@ export function MonthGrid({
                     </Button>
                     {visibleOccurrences.length > 0 && (
                       <ul
-                        aria-label={`${formatDate(date)} event titles`}
+                        aria-label={`${formatDate(date, region)} event titles`}
                         className="mt-1 space-y-1"
                       >
                         {visibleOccurrences.map((item) => (
@@ -466,7 +493,7 @@ export function MonthGrid({
                             className="bg-muted/50 flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-xs"
                           >
                             <span className="text-muted-foreground shrink-0 tabular-nums">
-                              {formatGridOccurrenceTime(item)}
+                              {formatGridOccurrenceTime(item, region)}
                             </span>
                             <span className="min-w-0 truncate font-medium">
                               {item.event.title}
@@ -491,19 +518,25 @@ export function MonthGrid({
   );
 }
 
-function myEventSchedule(event: BoardEvent): string {
+function myEventSchedule(
+  event: BoardEvent,
+  region: WorkspaceRegion | undefined,
+): string {
+  if (!region) return "Date unavailable";
   return event.allDay
-    ? `${event.startDate}–${event.endDate} · All day`
-    : `${event.startAt}–${event.endAt} · ${event.timezoneName}`;
+    ? `${formatWorkspaceDate(event.startDate ?? "", region)}–${formatWorkspaceDate(event.endDate ?? "", region)} · All day`
+    : `${formatWorkspaceDateTime(event.startAt ?? "", { ...region, timezone: event.timezoneName }, { dateStyle: "medium", timeStyle: "medium" })}–${formatWorkspaceDateTime(event.endAt ?? "", { ...region, timezone: event.timezoneName }, { dateStyle: "medium", timeStyle: "medium" })} · ${event.timezoneName}`;
 }
 
 export function MyEventsDisplay({
+  region,
   page,
   onEdit,
   onPrevious,
   onNext,
 }: {
   page: BoardEventPage;
+  region: WorkspaceRegion | undefined;
   onEdit: (event: BoardEvent) => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -530,7 +563,7 @@ export function MyEventsDisplay({
               <div className="min-w-0 space-y-1">
                 <h3 className="font-medium break-words">{event.title}</h3>
                 <p className="text-muted-foreground text-sm">
-                  {myEventSchedule(event)}
+                  {myEventSchedule(event, region)}
                   {event.reminders.length > 0
                     ? ` · ${event.reminders.length} ${event.reminders.length === 1 ? "reminder" : "reminders"}`
                     : ""}

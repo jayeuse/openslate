@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { ArrowUpRight, Compass, UsersRound, Workflow } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
@@ -20,6 +22,10 @@ import {
   FieldSet,
 } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  SearchSelect,
+  type SearchSelectOption,
+} from "@/components/ui/search-select";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -38,6 +44,20 @@ import {
   type WorkspaceProfileFormFields,
   type WorkspaceProfileField,
 } from "../adapters/workspace-api";
+import { activeCurrencies } from "../state/currency-options";
+
+function timezoneOption(timezone: string, reference: Date): SearchSelectOption {
+  const offset = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    timeZoneName: "longOffset",
+  })
+    .formatToParts(reference)
+    .find((part) => part.type === "timeZoneName")?.value;
+  return {
+    value: timezone,
+    label: `${offset === "GMT" ? "UTC+00:00" : offset?.replace("GMT", "UTC")} · ${timezone}`,
+  };
+}
 
 type OrganizationPanelProps = {
   form: SettingsPanelForm;
@@ -86,14 +106,39 @@ export function OrganizationPanel({
   const localeOptions: string[] = [...organizationLocaleTags];
   if (current.locale && !localeOptions.includes(current.locale))
     localeOptions.push(current.locale);
-  const timezoneOptions = ["Asia/Manila", "UTC", "Asia/Singapore"];
-  if (current.timezone && !timezoneOptions.includes(current.timezone))
-    timezoneOptions.push(current.timezone);
+  // Keep one current instant/list while a draft changes. Offset labels describe
+  // this visit; choosing a zone still saves its original IANA identifier.
+  const [timezoneCatalog] = useState(() => {
+    const reference = new Date();
+    return {
+      reference,
+      options: [...Intl.supportedValuesOf("timeZone"), "UTC"]
+        .sort()
+        .map((timezone) => timezoneOption(timezone, reference)),
+    };
+  });
+  const timezoneOptions = [...timezoneCatalog.options];
+  if (
+    current.timezone &&
+    !timezoneOptions.some((option) => option.value === current.timezone)
+  )
+    timezoneOptions.push(
+      timezoneOption(current.timezone, timezoneCatalog.reference),
+    );
   const markOptions = ["", "RS", "R", "Compass"];
   if (!markOptions.includes(current.logo)) markOptions.push(current.logo);
-  const currencyOptions = ["PHP", "USD", "SGD"];
-  if (current.currency && !currencyOptions.includes(current.currency))
-    currencyOptions.push(current.currency);
+  const currencyOptions = activeCurrencies.map(({ code, name }) => ({
+    value: code,
+    label: `${code} · ${name}`,
+  }));
+  if (
+    current.currency &&
+    !currencyOptions.some((option) => option.value === current.currency)
+  )
+    currencyOptions.push({
+      value: current.currency,
+      label: `${current.currency} · Current saved currency`,
+    });
   const workspaceFields = workspace
     ? workspaceSettingsFormFields(workspace)
     : null;
@@ -270,37 +315,34 @@ export function OrganizationPanel({
             </p>
             <FieldGroup className="grid min-w-0 gap-4 sm:grid-cols-2">
               {workspaceFields ? (
-                <SettingSelect
+                <SearchSelect
                   id="locale"
-                  label="Locale"
+                  label="Regional format"
                   value={current.locale}
-                  error={errors.locale}
-                  options={localeOptions}
-                  optionLabels={Object.fromEntries(
-                    localeOptions.map((tag) => [
-                      tag,
-                      organizationLocaleLabel(tag),
-                    ]),
-                  )}
-                  onChange={(value) =>
+                  disabled={editDisabled}
+                  options={localeOptions.map((tag) => ({
+                    value: tag,
+                    label: organizationLocaleLabel(tag),
+                  }))}
+                  onValueChange={(value) =>
                     changeSetting("organization", "locale", value)
                   }
                 />
               ) : (
                 <WorkspaceSettingsPlaceholder
                   id="locale"
-                  label="Locale"
+                  label="Regional format"
                   loading={workspaceLoading}
                 />
               )}
               {workspaceFields ? (
-                <SettingSelect
+                <SearchSelect
                   id="timezone"
                   label="Timezone"
                   value={current.timezone}
-                  error={errors.timezone}
+                  disabled={editDisabled}
                   options={timezoneOptions}
-                  onChange={(value) =>
+                  onValueChange={(value) =>
                     changeSetting("organization", "timezone", value)
                   }
                 />
@@ -312,13 +354,13 @@ export function OrganizationPanel({
                 />
               )}
               {workspaceFields ? (
-                <SettingSelect
+                <SearchSelect
                   id="currency"
                   label="Currency"
                   value={current.currency}
-                  error={errors.currency}
+                  disabled={editDisabled}
                   options={currencyOptions}
-                  onChange={(value) =>
+                  onValueChange={(value) =>
                     changeSetting("organization", "currency", value)
                   }
                 />

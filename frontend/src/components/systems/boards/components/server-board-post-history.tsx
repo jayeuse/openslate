@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ArrowUpRight, X } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import {
   Dialog,
   DialogContent,
@@ -23,14 +24,18 @@ type Loaded<T> =
   | { status: "error"; error: string }
   | { status: "ready"; data: T };
 
-function timeLabel(timestamp: string): string {
-  return new Intl.DateTimeFormat(undefined, {
+function timeLabel(
+  timestamp: string,
+  region: WorkspaceRegion | undefined,
+): string {
+  if (!region) return "Date unavailable";
+  return formatWorkspaceDateTime(timestamp, region, {
     year: "numeric",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(new Date(timestamp));
+  });
 }
 
 function useRevisions(boardId: string, postId: string, retryKey: number) {
@@ -119,11 +124,13 @@ function RevisionBody({ revision }: { revision: BoardPostRevision }) {
 }
 
 function PostHistoryContent({
+  region,
   boardId,
   postId,
   authorLabels,
 }: {
   boardId: string;
+  region: WorkspaceRegion | undefined;
   postId: string;
   authorLabels: Record<string, string> | null;
 }) {
@@ -186,7 +193,7 @@ function PostHistoryContent({
                 </span>
                 <span className="text-muted-foreground text-xs">
                   <time dateTime={item.publishedAt}>
-                    {timeLabel(item.publishedAt)}
+                    {timeLabel(item.publishedAt, region)}
                   </time>
                   {" · "}
                   {authorLabels?.[item.authorId] ?? "Author unavailable"}
@@ -213,6 +220,7 @@ function PostHistoryContent({
 
 /** Lists every published version of a post and shows the chosen one. */
 export function ServerBoardPostHistory({
+  region,
   boardId,
   postId,
   title,
@@ -220,6 +228,7 @@ export function ServerBoardPostHistory({
   onClose,
 }: {
   boardId: string;
+  region: WorkspaceRegion | undefined;
   postId: string;
   title: string;
   authorLabels: Record<string, string> | null;
@@ -253,6 +262,7 @@ export function ServerBoardPostHistory({
           <X aria-hidden="true" />
         </Button>
         <PostHistoryContent
+          region={region}
           boardId={boardId}
           postId={postId}
           authorLabels={authorLabels}

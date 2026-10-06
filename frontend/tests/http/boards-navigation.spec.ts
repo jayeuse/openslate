@@ -19,7 +19,12 @@ async function installServerBoards(page: Page) {
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ today: "2026-09-23", week_start: "monday" }),
+      body: JSON.stringify({
+        today: "2026-09-23",
+        week_start: "monday",
+        locale: "en-US",
+        timezone: "UTC",
+      }),
     }),
   );
   await page.route("**/api/auth/session", (route) =>

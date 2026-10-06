@@ -96,6 +96,8 @@ async function installArchivedBoard(page: Page) {
   const workspace = {
     today: "2026-09-25",
     week_start: "monday",
+    locale: "en-US",
+    timezone: "UTC",
     purge_enabled: true as boolean | undefined,
   };
   let workspaceFailure = false;

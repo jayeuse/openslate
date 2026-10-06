@@ -76,6 +76,8 @@ export async function installBoardApi(
       body: JSON.stringify({
         today: "2026-09-25",
         week_start: "monday",
+        locale: "en-US",
+        timezone: "UTC",
         purge_enabled: true,
       }),
     }),
