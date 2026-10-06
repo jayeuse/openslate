@@ -24,6 +24,7 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
     get_supabase_auth_client,
 )
+from app.systems.access.identity.mfa import requires_mfa
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.coordination import advance_token_cutoff
@@ -40,6 +41,10 @@ from app.systems.manage.audit.service import (
     SecurityEventPersistenceError,
     append_committed_security_event,
     append_security_event,
+)
+from app.systems.manage.workspace.security_policy import (
+    effective_session_expiry,
+    load_workspace_policy,
 )
 
 
@@ -93,6 +98,10 @@ def checkpoint(
     self_continuation: bool = False,
 ) -> tuple[Binding, bool]:
     try:
+        observed = None
+        if not self_continuation:
+            db.rollback()
+            observed = get_supabase_auth_client().get_admin_user(actor.claims.user_id)
         lock_administrator_changes(db, exclusive=False)
         users = {
             user.id: user
@@ -109,11 +118,12 @@ def checkpoint(
             IdentitySession, actor.session_id, with_for_update=True, populate_existing=True
         )
         now = utc_now()
+        policy = load_workspace_policy(db)
         if not self_continuation and (
             session is None
             or session.user_id != admin.id
             or session.revoked_at is not None
-            or session.expires_at <= now
+            or effective_session_expiry(session, policy) <= now
             or session.provider_user_id != admin.supabase_user_id
             or session.provider_user_id != actor.claims.user_id
             or session.provider_session_id != actor.claims.session_id
@@ -124,6 +134,25 @@ def checkpoint(
             )
         ):
             raise refusal(401, "security_identity_changed", "Your session must be verified again.")
+        if observed is not None:
+            if (
+                observed.id != admin.supabase_user_id
+                or observed.email != admin.email
+                or not observed.is_eligible(now=now)
+            ):
+                raise refusal(
+                    401, "security_identity_changed", "Your session must be verified again."
+                )
+            if requires_mfa(policy, admin, observed) and (
+                actor.claims.assurance_level != "aal2"
+                or not any(
+                    factor.factor_type == "totp" and factor.status == "verified"
+                    for factor in observed.factors
+                )
+            ):
+                raise refusal(
+                    403, "mfa_required", "Complete multi-factor authentication to continue."
+                )
         target = users.get(target_id)
         if target is None or target.is_deleted:
             raise refusal(404, "security_target_missing", "This person is unavailable.")
@@ -144,7 +173,12 @@ def checkpoint(
                 409, "security_target_ineligible", "This person is not eligible for this action."
             )
         return binding, eligible
-    except SQLAlchemyError as error:
+    except InvalidProviderCredentials as error:
+        db.rollback()
+        raise refusal(
+            401, "security_identity_changed", "Your session must be verified again."
+        ) from error
+    except (SQLAlchemyError, SupabaseAuthUnavailable) as error:
         db.rollback()
         raise refusal(
             503, "user_security_unavailable", "Security is unavailable. Try again."

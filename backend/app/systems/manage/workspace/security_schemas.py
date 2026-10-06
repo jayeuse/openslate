@@ -16,7 +16,6 @@ from pydantic import (
 from app.systems.manage.workspace.security_policy import MAX_IP_NETWORKS, canonical_network
 
 SessionTimeout = Literal[15, 30, 60, 480]
-MfaPolicy = Literal["optional", "admins", "everyone"]
 NetworkInput = Annotated[str, Field(max_length=64)]
 
 
@@ -28,7 +27,15 @@ class WorkspaceSecurityUpdate(BaseModel):
     password_min_length: StrictInt | None = Field(default=None, ge=12, le=128)
     password_require_mixed_case: StrictBool | None = None
     password_require_number: StrictBool | None = None
-    mfa_policy: MfaPolicy | None = None
+    session_absolute_lifetime_minutes: StrictInt | None = Field(default=None, ge=1, le=43200)
+    session_concurrent_limit: StrictInt | None = Field(default=None, ge=1, le=100)
+    mfa_require_admin: StrictBool | None = None
+    mfa_require_member: StrictBool | None = None
+    mfa_require_guest: StrictBool | None = None
+    mfa_grace_days: StrictInt | None = Field(default=None, ge=0, le=30)
+    login_failed_attempt_threshold: StrictInt | None = Field(default=None, ge=1, le=100)
+    login_window_minutes: StrictInt | None = Field(default=None, ge=1, le=1440)
+    login_cooldown_minutes: StrictInt | None = Field(default=None, ge=1, le=1440)
     ip_allow_list: list[NetworkInput] | None = Field(default=None, max_length=MAX_IP_NETWORKS)
 
     @field_validator("session_timeout_minutes", mode="before")
@@ -53,7 +60,8 @@ class WorkspaceSecurityUpdate(BaseModel):
         changed = self.model_fields_set - {"revision"}
         if not changed:
             raise ValueError("At least one security field is required")
-        if any(getattr(self, field) is None for field in changed):
+        nullable = {"session_absolute_lifetime_minutes", "session_concurrent_limit"}
+        if any(getattr(self, field) is None for field in changed - nullable):
             raise ValueError("Security fields must not be null")
         return self
 
@@ -66,7 +74,15 @@ class WorkspaceSecurityResponse(BaseModel):
     password_min_length: int
     password_require_mixed_case: bool
     password_require_number: bool
-    mfa_policy: MfaPolicy
+    session_absolute_lifetime_minutes: int | None
+    session_concurrent_limit: int | None
+    mfa_require_admin: bool
+    mfa_require_member: bool
+    mfa_require_guest: bool
+    mfa_grace_days: int
+    login_failed_attempt_threshold: int
+    login_window_minutes: int
+    login_cooldown_minutes: int
     ip_allow_list: list[str]
 
 

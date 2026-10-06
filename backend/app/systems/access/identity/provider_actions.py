@@ -136,7 +136,8 @@ def change_password(
 ) -> None:
     """Verify the current provider password and retain only this app session."""
 
-    validate_password(load_workspace_policy(db), new_password)
+    policy = load_workspace_policy(db)
+    validate_password(policy, new_password)
     timestamp = utc_now()
     fingerprint = None
     bucket = None
@@ -144,23 +145,20 @@ def change_password(
         rate_limits.cleanup_expired_buckets(db, now_value=timestamp)
         fingerprint = rate_limits.login_fingerprint(user.email, None)
         bucket = rate_limits.lock_bucket(db, fingerprint)
-        if (
-            bucket is not None
-            and bucket.blocked_until is not None
-            and bucket.blocked_until > timestamp
-        ):
-            raise IdentityRateLimited("Too many attempts")
+        retry_after = rate_limits.login_retry_after(db, bucket, timestamp, policy)
+        if retry_after is not None:
+            raise IdentityRateLimited("Too many attempts", retry_after=retry_after)
     try:
         temporary = client.password_grant(user.email, old_password)
     except InvalidProviderCredentials as error:
         if fingerprint is not None:
-            rate_limits.record_attempt(db, fingerprint, bucket, timestamp)
+            rate_limits.record_attempt(db, fingerprint, bucket, timestamp, policy=policy)
             db.commit()
         raise InvalidCredentials("Invalid credentials") from error
     try:
         if temporary.user_id != user.supabase_user_id:
             if fingerprint is not None:
-                rate_limits.record_attempt(db, fingerprint, bucket, timestamp)
+                rate_limits.record_attempt(db, fingerprint, bucket, timestamp, policy=policy)
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
         provider_user = client.get_user(temporary.access_token)
@@ -170,7 +168,7 @@ def change_password(
             or not provider_user.is_eligible()
         ):
             if fingerprint is not None:
-                rate_limits.record_attempt(db, fingerprint, bucket, timestamp)
+                rate_limits.record_attempt(db, fingerprint, bucket, timestamp, policy=policy)
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
         locked = db.get(User, user.id, with_for_update=True)
@@ -181,7 +179,7 @@ def change_password(
             or not is_identity_eligible(locked)
         ):
             if fingerprint is not None:
-                rate_limits.record_attempt(db, fingerprint, bucket, timestamp)
+                rate_limits.record_attempt(db, fingerprint, bucket, timestamp, policy=policy)
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
         changed = client.update_password(current_access_token, new_password)

@@ -6,12 +6,17 @@ const factor = z.object({
   factor_type: z.string(),
   status: z.enum(["verified", "unverified"]),
 });
-const status = z.object({
-  user_id: z.string().uuid(),
-  assurance_level: z.enum(["aal1", "aal2"]),
-  required: z.boolean(),
-  factors: z.array(factor),
-});
+const status = z
+  .object({
+    user_id: z.string().uuid(),
+    assurance_level: z.enum(["aal1", "aal2"]),
+    required: z.boolean(),
+    policy_required: z.boolean(),
+    required_since: z.iso.datetime({ offset: true }).nullable(),
+    enrollment_deadline: z.iso.datetime({ offset: true }).nullable(),
+    factors: z.array(factor),
+  })
+  .strict();
 const enrollment = z.object({
   id: z.string().uuid(),
   totp: z.object({

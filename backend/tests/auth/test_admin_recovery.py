@@ -104,7 +104,13 @@ def security_recovery(monkeypatch: pytest.MonkeyPatch):
     user = _admin()
     profile = WorkspaceProfile(
         id=uuid7(),
-        mfa_policy="everyone",
+        mfa_require_admin=True,
+        mfa_require_member=True,
+        mfa_require_guest=True,
+        mfa_grace_days=3,
+        session_absolute_lifetime_minutes=240,
+        session_concurrent_limit=2,
+        login_failed_attempt_threshold=4,
         ip_allow_list=["10.0.0.0/8"],
         revision=7,
     )
@@ -117,7 +123,9 @@ def security_recovery(monkeypatch: pytest.MonkeyPatch):
     db.scalar.side_effect = lambda query: (
         user if query.column_descriptions[0]["entity"] is User else profile
     )
-    db.scalars.side_effect = lambda _query: sessions
+    db.scalars.side_effect = lambda query: (
+        [user] if query.column_descriptions[0]["entity"] is User else sessions
+    )
     client = Mock()
     client.get_admin_user.return_value = ProviderUser(user.supabase_user_id, None, user.email)
     client.admin_list_factors.side_effect = [[uuid7()], []]
@@ -169,7 +177,7 @@ def test_security_recovery_validates_bound_provider(security_recovery, mismatch)
     )
     with pytest.raises(security.LocalSecurityRecoveryError):
         security.recover_workspace_security(db, user.id, local_invocation=True, elevated=True)
-    assert profile.mfa_policy == "everyone"
+    assert profile.mfa_require_admin and profile.mfa_require_member and profile.mfa_require_guest
     db.commit.assert_not_called()
     client.admin_list_factors.assert_not_called()
 
@@ -186,7 +194,9 @@ def test_security_recovery_clears_policy_factors_and_newly_admitted_sessions(
     result = security.recover_workspace_security(db, user.id, local_invocation=True, elevated=True)
 
     assert result.user_id == user.id
-    assert profile.mfa_policy == "optional"
+    assert not any(
+        (profile.mfa_require_admin, profile.mfa_require_member, profile.mfa_require_guest)
+    )
     assert profile.ip_allow_list == []
     assert profile.revision == 8
     assert all(session.revoked_at is not None for session in sessions)
@@ -228,7 +238,10 @@ def test_security_recovery_partial_factor_failure_is_truthful_and_rerunnable(
     assert caught.value.local_reset_committed is True
     assert caught.value.provider_factors_cleared is None
     assert "private" not in str(caught.value)
-    assert profile.mfa_policy == "optional" and profile.ip_allow_list == []
+    assert (
+        not any((profile.mfa_require_admin, profile.mfa_require_member, profile.mfa_require_guest))
+        and profile.ip_allow_list == []
+    )
     assert sessions[0].revoked_at is not None
     assert events[-1].outcome == SecurityEventOutcome.PARTIAL
 
@@ -251,10 +264,12 @@ def test_security_recovery_does_not_overwrite_concurrently_changed_policy(
     security_recovery,
 ) -> None:
     security, db, user, profile, _, client, events = security_recovery
-    client.admin_delete_factor.side_effect = lambda *_args: setattr(profile, "mfa_policy", "admins")
+    client.admin_delete_factor.side_effect = lambda *_args: setattr(
+        profile, "mfa_require_admin", True
+    )
     with pytest.raises(security.LocalSecurityRecoveryError) as caught:
         security.recover_workspace_security(db, user.id, local_invocation=True, elevated=True)
-    assert profile.mfa_policy == "admins"
+    assert profile.mfa_require_admin
     assert caught.value.local_reset_committed is True
     assert caught.value.provider_factors_cleared is True
     assert events[-1].outcome == SecurityEventOutcome.PARTIAL
@@ -285,7 +300,12 @@ def test_security_recovery_persists_audited_reset_without_provider_io_in_transac
     profile = db.scalar(select(WorkspaceProfile))
     assert profile is not None
     profile_id, revision = profile.id, profile.revision
-    profile.mfa_policy = "everyone"
+    profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = True
+    user.mfa_required_since = datetime.now(UTC) - timedelta(days=1)
+    profile.session_absolute_lifetime_minutes = 240
+    profile.session_concurrent_limit = 2
+    profile.mfa_grace_days = 3
+    profile.login_failed_attempt_threshold = 4
     profile.ip_allow_list = ["10.0.0.0/8"]
     session = IdentitySession(
         id=uuid7(),
@@ -327,8 +347,14 @@ def test_security_recovery_persists_audited_reset_without_provider_io_in_transac
     session = db.get(IdentitySession, session_id)
     assert profile is not None and session is not None
     assert result.user_id == user_id
-    assert profile.mfa_policy == "optional" and profile.ip_allow_list == []
+    assert (
+        not any((profile.mfa_require_admin, profile.mfa_require_member, profile.mfa_require_guest))
+        and profile.ip_allow_list == []
+    )
     assert profile.revision == revision + 1
+    assert db.get(User, user_id).mfa_required_since is None
+    assert (profile.session_absolute_lifetime_minutes, profile.session_concurrent_limit) == (240, 2)
+    assert profile.mfa_grace_days == 3 and profile.login_failed_attempt_threshold == 4
     assert session.revoked_at is not None and factor_ids == []
     events = list(db.scalars(select(SecurityEvent).where(SecurityEvent.subject_id == user_id)))
     assert {event.outcome for event in events} == {"attempt", "success"}

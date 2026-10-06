@@ -101,6 +101,9 @@ class User(BaseModel):
     tokens_valid_after: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    mfa_required_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     @validates("email", "username")
     def normalize_profile_field(self, key: str, value: Any) -> Any:

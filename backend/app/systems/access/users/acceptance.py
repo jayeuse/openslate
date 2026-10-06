@@ -19,6 +19,7 @@ from app.systems.access.users.service import (
 from app.systems.manage.audit.models import SecurityEvent, SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.workspace.security_policy import accepted_mfa_episode
 from app.systems.platform.scheduling.notification_creation import notify_invitation_accepted
 
 
@@ -122,6 +123,7 @@ def accept_verified_invitation(
         raise InvitationError("Invitation is not pending")
     profile.status = UserStatus.ACTIVE.value
     profile.invitation_accepted_at = utc_now()
+    accepted_mfa_episode(db, profile, profile.invitation_accepted_at)
     try:
         inviter_id = (
             db.scalar(

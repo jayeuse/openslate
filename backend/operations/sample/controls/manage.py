@@ -250,7 +250,10 @@ def execute_manage_control(
         policy(read("/api/workspace/security"))
     elif operation == "update_workspace_security":
         original = policy(read("/api/workspace/security"))
-        if original["mfa_policy"] != "optional" or original["ip_allow_list"] != []:
+        if (
+            any(original[f"mfa_require_{role}"] for role in ("admin", "member", "guest"))
+            or original["ip_allow_list"] != []
+        ):
             raise SamplePhaseActionError(
                 "Sample security baseline could restrict actor access", step=action.key
             )
@@ -259,7 +262,9 @@ def execute_manage_control(
             "password_min_length": 20,
             "password_require_mixed_case": False,
             "password_require_number": False,
-            "mfa_policy": "optional",
+            "mfa_require_admin": False,
+            "mfa_require_member": False,
+            "mfa_require_guest": False,
             "ip_allow_list": [],
         }
         updated = policy(

@@ -125,6 +125,15 @@ export function SecurityView({
     securityQuery.data && !securityDenied
       ? securitySettingsFormFields(securityQuery.data)
       : null;
+  const requiredMfaRoles = securityFields
+    ? [
+        securityFields.requireMfaAdmin ? "administrators" : null,
+        securityFields.requireMfaMember ? "members" : null,
+        securityFields.requireMfaGuest ? "guests" : null,
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : "";
   const securityPatch = securityQuery.data
     ? securitySettingsPatch(securityQuery.data, securityDraft)
     : null;
@@ -506,13 +515,17 @@ export function SecurityView({
           requestSessionRecheck();
         }
         setError(
-          caught instanceof ApiError && caught.code === "ip_lockout"
-            ? "The IP allow list would block your current address. Include your current address before saving."
-            : caught instanceof ApiError && caught.status === 422
-              ? "Check the policy values and IP addresses. Your changes are still here."
-              : caught instanceof ApiError && caught.status === 403
-                ? "Only administrators can change account policy. Reload the page to check your access."
-                : "The policy could not be saved. Try again.",
+          caught instanceof ApiError &&
+            caught.status === 409 &&
+            caught.code === "mfa_enrollment_required"
+            ? "Set up and verify an authenticator before requiring MFA for all roles. Your changes are still here. Choose Manage MFA, then try saving again."
+            : caught instanceof ApiError && caught.code === "ip_lockout"
+              ? "The IP allow list would block your current address. Include your current address before saving."
+              : caught instanceof ApiError && caught.status === 422
+                ? "Check the policy values and IP addresses. Your changes are still here."
+                : caught instanceof ApiError && caught.status === 403
+                  ? "Only administrators can change account policy. Reload the page to check your access."
+                  : "The policy could not be saved. Try again.",
         );
       }
     } finally {
@@ -644,7 +657,7 @@ export function SecurityView({
             </div>
             <p className="text-muted-foreground mt-1 text-sm">
               {securityFields
-                ? `${securityFields.minimumLength}-character password minimum · ${securityFields.mfa === "Optional" ? "Optional two-factor" : securityFields.mfa} · ${securityFields.timeout} timeout`
+                ? `${securityFields.minimumLength}-character password minimum · ${requiredMfaRoles ? `MFA required for ${requiredMfaRoles}` : "Optional two-factor"} · ${securityFields.timeout} timeout`
                 : securityQuery.isPending && !securityDenied
                   ? "Loading policy…"
                   : "Account policy unavailable"}

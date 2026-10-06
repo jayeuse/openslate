@@ -326,12 +326,55 @@ export function MfaPresentation({
     verified !== undefined &&
     flow.credentials === null;
   const step = ready ? 3 : factorId ? 2 : 1;
+  const requirement = flow.status?.policy_required ? flow.status : null;
+  function requirementDate(value: string) {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "UTC",
+    }).format(new Date(value));
+  }
   return (
     <div className="flex min-w-0 flex-col gap-4 py-2">
       <Progress value={step} max={3} aria-label="MFA enrollment progress" />
       <p className="text-muted-foreground text-sm">
         Step {step} of 3 · Authenticator app
       </p>
+      {requirement && (
+        <div className="min-w-0 space-y-3">
+          {(requirement.required_since || requirement.enrollment_deadline) && (
+            <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">
+              {requirement.required_since && (
+                <div className="min-w-0">
+                  <dt className="text-muted-foreground">Requirement started</dt>
+                  <dd className="mt-1 break-words tabular-nums">
+                    <time dateTime={requirement.required_since}>
+                      {requirementDate(requirement.required_since)} UTC
+                    </time>
+                  </dd>
+                </div>
+              )}
+              {requirement.enrollment_deadline && (
+                <div className="min-w-0">
+                  <dt className="text-muted-foreground">Enrollment deadline</dt>
+                  <dd className="mt-1 break-words tabular-nums">
+                    <time dateTime={requirement.enrollment_deadline}>
+                      {requirementDate(requirement.enrollment_deadline)} UTC
+                    </time>
+                  </dd>
+                </div>
+              )}
+            </dl>
+          )}
+          {!verified && (
+            <Alert role="note" variant="warning">
+              {requirement.required
+                ? "MFA enrollment is required now. Set up and verify an authenticator to continue."
+                : "Set up and verify an authenticator before the enrollment deadline. You can keep using the workspace during the grace period."}
+            </Alert>
+          )}
+        </div>
+      )}
       {flow.error && (
         <Alert role="alert" variant="destructive">
           {flow.error}

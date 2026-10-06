@@ -72,9 +72,16 @@ def test_workspace_security_resolves_caddy_peer_and_refuses_forged_lockout(
         user.role = "admin"
         original = {
             field: getattr(profile, field)
-            for field in ("revision", "mfa_policy", "ip_allow_list", "performed_by")
+            for field in (
+                "revision",
+                "mfa_require_admin",
+                "mfa_require_member",
+                "mfa_require_guest",
+                "ip_allow_list",
+                "performed_by",
+            )
         }
-        profile.mfa_policy = "optional"
+        profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = False
         profile.ip_allow_list = []
         db.commit()
     base_env = {

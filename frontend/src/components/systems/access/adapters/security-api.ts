@@ -8,12 +8,6 @@ const timeoutChoices = {
   "60 minutes": 60,
   "8 hours": 480,
 } as const;
-const mfaChoices = {
-  Optional: "optional",
-  "Required for administrators": "admins",
-  "Required for everyone": "everyone",
-} as const;
-
 const securityFields = {
   session_timeout_minutes: z.union([
     z.literal(15),
@@ -24,13 +18,28 @@ const securityFields = {
   password_min_length: z.number().int().min(12).max(128),
   password_require_mixed_case: z.boolean(),
   password_require_number: z.boolean(),
-  mfa_policy: z.enum(["optional", "admins", "everyone"]),
+  session_absolute_lifetime_minutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(43200)
+    .nullable(),
+  session_concurrent_limit: z.number().int().min(1).max(100).nullable(),
+  mfa_require_admin: z.boolean(),
+  mfa_require_member: z.boolean(),
+  mfa_require_guest: z.boolean(),
+  mfa_grace_days: z.number().int().min(0).max(30),
+  login_failed_attempt_threshold: z.number().int().min(1).max(100),
+  login_window_minutes: z.number().int().min(1).max(1440),
+  login_cooldown_minutes: z.number().int().min(1).max(1440),
   ip_allow_list: z.array(z.string().min(1).max(64)).max(100),
 };
-const securityPolicySchema = z.object({
-  revision: z.number().int().positive(),
-  ...securityFields,
-});
+const securityPolicySchema = z
+  .object({
+    revision: z.number().int().positive(),
+    ...securityFields,
+  })
+  .strict();
 const securityPatchSchema = z
   .object({
     revision: z.number().int().positive(),
@@ -46,7 +55,15 @@ export type SecuritySettingsFormFields = {
   requireMixedCase: boolean;
   requireNumber: boolean;
   timeout: keyof typeof timeoutChoices;
-  mfa: keyof typeof mfaChoices;
+  absoluteLifetime: string;
+  concurrentLimit: string;
+  requireMfaAdmin: boolean;
+  requireMfaMember: boolean;
+  requireMfaGuest: boolean;
+  mfaGrace: string;
+  loginThreshold: string;
+  loginWindow: string;
+  loginCooldown: string;
   ips: string[];
   ipEntry: string;
 };
@@ -110,6 +127,30 @@ export function securitySettingsFormErrors(
   )
     errors.minimumLength =
       "Minimum password length must be a whole number from 12 to 128.";
+  const bounds = {
+    absoluteLifetime: [1, 43200, "Lifetime"],
+    concurrentLimit: [1, 100, "Maximum sessions"],
+    mfaGrace: [0, 30, "Enrollment grace"],
+    loginThreshold: [1, 100, "Failed attempts"],
+    loginWindow: [1, 1440, "Attempt window"],
+    loginCooldown: [1, 1440, "Lockout duration"],
+  } as const;
+  for (const key of Object.keys(bounds) as (keyof typeof bounds)[]) {
+    const value = fields[key];
+    if (
+      (key === "absoluteLifetime" || key === "concurrentLimit") &&
+      value === "Off"
+    )
+      continue;
+    const [minimum, maximum, label] = bounds[key];
+    if (
+      !/^\d+$/.test(value) ||
+      Number(value) < minimum ||
+      Number(value) > maximum
+    )
+      errors[key] =
+        `${label} must be a whole number from ${minimum} to ${maximum}.`;
+  }
   if (
     fields.ips.length > 100 ||
     fields.ips.some((value) => !validSecurityNetwork(value))
@@ -128,16 +169,27 @@ export function securitySettingsFormFields(
   const timeout = (
     Object.keys(timeoutChoices) as (keyof typeof timeoutChoices)[]
   ).find((label) => timeoutChoices[label] === policy.session_timeout_minutes);
-  const mfa = (Object.keys(mfaChoices) as (keyof typeof mfaChoices)[]).find(
-    (label) => mfaChoices[label] === policy.mfa_policy,
-  );
-  if (!timeout || !mfa) throw new Error("Account policy could not be read.");
+  if (!timeout) throw new Error("Account policy could not be read.");
   return {
     minimumLength: String(policy.password_min_length),
     requireMixedCase: policy.password_require_mixed_case,
     requireNumber: policy.password_require_number,
     timeout,
-    mfa,
+    absoluteLifetime:
+      policy.session_absolute_lifetime_minutes === null
+        ? "Off"
+        : String(policy.session_absolute_lifetime_minutes),
+    concurrentLimit:
+      policy.session_concurrent_limit === null
+        ? "Off"
+        : String(policy.session_concurrent_limit),
+    requireMfaAdmin: policy.mfa_require_admin,
+    requireMfaMember: policy.mfa_require_member,
+    requireMfaGuest: policy.mfa_require_guest,
+    mfaGrace: String(policy.mfa_grace_days),
+    loginThreshold: String(policy.login_failed_attempt_threshold),
+    loginWindow: String(policy.login_window_minutes),
+    loginCooldown: String(policy.login_cooldown_minutes),
     ips: policy.ip_allow_list,
     ipEntry: "",
   };
@@ -166,8 +218,36 @@ export function securitySettingsPatch(
     patch.password_require_number = draft.requireNumber;
   if (draft.timeout !== undefined && draft.timeout !== saved.timeout)
     patch.session_timeout_minutes = timeoutChoices[draft.timeout];
-  if (draft.mfa !== undefined && draft.mfa !== saved.mfa)
-    patch.mfa_policy = mfaChoices[draft.mfa];
+  if (
+    draft.absoluteLifetime !== undefined &&
+    draft.absoluteLifetime !== saved.absoluteLifetime
+  )
+    patch.session_absolute_lifetime_minutes =
+      draft.absoluteLifetime === "Off" ? null : Number(draft.absoluteLifetime);
+  if (
+    draft.concurrentLimit !== undefined &&
+    draft.concurrentLimit !== saved.concurrentLimit
+  )
+    patch.session_concurrent_limit =
+      draft.concurrentLimit === "Off" ? null : Number(draft.concurrentLimit);
+  for (const [field, key] of [
+    ["requireMfaAdmin", "mfa_require_admin"],
+    ["requireMfaMember", "mfa_require_member"],
+    ["requireMfaGuest", "mfa_require_guest"],
+  ] as const) {
+    const value = draft[field];
+    if (value !== undefined && value !== saved[field]) patch[key] = value;
+  }
+  for (const [field, key] of [
+    ["mfaGrace", "mfa_grace_days"],
+    ["loginThreshold", "login_failed_attempt_threshold"],
+    ["loginWindow", "login_window_minutes"],
+    ["loginCooldown", "login_cooldown_minutes"],
+  ] as const) {
+    const value = draft[field];
+    if (value !== undefined && value !== saved[field])
+      patch[key] = Number(value);
+  }
   if (draft.ips !== undefined) {
     const ips = draft.ips;
     if (JSON.stringify(ips) !== JSON.stringify(policy.ip_allow_list))

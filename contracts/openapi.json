@@ -6225,6 +6225,18 @@
             "title": "Assurance Level",
             "type": "string"
           },
+          "enrollment_deadline": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrollment Deadline"
+          },
           "factors": {
             "items": {
               "$ref": "#/components/schemas/FactorResponse"
@@ -6232,9 +6244,25 @@
             "title": "Factors",
             "type": "array"
           },
+          "policy_required": {
+            "title": "Policy Required",
+            "type": "boolean"
+          },
           "required": {
             "title": "Required",
             "type": "boolean"
+          },
+          "required_since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Since"
           },
           "user_id": {
             "format": "uuid",
@@ -6246,6 +6274,9 @@
           "user_id",
           "assurance_level",
           "required",
+          "policy_required",
+          "required_since",
+          "enrollment_deadline",
           "factors"
         ],
         "title": "MfaStatus",
@@ -14200,14 +14231,33 @@
             "title": "Ip Allow List",
             "type": "array"
           },
-          "mfa_policy": {
-            "enum": [
-              "optional",
-              "admins",
-              "everyone"
-            ],
-            "title": "Mfa Policy",
-            "type": "string"
+          "login_cooldown_minutes": {
+            "title": "Login Cooldown Minutes",
+            "type": "integer"
+          },
+          "login_failed_attempt_threshold": {
+            "title": "Login Failed Attempt Threshold",
+            "type": "integer"
+          },
+          "login_window_minutes": {
+            "title": "Login Window Minutes",
+            "type": "integer"
+          },
+          "mfa_grace_days": {
+            "title": "Mfa Grace Days",
+            "type": "integer"
+          },
+          "mfa_require_admin": {
+            "title": "Mfa Require Admin",
+            "type": "boolean"
+          },
+          "mfa_require_guest": {
+            "title": "Mfa Require Guest",
+            "type": "boolean"
+          },
+          "mfa_require_member": {
+            "title": "Mfa Require Member",
+            "type": "boolean"
           },
           "password_min_length": {
             "title": "Password Min Length",
@@ -14224,6 +14274,28 @@
           "revision": {
             "title": "Revision",
             "type": "integer"
+          },
+          "session_absolute_lifetime_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Absolute Lifetime Minutes"
+          },
+          "session_concurrent_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Concurrent Limit"
           },
           "session_timeout_minutes": {
             "enum": [
@@ -14242,7 +14314,15 @@
           "password_min_length",
           "password_require_mixed_case",
           "password_require_number",
-          "mfa_policy",
+          "session_absolute_lifetime_minutes",
+          "session_concurrent_limit",
+          "mfa_require_admin",
+          "mfa_require_member",
+          "mfa_require_guest",
+          "mfa_grace_days",
+          "login_failed_attempt_threshold",
+          "login_window_minutes",
+          "login_cooldown_minutes",
           "ip_allow_list"
         ],
         "title": "WorkspaceSecurityResponse",
@@ -14267,21 +14347,90 @@
             ],
             "title": "Ip Allow List"
           },
-          "mfa_policy": {
+          "login_cooldown_minutes": {
             "anyOf": [
               {
-                "enum": [
-                  "optional",
-                  "admins",
-                  "everyone"
-                ],
-                "type": "string"
+                "maximum": 1440.0,
+                "minimum": 1.0,
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Mfa Policy"
+            "title": "Login Cooldown Minutes"
+          },
+          "login_failed_attempt_threshold": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Login Failed Attempt Threshold"
+          },
+          "login_window_minutes": {
+            "anyOf": [
+              {
+                "maximum": 1440.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Login Window Minutes"
+          },
+          "mfa_grace_days": {
+            "anyOf": [
+              {
+                "maximum": 30.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Grace Days"
+          },
+          "mfa_require_admin": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Require Admin"
+          },
+          "mfa_require_guest": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Require Guest"
+          },
+          "mfa_require_member": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Require Member"
           },
           "password_min_length": {
             "anyOf": [
@@ -14322,6 +14471,32 @@
             "minimum": 1.0,
             "title": "Revision",
             "type": "integer"
+          },
+          "session_absolute_lifetime_minutes": {
+            "anyOf": [
+              {
+                "maximum": 43200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Absolute Lifetime Minutes"
+          },
+          "session_concurrent_limit": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Concurrent Limit"
           },
           "session_timeout_minutes": {
             "anyOf": [

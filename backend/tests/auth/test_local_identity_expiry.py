@@ -70,6 +70,8 @@ def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
         provider_refresh_token_encrypted=cipher.encrypt(tokens.refresh_token.encode()).decode(),
         refresh_token_digest=provider_sessions._digest("r" * 48),
         csrf_token_digest="csrf-digest",
+        created_at=now,
+        refreshed_at=now,
         expires_at=now + timedelta(days=1),
     )
     return now, user, session, claims, client

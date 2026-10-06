@@ -35,6 +35,11 @@ from app.systems.access.users.sessions_schemas import (
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.workspace.security_policy import (
+    effective_session_expiry,
+    load_workspace_policy,
+    session_expiry_expression,
+)
 
 router = APIRouter(prefix="/users", tags=["users"])
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
@@ -151,12 +156,14 @@ def list_sessions(
     db: Annotated[Session, Depends(get_db)],
 ) -> list[AdminSessionResponse]:
     identity = _require_completed_identity(identity)
+    policy = load_workspace_policy(db)
     sessions = db.scalars(
         select(IdentitySession)
         .where(
             IdentitySession.user_id == identity.user.id,
             IdentitySession.revoked_at.is_(None),
             IdentitySession.expires_at > utc_now(),
+            session_expiry_expression(policy) > utc_now(),
         )
         .order_by(IdentitySession.refreshed_at.desc(), IdentitySession.id)
     ).all()
@@ -165,7 +172,7 @@ def list_sessions(
             id=item.id,
             created_at=item.created_at,
             refreshed_at=item.refreshed_at,
-            expires_at=item.expires_at,
+            expires_at=effective_session_expiry(item, policy),
             user_agent=item.user_agent,
             current=item.id == identity.session_id,
         )
@@ -181,10 +188,15 @@ def list_admin_sessions(
     response: Response,
 ) -> AdminSessionCollectionResponse:
     _require_admin(identity, db)
+    policy = load_workspace_policy(db)
     statement = (
         select(IdentitySession)
         .join(User, User.id == IdentitySession.user_id)
-        .where(IdentitySession.revoked_at.is_(None), IdentitySession.expires_at > utc_now())
+        .where(
+            IdentitySession.revoked_at.is_(None),
+            IdentitySession.expires_at > utc_now(),
+            session_expiry_expression(policy) > utc_now(),
+        )
     )
     if params.status == "current":
         statement = statement.where(IdentitySession.id == identity.session_id)
@@ -220,7 +232,7 @@ def list_admin_sessions(
                 user_agent=item.user_agent,
                 created_at=item.created_at,
                 refreshed_at=item.refreshed_at,
-                expires_at=item.expires_at,
+                expires_at=effective_session_expiry(item, policy),
                 current=item.id == identity.session_id,
             )
             for item in result.items
@@ -320,12 +332,14 @@ def list_user_sessions(
 ) -> AdminSessionListResponse:
     _require_admin(identity, db)
     target = load_user(db, user_id)
+    policy = load_workspace_policy(db)
     result = execute_standard_list(
         db,
         select(IdentitySession).where(
             IdentitySession.user_id == target.id,
             IdentitySession.revoked_at.is_(None),
             IdentitySession.expires_at > utc_now(),
+            session_expiry_expression(policy) > utc_now(),
         ),
         params,
         SESSION_LIST_SPEC,
@@ -336,7 +350,7 @@ def list_user_sessions(
                 id=item.id,
                 created_at=item.created_at,
                 refreshed_at=item.refreshed_at,
-                expires_at=item.expires_at,
+                expires_at=effective_session_expiry(item, policy),
                 user_agent=item.user_agent,
                 current=item.id == identity.session_id,
             )

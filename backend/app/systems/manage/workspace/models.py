@@ -57,8 +57,29 @@ class WorkspaceProfile(BaseModel):
             name="ck_workspace_profiles_password_min_length",
         ),
         CheckConstraint(
-            "mfa_policy IN ('optional', 'admins', 'everyone')",
-            name="ck_workspace_profiles_mfa_policy",
+            "session_absolute_lifetime_minutes IS NULL OR "
+            "session_absolute_lifetime_minutes BETWEEN 1 AND 43200",
+            name="ck_workspace_profiles_session_absolute_lifetime_minutes_range",
+        ),
+        CheckConstraint(
+            "session_concurrent_limit IS NULL OR session_concurrent_limit BETWEEN 1 AND 100",
+            name="ck_workspace_profiles_session_concurrent_limit_range",
+        ),
+        CheckConstraint(
+            "mfa_grace_days BETWEEN 0 AND 30",
+            name="ck_workspace_profiles_mfa_grace_days_range",
+        ),
+        CheckConstraint(
+            "login_failed_attempt_threshold BETWEEN 1 AND 100",
+            name="ck_workspace_profiles_login_failed_attempt_threshold_range",
+        ),
+        CheckConstraint(
+            "login_window_minutes BETWEEN 1 AND 1440",
+            name="ck_workspace_profiles_login_window_minutes_range",
+        ),
+        CheckConstraint(
+            "login_cooldown_minutes BETWEEN 1 AND 1440",
+            name="ck_workspace_profiles_login_cooldown_minutes_range",
         ),
         CheckConstraint(
             "jsonb_typeof(ip_allow_list) = 'array'", name="ck_workspace_profiles_ip_allow_list"
@@ -114,8 +135,28 @@ class WorkspaceProfile(BaseModel):
     password_require_number: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
-    mfa_policy: Mapped[str] = mapped_column(
-        String(8), default="optional", server_default=text("'optional'"), nullable=False
+    session_absolute_lifetime_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    session_concurrent_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mfa_require_admin: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    mfa_require_member: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    mfa_require_guest: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    mfa_grace_days: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
+    login_failed_attempt_threshold: Mapped[int] = mapped_column(
+        Integer, default=5, server_default=text("5"), nullable=False
+    )
+    login_window_minutes: Mapped[int] = mapped_column(
+        Integer, default=15, server_default=text("15"), nullable=False
+    )
+    login_cooldown_minutes: Mapped[int] = mapped_column(
+        Integer, default=15, server_default=text("15"), nullable=False
     )
     ip_allow_list: Mapped[list[str]] = mapped_column(
         JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False

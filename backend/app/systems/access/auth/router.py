@@ -137,7 +137,7 @@ def login(
         raise HTTPException(
             status_code=429,
             detail="Invalid authentication credentials",
-            headers={"Retry-After": "900"},
+            headers={"Retry-After": str(error.retry_after)},
         ) from error
     except InvalidCredentials as error:
         db.commit()
@@ -198,7 +198,7 @@ def issue_bearer_token(
         raise HTTPException(
             status_code=429,
             detail="Invalid authentication credentials",
-            headers={"Retry-After": "900"},
+            headers={"Retry-After": str(error.retry_after)},
         ) from error
     except InvalidCredentials as error:
         db.commit()

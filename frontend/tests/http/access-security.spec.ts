@@ -227,7 +227,7 @@ test("saving required MFA immediately gates protected interaction and resumes th
 }) => {
   const policy = await mockManageSecurity(page);
   const state = await mockMfa(page, {
-    isRequired: () => policy.policy.mfa_policy === "admins",
+    isRequired: () => policy.policy.mfa_require_admin,
   });
   const dialog = await openLiveMfa(page);
   await dialog
@@ -236,7 +236,7 @@ test("saving required MFA immediately gates protected interaction and resumes th
   await expect(
     dialog.getByRole("img", { name: "Authenticator QR code" }),
   ).toBeVisible();
-  policy.policy.mfa_policy = "admins";
+  policy.policy.mfa_require_admin = true;
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   const resumedGate = page.getByRole("dialog", {
     name: "Session verification",
@@ -250,7 +250,7 @@ test("saving required MFA immediately gates protected interaction and resumes th
       (call) => call.method === "POST" && call.path === "/auth/mfa/factors",
     ),
   ).toHaveLength(1);
-  policy.policy.mfa_policy = "optional";
+  policy.policy.mfa_require_admin = false;
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   await expect(
     dialog.getByRole("img", { name: "Authenticator QR code" }),
@@ -271,8 +271,11 @@ test("saving required MFA immediately gates protected interaction and resumes th
     exact: true,
   });
   await edit
-    .getByLabel("Two-factor authentication", { exact: true })
-    .selectOption("Required for administrators");
+    .getByRole("checkbox", {
+      name: "Require MFA for administrators",
+      exact: true,
+    })
+    .check();
   await edit
     .getByRole("button", { name: "Save settings", exact: true })
     .click();
@@ -588,6 +591,10 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
   await policy
     .getByLabel("Session timeout", { exact: true })
     .selectOption("30 minutes");
+  const threshold = policy.getByLabel("Failed attempts before lockout", {
+    exact: true,
+  });
+  await threshold.fill("4");
   state.policy.revision = 2;
   state.workspace.revision = 2;
   const save = policy.getByRole("button", {
@@ -599,6 +606,7 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
   await expect(
     policy.getByLabel("Session timeout", { exact: true }),
   ).toHaveValue("30 minutes");
+  await expect(threshold).toHaveValue("4");
   expect(state.policy.session_timeout_minutes).toBe(60);
   state.policyWriteFailure = { status: 409, code: "ip_lockout" };
   const address = policy.getByLabel("IP address or CIDR", { exact: true });
@@ -638,17 +646,285 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
     .click();
   await save.click();
   await expect(policy).toContainText("The policy could not be saved");
+  await expect(threshold).toHaveValue("4");
   await expect(save).toBeEnabled();
   state.policyWriteFailure = null;
   await save.click();
   await expect(save).toBeDisabled();
   expect(state.policy.revision).toBe(3);
+  expect(state.writes.at(-1)?.body).toMatchObject({
+    revision: 2,
+    login_failed_attempt_threshold: 4,
+  });
   await policy.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
   await expect(
     page.getByLabel("Organization name", { exact: true }),
   ).toHaveValue("Harbor School");
   expect(state.workspaceReads).toBeGreaterThan(1);
+});
+
+test("12b: independent roles and numeric limits save only changed keys, including false zero and Off", async ({
+  page,
+}) => {
+  const state = await mockManageSecurity(page);
+  await mockMfa(page);
+  await page.goto("/access?view=security");
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const policy = page.getByRole("dialog", {
+    name: "Account policy",
+    exact: true,
+  });
+  const save = policy.getByRole("button", {
+    name: "Save settings",
+    exact: true,
+  });
+  const lifetime = policy.getByLabel("Total session lifetime", { exact: true });
+  const cap = policy.getByLabel("Concurrent session limit", { exact: true });
+  const admin = policy.getByRole("checkbox", {
+    name: "Require MFA for administrators",
+    exact: true,
+  });
+  const member = policy.getByRole("checkbox", {
+    name: "Require MFA for members",
+    exact: true,
+  });
+  const guest = policy.getByRole("checkbox", {
+    name: "Require MFA for guests",
+    exact: true,
+  });
+  const grace = policy.getByLabel("Enrollment grace (days)", { exact: true });
+  await expect(lifetime).toHaveValue("Off");
+  await expect(cap).toHaveValue("Off");
+  await member.check();
+  await member.uncheck();
+  await expect(save).toBeDisabled();
+  await lifetime.selectOption("Set a limit");
+  await policy.getByLabel("Lifetime (minutes)", { exact: true }).fill("43200");
+  await cap.selectOption("Set a limit");
+  await policy.getByLabel("Maximum sessions", { exact: true }).fill("100");
+  await expect(policy).toContainText("Applies when sign-in completes.");
+  await admin.check();
+  await guest.check();
+  await grace.fill("30");
+  await policy
+    .getByLabel("Failed attempts before lockout", { exact: true })
+    .fill("1");
+  await policy
+    .getByLabel("Attempt window (minutes)", { exact: true })
+    .fill("1440");
+  await policy
+    .getByLabel("Lockout duration (minutes)", { exact: true })
+    .fill("1440");
+  await save.click();
+  await expect(save).toBeDisabled();
+  expect(state.writes.at(-1)?.body).toEqual({
+    revision: 1,
+    session_absolute_lifetime_minutes: 43200,
+    session_concurrent_limit: 100,
+    mfa_require_admin: true,
+    mfa_require_guest: true,
+    mfa_grace_days: 30,
+    login_failed_attempt_threshold: 1,
+    login_window_minutes: 1440,
+    login_cooldown_minutes: 1440,
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  await expect(
+    policy.getByLabel("Lifetime (minutes)", { exact: true }),
+  ).toHaveValue("43200");
+  await expect(
+    policy.getByLabel("Maximum sessions", { exact: true }),
+  ).toHaveValue("100");
+  await expect(admin).toBeChecked();
+  await expect(member).not.toBeChecked();
+  await expect(guest).toBeChecked();
+  await expect(grace).toHaveValue("30");
+  await admin.uncheck();
+  await guest.uncheck();
+  await grace.fill("0");
+  await lifetime.selectOption("Off");
+  await cap.selectOption("Off");
+  await save.click();
+  await expect(save).toBeDisabled();
+  expect(state.writes.at(-1)?.body).toEqual({
+    revision: 2,
+    session_absolute_lifetime_minutes: null,
+    session_concurrent_limit: null,
+    mfa_require_admin: false,
+    mfa_require_guest: false,
+    mfa_grace_days: 0,
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  await expect(lifetime).toHaveValue("Off");
+  await expect(cap).toHaveValue("Off");
+  await expect(admin).not.toBeChecked();
+  await expect(guest).not.toBeChecked();
+  await expect(grace).toHaveValue("0");
+  await expect(
+    policy.getByLabel("Failed attempts before lockout", { exact: true }),
+  ).toHaveValue("1");
+  await expect(save).toBeDisabled();
+});
+
+test("12b: numeric bounds and whole numbers retain invalid drafts without a request or page error", async ({
+  page,
+}) => {
+  const state = await mockManageSecurity(page);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/access?view=security");
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const policy = page.getByRole("dialog", {
+    name: "Account policy",
+    exact: true,
+  });
+  const save = policy.getByRole("button", {
+    name: "Save settings",
+    exact: true,
+  });
+  await policy
+    .getByLabel("Total session lifetime", { exact: true })
+    .selectOption("Set a limit");
+  await save.click();
+  await expect(
+    policy.getByLabel("Lifetime (minutes)", { exact: true }),
+  ).toHaveAttribute("aria-invalid", "true");
+  await policy
+    .getByLabel("Concurrent session limit", { exact: true })
+    .selectOption("Set a limit");
+  const cases = [
+    ["Lifetime (minutes)", "43201", "1"],
+    ["Maximum sessions", "101", "1"],
+    ["Enrollment grace (days)", "-1", "0"],
+    ["Failed attempts before lockout", "0", "100"],
+    ["Attempt window (minutes)", "1441", "1"],
+    ["Lockout duration (minutes)", "1.5", "1"],
+  ] as const;
+  for (const [label, invalid] of cases)
+    await policy.getByLabel(label, { exact: true }).fill(invalid);
+  await save.click();
+  for (const [label, invalid] of cases) {
+    await expect(policy.getByLabel(label, { exact: true })).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await expect(policy.getByLabel(label, { exact: true })).toHaveValue(
+      invalid,
+    );
+  }
+  await policy
+    .getByLabel("Lockout duration (minutes)", { exact: true })
+    .fill("1e2");
+  await save.click();
+  await expect(
+    policy.getByLabel("Lockout duration (minutes)", { exact: true }),
+  ).toHaveAttribute("aria-invalid", "true");
+  expect(state.writes).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  for (const [label, , valid] of cases)
+    await policy.getByLabel(label, { exact: true }).fill(valid);
+  await save.click();
+  await expect(save).toBeDisabled();
+  expect(state.writes.at(-1)?.body).toEqual({
+    revision: 1,
+    session_absolute_lifetime_minutes: 1,
+    session_concurrent_limit: 1,
+    login_failed_attempt_threshold: 100,
+    login_window_minutes: 1,
+    login_cooldown_minutes: 1,
+  });
+  expect(pageErrors).toEqual([]);
+});
+
+test("12b: a refused all-role MFA save retains the future draft and offers current Manage MFA before retry", async ({
+  page,
+}) => {
+  const state = await mockManageSecurity(page);
+  const identity = await mockMfa(page);
+  state.policyWriteFailure = { status: 409, code: "mfa_enrollment_required" };
+  await page.goto("/access?view=security");
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const policy = page.getByRole("dialog", {
+    name: "Account policy",
+    exact: true,
+  });
+  const roles = ["administrators", "members", "guests"] as const;
+  for (const role of roles)
+    await policy
+      .getByRole("checkbox", { name: `Require MFA for ${role}`, exact: true })
+      .check();
+  await policy.getByLabel("Enrollment grace (days)", { exact: true }).fill("7");
+  const save = policy.getByRole("button", {
+    name: "Save settings",
+    exact: true,
+  });
+  await save.click();
+  await expect(policy.getByRole("alert")).toContainText(
+    "Set up and verify an authenticator before requiring MFA for all roles",
+  );
+  await expect(save).toBeEnabled();
+  for (const role of roles)
+    await expect(
+      policy.getByRole("checkbox", {
+        name: `Require MFA for ${role}`,
+        exact: true,
+      }),
+    ).toBeChecked();
+  await expect(
+    policy.getByLabel("Enrollment grace (days)", { exact: true }),
+  ).toHaveValue("7");
+  expect(state.policy).toMatchObject({
+    mfa_require_admin: false,
+    mfa_require_member: false,
+    mfa_require_guest: false,
+  });
+  await policy.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Security" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "Session verification", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  for (const role of roles)
+    await expect(
+      policy.getByRole("checkbox", {
+        name: `Require MFA for ${role}`,
+        exact: true,
+      }),
+    ).toBeChecked();
+  const actor = identity.actors.get(mfaUserA)!;
+  actor.assurance = "aal2";
+  actor.factors.push({
+    id: "00000000-0000-4000-8000-000000000771",
+    factor_type: "totp",
+    status: "verified",
+  });
+  await policy.getByRole("button", { name: "Manage MFA", exact: true }).click();
+  const mfa = page.getByRole("dialog", { name: "MFA enrollment", exact: true });
+  await expect(mfa).toContainText("Authenticator verified");
+  await mfa.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  for (const role of roles)
+    await expect(
+      policy.getByRole("checkbox", {
+        name: `Require MFA for ${role}`,
+        exact: true,
+      }),
+    ).toBeChecked();
+  state.policyWriteFailure = null;
+  await save.click();
+  await expect(save).toBeDisabled();
+  expect(state.writes.at(-1)?.body).toEqual({
+    revision: 1,
+    mfa_require_admin: true,
+    mfa_require_member: true,
+    mfa_require_guest: true,
+    mfa_grace_days: 7,
+  });
 });
 
 test("Security reads show recovery and denial without sample sessions", async ({

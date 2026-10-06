@@ -12,6 +12,7 @@ from app.core.integrations.supabase_auth import (
     ProviderTokens,
 )
 from app.systems.access.identity.contracts import InvalidCredentials, IssuedSession
+from app.systems.access.identity.models import IdentityRateLimitBucket
 
 
 def test_password_grant_admits_only_the_bound_application_session(
@@ -45,24 +46,24 @@ def test_password_grant_admits_only_the_bound_application_session(
 
 def test_wrong_password_records_rate_limit_without_creating_local_session(
     monkeypatch: pytest.MonkeyPatch,
+    unit_workspace_policy,
 ) -> None:
     from app.systems.access.identity import provider_login, rate_limits
 
     db = Mock(spec=Session)
     client = Mock()
     client.password_grant.side_effect = InvalidProviderCredentials("wrong")
-    bucket = Mock(blocked_until=None)
+    now = datetime.now(UTC)
+    bucket = IdentityRateLimitBucket(window_started_at=now, attempt_count=0, blocked_until=None)
     monkeypatch.setattr(rate_limits, "cleanup_expired_buckets", Mock(return_value=0))
     monkeypatch.setattr(rate_limits, "login_fingerprint", Mock(return_value="fingerprint"))
     monkeypatch.setattr(rate_limits, "lock_bucket", Mock(return_value=bucket))
     record = Mock()
     monkeypatch.setattr(rate_limits, "record_attempt", record)
-    now = datetime.now(UTC)
-
     with pytest.raises(InvalidCredentials):
         provider_login.login_with_provider(
             db, "person@example.test", "wrong", client, source="127.0.0.1", now=now
         )
 
-    record.assert_called_once_with(db, "fingerprint", bucket, now)
+    record.assert_called_once_with(db, "fingerprint", bucket, now, policy=unit_workspace_policy)
     db.add.assert_not_called()

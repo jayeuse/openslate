@@ -12,10 +12,14 @@ from uuid import NAMESPACE_URL, uuid5
 import httpx
 import pytest
 
+from app.systems.access.users.sessions_schemas import AdminSessionCollectionRequest
+from app.systems.manage.workspace.security_schemas import WorkspaceSecurityUpdate
 from operations.sample.client import SampleClient
+from operations.sample.controls.actions import execute_control_action, plan_controls
 from operations.sample.controls.boards import _board_manager_and_record
 from operations.sample.controls.openview_queries import select_openview_target
 from operations.sample.controls.read_reviews import execute_read_review, plan_read_reviews
+from operations.sample.controls.request_verification import verify_request_evidence
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.packs.registry import get_pack
 from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
@@ -253,8 +257,6 @@ def test_board_review_stops_when_access_or_selected_revision_is_invalid(
 
 
 def _manage_run(tmp_path, pack_key, problem=None):
-    from operations.sample.controls.actions import plan_controls
-
     dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
     actions = [a for a in plan_controls(dataset) if a.kind == "manage_controls"]
     assert len(actions) == 5, "Every new noninteractive Phase B route needs its own action"
@@ -276,15 +278,17 @@ def _manage_run(tmp_path, pack_key, problem=None):
         "password_min_length": 12,
         "password_require_mixed_case": True,
         "password_require_number": False,
-        "mfa_policy": "optional",
+        **{f"mfa_require_{role}": False for role in ("admin", "member", "guest")},
+        "mfa_grace_days": 0,
+        "session_absolute_lifetime_minutes": None,
+        "session_concurrent_limit": None,
+        "login_failed_attempt_threshold": 5,
+        **dict.fromkeys(("login_window_minutes", "login_cooldown_minutes"), 15),
         "ip_allow_list": [],
     }
     state = {"seen": [], "policy": policy, "logins": [], "revoked": False}
 
     def handler(request):
-        from app.systems.access.users.sessions_schemas import AdminSessionCollectionRequest
-        from app.systems.manage.workspace.security_schemas import WorkspaceSecurityUpdate
-
         path, method = request.url.path, request.method
         body = json.loads(request.content) if request.content else {}
         state["seen"].append((method, path))
@@ -339,6 +343,8 @@ def _manage_run(tmp_path, pack_key, problem=None):
                     "user_id": _id("wrong") if problem == "mfa_identity" else user_ids[actor],
                     "assurance_level": "aal1",
                     "required": False,
+                    "policy_required": False,
+                    **dict.fromkeys(("required_since", "enrollment_deadline")),
                     "factors": [],
                 },
             )
@@ -352,7 +358,7 @@ def _manage_run(tmp_path, pack_key, problem=None):
                     body.get("password_require_mixed_case", policy["password_require_mixed_case"]),
                     body.get("password_require_number", policy["password_require_number"]),
                 ) in {(12, True, False), (16, True, True), (20, False, False)}
-                assert body.get("mfa_policy", policy["mfa_policy"]) == "optional"
+                assert not any(v for k, v in body.items() if k.startswith("mfa_require_"))
                 assert body.get("ip_allow_list", policy["ip_allow_list"]) == []
                 merged = {**policy, **body, "revision": policy["revision"] + 1}
                 if problem != "policy_not_saved":
@@ -455,9 +461,6 @@ def _manage_run(tmp_path, pack_key, problem=None):
 def test_manage_controls_persist_safe_policy_and_reauthenticate_every_revoked_actor(
     tmp_path, pack_key
 ):
-    from operations.sample.controls.actions import execute_control_action
-    from operations.sample.controls.request_verification import verify_request_evidence
-
     dataset, actions, context, state = _manage_run(tmp_path, pack_key)
     baseline = dict(state["policy"])
     try:

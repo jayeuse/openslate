@@ -21,6 +21,19 @@ from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.manage.workspace.models import WorkspaceProfile
 
 
+@pytest.fixture(autouse=True)
+def neutral_session_policy(monkeypatch):
+    from app.systems.access.users import sessions_router
+
+    monkeypatch.setattr(
+        sessions_router,
+        "load_workspace_policy",
+        lambda _db: WorkspaceProfile(
+            session_timeout_minutes=60, session_absolute_lifetime_minutes=None
+        ),
+    )
+
+
 def _admin_identity() -> tuple[User, CurrentIdentity]:
     admin_id = uuid7()
     current_session_id = uuid7()
@@ -102,7 +115,9 @@ def test_admin_lists_active_sessions_in_stable_descending_order_without_secret_d
             "id": str(session.id),
             "created_at": session.created_at.isoformat().replace("+00:00", "Z"),
             "refreshed_at": session.refreshed_at.isoformat().replace("+00:00", "Z"),
-            "expires_at": session.expires_at.isoformat().replace("+00:00", "Z"),
+            "expires_at": (session.refreshed_at + timedelta(minutes=60))
+            .isoformat()
+            .replace("+00:00", "Z"),
             "user_agent": "Browser/1.0",
             "current": False,
         }
@@ -327,7 +342,11 @@ def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(
         auth_dependencies, "resolve_provider_session", lambda *_args, **_kwargs: (admin, session)
     )
     monkeypatch.setattr(
-        auth_dependencies, "load_workspace_policy", lambda _db: WorkspaceProfile(ip_allow_list=[])
+        auth_dependencies,
+        "load_workspace_policy",
+        lambda _db: WorkspaceProfile(
+            ip_allow_list=[], session_timeout_minutes=60, session_absolute_lifetime_minutes=None
+        ),
     )
     monkeypatch.setattr(sessions_router, "require_fresh_exact_admin", lambda *_args: admin)
     monkeypatch.setattr(sessions_router, "load_user", lambda *_args: _target_user(target_id))
@@ -449,7 +468,9 @@ def test_admin_session_collection_returns_paged_public_person_and_client_metadat
         "browser": "Firefox",
         "created_at": session.created_at.isoformat().replace("+00:00", "Z"),
         "refreshed_at": session.refreshed_at.isoformat().replace("+00:00", "Z"),
-        "expires_at": session.expires_at.isoformat().replace("+00:00", "Z"),
+        "expires_at": (session.refreshed_at + timedelta(minutes=60))
+        .isoformat()
+        .replace("+00:00", "Z"),
         "current": True,
     }
     assert response.json()["pagination"] == {

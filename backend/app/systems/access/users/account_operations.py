@@ -39,6 +39,7 @@ from app.systems.manage.audit.service import (
     SecurityEventPersistenceError,
     append_committed_security_event,
 )
+from app.systems.manage.workspace.security_policy import apply_role_mfa_episode
 
 router = APIRouter(prefix="/users", tags=["users"])
 AdminUser = Annotated[User, Depends(require_admin)]
@@ -241,6 +242,8 @@ def update_user(
             expiry_requested="expires_at" in payload.model_fields_set,
         )
     before = snapshot_access(db, (user,)) if role_change_requested else None
+    if role_change_requested:
+        apply_role_mfa_episode(db, user, destination_role)
     try:
         _apply_profile_update(db, user, payload, destination_role=destination_role)
     except ProfileValidationError as error:

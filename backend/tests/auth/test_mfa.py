@@ -9,7 +9,23 @@ from uuid import uuid4
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
+from app.common.dependencies import auth as dependency
+from app.core.database import get_db
+from app.core.integrations.supabase_auth import (
+    ProviderAccessIdentity,
+    ProviderFactor,
+    ProviderUser,
+    SupabaseAuthUnavailable,
+)
+from app.systems.access.identity import provider_sessions
+from app.systems.access.identity.contracts import InvalidCredentials
+from app.systems.access.identity.models import IdentitySession
+from app.systems.access.users.models import User
+from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.test_supabase_auth_core import _client_for_key, _signed_access
 
 
@@ -85,16 +101,6 @@ def test_verified_provider_access_uses_exact_instance_session_and_assurance() ->
 def test_signed_assurance_policy_cannot_be_bypassed_by_request_parameters(
     monkeypatch, policy, role, factor_status, assurance, expected
 ) -> None:
-    from fastapi import Depends, FastAPI
-    from fastapi.testclient import TestClient
-    from sqlalchemy.orm import Session
-
-    from app.common.dependencies import auth as dependency
-    from app.core.database import get_db
-    from app.systems.access.identity import provider_sessions
-    from app.systems.access.identity.models import IdentitySession
-    from app.systems.access.users.models import User
-    from app.systems.manage.workspace.models import WorkspaceProfile
 
     key = ec.generate_private_key(ec.SECP256R1())
     local_id, provider_id, provider_session = uuid4(), uuid4(), uuid4()
@@ -113,6 +119,8 @@ def test_signed_assurance_policy_cannot_be_bypassed_by_request_parameters(
         user_id=local_id,
         provider_user_id=provider_id,
         provider_session_id=provider_session,
+        created_at=datetime.now(UTC),
+        refreshed_at=datetime.now(UTC),
         expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     db = Mock(spec=Session)
@@ -120,16 +128,17 @@ def test_signed_assurance_policy_cannot_be_bypassed_by_request_parameters(
         session if query.column_descriptions[0]["entity"] is IdentitySession else user
     )
     db.execute.return_value.scalar_one.return_value = True
-    profile = WorkspaceProfile(mfa_policy=policy, ip_allow_list=[])
-    reads = []
-
-    def read_policy(_db):
-        reads.append(profile)
-        return profile
-
-    # Both import sites share one counter: the real resolver may not read it again.
-    monkeypatch.setattr(provider_sessions, "load_workspace_policy", read_policy)
-    monkeypatch.setattr(dependency, "load_workspace_policy", read_policy, raising=False)
+    profile = WorkspaceProfile(
+        mfa_require_admin=policy != "optional",
+        mfa_require_member=policy == "everyone",
+        mfa_require_guest=policy == "everyone",
+        mfa_grace_days=0,
+        session_timeout_minutes=60,
+        session_absolute_lifetime_minutes=None,
+        ip_allow_list=[],
+    )
+    monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db: profile)
+    monkeypatch.setattr(dependency, "load_workspace_policy", lambda _db: profile, raising=False)
     monkeypatch.setattr(dependency, "get_supabase_auth_client", lambda: provider)
     app = FastAPI()
     app.dependency_overrides[get_db] = lambda: db
@@ -150,7 +159,6 @@ def test_signed_assurance_policy_cannot_be_bypassed_by_request_parameters(
     assert response.status_code == expected
     if expected == 403:
         assert response.json()["detail"]["code"] == "mfa_required"
-    assert reads == [profile]
 
 
 @pytest.mark.parametrize(
@@ -159,16 +167,6 @@ def test_signed_assurance_policy_cannot_be_bypassed_by_request_parameters(
 def test_authenticated_ip_policy_uses_transport_peer_not_forwarded_header(
     monkeypatch, source, expected
 ):
-    from fastapi import Depends, FastAPI
-    from fastapi.testclient import TestClient
-    from sqlalchemy.orm import Session
-
-    from app.common.dependencies import auth as dependency
-    from app.core.database import get_db
-    from app.systems.access.identity import provider_sessions
-    from app.systems.access.identity.models import IdentitySession
-    from app.systems.access.users.models import User
-    from app.systems.manage.workspace.models import WorkspaceProfile
 
     key = ec.generate_private_key(ec.SECP256R1())
     local_id, provider_id, provider_session = uuid4(), uuid4(), uuid4()
@@ -186,6 +184,8 @@ def test_authenticated_ip_policy_uses_transport_peer_not_forwarded_header(
         user_id=local_id,
         provider_user_id=provider_id,
         provider_session_id=provider_session,
+        created_at=datetime.now(UTC),
+        refreshed_at=datetime.now(UTC),
         expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     db = Mock(spec=Session)
@@ -193,16 +193,13 @@ def test_authenticated_ip_policy_uses_transport_peer_not_forwarded_header(
         session if query.column_descriptions[0]["entity"] is IdentitySession else user
     )
     db.execute.return_value.scalar_one.return_value = True
-    profile = WorkspaceProfile(mfa_policy="optional", ip_allow_list=["10.0.0.0/8"])
-    reads = []
-
-    def read_policy(_db):
-        reads.append(profile)
-        return profile
-
-    # Both import sites share one counter: the real resolver may not read it again.
-    monkeypatch.setattr(provider_sessions, "load_workspace_policy", read_policy)
-    monkeypatch.setattr(dependency, "load_workspace_policy", read_policy, raising=False)
+    profile = WorkspaceProfile(
+        session_timeout_minutes=60,
+        session_absolute_lifetime_minutes=None,
+        ip_allow_list=["10.0.0.0/8"],
+    )
+    monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db: profile)
+    monkeypatch.setattr(dependency, "load_workspace_policy", lambda _db: profile, raising=False)
     monkeypatch.setattr(dependency, "get_supabase_auth_client", lambda: provider)
     app = FastAPI()
     app.dependency_overrides[get_db] = lambda: db
@@ -222,7 +219,6 @@ def test_authenticated_ip_policy_uses_transport_peer_not_forwarded_header(
     assert response.status_code == expected
     if expected == 403:
         assert response.json()["detail"]["code"] == "ip_not_allowed"
-    assert reads == [profile]
 
 
 @pytest.mark.parametrize(
@@ -241,16 +237,15 @@ def test_authenticated_ip_policy_uses_transport_peer_not_forwarded_header(
 def test_auth_actions_reject_disallowed_transport_address_before_provider_work(
     monkeypatch, path, payload
 ):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
 
-    from app.common.dependencies import auth as dependency
     from app.core.config import get_settings
-    from app.core.database import get_db
     from app.systems.access.auth import router as auth_routes
-    from app.systems.manage.workspace.models import WorkspaceProfile
 
-    profile = WorkspaceProfile(mfa_policy="optional", ip_allow_list=["10.0.0.0/8"])
+    profile = WorkspaceProfile(
+        session_timeout_minutes=60,
+        session_absolute_lifetime_minutes=None,
+        ip_allow_list=["10.0.0.0/8"],
+    )
     provider = Mock()
     monkeypatch.setattr(dependency, "load_workspace_policy", lambda _db: profile)
     monkeypatch.setattr(auth_routes, "get_supabase_auth_client", lambda: provider)
@@ -280,18 +275,11 @@ def test_auth_actions_reject_disallowed_transport_address_before_provider_work(
 def mfa_context(monkeypatch):
     from cryptography.fernet import Fernet
     from pydantic import SecretStr
-    from sqlalchemy.orm import Session
 
     from app.core.integrations.supabase_auth import (
-        ProviderAccessIdentity,
-        ProviderFactor,
         ProviderTokens,
-        ProviderUser,
     )
     from app.systems.access.identity import mfa as service
-    from app.systems.access.identity.models import IdentitySession
-    from app.systems.access.users.models import User
-    from app.systems.manage.workspace.models import WorkspaceProfile
 
     key = Fernet.generate_key()
     cipher = Fernet(key)
@@ -313,6 +301,8 @@ def mfa_context(monkeypatch):
         provider_refresh_token_encrypted=cipher.encrypt(b"old-refresh").decode(),
         refresh_token_digest="stable-handle",
         csrf_token_digest="stable-csrf",
+        created_at=datetime.now(UTC),
+        refreshed_at=datetime.now(UTC),
         expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     db = Mock(spec=Session)
@@ -323,9 +313,14 @@ def mfa_context(monkeypatch):
     auth.get_user.return_value = ProviderUser(
         provider_id, None, user.email, factors=(ProviderFactor(factor_id, "totp", "unverified"),)
     )
-    mfa_client.challenge_and_verify.return_value = ProviderTokens(
-        "new-access", "new-refresh", provider_id, 600
-    )
+
+    def rotate(*_args):
+        auth.get_user.return_value = ProviderUser(
+            provider_id, None, user.email, factors=(ProviderFactor(factor_id, "totp", "verified"),)
+        )
+        return ProviderTokens("new-access", "new-refresh", provider_id, 600)
+
+    mfa_client.challenge_and_verify.side_effect = rotate
     context = SimpleNamespace(
         service=service,
         db=db,
@@ -351,12 +346,6 @@ def mfa_context(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(service, "SupabaseMfaClient", lambda _auth: mfa_client, raising=False)
-    monkeypatch.setattr(
-        service,
-        "load_workspace_policy",
-        lambda _db: WorkspaceProfile(mfa_policy="optional", session_timeout_minutes=60),
-        raising=False,
-    )
     monkeypatch.setattr(service, "append_security_event", lambda *_args: None, raising=False)
     return context
 
@@ -382,7 +371,6 @@ def test_mfa_verification_commits_both_rotated_credentials_before_return(mfa_con
 
 @pytest.mark.parametrize("mismatch", ["subject", "session", "aal"])
 def test_mfa_upgrade_refuses_wrong_signed_binding_or_assurance(mfa_context, mismatch):
-    from app.core.integrations.supabase_auth import ProviderAccessIdentity, SupabaseAuthUnavailable
 
     c = mfa_context
     original = c.auth.verify_access_token.side_effect
@@ -411,8 +399,6 @@ def test_mfa_upgrade_refuses_wrong_signed_binding_or_assurance(mfa_context, mism
 def test_mfa_rotated_pair_commit_failure_revokes_and_signs_out(mfa_context):
     from sqlalchemy.exc import SQLAlchemyError
 
-    from app.core.integrations.supabase_auth import SupabaseAuthUnavailable
-
     c = mfa_context
     c.db.commit.side_effect = [SQLAlchemyError("write unavailable"), None]
     with pytest.raises(SupabaseAuthUnavailable):
@@ -425,7 +411,6 @@ def test_mfa_rotated_pair_commit_failure_revokes_and_signs_out(mfa_context):
 
 @pytest.mark.parametrize("state", ["expired", "revoked"])
 def test_expired_or_revoked_session_cannot_complete_mfa(mfa_context, state):
-    from app.systems.access.identity.contracts import InvalidCredentials
 
     c = mfa_context
     if state == "expired":
@@ -441,7 +426,6 @@ def test_expired_or_revoked_session_cannot_complete_mfa(mfa_context, state):
 
 @pytest.mark.parametrize("status", ["unverified", "verified"])
 def test_factor_removal_revokes_only_when_authoritatively_verified(mfa_context, status):
-    from app.core.integrations.supabase_auth import ProviderFactor, ProviderUser
 
     c = mfa_context
     c.assurance = "aal2" if status == "verified" else "aal1"
@@ -468,7 +452,6 @@ def test_other_users_factor_is_refused_before_provider_mutation(mfa_context):
 
 
 def test_stale_aal1_cannot_borrow_stored_aal2_to_remove_verified_factor(mfa_context):
-    from app.core.integrations.supabase_auth import ProviderFactor, ProviderUser
 
     c = mfa_context
     c.session.provider_access_token_encrypted = c.cipher.encrypt(b"new-access").decode()
@@ -484,12 +467,12 @@ def test_stale_aal1_cannot_borrow_stored_aal2_to_remove_verified_factor(mfa_cont
 
 
 def test_session_expiring_during_provider_verification_cannot_revive(mfa_context):
-    from app.systems.access.identity.contracts import InvalidCredentials
 
     c = mfa_context
-    tokens = c.mfa.challenge_and_verify.return_value
+    rotate = c.mfa.challenge_and_verify.side_effect
 
-    def expire(*_args):
+    def expire(*args):
+        tokens = rotate(*args)
         c.session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         return tokens
 

@@ -51,7 +51,9 @@ def test_workspace_migration_preserves_designed_settings_defaults(
     assert profile.password_min_length == 12
     assert profile.password_require_mixed_case is True
     assert profile.password_require_number is False
-    assert profile.mfa_policy == "optional"
+    assert not any(
+        (profile.mfa_require_admin, profile.mfa_require_member, profile.mfa_require_guest)
+    )
     assert profile.ip_allow_list == []
 
 
@@ -67,7 +69,7 @@ def test_workspace_migration_preserves_designed_settings_defaults(
         ("session_timeout_minutes", 20),
         ("password_min_length", 11),
         ("password_min_length", 129),
-        ("mfa_policy", "required"),
+        ("mfa_grace_days", 31),
         ("ip_allow_list", {}),
     ],
 )

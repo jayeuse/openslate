@@ -121,6 +121,7 @@ def test_password_change_stops_before_provider_grant_when_backend_budget_blocked
         cleanup_expired_buckets=lambda *_a, **_kw: None,
         login_fingerprint=lambda *_a: "fingerprint",
         lock_bucket=lambda *_a: blocked,
+        login_retry_after=lambda *_a: 60,
     )
     monkeypatch.setattr(provider_actions, "rate_limits", budget, raising=False)
 
@@ -323,9 +324,12 @@ def test_mfa_policy_read_failure_after_rotation_revokes_instead_of_losing_pair(
     from app.core.integrations.supabase_auth import SupabaseAuthUnavailable
 
     c = mfa_context
+    current_policy = c.service.load_workspace_policy
 
     def unavailable(_db):
-        raise SupabaseAuthUnavailable("policy unavailable")
+        if c.mfa.challenge_and_verify.called:
+            raise SupabaseAuthUnavailable("policy unavailable")
+        return current_policy(_db)
 
     monkeypatch.setattr(c.service, "load_workspace_policy", unavailable)
     with pytest.raises(SupabaseAuthUnavailable):

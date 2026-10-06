@@ -25,7 +25,15 @@ _FIELDS = (
     "password_min_length",
     "password_require_mixed_case",
     "password_require_number",
-    "mfa_policy",
+    "session_absolute_lifetime_minutes",
+    "session_concurrent_limit",
+    "mfa_require_admin",
+    "mfa_require_member",
+    "mfa_require_guest",
+    "mfa_grace_days",
+    "login_failed_attempt_threshold",
+    "login_window_minutes",
+    "login_cooldown_minutes",
     "ip_allow_list",
 )
 
@@ -45,7 +53,11 @@ def security_workspace(provider_account):
         profile.password_min_length = 12
         profile.password_require_mixed_case = True
         profile.password_require_number = False
-        profile.mfa_policy = "optional"
+        profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = False
+        profile.mfa_grace_days = 0
+        profile.session_absolute_lifetime_minutes = profile.session_concurrent_limit = None
+        profile.login_failed_attempt_threshold = 5
+        profile.login_window_minutes = profile.login_cooldown_minutes = 15
         profile.ip_allow_list = []
         db.commit()
     settings = get_settings()
@@ -83,7 +95,7 @@ def test_workspace_security_saves_canonical_settings_with_audit_and_stale_protec
     assert before["password_min_length"] == 12
     assert before["password_require_mixed_case"] is True
     assert before["password_require_number"] is False
-    assert before["mfa_policy"] == "optional"
+    assert not any(before[f"mfa_require_{role}"] for role in ("admin", "member", "guest"))
     saved = client.patch(
         "/api/workspace/security",
         json={

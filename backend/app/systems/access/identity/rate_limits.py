@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from hmac import digest as hmac_digest
+from math import ceil
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -11,10 +12,11 @@ from app.common.normalization import normalize_email, normalize_username
 from app.core.base_model import utc_now
 from app.core.config import get_settings
 from app.systems.access.identity.models import IdentityRateLimitBucket
+from app.systems.manage.workspace.models import WorkspaceProfile
 
 LOGIN_WINDOW = timedelta(minutes=15)
 LOGIN_COOLDOWN = timedelta(minutes=15)
-STALE_BUCKET_RETENTION = LOGIN_WINDOW + LOGIN_COOLDOWN
+STALE_BUCKET_RETENTION = timedelta(hours=48)
 STALE_BUCKET_CLEANUP_LIMIT = 100
 
 
@@ -55,7 +57,11 @@ def cleanup_expired_buckets(db: Session, *, now_value: datetime | None = None) -
     cutoff = now(now_value) - STALE_BUCKET_RETENTION
     expired = db.scalars(
         select(IdentityRateLimitBucket)
-        .where(IdentityRateLimitBucket.window_started_at <= cutoff)
+        .where(
+            IdentityRateLimitBucket.window_started_at <= cutoff,
+            (IdentityRateLimitBucket.blocked_until.is_(None))
+            | (IdentityRateLimitBucket.blocked_until <= now(now_value)),
+        )
         .order_by(IdentityRateLimitBucket.window_started_at)
         .limit(STALE_BUCKET_CLEANUP_LIMIT)
         .with_for_update()
@@ -67,24 +73,55 @@ def cleanup_expired_buckets(db: Session, *, now_value: datetime | None = None) -
     return count
 
 
-def record_attempt(
-    db: Session, fingerprint: str, bucket: IdentityRateLimitBucket | None, timestamp: datetime
-) -> None:
+def login_retry_after(
+    db: Session,
+    bucket: IdentityRateLimitBucket | None,
+    timestamp: datetime,
+    profile: WorkspaceProfile,
+) -> int | None:
     if bucket is None:
-        db.add(
-            IdentityRateLimitBucket(
-                fingerprint=fingerprint, attempt_count=1, window_started_at=timestamp
-            )
+        return None
+    if bucket.blocked_until is not None and bucket.blocked_until > timestamp:
+        return max(1, ceil((bucket.blocked_until - timestamp).total_seconds()))
+    if (
+        bucket.window_started_at + timedelta(minutes=profile.login_window_minutes) > timestamp
+        and bucket.attempt_count >= profile.login_failed_attempt_threshold
+    ):
+        bucket.blocked_until = timestamp + timedelta(minutes=profile.login_cooldown_minutes)
+        db.commit()
+        return profile.login_cooldown_minutes * 60
+    return None
+
+
+def record_attempt(
+    db: Session,
+    fingerprint: str,
+    bucket: IdentityRateLimitBucket | None,
+    timestamp: datetime,
+    *,
+    policy: WorkspaceProfile | None = None,
+) -> None:
+    window = timedelta(minutes=policy.login_window_minutes) if policy is not None else LOGIN_WINDOW
+    cooldown = (
+        timedelta(minutes=policy.login_cooldown_minutes) if policy is not None else LOGIN_COOLDOWN
+    )
+    threshold = policy.login_failed_attempt_threshold if policy is not None else 5
+    if bucket is None:
+        bucket = IdentityRateLimitBucket(
+            fingerprint=fingerprint,
+            attempt_count=1,
+            window_started_at=timestamp,
+            blocked_until=None,
         )
-        return
-    if bucket.window_started_at + LOGIN_WINDOW <= timestamp:
+        db.add(bucket)
+    elif bucket.window_started_at + window <= timestamp:
         bucket.attempt_count = 1
         bucket.window_started_at = timestamp
         bucket.blocked_until = None
-        return
-    bucket.attempt_count += 1
-    if bucket.attempt_count >= 5:
-        bucket.blocked_until = timestamp + LOGIN_COOLDOWN
+    else:
+        bucket.attempt_count += 1
+    if bucket.attempt_count >= threshold:
+        bucket.blocked_until = timestamp + cooldown
 
 
 def recovery_request_permitted(

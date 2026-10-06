@@ -509,6 +509,41 @@ export function SecurityPolicyForm({
     addressNotice,
   } = form;
 
+  function numberField(
+    key:
+      | "absoluteLifetime"
+      | "concurrentLimit"
+      | "mfaGrace"
+      | "loginThreshold"
+      | "loginWindow"
+      | "loginCooldown",
+    id: string,
+    label: string,
+    minimum: number,
+    maximum: number,
+  ) {
+    const error = errors[key];
+    return (
+      <Field data-invalid={Boolean(error)}>
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <Input
+          id={id}
+          type="number"
+          inputMode="numeric"
+          min={minimum}
+          max={maximum}
+          step={1}
+          className="min-h-11"
+          value={current[key]}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${id}-error` : undefined}
+          onChange={(event) => changeSetting(key, event.target.value)}
+        />
+        <FieldError id={`${id}-error`}>{error}</FieldError>
+      </Field>
+    );
+  }
+
   return (
     <form
       noValidate
@@ -594,44 +629,171 @@ export function SecurityPolicyForm({
             stay unchanged.
           </p>
         </fieldset>
-        <SettingSelect
-          id="session-timeout"
-          label="Session timeout"
-          value={current.timeout}
-          error={errors.timeout}
-          options={["15 minutes", "30 minutes", "60 minutes", "8 hours"]}
-          onChange={(value) =>
-            changeSetting(
-              "timeout",
-              value as SecuritySettingsFormFields["timeout"],
-            )
-          }
-        />
-        <div className="grid min-w-0 gap-3 sm:col-span-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-          <SettingSelect
-            id="mfa-policy"
-            label="Two-factor authentication"
-            value={current.mfa}
-            error={errors.mfa}
-            options={[
-              "Optional",
-              "Required for administrators",
-              "Required for everyone",
-            ]}
-            onChange={(value) =>
-              changeSetting("mfa", value as SecuritySettingsFormFields["mfa"])
-            }
-            description="Required accounts must verify an authenticator before using the workspace."
-          />
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={onManageMfa}
+        <fieldset className="min-w-0 space-y-3 sm:col-span-2">
+          <legend className="text-sm font-medium">Session limits</legend>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+            <SettingSelect
+              id="session-timeout"
+              label="Session timeout"
+              value={current.timeout}
+              error={errors.timeout}
+              options={["15 minutes", "30 minutes", "60 minutes", "8 hours"]}
+              onChange={(value) =>
+                changeSetting(
+                  "timeout",
+                  value as SecuritySettingsFormFields["timeout"],
+                )
+              }
+            />
+            <div className="min-w-0 space-y-3">
+              <SettingSelect
+                id="session-absolute-mode"
+                label="Total session lifetime"
+                value={
+                  current.absoluteLifetime === "Off" ? "Off" : "Set a limit"
+                }
+                options={["Off", "Set a limit"]}
+                onChange={(value) =>
+                  changeSetting(
+                    "absoluteLifetime",
+                    value === "Off" ? "Off" : "",
+                  )
+                }
+              />
+              {current.absoluteLifetime !== "Off" &&
+                numberField(
+                  "absoluteLifetime",
+                  "session-absolute-minutes",
+                  "Lifetime (minutes)",
+                  1,
+                  43200,
+                )}
+              <p className="text-muted-foreground text-sm">
+                Limit the total time from sign-in, even while the session stays
+                active.
+              </p>
+            </div>
+            <div className="min-w-0 space-y-3">
+              <SettingSelect
+                id="session-cap-mode"
+                label="Concurrent session limit"
+                value={
+                  current.concurrentLimit === "Off" ? "Off" : "Set a limit"
+                }
+                options={["Off", "Set a limit"]}
+                onChange={(value) =>
+                  changeSetting("concurrentLimit", value === "Off" ? "Off" : "")
+                }
+              />
+              {current.concurrentLimit !== "Off" &&
+                numberField(
+                  "concurrentLimit",
+                  "session-cap",
+                  "Maximum sessions",
+                  1,
+                  100,
+                )}
+              <p className="text-muted-foreground text-sm">
+                Applies when sign-in completes.
+              </p>
+            </div>
+          </div>
+        </fieldset>
+        <fieldset
+          className="min-w-0 space-y-3 sm:col-span-2"
+          aria-describedby="mfa-policy-description"
+        >
+          <legend className="text-sm font-medium">
+            Two-factor authentication
+          </legend>
+          <p
+            id="mfa-policy-description"
+            className="text-muted-foreground text-sm"
           >
-            <KeyRound data-icon="inline-start" /> Manage MFA
-          </Button>
-        </div>
+            Choose which roles must enroll in an authenticator. Existing
+            verified authenticators still require verification at sign-in.
+          </p>
+          <div className="grid min-w-0 gap-1 sm:grid-cols-3">
+            {(
+              [
+                ["requireMfaAdmin", "administrators"],
+                ["requireMfaMember", "members"],
+                ["requireMfaGuest", "guests"],
+              ] as const
+            ).map(([key, role]) => (
+              <Field key={key}>
+                <FieldLabel
+                  htmlFor={`mfa-${role}`}
+                  className="flex min-h-11 items-center gap-3 font-normal"
+                >
+                  <Checkbox
+                    id={`mfa-${role}`}
+                    checked={current[key]}
+                    onCheckedChange={(value) => changeSetting(key, value)}
+                  />
+                  <span>Require MFA for {role}</span>
+                </FieldLabel>
+              </Field>
+            ))}
+          </div>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            {numberField(
+              "mfaGrace",
+              "mfa-grace",
+              "Enrollment grace (days)",
+              0,
+              30,
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={onManageMfa}
+            >
+              <KeyRound data-icon="inline-start" /> Manage MFA
+            </Button>
+          </div>
+          <p className="text-muted-foreground text-sm">
+            Newly required accounts can enroll during the grace period. Zero
+            days requires enrollment immediately.
+          </p>
+        </fieldset>
+        <fieldset
+          className="min-w-0 space-y-3 sm:col-span-2"
+          aria-describedby="login-policy-description"
+        >
+          <legend className="text-sm font-medium">Sign-in attempts</legend>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {numberField(
+              "loginThreshold",
+              "login-threshold",
+              "Failed attempts before lockout",
+              1,
+              100,
+            )}
+            {numberField(
+              "loginWindow",
+              "login-window",
+              "Attempt window (minutes)",
+              1,
+              1440,
+            )}
+            {numberField(
+              "loginCooldown",
+              "login-cooldown",
+              "Lockout duration (minutes)",
+              1,
+              1440,
+            )}
+          </div>
+          <p
+            id="login-policy-description"
+            className="text-muted-foreground text-sm"
+          >
+            Too many failed attempts within the window temporarily block further
+            attempts. Existing lockouts keep their remaining time.
+          </p>
+        </fieldset>
         <fieldset
           className="min-w-0 space-y-3 sm:col-span-2"
           aria-describedby="ip-allow-list-description"

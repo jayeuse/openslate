@@ -23,14 +23,24 @@ from app.core.integrations.supabase_mfa import SupabaseMfaClient, TotpEnrollment
 from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.identity.session_revocation import revoke_session, revoke_user_sessions
+from app.systems.access.identity.session_revocation import (
+    reconcile_session_cap,
+    revoke_session,
+    revoke_user_sessions,
+)
 from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.manage.workspace.security_policy import load_workspace_policy, session_timeout
+from app.systems.manage.workspace.security_policy import (
+    effective_session_expiry,
+    load_workspace_policy,
+    mfa_enrollment_deadline,
+    mfa_role_required,
+    renewed_session_expiry,
+)
 
 
 class MFARequired(RuntimeError):
@@ -42,14 +52,15 @@ class MFAFactorUnavailable(RuntimeError):
 
 
 def requires_mfa(profile: WorkspaceProfile, user: User, provider_user: ProviderUser) -> bool:
-    return (
-        any(
-            factor.factor_type == "totp" and factor.status == "verified"
-            for factor in provider_user.factors
-        )
-        or profile.mfa_policy == "everyone"
-        or (profile.mfa_policy == "admins" and user.role == UserRole.ADMIN.value)
-    )
+    if any(
+        factor.factor_type == "totp" and factor.status == "verified"
+        for factor in provider_user.factors
+    ):
+        return True
+    if not mfa_role_required(profile, user.role):
+        return False
+    deadline = mfa_enrollment_deadline(profile, user.mfa_required_since)
+    return deadline is None or deadline <= utc_now()
 
 
 def mfa_status(
@@ -59,10 +70,39 @@ def mfa_status(
     if claims.user_id != user.supabase_user_id:
         raise InvalidCredentials("Invalid credentials")
     provider_user = _provider_actor(client, access_token, user)
+    db.refresh(user)
+    session = db.scalar(
+        select(IdentitySession)
+        .where(
+            IdentitySession.provider_session_id == claims.session_id,
+            IdentitySession.user_id == user.id,
+        )
+        .execution_options(populate_existing=True)
+    )
+    policy = load_workspace_policy(db)
+    timestamp = utc_now()
+    if (
+        user.supabase_user_id != claims.user_id
+        or user.status != UserStatus.ACTIVE.value
+        or not is_identity_eligible(user, now=timestamp)
+        or not is_established_user(user)
+        or session is None
+        or not _same_session(claims, session)
+        or session.revoked_at is not None
+        or effective_session_expiry(session, policy) <= timestamp
+        or claims.expires_at <= timestamp
+        or (user.tokens_valid_after is not None and claims.issued_at < user.tokens_valid_after)
+    ):
+        raise InvalidCredentials("Invalid credentials")
+    policy_required = mfa_role_required(policy, user.role)
+    since = user.mfa_required_since if policy_required else None
     return {
         "user_id": user.id,
         "assurance_level": claims.assurance_level,
-        "required": requires_mfa(load_workspace_policy(db), user, provider_user),
+        "required": requires_mfa(policy, user, provider_user),
+        "policy_required": policy_required,
+        "required_since": since,
+        "enrollment_deadline": mfa_enrollment_deadline(policy, since),
         "factors": [
             {"id": factor.id, "factor_type": factor.factor_type, "status": factor.status}
             for factor in provider_user.factors
@@ -116,7 +156,13 @@ def verify_factor(
     user, session, current_access, _ = _locked_context(
         db, user_id, session_id, presented_access, client
     )
-    _factor(_provider_actor(client, current_access, user), factor_id)
+    before_provider = _provider_actor(client, current_access, user)
+    _factor(before_provider, factor_id)
+    before_policy = load_workspace_policy(db)
+    current_claims = client.verify_access_token(current_access)
+    was_blocked = current_claims.assurance_level == "aal1" and requires_mfa(
+        before_policy, user, before_provider
+    )
     tokens = SupabaseMfaClient(client).challenge_and_verify(current_access, factor_id, code)
     try:
         claims = client.verify_access_token(tokens.access_token)
@@ -129,8 +175,23 @@ def verify_factor(
     except InvalidProviderToken as error:
         _invalidate_after_rotation(db, user_id, session_id, client, current_access)
         raise SupabaseAuthUnavailable("Unable to confirm MFA verification") from error
+    try:
+        after_provider = _provider_actor(client, tokens.access_token, user)
+        if not any(
+            factor.factor_type == "totp" and factor.status == "verified"
+            for factor in after_provider.factors
+        ):
+            raise SupabaseAuthUnavailable("Unable to confirm MFA verification")
+    except (InvalidCredentials, SupabaseAuthUnavailable) as error:
+        _invalidate_after_rotation(db, user_id, session_id, client, tokens.access_token)
+        raise SupabaseAuthUnavailable("Unable to confirm MFA verification") from error
     timestamp = utc_now()
-    if session.expires_at <= timestamp:
+    try:
+        policy = load_workspace_policy(db)
+    except SupabaseAuthUnavailable:
+        _invalidate_after_rotation(db, user_id, session_id, client, tokens.access_token)
+        raise
+    if effective_session_expiry(session, policy) <= timestamp:
         _invalidate_after_rotation(db, user_id, session_id, client, tokens.access_token)
         raise InvalidCredentials("Invalid credentials")
     try:
@@ -142,7 +203,9 @@ def verify_factor(
             tokens.refresh_token.encode()
         ).decode()
         session.refreshed_at = timestamp
-        session.expires_at = timestamp + session_timeout(load_workspace_policy(db))
+        session.expires_at = renewed_session_expiry(session, policy, timestamp)
+        if was_blocked:
+            reconcile_session_cap(db, user.id, session.id, policy, now=timestamp)
         _record(db, user_id, "verified")
         db.commit()
     except (SQLAlchemyError, SupabaseAuthUnavailable) as error:
@@ -206,6 +269,7 @@ def _locked_context(
     )
     session = db.get(IdentitySession, session_id, with_for_update=True, populate_existing=True)
     timestamp = utc_now()
+    policy = load_workspace_policy(db)
     if (
         user is None
         or session is None
@@ -215,7 +279,7 @@ def _locked_context(
         or session.user_id != user_id
         or session.provider_user_id != user.supabase_user_id
         or session.revoked_at is not None
-        or session.expires_at <= timestamp
+        or effective_session_expiry(session, policy) <= timestamp
         or session.provider_session_id is None
         or not session.provider_access_token_encrypted
     ):

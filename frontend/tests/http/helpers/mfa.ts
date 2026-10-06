@@ -75,12 +75,16 @@ export async function mockMfa(
   const statusFor = (userId: string) => {
     const value = actors.get(userId);
     if (!value) throw new Error("Unknown synthetic actor");
+    const policyRequired =
+      value.policyRequired || Boolean(options.isRequired?.());
     return {
       user_id: userId,
       assurance_level: value.assurance,
+      policy_required: policyRequired,
+      required_since: null,
+      enrollment_deadline: null,
       required:
-        value.policyRequired ||
-        Boolean(options.isRequired?.()) ||
+        policyRequired ||
         value.factors.some((factor) => factor.status === "verified"),
       factors: value.factors.map((factor) => ({ ...factor })),
     };
