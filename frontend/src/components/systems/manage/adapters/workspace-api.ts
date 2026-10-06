@@ -27,6 +27,7 @@ const workspaceCommonProfileSchema = z.object({
   display_name: z.string().min(1).max(200),
   legal_name: z.string().nullable(),
   description: z.string().nullable(),
+  logo_file_id: z.uuid().nullable(),
   locale: z.string().min(1).max(35),
   timezone: z.string().min(1).max(64),
   mark: z.string().max(32),
@@ -65,6 +66,7 @@ const workspaceSettingsPatchSchema = z
     display_name: z.string().trim().min(1).max(200).optional(),
     legal_name: z.string().trim().max(200).nullable().optional(),
     description: z.string().trim().max(2000).nullable().optional(),
+    logo_file_id: z.uuid().nullable().optional(),
     contact_email: z.string().trim().max(254).nullable().optional(),
     contact_phone: z.string().trim().max(50).nullable().optional(),
     postal_address: z.string().trim().max(2000).nullable().optional(),
@@ -90,6 +92,30 @@ export type ManageWorkspaceProfile = z.output<typeof workspaceProfileSchema>;
 export type ManageWorkspaceFullProfile = z.output<
   typeof workspaceFullProfileSchema
 >;
+
+const workspaceBrandSchema = workspaceCommonProfileSchema.pick({
+  display_name: true,
+  mark: true,
+  logo_file_id: true,
+  revision: true,
+});
+export type WorkspaceBrand = z.output<typeof workspaceBrandSchema>;
+
+/** The shell cache keeps these four public fields, never profile contacts. */
+export function workspaceBrand(
+  workspace: ManageWorkspaceProfile,
+): WorkspaceBrand {
+  return workspaceBrandSchema.parse(workspace);
+}
+
+export function getWorkspaceBrand(
+  signal?: AbortSignal,
+): Promise<WorkspaceBrand> {
+  return apiFetch("/workspace", workspaceBrandSchema, {
+    cache: "no-store",
+    signal,
+  });
+}
 
 export function workspaceHasContacts(
   workspace: ManageWorkspaceProfile,
@@ -340,5 +366,15 @@ export function isStaleWorkspaceRevision(error: unknown): boolean {
     details !== null &&
     "code" in details &&
     details.code === "stale_revision"
+  );
+}
+
+export function isWorkspaceLogoCleanupPartial(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 503) return false;
+  return (
+    typeof error.details === "object" &&
+    error.details !== null &&
+    "code" in error.details &&
+    error.details.code === "workspace_logo_cleanup_partial"
   );
 }

@@ -649,6 +649,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
+    "function": "getWorkspaceBrand",
+    "method": "GET",
+    "path": "/api/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
     "function": "getWorkspaceCalendarSettings",
     "method": "GET",
     "path": "/api/workspace"
@@ -664,6 +670,42 @@
     "function": "updateManageWorkspace",
     "method": "PATCH",
     "path": "/api/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-logo-api.ts",
+    "function": "getWorkspaceLogo",
+    "method": "GET",
+    "path": "/api/workspace/logo"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-logo-api.ts",
+    "function": "getWorkspaceLogoFile",
+    "method": "GET",
+    "path": "/api/files/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-logo-api.ts",
+    "function": "listWorkspaceLogoFiles",
+    "method": "GET",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-logo-api.ts",
+    "function": "reconcileWorkspaceLogo",
+    "method": "POST",
+    "path": "/api/files/{param}/reconcile"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-logo-api.ts",
+    "function": "reserveWorkspaceLogo",
+    "method": "POST",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-logo-api.ts",
+    "function": "uploadWorkspaceLogo",
+    "method": "PUT",
+    "path": "/api/files/{param}/content"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",

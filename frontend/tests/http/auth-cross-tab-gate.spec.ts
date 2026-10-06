@@ -70,6 +70,10 @@ test("MFA gate stays accessible over an alert dialog and restores its typed conf
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
       json: {
+        display_name: "OpenSlate",
+        mark: "OS",
+        logo_file_id: null,
+        revision: 1,
         today: "2026-10-02",
         week_start: "monday",
         locale: "en-US",

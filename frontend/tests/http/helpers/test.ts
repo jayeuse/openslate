@@ -25,6 +25,34 @@ export const test = base.extend({
         json: { theme: "slate" },
       }),
     );
+    // Saved navigation branding uses the existing workspace read. Page-specific
+    // routes still own their role-filtered profile and all workspace writes.
+    await context.route("**/api/workspace", (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({
+            json: {
+              id: "00000000-0000-4000-8000-000000000102",
+              display_name: "OpenSlate",
+              legal_name: null,
+              description: null,
+              contact_email: null,
+              contact_phone: null,
+              postal_address: null,
+              logo_file_id: null,
+              locale: "en-PH",
+              timezone: "Asia/Manila",
+              mark: "OS",
+              currency: "PHP",
+              week_start: "monday",
+              business_hours: "09:00–18:00",
+              theme: "slate",
+              revision: 1,
+              today: "2026-10-06",
+              purge_enabled: false,
+            },
+          })
+        : route.fallback(),
+    );
     await context.route("**/api/notifications/unread-count", (route) =>
       route.fulfill({ json: { unread_count: 0 } }),
     );

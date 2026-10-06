@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { flushSync } from "react-dom";
 import type { Route } from "next";
 import {
@@ -10,6 +11,7 @@ import {
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  RotateCcw,
   Settings,
   UserCircle,
   X,
@@ -38,7 +40,17 @@ import {
   clearVerifiedWorkspaceSessionSnapshot,
   registerWorkspaceSessionClear,
   WorkspaceSignOutProvider,
+  useWorkspaceInteractionSuspended,
 } from "@/components/systems/shared/runtime/workspace-identity";
+import { WorkspaceLogo } from "@/components/systems/shared/runtime/workspace-logo";
+import {
+  workspaceBrandOptions,
+  workspaceLogoOptions,
+  subscribeWorkspaceBrand,
+  manageKeys,
+} from "@/components/systems/manage/adapters/manage-queries";
+import { WorkspaceLogoBindingChanged } from "@/components/systems/manage/adapters/workspace-logo-api";
+import type { WorkspaceBrand } from "@/components/systems/manage/adapters/workspace-api";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
   DropdownMenu,
@@ -61,7 +73,8 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
-import { signOut } from "@/lib/auth-api";
+import { signOut, requestSessionRecheck } from "@/lib/auth-api";
+import { ApiError } from "@/lib/api";
 
 const SIDEBAR_COLLAPSED_KEY = "openslate-sidebar-collapsed";
 const SIDEBAR_WIDTH_KEY = "openslate-sidebar-width";
@@ -95,6 +108,66 @@ export function AppShell({
   const isComms = pathname === "/comms";
   const isAccess = pathname === "/access";
   const isManage = pathname === "/manage";
+  const suspended = useWorkspaceInteractionSuspended();
+  const queryClient = useQueryClient();
+  const brandQuery = useQuery({
+    ...workspaceBrandOptions(),
+    enabled: !isComms && !suspended,
+  });
+  const savedLogoQuery = useQuery({
+    ...workspaceLogoOptions(brandQuery.data?.logo_file_id ?? ""),
+    enabled:
+      !isComms &&
+      !suspended &&
+      !brandQuery.isError &&
+      Boolean(brandQuery.data?.logo_file_id),
+  });
+  const brandDenied = [brandQuery.error, savedLogoQuery.error].some(
+    (error) =>
+      error instanceof ApiError &&
+      (error.status === 401 || error.status === 403),
+  );
+  const brandDenialReported = useRef(false);
+  useEffect(() => {
+    if (!brandDenied) brandDenialReported.current = false;
+    else if (!suspended && !brandDenialReported.current) {
+      brandDenialReported.current = true;
+      requestSessionRecheck();
+    }
+  }, [brandDenied, suspended]);
+  useLayoutEffect(() => {
+    if (!suspended) return;
+    void queryClient.cancelQueries({ queryKey: manageKeys.brand() });
+    void queryClient.cancelQueries({ queryKey: manageKeys.logos() });
+  }, [suspended, queryClient]);
+  useEffect(() => {
+    if (isComms || suspended || brandDenied) return;
+    return subscribeWorkspaceBrand(queryClient);
+  }, [isComms, suspended, brandDenied, queryClient]);
+  useEffect(() => {
+    if (
+      savedLogoQuery.error instanceof WorkspaceLogoBindingChanged &&
+      !suspended
+    )
+      void queryClient.invalidateQueries({ queryKey: manageKeys.brand() });
+  }, [savedLogoQuery.error, suspended, queryClient]);
+  const brand =
+    suspended || brandDenied || isComms ? undefined : brandQuery.data;
+  const logoBlob =
+    isComms ||
+    suspended ||
+    brandDenied ||
+    brandQuery.isError ||
+    savedLogoQuery.isError
+      ? undefined
+      : savedLogoQuery.data;
+  const retryLogo = () => {
+    if (suspended) return;
+    if (brandQuery.isError || !brandQuery.data) void brandQuery.refetch();
+    else void savedLogoQuery.refetch();
+  };
+  const logoFailed =
+    !isComms && !suspended && (brandQuery.isError || savedLogoQuery.isError);
   const [savedSidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [commsSidebarCollapsed, setCommsSidebarCollapsed] = useState(true);
   const sidebarCollapsed = isComms
@@ -286,7 +359,14 @@ export function AppShell({
             aria-label="Primary sidebar"
             className="z-30"
           >
-            <AppSidebarHeader collapsed={sidebarCollapsed} />
+            <AppSidebarHeader
+              collapsed={sidebarCollapsed}
+              brand={brand}
+              blob={logoBlob}
+              concealed={suspended || brandDenied}
+              failed={logoFailed}
+              onRetry={retryLogo}
+            />
             <SidebarContent className="app-sidebar-scroll px-3 pt-5">
               <AppNavigation
                 pathname={pathname}
@@ -386,11 +466,29 @@ export function AppShell({
                 <GuardedWorkspaceLink
                   href={"/openview" as Route}
                   onAcceptedNavigate={closeMobileNavigation}
-                  className="flex min-w-0 items-center gap-2.5 font-semibold"
+                  className="flex min-w-0 flex-1 items-center gap-2.5 font-semibold"
                 >
-                  <WorkspaceMark />
-                  <span>OpenSlate</span>
+                  <WorkspaceLogo
+                    blob={logoBlob}
+                    name={brand?.display_name ?? "OpenSlate"}
+                    mark={brand?.mark ?? "OS"}
+                    hidden={suspended || brandDenied}
+                  />
+                  <span className="truncate">
+                    {brand?.display_name ?? "OpenSlate"}
+                  </span>
                 </GuardedWorkspaceLink>
+                {logoFailed ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="size-11 shrink-0"
+                    aria-label="Retry logo"
+                    onClick={retryLogo}
+                  >
+                    <RotateCcw aria-hidden="true" className="size-4" />
+                  </Button>
+                ) : null}
                 <button
                   ref={mobileCloseRef}
                   type="button"
@@ -466,23 +564,58 @@ export function AppShell({
   );
 }
 
-function AppSidebarHeader({ collapsed }: { collapsed: boolean }) {
+function AppSidebarHeader({
+  collapsed,
+  brand,
+  blob,
+  concealed,
+  failed,
+  onRetry,
+}: {
+  collapsed: boolean;
+  brand: WorkspaceBrand | undefined;
+  blob: Blob | undefined;
+  concealed: boolean;
+  failed: boolean;
+  onRetry: () => void;
+}) {
+  const name = brand?.display_name ?? "OpenSlate";
   return (
     <SidebarHeader className="shrink-0 gap-4 px-4 pt-4 pb-2">
       <GuardedWorkspaceLink
         href={"/openview" as Route}
-        aria-label="OpenSlate workspace"
+        aria-label={`${name} workspace`}
         className={cn(
           "flex min-w-0 items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2",
         )}
       >
-        <WorkspaceMark />
+        <WorkspaceLogo
+          blob={blob}
+          name={name}
+          mark={brand?.mark ?? "OS"}
+          hidden={concealed}
+        />
         {!collapsed ? (
           <span className="truncate text-lg font-semibold tracking-tight">
-            OpenSlate
+            {name}
           </span>
         ) : null}
       </GuardedWorkspaceLink>
+      {failed ? (
+        <Button
+          type="button"
+          variant="ghost"
+          className="min-h-11"
+          aria-label="Retry logo"
+          onClick={onRetry}
+        >
+          {collapsed ? (
+            <RotateCcw aria-hidden="true" className="size-4" />
+          ) : (
+            "Retry logo"
+          )}
+        </Button>
+      ) : null}
     </SidebarHeader>
   );
 }
@@ -659,16 +792,5 @@ function AppHeaderActions({
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
-  );
-}
-
-function WorkspaceMark() {
-  return (
-    <span
-      className="bg-foreground text-background grid size-8 shrink-0 place-items-center rounded-md text-xs font-bold"
-      aria-hidden="true"
-    >
-      OS
-    </span>
   );
 }

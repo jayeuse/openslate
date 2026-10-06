@@ -125,6 +125,10 @@ async function installSelectedEventApi(
   await browser.route("**/api/workspace", (route) =>
     route.fulfill({
       json: {
+        display_name: "OpenSlate",
+        mark: "OS",
+        logo_file_id: null,
+        revision: 1,
         today: "2026-09-14",
         week_start: weekStart,
         locale: "en-US",
@@ -184,6 +188,10 @@ test.describe("Boards workspace regional dates", () => {
     await browser.route("**/api/workspace", (route) =>
       route.fulfill({
         json: {
+          display_name: "OpenSlate",
+          mark: "OS",
+          logo_file_id: null,
+          revision: 1,
           today: "2026-09-14",
           week_start: "monday",
           locale: "fr-FR",

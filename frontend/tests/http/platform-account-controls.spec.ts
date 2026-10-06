@@ -12,12 +12,19 @@ const currentUserAgent =
 const workspaceSettings = {
   id: "44444444-4444-4444-8444-444444444444",
   display_name: "OpenSlate test workspace",
+  legal_name: null,
+  description: null,
+  contact_email: null,
+  contact_phone: null,
+  postal_address: null,
   locale: "en-GB",
   timezone: "Europe/London",
+  logo_file_id: null,
   mark: "RS",
   currency: "PHP",
   week_start: "monday",
   business_hours: "09:00–18:00",
+  theme: "slate",
   revision: 1,
 };
 const cleanupKeys = [

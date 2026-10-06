@@ -29,6 +29,7 @@ export async function mockManageSecurity(page: Page) {
       postal_address: null,
       locale: "en-PH",
       timezone: "Asia/Manila",
+      logo_file_id: null,
       mark: "HS",
       currency: "PHP",
       week_start: "monday",

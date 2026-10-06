@@ -18,6 +18,7 @@ const initialWorkspace = {
   postal_address: null,
   locale: "en-GB",
   timezone: "UTC",
+  logo_file_id: null,
   mark: "TH",
   currency: "PHP",
   week_start: "monday",

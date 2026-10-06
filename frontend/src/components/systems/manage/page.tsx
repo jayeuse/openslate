@@ -36,6 +36,7 @@ import {
 import { authMeOptions } from "../access/adapters/access-queries";
 import type { OrganizationTheme } from "@/lib/appearance-preferences";
 import { ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
 import { requestSessionRecheck } from "@/lib/auth-api";
 import ManageAudit from "./components/audit";
 import {
@@ -48,10 +49,15 @@ import {
   afterManageWorkspaceChange,
   manageWorkspaceOptions,
   manageKeys,
+  newestManageWorkspace,
+  acceptedWorkspaceRevision,
+  workspaceLogoOptions,
+  workspaceLogoFilesOptions,
 } from "./adapters/manage-queries";
 import {
   getManageWorkspace,
   isStaleWorkspaceRevision,
+  isWorkspaceLogoCleanupPartial,
   organizationLocaleTag,
   workspaceSettingsFormFields,
   workspaceSettingsPatch,
@@ -60,7 +66,17 @@ import {
   type WorkspaceSettingsFormDraft,
   type WorkspaceSettingsFormFields,
   type WorkspaceProfileField,
+  type ManageWorkspaceSettingsPatch,
 } from "./adapters/workspace-api";
+import {
+  validLogoSelection,
+  reserveWorkspaceLogo,
+  uploadWorkspaceLogo,
+  getWorkspaceLogoFile,
+  reconcileWorkspaceLogo,
+  WorkspaceLogoBindingChanged,
+  type WorkspaceLogoFile,
+} from "./adapters/workspace-logo-api";
 import {
   BackupPanel,
   BackupRunnerStatus,
@@ -72,6 +88,14 @@ import { UpdatesPanel } from "./components/updates-panel";
 import { LicensingPanel } from "./components/licensing-panel";
 
 type ViewTab = "Organization" | "Audit" | "Backup" | "Updates & licensing";
+type LogoDraft =
+  | { kind: "new" | "reservation-unknown"; file: File }
+  | { kind: "candidate"; file: File; candidate: WorkspaceLogoFile }
+  | { kind: "remove" };
+const COMMITTED_READBACK_MESSAGE =
+  "Settings saved. Current organization settings could not be loaded. Retry before making another change.";
+const readyLogo = (file: WorkspaceLogoFile) =>
+  file.state === "ready" && !file.is_deleted;
 
 function organizationErrors(
   draft: WorkspaceSettingsFormDraft,
@@ -268,6 +292,15 @@ function ManageContent() {
   const [workspaceRefreshRequired, setWorkspaceRefreshRequired] =
     useState(false);
   const [workspaceSavePending, setWorkspaceSavePending] = useState(false);
+  const [logoDraft, setLogoDraft] = useState<LogoDraft | null>(null);
+  const [logoError, setLogoError] = useState("");
+  const [logoNotice, setLogoNotice] = useState("");
+  const [logoCleanupId, setLogoCleanupId] = useState<string | null>(null);
+  const [logoFilesOpen, setLogoFilesOpen] = useState(false);
+  const [logoFilesOffset, setLogoFilesOffset] = useState(0);
+  const [committedReadbackRequired, setCommittedReadbackRequired] =
+    useState(false);
+  const acknowledgedRevision = useRef<number | null>(null);
   const [profileServerErrors, setProfileServerErrors] = useState<
     Partial<Record<WorkspaceProfileField, string>>
   >({});
@@ -279,7 +312,10 @@ function ManageContent() {
     staleTime: 0,
     queryFn: async ({ signal }) => {
       const epoch = workspaceEpoch.current;
-      const workspace = await getManageWorkspace(signal);
+      const workspace = newestManageWorkspace(
+        queryClient,
+        await getManageWorkspace(signal),
+      );
       if (
         liveWorkspace.current &&
         !signal.aborted &&
@@ -308,6 +344,40 @@ function ManageContent() {
       verifiedOrganizationRole === "member") &&
     workspaceQuery.data !== undefined &&
     workspaceHasContacts(workspaceQuery.data);
+  const savedLogoQuery = useQuery({
+    ...workspaceLogoOptions(workspaceQuery.data?.logo_file_id ?? ""),
+    enabled:
+      tab === "Organization" &&
+      verifiedOrganizationRole !== null &&
+      !profileMismatch &&
+      Boolean(workspaceQuery.data?.logo_file_id),
+  });
+  const logoFilesQuery = useQuery({
+    ...workspaceLogoFilesOptions({ limit: 4, offset: logoFilesOffset }),
+    enabled:
+      tab === "Organization" && canEditLoadedOrganization && logoFilesOpen,
+  });
+  useEffect(() => {
+    if (
+      savedLogoQuery.error instanceof WorkspaceLogoBindingChanged &&
+      !suspended &&
+      !workspaceWriting.current
+    )
+      void workspaceQuery.refetch();
+  }, [savedLogoQuery.error, suspended, workspaceQuery.refetch]);
+  const logoReadDenied = [savedLogoQuery.error, logoFilesQuery.error].some(
+    (error) =>
+      error instanceof ApiError &&
+      (error.status === 401 || error.status === 403),
+  );
+  const logoDenialReported = useRef(false);
+  useEffect(() => {
+    if (!logoReadDenied) logoDenialReported.current = false;
+    else if (!suspended && !logoDenialReported.current) {
+      logoDenialReported.current = true;
+      requestSessionRecheck();
+    }
+  }, [logoReadDenied, suspended]);
   useLayoutEffect(() => {
     const previous = workspaceAdmission.current;
     workspaceAdmission.current = {
@@ -378,8 +448,9 @@ function ManageContent() {
         organizationTheme.theme,
       )
     : null;
-  const workspaceDraftDirty = workspacePatch !== null;
-  const allDraftsDirty = maintenance.dirty || workspaceDraftDirty;
+  const workspaceDraftDirty = workspacePatch !== null || logoDraft !== null;
+  const allDraftsDirty =
+    maintenance.dirty || (workspaceDraftDirty && !committedReadbackRequired);
   const workspaceFields = workspaceQuery.data
     ? workspaceSettingsFormFields(workspaceQuery.data)
     : null;
@@ -388,7 +459,7 @@ function ManageContent() {
     ...workspaceFields,
     ...workspaceDraft,
   };
-  const dirty = workspaceDraftDirty;
+  const dirty = workspaceDraftDirty && !committedReadbackRequired;
   const errors = organizationErrors(
     workspaceDraft,
     workspaceQuery.data !== undefined,
@@ -454,6 +525,9 @@ function ManageContent() {
     const leave = pendingLeave;
     setPendingLeave(null);
     setWorkspaceDraft({});
+    setLogoDraft(null);
+    setLogoError("");
+    setLogoNotice("");
     setWorkspaceStale(false);
     setWorkspaceRefreshRequired(false);
     setProfileServerErrors({});
@@ -547,6 +621,9 @@ function ManageContent() {
     if (target === "backup") maintenance.discardDraft();
     if (target === "organization") {
       setWorkspaceDraft({});
+      setLogoDraft(null);
+      setLogoError("");
+      setLogoNotice("");
       setWorkspaceStale(false);
       setWorkspaceRefreshRequired(false);
       setProfileServerErrors({});
@@ -582,10 +659,225 @@ function ManageContent() {
       return;
     }
     setError("");
+    if (committedReadbackRequired) {
+      const current = result.data;
+      if (
+        current.revision <
+        Math.max(
+          acknowledgedRevision.current ?? 0,
+          acceptedWorkspaceRevision(queryClient),
+        )
+      ) {
+        setError(
+          "The current organization settings could not be loaded. Try again.",
+        );
+        return;
+      }
+      afterManageWorkspaceChange(queryClient, current);
+      confirmTheme(current.theme);
+      releaseTheme(workspaceOwner.current);
+      setWorkspaceDraft({});
+      setLogoDraft(null);
+      acknowledgedRevision.current = null;
+      setCommittedReadbackRequired(false);
+      setWorkspaceStale(false);
+      setNotice("Organization settings saved.");
+    }
     workspaceNeedsReadback.current = false;
-    if (workspaceRefreshRequired) {
+    if (workspaceRefreshRequired && !committedReadbackRequired) {
       setWorkspaceRefreshRequired(false);
       setWorkspaceStale(true);
+    }
+  }
+
+  function chooseLogo(file: File) {
+    if (
+      !workspaceAdmission.current.canEdit ||
+      workspaceWriting.current ||
+      committedReadbackRequired
+    )
+      return;
+    if (!validLogoSelection(file)) {
+      setLogoError("Choose a PNG or JPEG between 1 byte and 2 MiB.");
+      return;
+    }
+    setLogoDraft({ kind: "new", file });
+    setLogoError("");
+    setLogoNotice("");
+    setNotice("");
+  }
+
+  function removeLogo() {
+    if (
+      !workspaceAdmission.current.canEdit ||
+      workspaceWriting.current ||
+      committedReadbackRequired
+    )
+      return;
+    setLogoDraft(workspaceQuery.data?.logo_file_id ? { kind: "remove" } : null);
+    setLogoError("");
+    setLogoNotice("");
+    setNotice("");
+  }
+
+  async function prepareLogo(
+    owns: () => boolean,
+    signal: AbortSignal,
+  ): Promise<{ kind: "ready"; id?: string | null } | { kind: "stopped" }> {
+    const selection = logoDraft;
+    if (!selection) return { kind: "ready" };
+    if (selection.kind === "remove") return { kind: "ready", id: null };
+    if (selection.kind === "reservation-unknown") {
+      setLogoError(
+        "The logo reservation could not be confirmed. Review Logo files, or choose a logo again.",
+      );
+      return { kind: "stopped" };
+    }
+    let candidate = selection.kind === "candidate" ? selection.candidate : null;
+    if (!candidate) {
+      try {
+        candidate = await reserveWorkspaceLogo(selection.file, signal);
+      } catch (caught) {
+        if (!owns()) return { kind: "stopped" };
+        if (!(
+          caught instanceof ApiError &&
+          caught.status >= 400 &&
+          caught.status < 500
+        ))
+          setLogoDraft({ kind: "reservation-unknown", file: selection.file });
+        if (
+          caught instanceof ApiError &&
+          (caught.status === 401 || caught.status === 403)
+        )
+          requestSessionRecheck();
+        setLogoError(
+          "The logo reservation could not be confirmed. Review Logo files, or choose a logo again.",
+        );
+        return { kind: "stopped" };
+      }
+      if (!owns()) return { kind: "stopped" };
+      setLogoDraft({ kind: "candidate", file: selection.file, candidate });
+      try {
+        candidate = await uploadWorkspaceLogo(
+          candidate.id,
+          selection.file,
+          signal,
+        );
+      } catch (caught) {
+        if (!owns()) return { kind: "stopped" };
+        if (
+          caught instanceof ApiError &&
+          (caught.status === 401 || caught.status === 403)
+        )
+          requestSessionRecheck();
+        try {
+          candidate = await getWorkspaceLogoFile(candidate.id, signal);
+        } catch {
+          /* Retain the exact reservation; a fresh check is explicit. */
+        }
+        if (!owns()) return { kind: "stopped" };
+        setLogoDraft({ kind: "candidate", file: selection.file, candidate });
+        setLogoError(
+          "The logo upload could not be confirmed. Check upload before saving.",
+        );
+        return { kind: "stopped" };
+      }
+    } else {
+      try {
+        candidate = await getWorkspaceLogoFile(candidate.id, signal);
+      } catch (caught) {
+        if (!owns()) return { kind: "stopped" };
+        setLogoError(
+          apiErrorMessage(
+            caught,
+            "The logo upload could not be checked. Try again.",
+          ),
+        );
+        if (
+          caught instanceof ApiError &&
+          (caught.status === 401 || caught.status === 403)
+        )
+          requestSessionRecheck();
+        return { kind: "stopped" };
+      }
+    }
+    if (!owns()) return { kind: "stopped" };
+    setLogoDraft({ kind: "candidate", file: selection.file, candidate });
+    if (!readyLogo(candidate)) {
+      setLogoError("The logo upload is not ready. Check upload before saving.");
+      return { kind: "stopped" };
+    }
+    setLogoError("");
+    return { kind: "ready", id: candidate.id };
+  }
+
+  async function recoverLogo(fileId: string, operation: "upload" | "cleanup") {
+    if (!workspaceAdmission.current.canEdit || workspaceWriting.current) return;
+    const epoch = ++workspaceEpoch.current;
+    const controller = new AbortController();
+    workspaceCommand.current = controller;
+    workspaceWriting.current = true;
+    setWorkspaceSavePending(true);
+    const owns = () =>
+      liveWorkspace.current &&
+      epoch === workspaceEpoch.current &&
+      !controller.signal.aborted &&
+      workspaceAdmission.current.canEdit;
+    setLogoError("");
+    try {
+      let file =
+        operation === "upload"
+          ? await getWorkspaceLogoFile(fileId, controller.signal)
+          : null;
+      if (!owns()) return;
+      if (!file || file.state === "uploading")
+        file = await reconcileWorkspaceLogo(fileId, controller.signal);
+      if (!owns()) return;
+      if (operation === "upload") {
+        const confirmed = file;
+        setLogoDraft((draft) =>
+          draft?.kind === "candidate" && draft.candidate.id === fileId
+            ? { ...draft, candidate: confirmed }
+            : draft,
+        );
+        if (readyLogo(file))
+          setLogoNotice("Logo upload confirmed. Save settings to use it.");
+        else
+          setLogoError(
+            "This upload is not ready. Choose the logo again or discard this change.",
+          );
+      } else if (file.state === "purged") {
+        if (logoCleanupId === fileId) setLogoCleanupId(null);
+        setLogoNotice("Previous logo cleanup completed.");
+      } else
+        setLogoError(
+          "Cleanup is still unfinished. Retry when the current operation has ended.",
+        );
+      void queryClient.invalidateQueries({ queryKey: manageKeys.logoFiles() });
+    } catch (caught) {
+      if (!owns()) return;
+      const purgeDisabled =
+        caught instanceof ApiError &&
+        caught.status === 403 &&
+        caught.code === "purge_disabled";
+      setLogoError(
+        purgeDisabled
+          ? "Manual permanent deletion is disabled."
+          : apiErrorMessage(
+              caught,
+              "The logo could not be checked. Try again.",
+            ),
+      );
+      if (
+        caught instanceof ApiError &&
+        (caught.status === 401 || (caught.status === 403 && !purgeDisabled))
+      )
+        requestSessionRecheck();
+    } finally {
+      if (owns()) {
+        workspaceWriting.current = false;
+        setWorkspaceSavePending(false);
+      }
     }
   }
 
@@ -593,6 +885,7 @@ function ManageContent() {
     if (
       livePending ||
       workspaceWriting.current ||
+      committedReadbackRequired ||
       !workspaceAdmission.current.canEdit ||
       workspaceQuery.isError ||
       profileMismatch
@@ -621,12 +914,44 @@ function ManageContent() {
       epoch === workspaceEpoch.current &&
       !controller.signal.aborted &&
       workspaceAdmission.current.canEdit;
+    let attemptedPatch: ManageWorkspaceSettingsPatch | null = null;
+    let capturedOldLogo: string | null = null;
+    let knownCommitted = false;
     setNotice("");
     setError("");
+    setLogoError("");
+    setLogoNotice("");
     setProfileServerErrors({});
+    const readbackNeeded = () => {
+      releaseTheme(workspaceOwner.current);
+      workspaceNeedsReadback.current = true;
+      setWorkspaceRefreshRequired(true);
+      setCommittedReadbackRequired(true);
+      setNotice(COMMITTED_READBACK_MESSAGE);
+      setError("");
+    };
+    const adoptCurrent = (
+      current: ReturnType<typeof newestManageWorkspace>,
+    ) => {
+      if (
+        current.revision < acceptedWorkspaceRevision(queryClient) ||
+        !afterManageWorkspaceChange(queryClient, current)
+      )
+        return false;
+      confirmTheme(current.theme);
+      return true;
+    };
+    const finishDraft = () => {
+      releaseTheme(workspaceOwner.current);
+      setWorkspaceDraft({});
+      setLogoDraft(null);
+      setWorkspaceStale(false);
+      setWorkspaceRefreshRequired(false);
+      setCommittedReadbackRequired(false);
+      acknowledgedRevision.current = null;
+      workspaceNeedsReadback.current = false;
+    };
     try {
-      // Older reads cannot undo this command. An uncertain previous write
-      // requires confirmed readback before another explicit write.
       await queryClient.cancelQueries({
         queryKey: manageKeys.workspace(),
         exact: true,
@@ -647,35 +972,66 @@ function ManageContent() {
         workspaceNeedsReadback.current = false;
         setWorkspaceRefreshRequired(false);
       }
-      const patch = workspaceSettingsPatch(
+      const prepared = await prepareLogo(ownsCommand, controller.signal);
+      if (!ownsCommand() || prepared.kind === "stopped") return;
+      let patch = workspaceSettingsPatch(
         workspace,
         workspaceDraft,
         getCommittedTheme(),
       );
+      if (prepared.id !== undefined && prepared.id !== workspace.logo_file_id)
+        patch = {
+          ...patch,
+          revision: workspace.revision,
+          logo_file_id: prepared.id,
+        };
       if (patch) {
-        const saved = await updateManageWorkspace(patch, controller.signal);
+        attemptedPatch = patch;
+        capturedOldLogo = workspace.logo_file_id;
+        // A logo response is a detached acknowledgement of this admitted write.
+        // Only a fresh authorized read may become the current form/brand/theme.
+        const receipt = await updateManageWorkspace(patch, controller.signal);
         if (!ownsCommand()) return;
-        confirmTheme(saved.theme);
-        afterManageWorkspaceChange(queryClient, saved);
+        knownCommitted = true;
+        acknowledgedRevision.current = receipt.revision;
+        let current = receipt;
+        if (
+          "logo_file_id" in patch ||
+          receipt.revision < acceptedWorkspaceRevision(queryClient)
+        ) {
+          const read = newestManageWorkspace(
+            queryClient,
+            await getManageWorkspace(controller.signal),
+          );
+          if (!ownsCommand()) return;
+          if (!workspaceHasContacts(read)) {
+            afterManageWorkspaceChange(queryClient, read);
+            readbackNeeded();
+            requestSessionRecheck();
+            return;
+          }
+          current = read;
+        }
+        if (!adoptCurrent(current)) {
+          readbackNeeded();
+          return;
+        }
       }
       if (!ownsCommand()) return;
-      releaseTheme(workspaceOwner.current);
-      setWorkspaceDraft({});
-      setWorkspaceStale(false);
-      setWorkspaceRefreshRequired(false);
+      finishDraft();
       setNotice("Organization settings saved.");
     } catch (caught) {
       if (!ownsCommand()) return;
-      workspaceNeedsReadback.current = true;
+      workspaceNeedsReadback.current = attemptedPatch !== null;
       if (isStaleWorkspaceRevision(caught)) {
         setWorkspaceRefreshRequired(true);
         const refreshed = await workspaceQuery.refetch();
         if (!ownsCommand()) return;
-        if (refreshed.isError || !refreshed.data) {
+        if (refreshed.isError || !refreshed.data)
           setError(
             "Workspace settings changed, but the latest values could not be loaded. Retry before saving again.",
           );
-        } else {
+        else {
           workspaceNeedsReadback.current = false;
           setWorkspaceRefreshRequired(false);
           setWorkspaceStale(true);
@@ -683,11 +1039,89 @@ function ManageContent() {
         }
         return;
       }
-      if (
+      const partial = isWorkspaceLogoCleanupPartial(caught);
+      if (partial) {
+        knownCommitted = true;
+        acknowledgedRevision.current = (attemptedPatch?.revision ?? 0) + 1;
+        setLogoCleanupId(capturedOldLogo);
+      }
+      const denied =
         caught instanceof ApiError &&
-        (caught.status === 401 || caught.status === 403)
-      )
-        requestSessionRecheck();
+        (caught.status === 401 || caught.status === 403);
+      if (knownCommitted && !partial) {
+        readbackNeeded();
+        if (denied) requestSessionRecheck();
+        return;
+      }
+      if (
+        !denied &&
+        attemptedPatch &&
+        (knownCommitted || "logo_file_id" in attemptedPatch)
+      ) {
+        try {
+          const current = newestManageWorkspace(
+            queryClient,
+            await getManageWorkspace(controller.signal),
+          );
+          if (!ownsCommand()) return;
+          if (!workspaceHasContacts(current)) {
+            afterManageWorkspaceChange(queryClient, current);
+            if (knownCommitted) readbackNeeded();
+            requestSessionRecheck();
+            return;
+          }
+          const values = new Map(Object.entries(current));
+          const matches =
+            current.revision > attemptedPatch.revision &&
+            Object.entries(attemptedPatch).every(
+              ([key, value]) => key === "revision" || values.get(key) === value,
+            );
+          if (adoptCurrent(current) && (knownCommitted || matches)) {
+            finishDraft();
+            setNotice(partial ? "" : "Organization settings saved.");
+            // A lost response needs old-File readback; a confirmed 200 already
+            // guarantees cleanup. No public origin field grants client authority.
+            if (capturedOldLogo && (partial || !knownCommitted)) {
+              try {
+                const old = await getWorkspaceLogoFile(
+                  capturedOldLogo,
+                  controller.signal,
+                );
+                if (!ownsCommand()) return;
+                if (old.state === "purged") {
+                  setLogoCleanupId(null);
+                  if (partial)
+                    setLogoNotice("Previous logo cleanup completed.");
+                } else {
+                  setLogoCleanupId(capturedOldLogo);
+                }
+              } catch (readError) {
+                if (!ownsCommand()) return;
+                setLogoCleanupId(capturedOldLogo);
+                if (
+                  readError instanceof ApiError &&
+                  (readError.status === 401 || readError.status === 403)
+                )
+                  requestSessionRecheck();
+              }
+            }
+            return;
+          }
+        } catch (readError) {
+          if (!ownsCommand()) return;
+          if (
+            readError instanceof ApiError &&
+            (readError.status === 401 || readError.status === 403)
+          )
+            requestSessionRecheck();
+        }
+      }
+      if (knownCommitted) {
+        readbackNeeded();
+        if (denied) requestSessionRecheck();
+        return;
+      }
+      if (denied) requestSessionRecheck();
       if (caught instanceof ApiError && caught.status === 422)
         setProfileServerErrors(profileResponseErrors(caught));
       setError(
@@ -813,7 +1247,72 @@ function ManageContent() {
               regionalCurrency={regionalCurrency}
               workspace={workspaceQuery.data}
               workspaceLoading={workspaceQuery.isPending}
-              workspaceLoadFailed={workspaceQuery.isError || profileMismatch}
+              workspaceLoadFailed={
+                workspaceQuery.isError ||
+                profileMismatch ||
+                committedReadbackRequired
+              }
+              logo={{
+                blob:
+                  verifiedOrganizationRole === null || logoReadDenied
+                    ? undefined
+                    : logoDraft?.kind === "remove"
+                      ? null
+                      : canEditLoadedOrganization &&
+                          logoDraft &&
+                          "file" in logoDraft
+                        ? logoDraft.file
+                        : savedLogoQuery.isError
+                          ? undefined
+                          : savedLogoQuery.data,
+                concealed: verifiedOrganizationRole === null || logoReadDenied,
+                selection:
+                  logoDraft?.kind === "remove"
+                    ? { kind: "removed" }
+                    : logoDraft &&
+                        "file" in logoDraft &&
+                        canEditLoadedOrganization
+                      ? { kind: "selected", name: logoDraft.file.name }
+                      : { kind: "none" },
+                error:
+                  logoError ||
+                  (logoCleanupId
+                    ? "Settings saved. The previous logo still needs cleanup."
+                    : ""),
+                notice: logoNotice,
+                onSelect: chooseLogo,
+                onRemove: removeLogo,
+                onCheckUpload:
+                  logoDraft?.kind === "candidate" &&
+                  (!readyLogo(logoDraft.candidate) || Boolean(logoError))
+                    ? () => void recoverLogo(logoDraft.candidate.id, "upload")
+                    : undefined,
+                onRetryCleanup: logoCleanupId
+                  ? () => void recoverLogo(logoCleanupId, "cleanup")
+                  : undefined,
+                onRetryImage:
+                  savedLogoQuery.isError && !suspended && !logoReadDenied
+                    ? () => void savedLogoQuery.refetch()
+                    : undefined,
+              }}
+              logoFiles={{
+                open: logoFilesOpen,
+                page:
+                  canEditLoadedOrganization && !logoReadDenied
+                    ? logoFilesQuery.data
+                    : undefined,
+                loading: logoFilesQuery.isFetching,
+                failed: logoFilesQuery.isError,
+                offset: logoFilesOffset,
+                onToggle: () => setLogoFilesOpen((open) => !open),
+                onRetry: () => void logoFilesQuery.refetch(),
+                onPage: setLogoFilesOffset,
+                onRecover: (file) =>
+                  void recoverLogo(
+                    file.id,
+                    file.state === "uploading" ? "upload" : "cleanup",
+                  ),
+              }}
               profile={
                 workspaceFields && !profileMismatch
                   ? { ...workspaceFields, ...workspaceDraft }
@@ -833,7 +1332,8 @@ function ManageContent() {
               editDisabled={
                 !canEditLoadedOrganization ||
                 !workspaceQuery.data ||
-                workspaceQuery.isError
+                workspaceQuery.isError ||
+                committedReadbackRequired
               }
             />
           ) : null}

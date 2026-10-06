@@ -1165,6 +1165,10 @@ async function installViewsApi(
   const windowQueryRequests: Record<string, unknown>[] = [];
   let failNextWindowQuery = false;
   const workspace = {
+    display_name: "OpenSlate",
+    mark: "OS",
+    logo_file_id: null,
+    revision: 1,
     today: "2026-09-20",
     week_start: options.weekStart ?? "monday",
     locale: "en-US",

@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
-import { ArrowUpRight, Compass, UsersRound, Workflow } from "lucide-react";
+import { ArrowUpRight, UsersRound, Workflow } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +20,14 @@ import {
   FieldLabel,
   FieldLegend,
   FieldSet,
+  FieldDescription,
 } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { WorkspaceLogo } from "../../shared/runtime/workspace-logo";
+import type {
+  WorkspaceLogoFile,
+  listWorkspaceLogoFiles,
+} from "../adapters/workspace-logo-api";
 import { Textarea } from "@/components/ui/textarea";
 import {
   SearchSelect,
@@ -77,6 +84,30 @@ type OrganizationPanelProps = {
   profileErrors: Partial<Record<WorkspaceProfileField, string>>;
   onProfileChange: (key: WorkspaceProfileField, value: string) => void;
   contactsVisible: boolean;
+  logo: {
+    blob: Blob | null | undefined;
+    concealed: boolean;
+    selection:
+      { kind: "none" | "removed" } | { kind: "selected"; name: string };
+    error: string;
+    notice: string;
+    onSelect: (file: File) => void;
+    onRemove: () => void;
+    onCheckUpload?: () => void;
+    onRetryCleanup?: () => void;
+    onRetryImage?: () => void;
+  };
+  logoFiles: {
+    open: boolean;
+    page: Awaited<ReturnType<typeof listWorkspaceLogoFiles>> | undefined;
+    loading: boolean;
+    failed: boolean;
+    offset: number;
+    onToggle: () => void;
+    onRetry: () => void;
+    onPage: (offset: number) => void;
+    onRecover: (file: WorkspaceLogoFile) => void;
+  };
 };
 
 export function OrganizationPanel({
@@ -97,12 +128,15 @@ export function OrganizationPanel({
   profileErrors,
   onProfileChange,
   contactsVisible,
+  logo,
+  logoFiles,
 }: OrganizationPanelProps) {
   const { dirty, saveSection, current, changeSetting, errors, clearDraft } =
     form;
-  const organizationName = workspace
-    ? current.name.trim() || "Unnamed organization"
-    : "Organization details unavailable";
+  const organizationName =
+    !logo.concealed && workspace
+      ? current.name.trim() || "Unnamed organization"
+      : "Organization details unavailable";
   const localeOptions: string[] = [...organizationLocaleTags];
   if (current.locale && !localeOptions.includes(current.locale))
     localeOptions.push(current.locale);
@@ -125,8 +159,6 @@ export function OrganizationPanel({
     timezoneOptions.push(
       timezoneOption(current.timezone, timezoneCatalog.reference),
     );
-  const markOptions = ["", "RS", "R", "Compass"];
-  if (!markOptions.includes(current.logo)) markOptions.push(current.logo);
   const currencyOptions = activeCurrencies.map(({ code, name }) => ({
     value: code,
     label: `${code} · ${name}`,
@@ -189,7 +221,7 @@ export function OrganizationPanel({
               Workspace identity
             </FieldLegend>
             <p className="text-muted-foreground mb-4 text-sm leading-6">
-              Choose the name and bundled mark your team recognizes.
+              Choose the name, logo and mark your team recognizes.
             </p>
             <FieldGroup className="grid min-w-0 gap-4 sm:grid-cols-2">
               {workspaceFields ? (
@@ -212,13 +244,12 @@ export function OrganizationPanel({
                 />
               )}
               {workspaceFields ? (
-                <SettingSelect
+                <SettingInput
                   id="organization-logo"
                   label="Organization mark"
                   value={current.logo}
                   error={errors.logo}
-                  options={markOptions}
-                  optionLabels={{ "": "No mark" }}
+                  maxLength={32}
                   onChange={(value) =>
                     changeSetting("organization", "logo", value)
                   }
@@ -230,7 +261,212 @@ export function OrganizationPanel({
                   loading={workspaceLoading}
                 />
               )}
+              {workspace && !readOnly ? (
+                <Field
+                  className="min-w-0 sm:col-span-2"
+                  data-invalid={Boolean(logo.error)}
+                >
+                  <FieldLabel htmlFor="organization-logo-file">
+                    Organization logo
+                  </FieldLabel>
+                  <Input
+                    id="organization-logo-file"
+                    type="file"
+                    accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+                    aria-describedby={[
+                      "organization-logo-help",
+                      logo.error ? "organization-logo-error" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    aria-invalid={Boolean(logo.error)}
+                    className="file:bg-muted min-h-11 max-w-full min-w-0 file:mr-3 file:rounded-md file:border-0 file:px-3 file:py-1 file:text-sm"
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      if (file) logo.onSelect(file);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                  <FieldDescription id="organization-logo-help">
+                    PNG or JPEG, up to 2 MiB. The preview changes now; your team
+                    sees it after Save settings.
+                  </FieldDescription>
+                  {logo.selection.kind === "selected" ? (
+                    <p className="text-muted-foreground text-sm break-all">
+                      Selected: {logo.selection.name}
+                    </p>
+                  ) : null}
+                  {logo.selection.kind === "removed" ? (
+                    <p role="status" className="text-muted-foreground text-sm">
+                      Save settings to remove the logo and use the mark.
+                    </p>
+                  ) : null}
+                  {workspace.logo_file_id ||
+                  logo.selection.kind === "selected" ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 w-fit"
+                      onClick={logo.onRemove}
+                    >
+                      Remove logo
+                    </Button>
+                  ) : null}
+                  {logo.onCheckUpload ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 w-fit"
+                      onClick={logo.onCheckUpload}
+                    >
+                      Check upload
+                    </Button>
+                  ) : null}
+                  <FieldError id="organization-logo-error">
+                    {logo.error}
+                  </FieldError>
+                  {logo.notice ? (
+                    <p role="status" className="text-muted-foreground text-sm">
+                      {logo.notice}
+                    </p>
+                  ) : null}
+                  {logo.onRetryCleanup ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 w-fit"
+                      onClick={logo.onRetryCleanup}
+                    >
+                      Retry cleanup
+                    </Button>
+                  ) : null}
+                </Field>
+              ) : null}
             </FieldGroup>
+            {workspace && !readOnly ? (
+              <div className="mt-5 min-w-0">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="min-h-11"
+                  aria-expanded={logoFiles.open}
+                  aria-controls="organization-logo-files"
+                  onClick={logoFiles.onToggle}
+                >
+                  Logo files
+                </Button>
+                {logoFiles.open ? (
+                  <section
+                    id="organization-logo-files"
+                    aria-label="Logo files"
+                    className="border-border mt-3 space-y-3 border-t pt-4"
+                  >
+                    <p className="text-muted-foreground text-sm">
+                      Check unfinished uploads or retry cleanup. Unused files
+                      stay available for the server’s normal deletion
+                      safeguards.
+                    </p>
+                    {logoFiles.loading && !logoFiles.page ? (
+                      <p role="status">Loading logo files…</p>
+                    ) : null}
+                    {logoFiles.failed ? (
+                      <Alert variant="destructive" role="alert">
+                        <p>Logo files could not be loaded.</p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="mt-2 min-h-11"
+                          onClick={logoFiles.onRetry}
+                        >
+                          Retry logo files
+                        </Button>
+                      </Alert>
+                    ) : null}
+                    {logoFiles.page && !logoFiles.failed ? (
+                      <>
+                        <ul className="divide-border divide-y">
+                          {logoFiles.page.items.map((file) => (
+                            <li
+                              key={file.id}
+                              className="flex min-w-0 flex-wrap items-center justify-between gap-3 py-3"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium break-all">
+                                  {file.filename}
+                                </p>
+                                <p className="text-muted-foreground text-sm">
+                                  {logoStateLabel[file.state]}
+                                  {file.is_deleted && file.state !== "purged"
+                                    ? " · Archived"
+                                    : ""}
+                                  {file.id === workspace.logo_file_id
+                                    ? " · Current logo"
+                                    : ""}
+                                </p>
+                              </div>
+                              {file.state === "uploading" ||
+                              file.state === "deleting" ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="min-h-11"
+                                  onClick={() => logoFiles.onRecover(file)}
+                                >
+                                  {file.state === "uploading"
+                                    ? "Check upload"
+                                    : "Retry cleanup"}
+                                </Button>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                        <p
+                          role="status"
+                          className="text-muted-foreground text-sm"
+                        >
+                          {logoFiles.page.pagination.count
+                            ? `Showing ${logoFiles.page.pagination.offset + 1}–${logoFiles.page.pagination.offset + logoFiles.page.pagination.count} of ${logoFiles.page.pagination.total} logo files.`
+                            : "No logo files on this page."}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="min-h-11"
+                            aria-label="Previous logo files page"
+                            disabled={
+                              logoFiles.offset === 0 || logoFiles.loading
+                            }
+                            onClick={() =>
+                              logoFiles.onPage(
+                                Math.max(0, logoFiles.offset - 4),
+                              )
+                            }
+                          >
+                            Previous
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="min-h-11"
+                            aria-label="Next logo files page"
+                            disabled={
+                              !logoFiles.page.pagination.has_more ||
+                              logoFiles.loading
+                            }
+                            onClick={() =>
+                              logoFiles.onPage(logoFiles.offset + 4)
+                            }
+                          >
+                            Next
+                          </Button>
+                        </div>
+                      </>
+                    ) : null}
+                  </section>
+                ) : null}
+              </div>
+            ) : null}
           </FieldSet>
 
           <FieldSet className="border-border min-w-0 gap-0 border-b pb-6">
@@ -433,6 +669,7 @@ export function OrganizationPanel({
 
       <aside className="min-w-0 space-y-4">
         <Card
+          role="region"
           aria-labelledby="manage-organization-preview-title"
           className={`${panelClass} self-stretch`}
         >
@@ -446,17 +683,23 @@ export function OrganizationPanel({
           </CardHeader>
           <CardContent className="space-y-6 p-5 sm:p-7">
             <div className="border-border flex min-w-0 flex-col items-center gap-4 border-b pb-7 text-center">
-              <div
-                className="bg-foreground text-background flex size-28 shrink-0 items-center justify-center rounded-2xl text-4xl font-semibold sm:size-32"
-                role="img"
-                aria-label={`${organizationName} mark: ${current.logo}`}
-              >
-                {current.logo === "Compass" ? (
-                  <Compass className="size-12" aria-hidden="true" />
-                ) : (
-                  current.logo
-                )}
-              </div>
+              <WorkspaceLogo
+                blob={logo.blob}
+                name={organizationName}
+                mark={current.logo}
+                hidden={logo.concealed}
+                className="size-28 rounded-2xl text-4xl font-semibold sm:size-32"
+              />
+              {logo.onRetryImage ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={logo.onRetryImage}
+                >
+                  Retry logo
+                </Button>
+              ) : null}
               <div className="max-w-full min-w-0 space-y-1">
                 <h3 className="text-xl font-semibold tracking-tight break-words sm:text-2xl">
                   {workspace
@@ -548,6 +791,15 @@ export function OrganizationPanel({
     </section>
   );
 }
+
+const logoStateLabel: Record<WorkspaceLogoFile["state"], string> = {
+  awaiting_upload: "Awaiting upload",
+  uploading: "Uploading",
+  ready: "Ready",
+  rejected: "Rejected",
+  deleting: "Removing",
+  purged: "Removed",
+};
 
 function ProfileTextarea({
   id,

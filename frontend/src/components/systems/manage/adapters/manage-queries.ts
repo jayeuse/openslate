@@ -5,8 +5,18 @@ import { accessKeys } from "../../access/adapters/access-queries";
 
 import {
   getManageWorkspace,
+  getWorkspaceBrand,
+  workspaceBrand,
+  type WorkspaceBrand,
   type ManageWorkspaceProfile,
 } from "./workspace-api";
+import {
+  getWorkspaceLogo,
+  listWorkspaceLogoFiles,
+  type WorkspaceLogoListInput,
+} from "./workspace-logo-api";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
+import { ApiContractError } from "@/lib/api";
 import {
   getManageAuditLog,
   getManageAuditOptions,
@@ -41,6 +51,22 @@ export function setManageAuditDenied(
 export const manageKeys = {
   all: ["manage"] as const,
   workspace: () => ["manage", "workspace"] as const,
+  brand: () => ["manage", "workspace-brand"] as const,
+  logos: () => ["manage", "workspace-logo"] as const,
+  logo: (id: string) => ["manage", "workspace-logo", id] as const,
+  logoFiles: () => ["manage", "logo-files"] as const,
+  logoFilePage: (input: WorkspaceLogoListInput) =>
+    [
+      "manage",
+      "logo-files",
+      {
+        purpose: "workspace_logo",
+        deleted: "include",
+        sortBy: "created_at",
+        sortOrder: "desc",
+        ...input,
+      },
+    ] as const,
   auditLists: () => ["manage", "audit-logs", "list"] as const,
   audit: () => ["manage", "audit-logs"] as const,
   auditList: (request: ManageAuditListRequest) =>
@@ -88,15 +114,104 @@ export function afterManageBackupQueue(client: QueryClient) {
 export const manageWorkspaceOptions = () =>
   queryOptions({
     queryKey: manageKeys.workspace(),
-    queryFn: ({ signal }) => getManageWorkspace(signal),
+    queryFn: async ({ signal, client }) =>
+      newestManageWorkspace(client, await getManageWorkspace(signal)),
   });
+
+export function acceptedWorkspaceRevision(client: QueryClient): number {
+  return Math.max(
+    client.getQueryData<ManageWorkspaceProfile>(manageKeys.workspace())
+      ?.revision ?? 0,
+    client.getQueryData<WorkspaceBrand>(manageKeys.brand())?.revision ?? 0,
+  );
+}
+
+/** A same-revision read still replaces the complete role-filtered payload. */
+export function newestManageWorkspace(
+  client: QueryClient,
+  incoming: ManageWorkspaceProfile,
+): ManageWorkspaceProfile {
+  if (incoming.revision >= acceptedWorkspaceRevision(client)) return incoming;
+  const current = client.getQueryData<ManageWorkspaceProfile>(
+    manageKeys.workspace(),
+  );
+  if (current && current.revision >= acceptedWorkspaceRevision(client))
+    return current;
+  throw new ApiContractError();
+}
+
+export const workspaceBrandOptions = () =>
+  queryOptions({
+    queryKey: manageKeys.brand(),
+    queryFn: async ({ signal, client }) => {
+      const incoming = await getWorkspaceBrand(signal);
+      if (incoming.revision >= acceptedWorkspaceRevision(client))
+        return incoming;
+      const current = client.getQueryData<WorkspaceBrand>(manageKeys.brand());
+      if (current && current.revision >= acceptedWorkspaceRevision(client))
+        return current;
+      const workspace = client.getQueryData<ManageWorkspaceProfile>(
+        manageKeys.workspace(),
+      );
+      if (workspace && workspace.revision >= acceptedWorkspaceRevision(client))
+        return workspaceBrand(workspace);
+      throw new ApiContractError();
+    },
+  });
+export const workspaceLogoOptions = (id: string) =>
+  queryOptions({
+    queryKey: manageKeys.logo(id),
+    queryFn: ({ signal }) => getWorkspaceLogo(id, signal),
+    enabled: Boolean(id),
+  });
+export const workspaceLogoFilesOptions = (input: WorkspaceLogoListInput) =>
+  queryOptions({
+    queryKey: manageKeys.logoFilePage(input),
+    queryFn: ({ signal }) => listWorkspaceLogoFiles(input, signal),
+  });
+
+/** Brand reads share the existing stream; an open settings draft is untouched. */
+export function subscribeWorkspaceBrand(client: QueryClient) {
+  const keys = [manageKeys.brand(), manageKeys.logos(), manageKeys.logoFiles()];
+  const refresh = () => {
+    const cold = keys
+      .flatMap((queryKey) =>
+        client.getQueryCache().findAll({ queryKey, fetchStatus: "fetching" }),
+      )
+      .filter((query) => query.state.data === undefined);
+    void Promise.all(cold.map((query) => query.cancel({ revert: true }))).then(
+      () =>
+        Promise.all(
+          keys.map((queryKey) => client.invalidateQueries({ queryKey })),
+        ),
+    );
+  };
+  const stop = subscribeWorkspaceInvalidations((event) => {
+    if (
+      event.type === "resync" ||
+      event.entity === "workspace_profiles" ||
+      event.entity === "files"
+    )
+      refresh();
+  }, refresh);
+  return () => {
+    stop();
+    for (const queryKey of keys)
+      void client.invalidateQueries({ queryKey, refetchType: "none" });
+  };
+}
 
 export function afterManageWorkspaceChange(
   client: QueryClient,
   workspace: ManageWorkspaceProfile,
-): void {
+): boolean {
+  if (workspace.revision < acceptedWorkspaceRevision(client)) return false;
   client.setQueryData(manageKeys.workspace(), workspace);
+  client.setQueryData(manageKeys.brand(), workspaceBrand(workspace));
+  void client.invalidateQueries({ queryKey: manageKeys.logos() });
+  void client.invalidateQueries({ queryKey: manageKeys.logoFiles() });
   void client.invalidateQueries({ queryKey: accessKeys.security() });
+  return true;
 }
 
 /** Use from Manage navigation intent to fill the same account-scoped cache. */

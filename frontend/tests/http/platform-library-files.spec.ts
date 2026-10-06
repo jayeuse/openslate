@@ -249,6 +249,7 @@ async function installLibrary(
                 }),
             locale: "en-GB",
             timezone: "Asia/Manila",
+            logo_file_id: null,
             mark: "RS",
             currency: "PHP",
             week_start: "monday",

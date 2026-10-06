@@ -43,6 +43,12 @@ class File(BaseModel):
             name="ck_files_ready_verdict",
         ),
         CheckConstraint("enc_version IS NULL OR enc_version > 0", name="ck_files_enc_version"),
+        CheckConstraint(
+            "deletion_origin IS NULL OR (deletion_origin = 'logo_replacement' "
+            "AND purpose = 'workspace_logo' AND is_deleted = true "
+            "AND state = 'deleting' AND operation_id IS NOT NULL)",
+            name="ck_files_deletion_origin",
+        ),
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset(
         {
@@ -80,3 +86,4 @@ class File(BaseModel):
     operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
     operation_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failure_code: Mapped[str | None] = mapped_column(String(60))
+    deletion_origin: Mapped[str | None] = mapped_column(String(30), nullable=True)

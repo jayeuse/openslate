@@ -175,7 +175,7 @@ test("Manage organization loads and saves all seven workspace fields", async ({
     name: "Timezone",
     exact: true,
   });
-  const mark = page.getByRole("combobox", {
+  const mark = page.getByRole("textbox", {
     name: "Organization mark",
     exact: true,
   });
@@ -192,7 +192,6 @@ test("Manage organization loads and saves all seven workspace fields", async ({
     exact: true,
   });
   await expect(mark).toHaveValue("");
-  await expect(mark.locator("option:checked")).toHaveText("No mark");
   await expect(currency).toContainText("SGD");
   await expect(week).toHaveValue("Sunday");
   await expect(hours).toHaveValue("08:00–17:00");
@@ -206,7 +205,7 @@ test("Manage organization loads and saves all seven workspace fields", async ({
   await name.fill("Harbor operations");
   await chooseRegionalOption(page, "Regional format", "Filipino", "Filipino");
   await chooseRegionalOption(page, "Timezone", "UTC", /^UTC\+00:00.*UTC$/);
-  await mark.selectOption("Compass");
+  await mark.fill("Compass");
   await chooseRegionalOption(page, "Currency", "USD", /USD.*US Dollar/);
   await week.selectOption("Monday");
   await hours.fill("10:00–19:00");
@@ -245,7 +244,7 @@ test("Manage organization loads and saves all seven workspace fields", async ({
     week_start: "monday",
     business_hours: "10:00–19:00",
   });
-  await mark.selectOption({ label: "No mark" });
+  await mark.fill("");
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(
     page.getByRole("button", { name: "Discard changes", exact: true }),
@@ -253,7 +252,6 @@ test("Manage organization loads and saves all seven workspace fields", async ({
   expect(workspace.patches[1]).toEqual({ revision: 5, mark: "" });
   await page.reload();
   await expect(mark).toHaveValue("");
-  await expect(mark.locator("option:checked")).toHaveText("No mark");
   expect(workspace.read().mark).toBe("");
 });
 
@@ -520,7 +518,7 @@ test("Manage organization keeps all its draft fields after a failed save", async
     name: "Organization name",
     exact: true,
   });
-  const mark = page.getByRole("combobox", {
+  const mark = page.getByRole("textbox", {
     name: "Organization mark",
     exact: true,
   });
@@ -538,7 +536,7 @@ test("Manage organization keeps all its draft fields after a failed save", async
   });
   await expect(name).toHaveValue("Riverside Services");
   await name.fill("Pending workspace");
-  await mark.selectOption("Compass");
+  await mark.fill("Compass");
   await chooseRegionalOption(page, "Currency", "USD", /USD.*US Dollar/);
   await week.selectOption("Sunday");
   await hours.fill("10:00–19:00");
@@ -590,7 +588,7 @@ test("Manage preserves section drafts without saving on leave or discard, valida
     name: "Currency",
     exact: true,
   });
-  const mark = page.getByRole("combobox", {
+  const mark = page.getByRole("textbox", {
     name: "Organization mark",
     exact: true,
   });
@@ -603,7 +601,7 @@ test("Manage preserves section drafts without saving on leave or discard, valida
     exact: true,
   });
   await chooseRegionalOption(page, "Currency", "USD", /USD.*US Dollar/);
-  await mark.selectOption("Compass");
+  await mark.fill("Compass");
   await week.selectOption("Sunday");
   await hours.fill("10:00–19:00");
   await page.getByRole("link", { name: "Audit", exact: true }).click();

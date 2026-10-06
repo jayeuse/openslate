@@ -10,6 +10,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.common.dependencies import require_fresh_exact_admin
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import SecurityEventOutcome
@@ -18,6 +19,7 @@ from app.systems.manage.audit.service import (
     SecurityEventPersistenceError,
     append_committed_security_event,
 )
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.files.access import (
     authorize,
     authorize_board_file,
@@ -328,10 +330,10 @@ def download(
             department_id=candidate.department_id,
         )
     file = load(db, file_id, lock=True, shared_lock=True)
-    if file.state != "ready":
-        raise error("file_not_ready", "File is not available")
     if current_logo and file.is_deleted:
         raise error("file_not_found", "Logo not found", 404)
+    if file.state != "ready":
+        raise error("file_not_ready", "File is not available")
     db.commit()
     try:
         append_committed_security_event(
@@ -393,9 +395,21 @@ def reconcile(
     *,
     board_id: UUID | None = None,
 ) -> FileResponse:
+    token: UUID | None
     lock_quota(db)
-    if fresh_user(db, actor_id).role != UserRole.ADMIN.value:
-        raise error("forbidden", "Forbidden", 403)
+    require_fresh_exact_admin(db, actor_id)
+    fresh_user(db, actor_id)
+    candidate = load(db, file_id)
+    if candidate.purpose == "workspace_logo":
+        profile = db.scalar(
+            select(WorkspaceProfile)
+            .with_for_update(nowait=True)
+            .execution_options(populate_existing=True)
+        )
+        if profile is None:
+            raise error("workspace_unavailable", "Workspace configuration is unavailable", 503)
+        if profile.logo_file_id == file_id:
+            raise error("file_current_logo", "Replace or remove the current logo before purging")
     file = load(db, file_id, lock=True)
     if file.purpose == "board_attachment":
         if board_id is None or file.board_id != board_id:
@@ -404,8 +418,23 @@ def reconcile(
     elif board_id is not None:
         raise error("file_not_found", "File not found", 404)
     if file.state == "deleting":
-        from app.systems.platform.files.purge import purge_confirmed
+        from app.systems.platform.files.purge import (
+            DeletionClaim,
+            delete_and_finalize,
+            purge_confirmed,
+        )
 
+        if file.deletion_origin == "logo_replacement":
+            if not file.is_deleted or file.operation_id is None:
+                raise error("file_operation_stale", "File operation changed; refresh its status")
+            if file.operation_expires_at is not None and file.operation_expires_at > datetime.now(
+                UTC
+            ):
+                raise error("file_operation_active", "Deletion is still active")
+            token = _claim(db, file, "deleting")
+            claim = DeletionClaim(file.id, file.object_key, token, actor_id)
+            db.commit()
+            return delete_and_finalize(db, claim, storage)
         return purge_confirmed(db, actor_id, file_id, storage, board_id=board_id)
     if file.state == "uploading":
         key, digest, size, token = file.object_key, file.digest, file.actual_size, file.operation_id

@@ -78,6 +78,8 @@ def _client(
 
     workspace_router = _router_module()
     application = create_app()
+    monkeypatch.setattr(workspace_router, "lock_quota", lambda _db: None)
+    monkeypatch.setattr(database, "flush", lambda: None, raising=False)
     application.dependency_overrides[get_db] = lambda: database
     application.dependency_overrides[get_current_user] = lambda: actor
     monkeypatch.setattr(

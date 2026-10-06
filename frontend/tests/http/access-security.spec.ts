@@ -995,12 +995,21 @@ test("Security reads show recovery and denial without sample sessions", async ({
       .getByRole("table", { name: "Sessions", exact: true })
       .locator("tbody tr"),
   ).toHaveCount(4);
+  await expect(
+    page.getByRole("button", { name: "End session for Eli", exact: true }),
+  ).toBeEnabled();
   await page.clock.fastForward(31_000);
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await page
     .getByRole("alertdialog", { name: "Discard unsaved changes?", exact: true })
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
+  await expect(
+    page.getByRole("heading", { name: "Access overview", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Security workspace", exact: true }),
+  ).toHaveCount(0);
   let releaseBackgroundRead = () => {};
   let signalBackgroundRead = () => {};
   const backgroundReleased = new Promise<void>((resolve) => {
@@ -1285,7 +1294,18 @@ test("a refused policy reread conceals cached sessions until their own fresh Ret
   await page.goto("/access?view=security");
   const table = page.getByRole("table", { name: "Sessions", exact: true });
   await expect(table).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Security workspace", exact: true })
+      .getByText(/60 minutes timeout$/),
+  ).toBeVisible();
   await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Access overview", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Security workspace", exact: true }),
+  ).toHaveCount(0);
   await page.clock.fastForward(31_000);
   state.policyReadStatus = 403;
   await page.getByRole("link", { name: "Security", exact: true }).click();

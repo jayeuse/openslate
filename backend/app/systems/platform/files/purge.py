@@ -1,18 +1,72 @@
-"""File purge execution, called only after lifecycle confirmation is verified."""
+"""Committed immutable-key deletion with guarded manual purge admission."""
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.common.dependencies import require_fresh_exact_admin
 from app.core.config import get_settings
 from app.systems.platform.files.access import error, load, require_unlinked
+from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import ProviderUnavailable, StorageBackend
 from app.systems.platform.files.quota import lock_quota
 from app.systems.platform.files.schemas import FileResponse
 from app.systems.platform.files.service import _claim, _current
+
+
+@dataclass(frozen=True)
+class DeletionClaim:
+    file_id: UUID
+    key: str
+    token: UUID
+    actor_id: UUID
+
+
+def claim_logo_replacement(db: Session, file: File, actor_id: UUID) -> DeletionClaim:
+    """Caller holds workspace/file locks; commit this intent with the new binding."""
+    if not file.is_deleted or file.deleted_at is None:
+        file.deleted_at = datetime.now(UTC)
+    file.is_deleted = True
+    file.deletion_origin = "logo_replacement"
+    file.performed_by = actor_id
+    token = _claim(db, file, "deleting")
+    return DeletionClaim(file.id, file.object_key, token, actor_id)
+
+
+def delete_and_finalize(db: Session, claim: DeletionClaim, storage: StorageBackend) -> FileResponse:
+    """Perform only committed immutable-key intent, then commit token-fenced finalization.
+
+    Completing this admitted effect must not depend on the actor retaining their role.
+    """
+    try:
+        storage.delete(claim.key)
+        if storage.download(claim.key) is not None:
+            raise ProviderUnavailable("Object deletion is not confirmed")
+    except ProviderUnavailable as exc:
+        try:
+            file = _current(db, claim.file_id, claim.token, "deleting")
+            file.failure_code = "deletion_unresolved"
+            file.operation_expires_at = datetime.now(UTC)
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+        raise error("deletion_unresolved", "Deletion requires reconciliation", 503) from exc
+    try:
+        file = _current(db, claim.file_id, claim.token, "deleting")
+        file.state = "purged"
+        file.operation_id = None
+        file.operation_expires_at = None
+        file.deletion_origin = None
+        file.failure_code = None
+        db.commit()
+        return FileResponse.model_validate(file)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise error("deletion_unresolved", "Deletion requires reconciliation", 503) from exc
 
 
 def purge_confirmed(
@@ -54,23 +108,6 @@ def purge_confirmed(
     ):
         raise error("file_operation_active", "Deletion is still active")
     token = _claim(db, file, "deleting")
-    key = file.object_key
+    claim = DeletionClaim(file.id, file.object_key, token, actor_id)
     db.commit()
-    try:
-        storage.delete(key)
-        if storage.download(key) is not None:
-            raise ProviderUnavailable("Object deletion is not confirmed")
-    except ProviderUnavailable as exc:
-        file = _current(db, file_id, token, "deleting")
-        file.failure_code = "deletion_unresolved"
-        # Retry is safe: admitted upload was settled and keys never get reused.
-        file.operation_expires_at = datetime.now(UTC)
-        db.commit()
-        raise error("deletion_unresolved", "Deletion requires reconciliation", 503) from exc
-    file = _current(db, file_id, token, "deleting")
-    file.state = "purged"
-    file.operation_id = None
-    file.operation_expires_at = None
-    file.failure_code = None
-    db.commit()
-    return FileResponse.model_validate(file)
+    return delete_and_finalize(db, claim, storage)

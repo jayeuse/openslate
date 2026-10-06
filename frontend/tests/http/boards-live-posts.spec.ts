@@ -155,6 +155,10 @@ async function installPostBrowserApi(page: Page) {
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
+        display_name: "OpenSlate",
+        mark: "OS",
+        logo_file_id: null,
+        revision: 1,
         today: "2026-09-23",
         week_start: "monday",
         locale: "en-US",
@@ -712,6 +716,10 @@ test.describe("Boards workspace regional post dates", () => {
     await page.route("**/api/workspace", (route) =>
       route.fulfill({
         json: {
+          display_name: "OpenSlate",
+          mark: "OS",
+          logo_file_id: null,
+          revision: 1,
           today: "2026-09-23",
           week_start: "monday",
           locale: "fr-FR",
