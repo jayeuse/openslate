@@ -619,6 +619,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
+    "function": "getWorkspaceAppearance",
+    "method": "GET",
+    "path": "/api/workspace/appearance"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
     "function": "getWorkspaceCalendarSettings",
     "method": "GET",
     "path": "/api/workspace"

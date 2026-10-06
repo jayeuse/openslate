@@ -45,6 +45,10 @@ class WorkspaceProfile(BaseModel):
         ),
         CheckConstraint("mark = btrim(mark)", name="ck_workspace_profiles_mark_trimmed"),
         CheckConstraint(
+            "theme IN ('slate', 'whiteboard', 'triplicate', 'stockroom')",
+            name="ck_workspace_profiles_theme",
+        ),
+        CheckConstraint(
             "session_timeout_minutes IN (15, 30, 60, 480)",
             name="ck_workspace_profiles_session_timeout_minutes",
         ),
@@ -94,6 +98,9 @@ class WorkspaceProfile(BaseModel):
     )
     mark: Mapped[str] = mapped_column(
         String(32), default="RS", server_default=text("'RS'"), nullable=False
+    )
+    theme: Mapped[str] = mapped_column(
+        String(16), default="slate", server_default=text("'slate'"), nullable=False
     )
     session_timeout_minutes: Mapped[int] = mapped_column(
         Integer, default=60, server_default=text("60"), nullable=False

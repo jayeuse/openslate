@@ -13668,6 +13668,20 @@
         "title": "WindowRecordResponse",
         "type": "object"
       },
+      "WorkspaceAppearanceResponse": {
+        "additionalProperties": false,
+        "description": "The only workspace value available before sign-in.",
+        "properties": {
+          "theme": {
+            "$ref": "#/components/schemas/WorkspaceTheme"
+          }
+        },
+        "required": [
+          "theme"
+        ],
+        "title": "WorkspaceAppearanceResponse",
+        "type": "object"
+      },
       "WorkspaceResponse": {
         "properties": {
           "business_hours": {
@@ -13784,6 +13798,9 @@
             "title": "Revision",
             "type": "integer"
           },
+          "theme": {
+            "$ref": "#/components/schemas/WorkspaceTheme"
+          },
           "timezone": {
             "title": "Timezone",
             "type": "string"
@@ -13823,6 +13840,7 @@
           "currency",
           "week_start",
           "business_hours",
+          "theme",
           "invitation_expiry_days",
           "guest_duration_days",
           "revision",
@@ -13989,6 +14007,15 @@
         ],
         "title": "WorkspaceSecurityUpdate",
         "type": "object"
+      },
+      "WorkspaceTheme": {
+        "enum": [
+          "slate",
+          "whiteboard",
+          "triplicate",
+          "stockroom"
+        ],
+        "type": "string"
       },
       "WorkspaceUpdate": {
         "additionalProperties": false,
@@ -14157,6 +14184,16 @@
             "minimum": 1.0,
             "title": "Revision",
             "type": "integer"
+          },
+          "theme": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceTheme"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "timezone": {
             "anyOf": [
@@ -29774,6 +29811,27 @@
           }
         ],
         "summary": "Update Workspace",
+        "tags": [
+          "workspace"
+        ]
+      }
+    },
+    "/api/workspace/appearance": {
+      "get": {
+        "operationId": "get_workspace_appearance_api_workspace_appearance_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceAppearanceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Workspace Appearance",
         "tags": [
           "workspace"
         ]

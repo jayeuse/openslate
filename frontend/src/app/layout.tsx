@@ -11,6 +11,7 @@ import {
   Schibsted_Grotesk,
 } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
+import { OrganizationThemeProvider } from "@/components/organization-theme-provider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -95,8 +96,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col">
         <ThemeProvider />
         <CSPProvider disableStyleElements>
-          {children}
-          <Toaster />
+          <OrganizationThemeProvider>
+            {children}
+            <Toaster />
+          </OrganizationThemeProvider>
         </CSPProvider>
       </body>
     </html>

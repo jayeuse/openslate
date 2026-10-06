@@ -31,8 +31,25 @@ async function installIdentity(
   await page.route("**/api/auth/sessions", (route) =>
     route.fulfill({ json: [] }),
   );
-  await page.route("**/api/workspace", (route) =>
-    route.fulfill({
+  let organizationTheme = "slate";
+  let revision = 1;
+  await page.route("**/api/workspace/appearance", (route) =>
+    route.fulfill({ json: { theme: organizationTheme } }),
+  );
+  await page.route("**/api/workspace", (route) => {
+    if (route.request().method() === "PATCH") {
+      const patch: unknown = route.request().postDataJSON();
+      if (
+        typeof patch !== "object" ||
+        patch === null ||
+        !("theme" in patch) ||
+        typeof patch.theme !== "string"
+      )
+        throw new Error("Invalid organization theme command");
+      organizationTheme = patch.theme;
+      revision += 1;
+    }
+    return route.fulfill({
       json: {
         id: "44444444-4444-4444-8444-444444444444",
         display_name: "Theme journey",
@@ -42,10 +59,11 @@ async function installIdentity(
         currency: "PHP",
         week_start: "monday",
         business_hours: "09:00–18:00",
-        revision: 1,
+        theme: organizationTheme,
+        revision,
       },
-    }),
-  );
+    });
+  });
   return {
     setUser: (next: string) => {
       user = next;
@@ -75,6 +93,10 @@ test("a cold preference load is disabled, fails visibly, and retries without cha
   page,
 }) => {
   await installIdentity(page, "guest");
+  await page.route("**/api/workspace/appearance", (route) =>
+    route.fulfill({ json: { theme: "stockroom" } }),
+  );
+
   const gate = deferred();
   let reads = 0;
   let recovered = false;
@@ -452,6 +474,12 @@ test("confirmed theme saves preserve applied motion and organization look when b
       "data-theme",
       "stockroom",
     );
+    await page
+      .getByRole("button", { name: "Save settings", exact: true })
+      .click();
+    await expect(
+      page.getByText("Organization settings saved.", { exact: true }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Appearance", exact: true }).click();
     await expect(light(page)).toBeChecked();
     const motion = page.getByRole("switch", { name: "Reduce motion" });

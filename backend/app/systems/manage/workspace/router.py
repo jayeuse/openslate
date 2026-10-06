@@ -10,7 +10,11 @@ from app.common.dependencies import get_current_user, require_fresh_exact_admin
 from app.core.database import get_db
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.manage.workspace.schemas import WorkspaceResponse, WorkspaceUpdate
+from app.systems.manage.workspace.schemas import (
+    WorkspaceAppearanceResponse,
+    WorkspaceResponse,
+    WorkspaceUpdate,
+)
 from app.systems.platform.files import service as file_service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import Storage, hold_file_worker
@@ -89,6 +93,20 @@ def _ready_logo(
     ):
         raise _logo_not_ready()
     return file
+
+
+@router.get("/appearance", response_model=WorkspaceAppearanceResponse)
+def get_workspace_appearance(
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> WorkspaceAppearanceResponse:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        profile = _workspace(db)
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise _workspace_unavailable() from error
+    return WorkspaceAppearanceResponse.model_validate({"theme": profile.theme})
 
 
 @router.get("", response_model=WorkspaceResponse)

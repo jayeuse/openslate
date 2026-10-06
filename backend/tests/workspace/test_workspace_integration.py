@@ -46,6 +46,7 @@ def test_workspace_migration_preserves_designed_settings_defaults(
     assert profile.week_start == "monday"
     assert profile.business_hours == "09:00–18:00"
     assert profile.mark == "RS"
+    assert profile.theme == "slate"
     assert profile.session_timeout_minutes == 60
     assert profile.password_min_length == 12
     assert profile.password_require_mixed_case is True
@@ -61,6 +62,8 @@ def test_workspace_migration_preserves_designed_settings_defaults(
         ("week_start", "friday"),
         ("business_hours", " padded "),
         ("mark", " padded "),
+        ("theme", "sepia"),
+        ("theme", None),
         ("session_timeout_minutes", 20),
         ("password_min_length", 11),
         ("password_min_length", 129),

@@ -20,6 +20,7 @@ export async function mockManageSecurity(page: Page) {
       currency: "PHP",
       week_start: "monday",
       business_hours: "09:00–18:00",
+      theme: "slate",
       revision: 1,
     },
     sessions: [

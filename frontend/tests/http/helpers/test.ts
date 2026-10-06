@@ -19,6 +19,12 @@ export const test = base.extend({
     await context.route("**/api/auth/me", (route) =>
       route.fulfill({ json: defaultSignedInIdentity }),
     );
+    await context.route("**/api/workspace/appearance", (route) =>
+      route.fulfill({
+        headers: { "Cache-Control": "no-store" },
+        json: { theme: "slate" },
+      }),
+    );
     await context.route("**/api/notifications/unread-count", (route) =>
       route.fulfill({ json: { unread_count: 0 } }),
     );

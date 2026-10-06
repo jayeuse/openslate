@@ -50,7 +50,7 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 if workspace_settings_before_test is not None:
                     cursor.execute(
                         "UPDATE public.workspace_profiles SET currency = %s, week_start = %s, "
-                        "business_hours = %s, mark = %s",
+                        "business_hours = %s, mark = %s, theme = %s",
                         workspace_settings_before_test,
                     )
                 cursor.execute(
@@ -110,7 +110,8 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
     with connect(database_url) as database:
         with database.cursor() as cursor:
             cursor.execute(
-                "SELECT currency, week_start, business_hours, mark FROM public.workspace_profiles"
+                "SELECT currency, week_start, business_hours, mark, theme "
+                "FROM public.workspace_profiles"
             )
             workspace_settings_before_test = cursor.fetchone()
             cursor.execute(
@@ -195,7 +196,8 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             )
             cursor.execute(
                 "UPDATE public.workspace_profiles SET logo_file_id = %s, currency = 'USD', "
-                "week_start = 'sunday', business_hours = '10:00–16:00', mark = 'ACME'",
+                "week_start = 'sunday', business_hours = '10:00–16:00', mark = 'ACME', "
+                "theme = 'stockroom'",
                 (file_id,),
             )
             plan_before_dashboard = reset.build_reset_plan(
@@ -331,6 +333,7 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             ("week_start", "sunday", "monday"),
             ("business_hours", "10:00–16:00", "08:00–17:00"),
             ("mark", "ACME", "CHANGED"),
+            ("theme", "stockroom", "triplicate"),
         ):
             with database.cursor() as cursor:
                 cursor.execute(f"UPDATE public.workspace_profiles SET {column} = %s", (changed,))
@@ -358,12 +361,39 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                         f"UPDATE public.workspace_profiles SET {column} = %s", (original,)
                     )
                 database.commit()
+
+        # A look change after preflight must also fail the locked digest check.
+        def change_theme_during_provider_cleanup(_account_ids):
+            with database.cursor() as cursor:
+                cursor.execute("UPDATE public.workspace_profiles SET theme = 'triplicate'")
+            database.commit()
+
+        auth.delete_and_verify_missing.side_effect = change_theme_during_provider_cleanup
+        auth.list_account_ids.side_effect = ((member_provider_id,), ())
+        with pytest.raises(reset.ResetError, match="Provider accounts.*profiles were retained"):
+            execution.apply_reset(
+                database,
+                plan,
+                execute=True,
+                stdin_is_tty=True,
+                confirmation=plan.impact_digest,
+                storage=storage,
+                auth=auth,
+            )
+        with database.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM public.users")
+            assert cursor.fetchone() == (2,)
+            cursor.execute("UPDATE public.workspace_profiles SET theme = 'stockroom'")
+        database.commit()
+        auth.delete_and_verify_missing.side_effect = None
+        storage.delete_and_verify_empty.assert_not_called()
         restore_company_board = execution._reset_company_board
         for column, value in (
             ("currency", "USD"),
             ("week_start", "sunday"),
             ("business_hours", "10:00–16:00"),
             ("mark", "ACME"),
+            ("theme", "stockroom"),
         ):
 
             def invalidate_workspace_setting(connection, *, column=column, value=value) -> None:
@@ -429,10 +459,13 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             cursor.execute("SELECT logo_file_id FROM public.workspace_profiles")
             assert cursor.fetchone() == (None,)
             cursor.execute(
-                "SELECT currency, week_start, business_hours, mark FROM public.workspace_profiles"
+                "SELECT currency, week_start, business_hours, mark, theme "
+                "FROM public.workspace_profiles"
             )
             workspace_settings = cursor.fetchone()
-            assert workspace_settings == ("PHP", "monday", "09:00–18:00", "RS"), workspace_settings
+            assert workspace_settings == ("PHP", "monday", "09:00–18:00", "RS", "slate"), (
+                workspace_settings
+            )
             cursor.execute(
                 "SELECT revision, document->>'schemaVersion', performed_by "
                 "FROM public.sandbox_documents"

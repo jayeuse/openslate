@@ -139,6 +139,7 @@ def _validate_postconditions(
         or workspace.week_start != "monday"
         or workspace.business_hours != "09:00–18:00"
         or workspace.mark != "RS"
+        or workspace.theme != "slate"
         or workspace.revision != 1
         or workspace.invitation_expiry_days != 7
         or workspace.guest_duration_days != 30
@@ -248,6 +249,7 @@ def apply_reset(
                contact_phone = NULL, postal_address = NULL,
                logo_file_id = NULL, timezone = 'UTC', locale = 'en-US',
                currency = 'PHP', week_start = 'monday', business_hours = '09:00–18:00', mark = 'RS',
+               theme = 'slate',
                invitation_expiry_days = 7, guest_duration_days = 30, revision = 1,
                performed_by = NULL WHERE id = %s""",
             (locked_plan.workspace_snapshot.id,),

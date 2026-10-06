@@ -2,7 +2,25 @@ import { z } from "zod";
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 
 import { ApiError, apiFetch } from "@/lib/api";
+import {
+  ORGANIZATION_THEMES,
+  type OrganizationTheme,
+} from "@/lib/appearance-preferences";
 import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
+
+const organizationThemeSchema = z.enum(ORGANIZATION_THEMES);
+const workspaceAppearanceSchema = z
+  .object({ theme: organizationThemeSchema })
+  .strict();
+
+/** Public palette only; an unavailable read must never enter the auth refresh flow. */
+export function getWorkspaceAppearance(signal?: AbortSignal) {
+  return apiFetch("/workspace/appearance", workspaceAppearanceSchema, {
+    cache: "no-store",
+    signal,
+    refreshOnUnauthorized: false,
+  });
+}
 
 const workspaceProfileSchema = z.object({
   id: z.uuid(),
@@ -13,6 +31,7 @@ const workspaceProfileSchema = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/),
   week_start: z.enum(["monday", "sunday"]),
   business_hours: z.string().max(200),
+  theme: organizationThemeSchema,
   revision: z.number().int().positive(),
 });
 
@@ -30,6 +49,7 @@ const workspaceSettingsPatchSchema = z
       .optional(),
     week_start: z.enum(["monday", "sunday"]).optional(),
     business_hours: z.string().trim().max(200).optional(),
+    theme: organizationThemeSchema.optional(),
   })
   .refine((fields) =>
     Object.entries(fields).some(
@@ -115,6 +135,7 @@ export type WorkspaceSettingsFormFields = {
   currency: string;
   week: "Monday" | "Sunday";
   hours: string;
+  theme: OrganizationTheme;
 };
 export type WorkspaceSettingsFormDraft = Partial<WorkspaceSettingsFormFields>;
 
@@ -162,12 +183,14 @@ export function workspaceSettingsFormFields(
     currency: workspace.currency,
     week: workspace.week_start === "monday" ? "Monday" : "Sunday",
     hours: workspace.business_hours,
+    theme: workspace.theme,
   };
 }
 
 export function workspaceSettingsPatch(
   workspace: ManageWorkspaceProfile,
   draft: WorkspaceSettingsFormDraft,
+  committedTheme: OrganizationTheme,
 ): ManageWorkspaceSettingsPatch | null {
   const fields = workspaceSettingsFormFields(workspace);
   const patch: ManageWorkspaceSettingsPatch = { revision: workspace.revision };
@@ -188,6 +211,9 @@ export function workspaceSettingsPatch(
     patch.week_start = draft.week === "Monday" ? "monday" : "sunday";
   if (draft.hours !== undefined && draft.hours.trim() !== fields.hours)
     patch.business_hours = draft.hours.trim();
+
+  if (draft.theme !== undefined && draft.theme !== committedTheme)
+    patch.theme = draft.theme;
 
   if (Object.keys(patch).length === 1) return null;
   return patch;

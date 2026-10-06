@@ -95,8 +95,8 @@ export function persistAppearancePreferences(
 /**
  * The organization's look. Themes change color, type, and materials only;
  * layout, behavior, and words stay the same. The owner picks one for the
- * whole organization. Until the workspace settings API stores it, the choice
- * lives in this browser.
+ * whole organization. The server owns the saved choice; browser storage is
+ * a validated cache used by the blocking prepaint script.
  */
 export const ORGANIZATION_THEMES = [
   "slate",
@@ -107,7 +107,7 @@ export const ORGANIZATION_THEMES = [
 
 export type OrganizationTheme = (typeof ORGANIZATION_THEMES)[number];
 
-const ORGANIZATION_THEME_KEY = "openslate-org-theme";
+export const ORGANIZATION_THEME_KEY = "openslate-org-theme";
 
 export function readOrganizationTheme(
   storage: Pick<Storage, "getItem"> | null | undefined,

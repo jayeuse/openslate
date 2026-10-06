@@ -335,6 +335,7 @@ test.beforeEach(async ({ page }) => {
         currency: "PHP",
         week_start: "monday",
         business_hours: "09:00–18:00",
+        theme: "slate",
         revision: 4,
       },
     }),
@@ -1101,6 +1102,7 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
             currency: "PHP",
             week_start: "monday",
             business_hours: "09:00–18:00",
+            theme: "slate",
             revision: 4,
           },
         })
@@ -1253,6 +1255,7 @@ test("Audit date filters use workspace-local day bounds across a daylight-saving
         currency: "PHP",
         week_start: "monday",
         business_hours: "09:00–18:00",
+        theme: "slate",
         revision: 4,
       },
     }),

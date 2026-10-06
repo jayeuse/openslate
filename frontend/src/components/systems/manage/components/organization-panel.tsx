@@ -26,6 +26,7 @@ import {
   SettingActions,
   type SettingsPanelForm,
 } from "./panel-ui";
+import type { OrganizationTheme } from "@/lib/appearance-preferences";
 import { OrganizationLook } from "./organization-look";
 import {
   organizationLocaleTags,
@@ -44,6 +45,10 @@ type OrganizationPanelProps = {
   workspaceLoadFailed: boolean;
   onRetryWorkspace: () => void;
   staleRevision: boolean;
+  theme: OrganizationTheme;
+  onThemeChange: (theme: OrganizationTheme) => void;
+  readOnly: boolean;
+  editDisabled: boolean;
 };
 
 export function OrganizationPanel({
@@ -56,6 +61,10 @@ export function OrganizationPanel({
   workspaceLoadFailed,
   onRetryWorkspace,
   staleRevision,
+  theme,
+  onThemeChange,
+  readOnly,
+  editDisabled,
 }: OrganizationPanelProps) {
   const { dirty, saveSection, current, changeSetting, errors, clearDraft } =
     form;
@@ -117,180 +126,182 @@ export function OrganizationPanel({
           saveSection("organization");
         }}
       >
-        <FieldSet className="border-border min-w-0 gap-0 border-b pb-6">
-          <FieldLegend className="mb-1 text-lg font-semibold tracking-tight">
-            Workspace identity
-          </FieldLegend>
-          <p className="text-muted-foreground mb-4 text-sm leading-6">
-            Choose the name and bundled mark your team recognizes.
-          </p>
-          <FieldGroup className="grid min-w-0 gap-4 sm:grid-cols-2">
-            {workspaceFields ? (
-              <SettingInput
-                id="organization-name"
-                label="Organization name"
-                required
-                maxLength={200}
-                value={current.name}
-                onChange={(value) =>
-                  changeSetting("organization", "name", value)
-                }
-                error={errors.name ?? null}
-              />
-            ) : (
-              <WorkspaceSettingsPlaceholder
-                id="organization-name"
-                label="Organization name"
-                loading={workspaceLoading}
-              />
-            )}
-            {workspaceFields ? (
-              <SettingSelect
-                id="organization-logo"
-                label="Organization mark"
-                value={current.logo}
-                error={errors.logo}
-                options={markOptions}
-                optionLabels={{ "": "No mark" }}
-                onChange={(value) =>
-                  changeSetting("organization", "logo", value)
-                }
-              />
-            ) : (
-              <WorkspaceSettingsPlaceholder
-                id="organization-logo"
-                label="Organization mark"
-                loading={workspaceLoading}
-              />
-            )}
-          </FieldGroup>
-        </FieldSet>
+        <fieldset disabled={editDisabled} className="min-w-0 space-y-7">
+          <FieldSet className="border-border min-w-0 gap-0 border-b pb-6">
+            <FieldLegend className="mb-1 text-lg font-semibold tracking-tight">
+              Workspace identity
+            </FieldLegend>
+            <p className="text-muted-foreground mb-4 text-sm leading-6">
+              Choose the name and bundled mark your team recognizes.
+            </p>
+            <FieldGroup className="grid min-w-0 gap-4 sm:grid-cols-2">
+              {workspaceFields ? (
+                <SettingInput
+                  id="organization-name"
+                  label="Organization name"
+                  required
+                  maxLength={200}
+                  value={current.name}
+                  onChange={(value) =>
+                    changeSetting("organization", "name", value)
+                  }
+                  error={errors.name ?? null}
+                />
+              ) : (
+                <WorkspaceSettingsPlaceholder
+                  id="organization-name"
+                  label="Organization name"
+                  loading={workspaceLoading}
+                />
+              )}
+              {workspaceFields ? (
+                <SettingSelect
+                  id="organization-logo"
+                  label="Organization mark"
+                  value={current.logo}
+                  error={errors.logo}
+                  options={markOptions}
+                  optionLabels={{ "": "No mark" }}
+                  onChange={(value) =>
+                    changeSetting("organization", "logo", value)
+                  }
+                />
+              ) : (
+                <WorkspaceSettingsPlaceholder
+                  id="organization-logo"
+                  label="Organization mark"
+                  loading={workspaceLoading}
+                />
+              )}
+            </FieldGroup>
+          </FieldSet>
 
-        <FieldSet className="border-border min-w-0 gap-0 border-b pb-6">
-          <FieldLegend className="mb-1 text-lg font-semibold tracking-tight">
-            Regional defaults
-          </FieldLegend>
-          <p className="text-muted-foreground mb-4 text-sm leading-6">
-            Choose how dates, times, and amounts appear.
-          </p>
-          <FieldGroup className="grid min-w-0 gap-4 sm:grid-cols-2">
-            {workspaceFields ? (
-              <SettingSelect
-                id="locale"
-                label="Locale"
-                value={current.locale}
-                error={errors.locale}
-                options={localeOptions}
-                optionLabels={Object.fromEntries(
-                  localeOptions.map((tag) => [
-                    tag,
-                    organizationLocaleLabel(tag),
-                  ]),
-                )}
-                onChange={(value) =>
-                  changeSetting("organization", "locale", value)
-                }
-              />
-            ) : (
-              <WorkspaceSettingsPlaceholder
-                id="locale"
-                label="Locale"
-                loading={workspaceLoading}
-              />
-            )}
-            {workspaceFields ? (
-              <SettingSelect
-                id="timezone"
-                label="Timezone"
-                value={current.timezone}
-                error={errors.timezone}
-                options={timezoneOptions}
-                onChange={(value) =>
-                  changeSetting("organization", "timezone", value)
-                }
-              />
-            ) : (
-              <WorkspaceSettingsPlaceholder
-                id="timezone"
-                label="Timezone"
-                loading={workspaceLoading}
-              />
-            )}
-            {workspaceFields ? (
-              <SettingSelect
-                id="currency"
-                label="Currency"
-                value={current.currency}
-                error={errors.currency}
-                options={currencyOptions}
-                onChange={(value) =>
-                  changeSetting("organization", "currency", value)
-                }
-              />
-            ) : (
-              <WorkspaceSettingsPlaceholder
-                id="currency"
-                label="Currency"
-                loading={workspaceLoading}
-              />
-            )}
-            {workspaceFields ? (
-              <SettingSelect
-                id="week-start"
-                label="Week starts on"
-                value={current.week}
-                error={errors.week}
-                options={["Monday", "Sunday"]}
-                onChange={(value) =>
-                  changeSetting("organization", "week", value)
-                }
-              />
-            ) : (
-              <WorkspaceSettingsPlaceholder
-                id="week-start"
-                label="Week starts on"
-                loading={workspaceLoading}
-              />
-            )}
-          </FieldGroup>
-        </FieldSet>
+          <FieldSet className="border-border min-w-0 gap-0 border-b pb-6">
+            <FieldLegend className="mb-1 text-lg font-semibold tracking-tight">
+              Regional defaults
+            </FieldLegend>
+            <p className="text-muted-foreground mb-4 text-sm leading-6">
+              Choose how dates, times, and amounts appear.
+            </p>
+            <FieldGroup className="grid min-w-0 gap-4 sm:grid-cols-2">
+              {workspaceFields ? (
+                <SettingSelect
+                  id="locale"
+                  label="Locale"
+                  value={current.locale}
+                  error={errors.locale}
+                  options={localeOptions}
+                  optionLabels={Object.fromEntries(
+                    localeOptions.map((tag) => [
+                      tag,
+                      organizationLocaleLabel(tag),
+                    ]),
+                  )}
+                  onChange={(value) =>
+                    changeSetting("organization", "locale", value)
+                  }
+                />
+              ) : (
+                <WorkspaceSettingsPlaceholder
+                  id="locale"
+                  label="Locale"
+                  loading={workspaceLoading}
+                />
+              )}
+              {workspaceFields ? (
+                <SettingSelect
+                  id="timezone"
+                  label="Timezone"
+                  value={current.timezone}
+                  error={errors.timezone}
+                  options={timezoneOptions}
+                  onChange={(value) =>
+                    changeSetting("organization", "timezone", value)
+                  }
+                />
+              ) : (
+                <WorkspaceSettingsPlaceholder
+                  id="timezone"
+                  label="Timezone"
+                  loading={workspaceLoading}
+                />
+              )}
+              {workspaceFields ? (
+                <SettingSelect
+                  id="currency"
+                  label="Currency"
+                  value={current.currency}
+                  error={errors.currency}
+                  options={currencyOptions}
+                  onChange={(value) =>
+                    changeSetting("organization", "currency", value)
+                  }
+                />
+              ) : (
+                <WorkspaceSettingsPlaceholder
+                  id="currency"
+                  label="Currency"
+                  loading={workspaceLoading}
+                />
+              )}
+              {workspaceFields ? (
+                <SettingSelect
+                  id="week-start"
+                  label="Week starts on"
+                  value={current.week}
+                  error={errors.week}
+                  options={["Monday", "Sunday"]}
+                  onChange={(value) =>
+                    changeSetting("organization", "week", value)
+                  }
+                />
+              ) : (
+                <WorkspaceSettingsPlaceholder
+                  id="week-start"
+                  label="Week starts on"
+                  loading={workspaceLoading}
+                />
+              )}
+            </FieldGroup>
+          </FieldSet>
 
-        <FieldSet className="min-w-0 gap-0">
-          <FieldLegend className="mb-1 text-lg font-semibold tracking-tight">
-            Working hours
-          </FieldLegend>
-          <p className="text-muted-foreground mb-4 text-sm leading-6">
-            Set a shared reference for your working day.
-          </p>
-          <div className="max-w-sm">
-            {workspaceFields ? (
-              <SettingInput
-                id="business-hours"
-                label="Business hours"
-                value={current.hours}
-                maxLength={200}
-                onChange={(value) =>
-                  changeSetting("organization", "hours", value)
-                }
-                description="Use 24-hour time and a dash, for example 09:00–18:00."
-                error={errors.hours ?? null}
-              />
-            ) : (
-              <WorkspaceSettingsPlaceholder
-                id="business-hours"
-                label="Business hours"
-                loading={workspaceLoading}
-              />
-            )}
-          </div>
-        </FieldSet>
+          <FieldSet className="min-w-0 gap-0">
+            <FieldLegend className="mb-1 text-lg font-semibold tracking-tight">
+              Working hours
+            </FieldLegend>
+            <p className="text-muted-foreground mb-4 text-sm leading-6">
+              Set a shared reference for your working day.
+            </p>
+            <div className="max-w-sm">
+              {workspaceFields ? (
+                <SettingInput
+                  id="business-hours"
+                  label="Business hours"
+                  value={current.hours}
+                  maxLength={200}
+                  onChange={(value) =>
+                    changeSetting("organization", "hours", value)
+                  }
+                  description="Use 24-hour time and a dash, for example 09:00–18:00."
+                  error={errors.hours ?? null}
+                />
+              ) : (
+                <WorkspaceSettingsPlaceholder
+                  id="business-hours"
+                  label="Business hours"
+                  loading={workspaceLoading}
+                />
+              )}
+            </div>
+          </FieldSet>
 
-        <SettingActions
-          dirty={dirty}
-          onDiscard={() => clearDraft("organization")}
-          onSave={() => saveSection("organization")}
-          saveLabel={staleRevision ? "Save again" : "Save settings"}
-        />
+          <SettingActions
+            dirty={dirty}
+            onDiscard={() => clearDraft("organization")}
+            onSave={() => saveSection("organization")}
+            saveLabel={staleRevision ? "Save again" : "Save settings"}
+          />
+        </fieldset>
       </form>
 
       <aside className="min-w-0 space-y-4">
@@ -401,7 +412,12 @@ export function OrganizationPanel({
         </nav>
       </aside>
 
-      <OrganizationLook />
+      <OrganizationLook
+        theme={theme}
+        onChange={onThemeChange}
+        readOnly={readOnly}
+        disabled={editDisabled}
+      />
     </section>
   );
 }

@@ -19,6 +19,7 @@ type WorkspaceProfile = {
   currency: string;
   week_start: "monday" | "sunday";
   business_hours: string;
+  theme: "slate" | "whiteboard" | "triplicate" | "stockroom";
   invitation_expiry_days: number;
   guest_duration_days: number;
   revision: number;
@@ -42,6 +43,7 @@ const initialWorkspace: WorkspaceProfile = {
   currency: "PHP",
   week_start: "monday",
   business_hours: "09:00–18:00",
+  theme: "slate",
   invitation_expiry_days: 7,
   guest_duration_days: 30,
   revision: 4,
@@ -114,6 +116,15 @@ function installWorkspaceRoute(
 }
 
 test.beforeEach(async ({ page }) => {
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        id: "00000000-0000-4000-8000-000000000101",
+        role: "admin",
+        access: [],
+      },
+    }),
+  );
   await page.route("**/api/auth/session", (route) =>
     route.fulfill({
       json: {

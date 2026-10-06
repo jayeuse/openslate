@@ -1,11 +1,8 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useId } from "react";
 import {
-  applyOrganizationTheme,
   ORGANIZATION_THEMES,
-  persistOrganizationTheme,
-  readBrowserOrganizationTheme,
   type OrganizationTheme,
 } from "@/lib/appearance-preferences";
 
@@ -65,24 +62,18 @@ function LookSwatch({ theme }: { theme: OrganizationTheme }) {
   );
 }
 
-export function OrganizationLook() {
+export function OrganizationLook({
+  theme,
+  onChange,
+  readOnly,
+  disabled,
+}: {
+  theme: OrganizationTheme;
+  onChange: (theme: OrganizationTheme) => void;
+  readOnly: boolean;
+  disabled: boolean;
+}) {
   const headingId = useId();
-  // The browser choice is read after mount so the server render (Slate)
-  // and the first client render match.
-  const [theme, setTheme] = useState<OrganizationTheme>("slate");
-  useEffect(() => {
-    // Also follow a look chosen in another tab.
-    const read = () => setTheme(readBrowserOrganizationTheme());
-    read();
-    window.addEventListener("storage", read);
-    return () => window.removeEventListener("storage", read);
-  }, []);
-
-  function choose(next: OrganizationTheme) {
-    setTheme(next);
-    applyOrganizationTheme(next);
-    persistOrganizationTheme(next);
-  }
 
   return (
     <section aria-labelledby={headingId} className="min-w-0 lg:col-span-2">
@@ -100,6 +91,7 @@ export function OrganizationLook() {
       <div
         role="radiogroup"
         aria-labelledby={headingId}
+        aria-readonly={readOnly}
         className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
       >
         {ORGANIZATION_THEMES.map((id) => (
@@ -112,7 +104,8 @@ export function OrganizationLook() {
               name="organization-look"
               value={id}
               checked={theme === id}
-              onChange={() => choose(id)}
+              onChange={() => onChange(id)}
+              disabled={disabled || readOnly}
               className="sr-only"
             />
             <LookSwatch theme={id} />
@@ -126,8 +119,9 @@ export function OrganizationLook() {
         ))}
       </div>
       <p className="text-muted-foreground mt-3 text-sm">
-        Changes apply right away. For now the look is saved in this browser
-        only.
+        {readOnly
+          ? "An administrator chooses the saved look for your organization."
+          : "Preview changes right away. Save settings to use this look for your organization."}
       </p>
     </section>
   );

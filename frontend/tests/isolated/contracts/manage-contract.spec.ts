@@ -21,6 +21,7 @@ import {
 } from "../../../src/components/systems/manage/adapters/security-api";
 import {
   getManageWorkspace,
+  getWorkspaceAppearance,
   updateManageWorkspace,
 } from "../../../src/components/systems/manage/adapters/workspace-api";
 import { describeContracts } from "./openapi-contract";
@@ -55,6 +56,7 @@ const version = {
 const workspace = { currency: "PHP" };
 
 describeContracts("Manage", [
+  { name: "getWorkspaceAppearance", run: () => getWorkspaceAppearance() },
   {
     name: "listManageAuditLogs",
     run: () => listManageAuditLogs({ ...auditFilters, limit: 25, offset: 0 }),
@@ -190,6 +192,7 @@ describeContracts("Manage", [
         currency: "PHP",
         week_start: "monday",
         business_hours: "08:00-17:00",
+        theme: "stockroom",
       }),
     responses: { "PATCH /api/workspace": workspace },
   },

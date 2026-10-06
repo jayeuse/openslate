@@ -11,10 +11,8 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   applyAppearancePreferences,
-  applyOrganizationTheme,
   persistAppearancePreferences,
   readBrowserAppearancePreferences,
-  readBrowserOrganizationTheme,
   type AppearanceMode,
 } from "@/lib/appearance-preferences";
 import {
@@ -41,7 +39,6 @@ function applyBrowserAppearance() {
     ...browser,
     mode: accountThemeOwner ? (confirmedAccountMode ?? "light") : browser.mode,
   });
-  applyOrganizationTheme(readBrowserOrganizationTheme());
 }
 
 export function ThemeProvider() {
@@ -118,7 +115,7 @@ export function UserThemeProvider({ children }: { children: ReactNode }) {
     if (suspended || accountThemeOwner !== owner.current) return;
     if (query.data) {
       confirmedAccountMode = query.data.theme;
-      // Local motion/look may have applied successfully even if browser
+      // Local motion may have applied successfully even if browser
       // storage rejected the write. A server response owns color mode only.
       persistAppearancePreferences({
         mode: query.data.theme,

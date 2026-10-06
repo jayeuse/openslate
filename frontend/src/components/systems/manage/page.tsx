@@ -11,6 +11,7 @@ import {
 import {
   Suspense,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type MouseEvent,
@@ -31,6 +32,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import { DiscardChangesDialog } from "../access/components/people-fields";
+import { useOrganizationTheme } from "@/components/organization-theme-provider";
+import {
+  useVerifiedWorkspaceUserId,
+  useWorkspaceInteractionSuspended,
+} from "@/components/systems/shared/runtime/workspace-identity";
+import { authMeOptions } from "../access/adapters/access-queries";
+import type { OrganizationTheme } from "@/lib/appearance-preferences";
 import { ApiError } from "@/lib/api";
 import { requestSessionRecheck } from "@/lib/auth-api";
 import { useMfaFlow } from "@/components/mfa-flow";
@@ -56,6 +64,7 @@ import {
   manageSessionsOptions,
 } from "./adapters/manage-queries";
 import {
+  getManageWorkspace,
   isStaleWorkspaceRevision,
   organizationLocaleTag,
   workspaceSettingsFormFields,
@@ -143,6 +152,84 @@ function ManageContent() {
   const router = useRouter();
   const requestedTab = manageTabFromQuery(searchParams.get("view"));
   const queryClient = useQueryClient();
+  const userId = useVerifiedWorkspaceUserId();
+  const suspended = useWorkspaceInteractionSuspended();
+  const organizationTheme = useOrganizationTheme();
+  const {
+    confirm: confirmTheme,
+    preview: previewTheme,
+    release: releaseTheme,
+    getCommittedTheme,
+  } = organizationTheme;
+  const [roleAwaitingVerification, setRoleAwaitingVerification] =
+    useState(false);
+  const roleVerificationCycle = useRef(0);
+  const identity = useQuery({
+    ...authMeOptions(),
+    enabled: !suspended && !roleAwaitingVerification,
+  });
+  useLayoutEffect(() => {
+    if (suspended) {
+      roleVerificationCycle.current += 1;
+      setRoleAwaitingVerification(true);
+    }
+  }, [suspended]);
+  const canEditOrganization =
+    !suspended &&
+    !roleAwaitingVerification &&
+    !identity.isError &&
+    identity.data?.id === userId &&
+    identity.data.role === "admin";
+  const liveWorkspace = useRef(false);
+  const workspaceOwner = useRef(Symbol("organization-preview"));
+  const workspaceEpoch = useRef(0);
+  const workspaceCommand = useRef<AbortController | null>(null);
+  const workspaceWriting = useRef(false);
+  const workspaceNeedsReadback = useRef(false);
+  const workspaceAdmission = useRef({
+    suspended,
+    canEdit: canEditOrganization,
+  });
+  useLayoutEffect(() => {
+    liveWorkspace.current = true;
+    const owner = workspaceOwner.current;
+    return () => {
+      liveWorkspace.current = false;
+      workspaceEpoch.current += 1;
+      workspaceCommand.current?.abort();
+      releaseTheme(owner);
+    };
+  }, [releaseTheme]);
+  useEffect(() => {
+    if (suspended || !roleAwaitingVerification) return;
+    const cycle = roleVerificationCycle.current;
+    let cancelled = false;
+    const ownsRead = () =>
+      !cancelled &&
+      liveWorkspace.current &&
+      cycle === roleVerificationCycle.current &&
+      !workspaceAdmission.current.suspended;
+    // A read started before verification cannot admit this cycle. Keep the
+    // ordinary trusted background behavior; only verification requires this
+    // cancellation followed by a fresh, account-owned role read.
+    void queryClient
+      .cancelQueries({ queryKey: authMeOptions().queryKey, exact: true })
+      .then(() =>
+        ownsRead()
+          ? queryClient.fetchQuery({ ...authMeOptions(), staleTime: 0 })
+          : undefined,
+      )
+      .then((currentIdentity) => {
+        if (currentIdentity && ownsRead()) setRoleAwaitingVerification(false);
+      })
+      .catch(() => {
+        // The failed identity read keeps the picker read-only. A subsequent
+        // session recheck starts another owned verification cycle.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [suspended, roleAwaitingVerification, queryClient]);
   const maintenance = useManageMaintenance({
     recoveryActive: requestedTab === "Security" || requestedTab === "Backup",
     historyActive: requestedTab === "Backup",
@@ -157,8 +244,54 @@ function ManageContent() {
   const [workspaceSavePending, setWorkspaceSavePending] = useState(false);
   const workspaceQuery = useQuery({
     ...manageWorkspaceOptions(),
-    enabled: tab === "Organization",
+    enabled: tab === "Organization" && !suspended,
+    // A resumed verified editor needs a current revision, including after an
+    // uncertain response. Cached data stays visible during this fresh read.
+    staleTime: 0,
+    queryFn: async ({ signal }) => {
+      const epoch = workspaceEpoch.current;
+      const workspace = await getManageWorkspace(signal);
+      if (
+        liveWorkspace.current &&
+        !signal.aborted &&
+        epoch === workspaceEpoch.current &&
+        !workspaceAdmission.current.suspended
+      )
+        confirmTheme(workspace.theme);
+      return workspace;
+    },
   });
+  useLayoutEffect(() => {
+    const previous = workspaceAdmission.current;
+    workspaceAdmission.current = { suspended, canEdit: canEditOrganization };
+    if (suspended || (previous.canEdit && !canEditOrganization)) {
+      workspaceEpoch.current += 1;
+      workspaceCommand.current?.abort();
+      if (workspaceWriting.current) {
+        workspaceNeedsReadback.current = true;
+        workspaceWriting.current = false;
+        setWorkspaceSavePending(false);
+        setWorkspaceRefreshRequired(true);
+      }
+    }
+  }, [suspended, canEditOrganization]);
+  useLayoutEffect(() => {
+    const owner = workspaceOwner.current;
+    if (
+      tab === "Organization" &&
+      canEditOrganization &&
+      workspaceDraft.theme !== undefined
+    )
+      previewTheme(owner, workspaceDraft.theme);
+    else releaseTheme(owner);
+    return () => releaseTheme(owner);
+  }, [
+    tab,
+    canEditOrganization,
+    workspaceDraft.theme,
+    previewTheme,
+    releaseTheme,
+  ]);
   const [securityDraft, setSecurityDraft] = useState<SecuritySettingsFormDraft>(
     {},
   );
@@ -259,7 +392,11 @@ function ManageContent() {
           : "Review sessions and manage backup requests.";
 
   const workspacePatch = workspaceQuery.data
-    ? workspaceSettingsPatch(workspaceQuery.data, workspaceDraft)
+    ? workspaceSettingsPatch(
+        workspaceQuery.data,
+        workspaceDraft,
+        organizationTheme.theme,
+      )
     : null;
   const workspaceDraftDirty = workspacePatch !== null;
   const allDraftsDirty =
@@ -330,6 +467,23 @@ function ManageContent() {
     leave?.resume();
   }
 
+  function changeOrganizationTheme(theme: OrganizationTheme) {
+    if (
+      !workspaceAdmission.current.canEdit ||
+      workspaceWriting.current ||
+      !workspaceQuery.data ||
+      workspaceQuery.isError
+    )
+      return;
+    setWorkspaceDraft((draft) => {
+      const next: WorkspaceSettingsFormDraft = { ...draft, theme };
+      if (theme === getCommittedTheme()) delete next.theme;
+      return next;
+    });
+    setNotice("");
+    setError("");
+  }
+
   function changeSetting(
     target: ManageSection,
     key: keyof ManageSettings,
@@ -345,6 +499,8 @@ function ManageContent() {
         key === "week" ||
         key === "hours")
     ) {
+      if (!workspaceAdmission.current.canEdit || workspaceWriting.current)
+        return;
       const saved = workspaceQuery.data
         ? workspaceSettingsFormFields(workspaceQuery.data)
         : null;
@@ -414,12 +570,22 @@ function ManageContent() {
   }
 
   async function retryWorkspace() {
+    if (workspaceAdmission.current.suspended || workspaceWriting.current)
+      return;
+    const epoch = workspaceEpoch.current;
     const result = await workspaceQuery.refetch();
+    if (
+      !liveWorkspace.current ||
+      epoch !== workspaceEpoch.current ||
+      workspaceAdmission.current.suspended
+    )
+      return;
     if (result.isError || !result.data) {
       setError("The organization settings could not be loaded. Try again.");
       return;
     }
     setError("");
+    workspaceNeedsReadback.current = false;
     if (workspaceRefreshRequired) {
       setWorkspaceRefreshRequired(false);
       setWorkspaceStale(true);
@@ -427,7 +593,13 @@ function ManageContent() {
   }
 
   async function saveOrganization() {
-    if (livePending) return;
+    if (
+      livePending ||
+      workspaceWriting.current ||
+      !workspaceAdmission.current.canEdit ||
+      workspaceQuery.isError
+    )
+      return;
     const validationError = Object.values(
       organizationErrors(workspaceDraft, workspaceQuery.data !== undefined),
     )[0];
@@ -435,59 +607,99 @@ function ManageContent() {
       setError(validationError);
       return;
     }
-
     if (!workspaceQuery.data) {
       setError(
         "The organization settings could not be loaded. Retry before saving.",
       );
       return;
     }
-
-    const patch = workspaceQuery.data
-      ? workspaceSettingsPatch(workspaceQuery.data, workspaceDraft)
-      : null;
+    const epoch = ++workspaceEpoch.current;
+    const controller = new AbortController();
+    workspaceCommand.current = controller;
+    workspaceWriting.current = true;
+    setWorkspaceSavePending(true);
+    const ownsCommand = () =>
+      liveWorkspace.current &&
+      epoch === workspaceEpoch.current &&
+      !controller.signal.aborted &&
+      workspaceAdmission.current.canEdit;
     setNotice("");
     setError("");
-    if (patch) {
-      setWorkspaceSavePending(true);
-      try {
-        const saved = await updateManageWorkspace(patch);
-        afterManageWorkspaceChange(queryClient, saved);
-        setWorkspaceDraft({});
-        setWorkspaceStale(false);
-        setWorkspaceRefreshRequired(false);
-        setNotice("Organization settings saved.");
-      } catch (caught) {
-        if (isStaleWorkspaceRevision(caught)) {
+    try {
+      // Older reads cannot undo this command. An uncertain previous write
+      // requires confirmed readback before another explicit write.
+      await queryClient.cancelQueries({
+        queryKey: manageKeys.workspace(),
+        exact: true,
+      });
+      if (!ownsCommand()) return;
+      let workspace = workspaceQuery.data;
+      if (workspaceNeedsReadback.current) {
+        const refreshed = await workspaceQuery.refetch();
+        if (!ownsCommand()) return;
+        if (refreshed.isError || !refreshed.data) {
           setWorkspaceRefreshRequired(true);
-          const refreshed = await workspaceQuery.refetch();
-          if (refreshed.isError || !refreshed.data) {
-            setError(
-              "Workspace settings changed, but the latest values could not be loaded. Retry before saving again.",
-            );
-          } else {
-            setWorkspaceRefreshRequired(false);
-            setWorkspaceStale(true);
-            setError("");
-          }
+          setError(
+            "The organization settings could not be loaded. Retry before saving.",
+          );
           return;
         }
-        setError(
-          caught instanceof ApiError && caught.status === 403
-            ? "Only administrators can change these settings. Reload the page to check your access."
-            : "The settings could not be saved. Try again.",
-        );
-        return;
-      } finally {
-        setWorkspaceSavePending(false);
+        workspace = refreshed.data;
+        workspaceNeedsReadback.current = false;
+        setWorkspaceRefreshRequired(false);
       }
-    } else if (Object.keys(workspaceDraft).length > 0) {
+      const patch = workspaceSettingsPatch(
+        workspace,
+        workspaceDraft,
+        getCommittedTheme(),
+      );
+      if (patch) {
+        const saved = await updateManageWorkspace(patch, controller.signal);
+        if (!ownsCommand()) return;
+        confirmTheme(saved.theme);
+        afterManageWorkspaceChange(queryClient, saved);
+      }
+      if (!ownsCommand()) return;
+      releaseTheme(workspaceOwner.current);
       setWorkspaceDraft({});
       setWorkspaceStale(false);
+      setWorkspaceRefreshRequired(false);
+      setNotice("Organization settings saved.");
+    } catch (caught) {
+      if (!ownsCommand()) return;
+      workspaceNeedsReadback.current = true;
+      if (isStaleWorkspaceRevision(caught)) {
+        setWorkspaceRefreshRequired(true);
+        const refreshed = await workspaceQuery.refetch();
+        if (!ownsCommand()) return;
+        if (refreshed.isError || !refreshed.data) {
+          setError(
+            "Workspace settings changed, but the latest values could not be loaded. Retry before saving again.",
+          );
+        } else {
+          workspaceNeedsReadback.current = false;
+          setWorkspaceRefreshRequired(false);
+          setWorkspaceStale(true);
+          setError("");
+        }
+        return;
+      }
+      if (
+        caught instanceof ApiError &&
+        (caught.status === 401 || caught.status === 403)
+      )
+        requestSessionRecheck();
+      setError(
+        caught instanceof ApiError && caught.status === 403
+          ? "Only administrators can change these settings. Reload the page to check your access."
+          : "The settings could not be saved. Try again.",
+      );
+    } finally {
+      if (ownsCommand()) {
+        workspaceWriting.current = false;
+        setWorkspaceSavePending(false);
+      }
     }
-
-    setError("");
-    setNotice("Organization settings saved.");
   }
 
   async function retrySecurity() {
@@ -730,6 +942,17 @@ function ManageContent() {
               workspaceLoadFailed={workspaceQuery.isError}
               onRetryWorkspace={retryWorkspace}
               staleRevision={workspaceStale}
+              theme={
+                (canEditOrganization ? workspaceDraft.theme : undefined) ??
+                organizationTheme.theme
+              }
+              onThemeChange={changeOrganizationTheme}
+              readOnly={!canEditOrganization}
+              editDisabled={
+                !canEditOrganization ||
+                !workspaceQuery.data ||
+                workspaceQuery.isError
+              }
             />
           ) : null}
 
