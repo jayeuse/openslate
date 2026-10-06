@@ -2,11 +2,6 @@ import { z } from "zod";
 
 import { ApiError, apiFetch } from "@/lib/api";
 
-const passwordChoices = {
-  "12 characters + mixed case": [12, true, false],
-  "16 characters + mixed case + number": [16, true, true],
-  "20-character passphrase": [20, false, false],
-} as const;
 const timeoutChoices = {
   "15 minutes": 15,
   "30 minutes": 30,
@@ -32,16 +27,10 @@ const securityFields = {
   mfa_policy: z.enum(["optional", "admins", "everyone"]),
   ip_allow_list: z.array(z.string().min(1).max(64)).max(100),
 };
-const securityPolicySchema = z
-  .object({ revision: z.number().int().positive(), ...securityFields })
-  .refine((policy) =>
-    Object.values(passwordChoices).some(
-      ([length, mixed, number]) =>
-        policy.password_min_length === length &&
-        policy.password_require_mixed_case === mixed &&
-        policy.password_require_number === number,
-    ),
-  );
+const securityPolicySchema = z.object({
+  revision: z.number().int().positive(),
+  ...securityFields,
+});
 const securityPatchSchema = z
   .object({
     revision: z.number().int().positive(),
@@ -53,35 +42,105 @@ const securityPatchSchema = z
 export type AccessSecurityPolicy = z.output<typeof securityPolicySchema>;
 export type AccessSecurityPatch = z.output<typeof securityPatchSchema>;
 export type SecuritySettingsFormFields = {
-  password: keyof typeof passwordChoices;
+  minimumLength: string;
+  requireMixedCase: boolean;
+  requireNumber: boolean;
   timeout: keyof typeof timeoutChoices;
   mfa: keyof typeof mfaChoices;
-  ips: string;
+  ips: string[];
+  ipEntry: string;
 };
 export type SecuritySettingsFormDraft = Partial<SecuritySettingsFormFields>;
+export type SecuritySettingsFormErrors = Partial<
+  Record<keyof SecuritySettingsFormFields, string>
+>;
+export type SecuritySettingsChange = <
+  K extends keyof SecuritySettingsFormFields,
+>(
+  key: K,
+  value: SecuritySettingsFormFields[K],
+) => void;
+const networkInputSchema = z
+  .string()
+  .max(64)
+  .pipe(z.union([z.ipv4(), z.ipv6(), z.cidrv4(), z.cidrv6()]));
+
+export function validSecurityNetwork(value: string) {
+  return networkInputSchema.safeParse(value).success;
+}
+
+/** Compare draft chips with a resolved host, including canonical single-host CIDRs. */
+export function securityNetworkKey(value: string) {
+  if (!validSecurityNetwork(value)) return value;
+  const [rawHost, rawPrefix] = value.split("/");
+  let host = rawHost;
+  let prefix =
+    rawPrefix === undefined
+      ? host.includes(":")
+        ? 128
+        : 32
+      : Number(rawPrefix);
+  if (host.includes(":")) {
+    try {
+      host = new URL(`http://[${host}]`).hostname.slice(1, -1);
+    } catch {
+      return value;
+    }
+    if (host.startsWith("::ffff:") && prefix >= 96) {
+      const words = host.slice(7).split(":");
+      if (words.length === 2) {
+        const high = Number.parseInt(words[0], 16);
+        const low = Number.parseInt(words[1], 16);
+        host = [high >> 8, high & 255, low >> 8, low & 255].join(".");
+        prefix -= 96;
+      }
+    }
+  }
+  return `${host}/${prefix}`;
+}
+
+export function securitySettingsFormErrors(
+  fields: SecuritySettingsFormFields,
+): SecuritySettingsFormErrors {
+  const errors: SecuritySettingsFormErrors = {};
+  if (
+    !/^\d{2,3}$/.test(fields.minimumLength) ||
+    Number(fields.minimumLength) < 12 ||
+    Number(fields.minimumLength) > 128
+  )
+    errors.minimumLength =
+      "Minimum password length must be a whole number from 12 to 128.";
+  if (
+    fields.ips.length > 100 ||
+    fields.ips.some((value) => !validSecurityNetwork(value))
+  )
+    errors.ips = "Use valid IP addresses or CIDR ranges, up to 100 entries.";
+  if (fields.ipEntry.trim())
+    errors.ipEntry = validSecurityNetwork(fields.ipEntry.trim())
+      ? "Add or clear the address before saving."
+      : "Enter a valid IP address or CIDR range.";
+  return errors;
+}
 
 export function securitySettingsFormFields(
   policy: AccessSecurityPolicy,
 ): SecuritySettingsFormFields {
-  const password = (
-    Object.keys(passwordChoices) as (keyof typeof passwordChoices)[]
-  ).find((label) => {
-    const [length, mixed, number] = passwordChoices[label];
-    return (
-      policy.password_min_length === length &&
-      policy.password_require_mixed_case === mixed &&
-      policy.password_require_number === number
-    );
-  });
   const timeout = (
     Object.keys(timeoutChoices) as (keyof typeof timeoutChoices)[]
   ).find((label) => timeoutChoices[label] === policy.session_timeout_minutes);
   const mfa = (Object.keys(mfaChoices) as (keyof typeof mfaChoices)[]).find(
     (label) => mfaChoices[label] === policy.mfa_policy,
   );
-  if (!password || !timeout || !mfa)
-    throw new Error("Account policy could not be read.");
-  return { password, timeout, mfa, ips: policy.ip_allow_list.join(", ") };
+  if (!timeout || !mfa) throw new Error("Account policy could not be read.");
+  return {
+    minimumLength: String(policy.password_min_length),
+    requireMixedCase: policy.password_require_mixed_case,
+    requireNumber: policy.password_require_number,
+    timeout,
+    mfa,
+    ips: policy.ip_allow_list,
+    ipEntry: "",
+  };
 }
 
 export function securitySettingsPatch(
@@ -90,21 +149,27 @@ export function securitySettingsPatch(
 ): AccessSecurityPatch | null {
   const saved = securitySettingsFormFields(policy);
   const patch: AccessSecurityPatch = { revision: policy.revision };
-  if (draft.password !== undefined && draft.password !== saved.password) {
-    const [length, mixed, number] = passwordChoices[draft.password];
-    patch.password_min_length = length;
-    patch.password_require_mixed_case = mixed;
-    patch.password_require_number = number;
-  }
+  if (
+    draft.minimumLength !== undefined &&
+    draft.minimumLength !== saved.minimumLength
+  )
+    patch.password_min_length = Number(draft.minimumLength);
+  if (
+    draft.requireMixedCase !== undefined &&
+    draft.requireMixedCase !== saved.requireMixedCase
+  )
+    patch.password_require_mixed_case = draft.requireMixedCase;
+  if (
+    draft.requireNumber !== undefined &&
+    draft.requireNumber !== saved.requireNumber
+  )
+    patch.password_require_number = draft.requireNumber;
   if (draft.timeout !== undefined && draft.timeout !== saved.timeout)
     patch.session_timeout_minutes = timeoutChoices[draft.timeout];
   if (draft.mfa !== undefined && draft.mfa !== saved.mfa)
     patch.mfa_policy = mfaChoices[draft.mfa];
   if (draft.ips !== undefined) {
-    const ips = draft.ips
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
+    const ips = draft.ips;
     if (JSON.stringify(ips) !== JSON.stringify(policy.ip_allow_list))
       patch.ip_allow_list = ips;
   }
@@ -116,6 +181,14 @@ export function getAccessSecurityPolicy(signal?: AbortSignal) {
     cache: "no-store",
     signal,
   });
+}
+
+export function getAccessCallerIp(signal?: AbortSignal) {
+  return apiFetch(
+    "/workspace/security/caller-ip",
+    z.object({ address: z.union([z.ipv4(), z.ipv6()]) }).strict(),
+    { cache: "no-store", signal },
+  );
 }
 
 export function updateAccessSecurityPolicy(

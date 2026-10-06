@@ -6,6 +6,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    IPvAnyAddress,
     StrictBool,
     StrictInt,
     field_validator,
@@ -67,3 +68,7 @@ class WorkspaceSecurityResponse(BaseModel):
     password_require_number: bool
     mfa_policy: MfaPolicy
     ip_allow_list: list[str]
+
+
+class WorkspaceCallerIpResponse(BaseModel):
+    address: IPvAnyAddress

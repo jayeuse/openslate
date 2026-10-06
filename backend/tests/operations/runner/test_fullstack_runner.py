@@ -26,7 +26,6 @@ def test_standalone_fullstack_runner_loads_complete_model_registry() -> None:
         text=True,
         check=False,
     )
-
     assert result.returncode == 0, result.stderr
 
 
@@ -108,7 +107,6 @@ def test_disposable_caddy_uses_a_pinned_image_loopback_gateway_and_owned_cleanup
         runtime.stop()
     finally:
         log.close()
-
     launch = next(arguments for arguments in commands if arguments[0] == "run")
     assert "@sha256:" in caddy_runtime.CADDY_IMAGE
     assert runtime.image in launch
@@ -123,8 +121,9 @@ def test_disposable_caddy_uses_a_pinned_image_loopback_gateway_and_owned_cleanup
     assert runtime.config.stat().st_mode & 0o777 == 0o644
 
 
+@pytest.mark.parametrize("native_ipv6", [False, True])
 def test_native_caddy_binds_loopback_and_uses_loopback_upstreams(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_ipv6: bool
 ) -> None:
     log = (tmp_path / "process.log").open("w")
     monkeypatch.setattr(caddy_runtime.shutil, "which", lambda _: "/usr/local/bin/caddy")
@@ -133,17 +132,35 @@ def test_native_caddy_binds_loopback_and_uses_loopback_upstreams(
     process.poll.return_value = 0
     monkeypatch.setattr(caddy_runtime.subprocess, "run", validate)
     monkeypatch.setattr(caddy_runtime.subprocess, "Popen", lambda *_args, **_kwargs: process)
-    runtime = caddy_runtime.DisposableCaddy(tmp_path, "a" * 32, {"PATH": "test"}, log)
+    runtime = caddy_runtime.DisposableCaddy(
+        tmp_path, "a" * 32, {"PATH": "test"}, log, native_ipv6=native_ipv6
+    )
     try:
         runtime.start()
         runtime.stop()
     finally:
         log.close()
-
     assert validate.call_args.args[0][:2] == ["/usr/local/bin/caddy", "validate"]
     rendered = runtime.config.read_text()
-    assert "bind 127.0.0.1" in rendered
+    assert f"bind {'::1' if native_ipv6 else '127.0.0.1'}" in rendered
     assert "http://127.0.0.1:3449 {\n    bind 127.0.0.1" in rendered
+    assert ("skip_install_trust" in rendered) is native_ipv6
+    if native_ipv6:
+        assert "https://[::1]:3448" in rendered
+        assert runtime.env["XDG_DATA_HOME"] == str(tmp_path / "caddy-data")
+        assert runtime.env["XDG_CONFIG_HOME"] == str(tmp_path / "caddy-config")
+        assert (tmp_path / "caddy-adapted.json").exists()
+
+
+def test_native_ipv6_caddy_refuses_docker_fallback(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(caddy_runtime.shutil, "which", lambda _: None)
+    with (tmp_path / "process.log").open("w") as log:
+        runtime = caddy_runtime.DisposableCaddy(
+            tmp_path, "a" * 32, {"PATH": "test"}, log, native_ipv6=True
+        )
+        with pytest.raises(RuntimeError, match="native Caddy"):
+            runtime.start()
+    assert not runtime.dockerfile.exists()
 
 
 def test_linux_docker_caddy_uses_host_network_and_loopback_upstreams(

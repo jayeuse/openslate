@@ -1,6 +1,13 @@
 "use client";
 
-import { Info, KeyRound, Monitor, Smartphone, UsersRound } from "lucide-react";
+import {
+  Info,
+  KeyRound,
+  Monitor,
+  Smartphone,
+  UsersRound,
+  X,
+} from "lucide-react";
 import { type MouseEvent } from "react";
 import { Alert } from "@/components/ui/alert";
 import { LoadingRegion } from "@/components/ui/loading-region";
@@ -8,6 +15,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AccessSearchToolbar } from "../../access/components/access-search-toolbar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import {
   Empty,
@@ -16,7 +25,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -30,10 +39,12 @@ import {
   type AccessAdminSession,
   type AccessAdminSessions,
   type AccessSessionsRequest,
+  type SecuritySettingsChange,
+  type SecuritySettingsFormFields,
+  type SecuritySettingsFormErrors,
 } from "../adapters/security-api";
 import {
   SettingActions,
-  SettingInput,
   SettingSelect,
 } from "../../manage/components/panel-ui";
 
@@ -70,17 +81,12 @@ type SecurityPanelProps = {
 type SecurityPolicyFormProps = {
   form: {
     dirty: boolean;
-    current: import("../adapters/security-api").SecuritySettingsFormFields;
-    errors: Partial<
-      Record<
-        keyof import("../adapters/security-api").SecuritySettingsFormFields,
-        string
-      >
-    >;
-    changeSetting: (
-      key: keyof import("../adapters/security-api").SecuritySettingsFormFields,
-      value: string,
-    ) => void;
+    current: SecuritySettingsFormFields;
+    errors: SecuritySettingsFormErrors;
+    changeSetting: SecuritySettingsChange;
+    addAddress: () => void;
+    addMyAddress: () => Promise<void>;
+    addressNotice: string;
     saveSection: () => Promise<void>;
     clearDraft: () => void;
   };
@@ -491,37 +497,115 @@ export function SecurityPolicyForm({
   form,
   onManageMfa,
 }: SecurityPolicyFormProps) {
-  const { dirty, saveSection, current, errors, changeSetting, clearDraft } =
-    form;
+  const {
+    dirty,
+    saveSection,
+    current,
+    errors,
+    changeSetting,
+    clearDraft,
+    addAddress,
+    addMyAddress,
+    addressNotice,
+  } = form;
 
   return (
     <form
+      noValidate
       className="flex flex-col gap-5"
       onSubmit={(event) => {
         event.preventDefault();
-        saveSection();
+        void saveSection();
       }}
     >
       <div className="grid gap-4 sm:grid-cols-2">
-        <SettingSelect
-          id="password-policy"
-          label="Password policy"
-          value={current.password}
-          error={errors.password}
-          options={[
-            "12 characters + mixed case",
-            "16 characters + mixed case + number",
-            "20-character passphrase",
-          ]}
-          onChange={(value) => changeSetting("password", value)}
-        />
+        <fieldset
+          className="min-w-0 space-y-3 sm:col-span-2"
+          aria-describedby="password-rules-description"
+        >
+          <legend className="text-sm font-medium">Password requirements</legend>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-start">
+            <Field data-invalid={Boolean(errors.minimumLength)}>
+              <FieldLabel htmlFor="password-minimum">
+                Minimum password length
+              </FieldLabel>
+              <Input
+                id="password-minimum"
+                type="number"
+                inputMode="numeric"
+                min={12}
+                max={128}
+                step={1}
+                className="min-h-11"
+                value={current.minimumLength}
+                aria-invalid={Boolean(errors.minimumLength)}
+                aria-describedby={
+                  errors.minimumLength
+                    ? "password-minimum-error password-rules-description"
+                    : "password-rules-description"
+                }
+                onChange={(event) =>
+                  changeSetting("minimumLength", event.target.value)
+                }
+              />
+              <FieldError id="password-minimum-error">
+                {errors.minimumLength}
+              </FieldError>
+            </Field>
+            <div className="min-w-0 space-y-1">
+              <Field>
+                <FieldLabel
+                  htmlFor="password-mixed-case"
+                  className="flex min-h-11 items-center gap-3 font-normal"
+                >
+                  <Checkbox
+                    id="password-mixed-case"
+                    checked={current.requireMixedCase}
+                    onCheckedChange={(value) =>
+                      changeSetting("requireMixedCase", value)
+                    }
+                  />
+                  <span>Require uppercase and lowercase letters</span>
+                </FieldLabel>
+              </Field>
+              <Field>
+                <FieldLabel
+                  htmlFor="password-number"
+                  className="flex min-h-11 items-center gap-3 font-normal"
+                >
+                  <Checkbox
+                    id="password-number"
+                    checked={current.requireNumber}
+                    onCheckedChange={(value) =>
+                      changeSetting("requireNumber", value)
+                    }
+                  />
+                  <span>Require a number</span>
+                </FieldLabel>
+              </Field>
+            </div>
+          </div>
+          <p
+            id="password-rules-description"
+            className="text-muted-foreground text-sm"
+          >
+            Use 12–128 characters. Common passwords are rejected. These rules
+            apply when a password is next set or changed; existing passwords
+            stay unchanged.
+          </p>
+        </fieldset>
         <SettingSelect
           id="session-timeout"
           label="Session timeout"
           value={current.timeout}
           error={errors.timeout}
           options={["15 minutes", "30 minutes", "60 minutes", "8 hours"]}
-          onChange={(value) => changeSetting("timeout", value)}
+          onChange={(value) =>
+            changeSetting(
+              "timeout",
+              value as SecuritySettingsFormFields["timeout"],
+            )
+          }
         />
         <div className="grid min-w-0 gap-3 sm:col-span-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
           <SettingSelect
@@ -534,7 +618,9 @@ export function SecurityPolicyForm({
               "Required for administrators",
               "Required for everyone",
             ]}
-            onChange={(value) => changeSetting("mfa", value)}
+            onChange={(value) =>
+              changeSetting("mfa", value as SecuritySettingsFormFields["mfa"])
+            }
             description="Required accounts must verify an authenticator before using the workspace."
           />
           <Button
@@ -546,22 +632,117 @@ export function SecurityPolicyForm({
             <KeyRound data-icon="inline-start" /> Manage MFA
           </Button>
         </div>
-        <div className="min-w-0 sm:col-span-2">
-          <SettingInput
-            id="ip-allow-list"
-            label="IP allow list"
-            value={current.ips}
-            onChange={(value) => changeSetting("ips", value)}
-            placeholder="192.0.2.0/24"
-            error={errors.ips ?? null}
-            description="Separate IP addresses or CIDR ranges with commas. An empty list allows all addresses. Include your current address to keep access."
-          />
-        </div>
+        <fieldset
+          className="min-w-0 space-y-3 sm:col-span-2"
+          aria-describedby="ip-allow-list-description"
+        >
+          <legend className="text-sm font-medium">IP allow list</legend>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <p
+              id="ip-allow-list-description"
+              className="text-muted-foreground min-w-0 flex-1 basis-64 text-sm"
+            >
+              An empty list allows all addresses. Include your current address
+              to keep access. You can add up to 100 addresses or ranges.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => void addMyAddress()}
+            >
+              Use my address
+            </Button>
+          </div>
+          {current.ips.length ? (
+            <ul
+              aria-label="Allowed addresses"
+              className="flex min-w-0 flex-wrap gap-2"
+            >
+              {Array.from(new Set(current.ips)).map((address) => (
+                <li key={address} className="max-w-full min-w-0">
+                  <Badge
+                    variant="outline"
+                    className="min-h-11 max-w-full gap-2 rounded-md py-0 pr-0 pl-3 font-normal"
+                  >
+                    <span className="min-w-0 break-all">{address}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="min-h-11 min-w-11 shrink-0"
+                      aria-label={`Remove ${address}`}
+                      onClick={() =>
+                        changeSetting(
+                          "ips",
+                          current.ips.filter((value) => value !== address),
+                        )
+                      }
+                    >
+                      <X aria-hidden="true" className="size-4" />
+                    </Button>
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              All addresses are allowed.
+            </p>
+          )}
+          {errors.ips ? (
+            <p role="alert" className="text-destructive text-sm">
+              {errors.ips}
+            </p>
+          ) : null}
+          <Field data-invalid={Boolean(errors.ipEntry)}>
+            <FieldLabel htmlFor="ip-entry">IP address or CIDR</FieldLabel>
+            <div className="flex min-w-0 flex-wrap gap-2">
+              <Input
+                id="ip-entry"
+                className="min-h-11 min-w-0 flex-1 basis-48"
+                value={current.ipEntry}
+                maxLength={64}
+                placeholder="192.0.2.0/24 or 2001:db8::/64"
+                aria-invalid={Boolean(errors.ipEntry)}
+                aria-describedby={
+                  errors.ipEntry
+                    ? "ip-entry-error ip-allow-list-description"
+                    : "ip-allow-list-description"
+                }
+                onChange={(event) =>
+                  changeSetting("ipEntry", event.target.value)
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addAddress();
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={!current.ipEntry.trim()}
+                onClick={addAddress}
+              >
+                Add address
+              </Button>
+            </div>
+            <FieldError id="ip-entry-error">{errors.ipEntry}</FieldError>
+          </Field>
+          {addressNotice ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              {addressNotice}
+            </p>
+          ) : null}
+        </fieldset>
       </div>
       <SettingActions
         dirty={dirty}
         onDiscard={() => clearDraft()}
-        onSave={() => saveSection()}
+        onSave={() => void saveSection()}
       />
     </form>
   );

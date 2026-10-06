@@ -1,6 +1,7 @@
 import {
   endAllAccessRemoteSessions,
   endAccessSession,
+  getAccessCallerIp,
   getAccessSecurityPolicy,
   listAccessSessions,
   updateAccessSecurityPolicy,
@@ -47,15 +48,20 @@ const list = {
   deleted: "exclude",
 } as const;
 
-// The frontend accepts only the policy values the settings screen can show.
+// Policy controls represent independent values, including non-preset combinations.
 const securityPolicy = {
   session_timeout_minutes: 30,
-  password_min_length: 12,
-  password_require_mixed_case: true,
-  password_require_number: false,
+  password_min_length: 13,
+  password_require_mixed_case: false,
+  password_require_number: true,
 };
 
 describeContracts("Access", [
+  {
+    name: "getAccessCallerIp",
+    run: () => getAccessCallerIp(),
+    responses: { "GET /api/workspace/security/caller-ip": { address: "::1" } },
+  },
   {
     name: "getAccessSecurityPolicy",
     run: () => getAccessSecurityPolicy(),

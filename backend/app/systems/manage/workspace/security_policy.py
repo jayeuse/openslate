@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 from ipaddress import IPv4Network, IPv6Address, IPv6Network, ip_address, ip_network
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -10,7 +11,9 @@ from sqlalchemy.orm import Session
 from app.core.integrations.supabase_auth import SupabaseAuthUnavailable
 from app.systems.manage.workspace.models import WorkspaceProfile
 
-PASSWORD_CHOICES = frozenset({(12, True, False), (16, True, True), (20, False, False)})
+COMMON_PASSWORDS = frozenset(
+    Path(__file__).with_name("common_passwords.txt").read_text(encoding="utf-8").splitlines()
+)
 MAX_IP_NETWORKS = 100
 _MAPPED_IPV4 = IPv6Network("::ffff:0:0/96")
 
@@ -54,6 +57,8 @@ def validate_password(profile: WorkspaceProfile, password: str) -> None:
         or (profile.password_require_number and not any(char.isdigit() for char in password))
     ):
         raise PasswordPolicyViolation("Password must contain " + ", ".join(requirements))
+    if password.casefold() in COMMON_PASSWORDS:
+        raise PasswordPolicyViolation("Choose a password that is not commonly used")
 
 
 def session_timeout(profile: WorkspaceProfile) -> timedelta:

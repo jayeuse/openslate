@@ -422,11 +422,26 @@ test("Security and recovery keeps policy drafts and protects the current session
   });
   await expect(saveSettings).toBeEnabled();
   await policy
-    .getByLabel("Password policy", { exact: true })
-    .selectOption("20-character passphrase");
+    .getByLabel("Minimum password length", { exact: true })
+    .fill("20");
   await policy
-    .getByLabel("IP allow list", { exact: true })
-    .fill("127.0.0.1, 192.0.2.0/24");
+    .getByRole("checkbox", {
+      name: "Require uppercase and lowercase letters",
+      exact: true,
+    })
+    .uncheck();
+  await policy
+    .getByLabel("IP address or CIDR", { exact: true })
+    .fill("127.0.0.1");
+  await policy
+    .getByRole("button", { name: "Add address", exact: true })
+    .click();
+  await policy
+    .getByLabel("IP address or CIDR", { exact: true })
+    .fill("192.0.2.0/24");
+  await policy
+    .getByRole("button", { name: "Add address", exact: true })
+    .click();
   await saveSettings.click();
   await expect(
     policy.getByRole("button", { name: "Discard changes", exact: true }),
@@ -586,31 +601,41 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
   ).toHaveValue("30 minutes");
   expect(state.policy.session_timeout_minutes).toBe(60);
   state.policyWriteFailure = { status: 409, code: "ip_lockout" };
+  const address = policy.getByLabel("IP address or CIDR", { exact: true });
+  await address.fill("192.0.2.0/24");
   await policy
-    .getByLabel("IP allow list", { exact: true })
-    .fill("192.0.2.0/24");
+    .getByRole("button", { name: "Add address", exact: true })
+    .click();
   await save.click();
   await expect(policy).toContainText(
     "The IP allow list would block your current address",
   );
-  await expect(policy.getByLabel("IP allow list", { exact: true })).toHaveValue(
-    "192.0.2.0/24",
-  );
+  await expect(
+    policy.getByRole("button", { name: "Remove 192.0.2.0/24", exact: true }),
+  ).toBeVisible();
   state.policyWriteFailure = { status: 422, code: "validation_error" };
   await policy
-    .getByLabel("IP allow list", { exact: true })
-    .fill("invalid-range");
+    .getByRole("button", { name: "Remove 192.0.2.0/24", exact: true })
+    .click();
+  await address.fill("198.51.100.0/24");
+  await policy
+    .getByRole("button", { name: "Add address", exact: true })
+    .click();
   await save.click();
   await expect(policy).toContainText(
     "Check the policy values and IP addresses",
   );
-  await expect(policy.getByLabel("IP allow list", { exact: true })).toHaveValue(
-    "invalid-range",
-  );
+  await expect(
+    policy.getByRole("button", { name: "Remove 198.51.100.0/24", exact: true }),
+  ).toBeVisible();
   state.policyWriteFailure = { status: 503, code: "unavailable" };
   await policy
-    .getByLabel("IP allow list", { exact: true })
-    .fill("127.0.0.1/32");
+    .getByRole("button", { name: "Remove 198.51.100.0/24", exact: true })
+    .click();
+  await address.fill("127.0.0.1/32");
+  await policy
+    .getByRole("button", { name: "Add address", exact: true })
+    .click();
   await save.click();
   await expect(policy).toContainText("The policy could not be saved");
   await expect(save).toBeEnabled();
@@ -1317,3 +1342,224 @@ test("dismissing self MFA releases ownership of a later gate enrollment on Back"
     });
   }
 });
+
+test("custom password rules and address chips save explicitly and reload independent values", async ({
+  page,
+}) => {
+  const state = await mockManageSecurity(page);
+  Object.assign(state.policy, {
+    password_min_length: 13,
+    password_require_mixed_case: false,
+    password_require_number: true,
+  });
+  await page.goto("/access?view=security");
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const policy = page.getByRole("dialog", {
+    name: "Account policy",
+    exact: true,
+  });
+  const minimum = policy.getByLabel("Minimum password length", { exact: true });
+  const mixed = policy.getByRole("checkbox", {
+    name: "Require uppercase and lowercase letters",
+    exact: true,
+  });
+  const number = policy.getByRole("checkbox", {
+    name: "Require a number",
+    exact: true,
+  });
+  const save = policy.getByRole("button", {
+    name: "Save settings",
+    exact: true,
+  });
+  await expect(minimum).toHaveValue("13");
+  await expect(mixed).not.toBeChecked();
+  await expect(number).toBeChecked();
+  await expect(policy).toContainText("when a password is next set or changed");
+  expect(state.callerReads).toBe(0);
+  await minimum.fill("17");
+  await minimum.fill("13");
+  await expect(save).toBeDisabled();
+  const entry = policy.getByLabel("IP address or CIDR", { exact: true });
+  await entry.fill("::1");
+  await entry.press("Enter");
+  await policy.getByRole("button", { name: "Remove ::1", exact: true }).click();
+  await expect(save).toBeDisabled();
+  await minimum.fill("17");
+  await mixed.check();
+  await number.uncheck();
+  await entry.fill("192.0.2.0/24");
+  await policy
+    .getByRole("button", { name: "Add address", exact: true })
+    .click();
+  const useAddress = policy.getByRole("button", {
+    name: "Use my address",
+    exact: true,
+  });
+  await useAddress.click();
+  await expect(
+    policy.getByRole("button", { name: "Remove 127.0.0.1", exact: true }),
+  ).toBeVisible();
+  await useAddress.click();
+  await expect(
+    policy.getByRole("button", { name: "Remove 127.0.0.1", exact: true }),
+  ).toHaveCount(1);
+  expect(state.callerReads).toBe(2);
+  expect(state.writes).toEqual([]);
+  await save.click();
+  await expect(save).toBeDisabled();
+  expect(state.policy).toMatchObject({
+    password_min_length: 17,
+    password_require_mixed_case: true,
+    password_require_number: false,
+    ip_allow_list: ["192.0.2.0/24", "127.0.0.1/32"],
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  await expect(minimum).toHaveValue("17");
+  await expect(mixed).toBeChecked();
+  await expect(number).not.toBeChecked();
+  await expect(
+    policy.getByRole("button", { name: "Remove 127.0.0.1/32", exact: true }),
+  ).toBeVisible();
+  await useAddress.click();
+  await expect(
+    policy.getByRole("button", { name: "Remove 127.0.0.1", exact: true }),
+  ).toHaveCount(0);
+  await expect(save).toBeDisabled();
+  state.callerAddress = "::ffff:7f00:1";
+  await useAddress.click();
+  await expect(
+    policy.getByRole("button", { name: "Remove ::ffff:7f00:1", exact: true }),
+  ).toHaveCount(0);
+  await expect(save).toBeDisabled();
+});
+
+test("invalid local policy and unavailable caller address retain the draft without writes or page errors", async ({
+  page,
+}) => {
+  const state = await mockManageSecurity(page);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/access?view=security");
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const policy = page.getByRole("dialog", {
+    name: "Account policy",
+    exact: true,
+  });
+  const minimum = policy.getByLabel("Minimum password length", { exact: true });
+  const save = policy.getByRole("button", {
+    name: "Save settings",
+    exact: true,
+  });
+  await minimum.fill("11");
+  await save.click();
+  await expect(minimum).toHaveAttribute("aria-invalid", "true");
+  await expect(policy).toContainText("whole number from 12 to 128");
+  await expect(minimum).toHaveValue("11");
+  const entry = policy.getByLabel("IP address or CIDR", { exact: true });
+  await entry.fill("invalid-range");
+  await policy
+    .getByRole("button", { name: "Add address", exact: true })
+    .click();
+  await expect(entry).toHaveAttribute("aria-invalid", "true");
+  await expect(policy).toContainText("valid IP address or CIDR range");
+  state.callerReadStatus = 503;
+  await policy
+    .getByRole("button", { name: "Use my address", exact: true })
+    .click();
+  await expect(policy).toContainText(
+    "Your current address could not be loaded",
+  );
+  await expect(minimum).toHaveValue("11");
+  await expect(entry).toHaveValue("invalid-range");
+  expect(state.writes).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  await policy
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(minimum).toHaveValue("12");
+  await expect(entry).toHaveValue("");
+  await expect(save).toBeDisabled();
+});
+
+for (const transition of ["same-account curtain", "new account"] as const) {
+  test(`a late caller address cannot edit the draft after ${transition}`, async ({
+    page,
+  }) => {
+    const security = await mockManageSecurity(page);
+    const identity = await mockMfa(page);
+    await page.route("**/api/users/me/preferences", (route) =>
+      route.fulfill({
+        json: {
+          user_id: identity.userId,
+          theme: "system",
+          appearance: { motion: "system", keyboard_shortcuts: true },
+        },
+      }),
+    );
+    const held = deferredMfaResponse();
+    let returned = () => {};
+    const responseReturned = new Promise<void>((resolve) => {
+      returned = resolve;
+    });
+    await page.route("**/api/workspace/security/caller-ip", async (route) => {
+      held.start();
+      await held.waiting;
+      try {
+        await route.fulfill({ json: { address: "192.0.2.90" } });
+      } finally {
+        returned();
+      }
+    });
+    await page.goto("/access?view=security");
+    await page
+      .getByRole("button", { name: "Edit policy", exact: true })
+      .click();
+    const policy = page.getByRole("dialog", {
+      name: "Account policy",
+      exact: true,
+    });
+    const minimum = policy.getByLabel("Minimum password length", {
+      exact: true,
+    });
+    await minimum.fill("17");
+    await policy
+      .getByRole("button", { name: "Use my address", exact: true })
+      .click();
+    await held.begun;
+    const recheck = deferredMfaResponse();
+    identity.holdSession = recheck;
+    if (transition === "new account") identity.userId = mfaUserB;
+    try {
+      await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+      await recheck.begun;
+      await expect(policy).toBeHidden();
+      recheck.release();
+      await expect(
+        page.getByRole("dialog", { name: "Session verification", exact: true }),
+      ).toBeHidden();
+      if (transition === "new account") {
+        await page
+          .getByRole("button", { name: "Edit policy", exact: true })
+          .click();
+        await expect(minimum).toHaveValue("12");
+        await minimum.fill("23");
+      } else await expect(minimum).toHaveValue("17");
+      held.release();
+      await responseReturned;
+      await expect(
+        policy.getByRole("button", { name: "Use my address", exact: true }),
+      ).toBeEnabled();
+      await expect(
+        policy.getByRole("button", { name: "Remove 192.0.2.90", exact: true }),
+      ).toHaveCount(0);
+      await expect(minimum).toHaveValue(
+        transition === "new account" ? "23" : "17",
+      );
+      expect(security.writes).toEqual([]);
+    } finally {
+      recheck.release();
+      held.release();
+    }
+  });
+}

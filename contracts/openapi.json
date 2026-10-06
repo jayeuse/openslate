@@ -13871,6 +13871,20 @@
         "title": "WorkspaceAppearanceResponse",
         "type": "object"
       },
+      "WorkspaceCallerIpResponse": {
+        "properties": {
+          "address": {
+            "format": "ipvanyaddress",
+            "title": "Address",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "title": "WorkspaceCallerIpResponse",
+        "type": "object"
+      },
       "WorkspaceGuestResponse": {
         "description": "Guests receive the common profile without any contact keys.",
         "properties": {
@@ -30423,6 +30437,32 @@
           }
         ],
         "summary": "Update Workspace Security",
+        "tags": [
+          "workspace"
+        ]
+      }
+    },
+    "/api/workspace/security/caller-ip": {
+      "get": {
+        "operationId": "get_workspace_caller_ip_api_workspace_security_caller_ip_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceCallerIpResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Workspace Caller Ip",
         "tags": [
           "workspace"
         ]

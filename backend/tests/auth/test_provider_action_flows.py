@@ -227,9 +227,44 @@ def test_recovery_preserves_sessions_when_provider_update_fails(failure: str) ->
     client.sign_out.assert_called_once_with("temporary-action", scope="local")
 
 
+@pytest.mark.parametrize("password", ["Password1234!", " Password1234 ", "xPassword1234x"])
+def test_password_change_preserves_unlisted_complete_candidate_before_provider_failure(
+    password: str,
+) -> None:
+    user, sessions, db, client = _password_update_failure_case("unavailable")
+    with pytest.raises(SupabaseAuthUnavailable):
+        provider_actions.change_password(
+            db,
+            user,
+            sessions[0].id,
+            "current-access",
+            "old password",
+            password,
+            client,
+            enforce_rate_limit=False,
+        )
+    client.update_password.assert_called_once_with("current-access", password)
+    _assert_password_failure_preserves_local_state(user, sessions, db)
+
+
 @pytest.mark.parametrize("kind", ["invite", "recovery", "change"])
+@pytest.mark.parametrize(
+    "minimum,mixed,number,password,message",
+    [
+        (16, True, True, "ShortPassword1", "16"),
+        (12, True, True, "Password1234", "common"),
+        (12, False, False, "PASSWORD1234", "common"),
+        (12, True, True, "Qwerty123456", "common"),
+    ],
+)
 def test_password_policy_rejects_before_consuming_action_or_mutating_provider(
-    monkeypatch: pytest.MonkeyPatch, kind: str
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    minimum: int,
+    mixed: bool,
+    number: bool,
+    password: str,
+    message: str,
 ) -> None:
     user, sessions, db, client = _password_update_failure_case("rejected")
     if kind == "invite":
@@ -246,13 +281,15 @@ def test_password_policy_rejects_before_consuming_action_or_mutating_provider(
             },
         )
     policy = WorkspaceProfile(
-        password_min_length=16, password_require_mixed_case=True, password_require_number=True
+        password_min_length=minimum,
+        password_require_mixed_case=mixed,
+        password_require_number=number,
     )
     monkeypatch.setattr(
         provider_actions, "load_workspace_policy", lambda _db: policy, raising=False
     )
 
-    with pytest.raises(ValueError, match="16"):
+    with pytest.raises(ValueError, match=message):
         if kind == "change":
             provider_actions.change_password(
                 db,
@@ -260,7 +297,7 @@ def test_password_policy_rejects_before_consuming_action_or_mutating_provider(
                 sessions[0].id,
                 "current-access",
                 "old password",
-                "ShortPassword1",
+                password,
                 client,
                 enforce_rate_limit=False,
             )
@@ -270,7 +307,7 @@ def test_password_policy_rejects_before_consuming_action_or_mutating_provider(
                 if kind == "invite"
                 else provider_actions.complete_recovery
             )
-            action(db, "a" * 56, "ShortPassword1", client)
+            action(db, "a" * 56, password, client)
 
     client.verify_email_action.assert_not_called()
     client.password_grant.assert_not_called()

@@ -50,6 +50,9 @@ export async function mockManageSecurity(page: Page) {
     })),
     sessionReads: [] as URLSearchParams[],
     policyReads: 0,
+    callerReads: 0,
+    callerAddress: "127.0.0.1",
+    callerReadStatus: 200,
     workspaceReads: 0,
     writes: [] as { path: string; body: unknown }[],
     policyReadStatus: 200,
@@ -98,6 +101,21 @@ export async function mockManageSecurity(page: Page) {
     }
     state.workspace.revision = state.policy.revision;
     await route.fulfill({ json: state.policy });
+  });
+  await page.route("**/api/workspace/security/caller-ip", async (route) => {
+    state.callerReads += 1;
+    await route.fulfill({
+      status: state.callerReadStatus,
+      json:
+        state.callerReadStatus === 200
+          ? { address: state.callerAddress }
+          : {
+              detail: {
+                code: "caller_address_unavailable",
+                message: "Current address unavailable",
+              },
+            },
+    });
   });
   await page.route("**/api/auth/admin-sessions**", async (route) => {
     if (route.request().method() === "DELETE") {

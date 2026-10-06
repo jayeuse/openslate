@@ -613,6 +613,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "getAccessCallerIp",
+    "method": "GET",
+    "path": "/api/workspace/security/caller-ip"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
     "function": "getAccessSecurityPolicy",
     "method": "GET",
     "path": "/api/workspace/security"

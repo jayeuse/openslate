@@ -15,7 +15,10 @@ CADDY_IMAGE = "caddy@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a77
 
 
 def render_gateway_config(
-    upstream_host: str = "host.docker.internal", listen_address: str = "0.0.0.0"
+    upstream_host: str = "host.docker.internal",
+    listen_address: str = "0.0.0.0",
+    *,
+    native_ipv6: bool = False,
 ) -> str:
     """Render the deployed gateway template for this disposable test topology."""
     if upstream_host not in {"127.0.0.1", "host.docker.internal"}:
@@ -23,8 +26,11 @@ def render_gateway_config(
     if listen_address not in {"127.0.0.1", "0.0.0.0"}:
         raise ValueError("test gateway listen address is not permitted")
     source = (ROOT / "infra/caddy/Caddyfile.template").read_text(encoding="utf-8")
+    if native_ipv6:
+        upstream_host, listen_address = "127.0.0.1", "::1"
+        source = source.replace("{\n", "{\n    skip_install_trust\n", 1)
     replacements = {
-        "{{PUBLIC_HOST}}": "localhost",
+        "{{PUBLIC_HOST}}": "[::1]" if native_ipv6 else "localhost",
         "{{LISTEN_ADDRESS}}": listen_address,
         "{{HTTPS_PORT}}": str(GATEWAY_PORT),
         "{{HEALTH_PORT}}": str(HEALTH_PORT),
@@ -42,10 +48,27 @@ def render_gateway_config(
 class DisposableCaddy:
     """Own a loopback-only Caddy gateway for one full-stack run."""
 
-    def __init__(self, private: Path, run_id: str, env: dict[str, str], log: IO[str]) -> None:
+    def __init__(
+        self,
+        private: Path,
+        run_id: str,
+        env: dict[str, str],
+        log: IO[str],
+        *,
+        native_ipv6: bool = False,
+    ) -> None:
         self.private = private
         self.run_id = run_id
-        self.env = env
+        self.native_ipv6 = native_ipv6
+        self.env = (
+            {
+                **env,
+                "XDG_DATA_HOME": str(private / "caddy-data"),
+                "XDG_CONFIG_HOME": str(private / "caddy-config"),
+            }
+            if native_ipv6
+            else env
+        )
         self.log = log
         self.container = f"openslate-caddy-e2e-{run_id}"
         self.image = f"openslate-caddy-e2e-{run_id}:local"
@@ -69,6 +92,8 @@ class DisposableCaddy:
 
     def start(self) -> None:
         native_binary = self.native_binary
+        if self.native_ipv6 and native_binary is None:
+            raise RuntimeError("IPv6 peer proof requires native Caddy; Docker fallback is refused")
         native = native_binary is not None
         linux_host_network = not native and sys.platform.startswith("linux")
         loopback_gateway = native or linux_host_network
@@ -76,6 +101,7 @@ class DisposableCaddy:
             render_gateway_config(
                 "127.0.0.1" if loopback_gateway else "host.docker.internal",
                 "127.0.0.1" if loopback_gateway else "0.0.0.0",
+                native_ipv6=self.native_ipv6,
             ),
             encoding="utf-8",
         )
@@ -84,6 +110,25 @@ class DisposableCaddy:
         self.config.chmod(0o644)
         if native:
             assert native_binary is not None
+            if self.native_ipv6:
+                adapted = self.private / "caddy-adapted.json"
+                with adapted.open("w") as output:
+                    adapted.chmod(0o600)
+                    subprocess.run(
+                        [
+                            native_binary,
+                            "adapt",
+                            "--config",
+                            str(self.config),
+                            "--adapter",
+                            "caddyfile",
+                        ],
+                        env=self.env,
+                        stdout=output,
+                        stderr=self.log,
+                        check=True,
+                        timeout=30,
+                    )
             subprocess.run(
                 [
                     native_binary,

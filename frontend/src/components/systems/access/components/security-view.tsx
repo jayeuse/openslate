@@ -43,10 +43,17 @@ import {
   defaultAccessSessionsRequest,
   endAccessSession,
   endAllAccessRemoteSessions,
+  getAccessCallerIp,
+  securityNetworkKey,
+  securitySettingsFormErrors,
   securitySettingsFormFields,
   securitySettingsPatch,
   updateAccessSecurityPolicy,
+  validSecurityNetwork,
+  type AccessSecurityPolicy,
   type AccessAdminSession,
+  type SecuritySettingsFormFields,
+  type SecuritySettingsFormErrors,
   type SecuritySettingsFormDraft,
 } from "../adapters/security-api";
 import {
@@ -90,6 +97,8 @@ export function SecurityView({
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [draftAcknowledged, setDraftAcknowledged] = useState(false);
   const [error, setError] = useState("");
+  const [formErrors, setFormErrors] = useState<SecuritySettingsFormErrors>({});
+  const [addressNotice, setAddressNotice] = useState("");
   const [notice, setNotice] = useState("");
   const mounted = useRef(false);
   const epoch = useRef(0);
@@ -121,6 +130,7 @@ export function SecurityView({
     : null;
   const securityDirty =
     securityPatch !== null ||
+    Boolean(securityDraft.ipEntry) ||
     (!securityQuery.data && Object.keys(securityDraft).length > 0);
 
   useLayoutEffect(() => {
@@ -192,6 +202,8 @@ export function SecurityView({
     setSecurityStale(false);
     setSecurityRefreshRequired(false);
     setError("");
+    setFormErrors({});
+    setAddressNotice("");
     setNotice("Unsaved changes discarded.");
     return true;
   }
@@ -237,16 +249,117 @@ export function SecurityView({
     },
     [onBusyChange, owns],
   );
-  function changeSetting(key: keyof SecuritySettingsFormDraft, value: string) {
-    if (!admission.current.admitted || operation.current || securityDenied)
+  function changeSetting<K extends keyof SecuritySettingsFormFields>(
+    key: K,
+    value: SecuritySettingsFormFields[K],
+  ) {
+    if (
+      !admission.current.active ||
+      !admission.current.admitted ||
+      operation.current ||
+      securityDenied
+    )
       return;
     setSecurityDraft((draft) => {
       const next = { ...draft, [key]: value };
-      if (securityFields && value === securityFields[key]) delete next[key];
+      if (
+        securityFields &&
+        JSON.stringify(value) === JSON.stringify(securityFields[key])
+      )
+        delete next[key];
       return next;
     });
     setNotice("");
     setError("");
+    setFormErrors((errors) => ({ ...errors, [key]: undefined }));
+    setAddressNotice("");
+  }
+  function addAddress() {
+    if (
+      !securityFields ||
+      operation.current ||
+      !admission.current.active ||
+      !admission.current.admitted ||
+      securityDenied
+    )
+      return;
+    const address = (securityDraft.ipEntry ?? "").trim();
+    if (!validSecurityNetwork(address)) {
+      setFormErrors((errors) => ({
+        ...errors,
+        ipEntry: "Enter a valid IP address or CIDR range.",
+      }));
+      return;
+    }
+    const ips = securityDraft.ips ?? securityFields.ips;
+    const duplicate = ips.some(
+      (value) => securityNetworkKey(value) === securityNetworkKey(address),
+    );
+    if (!duplicate && ips.length >= 100) {
+      setFormErrors((errors) => ({
+        ...errors,
+        ipEntry: "You can add up to 100 addresses or ranges.",
+      }));
+      return;
+    }
+    if (!duplicate) changeSetting("ips", [...ips, address]);
+    changeSetting("ipEntry", "");
+  }
+  async function addMyAddress() {
+    if (
+      !securityFields ||
+      securityDenied ||
+      securityQuery.isError ||
+      securityRefreshRequired
+    )
+      return;
+    const next = begin(false);
+    if (!next) return;
+    setError("");
+    setAddressNotice("");
+    try {
+      const { address } = await getAccessCallerIp(next.controller.signal);
+      if (!owns(next)) return;
+      const policy = queryClient.getQueryData<AccessSecurityPolicy>(
+        accessKeys.security(),
+      );
+      const ips =
+        securityDraft.ips ?? policy?.ip_allow_list ?? securityFields.ips;
+      const duplicate = ips.some(
+        (value) => securityNetworkKey(value) === securityNetworkKey(address),
+      );
+      if (!duplicate && ips.length >= 100) {
+        setError(
+          "You can add up to 100 addresses or ranges. Remove one before adding your address.",
+        );
+        return;
+      }
+      if (!duplicate) {
+        setSecurityDraft((draft) => ({ ...draft, ips: [...ips, address] }));
+      }
+      setAddressNotice(
+        duplicate
+          ? "Your address is already in the list."
+          : "Your address was added to the draft. Save settings to apply it.",
+      );
+    } catch (caught) {
+      if (!owns(next)) return;
+      if (
+        caught instanceof ApiError &&
+        (caught.status === 401 || caught.status === 403)
+      ) {
+        if (caught.status === 403) {
+          setAccessSecurityDenied(queryClient, "policy", true);
+          setAccessSecurityDenied(queryClient, "sessions", true);
+        }
+        requestSessionRecheck();
+      }
+      setError(
+        "Your current address could not be loaded. Your changes are still here; add an address manually or try again.",
+      );
+    } finally {
+      finish(next);
+    }
   }
   async function retrySecurity() {
     const next = begin(false);
@@ -325,9 +438,16 @@ export function SecurityView({
       securityRefreshRequired
     )
       return;
+    const validation = securitySettingsFormErrors({
+      ...securitySettingsFormFields(securityQuery.data),
+      ...securityDraft,
+    });
+    setFormErrors(validation);
+    if (Object.keys(validation).length > 0) return;
     const patch = securitySettingsPatch(securityQuery.data, securityDraft);
     if (!patch) {
       setSecurityDraft({});
+      setAddressNotice("");
       return;
     }
     const next = begin(true);
@@ -347,6 +467,8 @@ export function SecurityView({
       afterAccessSecurityChange(queryClient, saved);
       void queryClient.invalidateQueries({ queryKey: manageKeys.workspace() });
       setSecurityDraft({});
+      setFormErrors({});
+      setAddressNotice("");
       setSecurityStale(false);
       setSecurityRefreshRequired(false);
       setNotice("Account policy saved.");
@@ -522,7 +644,7 @@ export function SecurityView({
             </div>
             <p className="text-muted-foreground mt-1 text-sm">
               {securityFields
-                ? `${securityFields.mfa === "Optional" ? "Optional two-factor" : securityFields.mfa} · ${securityFields.timeout} timeout`
+                ? `${securityFields.minimumLength}-character password minimum · ${securityFields.mfa === "Optional" ? "Optional two-factor" : securityFields.mfa} · ${securityFields.timeout} timeout`
                 : securityQuery.isPending && !securityDenied
                   ? "Loading policy…"
                   : "Account policy unavailable"}
@@ -639,7 +761,10 @@ export function SecurityView({
                     ...securityFields,
                     ...securityDraft,
                   },
-                  errors: {},
+                  errors: formErrors,
+                  addAddress,
+                  addMyAddress,
+                  addressNotice,
                   saveSection,
                   clearDraft,
                   changeSetting,

@@ -142,8 +142,9 @@ def test_workspace_security_rejects_invalid_policies_and_admin_lockout_without_w
         {"session_timeout_minutes": None},
         {"password_min_length": 11},
         {"password_min_length": 129},
-        {"password_min_length": 13},
-        {"password_require_number": True},
+        {"password_min_length": True},
+        {"password_require_number": 1},
+        {"password_require_mixed_case": "true"},
         {"password_require_mixed_case": None},
         {"mfa_policy": "required"},
         {"mfa_policy": None},
@@ -193,6 +194,7 @@ def test_workspace_security_denies_demoted_admin_for_read_and_write(security_wor
         user.role = "member"
         db.commit()
     assert client.get("/api/workspace/security").status_code == 403
+    assert client.get("/api/workspace/security/caller-ip").status_code == 403
     assert (
         client.patch(
             "/api/workspace/security",
@@ -208,6 +210,75 @@ def test_workspace_security_denies_demoted_admin_for_read_and_write(security_wor
         assert profile is not None
         assert profile.revision == initial["revision"]
         assert profile.session_timeout_minutes == initial["session_timeout_minutes"]
+
+
+@pytest.mark.parametrize("minimum,mixed,number", [(13, False, True), (128, True, False)])
+def test_workspace_security_saves_independent_password_rules(
+    security_workspace, minimum: int, mixed: bool, number: bool
+):
+    client, _local_id, _owner = security_workspace
+    before = client.get("/api/workspace/security").json()
+    fields = {
+        "password_min_length": minimum,
+        "password_require_mixed_case": mixed,
+        "password_require_number": number,
+    }
+    saved = client.patch("/api/workspace/security", json={"revision": before["revision"], **fields})
+    assert saved.status_code == 200
+    after = saved.json()
+    assert {key: after[key] for key in fields} == fields
+    assert after["revision"] == before["revision"] + 1
+    assert client.get("/api/workspace/security").json() == after
+    # A partial toggle is independent too; unchanged values retain their revision-bound state.
+    toggled = client.patch(
+        "/api/workspace/security",
+        json={"revision": after["revision"], "password_require_number": not number},
+    )
+    assert toggled.status_code == 200
+    assert toggled.json()["password_require_number"] is not number
+    assert toggled.json()["password_min_length"] == minimum
+    assert toggled.json()["password_require_mixed_case"] is mixed
+
+
+def test_workspace_security_caller_ip_uses_authenticated_peer_without_policy_write(
+    security_workspace,
+):
+    client, _local_id, _owner = security_workspace
+    before = client.get("/api/workspace/security").json()
+    path = "/api/workspace/security/caller-ip"
+    response = client.get(path, headers={"X-Forwarded-For": "192.0.2.90"})
+    assert response.status_code == 200
+    assert response.json() == {"address": "127.0.0.1"}
+    assert response.headers["cache-control"] == "no-store"
+    assert client.get("/api/workspace/security").json() == before
+    with TestClient(client.app, base_url=get_settings().public_origin) as anonymous:
+        assert anonymous.get(path).status_code == 401
+    assert (
+        client.patch(
+            "/api/workspace/security",
+            json={"revision": before["revision"], "ip_allow_list": ["127.0.0.1"]},
+        ).status_code
+        == 200
+    )
+    with TestClient(
+        client.app, base_url=get_settings().public_origin, client=("192.0.2.90", 50000)
+    ) as excluded:
+        excluded.cookies.update(client.cookies)
+        denied = excluded.get(path, headers={"X-Forwarded-For": "127.0.0.1"})
+        assert denied.status_code == 403
+        assert denied.json()["detail"]["code"] == "ip_not_allowed"
+
+
+@pytest.mark.parametrize("peer", [None, ("not-an-address", 50000)])
+def test_workspace_security_caller_ip_reports_unavailable_peer(security_workspace, peer):
+    client, _local_id, _owner = security_workspace
+    before = client.get("/api/workspace/security").json()
+    with TestClient(client.app, base_url=get_settings().public_origin, client=peer) as unknown:
+        unknown.cookies.update(client.cookies)
+        response = unknown.get("/api/workspace/security/caller-ip")
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "caller_address_unavailable"
+    assert client.get("/api/workspace/security").json() == before
 
 
 def test_workspace_timeout_is_persisted_on_login_and_cached_browser_refresh(security_workspace):
