@@ -144,7 +144,8 @@ test("Cancel and route leave clean only the pending MFA factor, with truthful cl
     .getByRole("button", { name: "Retry cleanup", exact: true })
     .click();
   await expect.poll(() => state.actors.get(mfaUserA)?.factors.length).toBe(0);
-  await page.getByRole("link", { name: "Notifications", exact: true }).click();
+  await page.getByRole("button", { name: /^Notifications(?:,|$)/ }).click();
+  await page.getByRole("link", { name: "View all", exact: true }).click();
   await expect(page).toHaveURL(/\/platform\?section=notifications$/);
   await expect(
     page.getByRole("heading", { name: "Platform", exact: true }),
@@ -751,7 +752,8 @@ test("Security reads show recovery and denial without sample sessions", async ({
   await expect(
     page.getByRole("table", { name: "Sessions", exact: true }),
   ).toHaveCount(0);
-  await page.getByRole("link", { name: "Notifications", exact: true }).click();
+  await page.getByRole("button", { name: /^Notifications(?:,|$)/ }).click();
+  await page.getByRole("link", { name: "View all", exact: true }).click();
   // The organization draft above is unsaved, so leaving Manage asks first.
   await page
     .getByRole("alertdialog")

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 
 import { ApiError, apiFetch } from "@/lib/api";
-import { subscribeOpenViewInvalidations } from "../../openview/adapters/invalidation-events";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 
 const workspaceProfileSchema = z.object({
   id: z.uuid(),
@@ -93,7 +93,7 @@ export function subscribeWorkspaceLifecycleSettings(client: QueryClient) {
       () => client.invalidateQueries({ queryKey }),
     );
   };
-  const unsubscribe = subscribeOpenViewInvalidations((event) => {
+  const unsubscribe = subscribeWorkspaceInvalidations((event) => {
     if (event.type === "resync" || event.entity === "workspace_profiles")
       refresh();
   }, refresh);

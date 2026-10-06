@@ -5,7 +5,7 @@ import { ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { subscribeOpenViewInvalidations } from "@/components/systems/openview/adapters/invalidation-events";
+import { subscribeWorkspaceInvalidations } from "@/components/systems/shared/adapters/invalidation-events";
 import { invalidatesRecords } from "@/components/systems/openview/adapters/openview-queries";
 import {
   listOpenViewDataSourceFields,
@@ -115,7 +115,7 @@ export function ServerBoardRecordLinks(props: Props) {
   }, [busyChange]);
   useEffect(() => {
     const refresh = () => setListReload((value) => value + 1);
-    return subscribeOpenViewInvalidations((event) => {
+    return subscribeWorkspaceInvalidations((event) => {
       if (event.type === "resync") {
         refresh();
         return;

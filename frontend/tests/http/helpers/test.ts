@@ -19,6 +19,9 @@ export const test = base.extend({
     await context.route("**/api/auth/me", (route) =>
       route.fulfill({ json: defaultSignedInIdentity }),
     );
+    await context.route("**/api/notifications/unread-count", (route) =>
+      route.fulfill({ json: { unread_count: 0 } }),
+    );
     // Preferences are read under the verified session ID, which individual
     // journeys may override independently of this default navigation identity.
     // Only UUID paths and the approved light/dark command are supported.

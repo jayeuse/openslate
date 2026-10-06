@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiErrorMessage } from "@/lib/api-errors";
-import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 import {
   catalogFirstPageOptions,
   extendsRead,
@@ -203,7 +203,7 @@ export default function ServerBackedCharts() {
   // Applied snapshots are not cached reads; they refresh through this
   // counter. The catalog and fields refresh through OpenViewQuerySync.
   useEffect(() => {
-    return subscribeOpenViewInvalidations((event) => {
+    return subscribeWorkspaceInvalidations((event) => {
       if (event.type === "resync" || invalidatesRecords(event.entity))
         setInvalidationRevision((value) => value + 1);
     });

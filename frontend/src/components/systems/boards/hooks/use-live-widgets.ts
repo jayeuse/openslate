@@ -22,7 +22,7 @@ import {
   type OpenViewAggregateResult,
   type OpenViewAggregateSnapshotResult,
 } from "../../openview/adapters/analytics-api";
-import { subscribeOpenViewInvalidations } from "../../openview/adapters/invalidation-events";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 import { invalidatesRecords } from "../../openview/adapters/openview-queries";
 
 export type LiveWidgetData =
@@ -319,7 +319,7 @@ export function useLiveBoardWidgets(
   useEffect(() => {
     if (boardId === null || key === null) return;
     const refresh = () => setInvalidationKey((value) => value + 1);
-    return subscribeOpenViewInvalidations((event) => {
+    return subscribeWorkspaceInvalidations((event) => {
       if (event.type === "resync") {
         refresh();
         return;

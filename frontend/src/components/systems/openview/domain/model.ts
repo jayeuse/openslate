@@ -29,9 +29,12 @@ export type OpenViewUrlState = {
   view?: string;
   dashboard?: string;
   record?: string;
+  report?: string;
+  run?: string;
   /** Temporary View changes (`domain/temporary-view.ts`); never saved. */
   changes?: string;
   invalid?: boolean;
+  invalidReportSelection?: boolean;
 };
 
 export function parseOpenViewUrl(
@@ -44,6 +47,8 @@ export function parseOpenViewUrl(
   const recordValue = url.searchParams.get("record");
   const viewValue = url.searchParams.get("view");
   const dashboardValue = url.searchParams.get("dashboard");
+  const reportValue = url.searchParams.get("report");
+  const runValue = url.searchParams.get("run");
   const changesValue = url.searchParams.get("changes");
   const legacyRecordsSection = sectionValue === "records";
   const section = legacyRecordsSection
@@ -66,6 +71,13 @@ export function parseOpenViewUrl(
     invalid = true;
   for (const value of [recordValue, viewValue, dashboardValue])
     if (value && !safeIdentifier(value)) invalid = true;
+  const report = z.string().uuid().safeParse(reportValue);
+  const run = z.string().uuid().safeParse(runValue);
+  const invalidReportSelection =
+    section === "reports" &&
+    ((reportValue !== null && !report.success) ||
+      (runValue !== null && (!run.success || !report.success)));
+  if (invalidReportSelection) invalid = true;
   const record = safeIdentifier(recordValue);
   const result: ReturnType<typeof parseOpenViewUrl> = {
     section: record ? "views" : section,
@@ -82,12 +94,24 @@ export function parseOpenViewUrl(
   if (record) result.record = record;
   if (view) result.view = view;
   if (dashboard) result.dashboard = dashboard;
+  if (invalidReportSelection) result.invalidReportSelection = true;
+  if (result.section === "reports" && report.success)
+    result.report = report.data;
+  if (result.section === "reports" && report.success && run.success)
+    result.run = run.data;
   if (changesValue && result.section === "views") result.changes = changesValue;
   return result;
 }
 
 export function serializeOpenViewUrl(state: OpenViewUrlState): string {
   const parameters = new URLSearchParams();
+  if (state.report && !z.string().uuid().safeParse(state.report).success)
+    return "/openview";
+  if (
+    state.run &&
+    (!state.report || !z.string().uuid().safeParse(state.run).success)
+  )
+    return "/openview";
   if (state.record && !safeIdentifier(state.record)) return "/openview";
   if (state.view && !safeIdentifier(state.view)) return "/openview";
   if (state.dashboard && !safeIdentifier(state.dashboard)) return "/openview";
@@ -105,6 +129,10 @@ export function serializeOpenViewUrl(state: OpenViewUrlState): string {
   if (state.view) parameters.set("view", state.view);
   if (state.dashboard) parameters.set("dashboard", state.dashboard);
   if (state.record) parameters.set("record", state.record);
+  if (state.section === "reports" && state.report)
+    parameters.set("report", state.report);
+  if (state.section === "reports" && state.run)
+    parameters.set("run", state.run);
   if (state.changes && state.section === "views")
     parameters.set("changes", state.changes);
   const query = parameters.toString();

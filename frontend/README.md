@@ -19,7 +19,9 @@ child link to open a section. The selected section is encoded in each page's
 existing `view` or `section` query parameter, including `section` on Sandbox and
 Platform. Existing Platform account/notification hash links remain supported. Retired File library links resolve to Search until a real library is implemented.
 
-Live features share authenticated SSE invalidations through `subscribeOpenViewInvalidations`; events ask for authorized refetches and contain no row snapshots. OpenView Views, Charts, and Reports use the cache bridge, while Boards widgets/record links, Manage maintenance, and Platform connected notifications have their own consumers of that same stream.
+Live features share authenticated SSE invalidations through `subscribeWorkspaceInvalidations` in the shared adapter; events ask for authorized refetches and contain no row snapshots. The shell holds one notification listener across workspace routes, alongside the existing OpenView cache bridge, Boards, Manage and Platform Files listeners. When the stream is unavailable, an explicit focus fallback refreshes only the unread count; global focus/reconnect reads remain disabled.
+
+The bell uses the authoritative unread count and opens the latest ten notices. View all opens the cached, server-paged All/Unread inbox. Mark-one and read-all share a pending-command guard and explicitly refetch count/pages after confirmation. Displayed titles come from bounded authorized source reads, with safe retry or unavailable states; notification references retain no private content. Links open exact Board posts/events or `/openview?section=reports&report=<uuid>&run=<uuid>`. A run requires its Report, and Report-only links select that exact Report. Missing, denied or mismatched targets never open a default output.
 
 ## Shared interface contract
 

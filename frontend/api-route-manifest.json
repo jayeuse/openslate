@@ -73,15 +73,15 @@
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
-    "function": "listAccessUsers",
-    "method": "GET",
-    "path": "/api/users"
-  },
-  {
-    "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "listAccessUserSessions",
     "method": "GET",
     "path": "/api/users/{param}/sessions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "listAccessUsers",
+    "method": "GET",
+    "path": "/api/users"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
@@ -637,15 +637,15 @@
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
-    "function": "queryOpenViewAggregates",
-    "method": "POST",
-    "path": "/api/records/aggregate-query"
-  },
-  {
-    "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
     "function": "queryOpenViewAggregateSnapshot",
     "method": "POST",
     "path": "/api/records/aggregate-snapshot"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
+    "function": "queryOpenViewAggregates",
+    "method": "POST",
+    "path": "/api/records/aggregate-query"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
@@ -694,12 +694,6 @@
     "function": "listOpenViewDepartments",
     "method": "GET",
     "path": "/api/departments"
-  },
-  {
-    "adapter": "frontend/src/components/systems/openview/adapters/invalidation-events.ts",
-    "function": "subscribeOpenViewInvalidations",
-    "method": "GET",
-    "path": "/api/events"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
@@ -826,18 +820,6 @@
     "function": "updateOpenViewRecord",
     "method": "PATCH",
     "path": "/api/records/{param}"
-  },
-  {
-    "adapter": "frontend/src/components/systems/openview/adapters/report-notification-api.ts",
-    "function": "listOpenViewReportNotifications",
-    "method": "GET",
-    "path": "/api/notifications"
-  },
-  {
-    "adapter": "frontend/src/components/systems/openview/adapters/report-notification-api.ts",
-    "function": "markOpenViewReportNotificationRead",
-    "method": "POST",
-    "path": "/api/notifications/{param}/read"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/report-schedule-api.ts",
@@ -1270,6 +1252,36 @@
     "function": "previewSandboxLifecycle",
     "method": "POST",
     "path": "/api/modules/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/invalidation-events.ts",
+    "function": "subscribeWorkspaceInvalidations",
+    "method": "GET",
+    "path": "/api/events"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/notifications-api.ts",
+    "function": "getNotificationUnreadCount",
+    "method": "GET",
+    "path": "/api/notifications/unread-count"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/notifications-api.ts",
+    "function": "listNotifications",
+    "method": "GET",
+    "path": "/api/notifications"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/notifications-api.ts",
+    "function": "markAllNotificationsRead",
+    "method": "POST",
+    "path": "/api/notifications/read-all"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/notifications-api.ts",
+    "function": "markNotificationRead",
+    "method": "POST",
+    "path": "/api/notifications/{param}/read"
   },
   {
     "adapter": "frontend/src/lib/api.ts",

@@ -4,11 +4,11 @@
  * A change notice. `moduleId` names the module of a module-scoped change; the
  * server sends it only to users who can read that module.
  */
-export type OpenViewInvalidation =
+export type WorkspaceInvalidation =
   | { type: "resync" }
   | { type: "invalidate"; entity: string; moduleId?: string };
 
-type Listener = (event: OpenViewInvalidation) => void;
+type Listener = (event: WorkspaceInvalidation) => void;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -48,8 +48,9 @@ let stream: EventSource | null = null;
 // True once the open stream delivered its opening resync: from then on, no
 // server change can be missed.
 let connected = false;
+let available = false;
 
-function emit(event: OpenViewInvalidation) {
+function emit(event: WorkspaceInvalidation) {
   for (const listener of [...listeners]) listener(event);
 }
 
@@ -65,9 +66,11 @@ function openStream(): EventSource {
     if (firstResync) {
       firstResync = false;
       connected = true;
+      available = true;
       for (const listener of [...connectedListeners]) listener();
       return;
     }
+    available = true;
     emit({ type: "resync" });
   });
   source.addEventListener("invalidate", (event: Event) => {
@@ -76,6 +79,7 @@ function openStream(): EventSource {
     if (payload !== null) emit({ type: "invalidate", ...payload });
   });
   source.addEventListener("error", () => {
+    available = false;
     if (errorNotified) return;
     errorNotified = true;
     firstResync = false;
@@ -89,7 +93,7 @@ function openStream(): EventSource {
  * connected (at once if it already is): data read before that moment could
  * have missed a change, so a cache can refresh it then.
  */
-export function subscribeOpenViewInvalidations(
+export function subscribeWorkspaceInvalidations(
   onInvalidation: Listener,
   onConnected?: () => void,
 ): () => void {
@@ -103,6 +107,7 @@ export function subscribeOpenViewInvalidations(
   }
   if (!stream) {
     connected = false;
+    available = false;
     stream = openStream();
   }
 
@@ -113,6 +118,11 @@ export function subscribeOpenViewInvalidations(
       stream.close();
       stream = null;
       connected = false;
+      available = false;
     }
   };
+}
+
+export function isWorkspaceStreamAvailable(): boolean {
+  return stream !== null && available && stream.readyState === EventSource.OPEN;
 }

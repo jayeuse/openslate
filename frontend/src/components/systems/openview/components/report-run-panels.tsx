@@ -35,6 +35,50 @@ import { AvailableOutputsSkeleton } from "./openview-skeletons";
 
 export type ReportOutputAction = "download" | "print";
 
+export function SelectedReportRunPanel({
+  report,
+  run,
+  actionPending,
+  onOutputRun,
+}: {
+  report: OpenViewReport;
+  run: OpenViewReportRun;
+  actionPending: string;
+  onOutputRun: (
+    run: OpenViewReportRun,
+    reportName: string,
+    action: ReportOutputAction,
+  ) => void | Promise<void>;
+}) {
+  const dateLabel = formatReportRunDate(run.createdAt);
+  return (
+    <section aria-label="Selected output">
+      <Card>
+        <CardHeader>
+          <CardTitle>{report.name}</CardTitle>
+          <CardDescription>Selected output</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-muted-foreground text-sm">
+            <time dateTime={run.createdAt}>{dateLabel}</time> · Recipe version{" "}
+            {run.recipeRevision} · {run.rowCount}{" "}
+            {run.rowCount === 1 ? "row" : "rows"}
+          </p>
+          <ReportRunActions
+            run={run}
+            runName={report.name}
+            dateLabel={dateLabel}
+            actionPending={actionPending}
+            onOutputRun={(output, name, action) =>
+              onOutputRun(output, name, action)
+            }
+          />
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
 export function formatReportRunDate(value: string): string {
   return `${new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",

@@ -387,6 +387,15 @@ test("a returning tab conceals the old account before revalidation and ignores d
     });
   });
   await context.route("**/api/notifications**", async (route) => {
+    if (
+      new URL(route.request().url()).pathname ===
+      "/api/notifications/unread-count"
+    ) {
+      await route.fulfill({
+        json: { unread_count: activeUser === userA ? 1 : 0 },
+      });
+      return;
+    }
     const requestedUser = activeUser;
     if (holdNextNotice) {
       holdNextNotice = false;

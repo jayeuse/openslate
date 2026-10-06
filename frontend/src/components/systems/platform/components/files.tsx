@@ -28,7 +28,7 @@ import {
   manageKeys,
   manageWorkspaceOptions,
 } from "../../manage/adapters/manage-queries";
-import { subscribeOpenViewInvalidations } from "../../openview/adapters/invalidation-events";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 import {
   authMeOptions,
   extendsRead,
@@ -168,7 +168,7 @@ export default function Files() {
       refresh(authMeOptions().queryKey);
       refresh(manageKeys.workspace());
     };
-    const unsubscribe = subscribeOpenViewInvalidations((event) => {
+    const unsubscribe = subscribeWorkspaceInvalidations((event) => {
       if (event.type === "resync") return everyRead();
       if (event.entity === "files") refresh(platformKeys.libraryFiles);
       if (ACCESS_ENTITIES.has(event.entity)) {

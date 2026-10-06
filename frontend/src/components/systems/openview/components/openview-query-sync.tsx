@@ -6,7 +6,7 @@ import {
   type Query,
   type QueryKey,
 } from "@tanstack/react-query";
-import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 import {
   openViewKeys,
   openViewKeysForEntity,
@@ -41,7 +41,7 @@ export function OpenViewQuerySync({ active }: { active: boolean }) {
       ).then(() => client.invalidateQueries({ queryKey, predicate: matches }));
     };
     const everyRead = () => true;
-    const unsubscribe = subscribeOpenViewInvalidations(
+    const unsubscribe = subscribeWorkspaceInvalidations(
       (event) => {
         if (event.type === "resync") {
           refresh(openViewKeys.all, everyRead);

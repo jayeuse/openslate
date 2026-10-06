@@ -5,7 +5,6 @@ import {
   apiFetch,
   type ApiRequestInit,
 } from "@/lib/api";
-import type { OpenViewPage } from "./views-api";
 
 const uuidSchema = z.string().uuid();
 const utcTimestampSchema = z.iso
@@ -125,15 +124,12 @@ const listOptionsSchema = z
   .object({
     limit: z.number().int().min(1).max(100).default(25),
     offset: z.number().int().min(0).default(0),
+    status: z.literal("unread").optional(),
   })
   .strict();
 
-export type OpenViewReportNotification = z.output<
-  typeof wireNotificationSchema
->;
-export type OpenViewReportNotificationListOptions = z.input<
-  typeof listOptionsSchema
->;
+export type Notification = z.output<typeof wireNotificationSchema>;
+export type NotificationListOptions = z.input<typeof listOptionsSchema>;
 
 function throwSafeNotificationError(status: number, detail: unknown): never {
   if (status === 404 && detail === "Notification not found") {
@@ -155,30 +151,80 @@ async function safeNotificationJson<Schema extends z.ZodType>(
   }
 }
 
-export async function listOpenViewReportNotifications(
-  rawOptions: OpenViewReportNotificationListOptions = {},
-): Promise<OpenViewPage<OpenViewReportNotification>> {
+export async function listNotifications(
+  rawOptions: NotificationListOptions = {},
+  signal?: AbortSignal,
+): Promise<NotificationPage> {
   const options = listOptionsSchema.parse(rawOptions);
   const parameters = new URLSearchParams({
     limit: String(options.limit),
     offset: String(options.offset),
   });
-  return safeNotificationJson(
+  if (options.status) parameters.set("status", options.status);
+  const page = await safeNotificationJson(
     `/notifications?${parameters.toString()}`,
     wireNotificationListSchema,
-    { cache: "no-store" },
+    { cache: "no-store", signal },
   );
+  const { pagination } = page;
+  if (
+    pagination.limit !== options.limit ||
+    pagination.offset !== options.offset ||
+    pagination.count !== page.items.length ||
+    pagination.count > pagination.limit ||
+    (pagination.count > 0 &&
+      pagination.offset + pagination.count > pagination.total) ||
+    (pagination.hasMore && pagination.count === 0) ||
+    pagination.hasMore !==
+      pagination.offset + pagination.count < pagination.total ||
+    new Set(page.items.map((item) => item.id)).size !== page.items.length ||
+    (options.status === "unread" &&
+      page.items.some((item) => item.status !== "unread"))
+  )
+    throw new ApiContractError();
+  return page;
 }
 
-export async function markOpenViewReportNotificationRead(
+export async function markNotificationRead(
   rawNotificationId: string,
-): Promise<OpenViewReportNotification> {
+): Promise<Notification> {
   const notificationId = uuidSchema.parse(rawNotificationId);
   const notification = await safeNotificationJson(
     `/notifications/${encodeURIComponent(notificationId)}/read`,
     wireNotificationSchema,
     { method: "POST", cache: "no-store" },
   );
-  if (notification.id !== notificationId) throw new ApiContractError();
+  if (
+    notification.id !== notificationId ||
+    notification.status !== "read" ||
+    notification.readAt === null
+  )
+    throw new ApiContractError();
   return notification;
+}
+
+export type NotificationPage = z.output<typeof wireNotificationListSchema>;
+const countSchema = z
+  .object({ unread_count: z.number().int().min(0) })
+  .strict();
+const readAllSchema = z
+  .object({ updated_count: z.number().int().min(0) })
+  .strict();
+export async function getNotificationUnreadCount(
+  signal?: AbortSignal,
+): Promise<number> {
+  const result = await safeNotificationJson(
+    "/notifications/unread-count",
+    countSchema,
+    { cache: "no-store", signal },
+  );
+  return result.unread_count;
+}
+export async function markAllNotificationsRead(): Promise<number> {
+  const result = await safeNotificationJson(
+    "/notifications/read-all",
+    readAllSchema,
+    { method: "POST", cache: "no-store" },
+  );
+  return result.updated_count;
 }

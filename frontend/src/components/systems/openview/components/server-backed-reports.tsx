@@ -1,9 +1,12 @@
 "use client";
 
 import { MoreHorizontal, Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
+import type { Route } from "next";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
@@ -55,11 +58,17 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import {
+  useVerifiedWorkspaceUserId,
+  useWorkspaceInteractionSuspended,
+} from "../../shared/runtime/workspace-identity";
+import { serializeOpenViewUrl } from "../domain/model";
+import {
   archiveOpenViewReport,
   createOpenViewReport,
   createOpenViewReportRun,
   downloadOpenViewReportRunCsv,
   getOpenViewReport,
+  getOpenViewReportRun,
   getOpenViewReportConflict,
   listOpenViewReportRuns,
   listOpenViewReports,
@@ -106,6 +115,7 @@ import { canManageOpenView } from "../domain/manage-access";
 import {
   AvailableReportRunsPanel,
   SavedReportRunsPanel,
+  SelectedReportRunPanel,
   formatReportRunDate,
   type ReportOutputAction,
 } from "./report-run-panels";
@@ -147,8 +157,41 @@ function printFrozenCsv(printWindow: Window, csv: string, title: string): void {
   printWindow.print();
 }
 
-export default function ServerBackedReports() {
+export default function ServerBackedReports({
+  reportId,
+  runId,
+  invalidUrl = false,
+}: {
+  reportId?: string;
+  runId?: string;
+  invalidUrl?: boolean;
+}) {
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const verifiedUserId = useVerifiedWorkspaceUserId();
+  const suspended = useWorkspaceInteractionSuspended();
+  const actionOwner = useRef({
+    mounted: false,
+    userId: verifiedUserId,
+    suspended,
+  });
+  useLayoutEffect(() => {
+    actionOwner.current = { mounted: true, userId: verifiedUserId, suspended };
+    return () => {
+      actionOwner.current.mounted = false;
+    };
+  }, [verifiedUserId, suspended]);
+  const selectionSequence = useRef(0);
+  const localSelection = useRef<string | null>(null);
+  const [selectionRetry, setSelectionRetry] = useState(0);
+  const [target, setTarget] = useState<{
+    key: string;
+    loading: boolean;
+    reportError: string;
+    runError: string;
+    run: OpenViewReportRun | null;
+  } | null>(null);
+  const selectionKey = `${reportId ?? ""}:${runId ?? ""}:${invalidUrl}`;
   // A refusal of any cached OpenView read hides them all (openview-access.ts).
   const accessDenied = useOpenViewAccessDenied();
   const identityQuery = useQuery(authMeOptions());
@@ -207,6 +250,148 @@ export default function ServerBackedReports() {
 
   const dirty =
     reportDraftSignature(draft) !== reportDraftSignature(baselineDraft);
+  const currentEditor = useRef({ dirty, baselineReport, runId, suspended });
+  useLayoutEffect(() => {
+    currentEditor.current = { dirty, baselineReport, runId, suspended };
+  }, [dirty, baselineReport, runId, suspended]);
+
+  const applyReport = useCallback((report: OpenViewReport) => {
+    const nextDraft = reportDraftFrom(report);
+    setBaselineReport(report);
+    setDraft(nextDraft);
+    setBaselineDraft(nextDraft);
+    setRecipeEditorOpen(false);
+    setActiveReportTab("saved-outputs");
+    setRunsOffset(0);
+    setRuns([]);
+    setRunsTotal(0);
+    setRunsRefresh((current) => current + 1);
+    setError("");
+    setNotice("");
+    setStale(false);
+    runRetryRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    const sequence = ++selectionSequence.current;
+    if (suspended) return;
+    if (localSelection.current === selectionKey) {
+      localSelection.current = null;
+      return;
+    }
+    const editor = currentEditor.current;
+    if (
+      editor.dirty &&
+      editor.baselineReport?.id !== reportId &&
+      !window.confirm("Discard unsaved Report changes?")
+    ) {
+      router.replace(
+        serializeOpenViewUrl({
+          section: "reports",
+          report: editor.baselineReport?.id,
+        }) as Route,
+      );
+      return;
+    }
+    if (invalidUrl || !reportId) {
+      setTarget(null);
+      // A removed saved selection returns to the empty catalog. Intentional
+      // New/Copy drafts have no saved baseline and survive identity pauses.
+      if (editor.baselineReport) {
+        const empty = emptyReportDraft();
+        setDraft(empty);
+        setBaselineDraft(empty);
+        setRecipeEditorOpen(false);
+        setTemplateReportId("");
+        setActiveReportTab("saved-outputs");
+        setError("");
+        setNotice("");
+        setStale(false);
+        setRunsOffset(0);
+        setRunsError("");
+        runRetryRef.current = null;
+      }
+      setBaselineReport(null);
+      setRuns([]);
+      setRunsTotal(0);
+      return;
+    }
+    let active = true;
+    const owns = () =>
+      active &&
+      sequence === selectionSequence.current &&
+      !currentEditor.current.suspended;
+    setTarget({
+      key: selectionKey,
+      loading: true,
+      reportError: "",
+      runError: "",
+      run: null,
+    });
+    void (async () => {
+      try {
+        const report = await getOpenViewReport(reportId);
+        if (!owns()) return;
+        if (
+          !currentEditor.current.dirty ||
+          currentEditor.current.baselineReport?.id !== reportId
+        )
+          applyReport(report);
+        if (!runId) {
+          setTarget({
+            key: selectionKey,
+            loading: false,
+            reportError: "",
+            runError: "",
+            run: null,
+          });
+          return;
+        }
+        try {
+          const run = await getOpenViewReportRun(reportId, runId);
+          if (owns())
+            setTarget({
+              key: selectionKey,
+              loading: false,
+              reportError: "",
+              runError: "",
+              run,
+            });
+        } catch {
+          if (owns())
+            setTarget({
+              key: selectionKey,
+              loading: false,
+              reportError: "",
+              runError: "Selected output could not be loaded. Try again.",
+              run: null,
+            });
+        }
+      } catch {
+        if (!owns()) return;
+        setBaselineReport(null);
+        setTarget({
+          key: selectionKey,
+          loading: false,
+          reportError: "Selected Report could not be loaded. Try again.",
+          runError: "",
+          run: null,
+        });
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [
+    reportId,
+    runId,
+    invalidUrl,
+    selectionKey,
+    selectionRetry,
+    suspended,
+    router,
+    applyReport,
+  ]);
   const navigationGuard = useCallback(
     (href: string, resume: () => void) => {
       if (actionRef.current) return false;
@@ -485,26 +670,25 @@ export default function ServerBackedReports() {
     setActionPending("");
   }
 
+  function ownsActionResult(userId: string): boolean {
+    const owner = actionOwner.current;
+    return owner.mounted && owner.userId === userId && !owner.suspended;
+  }
+
   function openReport(report: OpenViewReport): void {
     if (
       actionRef.current ||
       (dirty && !window.confirm("Discard unsaved Report changes?"))
     )
       return;
-    const nextDraft = reportDraftFrom(report);
-    setBaselineReport(report);
-    setDraft(nextDraft);
-    setBaselineDraft(nextDraft);
-    setRecipeEditorOpen(false);
-    setActiveReportTab("saved-outputs");
-    setRunsOffset(0);
-    setRuns([]);
-    setRunsTotal(0);
-    setRunsRefresh((current) => current + 1);
-    setError("");
-    setNotice("");
-    setStale(false);
-    runRetryRef.current = null;
+    selectionSequence.current += 1;
+    applyReport(report);
+    setTarget(null);
+    localSelection.current =
+      selectionKey === `${report.id}::false` ? null : `${report.id}::false`;
+    router.push(
+      serializeOpenViewUrl({ section: "reports", report: report.id }) as Route,
+    );
   }
 
   function newReport(): void {
@@ -514,6 +698,10 @@ export default function ServerBackedReports() {
     )
       return;
     const nextDraft = emptyReportDraft();
+    selectionSequence.current += 1;
+    setTarget(null);
+    localSelection.current = selectionKey === "::false" ? null : "::false";
+    router.push(serializeOpenViewUrl({ section: "reports" }) as Route);
     setBaselineReport(null);
     setDraft(nextDraft);
     setBaselineDraft(nextDraft);
@@ -528,7 +716,9 @@ export default function ServerBackedReports() {
   }
 
   async function startFromSavedReport(reportId: string): Promise<void> {
+    const ownerId = verifiedUserId;
     if (
+      !ownsActionResult(ownerId) ||
       !reportId ||
       actionRef.current ||
       (dirty && !window.confirm("Discard unsaved Report changes?")) ||
@@ -537,12 +727,17 @@ export default function ServerBackedReports() {
       return;
     try {
       const source = await getOpenViewReport(reportId);
+      if (!ownsActionResult(ownerId)) return;
       if (source.isDeleted) {
         setError("Restore the saved Report before using it as a template.");
         return;
       }
       const nextDraft = reportDraftFrom(source);
       nextDraft.name = `Copy of ${source.name}`.slice(0, 80);
+      selectionSequence.current += 1;
+      setTarget(null);
+      localSelection.current = selectionKey === "::false" ? null : "::false";
+      router.push(serializeOpenViewUrl({ section: "reports" }) as Route);
       setBaselineReport(null);
       setDraft(nextDraft);
       setBaselineDraft(emptyReportDraft());
@@ -560,6 +755,7 @@ export default function ServerBackedReports() {
       );
       runRetryRef.current = null;
     } catch (reason) {
+      if (!ownsActionResult(ownerId)) return;
       setError(
         apiErrorMessage(
           reason,
@@ -567,7 +763,10 @@ export default function ServerBackedReports() {
         ),
       );
     } finally {
-      endAction();
+      // A paused current account may release its local pending guard without
+      // applying the response; abandoned accounts/routes own no cleanup UI.
+      if (actionOwner.current.mounted && actionOwner.current.userId === ownerId)
+        endAction();
     }
   }
 
@@ -648,7 +847,8 @@ export default function ServerBackedReports() {
 
   async function saveReport(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (!canEdit || !beginAction("save")) return;
+    const ownerId = verifiedUserId;
+    if (!ownsActionResult(ownerId) || !canEdit || !beginAction("save")) return;
     try {
       if (!draft.moduleId)
         throw new ReportDraftError("Choose a data source for this Report");
@@ -672,7 +872,19 @@ export default function ServerBackedReports() {
             ...input,
           })
         : await createOpenViewReport(input);
+      if (!ownsActionResult(ownerId)) return;
       const nextDraft = reportDraftFrom(saved);
+      if (saved.id !== reportId) {
+        selectionSequence.current += 1;
+        setTarget(null);
+        localSelection.current = `${saved.id}::false`;
+        router.push(
+          serializeOpenViewUrl({
+            section: "reports",
+            report: saved.id,
+          }) as Route,
+        );
+      }
       setBaselineReport(saved);
       setDraft(nextDraft);
       setBaselineDraft(nextDraft);
@@ -687,6 +899,7 @@ export default function ServerBackedReports() {
       setNotice(baselineReport ? "Report saved." : "Report created.");
       runRetryRef.current = null;
     } catch (reason) {
+      if (!ownsActionResult(ownerId)) return;
       const conflict = getOpenViewReportConflict(reason);
       setStale(Boolean(conflict));
       setError(
@@ -699,7 +912,8 @@ export default function ServerBackedReports() {
               )),
       );
     } finally {
-      endAction();
+      if (actionOwner.current.mounted && actionOwner.current.userId === ownerId)
+        endAction();
     }
   }
 
@@ -920,6 +1134,13 @@ export default function ServerBackedReports() {
   const showReportSummary = Boolean(
     baselineReport || hasDraftContent || recipeEditorOpen,
   );
+  const currentTarget = target?.key === selectionKey ? target : null;
+  const selectionUnavailable =
+    invalidUrl ||
+    Boolean(
+      reportId &&
+      (currentTarget?.reportError || baselineReport?.id !== reportId),
+    );
   const summaryName =
     draft.name.trim() || (baselineReport ? baselineReport.name : "New Report");
   const summarySource =
@@ -1009,6 +1230,42 @@ export default function ServerBackedReports() {
         </div>
 
         <div className="flex min-w-0 flex-col gap-6">
+          {invalidUrl ? (
+            <Alert role="alert" variant="destructive">
+              This Report link is invalid.
+            </Alert>
+          ) : null}
+          {currentTarget?.loading ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              Loading selected Report output…
+            </p>
+          ) : null}
+          {currentTarget?.reportError ? (
+            <Alert role="alert" variant="destructive">
+              {currentTarget.reportError}
+              <Button
+                type="button"
+                variant="outline"
+                className="ml-3 min-h-11"
+                onClick={() => setSelectionRetry((value) => value + 1)}
+              >
+                Retry selected Report
+              </Button>
+            </Alert>
+          ) : null}
+          {currentTarget?.runError ? (
+            <Alert role="alert" variant="destructive">
+              {currentTarget.runError}
+              <Button
+                type="button"
+                variant="outline"
+                className="ml-3 min-h-11"
+                onClick={() => setSelectionRetry((value) => value + 1)}
+              >
+                Retry selected output
+              </Button>
+            </Alert>
+          ) : null}
           {/* A refusal hides the opened Report too; the draft stays in
               state and returns once an authorized read succeeds. */}
           {accessDenied ? (
@@ -1017,7 +1274,7 @@ export default function ServerBackedReports() {
               retry.
             </Alert>
           ) : null}
-          {accessDenied ? null : showReportSummary ? (
+          {accessDenied || selectionUnavailable ? null : showReportSummary ? (
             <Card className="min-w-0 self-stretch">
               <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
@@ -1166,7 +1423,21 @@ export default function ServerBackedReports() {
             </Card>
           )}
 
-          {!accessDenied && baselineReport && !baselineReport.isDeleted ? (
+          {!accessDenied &&
+          !selectionUnavailable &&
+          baselineReport &&
+          currentTarget?.run ? (
+            <SelectedReportRunPanel
+              report={baselineReport}
+              run={currentTarget.run}
+              actionPending={actionPending}
+              onOutputRun={outputRun}
+            />
+          ) : null}
+          {!accessDenied &&
+          !selectionUnavailable &&
+          baselineReport &&
+          !baselineReport.isDeleted ? (
             <Tabs
               value={activeReportTab}
               onValueChange={setActiveReportTab}

@@ -4,7 +4,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { flushSync } from "react-dom";
 import type { Route } from "next";
 import {
-  Bell,
   Search,
   LogOut,
   Menu,
@@ -25,6 +24,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { NotificationBell } from "@/components/systems/platform/components/notification-bell";
 import { AppNavigation } from "@/components/app-navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import {
@@ -428,6 +428,7 @@ export function AppShell({
                 <AppBreadcrumbs />
               </div>
               <AppHeaderActions
+                verifiedUserId={verifiedUserId}
                 accountOpen={accountOpen}
                 onAccountOpenChange={setAccountOpen}
                 onLogout={logout}
@@ -580,10 +581,12 @@ function AppSidebarFooter({
 }
 
 function AppHeaderActions({
+  verifiedUserId,
   accountOpen,
   onAccountOpenChange,
   onLogout,
 }: {
+  verifiedUserId: string | null;
   accountOpen: boolean;
   onAccountOpenChange: (open: boolean) => void;
   onLogout: () => Promise<void>;
@@ -609,14 +612,7 @@ function AppHeaderActions({
         <Search className="size-4" aria-hidden="true" />
         <span className="hidden sm:inline">Search workspace…</span>
       </GuardedWorkspaceLink>
-      <GuardedWorkspaceLink
-        href={"/platform?section=notifications" as Route}
-        aria-label="Notifications"
-        title="Notifications"
-        className="hover:bg-muted grid size-11 place-items-center rounded-md"
-      >
-        <Bell className="size-4" aria-hidden="true" />
-      </GuardedWorkspaceLink>
+      <NotificationBell accountId={verifiedUserId} />
       <DropdownMenu open={accountOpen} onOpenChange={onAccountOpenChange}>
         <DropdownMenuTrigger
           render={

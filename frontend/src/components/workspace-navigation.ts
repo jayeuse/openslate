@@ -231,6 +231,12 @@ function paramsFor(
         const view = searchParams.get("view");
         if (view) params.set("view", view);
       }
+      if (itemId === "reports") {
+        for (const key of ["report", "run"]) {
+          const value = searchParams.get(key);
+          if (value) params.set(key, value);
+        }
+      }
       if (itemId === "dashboards") {
         const dashboard = searchParams.get("dashboard");
         if (dashboard) params.set("dashboard", dashboard);

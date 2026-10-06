@@ -32,7 +32,7 @@ import {
   workspaceCalendarQueryOptions,
   type WorkspaceCalendarSettings,
 } from "../../manage/adapters/workspace-api";
-import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 
 const WINDOW_PAGE_SIZE = 25;
 const DAY_MILLISECONDS = 24 * 60 * 60 * 1000;
@@ -458,7 +458,7 @@ export function LiveCalendar(props: LiveCalendarProps) {
         cold.map((query) => query.cancel({ revert: true })),
       ).then(() => client.invalidateQueries({ queryKey }));
     };
-    return subscribeOpenViewInvalidations((event) => {
+    return subscribeWorkspaceInvalidations((event) => {
       if (event.type === "resync" || event.entity === "workspace_profiles")
         refreshSettings();
     }, refreshSettings);

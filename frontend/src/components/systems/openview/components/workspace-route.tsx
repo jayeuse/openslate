@@ -29,7 +29,14 @@ function OpenViewRouteContent() {
     );
   else if (section === "charts") content = <ServerBackedCharts />;
   else if (section === "dashboards") content = <ServerBackedDashboards />;
-  else if (section === "reports") content = <ServerBackedReports />;
+  else if (section === "reports")
+    content = (
+      <ServerBackedReports
+        reportId={urlState.report}
+        runId={urlState.run}
+        invalidUrl={Boolean(urlState.invalidReportSelection)}
+      />
+    );
   else
     content = (
       <div className="flex min-w-0 flex-col gap-5">

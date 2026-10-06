@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
-import { subscribeOpenViewInvalidations } from "../../openview/adapters/invalidation-events";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 import {
   afterManageBackupPolicyChange,
   afterManageBackupQueue,
@@ -95,7 +95,7 @@ export function useManageMaintenance({
         cold.map((query) => query.cancel({ revert: true })),
       ).then(() => client.invalidateQueries({ queryKey }));
     };
-    const unsubscribe = subscribeOpenViewInvalidations(
+    const unsubscribe = subscribeWorkspaceInvalidations(
       (event) => {
         if (event.type === "resync") {
           refresh(manageKeys.maintenance());

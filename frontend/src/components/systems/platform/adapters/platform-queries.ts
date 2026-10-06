@@ -1,4 +1,8 @@
-import { queryOptions, type QueryClient } from "@tanstack/react-query";
+import {
+  queryOptions,
+  type QueryClient,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import {
   authMeOptions,
@@ -10,6 +14,14 @@ import type { AccessDepartment } from "../../access/state/api-contracts";
 import { loadAllAccessPages } from "../../access/state/pagination";
 
 import { listAccountSessions } from "./account-api";
+import {
+  getNotificationUnreadCount,
+  listNotifications,
+  type Notification,
+} from "../../shared/adapters/notifications-api";
+import { getOpenViewReport } from "../../openview/adapters/reports-api";
+import { readBoard } from "../../boards/adapters/board-management-api";
+import { readBoardEvent } from "../../boards/adapters/board-events-api";
 import {
   libraryFileDefaults,
   listLibraryFiles,
@@ -156,6 +168,10 @@ export function prefetchPlatformSection(
 ): void {
   const url = new URL(href, "http://platform.invalid");
   if (url.pathname !== "/platform" || !accountId) return;
+  if (url.searchParams.get("section") === "notifications") {
+    void client.prefetchQuery(notificationPageOptions("all", 25));
+    return;
+  }
   if (url.searchParams.get("section") === "account") {
     void client.prefetchQuery(accountSessionsOptions(accountId));
     return;
@@ -179,4 +195,211 @@ export function prefetchPlatformSection(
     void client.prefetchQuery(
       libraryFilesOptions(department.id, libraryFileDefaults),
     );
+}
+
+export const notificationKeys = {
+  all: ["platform", "notifications"] as const,
+  count: ["platform", "notifications", "count"] as const,
+  pages: ["platform", "notifications", "pages"] as const,
+  page: (status: "all" | "unread", limit: number, offset = 0) =>
+    ["platform", "notifications", "pages", status, limit, offset] as const,
+  titles: ["platform", "notifications", "titles"] as const,
+};
+const notificationRefusalKey = ["platform-notification-refusal"] as const;
+const notificationCommandKey = ["platform-notification-command"] as const;
+type NotificationReadState = {
+  sequence: number;
+  latestSuccess: number;
+  deniedAt: number | null;
+};
+const notificationReads = new WeakMap<QueryClient, NotificationReadState>();
+const notificationAccounts = new WeakMap<QueryClient, boolean>();
+
+// The shell commits this boundary synchronously with the privacy curtain.
+// Commands may outlive an inbox, but never the verified account's client.
+export function setNotificationAccountAvailable(
+  client: QueryClient,
+  available: boolean,
+): void {
+  notificationAccounts.set(client, available);
+}
+export function isNotificationAccountAvailable(client: QueryClient): boolean {
+  return notificationAccounts.get(client) === true;
+}
+
+export function notificationReadRefused(error: unknown): error is ApiError {
+  return error instanceof ApiError && [401, 403].includes(error.status);
+}
+export const notificationRefusalOptions = () =>
+  queryOptions({
+    queryKey: notificationRefusalKey,
+    queryFn: async () => false,
+    enabled: false,
+    initialData: false,
+    gcTime: Infinity,
+  });
+export const notificationCommandOptions = () =>
+  queryOptions({
+    queryKey: notificationCommandKey,
+    queryFn: async (): Promise<string | null> => null,
+    enabled: false,
+    initialData: null,
+    gcTime: Infinity,
+  });
+export function beginNotificationCommand(
+  client: QueryClient,
+  command: string,
+): boolean {
+  if (client.getQueryData(notificationCommandKey)) return false;
+  client.setQueryData(notificationCommandKey, command);
+  return true;
+}
+export function endNotificationCommand(client: QueryClient): void {
+  client.setQueryData(notificationCommandKey, null);
+}
+export function refuseNotificationReads(
+  client: QueryClient,
+  error = new ApiError(403, "Request could not be completed"),
+): void {
+  let state = notificationReads.get(client);
+  if (!state) {
+    state = { sequence: 0, latestSuccess: 0, deniedAt: null };
+    notificationReads.set(client, state);
+  }
+  const deniedAt = ++state.sequence;
+  state.deniedAt = deniedAt;
+  const refusedState = state;
+  client.setQueryData(notificationRefusalKey, true);
+  void client.cancelQueries({ queryKey: notificationKeys.all }).then(() => {
+    if (refusedState.deniedAt === deniedAt)
+      recordPageDenial(client, [notificationKeys.all], error);
+  });
+}
+async function trackNotificationRead<Value>(
+  client: QueryClient,
+  read: () => Promise<Value>,
+  signal: AbortSignal,
+): Promise<Value> {
+  let state = notificationReads.get(client);
+  if (!state) {
+    state = { sequence: 0, latestSuccess: 0, deniedAt: null };
+    notificationReads.set(client, state);
+  }
+  const startedAt = ++state.sequence;
+  try {
+    const value = await read();
+    if (signal.aborted) throw new DOMException("Read cancelled", "AbortError");
+    state.latestSuccess = Math.max(state.latestSuccess, startedAt);
+    if (state.deniedAt === null || startedAt > state.deniedAt) {
+      state.deniedAt = null;
+      client.setQueryData(notificationRefusalKey, false);
+    }
+    return value;
+  } catch (error) {
+    if (
+      !signal.aborted &&
+      notificationReadRefused(error) &&
+      state.latestSuccess <= startedAt
+    ) {
+      state.deniedAt = Math.max(state.deniedAt ?? 0, startedAt);
+      refuseNotificationReads(client, error);
+    }
+    throw error;
+  }
+}
+export const notificationCountOptions = () =>
+  queryOptions({
+    queryKey: notificationKeys.count,
+    queryFn: ({ client, signal }) =>
+      trackNotificationRead(
+        client,
+        () => getNotificationUnreadCount(signal),
+        signal,
+      ),
+  });
+export const notificationPageOptions = (
+  status: "all" | "unread",
+  limit: number,
+  offset = 0,
+) =>
+  queryOptions({
+    queryKey: notificationKeys.page(status, limit, offset),
+    queryFn: ({ client, signal }) =>
+      trackNotificationRead(
+        client,
+        () =>
+          listNotifications(
+            { limit, offset, ...(status === "unread" ? { status } : {}) },
+            signal,
+          ),
+        signal,
+      ),
+    // Opening an observed inbox/popover rechecks current visibility while
+    // retaining this account's last good page during transient failures.
+    staleTime: 0,
+  });
+export async function refreshNotificationReads(
+  client: QueryClient,
+  queryKey: QueryKey = notificationKeys.all,
+): Promise<void> {
+  const cold = client
+    .getQueryCache()
+    .findAll({ queryKey, fetchStatus: "fetching" })
+    .filter((query) => query.state.data === undefined);
+  await Promise.all(cold.map((query) => query.cancel({ revert: true })));
+  await client.invalidateQueries({ queryKey });
+}
+export async function resetNotificationPages(
+  client: QueryClient,
+): Promise<void> {
+  await client.cancelQueries({ queryKey: notificationKeys.pages });
+  recordPageDenial(
+    client,
+    [notificationKeys.pages],
+    new ApiError(404, "Notification not found"),
+  );
+  await client.invalidateQueries({
+    queryKey: notificationKeys.pages,
+    predicate: (query) => query.queryKey[5] === 0,
+  });
+  await client.invalidateQueries({ queryKey: notificationKeys.count });
+}
+
+export function notificationTitleOptions(item: Notification) {
+  const source =
+    item.kind === "report-run"
+      ? ["report", item.reportId]
+      : item.kind === "post-publish"
+        ? ["board", item.boardId]
+        : ["event", item.boardId, item.eventId];
+  return queryOptions({
+    queryKey: [...notificationKeys.titles, ...source],
+    queryFn: async ({ client, signal }): Promise<{ title: string }> => {
+      try {
+        const title =
+          item.kind === "report-run"
+            ? (await getOpenViewReport(item.reportId)).name
+            : item.kind === "post-publish"
+              ? (await readBoard(item.boardId)).name
+              : (await readBoardEvent(item.boardId, item.eventId)).title;
+        if (signal.aborted)
+          throw new DOMException("Read cancelled", "AbortError");
+        return { title };
+      } catch (error) {
+        if (
+          !signal.aborted &&
+          error instanceof ApiError &&
+          [401, 403, 404].includes(error.status)
+        ) {
+          // A source refusal hides only this title. Reconcile recipient
+          // visibility without treating OpenView's access latch as the inbox.
+          void client.invalidateQueries({ queryKey: notificationKeys.pages });
+          void client.invalidateQueries({ queryKey: notificationKeys.count });
+        }
+        throw error;
+      }
+    },
+    staleTime: 0,
+    gcTime: 0,
+  });
 }

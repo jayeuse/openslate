@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { ApiContractError, ApiError } from "../../../src/lib/api";
 import {
-  listOpenViewReportNotifications,
-  markOpenViewReportNotificationRead,
-} from "../../../src/components/systems/openview/adapters/report-notification-api";
+  listNotifications,
+  markNotificationRead,
+} from "../../../src/components/systems/shared/adapters/notifications-api";
 
 const notificationId = "00000000-0000-4000-8000-000000000201";
 const otherNotificationId = "00000000-0000-4000-8000-000000000202";
@@ -70,12 +70,12 @@ test("lists current-user notification references with bounded paging and no cach
     jsonResponse({
       items: [wireNotification()],
       pagination: String(input).includes("limit=5")
-        ? { ...pagination, limit: 5, offset: 10 }
+        ? { ...pagination, limit: 5, offset: 10, total: 11 }
         : pagination,
     }),
   );
   try {
-    const page = await listOpenViewReportNotifications();
+    const page = await listNotifications();
     expect(page).toEqual({
       items: [
         {
@@ -104,7 +104,7 @@ test("lists current-user notification references with bounded paging and no cach
     );
     expect(mock.requests[0]?.init?.cache).toBe("no-store");
 
-    const laterPage = await listOpenViewReportNotifications({
+    const laterPage = await listNotifications({
       limit: 5,
       offset: 10,
     });
@@ -123,9 +123,7 @@ test("marks one notification read without a body or inferred report authority", 
     jsonResponse(wireNotification({ status: "read", read_at: timestamp })),
   );
   try {
-    await expect(
-      markOpenViewReportNotificationRead(notificationId),
-    ).resolves.toEqual({
+    await expect(markNotificationRead(notificationId)).resolves.toEqual({
       id: notificationId,
       kind: "report-run",
       subjectType: "report_run",
@@ -184,7 +182,7 @@ test("accepts reference-only Board post and Event reminder variants", async () =
     }),
   );
   try {
-    const result = await listOpenViewReportNotifications();
+    const result = await listNotifications();
     expect(result.items).toEqual([
       {
         id: notificationId,
@@ -222,18 +220,10 @@ test("accepts reference-only Board post and Event reminder variants", async () =
 test("rejects invalid paging and IDs before a request", async () => {
   const mock = installFetch(() => jsonResponse({ items: [], pagination }));
   try {
-    await expect(
-      listOpenViewReportNotifications({ limit: 101 }),
-    ).rejects.toThrow();
-    await expect(
-      listOpenViewReportNotifications({ offset: -1 }),
-    ).rejects.toThrow();
-    await expect(
-      listOpenViewReportNotifications({ offset: 0.5 }),
-    ).rejects.toThrow();
-    await expect(
-      markOpenViewReportNotificationRead("not-a-uuid"),
-    ).rejects.toThrow();
+    await expect(listNotifications({ limit: 101 })).rejects.toThrow();
+    await expect(listNotifications({ offset: -1 })).rejects.toThrow();
+    await expect(listNotifications({ offset: 0.5 })).rejects.toThrow();
+    await expect(markNotificationRead("not-a-uuid")).rejects.toThrow();
     expect(mock.requests).toHaveLength(0);
   } finally {
     mock.restore();
@@ -297,13 +287,13 @@ test("rejects malformed or mismatched private notification response data", async
   const mock = installFetch(() => jsonResponse(responses.shift()));
   try {
     while (responses.length > 1) {
-      await expect(listOpenViewReportNotifications()).rejects.toBeInstanceOf(
+      await expect(listNotifications()).rejects.toBeInstanceOf(
         ApiContractError,
       );
     }
-    await expect(
-      markOpenViewReportNotificationRead(notificationId),
-    ).rejects.toBeInstanceOf(ApiContractError);
+    await expect(markNotificationRead(notificationId)).rejects.toBeInstanceOf(
+      ApiContractError,
+    );
   } finally {
     mock.restore();
   }
@@ -316,14 +306,12 @@ test("does not expose untrusted server error text", async () => {
   ];
   const mock = installFetch(() => responses.shift()!);
   try {
-    await expect(
-      markOpenViewReportNotificationRead(notificationId),
-    ).rejects.toMatchObject({
+    await expect(markNotificationRead(notificationId)).rejects.toMatchObject({
       status: 404,
       message: "Notification not found",
     });
     try {
-      await listOpenViewReportNotifications();
+      await listNotifications();
       throw new Error("Expected a safe API error");
     } catch (error) {
       expect(error).toBeInstanceOf(ApiError);
