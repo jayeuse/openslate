@@ -5,6 +5,8 @@ import sys
 from uuid import uuid4
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
@@ -63,8 +65,11 @@ def test_file_cleanup_origin_is_nullable_internal_column_with_named_fail_closed_
                 )
             ).one()
             assert tuple(column) == ("YES", None, 30)
+            config = Config()
+            config.set_main_option("script_location", "migrations")
             assert (
-                connection.scalar(text("SELECT version_num FROM alembic_version")) == "bbd3b29fc017"
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == ScriptDirectory.from_config(config).get_current_head()
             )
         subprocess.run([sys.executable, "-m", "alembic", "check"], env=environment, check=True)
     finally:
@@ -125,8 +130,10 @@ def test_stored_origin_rejects_every_nonadmitted_shape(bad, migration_actor):
 
 def test_upgrade_preserves_legacy_inventory_and_downgrade_refuses_pending_origin(migration_actor):
     environment = guarded_migration_environment()
-    run_alembic(environment, "downgrade", PREVIOUS)
     engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
+    with engine.connect() as connection:
+        current_revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+    run_alembic(environment, "downgrade", PREVIOUS)
     identity = uuid4()
     try:
         with engine.begin() as connection:
@@ -160,7 +167,8 @@ def test_upgrade_preserves_legacy_inventory_and_downgrade_refuses_pending_origin
             run_alembic(environment, "downgrade", PREVIOUS)
         with engine.begin() as connection:
             assert (
-                connection.scalar(text("SELECT version_num FROM alembic_version")) == "bbd3b29fc017"
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == current_revision
             )
             assert (
                 connection.scalar(

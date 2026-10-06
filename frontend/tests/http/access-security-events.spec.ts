@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./helpers/test";
+import { person } from "./helpers/access-api";
 import { deferredMfaResponse, mfaUserA, mfaUserB } from "./helpers/mfa";
 import {
   eventOperationId,
@@ -969,3 +970,42 @@ for (const mode of ["light", "dark"] as const) {
     }
   });
 }
+
+test("13b: unchanged Events person picker consumes the complete extended later-page catalog", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  for (let index = 0; index < 110; index += 1) {
+    const id = `00000000-0000-4000-8000-${String(700 + index).padStart(12, "0")}`;
+    state.directory.push(
+      person({ id, username: `later${String(index).padStart(3, "0")}` }),
+    );
+  }
+  const late = "00000000-0000-4000-8000-000000000999";
+  state.directory.push(
+    person({
+      id: late,
+      username: "zzz_event_person",
+      display_name: "Zzz Event Person",
+    }),
+  );
+  state.events = [
+    securityEvent(30, {
+      actor_id: late,
+      subject_id: null,
+      occurred_at: "2026-10-06T12:30:00Z",
+    }),
+  ];
+  await openFeed(page);
+  const controls = await filters(page);
+  await controls.getByLabel("Person", { exact: true }).click();
+  await page
+    .getByRole("option", { name: "Zzz Event Person", exact: true })
+    .click();
+  await expect.poll(() => state.reads.at(-1)?.get("person_id")).toBe(late);
+  await expect(feed(page)).toContainText("1 event");
+  expect(state.userQueries.some((query) => query.get("offset") === "100")).toBe(
+    true,
+  );
+  expect(state.commands).toEqual([]);
+});

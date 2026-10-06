@@ -50,6 +50,7 @@ export async function mockManageSecurity(page: Page) {
       user_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
       person_name,
       user_agent: index === 6 ? null : `${browser} test agent`,
+      ip_address: null as string | null,
       device,
       browser,
       created_at: "2026-10-01T01:00:00Z",

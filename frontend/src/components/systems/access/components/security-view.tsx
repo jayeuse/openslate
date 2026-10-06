@@ -36,6 +36,7 @@ import {
   accessKeys,
   accessSecurityOptions,
   afterAccessAdminSessionsChange,
+  afterAccessMfaObservation,
   afterAccessSecurityChange,
   isAccessSecurityDenied,
   setAccessSecurityDenied,
@@ -117,6 +118,12 @@ export function SecurityView({
   );
   const refusalRechecked = useRef(false);
   const mfa = useMfaFlow();
+  const mfaFactorId = mfa.credentials?.id ?? null;
+  const observedMfa = useRef({
+    userId,
+    status: mfa.status,
+    factorId: mfaFactorId,
+  });
   const cancelMfa = mfa.cancel;
   const securityDenied = isAccessSecurityDenied(queryClient, "policy");
   const sessionsDenied = isAccessSecurityDenied(queryClient, "sessions");
@@ -159,6 +166,27 @@ export function SecurityView({
       operation.current = null;
     };
   }, []);
+  useEffect(() => {
+    if (!active || !admitted) return;
+    const previous = observedMfa.current;
+    observedMfa.current = { userId, status: mfa.status, factorId: mfaFactorId };
+    if (previous.userId !== userId) return;
+    const acceptedStatus =
+      mfa.status?.user_id === userId && mfa.status !== previous.status;
+    const acceptedEnrollment =
+      mfa.status?.user_id === userId &&
+      mfaFactorId !== null &&
+      mfaFactorId !== previous.factorId;
+    // The existing controller clears both values after accepted verification,
+    // before its fresh status read, which may fail. A cancel retains status.
+    const acceptedVerification =
+      previous.status?.user_id === userId &&
+      previous.factorId !== null &&
+      mfaFactorId === null &&
+      mfa.status === null;
+    if (acceptedStatus || acceptedEnrollment || acceptedVerification)
+      void afterAccessMfaObservation(queryClient);
+  }, [active, admitted, mfa.status, mfaFactorId, queryClient, userId]);
   useEffect(
     () =>
       registerWorkspaceSessionClear(userId, () => {

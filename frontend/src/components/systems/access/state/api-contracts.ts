@@ -46,6 +46,17 @@ export const userSchema = z.strictObject({
   performed_by: uuid.nullable(),
 });
 
+/** GET /api/users only: local inventory and last accepted MFA observation. */
+export const directoryUserSchema = userSchema.extend({
+  active_session_count: z.number().int().nonnegative(),
+  mfa_verified_totp: z.boolean().nullable(),
+  mfa_observed_at: dateTime.nullable(),
+});
+export const userSummarySchema = z.strictObject({
+  admins_without_mfa: z.number().int().nonnegative(),
+  admins_mfa_unknown: z.number().int().nonnegative(),
+});
+
 /** `users/schemas.py` InvitationResponse. */
 export const invitationSchema = z.strictObject({
   user: userSchema,
@@ -96,6 +107,7 @@ export const sessionSchema = z.strictObject({
   expires_at: dateTime,
   user_agent: z.string().nullable(),
   current: z.boolean(),
+  ip_address: z.string().nullable(),
 });
 
 /**
@@ -247,6 +259,8 @@ export type AccessPage<Item> = {
 export type AccessVersioned<Data> = { data: Data; etag: string };
 
 export type AccessUser = z.output<typeof userSchema>;
+export type AccessDirectoryUser = z.output<typeof directoryUserSchema>;
+export type AccessUserSummary = z.output<typeof userSummarySchema>;
 export type AccessInvitationResponse = z.output<typeof invitationSchema>;
 export type AccessInvitationCreate = z.input<typeof invitationCreateSchema>;
 export type AccessUserPatch = z.input<typeof userPatchSchema>;
@@ -278,8 +292,14 @@ export type StandardListOptions<SortBy extends string> = RequestOptions & {
 };
 
 export type AccessUserListOptions = StandardListOptions<
-  "email" | "username" | "created_at" | "updated_at"
-> & { role?: AccessUserRole };
+  "email" | "username" | "created_at" | "updated_at" | "name" | "expires_at"
+> & {
+  role?: AccessUserRole;
+  status?: "pending" | "active" | "disabled" | "expired" | "ending";
+  group_id?: string;
+  department_id?: string;
+  mfa?: "without" | "unknown";
+};
 export type AccessGroupListOptions = StandardListOptions<
   "name" | "created_at" | "updated_at"
 >;

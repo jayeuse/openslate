@@ -7,6 +7,7 @@ import {
 } from "@/lib/api";
 import {
   departmentSchema,
+  directoryUserSchema,
   groupAccessReplaceSchema,
   groupCreateSchema,
   groupMembersReplaceSchema,
@@ -23,7 +24,9 @@ import {
   userAccessSchema,
   userPatchSchema,
   userSchema,
+  userSummarySchema,
   type AccessDepartment,
+  type AccessDirectoryUser,
   type AccessDepartmentListOptions,
   type AccessGroup,
   type AccessGroupAccessEntry,
@@ -45,6 +48,7 @@ import {
   type AccessUserAccess,
   type AccessUserListOptions,
   type AccessUserPatch,
+  type AccessUserSummary,
   type AccessVersioned,
   type RequestOptions,
   type StandardListOptions,
@@ -111,12 +115,28 @@ function groupPath(groupId: string): string {
 
 export function listAccessUsers(
   options: AccessUserListOptions = {},
-): Promise<AccessPage<AccessUser>> {
+): Promise<AccessPage<AccessDirectoryUser>> {
   return apiFetch(
-    queryPath("/users", { ...listValues(options), role: options.role }),
-    pageSchema(userSchema),
+    queryPath("/users", {
+      ...listValues(options),
+      role: options.role,
+      status: options.status,
+      group_id: options.group_id,
+      department_id: options.department_id,
+      mfa: options.mfa,
+    }),
+    pageSchema(directoryUserSchema),
     { cache: "no-store", signal: options.signal },
   );
+}
+
+export function getAccessUserSummary(
+  options: RequestOptions = {},
+): Promise<AccessUserSummary> {
+  return apiFetch("/users/summary", userSummarySchema, {
+    cache: "no-store",
+    signal: options.signal,
+  });
 }
 
 export function getAccessUser(

@@ -206,6 +206,17 @@
             "title": "Id",
             "type": "string"
           },
+          "ip_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip Address"
+          },
           "person_name": {
             "title": "Person Name",
             "type": "string"
@@ -238,6 +249,7 @@
           "refreshed_at",
           "expires_at",
           "user_agent",
+          "ip_address",
           "current",
           "user_id",
           "person_name",
@@ -317,6 +329,17 @@
             "title": "Id",
             "type": "string"
           },
+          "ip_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip Address"
+          },
           "refreshed_at": {
             "format": "date-time",
             "title": "Refreshed At",
@@ -340,6 +363,7 @@
           "refreshed_at",
           "expires_at",
           "user_agent",
+          "ip_address",
           "current"
         ],
         "title": "AdminSessionResponse",
@@ -3311,6 +3335,175 @@
           "config"
         ],
         "title": "DesignField",
+        "type": "object"
+      },
+      "DirectoryRowResponse": {
+        "properties": {
+          "active_session_count": {
+            "minimum": 0.0,
+            "title": "Active Session Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invitation_sent_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invitation Sent At"
+          },
+          "is_deleted": {
+            "title": "Is Deleted",
+            "type": "boolean"
+          },
+          "job_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Title"
+          },
+          "mfa_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Observed At"
+          },
+          "mfa_verified_totp": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Verified Totp"
+          },
+          "performed_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Performed By"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "sponsor_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sponsor User Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "username",
+          "status",
+          "role",
+          "display_name",
+          "job_title",
+          "sponsor_user_id",
+          "expires_at",
+          "invitation_sent_at",
+          "created_at",
+          "updated_at",
+          "deleted_at",
+          "is_deleted",
+          "performed_by",
+          "active_session_count",
+          "mfa_verified_totp",
+          "mfa_observed_at"
+        ],
+        "title": "DirectoryRowResponse",
         "type": "object"
       },
       "DocumentReplaceRequest": {
@@ -12465,7 +12658,7 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/UserResponse"
+              "$ref": "#/components/schemas/DirectoryRowResponse"
             },
             "title": "Items",
             "type": "array"
@@ -12819,7 +13012,9 @@
           "email",
           "username",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "name",
+          "expires_at"
         ],
         "title": "UserSortField",
         "type": "string"
@@ -12832,6 +13027,27 @@
         ],
         "title": "UserStatus",
         "type": "string"
+      },
+      "UserSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "admins_mfa_unknown": {
+            "minimum": 0.0,
+            "title": "Admins Mfa Unknown",
+            "type": "integer"
+          },
+          "admins_without_mfa": {
+            "minimum": 0.0,
+            "title": "Admins Without Mfa",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "admins_without_mfa",
+          "admins_mfa_unknown"
+        ],
+        "title": "UserSummaryResponse",
+        "type": "object"
       },
       "UserUpdate": {
         "additionalProperties": false,
@@ -29069,6 +29285,87 @@
               ],
               "title": "Role"
             }
+          },
+          {
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "const": "none",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "department_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Department Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pending",
+                    "active",
+                    "disabled",
+                    "expired",
+                    "ending"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mfa",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "without",
+                    "unknown"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mfa"
+            }
           }
         ],
         "responses": {
@@ -29143,6 +29440,32 @@
           }
         ],
         "summary": "Create User",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/summary": {
+      "get": {
+        "operationId": "user_summary_api_users_summary_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "User Summary",
         "tags": [
           "users"
         ]

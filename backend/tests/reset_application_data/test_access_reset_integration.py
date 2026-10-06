@@ -132,6 +132,12 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                 ),
             )
             cursor.execute(
+                "INSERT INTO public.identity_mfa_observations "
+                "(user_id, observed_provider_user_id, verified_totp, observed_at) "
+                "VALUES (%s, %s, true, now()), (%s, %s, false, now())",
+                (admin_id, admin_provider_id, member_id, member_provider_id),
+            )
+            cursor.execute(
                 "INSERT INTO public.identity_rate_limit_buckets "
                 "(fingerprint, attempt_count, window_started_at) "
                 "VALUES (%s, 1, now()), (%s, 1, now())",
@@ -231,7 +237,12 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
         plan = reset.build_reset_plan(
             database, admin_email, storage_object_keys=storage.list_object_keys()
         )
+        with database.cursor() as cursor:
+            cursor.execute("SELECT id FROM public.users")
+            original_profile_ids = set(cursor.fetchall())
+        assert {(admin_id,), (member_id,), (guest_id,)} <= original_profile_ids
         assert plan.backup_snapshot == read_backup_snapshot(database)
+        assert plan.counts["identity_mfa_observations"] >= 2
         assert plan.counts["backup_runs"] == 4
         # Commit an unresolved claim after preview, then prove both preview and the
         # post-advisory-lock guard refuse before any provider deletion for all states.
@@ -308,7 +319,7 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                 )
         with database.cursor() as cursor:
             cursor.execute("SELECT id FROM public.users ORDER BY id")
-            assert set(cursor.fetchall()) == {(admin_id,), (member_id,), (guest_id,)}
+            assert set(cursor.fetchall()) == original_profile_ids
             for table_name in ("groups", "group_members", "group_access"):
                 cursor.execute(f"SELECT count(*) FROM public.{table_name}")
                 assert cursor.fetchone() == (1,)
@@ -337,6 +348,8 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
             assert cursor.fetchall() == [(admin_id,)]
             cursor.execute("SELECT count(*) FROM public.identity_sessions")
             assert cursor.fetchone() == (0,)
+            cursor.execute("SELECT count(*) FROM public.identity_mfa_observations")
+            assert cursor.fetchone() == (0,)
             cursor.execute("SELECT count(*) FROM public.identity_rate_limit_buckets")
             assert cursor.fetchone() == (0,)
             cursor.execute("SELECT count(*) FROM public.lifecycle_rate_limit_buckets")
@@ -364,6 +377,11 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                 "Reset Administrator",
                 "Operations",
             )
+            cursor.execute(
+                "SELECT supabase_user_id, status, is_deleted FROM public.users WHERE id = %s",
+                (admin_id,),
+            )
+            assert cursor.fetchone() == (admin_provider_id, "active", False)
             assert preserved_profile[5:] == (
                 plan.profile_snapshot.invitation_sent_at,
                 plan.profile_snapshot.invitation_accepted_at,

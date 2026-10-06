@@ -1,6 +1,7 @@
 """Import all ORM models so runtime metadata and relationship mappings are complete."""
 
 from app.systems.access.identity.models import (  # noqa: F401
+    IdentityMfaObservation,
     IdentityRateLimitBucket,
     IdentitySession,
 )

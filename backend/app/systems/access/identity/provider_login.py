@@ -65,7 +65,9 @@ def login_with_provider(
         append_representative_failure(db, "identity.sign_in_failure", source, now=timestamp)
         raise InvalidCredentials("Invalid credentials") from error
     try:
-        issued = admit_provider_session(db, tokens, client, user_agent=user_agent)
+        issued = admit_provider_session(
+            db, tokens, client, user_agent=user_agent, ip_address=canonical_source(source)
+        )
     except InvalidCredentials:
         if fingerprint is not None:
             rate_limits.record_attempt(

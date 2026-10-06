@@ -1,5 +1,6 @@
 import { expect, test } from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
+import { mockAccessApi, person, created } from "./helpers/access-api";
 import {
   concealMfaTestCredentials,
   deferredMfaResponse,
@@ -1862,3 +1863,214 @@ for (const transition of ["same-account curtain", "new account"] as const) {
     }
   });
 }
+
+for (const width of [1440, 390])
+  test(`13b: organization sessions show sign-in IP metadata at ${width}px without changing caller-IP controls`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    const state = await mockManageSecurity(page);
+    state.sessions[0].ip_address = "198.51.100.101";
+    state.sessions[1].ip_address = "2001:db8::102";
+    state.sessions[2].ip_address = null;
+    await page.goto("/access?view=security");
+    const sessions =
+      width === 390
+        ? page.getByRole("region", { name: "Active sessions", exact: true })
+        : page.getByRole("table", { name: "Sessions", exact: true });
+    await expect(sessions).toContainText("Sign-in IP: 198.51.100.101");
+    await expect(sessions).toContainText("Sign-in IP: 2001:db8::102");
+    await expect(sessions).toContainText("Sign-in IP: Unknown");
+    await expect(
+      page.getByRole("button", { name: "End session for Eli", exact: true }),
+    ).toBeEnabled();
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <=
+          document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+  });
+
+for (const observation of ["status", "enrollment", "verification"] as const)
+  test(`13b: cached People and Overview refresh immediately after accepted self MFA ${observation}`, async ({
+    page,
+  }) => {
+    const enrollmentRecordedAt = "2026-10-06T12:30:00Z";
+    const api = await mockAccessApi(page);
+    api.users.set(
+      mfaUserA,
+      person({
+        id: mfaUserA,
+        username: "actor",
+        display_name: "Monitoring Actor",
+        role: "admin",
+      }),
+    );
+    api.monitoring.set(mfaUserA, {
+      active_session_count: 1,
+      mfa_verified_totp: observation === "status" ? null : false,
+      mfa_observed_at: observation === "status" ? null : created,
+    });
+    const auth = await mockMfa(page);
+    await mockManageSecurity(page);
+    page.on("response", async (response) => {
+      const request = response.request();
+      const path = new URL(request.url()).pathname;
+      if (!response.ok()) return;
+      if (path === "/api/auth/mfa" && request.method() === "GET") {
+        const status: unknown = await response.json();
+        if (
+          typeof status === "object" &&
+          status !== null &&
+          "user_id" in status &&
+          status.user_id === mfaUserA &&
+          "factors" in status &&
+          Array.isArray(status.factors)
+        )
+          api.monitoring.set(mfaUserA, {
+            active_session_count: 1,
+            mfa_verified_totp: status.factors.some(
+              (factor: unknown) =>
+                typeof factor === "object" &&
+                factor !== null &&
+                "factor_type" in factor &&
+                factor.factor_type === "totp" &&
+                "status" in factor &&
+                factor.status === "verified",
+            ),
+            mfa_observed_at: created,
+          });
+      } else if (
+        path === "/api/auth/mfa/factors" &&
+        request.method() === "POST"
+      ) {
+        api.monitoring.set(mfaUserA, {
+          active_session_count: 1,
+          mfa_verified_totp: false,
+          mfa_observed_at: enrollmentRecordedAt,
+        });
+      } else if (
+        path.endsWith("/verification") &&
+        request.method() === "POST"
+      ) {
+        api.monitoring.set(mfaUserA, {
+          active_session_count: 1,
+          mfa_verified_totp: true,
+          mfa_observed_at: created,
+        });
+      } else if (
+        path.startsWith("/api/auth/mfa/factors/") &&
+        request.method() === "DELETE"
+      ) {
+        api.monitoring.set(mfaUserA, {
+          active_session_count: 1,
+          mfa_verified_totp: null,
+          mfa_observed_at: created,
+        });
+      }
+    });
+    const returnToPeople = async () => {
+      await page.getByRole("link", { name: "People", exact: true }).click();
+      return page
+        .getByRole("table", { name: "People", exact: true })
+        .getByRole("row", { name: /Monitoring Actor/ });
+    };
+    const manageMfa = async () => {
+      await page
+        .getByRole("button", { name: "Edit policy", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "Manage MFA", exact: true })
+        .click();
+      return page.getByRole("dialog", { name: "MFA enrollment", exact: true });
+    };
+    if (observation !== "status") {
+      await page.goto("/access?view=security");
+      const prime = await manageMfa();
+      await expect(
+        prime.getByRole("button", {
+          name: "Set up authenticator",
+          exact: true,
+        }),
+      ).toBeEnabled();
+      await page.keyboard.press("Escape");
+      await page.getByRole("link", { name: "People", exact: true }).click();
+    } else await page.goto("/access?view=people");
+    await expect(
+      page
+        .getByRole("table", { name: "People", exact: true })
+        .getByRole("row", { name: /Monitoring Actor/ }),
+    ).toContainText(observation === "status" ? "Unknown" : "Not verified");
+    await page.getByRole("link", { name: "Overview", exact: true }).click();
+    const card = page.getByRole("region", {
+      name: "Administrator MFA",
+      exact: true,
+    });
+    await expect(
+      card.getByText(observation === "status" ? "2 unknown" : "1 unknown", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    const summaryReadsBefore = api.summaryReads;
+    if (observation !== "status") auth.statusFailure = 503;
+    await page
+      .getByRole("link", { name: "Sign-in & security", exact: true })
+      .click();
+    const dialog = await manageMfa();
+    await expect(
+      dialog.getByRole("button", { name: "Set up authenticator", exact: true }),
+    ).toBeEnabled();
+    if (observation !== "status") {
+      await dialog
+        .getByRole("button", { name: "Set up authenticator", exact: true })
+        .click();
+      await expect(
+        dialog.getByLabel("Verification code", { exact: true }),
+      ).toBeVisible();
+      if (observation === "verification") {
+        auth.statusFailure = 503;
+        await dialog
+          .getByLabel("Verification code", { exact: true })
+          .fill("123456");
+        await dialog
+          .getByRole("button", { name: "Verify code", exact: true })
+          .click();
+        await expect(dialog).toContainText(
+          "Verification succeeded, but updated MFA settings could not be loaded.",
+        );
+      }
+    }
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    const row = await returnToPeople();
+    await expect(
+      row.getByText(
+        observation === "status"
+          ? "Not verified"
+          : observation === "enrollment"
+            ? "Not verified"
+            : "Verified",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    if (observation === "enrollment") {
+      const recorded = row.locator("time");
+      await expect(recorded).toBeVisible();
+      await expect(recorded).toHaveAttribute("datetime", enrollmentRecordedAt);
+    }
+    await page.getByRole("link", { name: "Overview", exact: true }).click();
+    await expect
+      .poll(() => api.summaryReads)
+      .toBeGreaterThan(summaryReadsBefore);
+    await expect(
+      card.getByText(
+        observation === "verification"
+          ? "0 without verified MFA"
+          : "1 without verified MFA",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(card.getByText("1 unknown", { exact: true })).toBeVisible();
+  });

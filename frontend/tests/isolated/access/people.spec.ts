@@ -4,7 +4,6 @@ import {
   defaultGuestDays,
   directoryRows,
   draftFromUser,
-  filterDirectory,
   guestDaysError,
   guestExpiryFromDays,
   personConflicts,
@@ -12,7 +11,6 @@ import {
   personState,
   presentAccess,
   resolvePersonDraft,
-  type DirectoryFilters,
 } from "../../../src/components/systems/access/helpers/people";
 import type {
   AccessDepartment,
@@ -20,14 +18,7 @@ import type {
   AccessUser,
   AccessUserAccess,
 } from "../../../src/components/systems/access/state/api-contracts";
-import {
-  accessModule,
-  department,
-  group,
-  ids,
-  timestamp,
-  user,
-} from "./fixtures";
+import { accessModule, department, group, ids, user } from "./fixtures";
 
 const now = Date.parse("2026-09-28T12:00:00Z");
 const guest = user as AccessUser;
@@ -66,15 +57,6 @@ const finance: AccessGroup = {
   ],
 };
 const departments = [department as AccessDepartment, secondDepartment];
-
-const filters: DirectoryFilters = {
-  query: "",
-  role: "all",
-  status: "current",
-  groupId: "all",
-  departmentId: "all",
-  sort: "name",
-};
 
 test("a person's departments come from the access of their groups, named and sorted", () => {
   const rows = directoryRows(
@@ -132,41 +114,6 @@ test("status shows pending, disabled, deleted, expired and flags guests expiring
   );
   expect(later.expiresSoon).toBe(false);
   expect(personState(member, now).expiresSoon).toBe(false);
-});
-
-test("the directory searches, filters by role, status, group and department, and sorts", () => {
-  const rows = directoryRows(
-    [
-      guest,
-      member,
-      admin,
-      {
-        ...member,
-        id: "00000000-0000-4000-8000-000000000012",
-        username: "cy",
-        email: "cy@example.com",
-        is_deleted: true,
-        deleted_at: timestamp,
-      },
-    ],
-    [inventory, finance],
-    departments,
-    now,
-  );
-  const names = (next: Partial<DirectoryFilters>) =>
-    filterDirectory(rows, { ...filters, ...next }).map((row) => row.name);
-
-  // Current hides deleted people; the list sorts by display name or username.
-  expect(names({})).toEqual(["Ana Santos", "ben", "Rosa Admin"]);
-  expect(names({ status: "deleted" })).toEqual(["cy"]);
-  expect(names({ query: "BEN@" })).toEqual(["ben"]);
-  expect(names({ role: "admin" })).toEqual(["Rosa Admin"]);
-  expect(names({ groupId: inventory.id })).toEqual(["Ana Santos"]);
-  // Administrators need no group, so "In no group" never lists them.
-  expect(names({ groupId: "none" })).toEqual([]);
-  expect(names({ departmentId: department.id })).toEqual(["Ana Santos"]);
-  expect(names({ sort: "email" })).toEqual(["Ana Santos", "ben", "Rosa Admin"]);
-  expect(names({ sort: "expiry" })[0]).toBe("Ana Santos");
 });
 
 test("guest expiry defaults to the invitation setting and stays within 1 to 365 days", () => {

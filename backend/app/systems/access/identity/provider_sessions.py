@@ -28,6 +28,11 @@ from app.core.integrations.supabase_auth import (
 from app.systems.access.identity.contracts import InvalidCredentials, IssuedSession
 from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.identity.mfa import MFARequired, requires_mfa
+from app.systems.access.identity.mfa_observations import (
+    initialize_observation,
+    observation_started_at,
+    record_provider_observation,
+)
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import reconcile_session_cap, revoke_session
 from app.systems.access.users.eligibility import is_established_user
@@ -102,6 +107,7 @@ def admit_provider_session(
     client: SupabaseAuthClient,
     *,
     user_agent: str | None = None,
+    ip_address: str | None = None,
     now: datetime | None = None,
 ) -> IssuedSession:
     """Admit a verified provider session only for an explicitly bound active profile.
@@ -111,6 +117,7 @@ def admit_provider_session(
 
     timestamp = now or utc_now()
     claims = client.verify_access_token(tokens.access_token)
+    started_at = observation_started_at()
     provider_user = _live_provider_user(client, claims.user_id, timestamp)
     if claims.user_id != tokens.user_id or provider_user is None:
         raise InvalidCredentials("Invalid credentials")
@@ -122,6 +129,7 @@ def admit_provider_session(
     ):
         raise InvalidCredentials("Invalid credentials")
     assert user is not None and provider_user is not None
+    initialize_observation(db, user.id)
     csrf = token_urlsafe(32)
     handle = token_urlsafe(48)
     cipher = _fernet()
@@ -139,6 +147,7 @@ def admit_provider_session(
         refreshed_at=timestamp,
         expires_at=timestamp,
         user_agent=(user_agent or "")[:500] or None,
+        ip_address=ip_address,
     )
     session.expires_at = renewed_session_expiry(session, policy, timestamp)
     db.add(session)
@@ -151,6 +160,7 @@ def admit_provider_session(
         )
     ):
         reconcile_session_cap(db, user.id, session.id, policy, now=timestamp)
+    record_provider_observation(db, user.id, provider_user, started_at)
     return IssuedSession(tokens.access_token, handle, csrf, session.id, False)
 
 
@@ -163,6 +173,22 @@ def resolve_provider_session(
     allow_aal1: bool = False,
     policy: WorkspaceProfile | None = None,
 ) -> tuple[User, IdentitySession] | None:
+    """Ordinary authorization resolves authority without writing observations."""
+    result = _resolved_provider_session(
+        db, claims, client, now=now, allow_aal1=allow_aal1, policy=policy
+    )
+    return None if result is None else (result[0], result[1])
+
+
+def _resolved_provider_session(
+    db: Session,
+    claims: ProviderAccessIdentity,
+    client: SupabaseAuthClient,
+    *,
+    now: datetime | None = None,
+    allow_aal1: bool = False,
+    policy: WorkspaceProfile | None = None,
+) -> tuple[User, IdentitySession, ProviderUser, datetime] | None:
     """Recheck local access, provider account and provider session for every request.
 
     ``policy`` is the workspace policy the caller already read in this transaction.
@@ -195,6 +221,7 @@ def resolve_provider_session(
             return None
     if not _provider_session_exists(db, claims.user_id, claims.session_id):
         return None
+    started_at = observation_started_at()
     provider_user = _live_provider_user(client, claims.user_id, timestamp)
     if provider_user is None:
         return None
@@ -230,7 +257,7 @@ def resolve_provider_session(
         )
     ):
         raise MFARequired("Multi-factor authentication is required")
-    return user, session
+    return user, session, provider_user, started_at
 
 
 def refresh_provider_session(
@@ -286,7 +313,8 @@ def refresh_provider_session(
         and current_claims.session_id == session.provider_session_id
         and current_claims.expires_at > timestamp + timedelta(seconds=30)
     ):
-        if resolve_provider_session(db, current_claims, client, now=now, allow_aal1=True) is None:
+        resolved = _resolved_provider_session(db, current_claims, client, now=now, allow_aal1=True)
+        if resolved is None:
             _revoke_locked_session(db, session, timestamp)
             raise InvalidCredentials("Invalid credentials")
         timestamp = now or utc_now()
@@ -294,6 +322,7 @@ def refresh_provider_session(
         session.refreshed_at = timestamp
         session_id = session.id
         try:
+            record_provider_observation(db, resolved[0].id, resolved[2], resolved[3])
             db.commit()
         except SQLAlchemyError as error:
             db.rollback()
@@ -308,11 +337,14 @@ def refresh_provider_session(
     except SupabaseAuthUnavailable:
         _revoke_locked_session(db, session, timestamp)
         raise
+    resolved = None
+    if tokens.user_id == session.provider_user_id and claims.user_id == session.provider_user_id:
+        resolved = _resolved_provider_session(db, claims, client, now=now, allow_aal1=True)
     if (
         tokens.user_id != session.provider_user_id
         or claims.user_id != session.provider_user_id
         or claims.session_id != session.provider_session_id
-        or resolve_provider_session(db, claims, client, now=now, allow_aal1=True) is None
+        or resolved is None
     ):
         _revoke_locked_session(db, session, timestamp)
         raise InvalidCredentials("Invalid credentials")
@@ -324,7 +356,9 @@ def refresh_provider_session(
     session.refreshed_at = timestamp
     session.expires_at = renewed_session_expiry(session, load_workspace_policy(db), timestamp)
     session_id = session.id
+    assert resolved is not None
     try:
+        record_provider_observation(db, resolved[0].id, resolved[2], resolved[3])
         db.commit()
     except SQLAlchemyError as error:
         db.rollback()

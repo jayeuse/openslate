@@ -25,6 +25,11 @@ from app.core.integrations.supabase_auth import (
     get_supabase_auth_client,
 )
 from app.systems.access.identity.mfa import requires_mfa
+from app.systems.access.identity.mfa_observations import (
+    commit_bound_observation,
+    observation_started_at,
+    record_provider_observation,
+)
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.coordination import advance_token_cutoff
@@ -217,6 +222,7 @@ def read_security(
     actor = presented_actor(db, identity, request)
     binding, _ = checkpoint(db, actor, target_id)
     db.rollback()
+    started_at = observation_started_at()
     try:
         observed = provider_user(get_supabase_auth_client(), binding)
     except SupabaseAuthUnavailable as error:
@@ -224,7 +230,14 @@ def read_security(
             503, "user_security_unavailable", "Security could not be loaded. Try again."
         ) from error
     _, eligible = checkpoint(db, actor, target_id, expected=binding)
-    db.rollback()
+    try:
+        record_provider_observation(db, target_id, observed, started_at)
+        db.commit()
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise refusal(
+            503, "user_security_unavailable", "Security could not be loaded. Try again."
+        ) from error
     return UserSecurityResponse(
         user_id=target_id,
         verified_factor_count=sum(factor.status == "verified" for factor in observed.factors),
@@ -440,10 +453,20 @@ def reset_person_mfa(
     try:
         if cleanup:
             revoke_captured(db, operation)
-            remaining = client.admin_list_factors(operation.binding.provider_id)
-            operation.factors_cleared = not remaining
-            # A session accepted while provider confirmation ran must also end.
-            revoke_captured(db, operation)
+            started_at = observation_started_at()
+            try:
+                remaining = client.admin_list_factors(operation.binding.provider_id)
+                operation.factors_cleared = not remaining
+                # A session accepted while provider confirmation ran must also end.
+                revoke_captured(db, operation)
+            finally:
+                commit_bound_observation(
+                    db,
+                    target_id,
+                    operation.binding.provider_id,
+                    False if operation.factors_cleared else None,
+                    started_at,
+                )
             if not operation.factors_cleared:
                 raise SupabaseAuthUnavailable("Factor removal is incomplete")
         if interrupted is not None:

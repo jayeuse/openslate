@@ -27,7 +27,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { ApiError } from "@/lib/api";
 
-import { groupListOptions, userListOptions } from "../adapters/access-queries";
+import {
+  groupListOptions,
+  userListOptions,
+  userSummaryOptions,
+} from "../adapters/access-queries";
 import { EXPIRING_SOON_DAYS } from "../helpers/people";
 import { overviewHealth, type OverviewHealth } from "../helpers/overview";
 import { InvitationSettings } from "./invitation-settings";
@@ -142,6 +146,7 @@ export function OverviewView() {
   const settingsTitleId = useId();
   const users = useQuery(userListOptions("include"));
   const groups = useQuery(groupListOptions("exclude"));
+  const summary = useQuery(userSummaryOptions());
   const [now] = useState(() => Date.now());
   const health = useMemo(
     () =>
@@ -151,7 +156,7 @@ export function OverviewView() {
     [groups.data, now, users.data],
   );
 
-  const denied = [users.error, groups.error].some(
+  const denied = [users.error, groups.error, summary.error].some(
     (error) => error instanceof ApiError && error.status === 403,
   );
   const failed = users.isError || groups.isError;
@@ -209,6 +214,85 @@ export function OverviewView() {
           >
             {health ? (
               <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <li className="flex min-w-0">
+                  <Card
+                    aria-labelledby={`${settingsTitleId}-mfa`}
+                    className="flex w-full min-w-0 flex-col gap-2 self-stretch p-4"
+                  >
+                    <h3
+                      id={`${settingsTitleId}-mfa`}
+                      data-slot="card-title"
+                      className="flex items-center gap-2 text-sm font-semibold"
+                    >
+                      <ShieldCheck
+                        aria-hidden="true"
+                        className="text-muted-foreground size-4 shrink-0"
+                      />
+                      Administrator MFA
+                    </h3>
+                    {summary.isError ? (
+                      <div role="alert" className="space-y-3">
+                        <p className="text-sm">
+                          MFA observations could not be loaded.
+                        </p>
+                        <Button
+                          variant="outline"
+                          className="min-h-11"
+                          onClick={() => void summary.refetch()}
+                        >
+                          Retry MFA observations
+                        </Button>
+                      </div>
+                    ) : (
+                      <LoadingRegion
+                        loading={summary.isPending}
+                        label="Loading MFA observations…"
+                        skeleton={<Skeleton className="h-24 w-full" />}
+                      >
+                        {summary.data ? (
+                          <div className="flex flex-col gap-3">
+                            <p className="text-lg font-semibold tabular-nums">
+                              {summary.data.admins_without_mfa} without verified
+                              MFA
+                            </p>
+                            <p className="text-muted-foreground text-sm tabular-nums">
+                              {summary.data.admins_mfa_unknown} unknown
+                            </p>
+                            <p className="text-muted-foreground text-sm">
+                              Last recorded observations for current
+                              administrators. Unknown is separate from
+                              unverified.
+                            </p>
+                            {summary.data.admins_without_mfa > 0 ? (
+                              <Button
+                                asChild
+                                variant="outline"
+                                className="min-h-11 w-full justify-between"
+                              >
+                                <GuardedWorkspaceLink href="/access?view=people&role=admin&mfa=without">
+                                  Show administrators without verified MFA
+                                  <ArrowRight aria-hidden="true" />
+                                </GuardedWorkspaceLink>
+                              </Button>
+                            ) : null}
+                            {summary.data.admins_mfa_unknown > 0 ? (
+                              <Button
+                                asChild
+                                variant="outline"
+                                className="min-h-11 w-full justify-between"
+                              >
+                                <GuardedWorkspaceLink href="/access?view=people&role=admin&mfa=unknown">
+                                  Show administrators with unknown MFA
+                                  <ArrowRight aria-hidden="true" />
+                                </GuardedWorkspaceLink>
+                              </Button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </LoadingRegion>
+                    )}
+                  </Card>
+                </li>
                 {healthCards(health).map((card) => (
                   <li key={card.id} className="flex min-w-0">
                     <Card

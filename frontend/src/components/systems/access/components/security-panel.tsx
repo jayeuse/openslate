@@ -165,6 +165,9 @@ export function SecurityPanel({
               <span className="text-muted-foreground mt-0.5 block text-sm break-words">
                 {session.device} · {session.browser}
               </span>
+              <span className="text-muted-foreground mt-1 block text-xs break-all">
+                Sign-in IP: {session.ip_address ?? "Unknown"}
+              </span>
             </span>
           </div>
         );
@@ -232,7 +235,7 @@ export function SecurityPanel({
             Sessions
           </h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            Review active sessions across your organization.
+            Review active local sessions across your organization.
           </p>
         </div>
         <Button
@@ -370,6 +373,9 @@ export function SecurityPanel({
                                 </p>
                                 <p className="text-muted-foreground mt-0.5 text-sm break-words">
                                   {session.device} · {session.browser}
+                                </p>
+                                <p className="text-muted-foreground mt-1 text-xs break-all">
+                                  Sign-in IP: {session.ip_address ?? "Unknown"}
                                 </p>
                               </div>
                             </div>

@@ -13,6 +13,12 @@ from operations.reset import planning as reset_planning
 
 
 def test_reset_includes_views_boards_dashboards_and_reports_in_safe_delete_order() -> None:
+    table = "identity_mfa_observations"
+    assert table in reset_models.APPLICATION_TABLES
+    assert table in reset_models.NON_PRESERVED_TABLES
+    assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
+    assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
+    assert table in reset_models.DELETE_ORDER
     for removed in ("saved_view_defaults", "dashboard_defaults", "openview_chart_preferences"):
         assert removed not in reset_models.APPLICATION_TABLES
         assert removed not in reset_models.DELETE_ORDER

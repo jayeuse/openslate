@@ -43,6 +43,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "getAccessUserSummary",
+    "method": "GET",
+    "path": "/api/users/summary"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "inviteAccessUser",
     "method": "POST",
     "path": "/api/auth/invitations"

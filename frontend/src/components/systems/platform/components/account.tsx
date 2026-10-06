@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { manageWorkspaceOptions } from "@/components/systems/manage/adapters/manage-queries";
+import { accessKeys } from "../../access/adapters/access-queries";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { ApiError } from "@/lib/api";
 import { Action, Choice, Panel } from "../../shared/components/ui";
@@ -195,10 +196,13 @@ export default function Account() {
       if (accountId) {
         setRefreshingAfterPassword(true);
         try {
-          await queryClient.invalidateQueries({
-            queryKey: platformKeys.accountSessions(accountId),
-            exact: true,
-          });
+          await Promise.all([
+            queryClient.invalidateQueries({
+              queryKey: platformKeys.accountSessions(accountId),
+              exact: true,
+            }),
+            queryClient.invalidateQueries({ queryKey: accessKeys.directory() }),
+          ]);
         } catch {
           // The query's visible error state explains when the refreshed list
           // could not be loaded.
@@ -233,10 +237,13 @@ export default function Account() {
           "Other sessions ended. Your current session remains active.",
         );
       }
-      await queryClient.invalidateQueries({
-        queryKey: platformKeys.accountSessions(accountId),
-        exact: true,
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: platformKeys.accountSessions(accountId),
+          exact: true,
+        }),
+        queryClient.invalidateQueries({ queryKey: accessKeys.directory() }),
+      ]);
     } catch (error) {
       setConfirmation(null);
       setSessionActionError(sessionActionErrorMessage(error));
@@ -455,6 +462,9 @@ export default function Account() {
                         title={session.user_agent ?? undefined}
                       >
                         {accountDeviceLabel(session.user_agent)}
+                      </p>
+                      <p className="text-muted-foreground text-xs break-all">
+                        Sign-in IP: {session.ip_address ?? "Unknown"}
                       </p>
                       <p className="text-muted-foreground text-xs">
                         {session.current ? "Current session · " : ""}

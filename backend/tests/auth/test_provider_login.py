@@ -36,7 +36,7 @@ def test_password_grant_admits_only_the_bound_application_session(
         )
         is issued
     )
-    admit.assert_called_once_with(db, tokens, client, user_agent=None)
+    admit.assert_called_once_with(db, tokens, client, user_agent=None, ip_address=None)
 
     admit.side_effect = InvalidCredentials("unmapped")
     with pytest.raises(InvalidCredentials):

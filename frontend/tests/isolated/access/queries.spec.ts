@@ -16,7 +16,7 @@ import {
   userListOptions,
   userSessionsOptions,
 } from "../../../src/components/systems/access/adapters/access-queries";
-import { installFetch, pagination, user } from "./fixtures";
+import { installFetch, pagination, user, directoryUser } from "./fixtures";
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -41,7 +41,10 @@ test("every Access key starts with the area and holds its list filter", () => {
 });
 
 test("a list read loads every page into one complete collection", async () => {
-  const second = { ...user, id: "00000000-0000-4000-8000-0000000000f2" };
+  const second = {
+    ...directoryUser,
+    id: "00000000-0000-4000-8000-0000000000f2",
+  };
   const mock = installFetch((input) => {
     const offset = Number(
       new URL(String(input), "http://access.invalid").searchParams.get(
@@ -49,7 +52,7 @@ test("a list read loads every page into one complete collection", async () => {
       ),
     );
     return Response.json({
-      items: [offset === 0 ? user : second],
+      items: [offset === 0 ? directoryUser : second],
       pagination: {
         ...pagination,
         limit: 100,

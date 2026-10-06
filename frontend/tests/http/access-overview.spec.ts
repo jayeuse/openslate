@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "./helpers/test";
 
-import { group, ids, mockAccessApi } from "./helpers/access-api";
+import { group, ids, mockAccessApi, person } from "./helpers/access-api";
 
 // The Overview tab against the mocked Access API (see helpers/access-api.ts).
 // People: Rosa and Dee (administrators), Ana (guest ending in 5 days, in a
@@ -158,3 +158,102 @@ for (const width of [1440, 390])
       ),
     ).toBe(true);
   });
+
+test("13b: organization MFA summary keeps known absence separate from unknown and links to the same population", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  api.monitoring.set(ids.rosa, {
+    active_session_count: 1,
+    mfa_verified_totp: false,
+    mfa_observed_at: "2026-10-01T00:00:00Z",
+  });
+  api.monitoring.set(ids.dee, {
+    active_session_count: 0,
+    mfa_verified_totp: null,
+    mfa_observed_at: null,
+  });
+  await page.goto("/access?view=overview");
+  const mfa = card(page, "Administrator MFA");
+  await expect(
+    mfa.getByText("1 without verified MFA", { exact: true }),
+  ).toBeVisible();
+  await expect(mfa.getByText("1 unknown", { exact: true })).toBeVisible();
+  await mfa
+    .getByRole("link", {
+      name: "Show administrators without verified MFA",
+      exact: true,
+    })
+    .click();
+  const people = page.getByRole("table", { name: "People", exact: true });
+  await expect(people.getByRole("row")).toHaveCount(2);
+  await expect(people.getByRole("row", { name: /Rosa Reyes/ })).toBeVisible();
+  await expect.poll(() => api.listReads.at(-1)?.get("mfa")).toBe("without");
+  await page.goto("/access?view=overview");
+  await card(page, "Administrator MFA")
+    .getByRole("link", {
+      name: "Show administrators with unknown MFA",
+      exact: true,
+    })
+    .click();
+  await expect(people.getByRole("row")).toHaveCount(2);
+  await expect(people.getByRole("row", { name: /Dee Lim/ })).toBeVisible();
+  await expect.poll(() => api.listReads.at(-1)?.get("mfa")).toBe("unknown");
+});
+
+test("13b: loading and unavailable MFA summary never manufacture zero and explicit Retry recovers", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  // The recovery counters describe this same organization-wide population.
+  for (let index = 0; index < 5; index += 1) {
+    const id = `00000000-0000-4000-8000-${String(930 + index).padStart(12, "0")}`;
+    api.users.set(
+      id,
+      person({ id, username: `monitor${index}`, role: "admin" }),
+    );
+    if (index < 4)
+      api.monitoring.set(id, {
+        active_session_count: 0,
+        mfa_verified_totp: false,
+        mfa_observed_at: "2026-10-01T00:00:00Z",
+      });
+  }
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let unavailable = true;
+  api.on("GET", "/api/users/summary", async (route) => {
+    await gate;
+    if (unavailable)
+      await route.fulfill({
+        status: 503,
+        json: { detail: "Private failure canary" },
+      });
+    else
+      await route.fulfill({
+        json: { admins_without_mfa: 4, admins_mfa_unknown: 2 },
+      });
+  });
+  await page.goto("/access?view=overview");
+  await expect(
+    page.getByText("Loading MFA observations…", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/0 without verified MFA|0 unknown/)).toHaveCount(
+    0,
+  );
+  release?.();
+  const mfa = card(page, "Administrator MFA");
+  await expect(mfa).toContainText("MFA observations could not be loaded.");
+  await expect(mfa).not.toContainText("Private failure canary");
+  await expect(mfa.getByRole("link")).toHaveCount(0);
+  unavailable = false;
+  await mfa
+    .getByRole("button", { name: "Retry MFA observations", exact: true })
+    .click();
+  await expect(
+    mfa.getByText("4 without verified MFA", { exact: true }),
+  ).toBeVisible();
+  await expect(mfa.getByText("2 unknown", { exact: true })).toBeVisible();
+});

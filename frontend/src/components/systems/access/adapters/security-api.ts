@@ -299,6 +299,7 @@ const adminSessionSchema = z.object({
   refreshed_at: z.iso.datetime({ offset: true }),
   expires_at: z.iso.datetime({ offset: true }),
   current: z.boolean(),
+  ip_address: z.string().nullable(),
 });
 const adminSessionsSchema = z.object({
   items: z.array(adminSessionSchema),

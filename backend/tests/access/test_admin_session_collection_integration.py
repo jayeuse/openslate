@@ -71,10 +71,12 @@ def test_cross_user_session_collection_pages_and_filters_the_same_public_client_
         "refreshed_at",
         "expires_at",
         "user_agent",
+        "ip_address",
         "device",
         "browser",
         "current",
     }
+    assert all(row["ip_address"] is None for row in rows)
     current_page = client.get("/api/auth/admin-sessions?status=current").json()
     assert [row["id"] for row in current_page["items"]] == [str(current.id)]
     assert current_page["items"][0]["current"] is True

@@ -22,6 +22,11 @@ from app.core.integrations.supabase_auth import (
 from app.core.integrations.supabase_mfa import SupabaseMfaClient, TotpEnrollment
 from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.eligibility import is_identity_eligible
+from app.systems.access.identity.mfa_observations import (
+    commit_bound_observation,
+    observation_started_at,
+    record_provider_observation,
+)
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import (
     reconcile_session_cap,
@@ -69,6 +74,7 @@ def mfa_status(
     claims = client.verify_access_token(access_token)
     if claims.user_id != user.supabase_user_id:
         raise InvalidCredentials("Invalid credentials")
+    started_at = observation_started_at()
     provider_user = _provider_actor(client, access_token, user)
     db.refresh(user)
     session = db.scalar(
@@ -96,7 +102,7 @@ def mfa_status(
         raise InvalidCredentials("Invalid credentials")
     policy_required = mfa_role_required(policy, user.role)
     since = user.mfa_required_since if policy_required else None
-    return {
+    result = {
         "user_id": user.id,
         "assurance_level": claims.assurance_level,
         "required": requires_mfa(policy, user, provider_user),
@@ -108,6 +114,13 @@ def mfa_status(
             for factor in provider_user.factors
         ],
     }
+    try:
+        record_provider_observation(db, user.id, provider_user, started_at)
+        db.commit()
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise SupabaseAuthUnavailable("Unable to persist MFA observation") from error
+    return result
 
 
 def enroll_factor(
@@ -122,6 +135,7 @@ def enroll_factor(
     user, _, current_access, presented = _locked_context(
         db, user_id, session_id, presented_access, client
     )
+    started_at = observation_started_at()
     provider_user = _provider_actor(client, current_access, user)
     if (
         any(factor.status == "verified" for factor in provider_user.factors)
@@ -132,6 +146,7 @@ def enroll_factor(
     enrollment = mfa.enroll_totp(current_access, friendly_name=friendly_name)
     try:
         _record(db, user_id, "enrolled")
+        record_provider_observation(db, user_id, provider_user, started_at)
         db.commit()
     except SQLAlchemyError as error:
         db.rollback()
@@ -175,6 +190,7 @@ def verify_factor(
     except InvalidProviderToken as error:
         _invalidate_after_rotation(db, user_id, session_id, client, current_access)
         raise SupabaseAuthUnavailable("Unable to confirm MFA verification") from error
+    started_at = observation_started_at()
     try:
         after_provider = _provider_actor(client, tokens.access_token, user)
         if not any(
@@ -207,6 +223,7 @@ def verify_factor(
         if was_blocked:
             reconcile_session_cap(db, user.id, session.id, policy, now=timestamp)
         _record(db, user_id, "verified")
+        record_provider_observation(db, user_id, after_provider, started_at)
         db.commit()
     except (SQLAlchemyError, SupabaseAuthUnavailable) as error:
         _invalidate_after_rotation(db, user_id, session_id, client, tokens.access_token)
@@ -233,7 +250,10 @@ def unenroll_factor(
         return False
     if verified and presented.assurance_level != "aal2":
         raise MFARequired("Multi-factor authentication is required")
+    provider_id = user.supabase_user_id
+    assert provider_id is not None
     SupabaseMfaClient(client).unenroll(current_access, factor_id)
+    started_at = observation_started_at()
     if verified:
         revoke_user_sessions(db, user_id, except_session_id=None)
     try:
@@ -253,6 +273,7 @@ def unenroll_factor(
             except (InvalidProviderCredentials, SupabaseAuthUnavailable):
                 pass
         raise SupabaseAuthUnavailable("Unable to persist MFA removal") from error
+    commit_bound_observation(db, user_id, provider_id, None, started_at)
     return verified
 
 

@@ -13,6 +13,7 @@ import {
   getAccessGroup,
   getAccessInvitationSettings,
   getAccessUser,
+  getAccessUserSummary,
   getAccessUserAccess,
   inviteAccessUser,
   listAccessDepartments,
@@ -116,6 +117,7 @@ describeContracts("Access", [
         refreshed_at: "2026-01-01T00:00:00Z",
         expires_at: "2026-01-02T00:00:00Z",
         current: false,
+        ip_address: null,
       }),
   },
   {
@@ -128,6 +130,7 @@ describeContracts("Access", [
     run: () =>
       listAccessUsers({ ...list, sort_by: "username", role: "member" }),
   },
+  { name: "getAccessUserSummary", run: () => getAccessUserSummary() },
   { name: "getAccessUser", run: () => getAccessUser(userId) },
   {
     name: "inviteAccessUser",

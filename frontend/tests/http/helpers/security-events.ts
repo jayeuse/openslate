@@ -1,3 +1,4 @@
+import { person, listPage, type User } from "./access-api";
 import type { SecurityEvent, SecurityEventOutcome } from "../../../src/lib/api";
 import { mockManageSecurity } from "./manage-security";
 import { deferredMfaResponse, mockMfa, mfaUserA } from "./mfa";
@@ -127,6 +128,16 @@ export async function mockSecurityEvents(page: Page) {
     reads: [] as URLSearchParams[],
     details: [] as string[],
     userReads: 0,
+    userQueries: [] as URLSearchParams[],
+    directory: [
+      person({
+        id: mfaUserA,
+        email: "unshown-person@example.invalid",
+        username: "mara",
+        role: "admin",
+        display_name: "Mara",
+      }),
+    ] as User[],
     sessionReads: 0,
     commands: [] as { method: string; path: string }[],
     holdList: null as HeldRead | null,
@@ -155,39 +166,26 @@ export async function mockSecurityEvents(page: Page) {
   });
   await page.route(/\/api\/users(?:\?|$)/, async (route) => {
     state.userReads += 1;
-    const users = [
-      {
-        id: mfaUserA,
-        email: "unshown-person@example.invalid",
-        username: "mara",
-        status: "active",
-        role: "admin",
-        display_name: "Mara",
-        job_title: null,
-        sponsor_user_id: null,
-        expires_at: null,
-        invitation_sent_at: null,
-        created_at: "2026-10-01T00:00:00Z",
-        updated_at: "2026-10-01T00:00:00Z",
-        deleted_at: null,
-        is_deleted: false,
-        performed_by: null,
-      },
-    ];
+    const url = new URL(route.request().url());
+    state.userQueries.push(new URLSearchParams(url.searchParams));
+    const users = state.directory
+      .slice()
+      .sort(
+        (left, right) =>
+          left.username.localeCompare(right.username) ||
+          left.id.localeCompare(right.id),
+      )
+      .map((user) => ({
+        ...user,
+        active_session_count: 0,
+        mfa_verified_totp: null,
+        mfa_observed_at: null,
+      }));
     await route.fulfill({
       status: state.usersStatus,
       json:
         state.usersStatus === 200
-          ? {
-              items: users,
-              pagination: {
-                limit: 100,
-                offset: 0,
-                count: 1,
-                total: 1,
-                has_more: false,
-              },
-            }
+          ? listPage(users, url)
           : { detail: "Directory unavailable" },
     });
   });

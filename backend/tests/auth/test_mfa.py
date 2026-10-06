@@ -23,7 +23,7 @@ from app.core.integrations.supabase_auth import (
 )
 from app.systems.access.identity import provider_sessions
 from app.systems.access.identity.contracts import InvalidCredentials
-from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.test_supabase_auth_core import _client_for_key, _signed_access
@@ -306,7 +306,9 @@ def mfa_context(monkeypatch):
         expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     db = Mock(spec=Session)
-    db.scalar.return_value = user
+    db.scalar.side_effect = lambda query: (
+        None if query.column_descriptions[0]["entity"] is IdentityMfaObservation else user
+    )
     db.get.return_value = session
     db.scalars.return_value = [session]
     auth, mfa_client = Mock(), Mock()

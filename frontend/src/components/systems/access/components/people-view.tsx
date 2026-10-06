@@ -24,13 +24,10 @@ import {
   TablePagination,
 } from "@/components/ui/table-pagination";
 import { ApiError } from "@/lib/api";
-import {
-  completeCollection,
-  pageCollection,
-} from "@/components/systems/shared/helpers/sample-collections";
 
 import {
   departmentListOptions,
+  directoryPageOptions,
   groupListOptions,
   userListOptions,
 } from "../adapters/access-queries";
@@ -39,13 +36,15 @@ import {
   defaultDirectoryFilters,
   directoryFiltersFromParams,
   directoryRows,
-  filterDirectory,
+  directoryRequest,
   formatDate,
+  formatDateTime,
   roleLabels,
   type DirectoryFilters,
   type DirectoryRow,
   type DirectorySort,
 } from "../helpers/people";
+import type { AccessDirectoryUser } from "../state/api";
 import { AccessSearchToolbar } from "./access-search-toolbar";
 import { InvitePersonDialog } from "./invite-person-dialog";
 import { SelectField } from "./people-fields";
@@ -90,6 +89,30 @@ function StatusBadges({ row }: { row: DirectoryRow }) {
       <Badge variant={row.state.tone}>{row.state.label}</Badge>
       {row.state.expiresSoon ? (
         <Badge variant="warning">Ends {formatDate(row.user.expires_at)}</Badge>
+      ) : null}
+    </span>
+  );
+}
+
+function MfaObservation({ person }: { person: AccessDirectoryUser }) {
+  return (
+    <span className="flex min-w-0 flex-col items-start gap-1">
+      <Badge
+        variant={person.mfa_verified_totp === true ? "success" : "outline"}
+      >
+        {person.mfa_verified_totp === null
+          ? "Unknown"
+          : person.mfa_verified_totp
+            ? "Verified"
+            : "Not verified"}
+      </Badge>
+      {person.mfa_observed_at ? (
+        <span className="text-muted-foreground text-xs">
+          Recorded{" "}
+          <time dateTime={person.mfa_observed_at}>
+            {formatDateTime(person.mfa_observed_at)}
+          </time>
+        </span>
       ) : null}
     </span>
   );
@@ -150,7 +173,6 @@ function DirectorySkeleton() {
 
 export function PeopleView() {
   const searchParams = useSearchParams();
-  const users = useQuery(userListOptions("include"));
   const groups = useQuery(groupListOptions("exclude"));
   const departments = useQuery(departmentListOptions("exclude"));
   // An Overview link can open the directory already filtered.
@@ -161,27 +183,56 @@ export function PeopleView() {
   const [pageSize, setPageSize] = useState<number>(DEFAULT_TABLE_PAGE_SIZE);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [now] = useState(() => Date.now());
+  const selectedId = searchParams.get("user");
+  const request = directoryRequest(filters, pageSize, pageIndex * pageSize);
+  const users = useQuery(directoryPageOptions(request));
+  // Existing person/invitation editors need the complete sponsor catalog.
+  // The closed directory never loads this collection to mask server paging.
+  const catalogRequested = Boolean(selectedId) || inviteOpen;
+  const catalog = useQuery({
+    ...userListOptions("include"),
+    enabled: catalogRequested,
+  });
+
+  useEffect(() => {
+    const pagination = users.data?.pagination;
+    if (!pagination) return;
+    // A confirmed edit can shrink the matching population. Keep a valid page;
+    // move only an out-of-range page, without changing the selected person.
+    const lastPage = Math.max(0, Math.ceil(pagination.total / pageSize) - 1);
+    setPageIndex((current) => Math.min(current, lastPage));
+  }, [pageSize, users.data?.pagination]);
 
   const rows = useMemo(
     () =>
       users.data && groups.data && departments.data
-        ? directoryRows(users.data, groups.data, departments.data, now)
+        ? directoryRows(users.data.items, groups.data, departments.data, now)
         : null,
     [departments.data, groups.data, now, users.data],
   );
-  const selectedId = searchParams.get("user");
-  const selected = rows?.find((row) => row.user.id === selectedId) ?? null;
-
-  // A link to a person who is not in the directory opens the list instead.
-  useEffect(() => {
-    if (rows && selectedId && !rows.some((row) => row.user.id === selectedId))
-      replaceUserParam(null);
-  }, [rows, selectedId]);
-
-  const denied = [users.error, groups.error, departments.error].some(
-    (error) => error instanceof ApiError && error.status === 403,
+  const catalogRows = useMemo(
+    () =>
+      catalog.data && groups.data && departments.data
+        ? directoryRows(catalog.data, groups.data, departments.data, now)
+        : null,
+    [catalog.data, groups.data, departments.data, now],
   );
-  const failed = users.isError || groups.isError || departments.isError;
+  // The include-deleted catalog also preserves offpage Restore: singular
+  // detail GET intentionally returns 404 for deleted users. Loading never removes the URL.
+  const selected =
+    catalogRows?.find((row) => row.user.id === selectedId) ?? null;
+
+  const denied = [
+    users.error,
+    groups.error,
+    departments.error,
+    catalogRequested ? catalog.error : null,
+  ].some((error) => error instanceof ApiError && error.status === 403);
+  const failed =
+    users.isError ||
+    groups.isError ||
+    departments.isError ||
+    (catalogRequested && catalog.isError);
   const loading = !failed && rows === null;
 
   function changeFilters(patch: Partial<DirectoryFilters>) {
@@ -189,56 +240,72 @@ export function PeopleView() {
     setPageIndex(0);
   }
 
-  const filtered = rows ? filterDirectory(rows, filters) : [];
-  const page = pageCollection(
-    completeCollection(filtered, "access-people"),
-    pageIndex * pageSize,
-    pageSize,
-  );
+  const page = {
+    items: rows ?? [],
+    total: users.data?.pagination.total ?? 0,
+    offset: users.data?.pagination.offset ?? request.offset ?? 0,
+  };
   const filterCount = activeFilterCount(filters);
   const narrowed = filterCount > 0 || filters.query.trim() !== "";
 
-  const columns: DataTableColumn<DirectoryRow>[] = [
-    {
-      id: "name",
-      header: "Name",
-      cell: ({ row }) => (
-        <OpenPersonButton row={row.original} onOpen={replaceUserParam} />
-      ),
-    },
-    {
-      id: "email",
-      header: "Email",
-      cell: ({ row }) => (
-        <span className="break-all">{row.original.user.email}</span>
-      ),
-    },
-    {
-      id: "role",
-      header: "Role",
-      cell: ({ row }) => roleLabels[row.original.user.role],
-    },
-    {
-      id: "status",
-      header: "Status",
-      cell: ({ row }) => <StatusBadges row={row.original} />,
-    },
-    {
-      id: "groups",
-      header: "Groups",
-      cell: ({ row }) =>
-        row.original.user.role === "admin" ? (
-          <span className="text-muted-foreground">Not needed</span>
-        ) : (
-          <NameList items={row.original.groups} empty="None" />
+  const columns = useMemo<DataTableColumn<DirectoryRow<AccessDirectoryUser>>[]>(
+    () => [
+      {
+        id: "name",
+        header: "Name",
+        cell: ({ row }) => (
+          <OpenPersonButton row={row.original} onOpen={replaceUserParam} />
         ),
-    },
-    {
-      id: "departments",
-      header: "Departments",
-      cell: ({ row }) => <DepartmentList row={row.original} />,
-    },
-  ];
+      },
+      {
+        id: "email",
+        header: "Email",
+        cell: ({ row }) => (
+          <span className="break-all">{row.original.user.email}</span>
+        ),
+      },
+      {
+        id: "role",
+        header: "Role",
+        cell: ({ row }) => roleLabels[row.original.user.role],
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: ({ row }) => <StatusBadges row={row.original} />,
+      },
+      {
+        id: "groups",
+        header: "Groups",
+        cell: ({ row }) =>
+          row.original.user.role === "admin" ? (
+            <span className="text-muted-foreground">Not needed</span>
+          ) : (
+            <NameList items={row.original.groups} empty="None" />
+          ),
+      },
+      {
+        id: "departments",
+        header: "Departments",
+        cell: ({ row }) => <DepartmentList row={row.original} />,
+      },
+      {
+        id: "mfa",
+        header: "Observed MFA",
+        cell: ({ row }) => <MfaObservation person={row.original.user} />,
+      },
+      {
+        id: "sessions",
+        header: "Active sessions",
+        cell: ({ row }) => (
+          <span className="tabular-nums">
+            {row.original.user.active_session_count}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
 
   if (denied)
     return (
@@ -269,6 +336,7 @@ export function PeopleView() {
             if (users.isError) void users.refetch();
             if (groups.isError) void groups.refetch();
             if (departments.isError) void departments.refetch();
+            if (catalogRequested && catalog.isError) void catalog.refetch();
           }}
         >
           Retry
@@ -283,9 +351,7 @@ export function PeopleView() {
           People directory
         </h2>
         <p className="text-muted-foreground text-sm" aria-live="polite">
-          {rows
-            ? `${rows.filter((row) => row.state.id !== "deleted").length} people`
-            : " "}
+          {users.data ? `${users.data.pagination.total} people` : " "}
         </p>
         <Button
           className="min-h-11 w-full sm:w-auto"
@@ -296,6 +362,11 @@ export function PeopleView() {
           Invite person
         </Button>
       </div>
+
+      <p className="text-muted-foreground text-xs">
+        MFA uses the last recorded observation. Session counts are active local
+        sessions.
+      </p>
 
       <AccessSearchToolbar
         searchLabel="Search people"
@@ -365,6 +436,20 @@ export function PeopleView() {
           ]}
           onChange={(departmentId) => changeFilters({ departmentId })}
         />
+        <SelectField
+          id="people-mfa-filter"
+          label="Administrator MFA"
+          value={filters.mfa ?? "all"}
+          options={[
+            { value: "all", label: "All observations" },
+            { value: "without", label: "Without verified MFA" },
+            { value: "unknown", label: "Unknown MFA" },
+          ]}
+          onChange={(mfa) => {
+            if (mfa === "all" || mfa === "without" || mfa === "unknown")
+              changeFilters({ mfa });
+          }}
+        />
       </AccessSearchToolbar>
 
       <LoadingRegion
@@ -372,7 +457,7 @@ export function PeopleView() {
         label="Loading people…"
         skeleton={<DirectorySkeleton />}
       >
-        {filtered.length === 0 ? (
+        {page.items.length === 0 ? (
           <Empty className="min-h-64 border">
             <EmptyHeader>
               <EmptyMedia variant="icon">
@@ -453,6 +538,16 @@ export function PeopleView() {
                         <dd className="min-w-0">
                           <DepartmentList row={row} />
                         </dd>
+                        <dt className="text-muted-foreground">Observed MFA</dt>
+                        <dd className="min-w-0">
+                          <MfaObservation person={row.user} />
+                        </dd>
+                        <dt className="text-muted-foreground">
+                          Active sessions
+                        </dt>
+                        <dd className="tabular-nums">
+                          {row.user.active_session_count}
+                        </dd>
                       </dl>
                     </CardContent>
                   </Card>
@@ -475,16 +570,26 @@ export function PeopleView() {
         )}
       </LoadingRegion>
 
+      {selectedId && !selected ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          {catalog.isPending || catalog.isFetching
+            ? "Loading selected person…"
+            : "This person is not available in the directory."}
+        </p>
+      ) : null}
+
       <PersonPanel
         row={selected}
-        people={users.data ?? []}
-        listFresh={!users.isFetching && !users.isError}
+        people={catalog.data ?? []}
+        listFresh={
+          !catalog.isFetching && !catalog.isError && !catalog.isPending
+        }
         onClose={() => replaceUserParam(null)}
       />
       <InvitePersonDialog
         open={inviteOpen}
         onOpenChange={setInviteOpen}
-        people={users.data ?? []}
+        people={catalog.data ?? []}
         groups={groups.data ?? []}
       />
     </div>

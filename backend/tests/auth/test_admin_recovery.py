@@ -10,10 +10,17 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.systems.access.identity.admin_recovery as recovery
-from app.core.integrations.supabase_auth import ProviderUser
+import app.systems.access.identity.mfa_observations as observations
+from app.core.database.session import AuditSession
+from app.core.integrations.supabase_auth import (
+    ProviderFactor,
+    ProviderUser,
+    SupabaseAuthUnavailable,
+)
 from app.systems.access.identity.admin_recovery import LocalRecoveryError, recover_local_admin
-from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY
 from app.systems.manage.audit.models import AuditLog, SecurityEvent, SecurityEventOutcome
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -121,7 +128,11 @@ def security_recovery(monkeypatch: pytest.MonkeyPatch):
     ]
     db = Mock(spec=Session)
     db.scalar.side_effect = lambda query: (
-        user if query.column_descriptions[0]["entity"] is User else profile
+        None
+        if query.column_descriptions[0]["entity"] is IdentityMfaObservation
+        else user
+        if query.column_descriptions[0]["entity"] is User
+        else profile
     )
     db.scalars.side_effect = lambda query: (
         [user] if query.column_descriptions[0]["entity"] is User else sessions
@@ -275,11 +286,14 @@ def test_security_recovery_does_not_overwrite_concurrently_changed_policy(
     assert events[-1].outcome == SecurityEventOutcome.PARTIAL
 
 
+@pytest.mark.parametrize("failure_commit", [2, 3])
 def test_security_recovery_final_commit_failure_reports_completed_provider_effect(
     security_recovery,
+    failure_commit: int,
 ) -> None:
     security, db, user, _, _, _, events = security_recovery
-    db.commit.side_effect = [None, SQLAlchemyError("private diagnostic")]
+    fault = SQLAlchemyError("private diagnostic")
+    db.commit.side_effect = [None] * (failure_commit - 1) + [fault, None]
     with pytest.raises(security.LocalSecurityRecoveryError) as caught:
         security.recover_workspace_security(db, user.id, local_invocation=True, elevated=True)
     assert caught.value.local_reset_committed is True
@@ -289,17 +303,64 @@ def test_security_recovery_final_commit_failure_reports_completed_provider_effec
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("failure", [False, True, "final_projection"])
 def test_security_recovery_persists_audited_reset_without_provider_io_in_transaction(
-    integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch
+    integration_owner_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: bool | str,
+    request,
 ) -> None:
     import app.systems.access.identity.security_recovery as security
 
-    db = integration_owner_db
+    engine = integration_owner_db.get_bind().engine
+    db = AuditSession(engine)
+    db.info.update(integration_owner_db.info)
     user = _admin()
     user_id, provider_id, email = user.id, user.supabase_user_id, user.email
     profile = db.scalar(select(WorkspaceProfile))
     assert profile is not None
     profile_id, revision = profile.id, profile.revision
+    fields = (
+        "mfa_require_admin",
+        "mfa_require_member",
+        "mfa_require_guest",
+        "mfa_grace_days",
+        "session_absolute_lifetime_minutes",
+        "session_concurrent_limit",
+        "login_failed_attempt_threshold",
+        "ip_allow_list",
+        "revision",
+        "updated_at",
+        "performed_by",
+    )
+    saved = {field: getattr(profile, field) for field in fields}
+    episodes = {
+        row.id: (row.mfa_required_since, row.updated_at, row.performed_by)
+        for row in db.scalars(select(User))
+    }
+    request_id = db.info[AUDIT_CONTEXT_KEY].request_id
+
+    def cleanup():
+        db.rollback()
+        db.close()
+        with Session(engine) as restore:
+            for row in restore.scalars(
+                select(SecurityEvent).where(SecurityEvent.subject_id == user_id)
+            ):
+                restore.delete(row)
+            owned = restore.get(User, user_id)
+            if owned is not None:
+                restore.delete(owned)
+            current = restore.get(WorkspaceProfile, profile_id)
+            for field, value in saved.items():
+                setattr(current, field, value)
+            for row in restore.scalars(select(User).where(User.id.in_(episodes))):
+                row.mfa_required_since, row.updated_at, row.performed_by = episodes[row.id]
+            for row in restore.scalars(select(AuditLog).where(AuditLog.request_id == request_id)):
+                restore.delete(row)
+            restore.commit()
+
+    request.addfinalizer(cleanup)
     profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = True
     user.mfa_required_since = datetime.now(UTC) - timedelta(days=1)
     profile.session_absolute_lifetime_minutes = 240
@@ -307,17 +368,29 @@ def test_security_recovery_persists_audited_reset_without_provider_io_in_transac
     profile.mfa_grace_days = 3
     profile.login_failed_attempt_threshold = 4
     profile.ip_allow_list = ["10.0.0.0/8"]
-    session = IdentitySession(
-        id=uuid7(),
-        user_id=user_id,
-        refresh_token_digest="security-recovery-session",
-        csrf_token_digest="security-recovery-csrf",
-        expires_at=datetime.now(UTC) + timedelta(days=1),
-    )
-    session_id = session.id
+
+    def make_session():
+        return IdentitySession(
+            id=uuid7(),
+            user_id=user_id,
+            refresh_token_digest=str(uuid7()),
+            csrf_token_digest="security-recovery-csrf",
+            expires_at=datetime.now(UTC) + timedelta(days=1),
+        )
+
+    session, late_session = make_session(), make_session()
+    session_id, late_session_id = session.id, late_session.id
     db.add(user)
     db.flush()
     db.add(session)
+    db.add(
+        IdentityMfaObservation(
+            user_id=user_id,
+            observed_provider_user_id=provider_id,
+            verified_totp=True,
+            observed_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+    )
     db.commit()
     factor_ids = [uuid7()]
 
@@ -330,8 +403,34 @@ def test_security_recovery_persists_audited_reset_without_provider_io_in_transac
         assert not db.in_transaction(), "Provider I/O must release SQL transactions"
         return list(factor_ids)
 
+    interleaved = []
+
     def delete_factor(_user_id, factor_id):
         assert not db.in_transaction(), "Provider I/O must release SQL transactions"
+        with Session(engine) as readback:
+            observation = readback.get(IdentityMfaObservation, user_id)
+            assert observation.verified_totp is None
+            assert observation.observed_provider_user_id == provider_id
+            assert observation.observed_at is not None
+            if failure == "final_projection":
+                readback.add(late_session)
+                readback.commit()
+        if failure is True:
+            with Session(engine) as observer:
+                observations.record_provider_observation(
+                    observer,
+                    user_id,
+                    ProviderUser(
+                        provider_id,
+                        None,
+                        email,
+                        factors=(ProviderFactor(factor_id, "totp", "verified"),),
+                    ),
+                    observations.observation_started_at(),
+                )
+                observer.commit()
+                interleaved.append(observer.get(IdentityMfaObservation, user_id).observed_at)
+            raise SupabaseAuthUnavailable("Owned provider removal failure")
         factor_ids.remove(factor_id)
 
     client = Mock(
@@ -340,13 +439,28 @@ def test_security_recovery_persists_audited_reset_without_provider_io_in_transac
         admin_delete_factor=Mock(side_effect=delete_factor),
     )
     monkeypatch.setattr(security, "get_supabase_auth_client", lambda: client)
+    original_record = security.record_observation
 
-    result = security.recover_workspace_security(db, user_id, local_invocation=True, elevated=True)
+    def record_projection(*args):
+        if failure == "final_projection" and args[3] is False:
+            raise SQLAlchemyError("Owned final observation persistence failure")
+        return original_record(*args)
+
+    monkeypatch.setattr(security, "record_observation", record_projection)
+    if failure:
+        with pytest.raises(security.LocalSecurityRecoveryError) as caught:
+            security.recover_workspace_security(db, user_id, local_invocation=True, elevated=True)
+        assert caught.value.local_reset_committed is True
+        assert caught.value.provider_factors_cleared is (True if isinstance(failure, str) else None)
+    else:
+        result = security.recover_workspace_security(
+            db, user_id, local_invocation=True, elevated=True
+        )
+        assert result.user_id == user_id
     db.expire_all()
     profile = db.get(WorkspaceProfile, profile_id)
     session = db.get(IdentitySession, session_id)
     assert profile is not None and session is not None
-    assert result.user_id == user_id
     assert (
         not any((profile.mfa_require_admin, profile.mfa_require_member, profile.mfa_require_guest))
         and profile.ip_allow_list == []
@@ -355,9 +469,19 @@ def test_security_recovery_persists_audited_reset_without_provider_io_in_transac
     assert db.get(User, user_id).mfa_required_since is None
     assert (profile.session_absolute_lifetime_minutes, profile.session_concurrent_limit) == (240, 2)
     assert profile.mfa_grace_days == 3 and profile.login_failed_attempt_threshold == 4
-    assert session.revoked_at is not None and factor_ids == []
+    assert session.revoked_at is not None
+    assert bool(factor_ids) is (failure is True)
+    observation = db.get(IdentityMfaObservation, user_id)
+    assert observation.verified_totp is (None if failure else False)
+    assert observation.observed_at is not None
+    if failure is True:
+        assert observation.observed_at > interleaved[0]
+    assert observation.observed_provider_user_id == provider_id
     events = list(db.scalars(select(SecurityEvent).where(SecurityEvent.subject_id == user_id)))
-    assert {event.outcome for event in events} == {"attempt", "success"}
+    assert {event.outcome for event in events} == {
+        "attempt",
+        "partial" if failure else "success",
+    }
     assert len({event.operation_id for event in events}) == 1
     audit = db.scalar(
         select(AuditLog)
@@ -367,3 +491,7 @@ def test_security_recovery_persists_audited_reset_without_provider_io_in_transac
     assert audit is not None and audit.performed_by is None
     assert audit.after is not None and audit.after["ip_allow_list"] == REDACTED
     assert "10.0.0.0" not in str(audit.before) + str(audit.after)
+    if failure == "final_projection":
+        with Session(engine) as readback:
+            late = readback.get(IdentitySession, late_session_id)
+            assert late is not None and late.revoked_at is not None

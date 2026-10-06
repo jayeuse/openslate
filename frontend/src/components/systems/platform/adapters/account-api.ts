@@ -10,6 +10,7 @@ const sessionSchema = z.object({
   expires_at: timestampSchema,
   user_agent: z.string().nullable(),
   current: z.boolean(),
+  ip_address: z.string().nullable(),
 });
 const sessionsResponse = z.array(sessionSchema);
 const noContentResponse = z.null();

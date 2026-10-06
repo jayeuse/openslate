@@ -174,6 +174,7 @@ def list_sessions(
             refreshed_at=item.refreshed_at,
             expires_at=effective_session_expiry(item, policy),
             user_agent=item.user_agent,
+            ip_address=str(item.ip_address) if item.ip_address is not None else None,
             current=item.id == identity.session_id,
         )
         for item in sessions
@@ -230,6 +231,7 @@ def list_admin_sessions(
                 device=metadata[item.id]["device"],
                 browser=metadata[item.id]["browser"],
                 user_agent=item.user_agent,
+                ip_address=str(item.ip_address) if item.ip_address is not None else None,
                 created_at=item.created_at,
                 refreshed_at=item.refreshed_at,
                 expires_at=effective_session_expiry(item, policy),
@@ -352,6 +354,7 @@ def list_user_sessions(
                 refreshed_at=item.refreshed_at,
                 expires_at=effective_session_expiry(item, policy),
                 user_agent=item.user_agent,
+                ip_address=str(item.ip_address) if item.ip_address is not None else None,
                 current=item.id == identity.session_id,
             )
             for item in result.items

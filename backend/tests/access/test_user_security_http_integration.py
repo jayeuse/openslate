@@ -206,13 +206,13 @@ def test_live_status_requires_real_auth_and_reports_current_enrollment(world):
     [
         ("role", "member", 403),
         ("status", "disabled", 401),
-        ("tokens_valid_after", datetime.now(UTC) + timedelta(minutes=1), 401),
+        ("tokens_valid_after", timedelta(minutes=1), 401),
     ],
 )
 def test_status_requires_current_actor_authority(world, field, value, expected):
     with Session(world.owner) as db:
         actor = db.get(User, world.actor_id)
-        setattr(actor, field, value)
+        setattr(actor, field, datetime.now(UTC) + value if isinstance(value, timedelta) else value)
         db.commit()
     response = world.client.get(f"/api/users/{world.target_id}/security", headers=world.headers())
     assert response.status_code == expected

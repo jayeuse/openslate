@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "./helpers/test";
+import { mockAccessApi, ids, created } from "./helpers/access-api";
 import { accessDraftStorageKey } from "../../src/components/systems/access/state/draft-journal-storage";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 import {
@@ -39,6 +40,7 @@ const currentSession = {
   refreshed_at: "2026-10-01T09:00:00Z",
   expires_at: "2026-10-02T08:00:00Z",
   user_agent: currentUserAgent,
+  ip_address: null as string | null,
   current: true,
 };
 
@@ -48,6 +50,7 @@ const otherSession = {
   refreshed_at: "2026-10-01T07:30:00Z",
   expires_at: "2026-10-02T08:00:00Z",
   user_agent: "Firefox on Android",
+  ip_address: null as string | null,
   current: false,
 };
 
@@ -57,6 +60,7 @@ const anotherSession = {
   refreshed_at: "2026-10-01T06:00:00Z",
   expires_at: "2026-10-02T08:00:00Z",
   user_agent: "Safari on iPadOS",
+  ip_address: null as string | null,
   current: false,
 };
 
@@ -944,4 +948,182 @@ test("retries failed organization date settings without disabling session contro
   workspaceRetryAllowed = true;
   await page.getByRole("button", { name: "Retry date settings" }).click();
   await expect(current).toContainText("Last active 1 Oct 2026, 10:00");
+});
+
+test("13b: Account sign-in IP handles IPv4 IPv6 and unknown at mobile reflow while ending a session", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  let sessions = [
+    { ...currentSession, ip_address: "198.51.100.101" },
+    { ...otherSession, ip_address: "2001:db8::102" },
+    { ...anotherSession, ip_address: null as string | null },
+  ];
+  await page.route("**/api/auth/sessions**", async (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill({ json: sessions });
+    const id = new URL(route.request().url()).pathname.split("/").at(-1);
+    sessions = sessions.filter((session) => session.id !== id);
+    return route.fulfill({ status: 204 });
+  });
+  await openAccount(page);
+  const list = page.getByRole("list", { name: "Active sessions", exact: true });
+  await expect(list).toContainText("Sign-in IP: 198.51.100.101");
+  await expect(list).toContainText("Sign-in IP: 2001:db8::102");
+  await expect(list).toContainText("Sign-in IP: Unknown");
+  await list
+    .getByRole("listitem")
+    .filter({ hasText: "2001:db8::102" })
+    .getByRole("button", { name: "End session", exact: true })
+    .click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Confirm end session", exact: true })
+    .click();
+  await expect(list).not.toContainText("2001:db8::102");
+  await expect(
+    list
+      .getByRole("listitem")
+      .filter({ hasText: "Current session" })
+      .getByRole("button", { name: "End session", exact: true }),
+  ).toBeEnabled();
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth <=
+        document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+});
+
+test.describe("U4 evidence-only Account directory cache", () => {
+  test("13b U4 probe: accepted Account remote-session end refreshes the cached People count", async ({
+    page,
+  }, testInfo) => {
+    // No stream event may hide the cache follow-up under investigation.
+    await page.addInitScript(() => {
+      class QuietEventSource extends EventTarget {
+        close() {}
+      }
+      Object.defineProperty(window, "EventSource", { value: QuietEventSource });
+    });
+    const api = await mockAccessApi(page);
+    const actor = api.users.get(ids.rosa)!;
+    let ownSessions = [currentSession, otherSession].map((session) => ({
+      ...session,
+      expires_at: "2099-01-01T00:00:00Z",
+    }));
+    const updateCount = () =>
+      api.monitoring.set(ids.rosa, {
+        active_session_count: ownSessions.length,
+        mfa_verified_totp: true,
+        mfa_observed_at: created,
+      });
+    updateCount();
+    api.on("GET", "/api/workspace", (route) =>
+      route.fulfill({ json: workspaceSettings }),
+    );
+    const acceptedWrites: string[] = [];
+    await page.route("**/api/auth/sessions**", (route) => {
+      const request = route.request();
+      if (request.method() === "GET")
+        return route.fulfill({ json: ownSessions });
+      const id = new URL(request.url()).pathname.split("/").at(-1);
+      if (request.method() === "DELETE" && id === otherSession.id) {
+        ownSessions = ownSessions.filter((session) => session.id !== id);
+        acceptedWrites.push(id);
+        updateCount();
+        return route.fulfill({ status: 204, body: "" });
+      }
+      return route.fulfill({
+        status: 409,
+        json: { detail: "Unexpected probe action" },
+      });
+    });
+    let primedAt: number | null = null;
+    let elapsedToReturnMs: number | null = null;
+    let directoryReadsBefore = 0;
+    const directoryReads = () =>
+      api.listReads.filter(
+        (query) =>
+          query.get("limit") === "10" &&
+          query.get("offset") === "0" &&
+          query.get("sort_by") === "name" &&
+          query.get("deleted") === "exclude",
+      );
+    try {
+      await page.goto("/access?view=people");
+      const table = page.getByRole("table", { name: "People", exact: true });
+      await expect(table).toBeVisible();
+      const row = table.getByRole("row", {
+        name: new RegExp(actor.display_name!),
+      });
+      const headings = await table.getByRole("columnheader").allTextContents();
+      const countColumn = headings.findIndex(
+        (label) => label.trim() === "Active sessions",
+      );
+      expect(countColumn).toBeGreaterThanOrEqual(0);
+      const count = row.getByRole("cell").nth(countColumn);
+      await expect(count).toHaveText("2");
+      directoryReadsBefore = directoryReads().length;
+      primedAt = Date.now();
+      await page.getByRole("button", { name: "Account", exact: true }).click();
+      await page
+        .getByRole("menuitem", { name: "Account settings", exact: true })
+        .click();
+      await expect(page).toHaveURL(/\/platform\?section=account$/);
+      const sessions = page.getByRole("list", {
+        name: "Active sessions",
+        exact: true,
+      });
+      await expect(sessions.getByRole("listitem")).toHaveCount(2);
+      await sessions
+        .getByRole("listitem")
+        .filter({ hasText: "Firefox on Android" })
+        .getByRole("button", { name: "End session", exact: true })
+        .click();
+      await page
+        .getByRole("alertdialog")
+        .getByRole("button", { name: "Confirm end session", exact: true })
+        .click();
+      await expect(sessions.getByRole("listitem")).toHaveCount(1);
+      expect(acceptedWrites).toEqual([otherSession.id]);
+      expect(api.monitoring.get(ids.rosa)?.active_session_count).toBe(1);
+      const navigation = page.getByRole("navigation", {
+        name: "Main navigation",
+        exact: true,
+      });
+      const people = navigation.getByRole("link", {
+        name: "People",
+        exact: true,
+      });
+      if (!(await people.isVisible()))
+        await navigation
+          .getByRole("button", { name: "Access", exact: true })
+          .click();
+      await people.click();
+      await expect(page).toHaveURL(/\/access\?view=people$/);
+      elapsedToReturnMs = Date.now() - primedAt;
+      expect(elapsedToReturnMs).toBeLessThan(30_000);
+      await expect(count).toHaveText("1");
+      await expect
+        .poll(() => directoryReads().length)
+        .toBeGreaterThan(directoryReadsBefore);
+    } finally {
+      testInfo.annotations.push({
+        type: "U4-probe-state",
+        description: JSON.stringify({
+          actorId: ids.rosa,
+          expectedActorThroughout: ids.rosa,
+          acceptedWrites,
+          authoritativeCount: api.monitoring.get(ids.rosa)
+            ?.active_session_count,
+          elapsedToReturnMs,
+          directoryReadsBefore,
+          directoryReadsAfter: directoryReads().length,
+          userReads: api.listReads.map((query) => Object.fromEntries(query)),
+        }),
+      });
+    }
+  });
 });

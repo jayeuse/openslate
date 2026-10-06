@@ -119,6 +119,7 @@ def test_admin_lists_active_sessions_in_stable_descending_order_without_secret_d
             .isoformat()
             .replace("+00:00", "Z"),
             "user_agent": "Browser/1.0",
+            "ip_address": None,
             "current": False,
         }
     ]
@@ -464,6 +465,7 @@ def test_admin_session_collection_returns_paged_public_person_and_client_metadat
         "user_id": str(admin.id),
         "person_name": "Session Administrator",
         "user_agent": "Firefox/1.0 Linux",
+        "ip_address": None,
         "device": "Desktop",
         "browser": "Firefox",
         "created_at": session.created_at.isoformat().replace("+00:00", "Z"),

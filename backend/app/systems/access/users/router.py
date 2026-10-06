@@ -1,24 +1,16 @@
 """User listing, retrieval, and invitation-backed creation endpoints."""
 
-from enum import StrEnum
-from typing import Annotated, Any, cast
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.dependencies import get_current_user, require_admin
 from app.common.dependencies.auth import CurrentIdentity, get_current_identity
-from app.common.listing import (
-    ListQuerySpec,
-    StandardListRequest,
-    StandardListResponse,
-    execute_standard_list,
-)
+from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.systems.access.auth.cookies import clear_browser_session
 from app.systems.access.policy.scope import explain_access
@@ -31,12 +23,15 @@ from app.systems.access.users.coordination import (
 from app.systems.access.users.coordination import (
     get_user as load_user,
 )
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.directory import UserListRequest, directory_list, directory_summary
+from app.systems.access.users.directory import UserSortField as UserSortField
+from app.systems.access.users.models import User
 from app.systems.access.users.schemas import (
     InvitationCreate,
     InvitationResponse,
     UserAccessResponse,
     UserCreate,
+    UserListResponse,
     UserMfaResetRequest,
     UserMfaResetResponse,
     UserPreferencesResponse,
@@ -45,6 +40,7 @@ from app.systems.access.users.schemas import (
     UserRecoveryResponse,
     UserResponse,
     UserSecurityResponse,
+    UserSummaryResponse,
 )
 from app.systems.access.users.security import read_security, recover_person, reset_person_mfa
 from app.systems.access.users.service import (
@@ -56,48 +52,25 @@ AdminUser = Annotated[User, Depends(require_admin)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-class UserSortField(StrEnum):
-    EMAIL = "email"
-    USERNAME = "username"
-    CREATED_AT = "created_at"
-    UPDATED_AT = "updated_at"
-
-
-class UserListResponse(StandardListResponse[UserResponse]):
-    pass
-
-
-class UserListRequest(StandardListRequest[UserSortField]):
-    role: UserRole | None = None
-
-
-USER_LIST_SPEC = ListQuerySpec(
-    sort_fields={
-        UserSortField.EMAIL: cast(ColumnElement[Any], User.email),
-        UserSortField.USERNAME: cast(ColumnElement[Any], User.username),
-        UserSortField.CREATED_AT: cast(ColumnElement[Any], User.created_at),
-        UserSortField.UPDATED_AT: cast(ColumnElement[Any], User.updated_at),
-    },
-    default_sort=UserSortField.USERNAME,
-    tie_breaker=cast(ColumnElement[Any], User.id),
-    search_fields=(cast(ColumnElement[str], User.email), cast(ColumnElement[str], User.username)),
-    deleted_field=cast(ColumnElement[bool], User.is_deleted),
-)
-
-
 @router.get("", response_model=UserListResponse)
 def list_users(
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[UserListRequest, Query()],
+    response: Response,
 ) -> UserListResponse:
-    statement = select(User)
-    if params.role is not None:
-        statement = statement.where(User.role == params.role.value)
-    result = execute_standard_list(db, statement, params, USER_LIST_SPEC)
-    return UserListResponse.model_validate(
-        {"items": result.items, "pagination": result.pagination}, from_attributes=True
-    )
+    response.headers["Cache-Control"] = "no-store"
+    return directory_list(db, params, utc_now())
+
+
+@router.get("/summary", response_model=UserSummaryResponse)
+def user_summary(
+    _: AdminUser,
+    db: Annotated[Session, Depends(get_db)],
+    response: Response,
+) -> UserSummaryResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return directory_summary(db, utc_now())
 
 
 @router.get("/{user_id}", response_model=UserResponse)

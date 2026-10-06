@@ -396,7 +396,7 @@ def test_own_session_inventory_returns_active_sessions_newest_first_with_user_ag
                 user_id=local_id,
                 refresh_token_digest=uuid7().hex * 2,
                 csrf_token_digest=uuid7().hex * 2,
-                refreshed_at=now - timedelta(days=1),
+                refreshed_at=now - timedelta(minutes=10),
                 expires_at=now + timedelta(days=1),
                 user_agent="Old active browser/3.0",
             )

@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
+from app.common.listing import StandardListResponse
 from app.common.normalization import normalize_email, normalize_username
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import UserRole, UserStatus
@@ -27,6 +28,22 @@ class UserResponse(BaseModel):
     performed_by: UUID | None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DirectoryRowResponse(UserResponse):
+    active_session_count: int = Field(ge=0)
+    mfa_verified_totp: StrictBool | None
+    mfa_observed_at: datetime | None
+
+
+class UserListResponse(StandardListResponse[DirectoryRowResponse]):
+    pass
+
+
+class UserSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    admins_without_mfa: int = Field(ge=0)
+    admins_mfa_unknown: int = Field(ge=0)
 
 
 class AccessEntryResponse(BaseModel):
