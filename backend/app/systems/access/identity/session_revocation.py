@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import session_expiry_expression
 
@@ -37,11 +38,15 @@ def revoke_user_sessions(
     """Revoke active sessions other than an optional preserved session."""
 
     timestamp = _now(now)
+    # Order against admission/MFA without upgrading existing administrator shared locks.
+    db.scalar(select(User.id).where(User.id == user_id).with_for_update(of=User, read=True))
     changed = 0
     for session in db.scalars(
-        select(IdentitySession).where(
-            IdentitySession.user_id == user_id, IdentitySession.revoked_at.is_(None)
-        )
+        select(IdentitySession)
+        .where(IdentitySession.user_id == user_id, IdentitySession.revoked_at.is_(None))
+        .order_by(IdentitySession.id)
+        .execution_options(populate_existing=True)
+        .with_for_update(of=IdentitySession)
     ):
         if session.id != except_session_id and session.revoked_at is None:
             session.revoked_at = timestamp

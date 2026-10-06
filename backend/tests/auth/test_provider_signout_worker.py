@@ -33,3 +33,73 @@ def test_signout_worker_reports_inflight_work_until_it_finishes(
         release.set()
     assert worker.stop() is True
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "signout_failure,retention_failure", [(False, False), (True, False), (False, True)]
+)
+def test_retention_runs_initially_hourly_and_failures_do_not_couple_phases(
+    monkeypatch, signout_failure, retention_failure
+):
+    elapsed = [0.0]
+    calls = []
+
+    class ClockStop:
+        def is_set(self):
+            return elapsed[0] > 3600
+
+        def wait(self, seconds):
+            assert seconds == 30
+            elapsed[0] += seconds
+
+    worker = module.ProviderSignoutWorker(Settings(**settings_values(), _env_file=None))
+    worker._stop = ClockStop()
+    monkeypatch.setattr(module, "monotonic", lambda: elapsed[0], raising=False)
+
+    def signout():
+        calls.append(("signout", elapsed[0]))
+        if signout_failure:
+            raise RuntimeError("Owned unavailable provider")
+        return 0
+
+    def retention():
+        calls.append(("retention", elapsed[0]))
+        if retention_failure:
+            raise RuntimeError("Owned unavailable database")
+        return 0
+
+    monkeypatch.setattr(worker, "run_once", signout)
+    monkeypatch.setattr(worker, "_run_retention_once", retention, raising=False)
+    worker._run()
+    assert [time for phase, time in calls if phase == "retention"] == [0, 3600]
+    assert len([phase for phase, _ in calls if phase == "signout"]) == 121
+
+
+def test_stop_during_signout_prevents_another_retention_phase(monkeypatch):
+    worker = module.ProviderSignoutWorker(Settings(**settings_values(), _env_file=None))
+    monkeypatch.setattr(worker, "run_once", lambda: worker._stop.set())
+    calls = []
+    monkeypatch.setattr(worker, "_run_retention_once", lambda: calls.append(True), raising=False)
+    worker._run()
+    assert calls == []
+
+
+def test_stop_reports_inflight_retention_until_its_transaction_finishes(monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    worker = module.ProviderSignoutWorker(Settings(**settings_values(), _env_file=None))
+    monkeypatch.setattr(worker, "run_once", lambda: 0)
+    monkeypatch.setattr(module, "_SHUTDOWN_SECONDS", 0.01)
+
+    def retention():
+        entered.set()
+        assert release.wait(timeout=2)
+        return 0
+
+    monkeypatch.setattr(worker, "_run_retention_once", retention, raising=False)
+    try:
+        worker.start()
+        assert entered.wait(timeout=1), "Due retention was not attempted"
+        assert worker.stop() is False
+    finally:
+        release.set()
+        assert worker.stop() is True
