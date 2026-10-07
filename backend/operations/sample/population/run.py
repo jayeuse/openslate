@@ -379,7 +379,13 @@ def populate_sample_data(
     host_control: Callable[..., object] | None = None,
 ) -> SamplePopulationReport:
     """Create a private run, populate through user APIs, then prove the readback."""
-    dataset = build_dataset(profile, seed, anchor_date, organization=organization)
+    dataset = build_dataset(
+        profile,
+        seed,
+        anchor_date,
+        organization=organization,
+        host_acceptance=host_control is not None,
+    )
     from operations.sample.phases.expectations import phase_plan_summary
 
     phases = phase_plan_summary(dataset)
@@ -404,6 +410,7 @@ def populate_sample_data(
         "profile": profile,
         "seed": seed,
         "anchor_date": anchor_date.isoformat(),
+        "host_acceptance": host_control is not None,
         "admin_id": expected_admin_id,
         "started_at": None,
         "finished_at": None,

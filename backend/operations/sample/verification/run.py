@@ -217,6 +217,7 @@ def verify_sample_data(
         date.fromisoformat(manifest["anchor_date"]),
         organization=pack,
         module_counts_override=counts,
+        host_acceptance=manifest.get("host_acceptance") is True,
     )
     observed: dict[str, int] = {}
     issues: list[str] = []

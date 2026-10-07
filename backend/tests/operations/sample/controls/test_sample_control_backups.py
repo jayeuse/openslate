@@ -32,17 +32,15 @@ def test_backup_plan_adds_one_action_per_public_operation_with_authored_name(pac
     actions = plan_controls(dataset)
     backups = [row for row in actions if row.kind == "backup_controls"]
     assert [row.values["operation"] for row in backups] == [
-        "physical_backup_export",
         "review_backup_status",
         "update_restore_backup_policy",
         "queue_backup",
         "review_backup_history",
         "review_version",
     ]
-    assert len(actions) == 103
-    assert backups[0].actor_key != "admin"
-    assert all(row.actor_key == "admin" and row.phase == "reorganization" for row in backups[1:])
-    queue = backups[3]
+    assert len(actions) == 102
+    assert all(row.actor_key == "admin" and row.phase == "reorganization" for row in backups)
+    queue = backups[2]
     assert queue.expected_status == 201
     assert (
         queue.values["name"] == f"{dataset.organization.identity.workspace_name} workspace backup"
@@ -51,6 +49,22 @@ def test_backup_plan_adds_one_action_per_public_operation_with_authored_name(pac
     assert actions[-1].values["operation"] == "revoke_user_sessions"
     assert actions[-3].values["operation"] == "revoke_admin_sessions"
     assert actions[-2].values["operation"] == "review_notifications"
+
+
+@pytest.mark.parametrize("pack_key", ("harbor", "school"))
+def test_host_backup_export_is_planned_only_for_host_acceptance(pack_key):
+    # An ordinary run has no trusted host callback, so it must not plan the host step.
+    plain = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
+    host = build_dataset(
+        "small", 83, date(2026, 10, 2), organization=get_pack(pack_key), host_acceptance=True
+    )
+    plain_ops = [row.values["operation"] for row in plan_controls(plain)]
+    host_actions = plan_controls(host)
+    host_backups = [row for row in host_actions if row.kind == "backup_controls"]
+    assert "physical_backup_export" not in plain_ops
+    assert host_backups[0].values["operation"] == "physical_backup_export"
+    assert host_backups[0].actor_key != "admin"
+    assert len(host_actions) == len(plain_ops) + 1
 
 
 class BackupWire:
@@ -398,7 +412,9 @@ def test_backup_reconciliation_requires_exact_descriptors_and_current_owned_read
 def test_host_control_requires_operator_callback_before_any_request(tmp_path, callback):
     from operations.sample.controls.host_delivery import plan_host_controls
 
-    dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack("harbor"))
+    dataset = build_dataset(
+        "small", 83, date(2026, 10, 2), organization=get_pack("harbor"), host_acceptance=True
+    )
     wire = BackupWire()
     context = _context(tmp_path, wire.handle)
     context.private_values["host_control"] = callback

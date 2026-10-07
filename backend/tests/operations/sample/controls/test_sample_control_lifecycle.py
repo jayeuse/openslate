@@ -41,7 +41,7 @@ def test_platform_plan_uses_disposable_structure_and_preserves_lifecycle_order(p
     from operations.sample.controls.platform import OPERATIONS
 
     platform = [action for action in actions if action.values["operation"] in OPERATIONS]
-    assert len(actions) == 103
+    assert len(actions) == 102
     assert [action.values["operation"] for action in platform] == [
         "import_csv_rows",
         "search_workspace",

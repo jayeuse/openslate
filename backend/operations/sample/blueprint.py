@@ -92,6 +92,9 @@ class SampleDataset:
     edges: tuple[SampleEdge, ...]
     test_vectors: tuple[SampleTestVector, ...]
     named_scenarios: tuple[NamedScenario, ...]
+    # Host backup and export acceptance needs a trusted host callback; ordinary
+    # sample runs and the release smoke seed leave it out of the plan.
+    host_acceptance: bool = False
 
 
 def edge_child_ids(dataset: SampleDataset) -> tuple[str, ...]:

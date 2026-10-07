@@ -141,7 +141,14 @@ def test_plan_without_seed_draws_once_per_invocation_and_explicit_seed_wins(
         random_calls.append(bits)
         return next(drawn)
 
-    def build(profile: str, seed: int, anchor: date, *, organization: object) -> object:
+    def build(
+        profile: str,
+        seed: int,
+        anchor: date,
+        *,
+        organization: object,
+        host_acceptance: bool = False,
+    ) -> object:
         built.append(seed)
         return SimpleNamespace(seed=seed)
 
@@ -172,7 +179,14 @@ def test_populate_uses_one_generated_seed_for_plan_and_population(
         random_calls.append(bits)
         return 1_982_731
 
-    def build(profile: str, seed: int, anchor: date, *, organization: object) -> object:
+    def build(
+        profile: str,
+        seed: int,
+        anchor: date,
+        *,
+        organization: object,
+        host_acceptance: bool = False,
+    ) -> object:
         planned.append(seed)
         return SimpleNamespace(seed=seed)
 

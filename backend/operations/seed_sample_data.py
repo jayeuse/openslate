@@ -402,7 +402,11 @@ def main(
         report, api_url, mailpit_url = _local_preflight()
         if args.command == "plan":
             dataset = build_dataset(
-                args.profile, args.seed, args.anchor_date, organization=get_pack(args.organization)
+                args.profile,
+                args.seed,
+                args.anchor_date,
+                organization=get_pack(args.organization),
+                host_acceptance=host_control is not None,
             )
             _print_plan(dataset, report, mailpit_url)
             return 0
@@ -435,6 +439,7 @@ def main(
                     args.seed,
                     args.anchor_date,
                     organization=get_pack(args.organization),
+                    host_acceptance=host_control is not None,
                 )
                 _print_plan(dataset, report, mailpit_url)
                 result = populate_sample_data(

@@ -237,7 +237,9 @@ def host_journey(host_dataset, topology_runtime, tmp_path, monkeypatch):
 
 @pytest.fixture(params=("harbor", "school"))
 def host_dataset(request):
-    return build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(request.param))
+    return build_dataset(
+        "small", 83, date(2026, 10, 2), organization=get_pack(request.param), host_acceptance=True
+    )
 
 
 def test_host_plan_reuses_the_cleaned_mfa_member_without_the_original_backup_queue(host_dataset):

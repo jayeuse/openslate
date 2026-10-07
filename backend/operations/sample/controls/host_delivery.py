@@ -45,7 +45,7 @@ from operations.sample.population.people import SampleActorCredential
 
 
 def plan_host_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
-    if dataset.organization.phases is None:
+    if dataset.organization.phases is None or not dataset.host_acceptance:
         return ()
     return (
         PhaseAction(
