@@ -133,8 +133,14 @@ def is_active_admin(user: User, role: str | None = None, status_value: str | Non
     )
 
 
+def token_cutoff(timestamp: datetime) -> datetime:
+    """Token `iat` has whole-second precision; a sub-second cutoff would refuse a
+    new sign-in in the same second. Revoked sessions still refuse older tokens."""
+    return timestamp.replace(microsecond=0)
+
+
 def advance_token_cutoff(user: User) -> None:
-    now = utc_now()
+    now = token_cutoff(utc_now())
     if user.tokens_valid_after is None or user.tokens_valid_after < now:
         user.tokens_valid_after = now
 

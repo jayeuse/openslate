@@ -26,6 +26,7 @@ from app.systems.access.users.coordination import (
     InvitationNotFound,
     ProfileValidationError,
     get_user,
+    token_cutoff,
     validate_identity_profile,
 )
 from app.systems.access.users.invitation_provider import prepare_invitation_user
@@ -274,7 +275,7 @@ def revoke_invitation(db: Session, user_id: UUID, *, actor_id: UUID) -> None:
             raise InvitationConflict("Invitation is no longer pending")
         timestamp = utc_now()
         profile.invitation_sent_at = None
-        profile.tokens_valid_after = timestamp
+        profile.tokens_valid_after = token_cutoff(timestamp)
         revoke_user_sessions(db, profile.id, except_session_id=None, now=timestamp)
         append_security_event(
             db,
