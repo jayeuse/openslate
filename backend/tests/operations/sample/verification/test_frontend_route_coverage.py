@@ -120,12 +120,40 @@ def test_route_coverage_reconciles_the_cookie_free_invitation_journal(tmp_path: 
     ) as acceptance:
         assert acceptance.complete_invitation("a" * 56, "fixture-password").status_code == 204
 
-    counts, issues = coverage.verify_route_coverage(tmp_path)
+    counts, issues = coverage.verify_route_coverage(tmp_path, host_acceptance=True)
 
     assert counts["ui_routes_covered"] == len(coverage.SEEDER_ROUTES)
     assert counts["ui_routes_uncovered"] == 0
     assert counts["ui_routes_interactive"] == 0
     assert issues == []
+
+
+def test_host_only_routes_are_required_only_for_host_acceptance(tmp_path: Path) -> None:
+    covered = coverage.SEEDER_ROUTES - coverage.HOST_ACCEPTANCE_ROUTES
+    for name in ("requests.jsonl", "invitation-requests.jsonl", "verification-requests.jsonl"):
+        (tmp_path / name).touch(mode=0o600)
+    for method, route in sorted(covered):
+        attempt = str(uuid4())
+        append_event(
+            tmp_path / "requests.jsonl",
+            {
+                "event": "request_started",
+                "attempt_id": attempt,
+                "method": method,
+                "route_template": route,
+            },
+        )
+        append_event(
+            tmp_path / "requests.jsonl",
+            {"event": "request_finished", "attempt_id": attempt, "status_code": 200},
+        )
+
+    plain_counts, plain_issues = coverage.verify_route_coverage(tmp_path)
+    _, host_issues = coverage.verify_route_coverage(tmp_path, host_acceptance=True)
+
+    assert plain_issues == []
+    assert plain_counts["ui_routes_covered"] == len(covered)
+    assert len(host_issues) == len(coverage.HOST_ACCEPTANCE_ROUTES)
 
 
 @pytest.mark.parametrize(

@@ -290,6 +290,11 @@ def test_access_controls_call_ui_routes_and_restore_the_planned_state(tmp_path: 
         "control_results": results,
         "mappings": {"user": {_guest_key(dataset): GUEST_ID, _pending_key(dataset): PENDING_ID}},
     }
+    # The real plan also holds the People security control under this kind; it has
+    # its own verifier and must not fail the access operation check.
+    from operations.sample.controls.people_security import plan_people_security_controls
+
+    manifest["control_plan"].append(asdict(plan_people_security_controls(dataset)[0]))
 
     counts, issues = verify_access_controls(
         context.clients["admin"], dataset, manifest, admin_id=ADMIN_ID

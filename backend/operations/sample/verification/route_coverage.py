@@ -378,7 +378,22 @@ def read_route_evidence(journal: Path) -> dict[str, Any]:
     }
 
 
-def verify_route_coverage(directory: Path) -> tuple[dict[str, int], list[str]]:
+# Only the host backup export step calls these; ordinary runs leave that step out.
+HOST_ACCEPTANCE_ROUTES: frozenset[Route] = frozenset(
+    {
+        ("GET", "/api/health"),
+        ("GET", "/api/ready"),
+        ("POST", "/api/backups/exports"),
+        ("GET", "/api/backups/exports/{export_id}"),
+        ("POST", "/api/backups/exports/{export_id}/download-admission"),
+        ("GET", "/api/backups/exports/{export_id}/content"),
+    }
+)
+
+
+def verify_route_coverage(
+    directory: Path, *, host_acceptance: bool = False
+) -> tuple[dict[str, int], list[str]]:
     """Require executed UI coverage across population and its read-only verification."""
     requests: Counter[Route] = Counter()
     failures: Counter[str] = Counter()
@@ -390,7 +405,8 @@ def verify_route_coverage(directory: Path) -> tuple[dict[str, int], list[str]]:
             failures.update(evidence["failures_5xx"])
     except (OSError, ValueError, UnicodeError):
         return {}, ["Actual UI route evidence is missing, unfinished or invalid"]
-    missing = SEEDER_ROUTES - requests.keys()
+    required = SEEDER_ROUTES if host_acceptance else SEEDER_ROUTES - HOST_ACCEPTANCE_ROUTES
+    missing = required - requests.keys()
     report = {
         "event": "route_coverage",
         "covered": [
@@ -402,6 +418,7 @@ def verify_route_coverage(directory: Path) -> tuple[dict[str, int], list[str]]:
             for (method, path), category in sorted(DEFERRED_ROUTES.items())
         ],
         "uncovered": [{"method": method, "path": path} for method, path in sorted(missing)],
+        "host_acceptance": host_acceptance,
         "failures_5xx": dict(sorted(failures.items())),
         "interactive_acceptance": [
             {"method": method, "path": path, "reason": reason}
@@ -414,7 +431,7 @@ def verify_route_coverage(directory: Path) -> tuple[dict[str, int], list[str]]:
         return {}, ["Actual UI route coverage report could not be saved"]
     return (
         {
-            "ui_routes_covered": len(SEEDER_ROUTES) - len(missing),
+            "ui_routes_covered": len(required) - len(missing),
             "ui_routes_deferred": len(DEFERRED_ROUTES),
             "ui_routes_interactive": len(INTERACTIVE_ACCEPTANCE_ROUTES),
             "ui_routes_uncovered": len(missing),
