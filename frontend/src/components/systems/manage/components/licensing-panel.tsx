@@ -29,8 +29,7 @@ export function LicensingPanel() {
             Usage
           </h3>
           <p className="text-muted-foreground mt-3 text-sm">
-            Capacity depends on the resources configured by your server
-            operator. No plan allowance or storage measurement is reported here.
+            Capacity depends on your server. OpenSlate has no plan limits.
           </p>
         </div>
       </div>

@@ -60,6 +60,8 @@ const SESSION_SORT_OPTIONS: readonly {
 ];
 
 const SESSION_PAGE_SIZES = [4, 10, 25] as const;
+const hideNumberSpinners =
+  "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
 
 type SecurityPanelProps = {
   sessions:
@@ -81,6 +83,7 @@ type SecurityPanelProps = {
 type SecurityPolicyFormProps = {
   form: {
     dirty: boolean;
+    saved: SecuritySettingsFormFields;
     current: SecuritySettingsFormFields;
     errors: SecuritySettingsFormErrors;
     changeSetting: SecuritySettingsChange;
@@ -191,7 +194,7 @@ export function SecurityPanel({
         row.original.current ? (
           <Badge variant="success">Current session</Badge>
         ) : (
-          <Badge variant="outline">Remote</Badge>
+          <Badge variant="outline">Other device</Badge>
         ),
     },
     {
@@ -235,7 +238,7 @@ export function SecurityPanel({
             Sessions
           </h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            Review active local sessions across your organization.
+            Review signed-in devices across your organization.
           </p>
         </div>
         <Button
@@ -285,7 +288,7 @@ export function SecurityPanel({
             <NativeSelectOption value="current">
               Current session
             </NativeSelectOption>
-            <NativeSelectOption value="remote">Remote</NativeSelectOption>
+            <NativeSelectOption value="remote">Other device</NativeSelectOption>
           </NativeSelect>
         </Field>
         <Field className="min-w-0">
@@ -385,7 +388,7 @@ export function SecurityPanel({
                               </Badge>
                             ) : (
                               <Badge className="shrink-0" variant="outline">
-                                Remote
+                                Other device
                               </Badge>
                             )}
                           </div>
@@ -505,6 +508,7 @@ export function SecurityPolicyForm({
 }: SecurityPolicyFormProps) {
   const {
     dirty,
+    saved,
     saveSection,
     current,
     errors,
@@ -514,6 +518,11 @@ export function SecurityPolicyForm({
     addMyAddress,
     addressNotice,
   } = form;
+
+  const shorter = (key: "sessionRetention" | "eventRetention") =>
+    current[key].trim() !== "" && Number(current[key]) < Number(saved[key]);
+  const retentionShortened =
+    shorter("sessionRetention") || shorter("eventRetention");
 
   function numberField(
     key:
@@ -541,7 +550,7 @@ export function SecurityPolicyForm({
           min={minimum}
           max={maximum}
           step={1}
-          className="min-h-11"
+          className={`min-h-11 ${hideNumberSpinners}`}
           value={current[key]}
           aria-invalid={Boolean(error)}
           aria-describedby={error ? `${id}-error` : undefined}
@@ -579,7 +588,7 @@ export function SecurityPolicyForm({
                 min={12}
                 max={128}
                 step={1}
-                className="min-h-11"
+                className={`min-h-11 ${hideNumberSpinners}`}
                 value={current.minimumLength}
                 aria-invalid={Boolean(errors.minimumLength)}
                 aria-describedby={
@@ -639,28 +648,28 @@ export function SecurityPolicyForm({
         </fieldset>
         <fieldset className="min-w-0 space-y-3 sm:col-span-2">
           <legend className="text-sm font-medium">Session limits</legend>
-          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-            <SettingSelect
-              id="session-timeout"
-              label="Session timeout"
-              value={current.timeout}
-              error={errors.timeout}
-              options={["15 minutes", "30 minutes", "60 minutes", "8 hours"]}
-              onChange={(value) =>
-                changeSetting(
-                  "timeout",
-                  value as SecuritySettingsFormFields["timeout"],
-                )
-              }
-            />
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="min-w-0 sm:col-span-2 lg:col-span-1">
+              <SettingSelect
+                id="session-timeout"
+                label="Session timeout"
+                value={current.timeout}
+                error={errors.timeout}
+                options={["15 minutes", "30 minutes", "60 minutes", "8 hours"]}
+                onChange={(value) =>
+                  changeSetting(
+                    "timeout",
+                    value as SecuritySettingsFormFields["timeout"],
+                  )
+                }
+              />
+            </div>
             <div className="min-w-0 space-y-3">
               <SettingSelect
                 id="session-absolute-mode"
                 label="Total session lifetime"
-                value={
-                  current.absoluteLifetime === "Off" ? "Off" : "Set a limit"
-                }
-                options={["Off", "Set a limit"]}
+                value={current.absoluteLifetime === "Off" ? "Off" : "Limited"}
+                options={["Off", "Limited"]}
                 onChange={(value) =>
                   changeSetting(
                     "absoluteLifetime",
@@ -685,10 +694,8 @@ export function SecurityPolicyForm({
               <SettingSelect
                 id="session-cap-mode"
                 label="Concurrent session limit"
-                value={
-                  current.concurrentLimit === "Off" ? "Off" : "Set a limit"
-                }
-                options={["Off", "Set a limit"]}
+                value={current.concurrentLimit === "Off" ? "Off" : "Limited"}
+                options={["Off", "Limited"]}
                 onChange={(value) =>
                   changeSetting("concurrentLimit", value === "Off" ? "Off" : "")
                 }
@@ -709,7 +716,9 @@ export function SecurityPolicyForm({
         </fieldset>
         <fieldset
           className="min-w-0 space-y-3 sm:col-span-2"
-          aria-describedby="security-retention-description"
+          aria-describedby={
+            retentionShortened ? "security-retention-description" : undefined
+          }
         >
           <legend className="text-sm font-medium">Retention</legend>
           <div className="grid min-w-0 gap-3 sm:grid-cols-2">
@@ -728,28 +737,28 @@ export function SecurityPolicyForm({
               3650,
             )}
           </div>
-          <Alert
-            id="security-retention-description"
-            variant="warning"
-            role="note"
-          >
-            Shortening a period can make older sessions or security events
-            eligible for deletion at the next cleanup.
-          </Alert>
+          {retentionShortened ? (
+            <Alert
+              id="security-retention-description"
+              variant="warning"
+              role="note"
+            >
+              Shortening a period can make older sessions or security events
+              eligible for deletion at the next cleanup.
+            </Alert>
+          ) : null}
         </fieldset>
         <fieldset
           className="min-w-0 space-y-3 sm:col-span-2"
           aria-describedby="mfa-policy-description"
         >
-          <legend className="text-sm font-medium">
-            Two-factor authentication
-          </legend>
+          <legend className="text-sm font-medium">Two-step verification</legend>
           <p
             id="mfa-policy-description"
             className="text-muted-foreground text-sm"
           >
-            Choose which roles must enroll in an authenticator. Existing
-            verified authenticators still require verification at sign-in.
+            Choose which roles must set up an authenticator app. People who
+            already use one still enter a code when they sign in.
           </p>
           <div className="grid min-w-0 gap-1 sm:grid-cols-3">
             {(
@@ -769,7 +778,7 @@ export function SecurityPolicyForm({
                     checked={current[key]}
                     onCheckedChange={(value) => changeSetting(key, value)}
                   />
-                  <span>Require MFA for {role}</span>
+                  <span>Require two-step verification for {role}</span>
                 </FieldLabel>
               </Field>
             ))}
@@ -788,7 +797,7 @@ export function SecurityPolicyForm({
               className="min-h-11"
               onClick={onManageMfa}
             >
-              <KeyRound data-icon="inline-start" /> Manage MFA
+              <KeyRound data-icon="inline-start" /> Manage two-step verification
             </Button>
           </div>
           <p className="text-muted-foreground text-sm">
@@ -939,11 +948,15 @@ export function SecurityPolicyForm({
           ) : null}
         </fieldset>
       </div>
-      <SettingActions
-        dirty={dirty}
-        onDiscard={() => clearDraft()}
-        onSave={() => void saveSection()}
-      />
+      {/* The dialog scrolls; the actions stay in reach at its bottom edge.
+          -bottom-5 also covers the dialog's padding so fields don't show below. */}
+      <div className="bg-card sticky -bottom-5 z-10 -mx-5 -mb-5 border-t px-5 pb-8">
+        <SettingActions
+          dirty={dirty}
+          onDiscard={() => clearDraft()}
+          onSave={() => void saveSection()}
+        />
+      </div>
     </form>
   );
 }

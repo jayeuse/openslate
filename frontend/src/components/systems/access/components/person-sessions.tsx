@@ -86,8 +86,10 @@ export function PersonSessions({
           <h3 id="person-sessions-title" className="font-semibold">
             Sessions
           </h3>
-          <p className="text-muted-foreground text-sm">
-            Active local sessions for this person.
+          <p className="text-muted-foreground text-sm tabular-nums">
+            {sessions.data
+              ? `${items.length} active ${items.length === 1 ? "session" : "sessions"}`
+              : "Devices where this person is signed in."}
           </p>
         </div>
         {others.length > 0 ? (
@@ -123,7 +125,7 @@ export function PersonSessions({
         >
           {items.length === 0 ? (
             <p className="text-muted-foreground rounded-lg border p-4 text-sm">
-              No active local sessions.
+              No active sessions.
             </p>
           ) : (
             <ul

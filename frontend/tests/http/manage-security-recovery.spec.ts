@@ -166,7 +166,7 @@ test("Backup schedule saves revisioned real policy and keeps cancelled drafts wi
     .click();
   await expect(dialog).toContainText("UTC");
   await expect(dialog).toContainText(
-    "Saving this policy does not install a host runner",
+    "Saving this schedule does not set up the backup service",
   );
   await expect(
     dialog.getByRole("button", {

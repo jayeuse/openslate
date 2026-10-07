@@ -105,9 +105,7 @@ export function SettingInput({
         className="min-h-11"
       />
       {description ? (
-        <FieldDescription id={descriptionId} className="md:sr-only">
-          {description}
-        </FieldDescription>
+        <FieldDescription id={descriptionId}>{description}</FieldDescription>
       ) : null}
       <FieldError id={errorId}>{error}</FieldError>
     </Field>

@@ -538,7 +538,7 @@ test("CSV input rejects invalid UTF-8, row limits and widths while accepting one
     [Buffer.from([84, 105, 116, 108, 101, 10, 255]), "UTF-8"],
     [Buffer.from(`Title,Quantity\n${"Pump,1\n".repeat(10001)}`), "10,000"],
     [Buffer.from("Title,Quantity\nPump,1,extra"), "Row 2 must have 2 cells"],
-    [Buffer.alloc(8 * 1024 * 1024 + 1, 65), "8 MiB"],
+    [Buffer.alloc(8 * 1024 * 1024 + 1, 65), "8 MB"],
   ] as const) {
     await file.setInputFiles({
       name: "invalid.csv",

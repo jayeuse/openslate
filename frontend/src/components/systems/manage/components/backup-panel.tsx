@@ -1,7 +1,16 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Download, FileSearch, HardDrive, X } from "lucide-react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ComponentProps,
+  type FormEvent,
+} from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Download, Eye, EyeOff, FileSearch, HardDrive, X } from "lucide-react";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +39,7 @@ import {
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { AccessSearchToolbar } from "../../access/components/access-search-toolbar";
+import { formatFileSize } from "../../shared/adapters/files-api";
 import {
   backupNameError,
   backupExportSourceAvailable,
@@ -42,6 +52,7 @@ import {
   type ManageBackupRun,
   type ManageBackupsRequest,
 } from "../adapters/backup-api";
+import { manageWorkspaceOptions } from "../adapters/manage-queries";
 import type { useManageMaintenance } from "../state/controller";
 import { SettingSelect } from "./panel-ui";
 
@@ -53,13 +64,55 @@ const SORT_OPTIONS = [
   { value: "name", label: "Name" },
 ] as const;
 
-export function formatBackupTime(value: string | null): string {
-  return value === null
-    ? "Not recorded"
-    : new Intl.DateTimeFormat(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(new Date(value));
+/** Backup times use the workspace region; callers without it get the device format. */
+export function formatBackupTime(
+  value: string | null,
+  region?: WorkspaceRegion,
+): string {
+  if (value === null) return "Not recorded";
+  const options = { dateStyle: "medium", timeStyle: "short" } as const;
+  if (region) return formatWorkspaceDateTime(value, region, options);
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf())
+    ? value
+    : new Intl.DateTimeFormat(undefined, options).format(date);
+}
+
+export function useWorkspaceRegion(): WorkspaceRegion | undefined {
+  return useQuery(manageWorkspaceOptions()).data;
+}
+
+/** A secret field with a visibility toggle that keeps its own label. */
+function SecretInput({
+  revealed,
+  onRevealedChange,
+  revealLabel,
+  ...props
+}: Omit<ComponentProps<typeof Input>, "type"> & {
+  revealed: boolean;
+  onRevealedChange: (revealed: boolean) => void;
+  revealLabel: string;
+}) {
+  return (
+    <div className="relative min-w-0">
+      <Input
+        {...props}
+        type={revealed ? "text" : "password"}
+        className="min-h-11 pr-12"
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="absolute top-0 right-0 size-11"
+        aria-label={revealLabel}
+        aria-pressed={revealed}
+        onClick={() => onRevealedChange(!revealed)}
+      >
+        {revealed ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+      </Button>
+    </div>
+  );
 }
 
 export function BackupRunnerStatus({
@@ -67,10 +120,11 @@ export function BackupRunnerStatus({
 }: {
   status: NonNullable<Maintenance["acceptedStatus"]>;
 }) {
+  const region = useWorkspaceRegion();
   const labels = {
-    unknown: "Host runner status unknown",
-    available: "Host runner available",
-    stale: "Host runner observation is stale",
+    unknown: "Backup service status unknown",
+    available: "Backup service available",
+    stale: "Backup service has not checked in recently",
     recovery_required: "Operator recovery required",
     adoption_required: "Operator adoption required",
   } as const;
@@ -79,8 +133,8 @@ export function BackupRunnerStatus({
       <p className="font-medium">{labels[status.runner.state]}</p>
       <p>
         {status.runner.last_seen_at
-          ? `Last observed: ${formatBackupTime(status.runner.last_seen_at)}`
-          : "No host runner observation has been recorded."}
+          ? `Last checked in: ${formatBackupTime(status.runner.last_seen_at, region)}`
+          : "The backup service has not checked in yet."}
       </p>
       <p>
         {status.queued_count} queued ·{" "}
@@ -91,8 +145,8 @@ export function BackupRunnerStatus({
       {status.runner.state === "recovery_required" ||
       status.runner.state === "adoption_required" ? (
         <p>
-          A server operator must resolve this state before the host runner can
-          proceed. Requests only enter the queue.
+          The person who runs your server must fix this before backups can run.
+          New requests wait in the queue.
         </p>
       ) : null}
     </div>
@@ -101,6 +155,7 @@ export function BackupRunnerStatus({
 
 export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
   const id = useId();
+  const region = useWorkspaceRegion();
   const [selectedId, setSelectedId] = useState<string | null | undefined>(
     undefined,
   );
@@ -115,6 +170,10 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
     key: string;
   } | null>(null);
   const [passphraseError, setPassphraseError] = useState<string | null>(null);
+  // The confirmation is checked locally and never sent.
+  const [confirmPassphrase, setConfirmPassphrase] = useState("");
+  const [showPassphrase, setShowPassphrase] = useState(false);
+  const [showConfirmation, setShowConfirmation] = useState(false);
   const exportOpener = useRef<HTMLButtonElement | null>(null);
   const [passwordDraft, setPasswordDraft] = useState<{
     actorId: string;
@@ -123,6 +182,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
   } | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const passwordOpener = useRef<HTMLButtonElement | null>(null);
+  const downloadLink = useRef<HTMLAnchorElement | null>(null);
   const { acceptedHistory: page, request, setRequest } = maintenance;
   useEffect(() => {
     if (
@@ -186,19 +246,28 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
   async function submitExport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const draft = visibleExportDraft;
-    if (!draft || maintenance.pending) return;
+    if (!draft || maintenance.pending || confirmPassphrase !== draft.passphrase)
+      return;
     const invalid = exportPassphraseError(draft.passphrase);
     setPassphraseError(invalid);
     if (invalid) return;
     if (
       await maintenance.queueExport(draft.source, draft.passphrase, draft.key)
-    )
+    ) {
       setExportDraft((current) => (current === draft ? null : current));
+      resetPassphraseConfirmation();
+    }
+  }
+  function resetPassphraseConfirmation() {
+    setConfirmPassphrase("");
+    setShowPassphrase(false);
+    setShowConfirmation(false);
   }
   function cancelExport() {
     if (maintenance.pending) return;
     setExportDraft(null);
     setPassphraseError(null);
+    resetPassphraseConfirmation();
     maintenance.clearExportError();
   }
   async function submitPassword(event: FormEvent<HTMLFormElement>) {
@@ -219,8 +288,23 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
     setPasswordError(null);
     maintenance.clearExportError();
   }
-  const statusBadge = (run: ManageBackupRun) => (
+  const enteredPassphrase = visibleExportDraft?.passphrase ?? "";
+  const passphrasesMatch =
+    enteredPassphrase.length > 0 && confirmPassphrase === enteredPassphrase;
+  // Wait until the confirmation can no longer become a match by typing on.
+  const confirmationMismatch =
+    confirmPassphrase.length > 0 &&
+    confirmPassphrase !== enteredPassphrase &&
+    !enteredPassphrase.startsWith(confirmPassphrase);
+  const exportForSelected = Boolean(
+    operation &&
+    selected &&
+    maintenance.acceptedExportSource?.id === selected.id &&
+    ["queued", "preparing", "ready"].includes(operation.state),
+  );
+  const statusBadge = (run: ManageBackupRun, className?: string) => (
     <Badge
+      className={className}
       variant={
         run.state === "succeeded"
           ? "success"
@@ -271,7 +355,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
           className="text-muted-foreground tabular-nums"
           dateTime={row.original.requested_at}
         >
-          {formatBackupTime(row.original.requested_at)}
+          {formatBackupTime(row.original.requested_at, region)}
         </time>
       ),
     },
@@ -287,7 +371,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
       className="flex min-w-0 flex-col gap-3"
     >
       <div
-        className={`grid min-w-0 gap-3 ${selected || routedExport ? "lg:grid-cols-[minmax(0,1fr)_minmax(18rem,25rem)]" : "grid-cols-1"}`}
+        className={`grid min-w-0 gap-3 lg:items-start ${selected || routedExport ? "lg:grid-cols-[minmax(0,1fr)_minmax(18rem,25rem)]" : "grid-cols-1"}`}
       >
         <section
           aria-labelledby={`${id}-backups-heading`}
@@ -303,8 +387,8 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                 Backup history
               </h2>
               <p className="text-muted-foreground mt-1 text-sm">
-                Inspect requests and verified backup results. Back up now queues
-                work for the server operator’s host runner.
+                Review backup requests and their results. Back up now adds a
+                request to the server’s backup queue.
               </p>
             </div>
             <Button
@@ -473,7 +557,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                         className="text-muted-foreground px-2 text-sm tabular-nums"
                         dateTime={run.requested_at}
                       >
-                        {formatBackupTime(run.requested_at)}
+                        {formatBackupTime(run.requested_at, region)}
                       </time>
                     </article>
                   ))}
@@ -558,7 +642,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                   >
                     {selected.name}
                   </h2>
-                  {statusBadge(selected)}
+                  {statusBadge(selected, "self-start")}
                   <p className="text-muted-foreground text-sm">
                     {selected.installation === "previous"
                       ? "Previous installation · Read-only history"
@@ -571,7 +655,10 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                   </h3>
                   <dl className="min-w-0 divide-y rounded-lg border">
                     {[
-                      ["Requested", formatBackupTime(selected.requested_at)],
+                      [
+                        "Requested",
+                        formatBackupTime(selected.requested_at, region),
+                      ],
                       [
                         "Source",
                         selected.provenance === "manual"
@@ -586,19 +673,25 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                         "Retention at request",
                         `${selected.retention_days} days`,
                       ],
-                      ["Started", formatBackupTime(selected.started_at)],
-                      ["Finished", formatBackupTime(selected.finished_at)],
+                      [
+                        "Started",
+                        formatBackupTime(selected.started_at, region),
+                      ],
+                      [
+                        "Finished",
+                        formatBackupTime(selected.finished_at, region),
+                      ],
                       ["Snapshot", selected.snapshot_id ?? "Not verified"],
                       [
                         "Verification",
                         selected.verified_at
-                          ? `Verified · ${formatBackupTime(selected.verified_at)}`
+                          ? `Verified · ${formatBackupTime(selected.verified_at, region)}`
                           : "Not verified",
                       ],
                       [
                         "Restart / reconciliation",
                         selected.reconciled_at
-                          ? `Reconciled · ${formatBackupTime(selected.reconciled_at)}`
+                          ? `Reconciled · ${formatBackupTime(selected.reconciled_at, region)}`
                           : "Not reconciled",
                       ],
                       [
@@ -609,7 +702,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                       ],
                       [
                         "Confirmed expiry",
-                        formatBackupTime(selected.expired_at),
+                        formatBackupTime(selected.expired_at, region),
                       ],
                     ].map(([label, value]) => (
                       <div
@@ -626,13 +719,13 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                     ))}
                   </dl>
                   <p className="text-muted-foreground text-sm">
-                    Snapshot verification and service restart are separate
-                    facts. Restore is performed offline by a server operator.
+                    Restoring a backup is done on the server itself.
                   </p>
                   {maintenance.exportAllowed ? (
                     <Button
                       ref={exportOpener}
                       type="button"
+                      variant={exportForSelected ? "outline" : "default"}
                       className="min-h-11 min-w-0 gap-2"
                       disabled={
                         maintenance.pending ||
@@ -640,6 +733,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                       }
                       onClick={() => {
                         setPassphraseError(null);
+                        resetPassphraseConfirmation();
                         maintenance.clearExportError();
                         setExportDraft({
                           actorId: maintenance.exportActorId,
@@ -650,7 +744,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                       }}
                     >
                       <Download data-icon="inline-start" />
-                      Download backup
+                      Prepare encrypted backup
                     </Button>
                   ) : null}
                   {maintenance.exportAllowed &&
@@ -682,7 +776,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
             ) : null}
             {routedExport && maintenance.exportAllowed ? (
               <section
-                aria-label="Encrypted export"
+                aria-label="Encrypted backup"
                 className="bg-card min-w-0 overflow-hidden rounded-lg border"
               >
                 <header className="border-b p-4">
@@ -690,7 +784,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                     data-slot="section-title"
                     className="text-lg font-semibold"
                   >
-                    Encrypted export
+                    Encrypted backup
                   </h2>
                   {maintenance.acceptedExportSource ? (
                     <p className="text-muted-foreground mt-1 text-sm break-words">
@@ -701,16 +795,16 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                 <div className="min-w-0 space-y-4 p-4">
                   {maintenance.invalidExportId ? (
                     <Alert role="alert" variant="destructive">
-                      The export address is invalid. Select a backup to request
-                      an export.
+                      This link doesn’t match an encrypted backup. Select a
+                      backup to prepare one.
                     </Alert>
                   ) : maintenance.exportQuery.isError ||
                     maintenance.exportRefused ? (
                     <Alert role="alert" variant="destructive">
                       <p>
                         {maintenance.exportRefused
-                          ? "This export is unavailable to the current administrator."
-                          : "Export details could not be loaded."}
+                          ? "You don’t have access to this encrypted backup."
+                          : "Couldn’t load the encrypted backup details."}
                       </p>
                       <Button
                         type="button"
@@ -718,7 +812,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                         className="mt-2 min-h-11"
                         onClick={() => void maintenance.retryExport()}
                       >
-                        Retry export
+                        Try again
                       </Button>
                     </Alert>
                   ) : operation ? (
@@ -738,36 +832,38 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                       </Badge>
                       <p className="text-muted-foreground text-sm">
                         {operation.state === "queued"
-                          ? "Queued for the host runner. The export has not been prepared."
+                          ? "Queued. The encrypted backup is not ready yet."
                           : operation.state === "preparing"
-                            ? "The host runner is preparing the encrypted export."
+                            ? "Preparing the encrypted backup."
                             : operation.state === "ready"
                               ? maintenance.acceptedDownloadAdmission
-                                ? "The encrypted export is ready. Your password is confirmed. Use the download action below."
-                                : "The encrypted export is ready. Confirm your password before downloading."
+                                ? "The encrypted backup is ready. Your password is confirmed."
+                                : "The encrypted backup is ready. Confirm your password before downloading."
                               : operation.state === "expired"
-                                ? "This export has expired. Request a new export from an eligible backup."
-                                : "The export did not finish. Review the source backup before requesting another export."}
+                                ? "This encrypted backup has expired. Prepare a new one from an eligible backup."
+                                : "The encrypted backup did not finish. Review the source backup before you try again."}
                       </p>
                       <dl className="min-w-0 divide-y rounded-lg border">
                         {[
                           [
                             "Requested",
-                            formatBackupTime(operation.requested_at),
+                            formatBackupTime(operation.requested_at, region),
                           ],
-                          ["Ready", formatBackupTime(operation.ready_at)],
+                          [
+                            "Ready",
+                            formatBackupTime(operation.ready_at, region),
+                          ],
                           [
                             "Available until",
-                            formatBackupTime(operation.expires_at),
+                            formatBackupTime(operation.expires_at, region),
                           ],
                           [
                             "Size",
                             operation.size_bytes === null
                               ? "Not recorded"
-                              : operation.size_bytes.toLocaleString() +
-                                " bytes",
+                              : formatFileSize(operation.size_bytes),
                           ],
-                          ["SHA-256", operation.sha256 ?? "Not recorded"],
+                          ["Checksum", operation.sha256 ?? "Not recorded"],
                           [
                             "Failure",
                             operation.failure_code
@@ -787,9 +883,8 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                             </dd>
                             {label === "Available until" ? (
                               <dd className="text-muted-foreground col-span-2 text-xs break-words">
-                                New downloads stop when the export expires. The
-                                server copy is cleaned up at the next successful
-                                host runner check.
+                                Downloads stop when the encrypted backup
+                                expires. The server then deletes its copy.
                               </dd>
                             ) : null}
                           </div>
@@ -797,33 +892,31 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                       </dl>
                       {operation.state === "ready" ? (
                         <div className="min-w-0 space-y-3">
-                          <Button
-                            ref={passwordOpener}
-                            type="button"
-                            variant={
-                              maintenance.acceptedDownloadAdmission
-                                ? "outline"
-                                : "default"
-                            }
-                            className="min-h-11 w-full"
-                            disabled={maintenance.pending}
-                            onClick={() => {
-                              maintenance.clearExportError();
-                              maintenance.clearExportDownloadAdmission();
-                              setPasswordError(null);
-                              setPasswordDraft({
-                                actorId: maintenance.exportActorId,
-                                exportId: operation.id,
-                                password: "",
-                              });
-                            }}
-                          >
-                            Confirm download
-                          </Button>
+                          {maintenance.acceptedDownloadAdmission ? null : (
+                            <Button
+                              ref={passwordOpener}
+                              type="button"
+                              className="min-h-11 w-full"
+                              disabled={maintenance.pending}
+                              onClick={() => {
+                                maintenance.clearExportError();
+                                maintenance.clearExportDownloadAdmission();
+                                setPasswordError(null);
+                                setPasswordDraft({
+                                  actorId: maintenance.exportActorId,
+                                  exportId: operation.id,
+                                  password: "",
+                                });
+                              }}
+                            >
+                              Confirm password
+                            </Button>
+                          )}
                           {maintenance.acceptedDownloadAdmission ? (
                             <>
                               <Button asChild className="min-h-11 w-full">
                                 <a
+                                  ref={downloadLink}
                                   href={manageBackupExportContentUrl(
                                     operation.id,
                                   )}
@@ -840,15 +933,15 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                                 {formatBackupTime(
                                   maintenance.acceptedDownloadAdmission
                                     .expiresAt,
+                                  region,
                                 )}
                                 .
                               </p>
                             </>
                           ) : null}
                           <p className="text-muted-foreground text-sm">
-                            Your browser manages the download. If it fails,
-                            return here and confirm again. Each download starts
-                            from the beginning.
+                            Your browser handles the download. If it fails,
+                            confirm your password again to start over.
                           </p>
                         </div>
                       ) : null}
@@ -873,26 +966,31 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
       >
         <DialogContent finalFocus={() => exportOpener.current}>
           <DialogHeader>
-            <DialogTitle>Download backup</DialogTitle>
+            <DialogTitle>Prepare encrypted backup</DialogTitle>
             <DialogDescription>
               Prepare an encrypted copy of{" "}
-              {visibleExportDraft?.source.name ?? "the selected backup"}. Export
-              preparation leaves the installation online. Keep this passphrase
-              with your offline recovery records.
+              {visibleExportDraft?.source.name ?? "the selected backup"}. The
+              installation stays online. Keep this passphrase with your offline
+              recovery records; you need it to restore the backup.
             </DialogDescription>
           </DialogHeader>
           <form
             className="mt-4 flex min-w-0 flex-col gap-4"
             onSubmit={submitExport}
           >
-            <fieldset disabled={maintenance.pending} className="min-w-0">
+            <fieldset
+              disabled={maintenance.pending}
+              className="flex min-w-0 flex-col gap-4"
+            >
               <Field data-invalid={Boolean(passphraseError)}>
                 <FieldLabel htmlFor={id + "-export-passphrase"}>
-                  Export passphrase
+                  Passphrase
                 </FieldLabel>
-                <Input
+                <SecretInput
                   id={id + "-export-passphrase"}
-                  type="password"
+                  revealed={showPassphrase}
+                  onRevealedChange={setShowPassphrase}
+                  revealLabel="Show passphrase"
                   autoComplete="new-password"
                   value={visibleExportDraft?.passphrase ?? ""}
                   aria-invalid={Boolean(passphraseError)}
@@ -918,7 +1016,6 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                         : current,
                     );
                   }}
-                  className="min-h-11"
                 />
                 <p
                   id={id + "-passphrase-help"}
@@ -928,6 +1025,32 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
                 </p>
                 <FieldError id={id + "-passphrase-error"}>
                   {passphraseError}
+                </FieldError>
+              </Field>
+              <Field data-invalid={confirmationMismatch}>
+                <FieldLabel htmlFor={id + "-export-passphrase-confirm"}>
+                  Confirm passphrase
+                </FieldLabel>
+                <SecretInput
+                  id={id + "-export-passphrase-confirm"}
+                  revealed={showConfirmation}
+                  onRevealedChange={setShowConfirmation}
+                  revealLabel="Show confirmed passphrase"
+                  autoComplete="new-password"
+                  value={confirmPassphrase}
+                  aria-invalid={confirmationMismatch}
+                  aria-describedby={
+                    confirmationMismatch
+                      ? id + "-passphrase-mismatch"
+                      : undefined
+                  }
+                  onChange={(event) => {
+                    setConfirmPassphrase(event.currentTarget.value);
+                    maintenance.clearExportError();
+                  }}
+                />
+                <FieldError id={id + "-passphrase-mismatch"}>
+                  {confirmationMismatch ? "The passphrases don’t match." : null}
                 </FieldError>
               </Field>
             </fieldset>
@@ -949,9 +1072,11 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
               <Button
                 type="submit"
                 className="min-h-11"
-                disabled={maintenance.pending}
+                disabled={maintenance.pending || !passphrasesMatch}
               >
-                {maintenance.pending ? "Preparing…" : "Prepare export"}
+                {maintenance.pending
+                  ? "Preparing…"
+                  : "Prepare encrypted backup"}
               </Button>
             </DialogFooter>
           </form>
@@ -964,12 +1089,13 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
           if (!open) cancelPassword();
         }}
       >
-        <DialogContent finalFocus={() => passwordOpener.current}>
+        <DialogContent
+          finalFocus={() => passwordOpener.current ?? downloadLink.current}
+        >
           <DialogHeader>
-            <DialogTitle>Confirm download</DialogTitle>
+            <DialogTitle>Confirm password</DialogTitle>
             <DialogDescription>
-              Enter your current password to allow this encrypted export
-              download. You will choose the download action after confirmation.
+              Enter your current password to download this encrypted backup.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -1042,8 +1168,8 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
           <DialogHeader>
             <DialogTitle>Back up now</DialogTitle>
             <DialogDescription>
-              Queue a named backup request. The installation goes offline while
-              this backup runs. The configured host runner performs the backup.
+              Add a named backup request to the queue. The installation goes
+              offline while this backup runs.
             </DialogDescription>
           </DialogHeader>
           <form className="mt-4 flex flex-col gap-4" onSubmit={submit}>
@@ -1102,6 +1228,7 @@ export function SnapshotScheduleForm({
   maintenance: Maintenance;
 }) {
   const id = useId();
+  const region = useWorkspaceRegion();
   const status = maintenance.acceptedStatus;
   if (!status)
     return (
@@ -1212,11 +1339,11 @@ export function SnapshotScheduleForm({
           {backupScheduleLabels[status.policy.schedule]} ·{" "}
           {status.policy.timezone} · Keep {status.policy.retention_days} days
         </p>
-        <p>Next due: {formatBackupTime(status.policy.next_due_at)}</p>
+        <p>Next due: {formatBackupTime(status.policy.next_due_at, region)}</p>
         <p>
-          Saving this policy does not install a host runner. A server operator
-          configures the scheduler. Retention is applied only after a later
-          usable recovery point is verified.
+          Saving this schedule does not set up the backup service. The person
+          who runs your server does that. Old backups are removed only after a
+          newer backup is checked.
         </p>
         <BackupRunnerStatus status={status} />
       </div>

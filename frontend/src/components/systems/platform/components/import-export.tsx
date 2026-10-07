@@ -6,7 +6,7 @@ import { ApiError } from "@/lib/api";
 import { requestSessionRecheck } from "@/lib/auth-api";
 import type { WorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { FilePickerButton } from "@/components/ui/file-picker-button";
 import {
   Table,
   TableBody,
@@ -346,7 +346,7 @@ export default function ImportExport({
         <Panel title="Import records">
           <p className="text-muted-foreground text-sm">
             Upload a UTF-8 CSV, map its columns and validate the rows before
-            creating records. Up to 10,000 data rows and 8 MiB.
+            creating records. Up to 10,000 data rows and 8 MB.
           </p>
           <Choice
             label="Import module"
@@ -371,21 +371,22 @@ export default function ImportExport({
           </Choice>
           <Field>
             <FieldLabel htmlFor="platform-csv">CSV file</FieldLabel>
-            <Input
+            <FilePickerButton
               key={moduleId}
               id="platform-csv"
-              type="file"
               accept=".csv,text/csv"
               disabled={locked || !moduleId || denied}
-              onChange={(event) => {
+              onFiles={(chosen) => {
                 setMapping({});
                 setDefaultFields({});
                 setDefaultValues({});
                 setDefaultErrors({});
                 setValidationPage(0);
-                void importer.readFile(event.target.files?.[0]);
+                void importer.readFile(chosen[0]);
               }}
-            />
+            >
+              Choose CSV file
+            </FilePickerButton>
           </Field>
           {importer.csv ? (
             <div className="bg-muted/30 rounded-lg border p-4 text-sm">
@@ -637,7 +638,7 @@ export default function ImportExport({
           <p className="text-muted-foreground text-sm">
             Export the complete module or saved-view query as CSV. The preview
             shows the first ten records; the download includes every exported
-            record, up to 10,000 rows and 8 MiB.
+            record, up to 10,000 rows and 8 MB.
           </p>
           <Choice
             label="Export module"

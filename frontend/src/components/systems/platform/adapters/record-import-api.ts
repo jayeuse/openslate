@@ -157,7 +157,7 @@ export async function prepareRecordCsv(
     throw new ApiError(
       response.status,
       code === "export_limit_exceeded"
-        ? "Export exceeds 10,000 rows or 8 MiB; choose a narrower saved view."
+        ? "Export exceeds 10,000 rows or 8 MB; choose a narrower saved view."
         : "The export could not be prepared. Try again.",
       undefined,
       code,

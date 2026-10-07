@@ -48,21 +48,23 @@ const copies = {
     title: "Send recovery email?",
     confirm: "Send email",
     description:
-      "The bound sign-in email gets a recovery request. Provider acceptance does not confirm delivery. Existing sessions stay signed in.",
+      "A recovery link goes to their sign-in email. We cannot confirm the email arrived. They stay signed in on their devices.",
   },
   revoke: {
     title: "Send recovery and sign out everywhere?",
     confirm: "Send and sign out",
     description:
-      "All local sessions are revoked before email is requested. If email fails, those sessions stay signed out. The person can sign in again.",
+      "This signs them out on every device, then sends a recovery link to their sign-in email. If the email does not send, they stay signed out. They can sign in again.",
   },
   reset: {
-    title: "Reset multi-factor authentication?",
-    confirm: "Reset MFA",
+    title: "Reset two-step verification?",
+    confirm: "Reset two-step verification",
     description:
-      "Factors are removed first, then all local sessions are revoked. An interruption can leave a partial result. The person can set up MFA again after signing in.",
+      "This removes their authenticator app and signs them out everywhere. They can set up two-step verification again after they sign in.",
   },
 } as const;
+const unconfirmed =
+  "This change may be only partly saved. Check the person's settings, then try again.";
 
 /** Live observations and explicitly confirmed commands belong to this actor/person. */
 export function PersonSecurity({ person }: { person: AccessUser }) {
@@ -134,8 +136,11 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
     if (!suspended) void refresh();
   }, [refresh, suspended]);
 
-  const data = readAccepted && !suspended && !query.isError ? query.data : null;
-  const ready = Boolean(data?.status.target_eligible) && !pending;
+  // The last loaded facts stay visible while a background read runs; only a
+  // fresh, accepted read admits another action.
+  const data = suspended ? null : (query.data ?? null);
+  const ready =
+    readAccepted && Boolean(data?.status.target_eligible) && !pending;
   function current(controller: AbortController, generation: number) {
     return (
       alive.current &&
@@ -168,10 +173,10 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
       if (!current(controller, generation)) return;
       setNotice(
         selected === "reset"
-          ? "Factors cleared and local sessions revoked."
+          ? "Two-step verification reset. They are signed out everywhere."
           : selected === "revoke"
-            ? "Local sessions revoked. Recovery email request accepted. Delivery is not confirmed."
-            : "Recovery email request accepted. Delivery is not confirmed.",
+            ? `Signed out everywhere. Recovery email sent to ${person.email}.`
+            : `Recovery email sent to ${person.email}.`,
       );
       if (self && selected !== "email") {
         await completeSignOut();
@@ -183,7 +188,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
         if (current(controller, generation)) {
           setReadAccepted(false);
           setError(
-            "The action was accepted, but sessions could not be reloaded. Reload before another action.",
+            "The change is done, but sessions could not reload. Reload before you do anything else.",
           );
         }
         return;
@@ -194,30 +199,40 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
       const partial = personSecurityPartial(caught);
       setReadAccepted(false);
       if (partial) {
-        if (selected === "reset") {
+        const signedOut = partial.local_revocation === "committed";
+        // A sent email with a known sign-out result is a success, even when
+        // the server could not finish its own record of the change.
+        const sent =
+          selected !== "reset" &&
+          partial.email_request === "accepted" &&
+          partial.local_revocation !== "unconfirmed";
+        if (sent) {
+          setNotice(
+            signedOut
+              ? `Signed out everywhere. Recovery email sent to ${person.email}.`
+              : `Recovery email sent to ${person.email}.`,
+          );
+        } else if (selected === "reset") {
           setError(
-            partial.local_revocation === "committed"
-              ? partial.email_request === "unconfirmed"
-                ? "Local sessions were revoked. Email acceptance is unconfirmed. Do not resend automatically."
-                : partial.factors_cleared === true
-                  ? "Factors were cleared and local sessions revoked, but the action could not be fully recorded."
-                  : "Local sessions were revoked. Factor removal could not be fully confirmed."
-              : "This action could not be confirmed. Reload security and sessions before trying again.",
+            signedOut
+              ? partial.factors_cleared === true
+                ? "Two-step verification reset. They are signed out everywhere. This change may be only partly saved."
+                : "Signed out everywhere. Their authenticator app may not be removed. Check the person's settings, then try again."
+              : unconfirmed,
           );
         } else {
-          const revocationFact =
-            partial.local_revocation === "committed"
-              ? "Local sessions were revoked."
+          // "unconfirmed" email may have gone out; never invite a blind resend.
+          const email =
+            partial.email_request === "unconfirmed"
+              ? "We could not confirm the recovery email was sent. Ask the person before you send another."
+              : "The recovery email did not send. Try again.";
+          setError(
+            signedOut
+              ? `Signed out everywhere. ${email}`
               : partial.local_revocation === "not_requested"
-                ? "No local session revocation was requested."
-                : "Local session revocation is unconfirmed.";
-          const emailFact =
-            partial.email_request === "accepted"
-              ? "Recovery email request accepted. Delivery is not confirmed. Do not resend automatically."
-              : partial.email_request === "not_attempted"
-                ? "Recovery email was not requested. Reload security before another action."
-                : "Email acceptance is unconfirmed. Do not resend automatically.";
-          setError(`${revocationFact} ${emailFact}`);
+                ? email
+                : unconfirmed,
+          );
         }
         if (self && partial.local_revocation === "committed") {
           await completeSignOut();
@@ -225,9 +240,14 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
         }
         try {
           await afterPersonSecurityChange(client, person.id);
+          if (sent && current(controller, generation)) void refresh();
         } catch {
-          if (current(controller, generation))
-            setError((message) => `${message} Sessions could not be reloaded.`);
+          if (current(controller, generation)) {
+            const reload = "Sessions could not reload.";
+            setError((message) =>
+              message ? `${message} ${reload}` : `${reload} Reload security.`,
+            );
+          }
         }
         if (
           self &&
@@ -241,7 +261,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
             ? "Your session must be verified again."
             : apiErrorMessage(
                 caught,
-                "This action could not be confirmed. Reload security before trying again.",
+                "This change could not be confirmed. Reload security, then try again.",
               ),
         );
         if (caught instanceof ApiError && caught.status === 401)
@@ -275,7 +295,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
             Sign-in security
           </h3>
           <p className="text-muted-foreground text-sm">
-            Review this person&apos;s current sign-in identity and recovery
+            Review this person&apos;s two-step verification and recovery
             options.
           </p>
         </div>
@@ -283,42 +303,41 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
       {query.isError ? (
         <Alert variant="destructive">
           <p>
-            Security could not be loaded. No enrollment status is confirmed.
+            {data
+              ? "Security could not be reloaded. The details below may be out of date."
+              : "Security could not be loaded."}
           </p>
           <Button
-            className="mt-3 min-h-11"
+            className="mt-3 min-h-11 w-fit"
             variant="outline"
             onClick={() => void refresh()}
           >
             Retry security
           </Button>
         </Alert>
-      ) : !data ? (
-        <div aria-busy="true" aria-label="Loading person security">
-          <Skeleton className="h-24 w-full" />
-          {!query.isFetching && !error ? (
-            <Button
-              variant="outline"
-              className="mt-3 min-h-11"
-              onClick={() => void refresh()}
-            >
-              Reload security
-            </Button>
-          ) : null}
-        </div>
+      ) : null}
+      {!data ? (
+        query.isError ? null : (
+          <div aria-busy="true" aria-label="Loading person security">
+            <Skeleton className="h-24 w-full" />
+            {!query.isFetching && !error ? (
+              <Button
+                variant="outline"
+                className="mt-3 min-h-11"
+                onClick={() => void refresh()}
+              >
+                Reload security
+              </Button>
+            ) : null}
+          </div>
+        )
       ) : (
         <>
-          <div className="space-y-2">
-            <Badge variant="secondary">
-              {data.status.verified_factor_count === 0
-                ? "No verified factors"
-                : `${data.status.verified_factor_count} verified factor${data.status.verified_factor_count === 1 ? "" : "s"}`}
-            </Badge>
-            <p className="text-muted-foreground text-sm">
-              Enrollment does not confirm the assurance of this person&apos;s
-              current session.
-            </p>
-          </div>
+          <Badge variant="secondary">
+            {data.status.verified_factor_count === 0
+              ? "Two-step verification not set up"
+              : "Two-step verification is set up"}
+          </Badge>
           {!data.status.target_eligible ? (
             <Alert variant="warning">
               This person is not eligible for security actions. Pending
@@ -328,13 +347,14 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
           <div className="border-t pt-4">
             <h4 className="font-medium">Recovery email</h4>
             <p className="text-muted-foreground mt-1 text-sm">
-              Use the email bound to this person&apos;s sign-in identity.
-              Acceptance does not confirm delivery.
+              Sends a recovery link to their sign-in email. We cannot confirm
+              the email arrived.
             </p>
             {!data.status.smtp_configured ? (
               <p className="mt-3 text-sm">
-                Recovery email is not configured. Contact the operator. Session
-                actions remain available in Sessions.
+                Recovery email is not turned on. Ask the person who set up
+                OpenSlate to turn on email. You can still end sessions in
+                Sessions.
               </p>
             ) : null}
             <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
@@ -357,21 +377,21 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
             </div>
           </div>
           <div className="border-t pt-4">
-            <h4 className="font-medium">Multi-factor authentication</h4>
+            <h4 className="font-medium">Two-step verification</h4>
             <p className="text-muted-foreground mt-1 text-sm">
-              Reset factors only after confirming the person&apos;s recovery
-              need. All local sessions are then revoked.
+              Reset only after you confirm the person needs recovery. This
+              removes their authenticator app and signs them out everywhere.
             </p>
             {data.assurance !== "aal2" ? (
               <p className="mt-3 text-sm">
-                Verify your own multi-factor sign-in in{" "}
+                Complete your own two-step verification in{" "}
                 <GuardedWorkspaceLink
                   href="/access?view=security"
                   className="text-primary underline underline-offset-4"
                 >
-                  Sign-in &amp; security
+                  Security
                 </GuardedWorkspaceLink>{" "}
-                before resetting MFA.
+                before you reset it for someone else.
               </p>
             ) : null}
             <Button
@@ -380,7 +400,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
               disabled={!ready || data.assurance !== "aal2"}
               onClick={() => setAction("reset")}
             >
-              Reset multi-factor authentication
+              Reset two-step verification
             </Button>
           </div>
         </>
@@ -395,10 +415,10 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
       ) : null}
       {error ? (
         <Alert variant="destructive">
-          {error}
+          <p>{error}</p>
           <Button
             variant="outline"
-            className="mt-3 min-h-11"
+            className="mt-3 flex min-h-11 w-fit"
             disabled={pending}
             onClick={() => void refresh()}
           >

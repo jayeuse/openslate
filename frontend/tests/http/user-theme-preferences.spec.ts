@@ -954,11 +954,15 @@ test("forced colors and increased contrast keep focus and borders visible at Lar
   expect(forced.style).not.toBe("none");
   expect(forced.border).not.toBe("transparent");
   await page.emulateMedia({ forcedColors: "none", contrast: "more" });
-  const colors = await select.evaluate((el) => ({
-    border: getComputedStyle(el).borderTopColor,
-    ink: getComputedStyle(el).color,
-  }));
-  expect(colors.border).toBe(colors.ink);
+  // The select animates its border color, so read it once the transition settles.
+  await expect
+    .poll(() =>
+      select.evaluate(
+        (el) =>
+          getComputedStyle(el).borderTopColor === getComputedStyle(el).color,
+      ),
+    )
+    .toBe(true);
   expect((await select.boundingBox())!.height).toBeGreaterThanOrEqual(44);
 });
 

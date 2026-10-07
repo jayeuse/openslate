@@ -57,7 +57,7 @@ test("a department manager sees and opens only Groups", async ({ page }) => {
   ).toBeVisible();
   await expect(accessLinks(page)).toHaveText(["Groups"]);
   await expect(
-    page.getByRole("link", { name: "Sign-in & security" }),
+    page.getByRole("main").getByRole("link", { name: "Security", exact: true }),
   ).toHaveCount(0);
 });
 

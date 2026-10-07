@@ -20,8 +20,13 @@ test.afterEach(async ({ page }) => {
 async function openLiveMfa(page: Page) {
   await page.goto("/access?view=security");
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
-  await page.getByRole("button", { name: "Manage MFA", exact: true }).click();
-  return page.getByRole("dialog", { name: "MFA enrollment", exact: true });
+  await page
+    .getByRole("button", { name: "Manage two-step verification", exact: true })
+    .click();
+  return page.getByRole("dialog", {
+    name: "Two-step verification",
+    exact: true,
+  });
 }
 
 test("MFA enrollment verifies the provider factor, retries invalid codes, and removal signs out", async ({
@@ -57,7 +62,9 @@ test("MFA enrollment verifies the provider factor, retries invalid codes, and re
   expect(state.actors.get(mfaUserA)?.assurance).toBe("aal2");
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
-  await page.getByRole("button", { name: "Manage MFA", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage two-step verification", exact: true })
+    .click();
   await expect(dialog).toContainText("Authenticator verified");
   await dialog
     .getByRole("button", { name: "Remove authenticator", exact: true })
@@ -91,9 +98,7 @@ test("MFA enrollment verifies the provider factor, retries invalid codes, and re
       window as typeof window & { restoreMfaStorage?: () => void }
     ).restoreMfaStorage?.();
   });
-  await page
-    .getByRole("button", { name: "Retry session check", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Check again", exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
   expect(state.authenticated).toBe(false);
 });
@@ -114,7 +119,9 @@ test("Cancel and route leave clean only the pending MFA factor, with truthful cl
   await expect.poll(() => state.actors.get(mfaUserA)?.factors.length).toBe(0);
   expect(state.authenticated).toBe(true);
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
-  await page.getByRole("button", { name: "Manage MFA", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage two-step verification", exact: true })
+    .click();
   await dialog
     .getByRole("button", { name: "Set up authenticator", exact: true })
     .click();
@@ -154,11 +161,19 @@ test("Cancel and route leave clean only the pending MFA factor, with truthful cl
   const manageGroup = page.getByRole("button", { name: "Access", exact: true });
   if ((await manageGroup.getAttribute("aria-expanded")) !== "true")
     await manageGroup.click();
-  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Security", exact: true })
+    .click();
   await expect(page).toHaveURL(/\/access\?view=security$/);
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
-  await page.getByRole("button", { name: "Manage MFA", exact: true }).click();
-  dialog = page.getByRole("dialog", { name: "MFA enrollment", exact: true });
+  await page
+    .getByRole("button", { name: "Manage two-step verification", exact: true })
+    .click();
+  dialog = page.getByRole("dialog", {
+    name: "Two-step verification",
+    exact: true,
+  });
   const leaving = deferredMfaResponse();
   state.holdEnroll = leaving;
   await dialog
@@ -179,10 +194,15 @@ test("Cancel and route leave clean only the pending MFA factor, with truthful cl
   });
   if ((await manageReturn.getAttribute("aria-expanded")) !== "true")
     await manageReturn.click();
-  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Security", exact: true })
+    .click();
   await expect(page).toHaveURL(/\/access\?view=security$/);
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
-  await page.getByRole("button", { name: "Manage MFA", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage two-step verification", exact: true })
+    .click();
   await dialog
     .getByRole("button", { name: "Set up authenticator", exact: true })
     .click();
@@ -274,7 +294,7 @@ test("saving required MFA immediately gates protected interaction and resumes th
   });
   await edit
     .getByRole("checkbox", {
-      name: "Require MFA for administrators",
+      name: "Require two-step verification for administrators",
       exact: true,
     })
     .check();
@@ -286,7 +306,7 @@ test("saving required MFA immediately gates protected interaction and resumes th
     exact: true,
   });
   await expect(
-    gate.getByRole("heading", { name: "Complete multi-factor authentication" }),
+    gate.getByRole("heading", { name: "Complete two-step verification" }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { level: 1, name: "Security" }),
@@ -353,7 +373,9 @@ test("Security and recovery keeps policy drafts and protects the current session
     page.getByRole("heading", { level: 1, name: "Security" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Security", exact: true }),
+    page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: "Security", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   const manageNavigation = page.getByRole("button", {
     name: "Manage",
@@ -416,7 +438,9 @@ test("Security and recovery keeps policy drafts and protects the current session
   await policy
     .getByLabel("Session timeout", { exact: true })
     .selectOption("30 minutes");
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
+  await policy
+    .getByRole("button", { name: "Close account policy", exact: true })
+    .click();
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
   await expect(
     policy.getByLabel("Session timeout", { exact: true }),
@@ -462,8 +486,13 @@ test("Security and recovery keeps policy drafts and protects the current session
   expect(state.writes[1]?.body).toMatchObject({
     ip_allow_list: ["127.0.0.1", "192.0.2.0/24"],
   });
-  await policy.getByRole("button", { name: "Manage MFA", exact: true }).click();
-  const mfa = page.getByRole("dialog", { name: "MFA enrollment", exact: true });
+  await policy
+    .getByRole("button", { name: "Manage two-step verification", exact: true })
+    .click();
+  const mfa = page.getByRole("dialog", {
+    name: "Two-step verification",
+    exact: true,
+  });
   await expect(mfa).toContainText("Authenticator app");
   await page.keyboard.press("Escape");
   await expect(mfa).toBeHidden();
@@ -472,7 +501,9 @@ test("Security and recovery keeps policy drafts and protects the current session
   await expect(
     policy.getByLabel("Session timeout", { exact: true }),
   ).toHaveValue("30 minutes");
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
+  await policy
+    .getByRole("button", { name: "Close account policy", exact: true })
+    .click();
   await page
     .getByRole("button", { name: "End all remote sessions", exact: true })
     .click();
@@ -572,7 +603,10 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
     .getByLabel("Organization name", { exact: true })
     .fill("Unfinished organization edit");
   await page.getByRole("button", { name: "Access", exact: true }).click();
-  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Security", exact: true })
+    .click();
   const leave = page.getByRole("alertdialog", {
     name: "Discard unsaved Manage changes?",
     exact: true,
@@ -584,7 +618,10 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
   await expect(
     page.getByLabel("Organization name", { exact: true }),
   ).toHaveValue("Unfinished organization edit");
-  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Security", exact: true })
+    .click();
   await leave
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
@@ -636,6 +673,11 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
   await expect(policy).toContainText(
     "The IP allow list would block your current address",
   );
+  // The refusal belongs to the allow list: it shows there and takes focus.
+  await expect(policy).toContainText(
+    "This list blocks your current address. Add your address, then save.",
+  );
+  await expect(address).toBeFocused();
   await expect(
     policy.getByRole("button", { name: "Remove 192.0.2.0/24", exact: true }),
   ).toBeVisible();
@@ -682,7 +724,9 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
     session_retention_days: 90,
     security_event_retention_days: 180,
   });
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
+  await policy
+    .getByRole("button", { name: "Close account policy", exact: true })
+    .click();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
   await expect(
     page.getByLabel("Organization name", { exact: true }),
@@ -708,15 +752,15 @@ test("12b: independent roles and numeric limits save only changed keys, includin
   const lifetime = policy.getByLabel("Total session lifetime", { exact: true });
   const cap = policy.getByLabel("Concurrent session limit", { exact: true });
   const admin = policy.getByRole("checkbox", {
-    name: "Require MFA for administrators",
+    name: "Require two-step verification for administrators",
     exact: true,
   });
   const member = policy.getByRole("checkbox", {
-    name: "Require MFA for members",
+    name: "Require two-step verification for members",
     exact: true,
   });
   const guest = policy.getByRole("checkbox", {
-    name: "Require MFA for guests",
+    name: "Require two-step verification for guests",
     exact: true,
   });
   const grace = policy.getByLabel("Enrollment grace (days)", { exact: true });
@@ -725,9 +769,9 @@ test("12b: independent roles and numeric limits save only changed keys, includin
   await member.check();
   await member.uncheck();
   await expect(save).toBeDisabled();
-  await lifetime.selectOption("Set a limit");
+  await lifetime.selectOption("Limited");
   await policy.getByLabel("Lifetime (minutes)", { exact: true }).fill("43200");
-  await cap.selectOption("Set a limit");
+  await cap.selectOption("Limited");
   await policy.getByLabel("Maximum sessions", { exact: true }).fill("100");
   await expect(policy).toContainText("Applies when sign-in completes.");
   await admin.check();
@@ -813,14 +857,14 @@ test("12b: numeric bounds and whole numbers retain invalid drafts without a requ
   });
   await policy
     .getByLabel("Total session lifetime", { exact: true })
-    .selectOption("Set a limit");
+    .selectOption("Limited");
   await save.click();
   await expect(
     policy.getByLabel("Lifetime (minutes)", { exact: true }),
   ).toHaveAttribute("aria-invalid", "true");
   await policy
     .getByLabel("Concurrent session limit", { exact: true })
-    .selectOption("Set a limit");
+    .selectOption("Limited");
   const cases = [
     ["Lifetime (minutes)", "43201", "1"],
     ["Maximum sessions", "101", "1"],
@@ -922,7 +966,8 @@ for (const width of [1440, 390])
     });
     await expect(sessions).toHaveValue("365");
     await expect(events).toHaveValue("365");
-    await expect(retention).toContainText(/shorten.*older.*next cleanup/i);
+    // The warning appears only when a draft shortens a saved period.
+    await expect(retention).not.toContainText(/shorten.*older.*next cleanup/i);
     await expect(save).toBeDisabled();
     await expect(discard).toBeDisabled();
     expect(
@@ -933,7 +978,10 @@ for (const width of [1440, 390])
 
     await sessions.fill("90");
     await events.fill("180");
-    await policy.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(retention).toContainText(/shorten.*older.*next cleanup/i);
+    await policy
+      .getByRole("button", { name: "Close account policy", exact: true })
+      .click();
     expect(state.writes).toEqual([]);
     await page
       .getByRole("button", { name: "Edit policy", exact: true })
@@ -1080,7 +1128,10 @@ test("12b: a refused all-role MFA save retains the future draft and offers curre
   const roles = ["administrators", "members", "guests"] as const;
   for (const role of roles)
     await policy
-      .getByRole("checkbox", { name: `Require MFA for ${role}`, exact: true })
+      .getByRole("checkbox", {
+        name: `Require two-step verification for ${role}`,
+        exact: true,
+      })
       .check();
   await policy.getByLabel("Enrollment grace (days)", { exact: true }).fill("7");
   const save = policy.getByRole("button", {
@@ -1089,13 +1140,13 @@ test("12b: a refused all-role MFA save retains the future draft and offers curre
   });
   await save.click();
   await expect(policy.getByRole("alert")).toContainText(
-    "Set up and verify an authenticator before requiring MFA for all roles",
+    "Set up two-step verification for your own account before you require it for every role",
   );
   await expect(save).toBeEnabled();
   for (const role of roles)
     await expect(
       policy.getByRole("checkbox", {
-        name: `Require MFA for ${role}`,
+        name: `Require two-step verification for ${role}`,
         exact: true,
       }),
     ).toBeChecked();
@@ -1107,7 +1158,9 @@ test("12b: a refused all-role MFA save retains the future draft and offers curre
     mfa_require_member: false,
     mfa_require_guest: false,
   });
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
+  await policy
+    .getByRole("button", { name: "Close account policy", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { level: 1, name: "Security" }),
   ).toBeVisible();
@@ -1118,7 +1171,7 @@ test("12b: a refused all-role MFA save retains the future draft and offers curre
   for (const role of roles)
     await expect(
       policy.getByRole("checkbox", {
-        name: `Require MFA for ${role}`,
+        name: `Require two-step verification for ${role}`,
         exact: true,
       }),
     ).toBeChecked();
@@ -1129,15 +1182,20 @@ test("12b: a refused all-role MFA save retains the future draft and offers curre
     factor_type: "totp",
     status: "verified",
   });
-  await policy.getByRole("button", { name: "Manage MFA", exact: true }).click();
-  const mfa = page.getByRole("dialog", { name: "MFA enrollment", exact: true });
+  await policy
+    .getByRole("button", { name: "Manage two-step verification", exact: true })
+    .click();
+  const mfa = page.getByRole("dialog", {
+    name: "Two-step verification",
+    exact: true,
+  });
   await expect(mfa).toContainText("Authenticator verified");
   await mfa.getByRole("button", { name: "Done", exact: true }).click();
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
   for (const role of roles)
     await expect(
       policy.getByRole("checkbox", {
-        name: `Require MFA for ${role}`,
+        name: `Require two-step verification for ${role}`,
         exact: true,
       }),
     ).toBeChecked();
@@ -1211,7 +1269,9 @@ test("Security reads show recovery and denial without sample sessions", async ({
   await expect(
     policy.getByLabel("Session timeout", { exact: true }),
   ).toHaveCount(0);
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
+  await policy
+    .getByRole("button", { name: "Close account policy", exact: true })
+    .click();
   state.sessionReadStatus = 200;
   await page
     .getByRole("button", { name: "Retry sessions", exact: true })
@@ -1255,7 +1315,10 @@ test("Security reads show recovery and denial without sample sessions", async ({
   });
   state.sessionReadStatus = 403;
   try {
-    await page.getByRole("link", { name: "Security", exact: true }).click();
+    await page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: "Security", exact: true })
+      .click();
     await backgroundStarted;
     await page
       .getByRole("button", { name: "End session for Eli", exact: true })
@@ -1276,7 +1339,10 @@ test("Security reads show recovery and denial without sample sessions", async ({
     releaseBackgroundRead();
   }
   await page.getByRole("link", { name: "Overview", exact: true }).click();
-  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Security", exact: true })
+    .click();
   await page
     .getByRole("searchbox", { name: "Search sessions", exact: true })
     .fill("Mara");
@@ -1298,7 +1364,10 @@ test("Security reads show recovery and denial without sample sessions", async ({
   const manageGroup = page.getByRole("button", { name: "Access", exact: true });
   if ((await manageGroup.getAttribute("aria-expanded")) !== "true")
     await manageGroup.click();
-  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Security", exact: true })
+    .click();
   await expect(
     page.getByText("Only administrators can review sessions.", { exact: true }),
   ).toBeVisible();
@@ -1321,7 +1390,9 @@ test("Security reads show recovery and denial without sample sessions", async ({
   await expect(
     policy.getByLabel("Session timeout", { exact: true }),
   ).toHaveValue("60 minutes");
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
+  await policy
+    .getByRole("button", { name: "Close account policy", exact: true })
+    .click();
   state.sessionReadStatus = 200;
   await page
     .getByRole("button", { name: "Retry sessions", exact: true })
@@ -1390,7 +1461,9 @@ test("legacy Manage Security opens Access Security and Backup has no privileged 
   expect(state.policyReads).toBe(policyReads);
   expect(state.sessionReads).toHaveLength(sessionReads);
   await expect(
-    page.getByRole("link", { name: "Sign-in & security", exact: true }),
+    page
+      .getByRole("region", { name: "Backup workspace", exact: true })
+      .getByRole("link", { name: "Security", exact: true }),
   ).toHaveAttribute("href", "/access?view=security");
 });
 
@@ -1407,7 +1480,9 @@ test("Access policy leave keeps edits until explicit Discard and preserves Organ
   await policy
     .getByLabel("Session timeout", { exact: true })
     .selectOption("30 minutes");
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
+  await policy
+    .getByRole("button", { name: "Close account policy", exact: true })
+    .click();
   await page.getByRole("link", { name: "People", exact: true }).click();
   const leave = page.getByRole("alertdialog", {
     name: "Discard unsaved changes?",
@@ -1422,13 +1497,18 @@ test("Access policy leave keeps edits until explicit Discard and preserves Organ
   await expect(
     policy.getByLabel("Session timeout", { exact: true }),
   ).toHaveValue("30 minutes");
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
+  await policy
+    .getByRole("button", { name: "Close account policy", exact: true })
+    .click();
   await page.getByRole("link", { name: "People", exact: true }).click();
   await leave
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
   await expect(page).toHaveURL(/view=people$/);
-  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Security", exact: true })
+    .click();
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
   await expect(
     policy.getByLabel("Session timeout", { exact: true }),
@@ -1523,7 +1603,7 @@ test("a refused policy reread conceals cached sessions until their own fresh Ret
   await expect(
     page
       .getByRole("region", { name: "Security workspace", exact: true })
-      .getByText(/60 minutes timeout$/),
+      .getByText(/60-minute timeout/),
   ).toBeVisible();
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(
@@ -1534,7 +1614,10 @@ test("a refused policy reread conceals cached sessions until their own fresh Ret
   ).toHaveCount(0);
   await page.clock.fastForward(31_000);
   state.policyReadStatus = 403;
-  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Security", exact: true })
+    .click();
   await expect(
     page.getByText("Account policy unavailable", { exact: true }),
   ).toBeVisible();
@@ -1589,7 +1672,10 @@ test("a failed background session reread retains rows while disabling session-en
   });
   state.sessionReadStatus = 503;
   try {
-    await page.getByRole("link", { name: "Security", exact: true }).click();
+    await page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: "Security", exact: true })
+      .click();
     await started;
     await page
       .getByRole("button", { name: "End session for Eli", exact: true })
@@ -1723,7 +1809,7 @@ test("a late prior-account policy response cannot replace the new owner's draft 
   try {
     await oldWrite.begun;
     await expect(
-      policy.getByRole("button", { name: "Close", exact: true }),
+      policy.getByRole("button", { name: "Close account policy", exact: true }),
     ).toBeDisabled();
     await page.keyboard.press("Escape");
     await expect(policy).toBeVisible();
@@ -1751,11 +1837,11 @@ test("a late prior-account policy response cannot replace the new owner's draft 
       policy.getByRole("button", { name: "Save settings", exact: true }),
     ).toBeDisabled();
     await expect(
-      policy.getByRole("button", { name: "Close", exact: true }),
+      policy.getByRole("button", { name: "Close account policy", exact: true }),
     ).toBeDisabled();
     newWrite.release();
     await expect(
-      policy.getByRole("button", { name: "Close", exact: true }),
+      policy.getByRole("button", { name: "Close account policy", exact: true }),
     ).toBeEnabled();
     await expect(timeout).toHaveValue("15 minutes");
     expect(writeCount).toBe(2);
@@ -1788,14 +1874,22 @@ test("dismissing self MFA releases ownership of a later gate enrollment on Back"
     await expect(
       page.getByRole("heading", { name: "Access overview", exact: true }),
     ).toBeVisible();
-    await page.getByRole("link", { name: "Security", exact: true }).click();
+    await page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: "Security", exact: true })
+      .click();
     await expect(page).toHaveURL(/\/access\?view=security$/);
     await page
       .getByRole("button", { name: "Edit policy", exact: true })
       .click();
-    await page.getByRole("button", { name: "Manage MFA", exact: true }).click();
+    await page
+      .getByRole("button", {
+        name: "Manage two-step verification",
+        exact: true,
+      })
+      .click();
     const self = page.getByRole("dialog", {
-      name: "MFA enrollment",
+      name: "Two-step verification",
       exact: true,
     });
     await expect(
@@ -1811,7 +1905,7 @@ test("dismissing self MFA releases ownership of a later gate enrollment on Back"
     await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
     await expect(
       page.getByRole("heading", {
-        name: "Complete multi-factor authentication",
+        name: "Complete two-step verification",
         exact: true,
       }),
     ).toBeVisible();
@@ -1838,7 +1932,7 @@ test("dismissing self MFA releases ownership of a later gate enrollment on Back"
     observation.phase = "back-reached";
     await expect(
       page.getByRole("heading", {
-        name: "Complete multi-factor authentication",
+        name: "Complete two-step verification",
         exact: true,
       }),
     ).toBeVisible();
@@ -2210,9 +2304,15 @@ for (const observation of ["status", "enrollment", "verification"] as const)
         .getByRole("button", { name: "Edit policy", exact: true })
         .click();
       await page
-        .getByRole("button", { name: "Manage MFA", exact: true })
+        .getByRole("button", {
+          name: "Manage two-step verification",
+          exact: true,
+        })
         .click();
-      return page.getByRole("dialog", { name: "MFA enrollment", exact: true });
+      return page.getByRole("dialog", {
+        name: "Two-step verification",
+        exact: true,
+      });
     };
     if (observation !== "status") {
       await page.goto("/access?view=security");
@@ -2233,7 +2333,7 @@ for (const observation of ["status", "enrollment", "verification"] as const)
     ).toContainText(observation === "status" ? "Unknown" : "Not verified");
     await page.getByRole("link", { name: "Overview", exact: true }).click();
     const card = page.getByRole("region", {
-      name: "Administrator MFA",
+      name: "Administrator two-step verification",
       exact: true,
     });
     await expect(
@@ -2243,8 +2343,10 @@ for (const observation of ["status", "enrollment", "verification"] as const)
     ).toBeVisible();
     const summaryReadsBefore = api.summaryReads;
     if (observation !== "status") auth.statusFailure = 503;
+    // The Overview header shortcut, not the sidebar section link.
     await page
-      .getByRole("link", { name: "Sign-in & security", exact: true })
+      .getByRole("main")
+      .getByRole("link", { name: "Security", exact: true })
       .click();
     const dialog = await manageMfa();
     await expect(
@@ -2266,7 +2368,7 @@ for (const observation of ["status", "enrollment", "verification"] as const)
           .getByRole("button", { name: "Verify code", exact: true })
           .click();
         await expect(dialog).toContainText(
-          "Verification succeeded, but updated MFA settings could not be loaded.",
+          "Verification succeeded, but your updated settings could not load.",
         );
       }
     }
@@ -2295,8 +2397,8 @@ for (const observation of ["status", "enrollment", "verification"] as const)
     await expect(
       card.getByText(
         observation === "verification"
-          ? "0 without verified MFA"
-          : "1 without verified MFA",
+          ? "0 without two-step verification"
+          : "1 without two-step verification",
         { exact: true },
       ),
     ).toBeVisible();

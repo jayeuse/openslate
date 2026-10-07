@@ -365,7 +365,7 @@ test("Record files: a settled unfinished upload does not block archiving under a
     .click();
   await expect(
     page
-      .getByRole("region", { name: "Notifications" })
+      .getByRole("region", { name: "Status messages" })
       .getByText("Could not archive the file. Try again.", { exact: true }),
   ).toBeVisible();
   await expect(
@@ -436,7 +436,7 @@ test("Record files: an old account upload producer cannot announce completion in
   ).toHaveCount(0);
   await expect(
     page
-      .getByRole("region", { name: "Notifications" })
+      .getByRole("region", { name: "Status messages" })
       .getByText("Maintenance notes.pdf uploaded.", { exact: true }),
   ).toHaveCount(0);
   expect(api.calls.filter((call) => call.method === "PUT")).toHaveLength(1);
@@ -502,7 +502,7 @@ test("Record files: cached revisits and shared invalidations refresh file reads"
     .click();
   await expect(
     page
-      .getByRole("region", { name: "Notifications" })
+      .getByRole("region", { name: "Status messages" })
       .getByText(/invalid attachment response/),
   ).toBeVisible();
   api.files[0].filename = "Resynced equipment guide.pdf";
@@ -674,7 +674,7 @@ test("Record files: in-flight upload results cannot follow another record or a c
   held.release();
   await expect(
     page
-      .getByRole("region", { name: "Notifications" })
+      .getByRole("region", { name: "Status messages" })
       .getByText("Maintenance notes.pdf uploaded.", { exact: true }),
   ).toHaveCount(0);
   await dialog.getByRole("button", { name: "Previous record" }).click();
@@ -766,7 +766,7 @@ test("Record files: a writer uploads, downloads and archives with guarded list a
   expect(api.calls.find((call) => call.method === "PUT")?.body).toBe("%PDF");
   await expect(
     page
-      .getByRole("region", { name: "Notifications" })
+      .getByRole("region", { name: "Status messages" })
       .getByText("Maintenance notes.pdf uploaded.", { exact: true }),
   ).toBeVisible();
   const held = api.holdArchive();
@@ -798,7 +798,7 @@ test("Record files: a writer uploads, downloads and archives with guarded list a
     .click();
   await expect(
     page
-      .getByRole("region", { name: "Notifications" })
+      .getByRole("region", { name: "Status messages" })
       .getByText("Could not archive the file. Try again.", { exact: true }),
   ).toBeVisible();
   await expect(
@@ -840,7 +840,7 @@ test("Record files: local validation writes nothing and a server rejection offer
     ...attachmentUpload,
     buffer: Buffer.alloc(25 * 1024 * 1024 + 1),
   });
-  await expect(files.getByRole("alert")).toContainText("no larger than 25 MiB");
+  await expect(files.getByRole("alert")).toContainText("no larger than 25 MB");
   await upload.setInputFiles({
     ...attachmentUpload,
     name: "x".repeat(256) + ".pdf",

@@ -184,7 +184,7 @@ export function fileErrorMessage(error: unknown, action: string): string {
       return "This content changed. Try again, or reload the editor.";
     if ([401, 403, 404].includes(error.status))
       return "This content or file is no longer available to you.";
-    if (error.status === 413) return "This file is larger than 25 MiB.";
+    if (error.status === 413) return "This file is larger than 25 MB.";
     if (error.status === 422)
       return "The file or attachment request was rejected. Check the file and try again.";
   }

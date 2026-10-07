@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
+import {
+  formatWorkspaceClockTime,
+  formatWorkspaceDateTime,
+  type WorkspaceRegion,
+} from "@/lib/date-time";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +28,7 @@ import {
   updateOpenViewReportSchedule,
   type OpenViewReportSchedule,
 } from "../adapters/report-schedule-api";
+import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
 
 export type ReportScheduleDraft = {
   enabled: boolean;
@@ -108,22 +115,17 @@ function browserTimezone(): string {
   }
 }
 
-function formatUtc(value: string): string {
-  return `${new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "UTC",
-  }).format(new Date(value))} UTC`;
-}
-
-function scheduleSummary(schedule: OpenViewReportSchedule): string {
+function scheduleSummary(
+  schedule: OpenViewReportSchedule,
+  region: WorkspaceRegion | undefined,
+): string {
   const cadence =
     schedule.cadence === "weekly"
       ? `Weekly on ${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][schedule.weekday ?? 0]}`
       : schedule.cadence === "monthly"
         ? `Monthly on day ${schedule.monthDay}`
         : "Daily";
-  return `${schedule.enabled ? "" : "Paused · "}${cadence} at ${schedule.localTime} (${schedule.timezoneName})`;
+  return `${schedule.enabled ? "" : "Paused · "}${cadence} at ${region ? formatWorkspaceClockTime(schedule.localTime, region) : schedule.localTime} (${schedule.timezoneName.replaceAll("_", " ")})`;
 }
 
 function policySignature(draft: ReportScheduleDraft): string {
@@ -148,6 +150,7 @@ export function ReportScheduleControls({
   disabled,
   disabledReason,
 }: ReportScheduleControlsProps) {
+  const region = useQuery(workspaceCalendarQueryOptions()).data;
   const [loadVersion, setLoadVersion] = useState(0);
   const [loadState, setLoadState] = useState<
     "loading" | "ready" | "denied" | "failed"
@@ -357,7 +360,12 @@ export function ReportScheduleControls({
               <p className="text-sm">
                 Next run:{" "}
                 <time dateTime={schedule.nextDueAt}>
-                  {formatUtc(schedule.nextDueAt)}
+                  {region
+                    ? formatWorkspaceDateTime(schedule.nextDueAt, region, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    : "Date unavailable"}
                 </time>
               </p>
             ) : (
@@ -370,7 +378,9 @@ export function ReportScheduleControls({
             {!canManage ? (
               <div className="text-muted-foreground space-y-1 text-sm">
                 <p>
-                  {schedule ? scheduleSummary(schedule) : "No saved schedule."}
+                  {schedule
+                    ? scheduleSummary(schedule, region)
+                    : "No saved schedule."}
                 </p>
                 <p>Only a manager of this module changes the schedule.</p>
               </div>

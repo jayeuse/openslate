@@ -815,7 +815,7 @@ for (const code of ["mfa_required", "ip_not_allowed"] as const) {
     if (code === "mfa_required")
       await expect(
         curtain.getByRole("heading", {
-          name: "Complete multi-factor authentication",
+          name: "Complete two-step verification",
           exact: true,
         }),
       ).toBeVisible();
@@ -833,7 +833,7 @@ for (const code of ["mfa_required", "ip_not_allowed"] as const) {
     state.networkDenied = false;
     await curtain
       .getByRole("button", {
-        name: code === "mfa_required" ? "Retry session check" : "Retry",
+        name: code === "mfa_required" ? "Check again" : "Retry",
         exact: true,
       })
       .click();

@@ -61,10 +61,12 @@ test("Events mixed nullable feed and details explain representative and partial 
     if (message.type() === "error") consoleErrors.push(message.text());
   });
   await openFeed(page);
-  await expect(feed(page)).toContainText("UTC");
-  await expect(feed(page)).toContainText("Person not identified");
+  // Times are workspace-local (Asia/Manila); UTC stays out of visible text.
+  await expect(feed(page)).not.toContainText("UTC");
+  await expect(feed(page)).toContainText("Unknown person");
   await expect(feed(page)).toContainText("Address unknown");
-  await expect(feed(page)).toContainText("internal.controlled_check");
+  await expect(feed(page)).toContainText("Other security event");
+  await expect(feed(page)).not.toContainText("internal.controlled_check");
   await expect(feed(page)).not.toContainText(unsafeEventCanary);
   await expect(feed(page)).not.toContainText("unshown-person@example.invalid");
   let dialog = await details(page, "Sign-in failure");
@@ -72,16 +74,20 @@ test("Events mixed nullable feed and details explain representative and partial 
     "Sign-in failures from this address during this hour",
   );
   await expect(dialog).toContainText("198.51.100.42");
-  await expect(dialog).toContainText("11:00");
-  await expect(dialog).toContainText("12:00");
-  await expect(dialog).toContainText("Person not identified");
+  await expect(dialog).toContainText(/7:00\sPM/);
+  await expect(dialog).toContainText(/8:00\sPM/);
+  await expect(dialog).toContainText(
+    "Repeated attempts are grouped. The time shows the first one.",
+  );
+  await expect(dialog).toContainText("No person recorded");
   await expect(dialog).not.toContainText(unsafeEventCanary);
   await expect(dialog).not.toContainText(/last seen|attempt count/i);
   await page.keyboard.press("Escape");
   dialog = await details(page, "Password change");
   await expect(dialog).toContainText("Partial");
-  await expect(dialog).toContainText(/provider.*local|local.*provider/i);
+  await expect(dialog).toContainText("This change may be only partly saved");
   await expect(dialog).toContainText(eventOperationId);
+  await expect(dialog).not.toContainText(/producer|revision/i);
   await expect(dialog).not.toContainText(unsafeEventCanary);
   expect(state.commands).toEqual([]);
   expect(state.security.writes).toEqual([]);
@@ -89,7 +95,7 @@ test("Events mixed nullable feed and details explain representative and partial 
   expect(consoleErrors).toEqual([]);
 });
 
-test("Events filters serialize exact UTC bounds and person values before server paging and reset offset", async ({
+test("Events filters serialize workspace-local day bounds and person values before server paging and reset offset", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -105,18 +111,17 @@ test("Events filters serialize exact UTC bounds and person values before server 
   await controls.getByLabel("Outcome", { exact: true }).selectOption("success");
   await controls.getByLabel("Person", { exact: true }).click();
   await page.getByRole("option", { name: "Mara", exact: true }).click();
-  await controls.getByLabel("From (UTC)", { exact: true }).fill("2026-10-06");
-  await controls
-    .getByLabel("Through (UTC)", { exact: true })
-    .fill("2026-10-06");
+  await controls.getByLabel("From", { exact: true }).fill("2026-10-06");
+  await controls.getByLabel("Through", { exact: true }).fill("2026-10-06");
   await expect
     .poll(() => Object.fromEntries(state.reads.at(-1) ?? []))
     .toMatchObject({
       event_type: "identity.sign_in",
       outcome: "success",
       person_id: mfaUserA,
-      occurred_after: "2026-10-06T00:00:00.000Z",
-      occurred_before: "2026-10-07T00:00:00.000Z",
+      // One Asia/Manila (UTC+8) calendar day.
+      occurred_after: "2026-10-05T16:00:00Z",
+      occurred_before: "2026-10-06T16:00:00Z",
       offset: "0",
     });
   await expect(feed(page)).toContainText("25 events");
@@ -173,7 +178,7 @@ test("Events unknown exact type and historical person UUID work independently of
   await controls.getByLabel("Person", { exact: true }).click();
   const directoryError = controls
     .getByRole("alert")
-    .filter({ hasText: "person directory is unavailable" });
+    .filter({ hasText: "person list could not load" });
   await expect(directoryError).toBeVisible();
   await expect(directoryError).toHaveAttribute("data-variant", "destructive");
   await expect(
@@ -187,10 +192,10 @@ test("Events unknown exact type and historical person UUID work independently of
     .getByLabel("Exact event type", { exact: true })
     .fill("internal.controlled_check");
   await controls
-    .getByRole("button", { name: "Use recorded person ID", exact: true })
+    .getByRole("button", { name: "Enter a person ID", exact: true })
     .click();
   await controls
-    .getByLabel("Recorded person ID", { exact: true })
+    .getByLabel("Person ID", { exact: true })
     .fill(historicalPersonId);
   await expect
     .poll(() => Object.fromEntries(state.reads.at(-1) ?? []))
@@ -198,10 +203,10 @@ test("Events unknown exact type and historical person UUID work independently of
       event_type: "internal.controlled_check",
       person_id: historicalPersonId,
     });
-  await expect(feed(page)).toContainText("internal.controlled_check");
-  const dialog = await details(page, "internal.controlled_check");
+  await expect(feed(page)).toContainText("Other security event");
+  const dialog = await details(page, "Other security event");
   await expect(dialog).toContainText(historicalPersonId);
-  await expect(dialog).toContainText("Recorded person");
+  await expect(dialog).toContainText("Unknown person");
   await expect(dialog).not.toContainText(
     /deleted person|unshown-person@example.invalid/i,
   );
@@ -240,10 +245,22 @@ test("Events prototype-like unknown strings remain plain facts and unknown metad
   );
   await openFeed(page);
   await expect(
-    eventRows(page).getByText("__proto__", { exact: true }),
+    eventRows(page).getByText("Other security event", { exact: true }),
+  ).toHaveCount(2);
+  await expect(eventRows(page)).not.toContainText("__proto__");
+  // The oldest unknown row is the prototype-like event.
+  await feed(page)
+    .getByRole("button", { name: /^Details for Other security event/ })
+    .last()
+    .click();
+  const unknown = page.getByRole("dialog", {
+    name: "Security event details",
+    exact: true,
+  });
+  await expect(
+    unknown.getByText("Other security event", { exact: true }),
   ).toBeVisible();
-  const unknown = await details(page, "__proto__");
-  await expect(unknown.getByText("__proto__", { exact: true })).toBeVisible();
+  await expect(unknown).not.toContainText("__proto__");
   await expect(unknown.getByText("Stage", { exact: true })).toHaveCount(0);
   await expect(unknown.getByText("Reason", { exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
@@ -283,29 +300,32 @@ test("Events detail actor and subject filters use the recorded UUID and include 
   await expect(feed(page)).toContainText("4 events");
   let dialog = await details(page, "Sign-in accepted");
   await expect(
-    dialog.getByRole("button", { name: "Filter by actor", exact: true }),
+    dialog.getByRole("button", { name: "Filter by who did it", exact: true }),
   ).toBeVisible();
   await dialog
-    .getByRole("button", { name: "Filter by actor", exact: true })
+    .getByRole("button", { name: "Filter by who did it", exact: true })
     .click();
   await expect(dialog).toBeHidden();
   await expect.poll(() => state.reads.at(-1)?.get("person_id")).toBe(mfaUserA);
   await expect(feed(page)).toContainText("2 events");
-  await expect(eventRows(page)).not.toContainText("internal.actor_only");
+  // Both matches are the actor's sign-ins; the historical-only rows are gone.
+  await expect(eventRows(page)).not.toContainText("Other security event");
   await feed(page)
     .getByRole("button", { name: "Clear event filters", exact: true })
     .click();
   await expect(feed(page)).toContainText("4 events");
   dialog = await details(page, "Sign-in accepted");
   await dialog
-    .getByRole("button", { name: "Filter by subject", exact: true })
+    .getByRole("button", { name: "Filter by who it affects", exact: true })
     .click();
   await expect(dialog).toBeHidden();
   await expect
     .poll(() => state.reads.at(-1)?.get("person_id"))
     .toBe(historicalPersonId);
   await expect(feed(page)).toContainText("3 events");
-  await expect(eventRows(page)).toContainText("internal.actor_only");
+  await expect(
+    eventRows(page).getByText("Other security event", { exact: true }),
+  ).toHaveCount(2);
   expect(state.commands).toEqual([]);
   expect(state.security.writes).toEqual([]);
 });
@@ -331,42 +351,40 @@ for (const outcome of ["attempt", "partial"] as const) {
     await expect(dialog).toContainText(
       outcome === "attempt"
         ? "does not confirm completion"
-        : "local changes were not fully confirmed",
+        : "This change may be only partly saved",
     );
     expect(state.commands).toEqual([]);
   });
 }
 
-test("Events invalid UUID and reversed UTC day range remain local with linked errors and no wrong-filter request", async ({
+test("Events invalid UUID and reversed day range remain local with linked errors and no wrong-filter request", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
   await openFeed(page);
   const controls = await filters(page);
   await controls
-    .getByRole("button", { name: "Use recorded person ID", exact: true })
+    .getByRole("button", { name: "Enter a person ID", exact: true })
     .click();
   await controls
-    .getByLabel("Recorded person ID", { exact: true })
+    .getByLabel("Person ID", { exact: true })
     .fill("not-a-person-id");
   await expect(
-    controls.getByLabel("Recorded person ID", { exact: true }),
+    controls.getByLabel("Person ID", { exact: true }),
   ).toHaveAttribute("aria-invalid", "true");
-  await expect(controls).toContainText("Enter a valid recorded person ID");
+  await expect(controls).toContainText("Enter a valid person ID");
   expect(
     state.reads.some((query) => query.get("person_id") === "not-a-person-id"),
   ).toBe(false);
-  await controls.getByLabel("Recorded person ID", { exact: true }).fill("");
-  await controls.getByLabel("From (UTC)", { exact: true }).fill("2026-10-07");
-  await controls
-    .getByLabel("Through (UTC)", { exact: true })
-    .fill("2026-10-06");
+  await controls.getByLabel("Person ID", { exact: true }).fill("");
+  await controls.getByLabel("From", { exact: true }).fill("2026-10-07");
+  await controls.getByLabel("Through", { exact: true }).fill("2026-10-06");
   await expect(controls).toContainText("Through must be on or after From");
   expect(
     state.reads.some(
       (query) =>
-        query.get("occurred_after") === "2026-10-07T00:00:00.000Z" &&
-        query.get("occurred_before") === "2026-10-07T00:00:00.000Z",
+        query.get("occurred_after") === "2026-10-06T16:00:00Z" &&
+        query.get("occurred_before") === "2026-10-06T16:00:00Z",
     ),
   ).toBe(false);
   expect(state.commands).toEqual([]);
@@ -549,7 +567,9 @@ test("Events refresh and held detail leave the existing policy draft and explici
   await policy
     .getByLabel("Session timeout", { exact: true })
     .selectOption("30 minutes");
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
+  await policy
+    .getByRole("button", { name: "Close account policy", exact: true })
+    .click();
   await feed(page)
     .getByRole("button", { name: "Refresh security events", exact: true })
     .click();
@@ -659,7 +679,9 @@ for (const status of [401, 403]) {
       await expect(
         policy.getByLabel("Session timeout", { exact: true }),
       ).toBeVisible();
-      await policy.getByRole("button", { name: "Close", exact: true }).click();
+      await policy
+        .getByRole("button", { name: "Close account policy", exact: true })
+        .click();
       await page
         .getByRole("button", { name: "Retry sessions", exact: true })
         .click();
@@ -747,7 +769,9 @@ test("Events an older held Retry cannot clear a newer policy refusal", async ({
       ),
     ).toBeVisible();
     await expect(retryPolicy).toBeEnabled();
-    await policy.getByRole("button", { name: "Close", exact: true }).click();
+    await policy
+      .getByRole("button", { name: "Close account policy", exact: true })
+      .click();
     held.release();
     await settled;
     const retryEvents = feed(page).getByRole("button", {
@@ -777,7 +801,7 @@ test("Events a policy refusal conceals a cached feed on revisit until its own fr
   await page.clock.install();
   const state = await mockSecurityEvents(page);
   await openFeed(page);
-  await expect(page.getByText(/60 minutes timeout$/)).toBeVisible();
+  await expect(page.getByText(/60-minute timeout$/)).toBeVisible();
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Access overview", exact: true }),
@@ -785,7 +809,10 @@ test("Events a policy refusal conceals a cached feed on revisit until its own fr
   await expect(feed(page)).toHaveCount(0);
   await page.clock.fastForward(31_000);
   state.security.policyReadStatus = 403;
-  await page.getByRole("link", { name: "Security", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Security", exact: true })
+    .click();
   await expect(
     page.getByText("Account policy unavailable", { exact: true }),
   ).toBeVisible();
@@ -816,7 +843,9 @@ test("Events curtain clears held detail while preserving only the same-account p
   await policy
     .getByLabel("Session timeout", { exact: true })
     .selectOption("30 minutes");
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
+  await policy
+    .getByRole("button", { name: "Close account policy", exact: true })
+    .click();
   const detail = deferredMfaResponse();
   const native = deferredMfaResponse();
   state.holdDetail = detail;
@@ -863,14 +892,14 @@ test("Events late prior-account list cannot populate the next account's feed", a
     state.auth.userId = mfaUserB;
     state.events = [
       securityEvent(7, {
-        event_type: "internal.next_account",
+        event_type: "identity.recovery_complete",
         actor_id: mfaUserB,
         subject_id: mfaUserB,
       }),
     ];
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(feed(page)).toContainText("internal.next_account");
+    await expect(feed(page)).toContainText("Recovery completion");
     old.release();
     await expect(eventRows(page)).not.toContainText("Sign-in accepted");
     await expect(eventRows(page)).not.toContainText("Sign-in failure");
@@ -928,7 +957,7 @@ test("Events desktop keyboard Escape returns focus to the invoking detail row at
 });
 
 for (const mode of ["light", "dark"] as const) {
-  test(`Events compact ${mode} keyboard details and UTC filters remain reachable at 125 percent reflow`, async ({
+  test(`Events compact ${mode} keyboard details and date filters remain reachable at 125 percent reflow`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -946,9 +975,7 @@ for (const mode of ["light", "dark"] as const) {
     await more.focus();
     await page.keyboard.press("Enter");
     await expect(more).toHaveAttribute("aria-expanded", "true");
-    await expect(
-      feed(page).getByLabel("From (UTC)", { exact: true }),
-    ).toBeVisible();
+    await expect(feed(page).getByLabel("From", { exact: true })).toBeVisible();
     const opener = feed(page)
       .getByRole("button", { name: /^Details for Sign-in failure/ })
       .first();

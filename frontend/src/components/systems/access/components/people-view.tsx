@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Search, UserRoundPlus, UsersRound } from "lucide-react";
@@ -81,6 +81,21 @@ function replaceUserParam(userId: string | null) {
     "",
     `${url.pathname}${url.search}${url.hash}`,
   );
+}
+
+// Below 2xl the table drops the session count (the person panel shows it) and
+// merges sign-in and activity, so names and emails keep whole words.
+const wideQuery = "(min-width: 96rem)";
+function subscribeWide(notify: () => void) {
+  const query = window.matchMedia(wideQuery);
+  query.addEventListener("change", notify);
+  return () => query.removeEventListener("change", notify);
+}
+
+function lastSeen(person: AccessDirectoryUser) {
+  const { last_active_at: active, last_sign_in_at: signIn } = person;
+  if (!active || !signIn) return active ?? signIn;
+  return Date.parse(active) >= Date.parse(signIn) ? active : signIn;
 }
 
 function StatusBadges({ row }: { row: DirectoryRow }) {
@@ -197,6 +212,11 @@ export function PeopleView() {
   const [pageSize, setPageSize] = useState<number>(DEFAULT_TABLE_PAGE_SIZE);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [now] = useState(() => Date.now());
+  const wide = useSyncExternalStore(
+    subscribeWide,
+    () => window.matchMedia(wideQuery).matches,
+    () => false,
+  );
   const selectedId = searchParams.get("user");
   const request = directoryRequest(filters, pageSize, pageIndex * pageSize);
   const users = useQuery(directoryPageOptions(request));
@@ -275,7 +295,7 @@ export function PeopleView() {
         id: "email",
         header: "Email",
         cell: ({ row }) => (
-          <span className="break-all">{row.original.user.email}</span>
+          <span className="whitespace-nowrap">{row.original.user.email}</span>
         ),
       },
       {
@@ -305,40 +325,55 @@ export function PeopleView() {
       },
       {
         id: "mfa",
-        header: "Observed MFA",
+        header: "Two-step verification",
         cell: ({ row }) => <MfaObservation person={row.original.user} />,
       },
-      {
-        id: "sessions",
-        header: "Active sessions",
-        cell: ({ row }) => (
-          <span className="tabular-nums">
-            {row.original.user.active_session_count}
-          </span>
-        ),
-      },
-      {
-        id: "last-sign-in",
-        header: "Last sign-in",
-        cell: ({ row }) => (
-          <RecordedHistory
-            value={row.original.user.last_sign_in_at}
-            empty="No recorded sign-in"
-          />
-        ),
-      },
-      {
-        id: "last-activity",
-        header: "Last activity",
-        cell: ({ row }) => (
-          <RecordedHistory
-            value={row.original.user.last_active_at}
-            empty="No recorded activity"
-          />
-        ),
-      },
+      ...(wide
+        ? ([
+            {
+              id: "sessions",
+              header: "Active sessions",
+              cell: ({ row }) => (
+                <span className="tabular-nums">
+                  {row.original.user.active_session_count}
+                </span>
+              ),
+            },
+            {
+              id: "last-sign-in",
+              header: "Last sign-in",
+              cell: ({ row }) => (
+                <RecordedHistory
+                  value={row.original.user.last_sign_in_at}
+                  empty="No recorded sign-in"
+                />
+              ),
+            },
+            {
+              id: "last-activity",
+              header: "Last activity",
+              cell: ({ row }) => (
+                <RecordedHistory
+                  value={row.original.user.last_active_at}
+                  empty="No recorded activity"
+                />
+              ),
+            },
+          ] satisfies DataTableColumn<DirectoryRow<AccessDirectoryUser>>[])
+        : ([
+            {
+              id: "last-seen",
+              header: "Last seen",
+              cell: ({ row }) => (
+                <RecordedHistory
+                  value={lastSeen(row.original.user)}
+                  empty="No recorded sign-in"
+                />
+              ),
+            },
+          ] satisfies DataTableColumn<DirectoryRow<AccessDirectoryUser>>[])),
     ],
-    [],
+    [wide],
   );
 
   if (denied)
@@ -385,7 +420,9 @@ export function PeopleView() {
           People directory
         </h2>
         <p className="text-muted-foreground text-sm" aria-live="polite">
-          {users.data ? `${users.data.pagination.total} people` : " "}
+          {users.data
+            ? `${users.data.pagination.total} ${users.data.pagination.total === 1 ? "person" : "people"}`
+            : " "}
         </p>
         <Button
           className="min-h-11 w-full sm:w-auto"
@@ -397,10 +434,6 @@ export function PeopleView() {
         </Button>
       </div>
 
-      <p className="text-muted-foreground text-xs">
-        Sign-in and activity show recorded local history. MFA uses the last
-        recorded observation. Session counts are active local sessions.
-      </p>
       {filters.history && filters.history !== "all" ? (
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <p className="text-muted-foreground">
@@ -410,7 +443,7 @@ export function PeopleView() {
           </p>
           <Button
             variant="ghost"
-            className="min-h-11"
+            className="text-primary min-h-11 px-0 underline underline-offset-4 hover:bg-transparent"
             onClick={() => changeFilters({ history: "all" })}
           >
             Clear history filter
@@ -488,12 +521,12 @@ export function PeopleView() {
         />
         <SelectField
           id="people-mfa-filter"
-          label="Administrator MFA"
+          label="Administrator two-step verification"
           value={filters.mfa ?? "all"}
           options={[
-            { value: "all", label: "All observations" },
-            { value: "without", label: "Without verified MFA" },
-            { value: "unknown", label: "Unknown MFA" },
+            { value: "all", label: "Any status" },
+            { value: "without", label: "Not set up" },
+            { value: "unknown", label: "Unknown" },
           ]}
           onChange={(mfa) => {
             if (mfa === "all" || mfa === "without" || mfa === "unknown")
@@ -588,28 +621,17 @@ export function PeopleView() {
                         <dd className="min-w-0">
                           <DepartmentList row={row} />
                         </dd>
-                        <dt className="text-muted-foreground">Observed MFA</dt>
+                        <dt className="text-muted-foreground">
+                          Two-step verification
+                        </dt>
                         <dd className="min-w-0">
                           <MfaObservation person={row.user} />
                         </dd>
-                        <dt className="text-muted-foreground">
-                          Active sessions
-                        </dt>
-                        <dd className="tabular-nums">
-                          {row.user.active_session_count}
-                        </dd>
-                        <dt className="text-muted-foreground">Last sign-in</dt>
+                        <dt className="text-muted-foreground">Last seen</dt>
                         <dd className="min-w-0">
                           <RecordedHistory
-                            value={row.user.last_sign_in_at}
+                            value={lastSeen(row.user)}
                             empty="No recorded sign-in"
-                          />
-                        </dd>
-                        <dt className="text-muted-foreground">Last activity</dt>
-                        <dd className="min-w-0">
-                          <RecordedHistory
-                            value={row.user.last_active_at}
-                            empty="No recorded activity"
                           />
                         </dd>
                       </dl>

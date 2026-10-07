@@ -98,7 +98,7 @@ test("person security is lazy, current and recovery acceptance never claims deli
   expect(api.sent("GET", `/api/users/${ids.ben}/security`)).toHaveLength(0);
   await sheet.getByRole("tab", { name: "Security", exact: true }).click();
   await expect(
-    sheet.getByText("1 verified factor", { exact: true }),
+    sheet.getByText("Two-step verification is set up", { exact: true }),
   ).toBeVisible();
   await sheet
     .getByRole("button", { name: "Send recovery email", exact: true })
@@ -111,12 +111,10 @@ test("person security is lazy, current and recovery acceptance never claims deli
   expect(api.sent("POST", `/api/users/${ids.ben}/recovery`)).toHaveLength(0);
   await confirmRecovery(page);
   await expect(
-    sheet
-      .getByRole("status")
-      .filter({ hasText: /request accepted|Factors cleared/ }),
-  ).toContainText(
-    "Recovery email request accepted. Delivery is not confirmed.",
-  );
+    sheet.getByRole("status").filter({
+      hasText: /Recovery email sent|Two-step verification reset/,
+    }),
+  ).toContainText("Recovery email sent to ");
   expect(api.sent("POST", `/api/users/${ids.ben}/recovery`)).toHaveLength(1);
   expect(api.sent("POST", `/api/users/${ids.ben}/recovery`)[0].body).toEqual({
     revoke_sessions: false,
@@ -141,7 +139,7 @@ test("unavailable and malformed status stay unavailable until a fresh Retry", as
     "Security could not be loaded.",
   );
   await expect(
-    sheet.getByText("No verified factors", { exact: true }),
+    sheet.getByText("Two-step verification not set up", { exact: true }),
   ).toHaveCount(0);
   await expect(sheet).not.toContainText("Private provider routing detail");
   valid = true;
@@ -149,7 +147,7 @@ test("unavailable and malformed status stay unavailable until a fresh Retry", as
     .getByRole("button", { name: "Retry security", exact: true })
     .click();
   await expect(
-    sheet.getByText("1 verified factor", { exact: true }),
+    sheet.getByText("Two-step verification is set up", { exact: true }),
   ).toBeVisible();
 });
 
@@ -196,16 +194,16 @@ for (const refusal of ["smtp", "ineligible", "aal1", "foreign"]) {
         sheet.getByRole("button", {
           name:
             refusal === "aal1"
-              ? "Reset multi-factor authentication"
+              ? "Reset two-step verification"
               : "Send recovery email",
           exact: true,
         }),
       ).toBeDisabled();
       await expect(sheet).toContainText(
         refusal === "smtp"
-          ? "Recovery email is not configured"
+          ? "Recovery email is not turned on"
           : refusal === "aal1"
-            ? "Verify your own multi-factor sign-in"
+            ? "Complete your own two-step verification"
             : "This person is not eligible",
       );
     }
@@ -220,21 +218,27 @@ test("reset uses its own confirmation and strict empty command", async ({
   const sheet = await open(page);
   await sheet
     .getByRole("button", {
-      name: "Reset multi-factor authentication",
+      name: "Reset two-step verification",
       exact: true,
     })
     .click();
   const dialog = page.getByRole("alertdialog", {
-    name: "Reset multi-factor authentication?",
+    name: "Reset two-step verification?",
     exact: true,
   });
-  await expect(dialog).toContainText("Factors are removed first");
-  await dialog.getByRole("button", { name: "Reset MFA", exact: true }).click();
+  await expect(dialog).toContainText(
+    "This removes their authenticator app and signs them out everywhere.",
+  );
+  await dialog
+    .getByRole("button", { name: "Reset two-step verification", exact: true })
+    .click();
   await expect(
-    sheet
-      .getByRole("status")
-      .filter({ hasText: /request accepted|Factors cleared/ }),
-  ).toContainText("Factors cleared and local sessions revoked.");
+    sheet.getByRole("status").filter({
+      hasText: /Recovery email sent|Two-step verification reset/,
+    }),
+  ).toContainText(
+    "Two-step verification reset. They are signed out everywhere.",
+  );
   expect(api.sent("POST", `/api/users/${ids.ben}/mfa/reset`)[0].body).toEqual(
     {},
   );
@@ -280,19 +284,17 @@ test("pending security blocks close, tab and route while preserving an existing 
   await expect(
     sheet.getByRole("tab", { name: "Security", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await sheet
-    .getByRole("link", { name: "Sign-in & security", exact: true })
-    .click();
+  await sheet.getByRole("link", { name: "Security", exact: true }).click();
   await expect(page).toHaveURL(
     new RegExp(`/access\\?view=people&user=${ids.ben}`),
   );
   expect(api.sent("POST", `/api/users/${ids.ben}/recovery`)).toHaveLength(1);
   held.release();
   await expect(
-    sheet
-      .getByRole("status")
-      .filter({ hasText: /request accepted|Factors cleared/ }),
-  ).toContainText("request accepted");
+    sheet.getByRole("status").filter({
+      hasText: /Recovery email sent|Two-step verification reset/,
+    }),
+  ).toContainText("Recovery email sent");
   await sheet.getByRole("tab", { name: /Details/ }).click();
   await expect(sheet.getByLabel("Job title")).toHaveValue("Retained draft");
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
@@ -323,7 +325,7 @@ test("partial revocation is truthful and performs session read-back without repl
   const sheet = await open(page);
   await confirmRecovery(page, true);
   await expect(sheet.getByRole("alert")).toContainText(
-    "Local sessions were revoked. Email acceptance is unconfirmed.",
+    "Signed out everywhere. We could not confirm the recovery email was sent.",
   );
   await expect(sheet).not.toContainText("Private diagnostic");
   await expect
@@ -404,7 +406,7 @@ test("old pending completion behind same-account verification cannot change curr
     sheet.getByRole("button", { name: "Send recovery email", exact: true }),
   ).toBeEnabled();
   await expect(
-    sheet.getByRole("status").filter({ hasText: "request accepted" }),
+    sheet.getByRole("status").filter({ hasText: "Recovery email sent" }),
   ).toHaveCount(0);
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
   await expect(sheet).toBeHidden();
@@ -454,7 +456,7 @@ test("browser Back safely departs and delayed command cannot overwrite its new o
   ).toBeVisible();
   held.release();
   await expect(
-    page.getByRole("status").filter({ hasText: "request accepted" }),
+    page.getByRole("status").filter({ hasText: "Recovery email sent" }),
   ).toHaveCount(0);
   await page.getByRole("link", { name: "People", exact: true }).first().click();
   const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
@@ -521,7 +523,7 @@ test("account replacement clears old pending ownership and cannot display its re
     sheet.getByRole("button", { name: "Send recovery email", exact: true }),
   ).toBeEnabled();
   await expect(
-    sheet.getByRole("status").filter({ hasText: "request accepted" }),
+    sheet.getByRole("status").filter({ hasText: "Recovery email sent" }),
   ).toHaveCount(0);
   expect(api.sent("POST", `/api/users/${ids.ben}/recovery`)).toHaveLength(1);
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
@@ -564,7 +566,7 @@ test("large-text phone panel keeps security actions and confirmation reachable",
   await setup(page);
   const sheet = await open(page);
   const reset = sheet.getByRole("button", {
-    name: "Reset multi-factor authentication",
+    name: "Reset two-step verification",
     exact: true,
   });
   await reset.scrollIntoViewIfNeeded();
@@ -579,7 +581,7 @@ test("large-text phone panel keeps security actions and confirmation reachable",
   expect(bounds!.height).toBeGreaterThanOrEqual(44);
   await reset.click();
   const confirmation = page.getByRole("alertdialog", {
-    name: "Reset multi-factor authentication?",
+    name: "Reset two-step verification?",
     exact: true,
   });
   const cancel = confirmation.getByRole("button", {
@@ -648,41 +650,36 @@ for (const state of [
       ),
       confirmRecovery(page, state.revoke),
     ]);
-    const alert = sheet.getByRole("alert");
-    await expect(alert).toBeVisible();
+    // An accepted email is a success; only a real failure is an alert.
+    const sent = state.email === "accepted";
+    const outcome = sent
+      ? sheet.getByRole("status").filter({ hasText: "Recovery email sent" })
+      : sheet.getByRole("alert");
+    await expect(outcome).toBeVisible();
+    if (sent) await expect(sheet.getByRole("alert")).toHaveCount(0);
     expect(api.sent("POST", path)).toHaveLength(1);
     expect(api.sent("POST", path)[0].body).toEqual({
       revoke_sessions: state.revoke,
     });
     expect(api.sent("POST", `/api/users/${ids.ben}/mfa/reset`)).toHaveLength(0);
-    const observed = (await alert.innerText()).replace(/\s+/g, " ").trim();
-    await testInfo.attach("recovery-partial-alert", {
+    const observed = (await outcome.innerText()).replace(/\s+/g, " ").trim();
+    await testInfo.attach("recovery-partial-outcome", {
       body: Buffer.from(observed),
       contentType: "text/plain",
     });
-    expect
-      .soft(observed)
-      .not.toMatch(/factor removal|factors(?: were)? cleared/i);
-    expect
-      .soft(observed)
-      .toMatch(
-        state.email === "accepted"
-          ? /email.*accepted/i
-          : /email.*not (?:requested|attempted|sent)/i,
+    expect.soft(observed).not.toMatch(/authenticator|two-step/i);
+    if (sent) expect(observed).toMatch(/Recovery email sent to \S+@\S+\./);
+    else if (state.local === "committed")
+      expect(observed).toContain(
+        "Signed out everywhere. The recovery email did not send. Try again.",
       );
-    if (state.email === "accepted")
-      expect(observed).toMatch(/delivery.*not.*confirm/i);
     if (state.local === "committed")
-      expect(observed).toMatch(/local sessions were revoked/i);
+      expect(observed).toMatch(/^Signed out everywhere\./);
     else if (state.local === "not_requested")
-      expect(observed).toMatch(
-        /no local session revocation.*requested|local session revocation.*not requested/i,
-      );
+      expect(observed).not.toMatch(/signed out/i);
     else {
-      expect(observed).toMatch(
-        /local session revocation.*unconfirmed|revocation could not.*confirm/i,
-      );
-      expect(observed).not.toMatch(/local sessions were revoked/i);
+      expect(observed).toMatch(/may be only partly saved/i);
+      expect(observed).not.toMatch(/signed out everywhere/i);
     }
   });
 }

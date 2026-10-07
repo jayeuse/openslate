@@ -67,7 +67,7 @@ export default function Platform() {
     <div className="space-y-6">
       <PageHeader
         title="Platform"
-        description="Files, search, notifications, and your account."
+        description="Search, files, notifications, import and export, and your account."
       />
       {tab === "Account" ? (
         <p

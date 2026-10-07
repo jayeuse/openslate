@@ -91,7 +91,7 @@ export function SearchSelect({
                   className="min-h-11"
                 >
                   <span className="flex min-w-0 flex-col gap-0.5">
-                    <span className="truncate">{option.label}</span>
+                    <span className="break-words">{option.label}</span>
                     {option.description && (
                       <span className="text-muted-foreground text-xs">
                         {option.description}

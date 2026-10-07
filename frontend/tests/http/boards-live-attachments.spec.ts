@@ -259,7 +259,7 @@ test("an author uploads, downloads and removes post attachments in one step each
   const panel = await openDraftAttachments(page);
   const input = panel.getByLabel("Add an attachment");
   await expect(
-    panel.getByText("Files up to 25 MiB. PDF, PNG, JPEG, DOCX, XLSX or PPTX."),
+    panel.getByText("Files up to 25 MB. PDF, PNG, JPEG, DOCX, XLSX or PPTX."),
   ).toBeVisible();
   const names = [
     "Dock 3 loading plan.pdf",

@@ -55,10 +55,7 @@ export function WorkspaceLogo({
         className="bg-foreground text-background rounded-[inherit]"
         style={{ fontSize: "inherit" }}
       >
-        <span
-          className="block w-full min-w-0 truncate px-1 text-center"
-          title={mark}
-        >
+        <span className="block w-full min-w-0 text-center tracking-tight whitespace-nowrap">
           {mark}
         </span>
       </AvatarFallback>

@@ -37,10 +37,10 @@ async function fixtures(page: Page, baseURL: string | undefined) {
 const selectedBackup = (page: Page) =>
   page.getByRole("region", { name: "Selected backup", exact: true });
 const exportPanel = (page: Page) =>
-  page.getByRole("region", { name: "Encrypted export", exact: true });
+  page.getByRole("region", { name: "Encrypted backup", exact: true });
 const passphraseDialog = (page: Page) =>
   page.getByRole("dialog").filter({
-    has: page.getByLabel("Export passphrase", { exact: true }),
+    has: page.getByLabel("Passphrase", { exact: true }),
   });
 const passwordDialog = (page: Page) =>
   page.getByRole("dialog").filter({
@@ -48,8 +48,17 @@ const passwordDialog = (page: Page) =>
   });
 const downloadAction = (page: Page) =>
   selectedBackup(page).getByRole("button", {
-    name: /^Download(?: backup)?$/,
+    name: "Prepare encrypted backup",
+    exact: true,
   });
+// The confirmation must match before the dialog allows preparation.
+async function fillPassphrase(
+  dialog: ReturnType<typeof passphraseDialog>,
+  value: string,
+) {
+  await dialog.getByLabel("Passphrase", { exact: true }).fill(value);
+  await dialog.getByLabel("Confirm passphrase", { exact: true }).fill(value);
+}
 const nativeLink = (page: Page) =>
   exportPanel(page).getByRole("link", {
     name: "Download encrypted backup",
@@ -65,11 +74,9 @@ async function requestExport(
 ) {
   await downloadAction(page).click();
   const dialog = passphraseDialog(page);
+  await fillPassphrase(dialog, passphrase);
   await dialog
-    .getByLabel("Export passphrase", { exact: true })
-    .fill(passphrase);
-  await dialog
-    .getByRole("button", { name: "Prepare export", exact: true })
+    .getByRole("button", { name: "Prepare encrypted backup", exact: true })
     .click();
   await expect(dialog).toBeHidden();
   await expect(exportPanel(page)).toContainText(/queued/i);
@@ -77,7 +84,7 @@ async function requestExport(
 
 async function confirmDownload(page: Page) {
   await exportPanel(page)
-    .getByRole("button", { name: "Confirm download", exact: true })
+    .getByRole("button", { name: "Confirm password", exact: true })
     .click();
   const dialog = passwordDialog(page);
   await dialog
@@ -172,7 +179,7 @@ test("14 export validates the passphrase before a request and cancels with empty
   await expect(downloadAction(page)).toBeVisible();
   await downloadAction(page).click();
   const dialog = passphraseDialog(page);
-  const passphrase = dialog.getByLabel("Export passphrase", { exact: true });
+  const passphrase = dialog.getByLabel("Passphrase", { exact: true });
   for (const invalid of [
     "too-short",
     " " + syntheticExportPassphrase,
@@ -181,14 +188,14 @@ test("14 export validates the passphrase before a request and cancels with empty
     "Harbor-\u2028-export-passphrase",
     "x".repeat(129),
   ]) {
-    await passphrase.fill(invalid);
+    await fillPassphrase(dialog, invalid);
     await dialog
-      .getByRole("button", { name: "Prepare export", exact: true })
+      .getByRole("button", { name: "Prepare encrypted backup", exact: true })
       .click();
     await expect(dialog.getByRole("alert")).toBeVisible();
     expect(exports.createSubmissions).toBe(0);
   }
-  await passphrase.fill(syntheticExportPassphrase);
+  await fillPassphrase(dialog, syntheticExportPassphrase);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(downloadAction(page)).toBeFocused();
@@ -238,16 +245,15 @@ test("14 export validates non-ASCII separators locally and keeps printable Unico
   await page.goto("/manage?view=backup");
   await downloadAction(page).click();
   const dialog = passphraseDialog(page);
-  const passphrase = dialog.getByLabel("Export passphrase", { exact: true });
-  await passphrase.fill("A\u00a0printable export passphrase");
+  await fillPassphrase(dialog, "A\u00a0printable export passphrase");
   await dialog
-    .getByRole("button", { name: "Prepare export", exact: true })
+    .getByRole("button", { name: "Prepare encrypted backup", exact: true })
     .click();
   await expect(dialog.getByRole("alert")).toBeVisible();
   expect(exports.createSubmissions).toBe(0);
-  await passphrase.fill("A printable é export passphrase");
+  await fillPassphrase(dialog, "A printable é export passphrase");
   await dialog
-    .getByRole("button", { name: "Prepare export", exact: true })
+    .getByRole("button", { name: "Prepare encrypted backup", exact: true })
     .click();
   await expect(dialog).toBeHidden();
   expect(exports.createRequests).toHaveLength(1);
@@ -314,14 +320,10 @@ test("14 export permits a verified reconciled retention-failed recovery point an
     .click();
   await downloadAction(page).click();
   const exportDialog = passphraseDialog(page);
-  await expect(exportDialog).toContainText(
-    "Export preparation leaves the installation online.",
-  );
+  await expect(exportDialog).toContainText("The installation stays online.");
+  await fillPassphrase(exportDialog, syntheticExportPassphrase);
   await exportDialog
-    .getByLabel("Export passphrase", { exact: true })
-    .fill(syntheticExportPassphrase);
-  await exportDialog
-    .getByRole("button", { name: "Prepare export", exact: true })
+    .getByRole("button", { name: "Prepare encrypted backup", exact: true })
     .click();
   await expect(exportDialog).toBeHidden();
   await expect(exportPanel(page)).toContainText(/queued/i);
@@ -343,12 +345,10 @@ test("14 export keeps pending submission exclusive and blocks route leave until 
   await page.goto("/manage?view=backup");
   await downloadAction(page).click();
   const dialog = passphraseDialog(page);
-  await dialog
-    .getByLabel("Export passphrase", { exact: true })
-    .fill(syntheticExportPassphrase);
+  await fillPassphrase(dialog, syntheticExportPassphrase);
   try {
     await dialog
-      .getByRole("button", { name: "Prepare export", exact: true })
+      .getByRole("button", { name: "Prepare encrypted backup", exact: true })
       .click();
     await held.started;
     await expect(
@@ -381,17 +381,15 @@ test("14 export retries an uncertain create with the same payload and key instea
   await page.goto("/manage?view=backup");
   await downloadAction(page).click();
   const dialog = passphraseDialog(page);
+  await fillPassphrase(dialog, syntheticExportPassphrase);
   await dialog
-    .getByLabel("Export passphrase", { exact: true })
-    .fill(syntheticExportPassphrase);
-  await dialog
-    .getByRole("button", { name: "Prepare export", exact: true })
+    .getByRole("button", { name: "Prepare encrypted backup", exact: true })
     .click();
   await expect(dialog.getByRole("alert")).toBeVisible();
   expect(exports.operations.size).toBe(1);
   expect(exports.createRequests).toHaveLength(1);
   await dialog
-    .getByRole("button", { name: "Prepare export", exact: true })
+    .getByRole("button", { name: "Prepare encrypted backup", exact: true })
     .click();
   await expect(dialog).toBeHidden();
   expect(exports.createRequests).toHaveLength(2);
@@ -520,7 +518,7 @@ for (const failure of [
       await expect(exportPanel(page)).toContainText(/failed|interrupted/i);
       await expect(
         exportPanel(page).getByRole("button", {
-          name: "Confirm download",
+          name: "Confirm password",
           exact: true,
         }),
       ).toHaveCount(0);
@@ -551,7 +549,7 @@ test("14 export reloads the UUID for an off-page source and preserves it through
   await expect(exportPanel(page)).toContainText(operation.sha256!);
   await expect(
     exportPanel(page).getByRole("button", {
-      name: "Confirm download",
+      name: "Confirm password",
       exact: true,
     }),
   ).toBeEnabled();
@@ -598,7 +596,7 @@ test("14 export reports an invalid route UUID without requesting another operati
   await expect(exportPanel(page).getByRole("alert")).toBeVisible();
   await expect(
     exportPanel(page).getByRole("button", {
-      name: "Confirm download",
+      name: "Confirm password",
       exact: true,
     }),
   ).toHaveCount(0);
@@ -622,7 +620,7 @@ test("14 export honors an expired API state and never offers password admission 
   await expect(exportPanel(page)).toContainText(/expired/i);
   await expect(
     exportPanel(page).getByRole("button", {
-      name: "Confirm download",
+      name: "Confirm password",
       exact: true,
     }),
   ).toHaveCount(0);
@@ -647,7 +645,7 @@ test("14 export never accepts stale privileged metadata after refusal and requir
   await expect(exportPanel(page)).not.toContainText(operation.sha256!);
   await expect(
     exportPanel(page).getByRole("button", {
-      name: "Confirm download",
+      name: "Confirm password",
       exact: true,
     }),
   ).toHaveCount(0);
@@ -666,7 +664,7 @@ test("14 export never accepts stale privileged metadata after refusal and requir
   await expect(exportPanel(page)).not.toContainText(operation.sha256!);
   exports.malformedMetadata = true;
   await exportPanel(page)
-    .getByRole("button", { name: "Retry export", exact: true })
+    .getByRole("button", { name: "Try again", exact: true })
     .click();
   await expect(exportPanel(page).getByRole("alert")).toBeVisible();
   await expect(exportPanel(page)).not.toContainText(operation.sha256!);
@@ -677,12 +675,12 @@ test("14 export never accepts stale privileged metadata after refusal and requir
     message: "Export metadata is unavailable.",
   };
   await exportPanel(page)
-    .getByRole("button", { name: "Retry export", exact: true })
+    .getByRole("button", { name: "Try again", exact: true })
     .click();
   await expect(exportPanel(page).getByRole("alert")).toBeVisible();
   exports.readError = null;
   await exportPanel(page)
-    .getByRole("button", { name: "Retry export", exact: true })
+    .getByRole("button", { name: "Try again", exact: true })
     .click();
   await expect(exportPanel(page)).toContainText(operation.sha256!);
   expect(exports.contentRequests).toEqual([]);
@@ -723,10 +721,10 @@ for (const failure of [
       await page.goto(exportLocation(operation.id));
       if (failure.status === 503) {
         await expect(exportPanel(page)).toContainText(
-          /downloads stop when the export expires\./i,
+          /downloads stop when the encrypted backup expires\./i,
         );
         await expect(exportPanel(page)).toContainText(
-          "The server copy is cleaned up at the next successful host runner check.",
+          "The server then deletes its copy.",
         );
         await expect(
           exportPanel(page).getByText("Available until", { exact: true }),
@@ -745,7 +743,7 @@ for (const failure of [
         expect(layout.panelContentWidth).toBeLessThanOrEqual(layout.panelWidth);
       }
       await exportPanel(page)
-        .getByRole("button", { name: "Confirm download", exact: true })
+        .getByRole("button", { name: "Confirm password", exact: true })
         .click();
       const dialog = passwordDialog(page);
       await dialog
@@ -795,13 +793,23 @@ for (const failure of [
         await expect(exportPanel(page)).toContainText(/ready/i);
         await expect(
           exportPanel(page).getByRole("button", {
-            name: "Confirm download",
+            name: "Confirm password",
             exact: true,
           }),
         ).toBeEnabled();
+      } else {
+        // One primary action per state: a confirmed password leaves only the
+        // download link.
+        await expect(
+          exportPanel(page).getByRole("button", {
+            name: "Confirm password",
+            exact: true,
+          }),
+        ).toHaveCount(0);
+        return;
       }
       await exportPanel(page)
-        .getByRole("button", { name: "Confirm download", exact: true })
+        .getByRole("button", { name: "Confirm password", exact: true })
         .click();
       await expect(
         passwordDialog(page).getByLabel("Current password", { exact: true }),
@@ -918,7 +926,7 @@ test("14 native export: the explicit anchor hands an attachment to the browser w
   await expect(nativeLink(page)).toHaveCount(0);
   await expect(
     exportPanel(page).getByRole("button", {
-      name: "Confirm download",
+      name: "Confirm password",
       exact: true,
     }),
   ).toBeEnabled();
@@ -1018,7 +1026,7 @@ for (const failure of [
         await expect(exportPanel(page)).toContainText(/expired/i);
         await expect(
           exportPanel(page).getByRole("button", {
-            name: "Confirm download",
+            name: "Confirm password",
             exact: true,
           }),
         ).toHaveCount(0);
@@ -1073,9 +1081,7 @@ test("14 export keeps local input through a same-account privacy curtain and pre
   await policy.getByRole("button", { name: "Close", exact: true }).click();
   await downloadAction(page).click();
   const dialog = passphraseDialog(page);
-  await dialog
-    .getByLabel("Export passphrase", { exact: true })
-    .fill(syntheticExportPassphrase);
+  await fillPassphrase(dialog, syntheticExportPassphrase);
   const held = heldReply();
   exports.holdSession = held;
   try {
@@ -1089,9 +1095,9 @@ test("14 export keeps local input through a same-account privacy curtain and pre
     await expect(dialog).toBeHidden();
     held.release();
     await expect(curtain).toBeHidden();
-    await expect(
-      dialog.getByLabel("Export passphrase", { exact: true }),
-    ).toHaveValue(syntheticExportPassphrase);
+    await expect(dialog.getByLabel("Passphrase", { exact: true })).toHaveValue(
+      syntheticExportPassphrase,
+    );
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await page
       .getByRole("button", { name: "Edit schedule", exact: true })
@@ -1118,7 +1124,7 @@ test("14 export ignores a delayed prior-account admission without clearing the n
   exports.holdAdmission = oldReply;
   await page.goto(exportLocation(operation.id));
   await exportPanel(page)
-    .getByRole("button", { name: "Confirm download", exact: true })
+    .getByRole("button", { name: "Confirm password", exact: true })
     .click();
   await passwordDialog(page)
     .getByLabel("Current password", { exact: true })
@@ -1141,7 +1147,7 @@ test("14 export ignores a delayed prior-account admission without clearing the n
     await expect(nativeLink(page)).toHaveCount(0);
     exports.holdAdmission = newReply;
     await exportPanel(page)
-      .getByRole("button", { name: "Confirm download", exact: true })
+      .getByRole("button", { name: "Confirm password", exact: true })
       .click();
     await passwordDialog(page)
       .getByLabel("Current password", { exact: true })
@@ -1186,9 +1192,9 @@ for (const role of ["member", "guest"] as const) {
       await page.goto(exportLocation(operation.id));
       await expect(downloadAction(page)).toHaveCount(0);
       await expect(nativeLink(page)).toHaveCount(0);
-      await expect(
-        page.getByLabel("Export passphrase", { exact: true }),
-      ).toHaveCount(0);
+      await expect(page.getByLabel("Passphrase", { exact: true })).toHaveCount(
+        0,
+      );
       expect(exports.createSubmissions).toBe(0);
       expect(exports.admissionSubmissions).toBe(0);
       expect(exports.contentRequests).toEqual([]);

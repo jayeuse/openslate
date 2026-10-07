@@ -56,7 +56,7 @@ test("the breadcrumb names the workspace and its open section", async ({
   await expect(breadcrumb.locator('[aria-current="page"]')).toHaveText("Files");
 });
 
-test("a phone breadcrumb drops the Workspace root", async ({ page }) => {
+test("a phone breadcrumb shows only the current page", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
   await page.goto("/sandbox?section=history");
@@ -64,6 +64,7 @@ test("a phone breadcrumb drops the Workspace root", async ({ page }) => {
   await expect(
     breadcrumb.getByRole("link", { name: "Workspace" }),
   ).toBeHidden();
+  await expect(breadcrumb.getByRole("link", { name: "Sandbox" })).toBeHidden();
   await expect(breadcrumb.locator('[aria-current="page"]')).toHaveText(
     "History",
   );

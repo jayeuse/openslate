@@ -642,12 +642,12 @@ test("Board creation closes its form and confirms the created Board", async ({
   await expect(form).toBeHidden();
   await expect(
     page
-      .getByRole("region", { name: "Notifications", exact: true })
+      .getByRole("region", { name: "Status messages", exact: true })
       .getByText("Board created.", { exact: true }),
   ).toBeVisible();
   await expect(
     page
-      .getByRole("region", { name: "Notifications", exact: true })
+      .getByRole("region", { name: "Status messages", exact: true })
       .getByText("Board created.", { exact: true }),
   ).toHaveCount(1);
 });
@@ -685,12 +685,12 @@ test("Board permanent deletion closes its review and confirms completion", async
   await expect(form).toBeHidden();
   await expect(
     page
-      .getByRole("region", { name: "Notifications", exact: true })
+      .getByRole("region", { name: "Status messages", exact: true })
       .getByText("Board permanently deleted.", { exact: true }),
   ).toBeVisible();
   await expect(
     page
-      .getByRole("region", { name: "Notifications", exact: true })
+      .getByRole("region", { name: "Status messages", exact: true })
       .getByText("Board permanently deleted.", { exact: true }),
   ).toHaveCount(1);
 });

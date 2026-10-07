@@ -215,7 +215,7 @@ async function setup(page: Page) {
 }
 
 const inbox = (page: Page) =>
-  page.getByRole("region", { name: "Connected notifications" });
+  page.getByRole("region", { name: "Notifications" });
 
 test("six new kinds show exact current-source titles and destinations with only one scheduled date", async ({
   page,
@@ -233,22 +233,22 @@ test("six new kinds show exact current-source titles and destinations with only 
   ])
     await expect(region.getByText(title, { exact: true })).toBeVisible();
   await expect(
-    region.getByRole("link", { name: "Open Report" }),
+    region.getByRole("link", { name: "Open report" }),
   ).toHaveAttribute("href", `/openview?section=reports&report=${reportId}`);
   await expect(
-    region.getByRole("link", { name: "Open Backups" }),
+    region.getByRole("link", { name: "Open backup history" }),
   ).toHaveAttribute("href", "/manage?view=backup");
   await expect(
-    region.getByRole("link", { name: "Open Record" }),
+    region.getByRole("link", { name: "Open record" }),
   ).toHaveAttribute(
     "href",
     `/openview?section=views&module=${moduleId}&record=${recordId}`,
   );
   await expect(
-    region.getByRole("link", { name: "Open People" }),
+    region.getByRole("link", { name: "Open person" }),
   ).toHaveAttribute("href", `/access?view=people&user=${acceptedId}`);
   await expect(
-    region.getByRole("link", { name: "Open Sandbox history" }),
+    region.getByRole("link", { name: "Open version history" }),
   ).toHaveAttribute("href", "/sandbox?section=history");
   await expect(region.getByRole("link")).toHaveCount(5);
   await expect(region.getByText(/· Scheduled/)).toHaveCount(1);
@@ -295,13 +295,22 @@ test("source refusal and foreign Backup metadata expose no cached title or desti
   state.reportStatus = 404;
   await page.goto("/platform?section=notifications");
   const region = inbox(page);
-  await expect(region.getByText("Source is unavailable.")).toHaveCount(2);
-  await expect(region.getByRole("link", { name: "Open Report" })).toHaveCount(
+  // A refused source reads as lost access; a bad response can be retried.
+  await expect(
+    region.getByText("You no longer have access to this item."),
+  ).toHaveCount(1);
+  await expect(region.getByText("The title couldn’t be loaded.")).toHaveCount(
+    1,
+  );
+  await expect(
+    region.getByRole("button", { name: "Try again", exact: true }),
+  ).toHaveCount(1);
+  await expect(region.getByRole("link", { name: "Open report" })).toHaveCount(
     0,
   );
-  await expect(region.getByRole("link", { name: "Open Backups" })).toHaveCount(
-    0,
-  );
+  await expect(
+    region.getByRole("link", { name: "Open backup history" }),
+  ).toHaveCount(0);
   await expect(region).not.toContainText("Nightly safety copy");
   await expect(region).not.toContainText("Private report detail");
   state.backupResponseId = backupId;
@@ -309,7 +318,7 @@ test("source refusal and foreign Backup metadata expose no cached title or desti
   await region
     .getByRole("listitem")
     .filter({ hasText: "Backup failed" })
-    .getByRole("button", { name: "Retry title" })
+    .getByRole("button", { name: "Try again" })
     .click();
   await expect(
     region.getByText("Nightly safety copy", { exact: true }),
@@ -320,7 +329,7 @@ test("source refusal and foreign Backup metadata expose no cached title or desti
   await expect(
     region.getByText("Nightly safety copy", { exact: true }),
   ).toHaveCount(0);
-  await expect(region.getByRole("link", { name: "Open Backups" })).toHaveCount(
-    0,
-  );
+  await expect(
+    region.getByRole("link", { name: "Open backup history" }),
+  ).toHaveCount(0);
 });

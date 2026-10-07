@@ -1000,6 +1000,8 @@ test.describe("U4 evidence-only Account directory cache", () => {
   test("13b U4 probe: accepted Account remote-session end refreshes the cached People count", async ({
     page,
   }, testInfo) => {
+    // The People count column shows from the 2xl breakpoint.
+    await page.setViewportSize({ width: 1600, height: 900 });
     // No stream event may hide the cache follow-up under investigation.
     await page.addInitScript(() => {
       class QuietEventSource extends EventTarget {

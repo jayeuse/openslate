@@ -11,10 +11,11 @@ import {
 } from "react";
 import { ApiContractError, ApiError } from "@/lib/api";
 import { reportDone, reportError } from "@/lib/feedback";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { FilePickerButton } from "@/components/ui/file-picker-button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FileList } from "../../shared/components/file-list";
@@ -65,12 +66,23 @@ type FileExtension = {
 const refused = (error: unknown): error is ApiError =>
   error instanceof ApiError && [401, 403, 404].includes(error.status);
 
+function addedAt(value: string, region: WorkspaceRegion | undefined): string {
+  if (!region || Number.isNaN(new Date(value).valueOf()))
+    return "Date unavailable";
+  return formatWorkspaceDateTime(value, region, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
 export function RecordFilesPanel({
   record,
   canWrite,
+  region,
 }: {
   record: OpenViewRecord;
   canWrite: boolean;
+  region: WorkspaceRegion | undefined;
 }) {
   const client = useQueryClient();
   const inputId = useId();
@@ -253,7 +265,7 @@ export function RecordFilesPanel({
   async function upload(file: File) {
     if (!canUpload || denied || !hasFirstPage || operation.current) return;
     if (file.size < 1 || file.size > MAX_FILE_BYTES) {
-      setError("Choose a file larger than 0 bytes and no larger than 25 MiB.");
+      setError("Choose a file larger than 0 bytes and no larger than 25 MB.");
       return;
     }
     if (
@@ -417,18 +429,23 @@ export function RecordFilesPanel({
 
   if (denied)
     return (
-      <div className="flex flex-wrap items-center gap-3 py-4">
-        <Alert variant="destructive">
-          Files are no longer available to you. Retry after your access is
-          restored.
-        </Alert>
-        <Button
-          variant="outline"
-          className="min-h-11"
-          onClick={() => void files.refetch()}
+      <div className="py-4">
+        <Alert
+          variant="destructive"
+          className="flex w-full flex-wrap items-center justify-between gap-3"
         >
-          Retry files
-        </Button>
+          <p className="min-w-0">
+            Files are no longer available to you. Retry after your access is
+            restored.
+          </p>
+          <Button
+            variant="outline"
+            className="min-h-11"
+            onClick={() => void files.refetch()}
+          >
+            Retry files
+          </Button>
+        </Alert>
       </div>
     );
 
@@ -445,28 +462,37 @@ export function RecordFilesPanel({
         run: (file: RecordFile) => void archive(file),
       }
     : undefined;
+  // The record file list names no uploader, so only the date is shown.
+  const metadata = (file: RecordFile) => (
+    <span className="block">
+      Added{" "}
+      <time dateTime={file.createdAt}>{addedAt(file.createdAt, region)}</time>
+    </span>
+  );
   return (
     <div className="flex min-w-0 flex-col gap-4 py-4">
       {canUpload ? (
         <Field>
           <FieldLabel htmlFor={inputId}>Upload file</FieldLabel>
-          <Input
+          <FilePickerButton
             id={inputId}
-            type="file"
             accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.pptx"
             disabled={
               busy ||
               !hasFirstPage ||
               Boolean(pending && checkedState !== "awaiting_upload")
             }
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0];
+            aria-describedby={`${inputId}-hint`}
+            onFiles={(chosen, event) => {
+              const file = chosen[0];
               event.currentTarget.value = "";
               if (file) void upload(file);
             }}
-          />
-          <p className="text-muted-foreground text-sm">
-            PDF, images, and Office files up to 25 MiB.
+          >
+            Choose file
+          </FilePickerButton>
+          <p id={`${inputId}-hint`} className="text-muted-foreground text-sm">
+            PDF, images, and Office files up to 25 MB.
           </p>
         </Field>
       ) : null}
@@ -505,18 +531,22 @@ export function RecordFilesPanel({
         </div>
       ) : null}
       {files.error ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Alert variant="destructive">
+        <Alert
+          variant="destructive"
+          className="flex w-full flex-wrap items-center justify-between gap-3"
+        >
+          <p className="min-w-0">
             {fileErrorMessage(files.error, "load files")}
-          </Alert>
+          </p>
           <Button
             variant="outline"
             className="min-h-11"
+            disabled={files.isFetching}
             onClick={() => void files.refetch()}
           >
             Retry files
           </Button>
-        </div>
+        </Alert>
       ) : null}
       <LoadingRegion
         loading={files.isPending}
@@ -534,6 +564,7 @@ export function RecordFilesPanel({
         {ready.length ? (
           <FileList
             items={ready}
+            metadata={metadata}
             adapter={{ download: (file) => void download(file) }}
             downloadingId={
               activeOperation?.kind === "download"
@@ -561,6 +592,9 @@ export function RecordFilesPanel({
                         ? "File unavailable."
                         : "Upload pending."}
                   </p>
+                  <span className="text-muted-foreground mt-1 block text-xs">
+                    {metadata(file)}
+                  </span>
                 </div>
                 {canWrite ? (
                   <Button

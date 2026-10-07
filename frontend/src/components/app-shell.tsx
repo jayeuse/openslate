@@ -151,14 +151,11 @@ export function AppShell({
     )
       void queryClient.invalidateQueries({ queryKey: manageKeys.brand() });
   }, [savedLogoQuery.error, suspended, queryClient]);
-  const brand =
-    suspended || brandDenied || isComms ? undefined : brandQuery.data;
+  // OpenComms does not fetch the brand, but a disabled query still returns
+  // the cached brand, so the header stays the organization's own.
+  const brand = suspended || brandDenied ? undefined : brandQuery.data;
   const logoBlob =
-    isComms ||
-    suspended ||
-    brandDenied ||
-    brandQuery.isError ||
-    savedLogoQuery.isError
+    suspended || brandDenied || brandQuery.isError || savedLogoQuery.isError
       ? undefined
       : savedLogoQuery.data;
   const retryLogo = () => {

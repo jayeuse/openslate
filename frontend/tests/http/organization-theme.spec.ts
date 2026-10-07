@@ -301,7 +301,7 @@ for (const role of ["member", "guest"] as const) {
       "stockroom",
     );
     expect(api.writes).toEqual([]);
-    await expect(save(page)).toBeDisabled();
+    await expect(save(page)).toHaveCount(0);
   });
 }
 

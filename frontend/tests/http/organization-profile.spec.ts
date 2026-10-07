@@ -317,7 +317,10 @@ for (const fault of [
       }),
     ).toBeVisible();
     await expect(field(page, "Contact email")).toHaveCount(0);
-    await expect(save(page)).toBeDisabled();
+    // A guest-shaped body makes the form read-only, which hides Save.
+    if (fault === "guest shape for admin")
+      await expect(save(page)).toHaveCount(0);
+    else await expect(save(page)).toBeDisabled();
     api.onGet = (route) =>
       route.fulfill({
         json: { ...api.workspace, unrelated_metadata: { accepted: true } },

@@ -19,9 +19,9 @@ import type { AccessLevel } from "@/lib/auth-api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { FilePickerButton } from "@/components/ui/file-picker-button";
 import { LoadingRegion } from "@/components/ui/loading-region";
-import { SearchField } from "@/components/ui/search-field";
+import { SearchFilterToolbar } from "@/components/ui/search-filter-toolbar";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { AccessDepartment } from "../../access/state/api-contracts";
 import {
@@ -89,6 +89,10 @@ const SORTS = {
   },
 } as const;
 type SortChoice = keyof typeof SORTS;
+const SORT_OPTIONS = Object.entries(SORTS).map(([value, option]) => ({
+  value: value as SortChoice,
+  label: option.label,
+}));
 type UploadCheck = {
   id: string;
   filename: string;
@@ -196,60 +200,43 @@ export default function Files() {
     identity.isPending || (identityReady && departments.isPending);
   return (
     <Panel title="Department file library">
-      <div className="max-w-xl">
-        <Choice
-          label="Department"
-          value={department?.id ?? ""}
-          disabled={loading || !choices.length}
-          onChange={(event) => {
-            const id = event.currentTarget.value;
-            if (!choices.some((item) => item.id === id)) return;
-            const parameters = new URLSearchParams(searchParams.toString());
-            parameters.set("section", "files");
-            parameters.set("department", id);
-            router.push(`/platform?${parameters}` as Route, { scroll: false });
-          }}
-        >
-          <option value="" disabled>
-            Choose a department
+      <Choice
+        label="Department"
+        value={department?.id ?? ""}
+        disabled={loading || !choices.length}
+        onChange={(event) => {
+          const id = event.currentTarget.value;
+          if (!choices.some((item) => item.id === id)) return;
+          const parameters = new URLSearchParams(searchParams.toString());
+          parameters.set("section", "files");
+          parameters.set("department", id);
+          router.push(`/platform?${parameters}` as Route, { scroll: false });
+        }}
+      >
+        <option value="" disabled>
+          Choose a department
+        </option>
+        {choices.map((item) => (
+          <option key={item.id} value={item.id}>
+            {item.department_name}
+            {item.is_deleted ? " (Closed)" : ""}
           </option>
-          {choices.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.department_name}
-              {item.is_deleted ? " (Closed)" : ""}
-            </option>
-          ))}
-        </Choice>
-      </div>
+        ))}
+      </Choice>
       {identity.isError ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Alert variant="destructive">
-            Your department access could not be checked. Retry before opening
-            files.
-          </Alert>
-          <Button
-            variant="outline"
-            className="min-h-11"
-            disabled={identity.isFetching}
-            onClick={() => void identity.refetch()}
-          >
-            Retry access
-          </Button>
-        </div>
+        <RetryBand
+          message="Your department access could not be checked. Retry before opening files."
+          retryLabel="Retry access"
+          disabled={identity.isFetching}
+          onRetry={() => void identity.refetch()}
+        />
       ) : departments.error ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Alert variant="destructive">
-            Departments could not be loaded. Retry to load the complete list.
-          </Alert>
-          <Button
-            variant="outline"
-            className="min-h-11"
-            disabled={departments.isFetching}
-            onClick={() => void departments.refetch()}
-          >
-            Retry departments
-          </Button>
-        </div>
+        <RetryBand
+          message="Departments could not be loaded. Retry to load the complete list."
+          retryLabel="Retry departments"
+          disabled={departments.isFetching}
+          onRetry={() => void departments.refetch()}
+        />
       ) : null}
       <LoadingRegion
         loading={loading}
@@ -505,7 +492,7 @@ function LibraryContents({
     if (!canUpload || denied || waiting || !hasFirstPage || operation.current)
       return;
     if (file.size < 1 || file.size > MAX_FILE_BYTES) {
-      setError("Choose a file larger than 0 bytes and no larger than 25 MiB.");
+      setError("Choose a file larger than 0 bytes and no larger than 25 MB.");
       return;
     }
     if (
@@ -684,10 +671,14 @@ function LibraryContents({
   }
 
   const metadata = (file: LibraryFile) => {
+    const uploader = labels[file.creatorId];
     let added = "Date format unavailable";
     if (workspace.data) {
       try {
-        added = formatWorkspaceDateTime(file.createdAt, workspace.data);
+        added = formatWorkspaceDateTime(file.createdAt, workspace.data, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        });
       } catch {
         /* The file remains usable while date settings recover. */
       }
@@ -697,9 +688,7 @@ function LibraryContents({
         <span className="block">
           Added <time dateTime={file.createdAt}>{added}</time>
         </span>
-        <span className="block">
-          Added by {labels[file.creatorId] ?? "Unavailable user"}
-        </span>
+        {uploader ? <span className="block">Added by {uploader}</span> : null}
       </>
     );
   };
@@ -722,28 +711,20 @@ function LibraryContents({
           if you manage this department.
         </p>
       ) : null}
-      <div className="grid items-end gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,13.75rem)_minmax(0,11.25rem)]">
-        <SearchField
-          label="Search files by name"
-          value={query}
-          onValueChange={setQuery}
-          maxLength={100}
-          placeholder="Find a file…"
-        />
-        <Choice
-          label="Sort files"
-          value={sort}
-          onChange={(event) => {
-            if (Object.hasOwn(SORTS, event.currentTarget.value))
-              setSort(event.currentTarget.value as SortChoice);
-          }}
-        >
-          {Object.entries(SORTS).map(([value, option]) => (
-            <option key={value} value={value}>
-              {option.label}
-            </option>
-          ))}
-        </Choice>
+      <SearchFilterToolbar
+        searchLabel="Search files by name"
+        placeholder="Find a file…"
+        query={query}
+        onQueryChange={setQuery}
+        searchMaxLength={100}
+        sortLabel="Sort files"
+        sort={sort}
+        sortOptions={SORT_OPTIONS}
+        onSortChange={setSort}
+        activeFilterCount={deleted === "only" ? 1 : 0}
+        filtersClassName="xl:grid-cols-2"
+        sortInFiltersBelowMd
+      >
         <Choice
           label="File status"
           value={deleted}
@@ -758,22 +739,14 @@ function LibraryContents({
           <option value="exclude">Active</option>
           <option value="only">Archived</option>
         </Choice>
-      </div>
+      </SearchFilterToolbar>
       {denied ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Alert variant="destructive">
-            Files are no longer available to you. Retry after your access is
-            restored.
-          </Alert>
-          <Button
-            variant="outline"
-            className="min-h-11"
-            disabled={files.isFetching}
-            onClick={() => void files.refetch()}
-          >
-            Retry files
-          </Button>
-        </div>
+        <RetryBand
+          message="Files are no longer available to you. Retry after your access is restored."
+          retryLabel="Retry files"
+          disabled={files.isFetching}
+          onRetry={() => void files.refetch()}
+        />
       ) : (
         <>
           {files.data ? (
@@ -790,9 +763,8 @@ function LibraryContents({
           {canUpload ? (
             <Field>
               <FieldLabel htmlFor={inputId}>Upload file</FieldLabel>
-              <Input
+              <FilePickerButton
                 id={inputId}
-                type="file"
                 accept=".pdf,.png,.jpg,.jpeg,.docx,.xlsx,.pptx"
                 disabled={
                   busy ||
@@ -804,17 +776,19 @@ function LibraryContents({
                 aria-describedby={
                   error ? `${inputId}-error` : `${inputId}-hint`
                 }
-                onChange={(event) => {
-                  const file = event.currentTarget.files?.[0];
+                onFiles={(chosen, event) => {
+                  const file = chosen[0];
                   event.currentTarget.value = "";
                   if (file) void upload(file);
                 }}
-              />
+              >
+                Choose file
+              </FilePickerButton>
               <p
                 id={`${inputId}-hint`}
                 className="text-muted-foreground text-sm"
               >
-                PDF, images, and Office files up to 25 MiB.
+                PDF, images, and Office files up to 25 MB.
               </p>
             </Field>
           ) : null}
@@ -859,35 +833,20 @@ function LibraryContents({
             </div>
           ) : null}
           {files.error ? (
-            <div className="flex flex-wrap items-center gap-3">
-              <Alert variant="destructive">
-                {fileErrorMessage(files.error, "load files")}
-              </Alert>
-              <Button
-                variant="outline"
-                className="min-h-11"
-                disabled={files.isFetching}
-                onClick={() => void files.refetch()}
-              >
-                Retry files
-              </Button>
-            </div>
+            <RetryBand
+              message={fileErrorMessage(files.error, "load files")}
+              retryLabel="Retry files"
+              disabled={files.isFetching}
+              onRetry={() => void files.refetch()}
+            />
           ) : null}
           {workspace.error ? (
-            <div className="flex flex-wrap items-center gap-3">
-              <Alert variant="destructive">
-                File dates could not be formatted. File actions remain
-                available.
-              </Alert>
-              <Button
-                variant="outline"
-                className="min-h-11"
-                disabled={workspace.isFetching}
-                onClick={() => void workspace.refetch()}
-              >
-                Retry date settings
-              </Button>
-            </div>
+            <RetryBand
+              message="File dates could not be formatted. File actions remain available."
+              retryLabel="Retry date settings"
+              disabled={workspace.isFetching}
+              onRetry={() => void workspace.refetch()}
+            />
           ) : null}
           <LoadingRegion
             loading={files.isPending || waiting}
@@ -978,5 +937,35 @@ function LibraryContents({
         </>
       )}
     </div>
+  );
+}
+
+/** A full-width failure band that keeps its recovery action inside. */
+function RetryBand({
+  message,
+  retryLabel,
+  disabled,
+  onRetry,
+}: {
+  message: string;
+  retryLabel: string;
+  disabled: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <Alert
+      variant="destructive"
+      className="flex w-full flex-wrap items-center justify-between gap-3"
+    >
+      <p className="min-w-0">{message}</p>
+      <Button
+        variant="outline"
+        className="min-h-11"
+        disabled={disabled}
+        onClick={onRetry}
+      >
+        {retryLabel}
+      </Button>
+    </Alert>
   );
 }

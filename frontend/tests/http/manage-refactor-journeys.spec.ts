@@ -203,9 +203,14 @@ test("Manage organization loads and saves all seven workspace fields", async ({
   await expect(timezone).toContainText("Asia/Manila");
 
   await name.fill("Harbor operations");
-  await chooseRegionalOption(page, "Regional format", "Filipino", "Filipino");
+  await chooseRegionalOption(
+    page,
+    "Regional format",
+    "Singapore",
+    "English (Singapore)",
+  );
   await chooseRegionalOption(page, "Timezone", "UTC", /^UTC\+00:00.*UTC$/);
-  await mark.fill("Compass");
+  await mark.fill("HOP");
   await chooseRegionalOption(page, "Currency", "USD", /USD.*US Dollar/);
   await week.selectOption("Monday");
   await hours.fill("10:00–19:00");
@@ -219,9 +224,9 @@ test("Manage organization loads and saves all seven workspace fields", async ({
     {
       revision: 4,
       display_name: "Harbor operations",
-      locale: "fil-PH",
+      locale: "en-SG",
       timezone: "UTC",
-      mark: "Compass",
+      mark: "HOP",
       currency: "USD",
       week_start: "monday",
       business_hours: "10:00–19:00",
@@ -232,14 +237,14 @@ test("Manage organization loads and saves all seven workspace fields", async ({
   await expect(
     page.getByRole("combobox", { name: "Currency", exact: true }),
   ).toContainText("USD");
-  await expect(mark).toHaveValue("Compass");
+  await expect(mark).toHaveValue("HOP");
   await expect(week).toHaveValue("Monday");
   await expect(hours).toHaveValue("10:00–19:00");
   expect(workspace.read()).toMatchObject({
     display_name: "Harbor operations",
-    locale: "fil-PH",
+    locale: "en-SG",
     timezone: "UTC",
-    mark: "Compass",
+    mark: "HOP",
     currency: "USD",
     week_start: "monday",
     business_hours: "10:00–19:00",
@@ -394,17 +399,34 @@ test.describe("Organization regional choices", () => {
       exact: true,
     });
     await expect(format).toContainText("English (Philippines)");
+    await page
+      .getByRole("combobox", { name: "Regional format", exact: true })
+      .click();
+    await expect(page.getByRole("dialog").getByRole("option")).toHaveText([
+      "English (Australia)",
+      "English (Canada)",
+      "English (Europe)",
+      "English (India)",
+      "English (Ireland)",
+      "English (New Zealand)",
+      "English (Philippines)",
+      "English (Singapore)",
+      "English (South Africa)",
+      "English (UK)",
+      "English (US)",
+    ]);
+    await page.keyboard.press("Escape");
     await chooseRegionalOption(
       page,
       "Regional format",
-      "French",
-      "French (France)",
+      "Ireland",
+      "English (Ireland)",
     );
     await chooseRegionalOption(
       page,
       "Timezone",
-      "New_York",
-      /UTC-04:00.*America\/New_York/,
+      "New York",
+      /UTC-04:00.*America\/New York/,
     );
     await chooseRegionalOption(page, "Currency", "Yen", /JPY.*Yen/);
     await page
@@ -416,16 +438,16 @@ test.describe("Organization regional choices", () => {
     expect(workspace.patches).toEqual([
       {
         revision: 4,
-        locale: "fr-FR",
+        locale: "en-IE",
         timezone: "America/New_York",
         currency: "JPY",
       },
     ]);
     await page.reload();
-    await expect(format).toContainText("French (France)");
+    await expect(format).toContainText("English (Ireland)");
     await expect(
       page.getByRole("combobox", { name: "Timezone", exact: true }),
-    ).toContainText("America/New_York");
+    ).toContainText("America/New York");
     await expect(
       page.getByRole("combobox", { name: "Currency", exact: true }),
     ).toContainText("JPY");
@@ -536,7 +558,7 @@ test("Manage organization keeps all its draft fields after a failed save", async
   });
   await expect(name).toHaveValue("Riverside Services");
   await name.fill("Pending workspace");
-  await mark.fill("Compass");
+  await mark.fill("HOP");
   await chooseRegionalOption(page, "Currency", "USD", /USD.*US Dollar/);
   await week.selectOption("Sunday");
   await hours.fill("10:00–19:00");
@@ -549,7 +571,7 @@ test("Manage organization keeps all its draft fields after a failed save", async
       .filter({ hasText: "The settings could not be saved. Try again." }),
   ).toBeVisible();
   await expect(name).toHaveValue("Pending workspace");
-  await expect(mark).toHaveValue("Compass");
+  await expect(mark).toHaveValue("HOP");
   await expect(currency).toContainText("USD");
   await expect(week).toHaveValue("Sunday");
   await expect(hours).toHaveValue("10:00–19:00");
@@ -565,7 +587,7 @@ test("Manage organization keeps all its draft fields after a failed save", async
     .poll(() => workspace.read())
     .toMatchObject({
       display_name: "Pending workspace",
-      mark: "Compass",
+      mark: "HOP",
       currency: "USD",
       week_start: "sunday",
       business_hours: "10:00–19:00",
@@ -601,14 +623,14 @@ test("Manage preserves section drafts without saving on leave or discard, valida
     exact: true,
   });
   await chooseRegionalOption(page, "Currency", "USD", /USD.*US Dollar/);
-  await mark.fill("Compass");
+  await mark.fill("HOP");
   await week.selectOption("Sunday");
   await hours.fill("10:00–19:00");
   await page.getByRole("link", { name: "Audit", exact: true }).click();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
   await expect(name).toHaveValue("Refactor journey workspace");
   await expect(currency).toContainText("USD");
-  await expect(mark).toHaveValue("Compass");
+  await expect(mark).toHaveValue("HOP");
   await expect(week).toHaveValue("Sunday");
   await expect(hours).toHaveValue("10:00–19:00");
   expect(workspace.patches).toEqual([]);
@@ -806,7 +828,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
     .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software.getByText("Up to date", { exact: true })).toBeVisible();
-  await expect(software).toContainText("Host runner observation");
+  await expect(software).toContainText("Release check");
   state.version.current_version = "2.7.1-development";
   state.version.status = "unknown";
   state.version.latest_version = "2.7.1";

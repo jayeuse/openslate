@@ -178,19 +178,19 @@ export function LiveRecordInspector({
             <Tabs defaultValue="details" className="min-w-0 pt-4">
               <TabsList
                 aria-label="Record sections"
-                className="max-w-full flex-wrap"
+                className="max-w-full flex-nowrap justify-start overflow-x-auto"
               >
-                <TabsTrigger value="details" className="min-h-11">
+                <TabsTrigger value="details" className="min-h-11 shrink-0">
                   Details
                 </TabsTrigger>
-                <TabsTrigger value="links" className="min-h-11">
+                <TabsTrigger value="links" className="min-h-11 shrink-0">
                   Linked records
                 </TabsTrigger>
-                <TabsTrigger value="files" className="min-h-11">
+                <TabsTrigger value="files" className="min-h-11 shrink-0">
                   Files
                 </TabsTrigger>
                 {controls.canReadHistory ? (
-                  <TabsTrigger value="history" className="min-h-11">
+                  <TabsTrigger value="history" className="min-h-11 shrink-0">
                     History
                   </TabsTrigger>
                 ) : null}
@@ -222,6 +222,7 @@ export function LiveRecordInspector({
                   key={record.id}
                   record={record}
                   canWrite={controls.canWrite}
+                  region={region}
                 />
               </TabsContent>
               {controls.canReadHistory ? (

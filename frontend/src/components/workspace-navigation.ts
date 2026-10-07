@@ -97,7 +97,7 @@ const workspaceNavigationDefinitions = [
   {
     id: "platform",
     label: "Platform",
-    description: "Account, search, and alerts",
+    description: "Files, search, and import & export",
     pathname: "/platform",
     queryKey: "section",
     defaultItem: "search",

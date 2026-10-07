@@ -12,6 +12,7 @@ import {
   type MouseEvent,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Temporal } from "@js-temporal/polyfill";
 import { RefreshCw, X } from "lucide-react";
 import { z } from "zod";
 import { Alert } from "@/components/ui/alert";
@@ -51,6 +52,8 @@ import { SearchFilterToolbar } from "@/components/ui/search-filter-toolbar";
 import { SearchSelect } from "@/components/ui/search-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
+import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
 import {
   accessKeys,
   accessSecurityEventsOptions,
@@ -83,12 +86,12 @@ const outcomes = {
   partial: { label: "Partial", variant: "warning" },
 } as const;
 const stageLabels: Record<string, string> = {
-  provider_update: "Provider password update",
-  provider_request: "Provider request",
-  provider_accepted: "Provider request accepted",
-  provider_request_unconfirmed: "Provider request could not be confirmed",
-  event_commit: "Local event recording",
-  local_commit: "Local changes",
+  provider_update: "Password update",
+  provider_request: "Request sent",
+  provider_accepted: "Request accepted",
+  provider_request_unconfirmed: "Request not confirmed",
+  event_commit: "Saving the event",
+  local_commit: "Saving the change",
 };
 const reasonLabels: Record<string, string> = {
   request_accepted: "Recovery request accepted",
@@ -105,10 +108,10 @@ const policyLabels: Record<string, string> = {
   password_min_length: "Minimum password length",
   password_require_mixed_case: "Mixed-case password requirement",
   password_require_number: "Password number requirement",
-  mfa_require_admin: "Administrator MFA requirement",
-  mfa_require_member: "Member MFA requirement",
-  mfa_require_guest: "Guest MFA requirement",
-  mfa_grace_days: "MFA enrollment grace",
+  mfa_require_admin: "Two-step verification for administrators",
+  mfa_require_member: "Two-step verification for members",
+  mfa_require_guest: "Two-step verification for guests",
+  mfa_grace_days: "Two-step verification setup time",
   login_failed_attempt_threshold: "Failed-attempt threshold",
   login_window_minutes: "Attempt window",
   login_cooldown_minutes: "Lockout duration",
@@ -156,18 +159,51 @@ function eventName(event: AccessSecurityEvent) {
     return "Sign-in accepted";
   return Object.hasOwn(eventLabels, event.event_type)
     ? eventLabels[event.event_type]
-    : event.event_type;
+    : "Other security event";
 }
-function utcTime(value: string) {
+/** Workspace-local time; this device's zone until the workspace region loads. */
+function localTime(value: string, region: WorkspaceRegion | undefined) {
+  if (region)
+    return formatWorkspaceDateTime(value, region, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+function utcTitle(value: string) {
   return `${new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
+    dateStyle: "medium",
+    timeStyle: "short",
     timeZone: "UTC",
   }).format(new Date(value))} UTC`;
+}
+function EventTime({
+  value,
+  region,
+  className,
+}: {
+  value: string;
+  region: WorkspaceRegion | undefined;
+  className?: string;
+}) {
+  return (
+    <time className={className} dateTime={value} title={utcTitle(value)}>
+      {localTime(value, region)}
+    </time>
+  );
+}
+/** The instant a calendar day starts in the workspace (or this device's) zone. */
+function dayStart(day: string, region: WorkspaceRegion | undefined, add = 0) {
+  const timeZone =
+    region?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return Temporal.PlainDate.from(day)
+    .add({ days: add })
+    .toZonedDateTime({ timeZone })
+    .toInstant()
+    .toString();
 }
 function address(event: AccessSecurityEvent) {
   const parsed = z
@@ -177,6 +213,10 @@ function address(event: AccessSecurityEvent) {
 }
 function recordedPerson(event: AccessSecurityEvent) {
   return event.subject_id ?? event.actor_id;
+}
+type PersonNames = ReadonlyMap<string, string>;
+function personName(names: PersonNames, id: string | null) {
+  return (id && names.get(id)) || "Unknown person";
 }
 function Outcome({ outcome }: { outcome: AccessSecurityEventOutcome }) {
   const style = outcomes[outcome];
@@ -218,9 +258,13 @@ export function SecurityEventsView({
     () => false,
   );
   const denied = isAccessSecurityDenied(client, "events");
+  const region = useQuery({
+    ...workspaceCalendarQueryOptions(),
+    enabled: active && admitted,
+  }).data;
   const uuidError =
     filters.person && !z.uuid().safeParse(filters.person).success
-      ? "Enter a valid recorded person ID."
+      ? "Enter a valid person ID."
       : "";
   const typeError =
     filters.type === "other" && !filters.exactType.trim()
@@ -229,17 +273,13 @@ export function SecurityEventsView({
   const dayError =
     (filters.from && !z.iso.date().safeParse(filters.from).success) ||
     (filters.through && !z.iso.date().safeParse(filters.through).success)
-      ? "Enter a valid UTC day."
+      ? "Enter a valid date."
       : filters.from && filters.through && filters.from > filters.through
         ? "Through must be on or after From."
         : "";
   const invalid = Boolean(uuidError || typeError || dayError);
   const nextDay =
-    filters.through && !dayError
-      ? new Date(
-          Date.parse(`${filters.through}T00:00:00.000Z`) + 86_400_000,
-        ).toISOString()
-      : "";
+    filters.through && !dayError ? dayStart(filters.through, region, 1) : "";
   const request = {
     ...defaultSecurityEventsRequest,
     offset,
@@ -249,7 +289,7 @@ export function SecurityEventsView({
     outcome: filters.outcome,
     person_id: filters.person,
     occurred_after:
-      filters.from && !dayError ? `${filters.from}T00:00:00.000Z` : "",
+      filters.from && !dayError ? dayStart(filters.from, region) : "",
     occurred_before: nextDay,
     sort_by:
       filters.sort === "event"
@@ -270,10 +310,21 @@ export function SecurityEventsView({
     ...accessSecurityEventsOptions(client, request),
     enabled: active && admitted && !denied && !invalid,
   });
+  // The directory names the people in events; IDs stay in the detail view.
   const people = useQuery({
     ...userListOptions("include"),
-    enabled: directoryRequested && active && admitted && !denied,
+    enabled: active && admitted && !denied,
   });
+  const names: PersonNames = useMemo(
+    () =>
+      new Map(
+        (people.data ?? []).map((person) => [
+          person.id,
+          person.display_name || person.username,
+        ]),
+      ),
+    [people.data],
+  );
   const page = denied || invalid ? undefined : events.data;
   const narrowed = Boolean(
     filters.search.trim() ||
@@ -299,7 +350,7 @@ export function SecurityEventsView({
     ...(filters.person &&
     !people.data?.some((person) => person.id === filters.person) &&
     !uuidError
-      ? [{ value: filters.person, label: "Recorded person" }]
+      ? [{ value: filters.person, label: "Unknown person" }]
       : []),
   ];
 
@@ -419,11 +470,9 @@ export function SecurityEventsView({
     () => [
       {
         id: "time",
-        header: "Time (UTC)",
+        header: "Time",
         cell: ({ row }) => (
-          <time dateTime={row.original.occurred_at}>
-            {utcTime(row.original.occurred_at)}
-          </time>
+          <EventTime value={row.original.occurred_at} region={region} />
         ),
       },
       {
@@ -442,10 +491,8 @@ export function SecurityEventsView({
         id: "person",
         header: "Person",
         cell: ({ row }) => (
-          <span title={recordedPerson(row.original) ?? undefined}>
-            {recordedPerson(row.original)
-              ? "Recorded person"
-              : "Person not identified"}
+          <span className="break-words">
+            {personName(names, recordedPerson(row.original))}
           </span>
         ),
       },
@@ -463,7 +510,7 @@ export function SecurityEventsView({
           <Button
             variant="outline"
             className="min-h-11"
-            aria-label={`Details for ${eventName(row.original)} at ${utcTime(row.original.occurred_at)}`}
+            aria-label={`Details for ${eventName(row.original)} at ${localTime(row.original.occurred_at, region)}`}
             onClick={(event) => void loadDetail(row.original.id, event)}
           >
             Details
@@ -471,7 +518,7 @@ export function SecurityEventsView({
         ),
       },
     ],
-    [loadDetail],
+    [loadDetail, names, region],
   );
   if (!active || !admitted) return null;
   return (
@@ -487,7 +534,6 @@ export function SecurityEventsView({
             <CardTitle id={`${id}-heading`}>Security events</CardTitle>
             <CardDescription>
               Review recorded sign-ins, recovery and account policy changes.
-              Times and date filters use UTC.
             </CardDescription>
           </div>
           <Button
@@ -596,15 +642,13 @@ export function SecurityEventsView({
                     disabled={pending || denied}
                     placeholder="All people"
                     emptyMessage={
-                      people.isPending
-                        ? "Loading people…"
-                        : "No recorded directory match."
+                      people.isPending ? "Loading people…" : "No one matches."
                     }
                   />
                 ) : (
                   <Field>
                     <FieldLabel htmlFor={`${id}-person-id`}>
-                      Recorded person ID
+                      Person ID
                     </FieldLabel>
                     <Input
                       id={`${id}-person-id`}
@@ -621,8 +665,8 @@ export function SecurityEventsView({
                       id={`${id}-person-help`}
                       className="text-muted-foreground text-xs"
                     >
-                      Use the ID recorded in an event, including people no
-                      longer in the directory.
+                      Use the ID shown in an event&apos;s details. This also
+                      finds people no longer in the directory.
                     </p>
                     {uuidError ? (
                       <FieldError id={`${id}-person-error`}>
@@ -631,6 +675,20 @@ export function SecurityEventsView({
                     ) : null}
                   </Field>
                 )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-primary min-h-11 w-fit justify-start px-0 text-sm underline underline-offset-4 hover:bg-transparent"
+                  onClick={() =>
+                    setPersonMode(
+                      personMode === "directory" ? "id" : "directory",
+                    )
+                  }
+                >
+                  {personMode === "directory"
+                    ? "Enter a person ID"
+                    : "Choose from directory"}
+                </Button>
                 {people.isError && directoryRequested ? (
                   <Alert
                     role="alert"
@@ -638,8 +696,8 @@ export function SecurityEventsView({
                     className="space-y-2 text-sm"
                   >
                     <p>
-                      The person directory is unavailable. Use a recorded person
-                      ID or retry.
+                      The person list could not load. Enter a person ID, or try
+                      again.
                     </p>
                     <Button
                       variant="ghost"
@@ -650,52 +708,46 @@ export function SecurityEventsView({
                     </Button>
                   </Alert>
                 ) : null}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="min-h-11 justify-start px-0 text-sm"
-                  onClick={() =>
-                    setPersonMode(
-                      personMode === "directory" ? "id" : "directory",
-                    )
-                  }
-                >
-                  {personMode === "directory"
-                    ? "Use recorded person ID"
-                    : "Choose from directory"}
-                </Button>
               </div>
-              <Field>
-                <FieldLabel htmlFor={`${id}-from`}>From (UTC)</FieldLabel>
-                <Input
-                  id={`${id}-from`}
-                  type="date"
-                  value={filters.from}
-                  className="min-h-11"
-                  aria-invalid={Boolean(dayError)}
-                  aria-describedby={dayError ? `${id}-day-error` : undefined}
-                  onChange={(event) =>
-                    changeFilters({ from: event.target.value })
-                  }
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor={`${id}-through`}>Through (UTC)</FieldLabel>
-                <Input
-                  id={`${id}-through`}
-                  type="date"
-                  value={filters.through}
-                  className="min-h-11"
-                  aria-invalid={Boolean(dayError)}
-                  aria-describedby={dayError ? `${id}-day-error` : undefined}
-                  onChange={(event) =>
-                    changeFilters({ through: event.target.value })
-                  }
-                />
+              <div className="grid min-w-0 grid-cols-2 gap-3">
+                <Field className="min-w-0">
+                  <FieldLabel htmlFor={`${id}-from`}>From</FieldLabel>
+                  <Input
+                    id={`${id}-from`}
+                    type="date"
+                    value={filters.from}
+                    className="min-h-11"
+                    aria-invalid={Boolean(dayError)}
+                    aria-describedby={dayError ? `${id}-day-error` : undefined}
+                    onChange={(event) =>
+                      changeFilters({ from: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field className="min-w-0">
+                  <FieldLabel htmlFor={`${id}-through`}>Through</FieldLabel>
+                  <Input
+                    id={`${id}-through`}
+                    type="date"
+                    value={filters.through}
+                    className="min-h-11"
+                    aria-invalid={Boolean(dayError)}
+                    aria-describedby={dayError ? `${id}-day-error` : undefined}
+                    onChange={(event) =>
+                      changeFilters({ through: event.target.value })
+                    }
+                  />
+                </Field>
                 {dayError ? (
-                  <FieldError id={`${id}-day-error`}>{dayError}</FieldError>
+                  <p
+                    id={`${id}-day-error`}
+                    role="alert"
+                    className="text-destructive col-span-2 text-sm"
+                  >
+                    {dayError}
+                  </p>
                 ) : null}
-              </Field>
+              </div>
             </SearchFilterToolbar>
           </fieldset>
           {narrowed ? (
@@ -789,21 +841,15 @@ export function SecurityEventsView({
                             </span>
                             <Outcome outcome={event.outcome} />
                           </div>
-                          <time
+                          <EventTime
                             className="text-muted-foreground block text-sm"
-                            dateTime={event.occurred_at}
-                          >
-                            {utcTime(event.occurred_at)}
-                          </time>
+                            value={event.occurred_at}
+                            region={region}
+                          />
                           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
                             <dt className="text-muted-foreground">Person</dt>
-                            <dd
-                              className="break-all"
-                              title={recordedPerson(event) ?? undefined}
-                            >
-                              {recordedPerson(event)
-                                ? "Recorded person"
-                                : "Person not identified"}
+                            <dd className="break-words">
+                              {personName(names, recordedPerson(event))}
                             </dd>
                             <dt className="text-muted-foreground">Address</dt>
                             <dd className="break-all">{address(event)}</dd>
@@ -812,7 +858,7 @@ export function SecurityEventsView({
                             type="button"
                             variant="outline"
                             className="min-h-11 w-full"
-                            aria-label={`Details for ${eventName(event)} at ${utcTime(event.occurred_at)}`}
+                            aria-label={`Details for ${eventName(event)} at ${localTime(event.occurred_at, region)}`}
                             onClick={(opener) =>
                               void loadDetail(event.id, opener)
                             }
@@ -877,7 +923,7 @@ export function SecurityEventsView({
               </Button>
             </div>
             <DialogDescription>
-              Recorded security facts. All times are shown in UTC.
+              What happened, when, and who it involved.
             </DialogDescription>
           </DialogHeader>
           {detail?.status === "error" ? (
@@ -907,6 +953,8 @@ export function SecurityEventsView({
               {detail?.status === "ready" ? (
                 <SecurityEventFacts
                   event={detail.event}
+                  names={names}
+                  region={region}
                   disabled={pending}
                   onPersonFilter={(person) => {
                     if (pending) return;
@@ -933,12 +981,49 @@ export function SecurityEventsView({
   );
 }
 
+function PersonFact({
+  id,
+  label,
+  names,
+  disabled,
+  onPersonFilter,
+}: {
+  id: string | null;
+  label: string;
+  names: PersonNames;
+  disabled: boolean;
+  onPersonFilter: (personId: string) => void;
+}) {
+  if (!id) return <dd>No person recorded</dd>;
+  return (
+    <dd className="min-w-0 space-y-1">
+      <span className="block break-words">{personName(names, id)}</span>
+      <span className="text-muted-foreground block font-mono text-xs break-all">
+        {id}
+      </span>
+      <Button
+        type="button"
+        variant="outline"
+        className="mt-1 flex min-h-11 w-fit"
+        disabled={disabled}
+        onClick={() => onPersonFilter(id)}
+      >
+        {label}
+      </Button>
+    </dd>
+  );
+}
+
 function SecurityEventFacts({
   event,
+  names,
+  region,
   disabled,
   onPersonFilter,
 }: {
   event: AccessSecurityEvent;
+  names: PersonNames;
+  region: WorkspaceRegion | undefined;
   disabled: boolean;
   onPersonFilter: (personId: string) => void;
 }) {
@@ -967,22 +1052,18 @@ function SecurityEventFacts({
           : [],
       )
     : [];
-  const revision =
-    typeof event.metadata.revision === "number" &&
-    Number.isSafeInteger(event.metadata.revision) &&
-    event.metadata.revision > 0
-      ? event.metadata.revision
-      : null;
   return (
     <div className="min-w-0 space-y-4 py-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="min-w-0 font-semibold break-all">{eventName(event)}</h3>
+        <h3 className="min-w-0 font-semibold break-words">
+          {eventName(event)}
+        </h3>
         <Outcome outcome={event.outcome} />
       </div>
       {event.outcome === "partial" ? (
         <Alert variant="warning" role="note">
-          The provider action may have happened, but local changes were not
-          fully confirmed. Review the recorded stage before trying again.
+          This change may be only partly saved. Check the person&apos;s
+          settings.
         </Alert>
       ) : null}
       {event.outcome === "attempt" ? (
@@ -993,14 +1074,15 @@ function SecurityEventFacts({
       {event.event_type === "identity.sign_in" &&
       event.outcome === "success" ? (
         <p className="text-muted-foreground text-sm">
-          Local sign-in accepted. MFA completion is recorded separately.
+          The password was accepted. Two-step verification is recorded as a
+          separate event.
         </p>
       ) : null}
       {event.event_type === "identity.recovery_request" &&
       event.outcome === "success" ? (
         <p className="text-muted-foreground text-sm">
-          The recovery request was accepted. This does not confirm that an
-          account exists or an email was delivered.
+          We sent the recovery request. We cannot confirm the account exists or
+          the email arrived.
         </p>
       ) : null}
       {representative ? (
@@ -1008,86 +1090,72 @@ function SecurityEventFacts({
           <p className="font-medium">
             {event.event_type === "identity.sign_in_failure"
               ? "Sign-in failures from this address during this hour"
-              : "IP denials from this address during this hour"}
+              : "Blocked attempts from this address during this hour"}
           </p>
+          <p>Repeated attempts are grouped. The time shows the first one.</p>
           <p>
-            Repeated attempts are combined into this representative event. The
-            time is the first persisted occurrence.
-          </p>
-          <p>
-            {utcTime(start.data)} – {utcTime(end.data)}
+            <EventTime value={start.data} region={region} /> –{" "}
+            <EventTime value={end.data} region={region} />
           </p>
         </div>
       ) : null}
-      <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-[9rem_minmax(0,1fr)]">
-        <dt className="text-muted-foreground">Recorded time</dt>
-        <dd className="break-words">{utcTime(event.occurred_at)}</dd>
-        <dt className="text-muted-foreground">Network address</dt>
+      <dl className="grid min-w-0 gap-x-3 gap-y-1 text-sm sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-y-3">
+        <dt className="text-muted-foreground">Time</dt>
+        <dd className="break-words">
+          <EventTime value={event.occurred_at} region={region} />
+        </dd>
+        <dt className="text-muted-foreground mt-2 sm:mt-0">Network address</dt>
         <dd className="break-all">{address(event)}</dd>
-        <dt className="text-muted-foreground">Producer</dt>
-        <dd className="break-all">{event.source}</dd>
-        <dt className="text-muted-foreground">Actor</dt>
-        <dd className="break-all">
-          {event.actor_id
-            ? `Recorded person · ${event.actor_id}`
-            : "Person not identified"}
-          {event.actor_id ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="mt-2 min-h-11"
-              disabled={disabled}
-              onClick={() => {
-                if (event.actor_id) onPersonFilter(event.actor_id);
-              }}
-            >
-              Filter by actor
-            </Button>
-          ) : null}
+        <dt className="text-muted-foreground mt-2 sm:mt-0">Done by</dt>
+        <PersonFact
+          id={event.actor_id}
+          label="Filter by who did it"
+          names={names}
+          disabled={disabled}
+          onPersonFilter={onPersonFilter}
+        />
+        <dt className="text-muted-foreground mt-2 sm:mt-0">Affects</dt>
+        <PersonFact
+          id={event.subject_id}
+          label="Filter by who it affects"
+          names={names}
+          disabled={disabled}
+          onPersonFilter={onPersonFilter}
+        />
+        <dt className="text-muted-foreground mt-2 sm:mt-0">Reference</dt>
+        <dd className="min-w-0">
+          <span className="font-mono text-xs break-all">
+            {event.operation_id}
+          </span>
         </dd>
-        <dt className="text-muted-foreground">Subject</dt>
-        <dd className="break-all">
-          {event.subject_id
-            ? `Recorded person · ${event.subject_id}`
-            : "Person not identified"}
-          {event.subject_id ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="mt-2 min-h-11"
-              disabled={disabled}
-              onClick={() => {
-                if (event.subject_id) onPersonFilter(event.subject_id);
-              }}
-            >
-              Filter by subject
-            </Button>
-          ) : null}
-        </dd>
-        <dt className="text-muted-foreground">Operation ID</dt>
-        <dd className="break-all">{event.operation_id}</dd>
         {event.request_id ? (
           <>
-            <dt className="text-muted-foreground">Request ID</dt>
-            <dd className="break-all">{event.request_id}</dd>
+            <dt className="text-muted-foreground mt-2 sm:mt-0">Request ID</dt>
+            <dd className="min-w-0">
+              <span className="font-mono text-xs break-all">
+                {event.request_id}
+              </span>
+            </dd>
           </>
         ) : null}
         {stage ? (
           <>
-            <dt className="text-muted-foreground">Stage</dt>
+            <dt className="text-muted-foreground mt-2 sm:mt-0">Stage</dt>
             <dd>{stage}</dd>
           </>
         ) : null}
         {event.reason && Object.hasOwn(reasonLabels, event.reason) ? (
           <>
-            <dt className="text-muted-foreground">Reason</dt>
+            <dt className="text-muted-foreground mt-2 sm:mt-0">Reason</dt>
             <dd>{reasonLabels[event.reason]}</dd>
           </>
         ) : null}
         {event.event_type === "workspace.security_policy_change" &&
         changed.length ? (
           <>
-            <dt className="text-muted-foreground">Changed settings</dt>
+            <dt className="text-muted-foreground mt-2 sm:mt-0">
+              Changed settings
+            </dt>
             <dd>
               <ul className="list-inside list-disc space-y-1">
                 {changed.map((label) => (
@@ -1095,13 +1163,6 @@ function SecurityEventFacts({
                 ))}
               </ul>
             </dd>
-          </>
-        ) : null}
-        {event.event_type === "workspace.security_policy_change" &&
-        revision !== null ? (
-          <>
-            <dt className="text-muted-foreground">Accepted revision</dt>
-            <dd>{revision}</dd>
           </>
         ) : null}
       </dl>

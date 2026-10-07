@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { LiveRecordCards } from "./live-record-cards";
+import { formatOpenViewFieldValue, LiveRecordCards } from "./live-record-cards";
 import { openViewRecordFieldValue } from "../domain/record-display";
 import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 
@@ -49,13 +49,6 @@ type LiveRecordResultsProps = {
   onPageIndexChange: (pageIndex: number) => void;
   onPageSizeChange: (pageSize: number) => void;
 };
-
-function recordValue(value: unknown): string {
-  if (typeof value === "string" || typeof value === "number")
-    return String(value);
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  return "—";
-}
 
 export function LiveRecordResults({
   region,
@@ -136,24 +129,39 @@ export function LiveRecordResults({
           <TableBody className="divide-y">
             {page.rows.map((row) => (
               <TableRow key={row.id}>
-                {tableFields.map((field, index) => (
-                  <TableCell
-                    key={field.id}
-                    className={`max-w-80 px-4 align-top ${presentation.density === "compact" ? "py-1.5" : "py-3"} ${presentation.wrap ? "break-words whitespace-normal" : "truncate"} ${field.id === pinnedFieldId ? "bg-card sticky left-0 z-10" : ""}`}
-                  >
-                    {index === 0 ? (
-                      <button
-                        type="button"
-                        className="text-primary focus-visible:ring-ring min-h-11 text-left font-medium underline-offset-4 hover:underline focus-visible:ring-2"
-                        onClick={() => onOpenRecord(row.id)}
-                      >
-                        {recordValue(openViewRecordFieldValue(row, field))}
-                      </button>
-                    ) : (
-                      recordValue(openViewRecordFieldValue(row, field))
-                    )}
-                  </TableCell>
-                ))}
+                {tableFields.map((field, index) => {
+                  const value = formatOpenViewFieldValue(
+                    openViewRecordFieldValue(row, field),
+                    field.type,
+                    region,
+                  );
+                  return (
+                    <TableCell
+                      key={field.id}
+                      className={`max-w-80 px-4 align-top ${presentation.density === "compact" ? "py-1.5" : "py-3"} ${presentation.wrap ? "break-words whitespace-normal" : "truncate"} ${field.id === pinnedFieldId ? "bg-card sticky left-0 z-10" : ""}`}
+                    >
+                      {index === 0 ? (
+                        <button
+                          type="button"
+                          className={`text-primary focus-visible:ring-ring inline-flex min-h-[max(44px,2.75rem)] max-w-full items-start text-left font-medium underline-offset-4 hover:underline focus-visible:ring-2 ${presentation.density === "compact" ? "pointer-fine:min-h-9" : "xl:pointer-fine:[html[data-density=compact]_&]:min-h-9"}`}
+                          onClick={() => onOpenRecord(row.id)}
+                        >
+                          <span
+                            className={
+                              presentation.wrap
+                                ? "min-w-0 break-words whitespace-normal"
+                                : "min-w-0 truncate"
+                            }
+                          >
+                            {value}
+                          </span>
+                        </button>
+                      ) : (
+                        value
+                      )}
+                    </TableCell>
+                  );
+                })}
                 <TableCell
                   className={`text-muted-foreground px-4 align-top ${presentation.density === "compact" ? "py-1.5" : "py-3"}`}
                 >

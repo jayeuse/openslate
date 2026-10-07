@@ -53,7 +53,6 @@ import {
   newestManageWorkspace,
   acceptedWorkspaceRevision,
   workspaceLogoOptions,
-  workspaceLogoFilesOptions,
 } from "./adapters/manage-queries";
 import {
   getManageWorkspace,
@@ -112,8 +111,8 @@ function organizationErrors(
     else if (draft.name.length > 200)
       errors.name = "Use 200 characters or fewer.";
   }
-  if (draft.logo !== undefined && draft.logo.trim().length > 32)
-    errors.logo = "Use 32 characters or fewer.";
+  if (draft.logo !== undefined && draft.logo.trim().length > 3)
+    errors.logo = "Use 3 characters or fewer.";
   if (draft.hours !== undefined && draft.hours.trim().length > 200)
     errors.hours = "Use 200 characters or fewer.";
   const limits = {
@@ -318,8 +317,6 @@ function ManageContent() {
   const [logoError, setLogoError] = useState("");
   const [logoNotice, setLogoNotice] = useState("");
   const [logoCleanupId, setLogoCleanupId] = useState<string | null>(null);
-  const [logoFilesOpen, setLogoFilesOpen] = useState(false);
-  const [logoFilesOffset, setLogoFilesOffset] = useState(0);
   const [committedReadbackRequired, setCommittedReadbackRequired] =
     useState(false);
   const acknowledgedRevision = useRef<number | null>(null);
@@ -361,6 +358,10 @@ function ManageContent() {
       verifiedOrganizationRole === "member") &&
     !workspaceHasContacts(workspaceQuery.data);
   const canEditLoadedOrganization = canEditOrganization && !profileMismatch;
+  // Only a verified non-administrator is told the settings are read only; an
+  // unverified or loading role keeps the neutral source line.
+  const organizationReadOnly =
+    verifiedOrganizationRole !== null && verifiedOrganizationRole !== "admin";
   const contactsVisible =
     (verifiedOrganizationRole === "admin" ||
       verifiedOrganizationRole === "member") &&
@@ -374,11 +375,6 @@ function ManageContent() {
       !profileMismatch &&
       Boolean(workspaceQuery.data?.logo_file_id),
   });
-  const logoFilesQuery = useQuery({
-    ...workspaceLogoFilesOptions({ limit: 4, offset: logoFilesOffset }),
-    enabled:
-      tab === "Organization" && canEditLoadedOrganization && logoFilesOpen,
-  });
   useEffect(() => {
     if (
       savedLogoQuery.error instanceof WorkspaceLogoBindingChanged &&
@@ -387,11 +383,10 @@ function ManageContent() {
     )
       void workspaceQuery.refetch();
   }, [savedLogoQuery.error, suspended, workspaceQuery.refetch]);
-  const logoReadDenied = [savedLogoQuery.error, logoFilesQuery.error].some(
-    (error) =>
-      error instanceof ApiError &&
-      (error.status === 401 || error.status === 403),
-  );
+  const logoReadDenied =
+    savedLogoQuery.error instanceof ApiError &&
+    (savedLogoQuery.error.status === 401 ||
+      savedLogoQuery.error.status === 403);
   const logoDenialReported = useRef(false);
   useEffect(() => {
     if (!logoReadDenied) logoDenialReported.current = false;
@@ -448,12 +443,14 @@ function ManageContent() {
   const pageTitle = tab;
   const liveSourceStatus =
     tab === "Organization"
-      ? "Settings save to the organization."
+      ? organizationReadOnly
+        ? "Only an administrator can change these settings."
+        : "Settings save to the organization."
       : tab === "Audit"
         ? "Audit entries are loaded from your organization."
         : recoveryView
           ? "Backup policy and backup history are loaded from your server."
-          : "The running version and host runner release observations are loaded from your server. No license is required.";
+          : "The running version and the latest release check come from your server. No license is required.";
   const pageDescription =
     tab === "Organization"
       ? "Make this workspace feel like your organization."
@@ -720,7 +717,7 @@ function ManageContent() {
     )
       return;
     if (!validLogoSelection(file)) {
-      setLogoError("Choose a PNG or JPEG between 1 byte and 2 MiB.");
+      setLogoError("Choose a PNG or JPEG between 1 byte and 2 MB.");
       return;
     }
     setLogoDraft({ kind: "new", file });
@@ -875,7 +872,6 @@ function ManageContent() {
         setLogoError(
           "Cleanup is still unfinished. Retry when the current operation has ended.",
         );
-      void queryClient.invalidateQueries({ queryKey: manageKeys.logoFiles() });
     } catch (caught) {
       if (!owns()) return;
       const purgeDisabled =
@@ -1296,12 +1292,9 @@ function ManageContent() {
                         canEditLoadedOrganization
                       ? { kind: "selected", name: logoDraft.file.name }
                       : { kind: "none" },
-                error:
-                  logoError ||
-                  (logoCleanupId
-                    ? "Settings saved. The previous logo still needs cleanup."
-                    : ""),
+                error: logoError,
                 notice: logoNotice,
+                cleanupPending: logoCleanupId !== null,
                 onSelect: chooseLogo,
                 onRemove: removeLogo,
                 onCheckUpload:
@@ -1316,24 +1309,6 @@ function ManageContent() {
                   savedLogoQuery.isError && !suspended && !logoReadDenied
                     ? () => void savedLogoQuery.refetch()
                     : undefined,
-              }}
-              logoFiles={{
-                open: logoFilesOpen,
-                page:
-                  canEditLoadedOrganization && !logoReadDenied
-                    ? logoFilesQuery.data
-                    : undefined,
-                loading: logoFilesQuery.isFetching,
-                failed: logoFilesQuery.isError,
-                offset: logoFilesOffset,
-                onToggle: () => setLogoFilesOpen((open) => !open),
-                onRetry: () => void logoFilesQuery.refetch(),
-                onPage: setLogoFilesOffset,
-                onRecover: (file) =>
-                  void recoverLogo(
-                    file.id,
-                    file.state === "uploading" ? "upload" : "cleanup",
-                  ),
               }}
               profile={
                 workspaceFields && !profileMismatch
@@ -1365,16 +1340,15 @@ function ManageContent() {
               aria-label="Backup workspace"
               className="min-w-0 space-y-5"
             >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <Alert role="note" className="min-w-0 flex-1">
-                  Backup requests are queued for a configured host runner.
-                  Restore and software updates are offline server-operator
-                  procedures.
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <Alert role="note" className="min-w-0 sm:flex-1">
+                  Your server makes the backups you request here. Restoring a
+                  backup and installing updates are done on the server itself.
                 </Alert>
                 {canEditOrganization ? (
                   <Button asChild variant="outline" className="min-h-11">
                     <GuardedWorkspaceLink href="/access?view=security">
-                      Sign-in &amp; security
+                      Security
                     </GuardedWorkspaceLink>
                   </Button>
                 ) : null}
@@ -1445,8 +1419,8 @@ function ManageContent() {
           {tab === "Updates & licensing" ? (
             <div className="min-w-0 space-y-5">
               <Alert role="note">
-                This page reads the running server version and recorded release
-                observations. Updates are applied by your server operator. No
+                This page shows the running version and the latest release
+                check. The person who runs your server installs updates. No
                 license is required.
               </Alert>
               <div className="bg-card grid min-w-0 divide-y overflow-hidden rounded-lg border xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] xl:divide-x xl:divide-y-0">
@@ -1480,8 +1454,8 @@ function ManageContent() {
               </Button>
             </div>
             <DialogDescription>
-              Save the server’s schedule and retention policy. Your server
-              operator configures the host runner.
+              Choose when backups run and how long they are kept. The person who
+              runs your server sets up the backup service.
             </DialogDescription>
           </DialogHeader>
           <fieldset

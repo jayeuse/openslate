@@ -342,7 +342,7 @@ function AccessFrame({
           >
             <GuardedWorkspaceLink href="/access?view=security">
               <ShieldCheck aria-hidden="true" />
-              Sign-in & security
+              Security
               <ArrowUpRight aria-hidden="true" />
             </GuardedWorkspaceLink>
           </Button>

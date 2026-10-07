@@ -414,7 +414,7 @@ test("every workspace describes what it holds in one short line", () => {
     ["access", "Who can see and change what"],
     ["openview", "Browse records and reports"],
     ["manage", "Organization settings and audit"],
-    ["platform", "Account, search, and alerts"],
+    ["platform", "Files, search, and import & export"],
   ]);
 });
 

@@ -104,7 +104,7 @@ export function useRecordImport() {
       if (!/\.csv$/i.test(file.name))
         throw new Error("Choose a UTF-8 CSV file.");
       if (file.size > 8 * 1024 * 1024)
-        throw new Error("CSV files support up to 8 MiB.");
+        throw new Error("CSV files support up to 8 MB.");
       let text: string;
       try {
         text = new TextDecoder("utf-8", { fatal: true }).decode(

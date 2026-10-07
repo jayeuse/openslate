@@ -72,7 +72,7 @@ export function formatWorkspaceDateTime(
   region: WorkspaceRegion,
   options: Omit<Intl.DateTimeFormatOptions, "timeZone"> = {
     dateStyle: "medium",
-    timeStyle: "long",
+    timeStyle: "short",
   },
 ): string {
   const date = new Date(value);
@@ -97,4 +97,17 @@ export function formatWorkspaceDate(
     ...options,
     timeZone: dateOnly ? "UTC" : region.timezone,
   }).format(date);
+}
+
+/** A wall-clock "HH:MM" time in the workspace's 12- or 24-hour convention. */
+export function formatWorkspaceClockTime(
+  value: string,
+  region: Pick<WorkspaceRegion, "locale">,
+): string {
+  const match = /^([01][0-9]|2[0-3]):([0-5][0-9])$/.exec(value);
+  if (!match) return value;
+  return new Intl.DateTimeFormat(workspaceLocale(region.locale), {
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(2000, 0, 1, Number(match[1]), Number(match[2]))));
 }

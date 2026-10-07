@@ -24,8 +24,13 @@ function requirementStatus(required = false) {
 async function openMfa(page: Page) {
   await page.goto("/access?view=security");
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
-  await page.getByRole("button", { name: "Manage MFA", exact: true }).click();
-  return page.getByRole("dialog", { name: "MFA enrollment", exact: true });
+  await page
+    .getByRole("button", { name: "Manage two-step verification", exact: true })
+    .click();
+  return page.getByRole("dialog", {
+    name: "Two-step verification",
+    exact: true,
+  });
 }
 
 test("12b: authoritative MFA grace shows its start and deadline while a fresh enforced status uses the existing gate", async ({
@@ -37,12 +42,16 @@ test("12b: authoritative MFA grace shows its start and deadline while a fresh en
   const body = requirementStatus();
   await page.route("**/api/auth/mfa", (route) => route.fulfill({ json: body }));
   const dialog = await openMfa(page);
-  await expect(dialog.getByRole("note")).toContainText("grace period");
-  await expect(dialog).toContainText("Requirement started");
-  await expect(dialog).toContainText("Enrollment deadline");
+  await expect(dialog.getByRole("note")).toContainText(
+    "keep using the workspace",
+  );
+  await expect(dialog).toContainText("Required since");
+  await expect(dialog).toContainText("Set up by");
   await expect(dialog).toContainText("Oct 1, 2026");
   await expect(dialog).toContainText("Oct 8, 2026");
-  await expect(dialog).toContainText("UTC");
+  // Workspace-local (Asia/Manila) time; UTC stays in the title only.
+  await expect(dialog).toContainText(/4:30\sPM/);
+  await expect(dialog).not.toContainText("UTC");
   await expect(
     dialog.getByRole("button", { name: "Set up authenticator", exact: true }),
   ).toBeEnabled();
@@ -59,17 +68,17 @@ test("12b: authoritative MFA grace shows its start and deadline while a fresh en
     window.dispatchEvent(new Event("openslate:session-recheck")),
   );
   const gate = page.getByRole("region", {
-    name: "Multi-factor authentication",
+    name: "Two-step verification",
     exact: true,
   });
   await expect(
     gate.getByRole("heading", {
-      name: "Complete multi-factor authentication",
+      name: "Complete two-step verification",
       exact: true,
     }),
   ).toBeVisible();
   await expect(gate.getByRole("note")).toContainText(
-    "MFA enrollment is required now",
+    "Two-step verification is required now",
   );
   await expect(gate).toContainText("Oct 1, 2026");
   await expect(gate).toContainText("Oct 8, 2026");
@@ -93,25 +102,23 @@ test("12b: a required account with no recorded episode has immediate enrollment 
   );
   await page.goto("/platform?section=search");
   const gate = page.getByRole("region", {
-    name: "Multi-factor authentication",
+    name: "Two-step verification",
     exact: true,
   });
   await expect(
     gate.getByRole("heading", {
-      name: "Complete multi-factor authentication",
+      name: "Complete two-step verification",
       exact: true,
     }),
   ).toBeVisible();
   await expect(gate.getByRole("note")).toContainText(
-    "MFA enrollment is required now",
+    "Two-step verification is required now",
   );
-  await expect(
-    gate.getByText("Requirement started", { exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    gate.getByText("Enrollment deadline", { exact: true }),
-  ).toHaveCount(0);
-  await expect(gate).not.toContainText("grace period");
+  await expect(gate.getByText("Required since", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(gate.getByText("Set up by", { exact: true })).toHaveCount(0);
+  await expect(gate).not.toContainText("keep using the workspace");
   await expect(
     gate.getByRole("button", { name: "Set up authenticator", exact: true }),
   ).toBeEnabled();
@@ -134,7 +141,7 @@ for (const invalid of ["missing policy fact", "naive deadline"] as const) {
     });
     const dialog = await openMfa(page);
     await expect(dialog.getByRole("alert")).toContainText(
-      "could not load your MFA settings",
+      "could not load your two-step verification settings",
     );
     await expect(
       dialog.getByRole("button", { name: "Set up authenticator", exact: true }),
@@ -142,7 +149,9 @@ for (const invalid of ["missing policy fact", "naive deadline"] as const) {
     invalidResponse = false;
     await dialog.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(dialog.getByRole("alert")).toHaveCount(0);
-    await expect(dialog.getByRole("note")).toContainText("grace period");
+    await expect(dialog.getByRole("note")).toContainText(
+      "Set up an authenticator app before the date above.",
+    );
     await expect(dialog).toContainText("Oct 8, 2026");
     await expect(
       dialog.getByRole("button", { name: "Set up authenticator", exact: true }),

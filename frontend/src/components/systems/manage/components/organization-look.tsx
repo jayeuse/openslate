@@ -1,6 +1,10 @@
 "use client";
 
 import { useId } from "react";
+import { Check } from "lucide-react";
+
+import { FieldLegend, FieldSet } from "@/components/ui/field";
+import { cn } from "@/lib/utils";
 import {
   ORGANIZATION_THEMES,
   type OrganizationTheme,
@@ -73,31 +77,34 @@ export function OrganizationLook({
   readOnly: boolean;
   disabled: boolean;
 }) {
-  const headingId = useId();
+  const legendId = useId();
+  const locked = disabled || readOnly;
 
   return (
-    <section aria-labelledby={headingId} className="min-w-0 lg:col-span-2">
-      <h2
-        data-slot="section-title"
-        id={headingId}
-        className="text-lg font-semibold tracking-tight"
+    <FieldSet className="min-w-0 gap-0">
+      <FieldLegend
+        id={legendId}
+        className="mb-1 text-lg font-semibold tracking-tight"
       >
         Organization look
-      </h2>
-      <p className="text-muted-foreground mt-1 max-w-prose text-sm leading-6">
+      </FieldLegend>
+      <p className="text-muted-foreground mb-4 max-w-prose text-sm leading-6">
         Choose how OpenSlate looks for your organization. Words, layout, and how
         things work stay the same. Each person still picks light or dark.
       </p>
       <div
         role="radiogroup"
-        aria-labelledby={headingId}
+        aria-labelledby={legendId}
         aria-readonly={readOnly}
-        className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
+        className="grid gap-3 sm:grid-cols-2"
       >
         {ORGANIZATION_THEMES.map((id) => (
           <label
             key={id}
-            className="border-border has-[:checked]:border-primary has-[:focus-visible]:outline-ring grid cursor-pointer gap-3 rounded-[var(--radius)] border p-3 has-[:checked]:ring-1 has-[:checked]:ring-[var(--action)] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2"
+            className={cn(
+              "border-border has-[:checked]:border-primary has-[:focus-visible]:outline-ring grid gap-3 rounded-[var(--radius)] border p-3 has-[:checked]:ring-1 has-[:checked]:ring-[var(--action)] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 forced-colors:has-[:checked]:border-[Highlight] forced-colors:has-[:checked]:outline-2 forced-colors:has-[:checked]:outline-[Highlight]",
+              locked ? "cursor-default" : "cursor-pointer",
+            )}
           >
             <input
               type="radio"
@@ -105,15 +112,25 @@ export function OrganizationLook({
               value={id}
               checked={theme === id}
               onChange={() => onChange(id)}
-              disabled={disabled || readOnly}
+              disabled={locked}
               className="sr-only"
             />
             <LookSwatch theme={id} />
-            <span className="grid gap-0.5">
-              <span className="text-sm font-medium">{LOOKS[id].name}</span>
-              <span className="text-muted-foreground text-sm">
-                {LOOKS[id].description}
+            <span className="flex items-start justify-between gap-2">
+              <span className="grid min-w-0 gap-0.5">
+                <span className="text-sm font-medium">{LOOKS[id].name}</span>
+                <span className="text-muted-foreground text-sm">
+                  {LOOKS[id].description}
+                </span>
               </span>
+              <Check
+                size={15}
+                aria-hidden="true"
+                className={cn(
+                  "text-action-text mt-0.5 shrink-0",
+                  theme === id ? undefined : "invisible",
+                )}
+              />
             </span>
           </label>
         ))}
@@ -123,6 +140,6 @@ export function OrganizationLook({
           ? "An administrator chooses the saved look for your organization."
           : "Preview changes right away. Save settings to use this look for your organization."}
       </p>
-    </section>
+    </FieldSet>
   );
 }

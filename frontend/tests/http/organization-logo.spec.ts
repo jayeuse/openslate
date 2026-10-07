@@ -40,7 +40,8 @@ test("Logo draft stays local until settings save, then saved header and removal 
     name: "Organization mark",
     exact: true,
   });
-  const fullMark = "A32CHARACTERORGANIZATIONMARKABCD";
+  await expect(mark).toHaveAttribute("maxlength", "3");
+  const fullMark = "HOP";
   await mark.fill(fullMark);
   await page
     .getByLabel("Organization name", { exact: true })
@@ -102,7 +103,7 @@ test("Logo draft stays local until settings save, then saved header and removal 
   expect(bounds.scroll).toBeLessThanOrEqual(bounds.width);
 });
 
-test("Logo warm workspace cache keeps Comms' own header and restores saved branding on return", async ({
+test("Logo warm workspace cache shows the organization brand in Comms and on return", async ({
   page,
 }) => {
   const api = await installLogoApi(page);
@@ -122,12 +123,12 @@ test("Logo warm workspace cache keeps Comms' own header and restores saved brand
   ).toBeVisible();
   await expect(
     header(page).getByRole("img", {
-      name: "OpenSlate mark: OS",
+      name: "Harbor Services logo",
       exact: true,
     }),
   ).toBeVisible();
   await expect(
-    header(page).getByRole("img", { name: / logo$/, exact: false }),
+    header(page).getByRole("img", { name: "OpenSlate mark: OS", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Manage", exact: true }).click();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
@@ -180,7 +181,7 @@ for (const [name, buffer, mimeType] of [
       .fill("Retained draft");
     await pick(page, name, buffer, mimeType);
     await expect(
-      page.getByText("Choose a PNG or JPEG between 1 byte and 2 MiB.", {
+      page.getByText("Choose a PNG or JPEG between 1 byte and 2 MB.", {
         exact: true,
       }),
     ).toBeVisible();
@@ -204,11 +205,13 @@ test("Logo partial cleanup shows committed settings and retries only the capture
     .getByLabel("Organization name", { exact: true })
     .fill("Saved despite cleanup");
   await save(page).click();
+  const cleanupNotice = page.getByRole("status").filter({
+    hasText: "Logo saved. The old logo will be removed shortly.",
+  });
+  await expect(cleanupNotice).toBeVisible();
   await expect(
-    page.getByRole("alert").filter({
-      hasText: "Settings saved. The previous logo still needs cleanup.",
-    }),
-  ).toBeVisible();
+    page.getByLabel("Organization logo", { exact: true }),
+  ).not.toHaveAttribute("aria-invalid", "true");
   await expect(
     header(page).getByRole("img", {
       name: "Saved despite cleanup logo",
@@ -216,13 +219,13 @@ test("Logo partial cleanup shows committed settings and retries only the capture
     }),
   ).toBeVisible();
   await expect(save(page)).toBeDisabled();
-  await page
+  await cleanupNotice
     .getByRole("button", { name: "Retry cleanup", exact: true })
-    .first()
     .click();
   await expect(
     page.getByText("Previous logo cleanup completed.", { exact: true }),
   ).toBeVisible();
+  await expect(cleanupNotice).toHaveCount(0);
   expect(patches(api)).toHaveLength(1);
   expect(
     api.writes
@@ -417,46 +420,6 @@ test("Logo retained-candidate refusal rechecks the session before any further pu
   }
 });
 
-test("Logo reload recovery pages actual Files and preserves manual purge denial", async ({
-  page,
-}) => {
-  const api = await installLogoApi(page);
-  for (let i = 1; i <= 4; i++) {
-    const id = `55555555-5555-4555-8555-${String(i).padStart(12, "0")}`;
-    api.files.set(id, logoFile(id));
-  }
-  api.files.set(oldLogoId, logoFile(oldLogoId, "deleting"));
-  api.reconcileDenied = true;
-  api.reconcileMessage = untrustedLogoMessage;
-  await page.goto("/manage?view=organization");
-  await page.getByRole("button", { name: "Logo files", exact: true }).click();
-  await expect(
-    page.getByText("Showing 1–4 of 5 logo files.", { exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Next logo files page", exact: true })
-    .click();
-  await expect(
-    page.getByText("Showing 5–5 of 5 logo files.", { exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Retry cleanup", exact: true })
-    .click();
-  await expect(
-    page.getByRole("alert").filter({
-      hasText: "Manual permanent deletion is disabled.",
-    }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(untrustedLogoMessage, { exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("dialog", { name: "Session verification", exact: true }),
-  ).toHaveCount(0);
-  expect(api.files.get(oldLogoId)?.state).toBe("deleting");
-  expect(api.lists.at(-1)?.get("offset")).toBe("4");
-});
-
 for (const role of ["member", "guest"] as const) {
   test(`Logo ${role} sees saved brand without mutation or File inventory access`, async ({
     page,
@@ -481,7 +444,10 @@ for (const role of ["member", "guest"] as const) {
     await expect(
       page.getByRole("button", { name: "Remove logo", exact: true }),
     ).toHaveCount(0);
-    await expect(save(page)).toBeDisabled();
+    await expect(
+      page.getByRole("note", { name: "Organization data", exact: true }),
+    ).toContainText("Only an administrator can change these settings.");
+    await expect(save(page)).toHaveCount(0);
     expect(api.lists).toEqual([]);
     expect(api.writes).toEqual([]);
   });

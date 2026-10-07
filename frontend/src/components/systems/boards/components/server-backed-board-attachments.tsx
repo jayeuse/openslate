@@ -4,7 +4,7 @@ import { createElement, useEffect, useMemo, useRef, useState } from "react";
 import { ApiContractError, ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { FilePickerButton } from "@/components/ui/file-picker-button";
 import { fileErrorMessage } from "../../shared/adapters/files-api";
 import { FileList } from "../../shared/components/file-list";
 import {
@@ -236,7 +236,7 @@ export function ServerBoardAttachments(props: Props) {
   async function uploadSelectedFile(file: File) {
     if (!editable || editable.locked || busy) return;
     if (file.size < 1 || file.size > MAX_BOARD_ATTACHMENT_BYTES) {
-      setError("Choose a file larger than 0 bytes and no larger than 25 MiB.");
+      setError("Choose a file larger than 0 bytes and no larger than 25 MB.");
       return;
     }
     if (
@@ -473,24 +473,24 @@ export function ServerBoardAttachments(props: Props) {
               >
                 Add an attachment
               </label>
-              <Input
+              <FilePickerButton
                 id={`board-file-${sourceKey}`}
-                type="file"
                 accept={ATTACHMENT_ACCEPT}
                 aria-describedby={`board-file-${sourceKey}-help`}
-                className="min-h-11 max-w-full py-2"
                 disabled={busy || editable.locked === true}
-                onChange={(event) => {
-                  const file = event.currentTarget.files?.[0];
+                onFiles={(chosen, event) => {
+                  const file = chosen[0];
                   event.currentTarget.value = "";
                   if (file) void uploadSelectedFile(file);
                 }}
-              />
+              >
+                Choose file
+              </FilePickerButton>
               <p
                 id={`board-file-${sourceKey}-help`}
                 className="text-muted-foreground text-sm"
               >
-                Files up to 25 MiB. PDF, PNG, JPEG, DOCX, XLSX or PPTX.
+                Files up to 25 MB. PDF, PNG, JPEG, DOCX, XLSX or PPTX.
               </p>
               {feedback}
               {pendingFile ? (

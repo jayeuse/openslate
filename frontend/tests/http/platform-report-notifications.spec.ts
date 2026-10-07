@@ -99,18 +99,18 @@ test("connected Report notifications show reference status and refetch after mar
 
   await page.goto("/platform?section=notifications");
   const connected = page.getByRole("region", {
-    name: "Connected notifications",
+    name: "Notifications",
   });
   await expect(connected.getByText("Scheduled report run")).toBeVisible();
   await expect(
     connected
-      .getByRole("list", { name: "Connected delivery notices" })
+      .getByRole("list", { name: "Notifications" })
       .getByText("Unread", { exact: true }),
   ).toBeVisible();
   await expect(connected).not.toContainText(reportId);
   await expect(connected).not.toContainText(runId);
   await expect(
-    connected.getByRole("link", { name: "Open Report output" }),
+    connected.getByRole("link", { name: "Open report" }),
   ).toHaveAttribute(
     "href",
     `/openview?section=reports&report=${reportId}&run=${runId}`,
@@ -175,7 +175,7 @@ test("connected inbox shows Board publication and reminder references without co
 
   await page.goto("/platform?section=notifications");
   const connected = page.getByRole("region", {
-    name: "Connected notifications",
+    name: "Notifications",
   });
   await expect(
     connected.getByText("Field operations", { exact: true }),
@@ -194,13 +194,13 @@ test("connected inbox shows Board publication and reminder references without co
   await expect(connected).not.toContainText("Publication body");
   await expect(connected).not.toContainText("Private event details");
   await expect(
-    connected.getByRole("link", { name: "Open Board posts" }),
+    connected.getByRole("link", { name: "Open post" }),
   ).toHaveAttribute(
     "href",
     `/boards?board=${boardId}&section=posts&post=${postId}`,
   );
   await expect(
-    connected.getByRole("link", { name: "Open Board calendar" }),
+    connected.getByRole("link", { name: "Open event" }),
   ).toHaveAttribute(
     "href",
     `/boards?board=${boardId}&section=calendar&event=${eventId}`,
@@ -233,10 +233,10 @@ test("Report notification SSE resync and recipient invalidation refresh without 
 
   await page.goto("/platform?section=notifications");
   const connected = page.getByRole("region", {
-    name: "Connected notifications",
+    name: "Notifications",
   });
   await expect(
-    connected.getByText("No connected notifications on this page."),
+    connected.getByText("No notifications on this page."),
   ).toBeVisible();
   const openingPage = page.waitForResponse((response) => {
     const url = new URL(response.url());
@@ -254,9 +254,7 @@ test("Report notification SSE resync and recipient invalidation refresh without 
     stream?.dispatchEvent(new MessageEvent("resync", { data: "{}" }));
   });
   await (await openingPage).finished();
-  await expect(
-    connected.getByText("Refreshing connected notifications…"),
-  ).toHaveCount(0);
+  await expect(connected.getByText("Refreshing notifications…")).toHaveCount(0);
   const baselineReads = listReads;
   available = true;
   await page.evaluate(() => {
@@ -295,7 +293,7 @@ test("Report notification SSE resync and recipient invalidation refresh without 
     );
   });
   await expect(
-    connected.getByText("No connected notifications on this page."),
+    connected.getByText("No notifications on this page."),
   ).toBeVisible();
   await page.getByRole("link", { name: "Search workspace" }).click();
   await expect(
@@ -344,14 +342,14 @@ test("Report notification refresh retains last good on transient failure and cle
   });
   await page.goto("/platform?section=notifications");
   const connected = page.getByRole("region", {
-    name: "Connected notifications",
+    name: "Notifications",
   });
   await expect(connected.getByText("Scheduled report run")).toBeVisible();
   responseStatus = 500;
   await connected.getByRole("button", { name: "Refresh" }).click();
   await expect(
     connected.getByText(
-      "Could not refresh connected notifications. Showing the last loaded page.",
+      "Couldn’t refresh notifications. Showing the last loaded page.",
     ),
   ).toBeVisible();
   await expect(connected.getByText("Scheduled report run")).toBeVisible();
@@ -359,7 +357,7 @@ test("Report notification refresh retains last good on transient failure and cle
   await connected.getByRole("button", { name: "Refresh" }).click();
   await expect(
     connected.getByText(
-      "Connected notifications are unavailable. Sign in or ask for access, then retry.",
+      "Notifications are unavailable. Sign in or ask for access, then try again.",
     ),
   ).toBeVisible();
   await expect(connected.getByText("Scheduled report run")).toHaveCount(0);
@@ -439,7 +437,7 @@ test("a revoked notification 404 clears old references before a failed first-pag
 
   await page.goto("/platform?section=notifications");
   const connected = page.getByRole("region", {
-    name: "Connected notifications",
+    name: "Notifications",
   });
   await expect(connected.getByText("Scheduled report run")).toBeVisible();
   await page.evaluate(() => {
@@ -466,9 +464,7 @@ test("a revoked notification 404 clears old references before a failed first-pag
   releaseStaleRefresh();
   releaseFollowUp();
   await expect(
-    connected.getByText(
-      "Connected notifications could not be loaded. Try again.",
-    ),
+    connected.getByText("Couldn’t load notifications."),
   ).toBeVisible();
   await expect(connected.getByText("Scheduled report run")).toHaveCount(0);
   await expect(connected).not.toContainText(reportId);
@@ -540,7 +536,7 @@ test("a revoked notice on a later page reloads the authorized first page", async
 
   await page.goto("/platform?section=notifications");
   const connected = page.getByRole("region", {
-    name: "Connected notifications",
+    name: "Notifications",
   });
   await expect(connected.getByText("Scheduled report run")).toHaveCount(25);
   await connected.getByRole("button", { name: "Next" }).click();
@@ -589,7 +585,7 @@ test("Report notification paging remains bounded to the server page", async ({
   });
   await page.goto("/platform?section=notifications");
   const connected = page.getByRole("region", {
-    name: "Connected notifications",
+    name: "Notifications",
   });
   await expect(connected.getByText("Scheduled report run")).toHaveCount(25);
   await connected.getByRole("button", { name: "Next" }).click();
@@ -857,7 +853,7 @@ for (const count of [0, 8, 125]) {
       status: null,
     });
     await popup.getByRole("link", { name: "View all" }).click();
-    const inbox = page.getByRole("region", { name: "Connected notifications" });
+    const inbox = page.getByRole("region", { name: "Notifications" });
     await expect(
       inbox.getByText("Operations review", { exact: true }),
     ).toHaveCount(25);
@@ -882,10 +878,10 @@ for (const invalid of [
       page.getByRole("button", { name: "Notifications", exact: true }),
     ).toBeVisible();
     const popup = await notificationPopover(page);
-    await expect(popup.getByText("Unread count is unavailable.")).toBeVisible();
+    await expect(popup.getByText("Couldn’t load notifications.")).toBeVisible();
     await expect(popup).not.toContainText("private");
     state.countBody = { unread_count: 8 };
-    await popup.getByRole("button", { name: "Retry unread count" }).click();
+    await popup.getByRole("button", { name: "Try again" }).click();
     await expect(
       page.getByRole("button", { name: "Notifications, 8 unread" }),
     ).toBeVisible();
@@ -898,7 +894,7 @@ test("shared read guard prevents overlapping bell and inbox commands and explici
   const state = await installNotificationJourney(page, 70);
   state.newAfterReadAll = true;
   await page.goto("/platform?section=notifications");
-  const inbox = page.getByRole("region", { name: "Connected notifications" });
+  const inbox = page.getByRole("region", { name: "Notifications" });
   await expect(
     inbox.getByText("Operations review", { exact: true }),
   ).toHaveCount(25);
@@ -952,7 +948,7 @@ test("source titles deduplicate only displayed reads, suppress denied names and 
     return route.fallback();
   });
   await page.goto("/platform?section=notifications");
-  const inbox = page.getByRole("region", { name: "Connected notifications" });
+  const inbox = page.getByRole("region", { name: "Notifications" });
   await expect(
     inbox.getByText("Operations review", { exact: true }),
   ).toHaveCount(25);
@@ -969,11 +965,11 @@ test("source titles deduplicate only displayed reads, suppress denied names and 
   await expect(
     popup
       .getByRole("alert")
-      .filter({ hasText: "Title is unavailable. Try again." })
+      .filter({ hasText: "The title couldn’t be loaded." })
       .first(),
   ).toBeVisible();
   sourceStatus = 200;
-  await popup.getByRole("button", { name: "Retry title" }).first().click();
+  await popup.getByRole("button", { name: "Try again" }).first().click();
   await expect(
     popup.getByText("Operations review", { exact: true }),
   ).toHaveCount(10);
@@ -986,9 +982,7 @@ test("source titles deduplicate only displayed reads, suppress denied names and 
   await expect(
     inbox.getByText("Operations review", { exact: true }),
   ).toHaveCount(0);
-  await expect(
-    popup.getByRole("link", { name: "Open Report output" }),
-  ).toHaveCount(0);
+  await expect(popup.getByRole("link", { name: "Open report" })).toHaveCount(0);
   await expect(popup).not.toContainText("Private Operations detail");
   expect(state.countReads).toBeGreaterThan(1);
 });
@@ -999,7 +993,7 @@ test("failed read-all retains authoritative count and does not resend until expl
   const state = await installNotificationJourney(page, 70);
   state.readStatus = 503;
   await page.goto("/platform?section=notifications");
-  const inbox = page.getByRole("region", { name: "Connected notifications" });
+  const inbox = page.getByRole("region", { name: "Notifications" });
   await expect(
     inbox.getByText("Operations review", { exact: true }),
   ).toHaveCount(25);
@@ -1087,7 +1081,7 @@ test("the shell keeps one active stream and only unavailable-stream focus refres
 }) => {
   const state = await installNotificationJourney(page, 8);
   await page.goto("/platform?section=notifications");
-  const inbox = page.getByRole("region", { name: "Connected notifications" });
+  const inbox = page.getByRole("region", { name: "Notifications" });
   await expect(
     inbox.getByText("Operations review", { exact: true }),
   ).toHaveCount(25);
@@ -1203,14 +1197,14 @@ test("a transient count refresh retains its last confirmed number and an empty p
   state.count = 0;
   state.countStatus = 503;
   await sendOpenViewEvent(page, "resync");
-  await expect(popup.getByText("Unread count is unavailable.")).toBeVisible();
+  await expect(popup.getByText("Couldn’t load notifications.")).toBeVisible();
   await expect(popup.getByText("No notifications yet.")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Notifications, 8 unread" }),
   ).toBeVisible();
   state.countStatus = 200;
   state.count = 0;
-  await popup.getByRole("button", { name: "Retry unread count" }).click();
+  await popup.getByRole("button", { name: "Try again" }).click();
   await expect(
     page.getByRole("button", { name: "Notifications, 0 unread" }),
   ).toBeVisible();
@@ -1223,7 +1217,7 @@ test("read-all remains available when the unread notice lies beyond the displaye
   const state = await installNotificationJourney(page, 1);
   state.items.reverse();
   await page.goto("/platform?section=notifications");
-  const inbox = page.getByRole("region", { name: "Connected notifications" });
+  const inbox = page.getByRole("region", { name: "Notifications" });
   await expect(inbox.getByText("Read", { exact: true })).toHaveCount(25);
   await expect(
     page.getByRole("button", { name: "Notifications, 1 unread" }),
@@ -1243,7 +1237,7 @@ test("a confirmed single read refetches both views and rejects an unconfirmed re
 }) => {
   const state = await installNotificationJourney(page, 8);
   await page.goto("/platform?section=notifications");
-  const inbox = page.getByRole("region", { name: "Connected notifications" });
+  const inbox = page.getByRole("region", { name: "Notifications" });
   await expect(
     inbox.getByText("Operations review", { exact: true }),
   ).toHaveCount(25);
@@ -1279,7 +1273,7 @@ test("a refused list clears private count and titles across cached views before 
 }) => {
   const state = await installNotificationJourney(page, 8);
   await page.goto("/platform?section=notifications");
-  const inbox = page.getByRole("region", { name: "Connected notifications" });
+  const inbox = page.getByRole("region", { name: "Notifications" });
   await expect(
     inbox.getByText("Operations review", { exact: true }),
   ).toHaveCount(25);
@@ -1300,11 +1294,11 @@ test("a refused list clears private count and titles across cached views before 
   ).toBeVisible();
   state.listStatus = 503;
   state.count = 0;
-  await popup.getByRole("button", { name: "Retry unread count" }).click();
+  // One retry refetches both the unread count and the list.
+  await popup.getByRole("button", { name: "Try again" }).click();
   await expect(
     page.getByRole("button", { name: "Notifications, 0 unread" }),
   ).toBeVisible();
-  await popup.getByRole("button", { name: "Retry notifications" }).click();
   await expect(
     popup.getByText("Operations review", { exact: true }),
   ).toHaveCount(0);
@@ -1321,7 +1315,7 @@ test("cached inbox revisits retain the authorized page while a refresh is held",
   await page.goto("/platform?section=notifications");
   await expect(
     page
-      .getByRole("region", { name: "Connected notifications" })
+      .getByRole("region", { name: "Notifications" })
       .getByText("Operations review", { exact: true }),
   ).toHaveCount(25);
   await page.getByRole("link", { name: "Search workspace" }).click();
@@ -1336,12 +1330,10 @@ test("cached inbox revisits retain the authorized page while a refresh is held",
   try {
     await expect(
       page
-        .getByRole("region", { name: "Connected notifications" })
+        .getByRole("region", { name: "Notifications" })
         .getByText("Operations review", { exact: true }),
     ).toHaveCount(25);
-    await expect(
-      page.getByText("Refreshing connected notifications…"),
-    ).toBeVisible();
+    await expect(page.getByText("Refreshing notifications…")).toBeVisible();
   } finally {
     release();
   }
@@ -1402,7 +1394,7 @@ test("held count, title and read-command results cannot follow a different verif
     });
   });
   await page.goto("/platform?section=notifications");
-  let inbox = page.getByRole("region", { name: "Connected notifications" });
+  let inbox = page.getByRole("region", { name: "Notifications" });
   await expect(
     inbox.getByText("Private operations review", { exact: true }),
   ).toHaveCount(25);
@@ -1442,7 +1434,7 @@ test("held count, title and read-command results cannot follow a different verif
   state.count = 1;
   state.items = [{ ...notification("unread"), id: oldItem.id }];
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-  inbox = page.getByRole("region", { name: "Connected notifications" });
+  inbox = page.getByRole("region", { name: "Notifications" });
   try {
     await expect(
       inbox.getByText("Finance review", { exact: true }),
@@ -1477,7 +1469,7 @@ test("held count, title and read-command results cannot follow a different verif
   ).toHaveCount(0);
   await expect(
     inbox
-      .getByRole("list", { name: "Connected delivery notices" })
+      .getByRole("list", { name: "Notifications" })
       .getByText("Unread", { exact: true }),
   ).toHaveCount(1);
   await expect(
@@ -1533,15 +1525,13 @@ for (const invalid of [
             };
     await page.goto("/platform");
     const popup = await notificationPopover(page);
-    await expect(
-      popup.getByText("Notifications could not be loaded. Try again."),
-    ).toBeVisible();
+    await expect(popup.getByText("Couldn’t load notifications.")).toBeVisible();
     await expect(popup).not.toContainText("Private title must not render");
     await expect(
       popup.getByText("Operations review", { exact: true }),
     ).toHaveCount(0);
     state.listBody = null;
-    await popup.getByRole("button", { name: "Retry notifications" }).click();
+    await popup.getByRole("button", { name: "Try again" }).click();
     await expect(
       popup.getByText("Operations review", { exact: true }),
     ).toHaveCount(10);
@@ -1559,7 +1549,7 @@ for (const body of [
     const state = await installNotificationJourney(page, 8);
     state.readAllBody = body;
     await page.goto("/platform?section=notifications");
-    const inbox = page.getByRole("region", { name: "Connected notifications" });
+    const inbox = page.getByRole("region", { name: "Notifications" });
     await expect(
       inbox.getByText("Operations review", { exact: true }),
     ).toHaveCount(25);
@@ -1591,7 +1581,7 @@ test("a confirmed inbox read updates the shared count after leaving the inbox wi
 }) => {
   const state = await installNotificationJourney(page, 8);
   await page.goto("/platform?section=notifications");
-  const inbox = page.getByRole("region", { name: "Connected notifications" });
+  const inbox = page.getByRole("region", { name: "Notifications" });
   await expect(
     inbox.getByText("Operations review", { exact: true }),
   ).toHaveCount(25);
@@ -1623,16 +1613,14 @@ test("an empty terminal inbox page after concurrent removal is valid and clears 
 }) => {
   const state = await installNotificationJourney(page, 8);
   await page.goto("/platform?section=notifications");
-  const inbox = page.getByRole("region", { name: "Connected notifications" });
+  const inbox = page.getByRole("region", { name: "Notifications" });
   await expect(inbox.getByText("1–25 of 70")).toBeVisible();
   await inbox.getByRole("button", { name: "Next", exact: true }).click();
   await expect(inbox.getByText("26–50 of 70")).toBeVisible();
   state.items = [];
   state.count = 0;
   await inbox.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(
-    inbox.getByText("No connected notifications on this page."),
-  ).toBeVisible();
+  await expect(inbox.getByText("No notifications on this page.")).toBeVisible();
   await expect(
     inbox.getByText("0 notifications", { exact: true }),
   ).toBeVisible();

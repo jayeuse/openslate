@@ -525,6 +525,19 @@ async function openLibrary(page: Page, department = LIBRARY_DEPARTMENT) {
   ).toBeVisible();
 }
 
+// File status sits behind the "More filters" disclosure at every width.
+async function chooseFileStatus(page: Page, label: "Active" | "Archived") {
+  const status = page.getByRole("combobox", {
+    name: "File status",
+    exact: true,
+  });
+  if (!(await status.isVisible()))
+    await page
+      .getByRole("button", { name: "More filters", exact: true })
+      .click();
+  await status.selectOption({ label });
+}
+
 async function chooseLibraryFile(
   page: Page,
   name = "Upload guide.pdf",
@@ -625,9 +638,9 @@ for (const role of ["member", "guest"] as const)
     await expect(
       files.getByText("Added by Mara Santos", { exact: true }),
     ).toBeVisible();
-    await expect(
-      files.getByText("Added by Unavailable user", { exact: true }),
-    ).toBeVisible();
+    // A file whose uploader has no current name shows no uploader line.
+    await expect(files.getByText(/^Added by /)).toHaveCount(1);
+    await expect(files.getByText("Unavailable user")).toHaveCount(0);
     await expect(files.getByText(/Added.*5 Oct 2026/)).toBeVisible();
     await expect(page.getByText(/Storage used.*69 bytes/)).toBeVisible();
     await expect(page.getByLabel("Upload file", { exact: true })).toHaveCount(
@@ -710,9 +723,7 @@ test("Library files: writer uploads once and manage-only lifecycle actions use c
       exact: true,
     }),
   ).toHaveCount(0);
-  await page
-    .getByRole("combobox", { name: "File status", exact: true })
-    .selectOption({ label: "Archived" });
+  await chooseFileStatus(page, "Archived");
   const reopen = page.getByRole("button", {
     name: "Reopen Upload guide.pdf",
     exact: true,
@@ -843,9 +854,7 @@ test("Library files: closed departments remain readable and archivable but canno
   await expect(archive).toBeEnabled();
   await archive.click();
   await expect(archive).toHaveCount(0);
-  await page
-    .getByRole("combobox", { name: "File status", exact: true })
-    .selectOption({ label: "Archived" });
+  await chooseFileStatus(page, "Archived");
   const download = page.getByRole("button", {
     name: "Download Closed archived guide.pdf",
     exact: true,
@@ -1290,7 +1299,7 @@ test("Library files: invalid local uploads reserve nothing and foreign reservati
     Buffer.alloc(25 * 1024 * 1024 + 1),
   );
   await expect(
-    page.getByRole("alert").filter({ hasText: "25 MiB" }),
+    page.getByRole("alert").filter({ hasText: "25 MB" }),
   ).toBeVisible();
   await chooseLibraryFile(page, "bad/name.pdf");
   await expect(
@@ -1450,18 +1459,14 @@ for (const status of [401, 403, 404])
     await expect(
       page.getByRole("list", { name: "Library files", exact: true }),
     ).toBeVisible();
-    await page
-      .getByRole("combobox", { name: "File status", exact: true })
-      .selectOption({ label: "Archived" });
+    await chooseFileStatus(page, "Archived");
     await expect(
       page.getByRole("button", {
         name: "Download Archived handbook.pdf",
         exact: true,
       }),
     ).toBeVisible();
-    await page
-      .getByRole("combobox", { name: "File status", exact: true })
-      .selectOption({ label: "Active" });
+    await chooseFileStatus(page, "Active");
     fixture.uploadMode = "awaiting";
     await chooseLibraryFile(page);
     await expect(
@@ -1503,9 +1508,7 @@ for (const status of [401, 403, 404])
       ).toHaveCount(0);
       return;
     }
-    await page
-      .getByRole("combobox", { name: "File status", exact: true })
-      .selectOption({ label: "Archived" });
+    await chooseFileStatus(page, "Archived");
     await expect(
       page.getByRole("button", {
         name: "Download Archived handbook.pdf",
@@ -1928,7 +1931,7 @@ test("Library files: transient access refresh preserves filters and pending work
     name: "File status",
     exact: true,
   });
-  await status.selectOption({ label: "Archived" });
+  await chooseFileStatus(page, "Archived");
   await expect(
     page.getByText("No archived files in this department.", { exact: true }),
   ).toBeVisible();

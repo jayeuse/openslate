@@ -3,7 +3,7 @@ import {
   type QueryClient,
   type QueryKey,
 } from "@tanstack/react-query";
-import { ApiError } from "@/lib/api";
+import { ApiContractError, ApiError } from "@/lib/api";
 import {
   authMeOptions,
   recordPageDenial,
@@ -407,7 +407,13 @@ export function notificationTitleOptions(item: Notification) {
             const run = page.items.find(
               (candidate) => candidate.id === item.subjectId,
             );
-            if (!run) throw new ApiError(404, "Source is unavailable");
+            // No row means the backup is gone; a different row is a bad
+            // response that a retry may fix.
+            if (!run) {
+              if (page.items.length === 0)
+                throw new ApiError(404, "Source is unavailable");
+              throw new ApiContractError();
+            }
             title = run.name;
             break;
           }

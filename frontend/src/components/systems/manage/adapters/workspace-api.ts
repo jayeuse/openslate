@@ -219,25 +219,20 @@ export type WorkspaceProfileFormFields = Pick<
   WorkspaceProfileField
 >;
 
+// Until the interface is translated, regional formats are English variants
+// that differ only in date, time, and number conventions.
 const ORGANIZATION_LOCALE_TAGS = {
+  "English (Australia)": "en-AU",
+  "English (Canada)": "en-CA",
+  "English (Europe)": "en-150",
+  "English (India)": "en-IN",
+  "English (Ireland)": "en-IE",
+  "English (New Zealand)": "en-NZ",
   "English (Philippines)": "en-PH",
-  Filipino: "fil-PH",
-  "English (US)": "en-US",
+  "English (Singapore)": "en-SG",
+  "English (South Africa)": "en-ZA",
   "English (UK)": "en-GB",
-  "French (France)": "fr-FR",
-  "German (Germany)": "de-DE",
-  "Spanish (Spain)": "es-ES",
-  "Portuguese (Brazil)": "pt-BR",
-  "Italian (Italy)": "it-IT",
-  "Japanese (Japan)": "ja-JP",
-  "Korean (South Korea)": "ko-KR",
-  "Chinese (China)": "zh-CN",
-  "Chinese (Taiwan)": "zh-TW",
-  "Arabic (Saudi Arabia)": "ar-SA",
-  "Hindi (India)": "hi-IN",
-  "Thai (Thailand)": "th-TH",
-  "Indonesian (Indonesia)": "id-ID",
-  "Vietnamese (Vietnam)": "vi-VN",
+  "English (US)": "en-US",
 } as const;
 
 export const organizationLocaleLabels = Object.keys(

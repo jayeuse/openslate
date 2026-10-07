@@ -183,20 +183,27 @@ export function NotificationBell({ accountId }: { accountId: string | null }) {
             Loading unread count…
           </p>
         )}
-        {(count.isError || refused) && (
+        {(count.isError || page.isError || refused) && (
           <Alert
             role="alert"
             variant="destructive"
             className="flex flex-wrap items-center justify-between gap-3 text-sm"
           >
-            <p>Unread count is unavailable.</p>
+            <p className="min-w-0">
+              {refused
+                ? "Notifications are unavailable. Sign in or ask for access, then try again."
+                : "Couldn’t load notifications."}
+            </p>
             <Button
               variant="outline"
               size="sm"
               className="min-h-11"
-              onClick={() => void count.refetch()}
+              onClick={() => {
+                void count.refetch();
+                void page.refetch();
+              }}
             >
-              Retry unread count
+              Try again
             </Button>
           </Alert>
         )}
@@ -208,23 +215,6 @@ export function NotificationBell({ accountId }: { accountId: string | null }) {
             <p role="status" className="text-muted-foreground py-4 text-sm">
               Loading notifications…
             </p>
-          )}
-          {(page.isError || refused) && (
-            <Alert role="alert" variant="destructive" className="space-y-2">
-              <p>
-                {refused
-                  ? "Notifications are unavailable. Sign in or ask for access, then retry."
-                  : "Notifications could not be loaded. Try again."}
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="min-h-11"
-                onClick={() => void page.refetch()}
-              >
-                Retry notifications
-              </Button>
-            </Alert>
           )}
           {visiblePage?.items.length === 0 && (
             <p className="text-muted-foreground py-4 text-sm">

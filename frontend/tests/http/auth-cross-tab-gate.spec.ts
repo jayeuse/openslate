@@ -158,7 +158,7 @@ test("required MFA challenges an existing factor and waits for the real session 
   state.statusFailure = 0;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Complete multi-factor authentication" }),
+    page.getByRole("heading", { name: "Complete two-step verification" }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Platform", exact: true }),
@@ -445,7 +445,7 @@ test("a returning tab conceals the old account before revalidation and ignores d
   });
 
   await page.goto("/platform?section=notifications");
-  const notices = page.getByRole("region", { name: "Connected notifications" });
+  const notices = page.getByRole("region", { name: "Notifications" });
   await expect(notices.getByText("Scheduled report run")).toBeVisible();
 
   holdNextNotice = true;
@@ -490,10 +490,10 @@ test("a returning tab conceals the old account before revalidation and ignores d
   }
 
   const currentNotices = page.getByRole("region", {
-    name: "Connected notifications",
+    name: "Notifications",
   });
   await expect(
-    currentNotices.getByText("No connected notifications on this page."),
+    currentNotices.getByText("No notifications on this page."),
   ).toBeVisible();
   await expect(currentNotices.getByText("Scheduled report run")).toHaveCount(0);
 });
@@ -715,7 +715,7 @@ test("Retry starts a fresh check when the current session request never settles"
     const curtain = page.getByRole("dialog", {
       name: "Session verification",
     });
-    await curtain.getByRole("button", { name: "Retry session check" }).click();
+    await curtain.getByRole("button", { name: "Check again" }).click();
     await expect(curtain).toBeHidden();
     await expect(search).toHaveValue("still editing");
   } finally {
@@ -767,7 +767,7 @@ for (const transition of [
     }
     await copyFailure();
     const failure = page
-      .getByRole("region", { name: "Notifications", exact: true })
+      .getByRole("region", { name: "Status messages", exact: true })
       .getByText("The browser could not copy the link.", {
         exact: true,
       });
@@ -784,7 +784,7 @@ for (const transition of [
       .click();
     await expect(
       page
-        .getByRole("region", { name: "Notifications", exact: true })
+        .getByRole("region", { name: "Status messages", exact: true })
         .getByText("#workshop archived.", { exact: true }),
     ).toBeVisible();
     await expect(
@@ -792,7 +792,7 @@ for (const transition of [
     ).toBeVisible();
     if (transition === "closing-account-change") {
       const endingNotice = page
-        .getByRole("region", { name: "Notifications", exact: true })
+        .getByRole("region", { name: "Status messages", exact: true })
         .getByRole("alertdialog", { includeHidden: true })
         .filter({ hasText: "The browser could not copy the link." });
       // Hold a real ending animation so dismissal is still pending when the
@@ -820,7 +820,7 @@ for (const transition of [
     await expect(failure).toHaveCount(0);
     await expect(
       page
-        .getByRole("region", { name: "Notifications", exact: true })
+        .getByRole("region", { name: "Status messages", exact: true })
         .getByText("#workshop archived.", { exact: true }),
     ).toHaveCount(0);
     await expect(

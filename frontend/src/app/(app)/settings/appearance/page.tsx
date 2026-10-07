@@ -5,6 +5,7 @@ import { Check, Monitor, Moon, Sun } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectItem } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
   useUserPreferences,
@@ -19,6 +20,9 @@ const modes = [
   ["system", "System", Monitor],
 ] as const;
 
+const kbdClass =
+  "border-border bg-muted text-foreground rounded-sm border px-1.5 py-0.5 font-mono text-xs";
+
 export default function AppearancePage() {
   const preference = useUserPreferences();
   const [deviceReducesMotion, setDeviceReducesMotion] = useState(false);
@@ -26,6 +30,10 @@ export default function AppearancePage() {
   const motionDescriptionId = useId();
   const keyboardLabelId = useId();
   const keyboardDescriptionId = useId();
+  const motionSwitchId = useId();
+  const keyboardSwitchId = useId();
+  const textSizeId = useId();
+  const densityId = useId();
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
     const sync = () => setDeviceReducesMotion(media.matches);
@@ -89,38 +97,40 @@ export default function AppearancePage() {
             <CardTitle>Text and display</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <label className="grid gap-1.5 text-sm font-medium">
-              Text size
-              <select
-                className="border-input bg-background min-h-11 w-full rounded-md border px-3 text-sm"
+            <div className="grid gap-1.5">
+              <label htmlFor={textSizeId} className="text-sm font-medium">
+                Text size
+              </label>
+              <Select
+                id={textSizeId}
+                className="min-h-11"
                 value={preference.device.textSize}
-                onChange={(event) =>
-                  preference.setDevice({
-                    textSize: event.target.value as DeviceTextSize,
-                  })
+                onValueChange={(value) =>
+                  preference.setDevice({ textSize: value as DeviceTextSize })
                 }
               >
-                <option value="100">Default (100%)</option>
-                <option value="112.5">Large (112.5%)</option>
-                <option value="125">Larger (125%)</option>
-              </select>
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium">
-              Page spacing
-              <select
-                className="border-input bg-background min-h-11 w-full rounded-md border px-3 text-sm"
+                <SelectItem value="100">Default (100%)</SelectItem>
+                <SelectItem value="112.5">Large (112.5%)</SelectItem>
+                <SelectItem value="125">Larger (125%)</SelectItem>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <label htmlFor={densityId} className="text-sm font-medium">
+                Page spacing
+              </label>
+              <Select
+                id={densityId}
+                className="min-h-11"
                 value={preference.device.density}
-                onChange={(event) =>
-                  preference.setDevice({
-                    density: event.target.value as PageDensity,
-                  })
+                onValueChange={(value) =>
+                  preference.setDevice({ density: value as PageDensity })
                 }
               >
-                <option value="default">Default</option>
-                <option value="compact">Compact</option>
-                <option value="spacious">Spacious</option>
-              </select>
-            </label>
+                <SelectItem value="default">Default</SelectItem>
+                <SelectItem value="compact">Compact</SelectItem>
+                <SelectItem value="spacious">Spacious</SelectItem>
+              </Select>
+            </div>
             <p className="text-muted-foreground text-sm">
               Compact applies on wide screens with a mouse or trackpad. Other
               screens use Default spacing. The Sandbox canvas keeps its own
@@ -141,9 +151,13 @@ export default function AppearancePage() {
           <CardContent>
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <p id={motionLabelId} className="text-sm font-medium">
+                <label
+                  id={motionLabelId}
+                  htmlFor={motionSwitchId}
+                  className="block text-sm font-medium"
+                >
                   Reduce motion
-                </p>
+                </label>
                 <p
                   id={motionDescriptionId}
                   className="text-muted-foreground mt-1 text-sm"
@@ -156,6 +170,7 @@ export default function AppearancePage() {
                 </p>
               </div>
               <Switch
+                id={motionSwitchId}
                 aria-labelledby={motionLabelId}
                 aria-describedby={motionDescriptionId}
                 checked={preference.motion === "reduce"}
@@ -175,18 +190,24 @@ export default function AppearancePage() {
           <CardContent>
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <p id={keyboardLabelId} className="text-sm font-medium">
+                <label
+                  id={keyboardLabelId}
+                  htmlFor={keyboardSwitchId}
+                  className="block text-sm font-medium"
+                >
                   Convenience shortcuts
-                </p>
+                </label>
                 <p
                   id={keyboardDescriptionId}
                   className="text-muted-foreground mt-1 text-sm"
                 >
-                  In the Sandbox, ? opens canvas help and 0 fits the canvas.
+                  In the Sandbox, <kbd className={kbdClass}>?</kbd> opens canvas
+                  help and <kbd className={kbdClass}>0</kbd> fits the canvas.
                   Buttons and essential editing keys always work.
                 </p>
               </div>
               <Switch
+                id={keyboardSwitchId}
                 aria-labelledby={keyboardLabelId}
                 aria-describedby={keyboardDescriptionId}
                 checked={preference.keyboardShortcuts === true}

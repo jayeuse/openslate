@@ -174,14 +174,14 @@ test("13b: organization MFA summary keeps known absence separate from unknown an
     mfa_observed_at: null,
   });
   await page.goto("/access?view=overview");
-  const mfa = card(page, "Administrator MFA");
+  const mfa = card(page, "Administrator two-step verification");
   await expect(
-    mfa.getByText("1 without verified MFA", { exact: true }),
+    mfa.getByText("1 without two-step verification", { exact: true }),
   ).toBeVisible();
   await expect(mfa.getByText("1 unknown", { exact: true })).toBeVisible();
   await mfa
     .getByRole("link", {
-      name: "Show administrators without verified MFA",
+      name: "Show administrators without two-step verification",
       exact: true,
     })
     .click();
@@ -190,9 +190,9 @@ test("13b: organization MFA summary keeps known absence separate from unknown an
   await expect(people.getByRole("row", { name: /Rosa Reyes/ })).toBeVisible();
   await expect.poll(() => api.listReads.at(-1)?.get("mfa")).toBe("without");
   await page.goto("/access?view=overview");
-  await card(page, "Administrator MFA")
+  await card(page, "Administrator two-step verification")
     .getByRole("link", {
-      name: "Show administrators with unknown MFA",
+      name: "Show administrators with unknown status",
       exact: true,
     })
     .click();
@@ -245,14 +245,16 @@ test("13b: unavailable monitoring summary never manufactures zero and explicit R
   });
   await page.goto("/access?view=overview");
   await expect(
-    page.getByText("Loading MFA observations…", { exact: true }),
+    page.getByText("Loading two-step verification status…", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText(/0 without verified MFA|0 unknown/)).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByText(/0 without two-step verification|0 unknown/),
+  ).toHaveCount(0);
   release?.();
-  const mfa = card(page, "Administrator MFA");
-  await expect(mfa).toContainText("MFA observations could not be loaded.");
+  const mfa = card(page, "Administrator two-step verification");
+  await expect(mfa).toContainText(
+    "Two-step verification status could not load.",
+  );
   await expect(mfa.getByRole("alert")).toHaveAttribute(
     "data-variant",
     "destructive",
@@ -271,11 +273,9 @@ test("13b: unavailable monitoring summary never manufactures zero and explicit R
     await expect(card(page, title)).not.toContainText("Private failure canary");
   }
   unavailable = false;
-  await mfa
-    .getByRole("button", { name: "Retry MFA observations", exact: true })
-    .click();
+  await mfa.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(
-    mfa.getByText("4 without verified MFA", { exact: true }),
+    mfa.getByText("4 without two-step verification", { exact: true }),
   ).toBeVisible();
   await expect(mfa.getByText("2 unknown", { exact: true })).toBeVisible();
   await expect(

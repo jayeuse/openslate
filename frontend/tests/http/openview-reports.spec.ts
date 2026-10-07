@@ -483,7 +483,8 @@ test.describe("Reports in a non-UTC browser timezone", () => {
     await expect(
       page
         .getByRole("table", { name: "Saved outputs" })
-        .getByText(/Sep 24, 2026.*12:00 AM UTC/),
+        // The shared workspace fixture is en-PH in Asia/Manila (UTC+8).
+        .getByText(/Sep 24, 2026.*8:00\sAM$/),
     ).toBeVisible();
     await page.getByRole("tab", { name: "Schedule" }).click();
     await page.getByRole("checkbox", { name: "Enable scheduled runs" }).check();
@@ -788,7 +789,7 @@ test("a module reader runs a Report but cannot change, copy or schedule it", asy
     page.getByRole("checkbox", { name: "Enable scheduled runs" }),
   ).toHaveCount(0);
   await expect(
-    page.getByText("Weekly on Monday at 09:00 (Asia/Manila)"),
+    page.getByText("Weekly on Monday at 9:00 AM (Asia/Manila)"),
   ).toBeVisible();
   await expect(
     page.getByText("Only a manager of this module changes the schedule."),
@@ -1518,7 +1519,7 @@ test("a notice keeps dirty Report edits on canceled navigation and closes only a
     name: "Notifications",
     exact: true,
   });
-  await popup.getByRole("link", { name: "Open Report output" }).click();
+  await popup.getByRole("link", { name: "Open report" }).click();
   const guard = page.getByRole("alertdialog", {
     name: "Discard unsaved Report changes?",
   });
@@ -1531,7 +1532,7 @@ test("a notice keeps dirty Report edits on canceled navigation and closes only a
     }),
   ).toBeVisible();
   await expect(page).toHaveURL(`/openview?section=reports&report=${reportId}`);
-  await popup.getByRole("link", { name: "Open Report output" }).click();
+  await popup.getByRole("link", { name: "Open report" }).click();
   await guard.getByRole("button", { name: "Discard and continue" }).click();
   await expect(page).toHaveURL(
     `/openview?section=reports&report=${reportId}&run=${runId}`,

@@ -660,8 +660,10 @@ test("13b: combined directory filters and sort aliases reach the server with the
   }
 });
 
-for (const width of [1440, 390])
-  test(`13b: recorded history, observed MFA and active local counts remain truthful at ${width}px`, async ({
+// From 2xl the table shows the count and both history columns; narrower
+// layouts merge history into "Last seen" and leave the count to the panel.
+for (const width of [1600, 1440, 390])
+  test(`13b: recorded history, two-step verification and active counts remain truthful at ${width}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
@@ -705,53 +707,49 @@ for (const width of [1440, 390])
     await expect(
       row("Ana Santos").getByText("Unknown", { exact: true }),
     ).toBeVisible();
-    await expect(row("Ben Cruz").getByText("2", { exact: true })).toBeVisible();
-    await expect(
-      row("Ana Santos").getByText("0", { exact: true }),
-    ).toBeVisible();
-    await expect(people).toContainText(/Observed/);
-    await expectHistoryField(
-      page,
-      "Rosa Reyes",
-      "Last sign-in",
-      await recordedTime(page, "2026-09-12T09:15:00Z"),
-      width,
-    );
-    await expectHistoryField(
-      page,
-      "Rosa Reyes",
-      "Last activity",
-      await recordedTime(page, "2026-10-01T07:45:00Z"),
-      width,
-    );
-    await expectHistoryField(
-      page,
-      "Ben Cruz",
-      "Last sign-in",
-      "No recorded sign-in",
-      width,
-    );
-    await expectHistoryField(
-      page,
-      "Ben Cruz",
-      "Last activity",
-      await recordedTime(page, "2026-10-02T08:30:00Z"),
-      width,
-    );
-    await expectHistoryField(
-      page,
-      "Ana Santos",
-      "Last sign-in",
-      "No recorded sign-in",
-      width,
-    );
-    await expectHistoryField(
-      page,
-      "Ana Santos",
-      "Last activity",
-      "No recorded activity",
-      width,
-    );
+    await expect(people).toContainText(/Recorded/);
+    if (width === 1600) {
+      await expect(
+        row("Ben Cruz").getByText("2", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        row("Ana Santos").getByText("0", { exact: true }),
+      ).toBeVisible();
+      for (const [name, label, expected] of [
+        ["Rosa Reyes", "Last sign-in", "2026-09-12T09:15:00Z"],
+        ["Rosa Reyes", "Last activity", "2026-10-01T07:45:00Z"],
+        ["Ben Cruz", "Last sign-in", "No recorded sign-in"],
+        ["Ben Cruz", "Last activity", "2026-10-02T08:30:00Z"],
+        ["Ana Santos", "Last sign-in", "No recorded sign-in"],
+        ["Ana Santos", "Last activity", "No recorded activity"],
+      ] as const)
+        await expectHistoryField(
+          page,
+          name,
+          label,
+          expected.startsWith("2026")
+            ? await recordedTime(page, expected)
+            : expected,
+          width,
+        );
+    } else {
+      await expect(people).not.toContainText(/Active sessions|Last activity/);
+      // Last seen is the later of the recorded sign-in and activity.
+      for (const [name, expected] of [
+        ["Rosa Reyes", "2026-10-01T07:45:00Z"],
+        ["Ben Cruz", "2026-10-02T08:30:00Z"],
+        ["Ana Santos", "No recorded sign-in"],
+      ] as const)
+        await expectHistoryField(
+          page,
+          name,
+          "Last seen",
+          expected.startsWith("2026")
+            ? await recordedTime(page, expected)
+            : expected,
+          width,
+        );
+    }
     await expect(people).not.toContainText(/never signed in|provider live/i);
     expect(
       await page.evaluate(
@@ -913,6 +911,8 @@ for (const [contract, fields] of [
 test("13b: person sessions show sign-in addresses and accepted revocation refreshes the directory count", async ({
   page,
 }) => {
+  // The directory count column shows from the 2xl breakpoint.
+  await page.setViewportSize({ width: 1600, height: 900 });
   const api = await mockPeopleApi(page);
   api.sessions.push({
     id: "00000000-0000-4000-8000-0000000000f3",

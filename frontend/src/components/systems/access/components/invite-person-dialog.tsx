@@ -374,7 +374,7 @@ export function InvitePersonDialog({
             ) : null}
             <ActionError message={submitError} />
 
-            <DialogFooter className="bg-card sticky bottom-0 z-10 -mx-5 mt-0 -mb-5 border-t px-5 py-3">
+            <DialogFooter className="bg-card sticky -bottom-5 z-10 -mx-5 mt-0 -mb-5 border-t px-5 pt-3 pb-8">
               <Button
                 type="button"
                 variant="outline"

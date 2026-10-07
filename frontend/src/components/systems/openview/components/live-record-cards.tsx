@@ -5,7 +5,11 @@ import type {
   OpenViewRecord,
 } from "../adapters/views-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
-import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
+import {
+  formatWorkspaceDate,
+  formatWorkspaceDateTime,
+  type WorkspaceRegion,
+} from "@/lib/date-time";
 
 type LiveRecordCardLayout = "grid" | "gallery";
 
@@ -21,11 +25,40 @@ type LiveRecordCardsProps = {
   onOpenRecord: (recordId: string) => void;
 };
 
-function recordValue(value: unknown): string {
-  if (typeof value === "string" || typeof value === "number")
-    return String(value);
+/**
+ * One reading of a record field value for OpenView lists, cards and the
+ * timeline: dates follow the workspace region, booleans read Yes or No, and an
+ * empty value shows the caller's fallback.
+ */
+export function formatOpenViewFieldValue(
+  value: unknown,
+  type: OpenViewDataSourceField["type"],
+  region: WorkspaceRegion | undefined,
+  fallback = "—",
+): string {
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  return "—";
+  if (typeof value === "number")
+    return Number.isFinite(value) ? String(value) : fallback;
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  if (region && type === "date") return formatWorkspaceDate(value, region);
+  if (region && type === "datetime") {
+    // Stored datetimes without an offset are UTC, as the calendar reads them.
+    const instant = /(?:z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`;
+    return formatWorkspaceDateTime(instant, region);
+  }
+  return value;
+}
+
+function recordValue(
+  row: OpenViewRecord,
+  field: OpenViewDataSourceField,
+  region: WorkspaceRegion | undefined,
+): string {
+  return formatOpenViewFieldValue(
+    openViewRecordFieldValue(row, field),
+    field.type,
+    region,
+  );
 }
 
 function updatedDate(
@@ -71,7 +104,12 @@ export function LiveRecordCards({
     >
       {rows.map((row) => {
         const primaryValue = primaryField
-          ? recordValue(openViewRecordFieldValue(row, primaryField))
+          ? formatOpenViewFieldValue(
+              openViewRecordFieldValue(row, primaryField),
+              primaryField.type,
+              region,
+              "Untitled record",
+            )
           : "Untitled record";
         return (
           <li key={row.id} className="min-w-0">
@@ -110,7 +148,7 @@ export function LiveRecordCards({
                     className={`text-muted-foreground mt-1 text-sm ${wrap ? "break-words" : "truncate whitespace-nowrap"}`}
                   >
                     {secondaryField.name}:{" "}
-                    {recordValue(openViewRecordFieldValue(row, secondaryField))}
+                    {recordValue(row, secondaryField, region)}
                   </p>
                 ) : null}
               </header>
@@ -134,7 +172,7 @@ export function LiveRecordCards({
                           wrap ? "break-words" : "truncate whitespace-nowrap"
                         }
                       >
-                        {recordValue(openViewRecordFieldValue(row, field))}
+                        {recordValue(row, field, region)}
                       </dd>
                     </div>
                   ))}

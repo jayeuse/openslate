@@ -18,6 +18,7 @@ import {
 import type { OpenViewWindowQueryRequest } from "../adapters/window-api";
 import type { OpenViewDataSourceField } from "../adapters/views-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
+import { formatOpenViewFieldValue } from "./live-record-cards";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -31,13 +32,6 @@ import {
 const PAGE_SIZE = 25;
 
 type TimelineScope = "window" | "unscheduled";
-
-function recordTitle(value: unknown, fallback: string): string {
-  if (typeof value === "string" && value.trim()) return value;
-  if (typeof value === "number" || typeof value === "boolean")
-    return String(value);
-  return fallback;
-}
 
 function progressValue(
   value: unknown,
@@ -222,6 +216,7 @@ export function LiveTimeline({
         }}
         onShiftWindow={shiftWindow}
         timezone={timezone}
+        locale={region?.locale}
       />
       {loading && result ? (
         <p
@@ -292,8 +287,10 @@ export function LiveTimeline({
         <ul aria-label="Timeline intervals" className="divide-y">
           {result.items.map((row) => {
             const title = titleField
-              ? recordTitle(
+              ? formatOpenViewFieldValue(
                   openViewRecordFieldValue(row, titleField),
+                  titleField.type,
+                  region,
                   `Record ${row.id.slice(0, 8)}`,
                 )
               : `Record ${row.id.slice(0, 8)}`;
@@ -408,7 +405,11 @@ export function LiveTimeline({
                         className="text-muted-foreground text-sm"
                       >
                         {field.name}:{" "}
-                        {recordTitle(openViewRecordFieldValue(row, field), "—")}
+                        {formatOpenViewFieldValue(
+                          openViewRecordFieldValue(row, field),
+                          field.type,
+                          region,
+                        )}
                       </p>
                     ))}
                   </div>

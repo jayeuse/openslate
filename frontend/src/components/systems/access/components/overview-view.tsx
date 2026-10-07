@@ -189,7 +189,7 @@ export function OverviewView() {
       title: "No recorded sign-in",
       count: summary.data?.no_recorded_sign_in,
       description:
-        "Active people with no recorded local sign-in. Earlier sign-ins may not have been recorded.",
+        "Active people with no recorded sign-in. Sign-ins before this feature was added are not counted.",
       href: "/access?view=people&history=no-recorded-sign-in",
     },
     {
@@ -280,40 +280,33 @@ export function OverviewView() {
                         aria-hidden="true"
                         className="text-muted-foreground size-4 shrink-0"
                       />
-                      Administrator MFA
+                      Administrator two-step verification
                     </h3>
                     {summary.isError ? (
                       <Alert variant="destructive" className="space-y-3">
-                        <p className="text-sm">
-                          MFA observations could not be loaded.
-                        </p>
+                        <p>Two-step verification status could not load.</p>
                         <Button
                           variant="outline"
                           className="min-h-11"
                           onClick={() => void summary.refetch()}
                         >
-                          Retry MFA observations
+                          Try again
                         </Button>
                       </Alert>
                     ) : (
                       <LoadingRegion
                         loading={summary.isPending}
-                        label="Loading MFA observations…"
+                        label="Loading two-step verification status…"
                         skeleton={<Skeleton className="h-24 w-full" />}
                       >
                         {summary.data ? (
                           <div className="flex flex-col gap-3">
                             <p className="text-lg font-semibold tabular-nums">
-                              {summary.data.admins_without_mfa} without verified
-                              MFA
+                              {summary.data.admins_without_mfa} without two-step
+                              verification
                             </p>
                             <p className="text-muted-foreground text-sm tabular-nums">
                               {summary.data.admins_mfa_unknown} unknown
-                            </p>
-                            <p className="text-muted-foreground text-sm">
-                              Last recorded observations for current
-                              administrators. Unknown is separate from
-                              unverified.
                             </p>
                             {summary.data.admins_without_mfa > 0 ? (
                               <Button
@@ -322,7 +315,8 @@ export function OverviewView() {
                                 className="min-h-11 w-full justify-between"
                               >
                                 <GuardedWorkspaceLink href="/access?view=people&role=admin&mfa=without">
-                                  Show administrators without verified MFA
+                                  Show administrators without two-step
+                                  verification
                                   <ArrowRight aria-hidden="true" />
                                 </GuardedWorkspaceLink>
                               </Button>
@@ -334,7 +328,7 @@ export function OverviewView() {
                                 className="min-h-11 w-full justify-between"
                               >
                                 <GuardedWorkspaceLink href="/access?view=people&role=admin&mfa=unknown">
-                                  Show administrators with unknown MFA
+                                  Show administrators with unknown status
                                   <ArrowRight aria-hidden="true" />
                                 </GuardedWorkspaceLink>
                               </Button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   formatWorkspaceDate,
   formatWorkspaceDateTime,
@@ -18,6 +18,7 @@ import type {
   OpenViewRecord,
 } from "../adapters/views-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
+import { formatOpenViewFieldValue } from "./live-record-cards";
 import type { RecordInspectionPage } from "./live-record-inspector";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -294,6 +295,7 @@ export function WindowControls({
   onScopeChange,
   onShiftWindow,
   timezone,
+  locale,
 }: {
   startDate: string;
   endDate: string;
@@ -306,7 +308,20 @@ export function WindowControls({
   onScopeChange: (scope: "window" | "undated" | "unscheduled") => void;
   onShiftWindow: (direction: -1 | 1) => void;
   timezone: string | null;
+  /** Workspace locale; the chosen dates are repeated in its format. */
+  locale: string | undefined;
 }) {
+  const startHintId = useId();
+  const endHintId = useId();
+  const chosenDate = (value: string) =>
+    locale && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? formatWorkspaceDate(value, {
+          locale,
+          timezone: timezone ?? "UTC",
+        })
+      : "";
+  const startLabel = chosenDate(startDate);
+  const endLabel = chosenDate(endDate);
   const labels = [
     { value: "window" as const, label: windowLabel },
     {
@@ -340,21 +355,33 @@ export function WindowControls({
             <span>Window starts</span>
             <Input
               aria-label="Window starts"
+              aria-describedby={startLabel ? startHintId : undefined}
               className="min-h-11 w-44"
               type="date"
               value={startDate}
               onChange={(event) => onStartDateChange(event.target.value)}
             />
+            {startLabel ? (
+              <span id={startHintId} className="text-muted-foreground text-xs">
+                {startLabel}
+              </span>
+            ) : null}
           </label>
           <label className="grid gap-1 text-sm">
             <span>Window ends</span>
             <Input
               aria-label="Window ends"
+              aria-describedby={endLabel ? endHintId : undefined}
               className="min-h-11 w-44"
               type="date"
               value={endDate}
               onChange={(event) => onEndDateChange(event.target.value)}
             />
+            {endLabel ? (
+              <span id={endHintId} className="text-muted-foreground text-xs">
+                {endLabel}
+              </span>
+            ) : null}
           </label>
           <Button
             type="button"
@@ -429,11 +456,18 @@ export function WindowPageNavigation({
   );
 }
 
-function recordText(value: unknown): string {
-  if (typeof value === "string" && value.trim()) return value;
-  if (typeof value === "number" || typeof value === "boolean")
-    return String(value);
-  return "Untitled record";
+function recordText(
+  row: OpenViewRecord,
+  field: OpenViewDataSourceField,
+  region: WorkspaceRegion,
+  fallback = "—",
+): string {
+  return formatOpenViewFieldValue(
+    openViewRecordFieldValue(row, field),
+    field.type,
+    region,
+    fallback,
+  );
 }
 
 type LiveCalendarProps = LiveWindowBaseProps & {
@@ -697,6 +731,7 @@ function ResolvedLiveCalendar({
         }}
         onShiftWindow={shiftWindow}
         timezone={timezone}
+        locale={region.locale}
       />
       {monthLayout ? (
         <div className="hidden min-w-0 flex-col gap-4 p-4 lg:flex">
@@ -797,7 +832,10 @@ function ResolvedLiveCalendar({
                               {rows.map((row) => {
                                 const title = titleField
                                   ? recordText(
-                                      openViewRecordFieldValue(row, titleField),
+                                      row,
+                                      titleField,
+                                      region,
+                                      "Untitled record",
                                     )
                                   : `Record ${row.id.slice(0, 8)}`;
                                 return (
@@ -833,12 +871,7 @@ function ResolvedLiveCalendar({
                                           {detailFields
                                             .slice(0, 2)
                                             .map((field) =>
-                                              recordText(
-                                                openViewRecordFieldValue(
-                                                  row,
-                                                  field,
-                                                ),
-                                              ),
+                                              recordText(row, field, region),
                                             )
                                             .join(" · ")}
                                         </span>
@@ -950,7 +983,7 @@ function ResolvedLiveCalendar({
               <ul className="divide-y">
                 {rows.map((row) => {
                   const title = titleField
-                    ? recordText(openViewRecordFieldValue(row, titleField))
+                    ? recordText(row, titleField, region, "Untitled record")
                     : `Record ${row.id.slice(0, 8)}`;
                   return (
                     <li
@@ -987,8 +1020,7 @@ function ResolvedLiveCalendar({
                             key={field.id}
                             className="text-muted-foreground text-sm"
                           >
-                            {field.name}:{" "}
-                            {recordText(openViewRecordFieldValue(row, field))}
+                            {field.name}: {recordText(row, field, region)}
                           </p>
                         ))}
                       </div>

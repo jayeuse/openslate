@@ -3612,14 +3612,14 @@ test("History deletion failure retains its target and successful deletion select
   await expect(dialog).toBeHidden();
   await expect(
     page
-      .getByRole("region", { name: "Notifications", exact: true })
+      .getByRole("region", { name: "Status messages", exact: true })
       .getByText("Disposable checkpoint deleted from shared history.", {
         exact: true,
       }),
   ).toBeVisible();
   await expect(
     page
-      .getByRole("region", { name: "Notifications", exact: true })
+      .getByRole("region", { name: "Status messages", exact: true })
       .getByText("Disposable checkpoint deleted from shared history.", {
         exact: true,
       }),

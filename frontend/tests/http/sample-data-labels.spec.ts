@@ -86,7 +86,7 @@ test("Platform notifications contains the connected inbox without sample control
 }) => {
   await openSignedIn(page, "/platform?section=notifications");
   await expect(
-    page.getByRole("region", { name: "Connected notifications", exact: true }),
+    page.getByRole("region", { name: "Notifications", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("note", { name: "Example data" })).toHaveCount(0);
   for (const name of ["Preview notifications", "Preview preferences"])

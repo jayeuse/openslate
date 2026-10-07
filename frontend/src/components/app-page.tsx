@@ -20,6 +20,8 @@ import {
 } from "@/lib/auth-api";
 import { ApiError, refreshBrowserSession } from "@/lib/api";
 import { toast } from "@/components/ui/toast";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { getMfaStatus, type MfaStatus } from "@/lib/mfa-api";
 import {
   MfaFlowContext,
@@ -71,42 +73,42 @@ function SessionVerificationMessage({
   signOutError?: boolean;
 }) {
   return (
-    <div className="max-w-sm px-6 text-center">
+    <div className="mx-auto max-w-sm px-6">
       {draftCleanupFailed ? (
-        <p className="text-foreground text-sm" role="alert">
+        <Alert variant="destructive">
           We could not clear saved Access drafts in this tab. Close this tab
           before another person signs in, or clear this site&apos;s session data
           and retry.
-        </p>
+        </Alert>
       ) : unavailable ? (
-        <p className="text-foreground text-sm" role="alert">
+        <Alert variant="destructive">
           We can’t verify your session right now. Your sign-in details are still
           available.
-        </p>
+        </Alert>
       ) : (
-        <p className="text-muted-foreground text-sm" role="status">
+        <p className="text-muted-foreground text-center text-sm" role="status">
           Checking your session…
         </p>
       )}
-      <button
-        className="bg-primary text-primary-foreground mt-5 inline-flex min-h-11 items-center justify-center rounded-md px-4 text-sm font-medium"
-        onClick={onRetry}
-        type="button"
-      >
-        {unavailable ? "Retry" : "Retry session check"}
-      </button>
-      {onSignOut && (
-        <button
-          className="mt-5 ml-3 min-h-11 rounded-md border px-4 text-sm"
-          onClick={onSignOut}
-        >
-          Sign out
-        </button>
-      )}
+      <div className="mt-5 flex flex-wrap justify-center gap-3">
+        <Button className="min-h-11" onClick={onRetry} type="button">
+          {unavailable ? "Retry" : "Check again"}
+        </Button>
+        {onSignOut && (
+          <Button
+            className="min-h-11"
+            variant="outline"
+            onClick={onSignOut}
+            type="button"
+          >
+            Sign out
+          </Button>
+        )}
+      </div>
       {signOutError && (
-        <p className="mt-3 text-sm" role="alert">
+        <Alert variant="destructive" className="mt-3">
           Sign-out could not finish. Try again.
-        </p>
+        </Alert>
       )}
     </div>
   );
@@ -554,53 +556,67 @@ export function AppPage({ children }: AppPageProps) {
     mfaRequired && mfa.mode === "gate" ? (
       <section
         className="w-full max-w-lg px-6 py-8"
-        aria-label="Multi-factor authentication"
+        aria-label="Two-step verification"
       >
         <h2 className="text-xl font-semibold">
-          Complete multi-factor authentication
+          Complete two-step verification
         </h2>
         <p className="text-muted-foreground mt-2 text-sm">
           Verify this account before continuing to your workspace.
         </p>
         <MfaPresentation flow={mfa} gate />
-        <button
-          className="min-h-11 rounded-md border px-4 text-sm"
-          onClick={retrySessionCheck}
-        >
-          Retry session check
-        </button>
-        <button
-          className="mt-4 min-h-11 rounded-md border px-4 text-sm"
-          onClick={() => void signOutFromGate()}
-        >
-          Sign out
-        </button>
-        {signOutError && (
-          <p role="alert">Sign-out could not finish. Try again.</p>
-        )}
-      </section>
-    ) : networkDenied ? (
-      <div className="max-w-sm px-6 text-center">
-        <p role="alert">
-          Access from this address is not allowed. Use an allowed network, or
-          contact your administrator.
-        </p>
-        <div className="mt-5 flex flex-wrap justify-center gap-3">
-          <button
-            className="min-h-11 rounded-md border px-4 text-sm"
+        <div className="mt-2 flex flex-wrap gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
             onClick={retrySessionCheck}
           >
-            Retry
-          </button>
-          <button
-            className="min-h-11 rounded-md border px-4 text-sm"
+            Check again
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
             onClick={() => void signOutFromGate()}
           >
             Sign out
-          </button>
+          </Button>
         </div>
         {signOutError && (
-          <p role="alert">Sign-out could not finish. Try again.</p>
+          <Alert variant="destructive" className="mt-3">
+            Sign-out could not finish. Try again.
+          </Alert>
+        )}
+      </section>
+    ) : networkDenied ? (
+      <div className="mx-auto max-w-sm px-6">
+        <Alert variant="destructive">
+          Access from this address is not allowed. Use an allowed network, or
+          contact your administrator.
+        </Alert>
+        <div className="mt-5 flex flex-wrap justify-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={retrySessionCheck}
+          >
+            Retry
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={() => void signOutFromGate()}
+          >
+            Sign out
+          </Button>
+        </div>
+        {signOutError && (
+          <Alert variant="destructive" className="mt-3">
+            Sign-out could not finish. Try again.
+          </Alert>
         )}
       </div>
     ) : (

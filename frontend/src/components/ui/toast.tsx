@@ -108,7 +108,12 @@ function ToastList() {
           screens (over lists, clear of composers and page actions), and
           below the 56px top bar on phones, where a composer fills the
           bottom edge. */}
-      <Toast.Viewport className="fixed z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2 outline-none max-sm:top-[calc(3.5rem+0.5rem)] max-sm:left-1/2 max-sm:-translate-x-1/2 sm:bottom-4 sm:left-4">
+      <Toast.Viewport
+        // Base UI names this region "Notifications", which collides with the
+        // Notifications inbox landmark.
+        aria-label="Status messages"
+        className="fixed z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2 outline-none max-sm:top-[calc(3.5rem+0.5rem)] max-sm:left-1/2 max-sm:-translate-x-1/2 sm:bottom-4 sm:left-4"
+      >
         {toasts.map((item) => {
           const obsolete =
             item.data?.workspaceRevision !== undefined &&
