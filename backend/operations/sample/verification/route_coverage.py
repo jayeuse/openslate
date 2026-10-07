@@ -20,6 +20,30 @@ Route = tuple[str, str]
 # must acquire an executor and verification before it can be added here.
 SEEDER_ROUTES: frozenset[Route] = frozenset(
     {
+        ("POST", "/api/auth/mfa/factors"),
+        ("POST", "/api/auth/mfa/factors/{factor_id}/verification"),
+        ("DELETE", "/api/auth/mfa/factors/{factor_id}"),
+        ("GET", "/api/users/{user_id}/security"),
+        ("POST", "/api/users/{user_id}/mfa/reset"),
+        ("GET", "/api/security-events"),
+        ("GET", "/api/security-events/{event_id}"),
+        ("GET", "/api/users/summary"),
+        ("POST", "/api/users/{user_id}/recovery"),
+        ("POST", "/api/files"),
+        ("GET", "/api/files"),
+        ("GET", "/api/files/{file_id}"),
+        ("PUT", "/api/files/{file_id}/content"),
+        ("GET", "/api/files/{file_id}/content"),
+        ("POST", "/api/files/{file_id}/archive"),
+        ("POST", "/api/files/{file_id}/reopen"),
+        ("POST", "/api/files/{file_id}/reconcile"),
+        ("GET", "/api/workspace/logo"),
+        ("GET", "/api/workspace/appearance"),
+        ("GET", "/api/workspace/security/caller-ip"),
+        ("GET", "/api/notifications"),
+        ("GET", "/api/notifications/unread-count"),
+        ("POST", "/api/notifications/{notification_id}/read"),
+        ("POST", "/api/notifications/read-all"),
         ("DELETE", "/api/access/groups/{group_id}"),
         ("DELETE", "/api/auth/invitations/{user_id}"),
         ("DELETE", "/api/auth/sessions/{session_id}"),
@@ -223,26 +247,9 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
     }
 )
 
-# Exact operations only; a category is never a prefix wildcard.
-INTERACTIVE_ACCEPTANCE_ROUTES: dict[Route, str] = {
-    (
-        "POST",
-        "/api/auth/mfa/factors",
-    ): "Real authenticator enrollment requires provider acceptance outside packs (Phase B8).",
-    (
-        "POST",
-        "/api/auth/mfa/factors/{factor_id}/verification",
-    ): "Real authenticator verification requires provider acceptance outside packs (Phase B8).",
-    (
-        "DELETE",
-        "/api/auth/mfa/factors/{factor_id}",
-    ): "Provider factor removal is covered by the same interactive acceptance journey (Phase B8).",
-}
-
-DEFERRED_ROUTES: dict[Route, str] = {
-    ("GET", "/api/notifications"): "notifications",
-    ("POST", "/api/notifications/{notification_id}/read"): "notifications",
-}
+# Every current frontend operation has an executable sample journey.
+INTERACTIVE_ACCEPTANCE_ROUTES: dict[Route, str] = {}
+DEFERRED_ROUTES: dict[Route, str] = {}
 
 
 @lru_cache(maxsize=1)

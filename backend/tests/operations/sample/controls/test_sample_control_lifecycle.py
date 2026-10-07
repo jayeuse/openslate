@@ -38,8 +38,10 @@ def test_platform_plan_uses_disposable_structure_and_preserves_lifecycle_order(p
     dataset = _dataset(pack_key)
     document = copy.deepcopy(dataset.document)
     actions = plan_controls(dataset)
-    platform = [action for action in actions if action.kind == "platform_controls"]
-    assert len(actions) == 95
+    from operations.sample.controls.platform import OPERATIONS
+
+    platform = [action for action in actions if action.values["operation"] in OPERATIONS]
+    assert len(actions) == 102
     assert [action.values["operation"] for action in platform] == [
         "import_csv_rows",
         "search_workspace",
@@ -109,7 +111,7 @@ def test_platform_wire_imports_searches_exports_disposes_and_restores(
     selected = [
         row
         for row in plan_controls(dataset)
-        if row.kind == "platform_controls" or row.values["operation"] in lifecycle_operations
+        if row.values["operation"] in (*OPERATIONS, *lifecycle_operations)
     ]
     results = []
     try:

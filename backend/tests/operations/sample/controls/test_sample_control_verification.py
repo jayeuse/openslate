@@ -191,7 +191,9 @@ def test_platform_verification_requires_exact_requests_and_restored_state(
     wire = PlatformWire(dataset)
     context = _context(tmp_path, wire.handle)
     wire.bind(context)
-    actions = tuple(row for row in plan_controls(dataset) if row.kind == "platform_controls")
+    from operations.sample.controls.platform import OPERATIONS
+
+    actions = tuple(row for row in plan_controls(dataset) if row.values["operation"] in OPERATIONS)
     setup = next(
         row
         for row in plan_controls(dataset)

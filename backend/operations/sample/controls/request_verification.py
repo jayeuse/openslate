@@ -10,6 +10,7 @@ from operations.sample.blueprint import SampleDataset
 from operations.sample.packs.phase_types import PhaseAction
 
 _REVIEW_READ_CHECKS = {
+    "review_workspace_appearance": 3,
     "review_view_fields": 4,
     "review_report_run": 2,
     "review_board_tools": 9,
@@ -184,6 +185,34 @@ def verify_request_evidence(
         issues.append("A sample control result has invalid request evidence")
         return
     operation = action.values.get("operation")
+    if operation == "real_mfa_reset":
+        from operations.sample.controls.mfa_verification import verify_mfa_request_evidence
+
+        verify_mfa_request_evidence(
+            dataset, manifest, action, result, actors, admin_id, seen_request_ids, observed, issues
+        )
+        return
+    from operations.sample.controls.files import FILE_OPERATIONS
+    from operations.sample.controls.files_verification import verify_file_evidence
+    from operations.sample.controls.notifications_verification import verify_notification_evidence
+    from operations.sample.controls.people_security_verification import (
+        verify_people_security_evidence,
+    )
+
+    evidence_verifier = (
+        verify_file_evidence
+        if operation in FILE_OPERATIONS
+        else verify_notification_evidence
+        if operation == "review_notifications"
+        else verify_people_security_evidence
+        if operation == "review_people_security"
+        else None
+    )
+    if evidence_verifier is not None:
+        evidence_verifier(
+            dataset, manifest, action, result, admin_id, seen_request_ids, observed, issues
+        )
+        return
     if action.kind == "platform_controls":
         from operations.sample.controls.platform_verification import verify_platform_evidence
 

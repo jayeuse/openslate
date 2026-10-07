@@ -55,8 +55,12 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample.controls.account import plan_account_controls
     from operations.sample.controls.backups import plan_backup_controls
     from operations.sample.controls.boards import plan_board_controls
+    from operations.sample.controls.files import plan_file_controls
     from operations.sample.controls.manage import plan_manage_controls
+    from operations.sample.controls.mfa import plan_mfa_controls
+    from operations.sample.controls.notifications import plan_notification_controls
     from operations.sample.controls.openview import plan_openview_controls
+    from operations.sample.controls.people_security import plan_people_security_controls
     from operations.sample.controls.platform import plan_platform_controls
     from operations.sample.controls.read_reviews import plan_read_reviews
     from operations.sample.controls.reads import plan_read_controls
@@ -75,6 +79,8 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
 
     return (
         *plan_account_controls(dataset),
+        *plan_mfa_controls(dataset),
+        *plan_people_security_controls(dataset),
         *plan_board_controls(dataset),
         *plan_openview_controls(dataset),
         *plan_access_controls(dataset),
@@ -84,8 +90,10 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         *platform[3:],
         *_audit_actions(dataset),
         *plan_read_reviews(dataset),
+        *plan_file_controls(dataset),
         *plan_backup_controls(dataset),
         *plan_manage_controls(dataset),
+        *plan_notification_controls(dataset),
         *plan_read_controls(dataset),
     )
 
@@ -290,12 +298,26 @@ def execute_control_action(
     from operations.sample.controls.account import execute_account_control
     from operations.sample.controls.backups import execute_backup_control
     from operations.sample.controls.boards import execute_board_control
+    from operations.sample.controls.files import FILE_OPERATIONS, execute_file_control
     from operations.sample.controls.manage import execute_manage_control
+    from operations.sample.controls.mfa import execute_mfa_control
+    from operations.sample.controls.notifications import execute_notification_control
     from operations.sample.controls.openview import execute_openview_control
+    from operations.sample.controls.people_security import execute_people_security_control
     from operations.sample.controls.platform import execute_platform_control
     from operations.sample.controls.read_reviews import execute_read_review
     from operations.sample.controls.reads import execute_read_control
     from operations.sample.controls.sandbox import execute_sandbox_control
+
+    operation = action.values.get("operation")
+    if operation == "real_mfa_reset":
+        return execute_mfa_control(action, dataset, context, on_substep=on_substep)
+    if operation == "review_people_security":
+        return execute_people_security_control(action, dataset, context, on_substep=on_substep)
+    if operation in FILE_OPERATIONS:
+        return execute_file_control(action, dataset, context, on_substep=on_substep)
+    if operation == "review_notifications":
+        return execute_notification_control(action, dataset, context, on_substep=on_substep)
 
     handlers = {
         "access_controls": execute_access_control,

@@ -29,7 +29,7 @@ def test_backup_plan_adds_one_action_per_public_operation_with_authored_name(pac
         "review_backup_history",
         "review_version",
     ]
-    assert len(actions) == 95
+    assert len(actions) == 102
     assert all(row.actor_key == "admin" and row.phase == "reorganization" for row in backups)
     queue = backups[2]
     assert queue.expected_status == 201
@@ -38,7 +38,8 @@ def test_backup_plan_adds_one_action_per_public_operation_with_authored_name(pac
     )
     assert queue.expected_end_state["queued"] is True
     assert actions[-1].values["operation"] == "revoke_user_sessions"
-    assert actions[-2].values["operation"] == "revoke_admin_sessions"
+    assert actions[-3].values["operation"] == "revoke_admin_sessions"
+    assert actions[-2].values["operation"] == "review_notifications"
 
 
 class BackupWire:

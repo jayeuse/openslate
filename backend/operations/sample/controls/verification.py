@@ -166,15 +166,45 @@ def _run_final_verifiers(
         ("Access", lambda: verify_access_controls(client, dataset, manifest, admin_id=admin_id)),
         ("Sandbox", lambda: verify_sandbox_controls(client, dataset, manifest, admin_id=admin_id)),
     )
+    from operations.sample.controls.files_verification import verify_file_controls
+    from operations.sample.controls.mfa_verification import verify_mfa_controls
+    from operations.sample.controls.people_security_verification import (
+        verify_people_security_controls as verify_people_controls,
+    )
+
+    plan = manifest.get("control_plan")
+    operations = (
+        {
+            row["values"].get("operation")
+            for row in plan
+            if isinstance(row, Mapping) and isinstance(row.get("values"), Mapping)
+        }
+        if isinstance(plan, list)
+        else set()
+    )
+    if "real_mfa_reset" in operations:
+        verifiers += (("MFA", lambda: verify_mfa_controls(client, dataset, manifest, admin_id)),)
+    if "generic_record_file" in operations:
+        verifiers += (
+            ("Files", lambda: verify_file_controls(client, dataset, manifest, admin_id=admin_id)),
+        )
+    if "review_people_security" in operations:
+        verifiers += (
+            (
+                "People",
+                lambda: verify_people_controls(client, dataset, manifest, admin_id=admin_id),
+            ),
+        )
     for label, verifier in verifiers:
         try:
             counts, family_issues = verifier()
         except (SampleClientError, SampleVerificationError, KeyError, TypeError, ValueError):
             issues.append(f"{label} control final-state readback failed")
             continue
+        if label == "People":
+            counts["people_control_requests"] = counts.pop("control_requests_verified", 0)
         observed.update(counts)
         issues.extend(family_issues)
-    plan = manifest.get("control_plan")
     if isinstance(plan, list) and any(
         isinstance(row, Mapping) and row.get("kind") == "platform_controls" for row in plan
     ):
