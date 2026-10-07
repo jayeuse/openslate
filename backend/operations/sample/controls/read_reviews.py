@@ -22,7 +22,6 @@ from operations.sample.phases.actions import (
     SamplePhaseActionError,
     _id,
     _mapped_id,
-    _request,
     _request_object,
     _result,
 )
@@ -271,25 +270,17 @@ def execute_read_review(
                 ),
                 action.key,
             )
-            response = _request(
+            authors = _request_object(
                 action,
                 context,
                 evidence,
                 actor_key=action.actor_key,
-                method="GET",
                 path=f"{base}/post-authors",
                 step="post_authors",
-                expected=200,
                 on_substep=on_substep,
+                params=page,
             )
-            try:
-                authors = response.json()
-            except ValueError:
-                authors = None
-            if not isinstance(authors, list) or any(
-                not isinstance(row, Mapping) for row in authors
-            ):
-                raise SamplePhaseActionError("Post author options are invalid", step=action.key)
+            _rows(authors, action.key)
             checks += 1
             post_id = _mapped_id(context, "posts", str(action.values["post_key"]), step=action.key)
             post = f"{base}/posts/{post_id}"

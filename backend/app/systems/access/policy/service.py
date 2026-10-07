@@ -12,9 +12,10 @@ from app.systems.access.policy.access_notifications import (
     lock_access_recipients,
     notify_access_changes,
 )
-from app.systems.access.policy.models import Group, GroupAccess, GroupMember
+from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import (
     GroupAccessEntry,
+    GroupAccessResponse,
     GroupCreate,
     GroupUpdate,
 )
@@ -304,23 +305,35 @@ def locked_access(db: Session, group_id: UUID) -> list[GroupAccess]:
     )
 
 
-def group_access_map(db: Session, group_ids: Iterable[UUID]) -> dict[UUID, list[GroupAccessEntry]]:
-    result: dict[UUID, list[GroupAccessEntry]] = {}
+def group_access_map(
+    db: Session, group_ids: Iterable[UUID]
+) -> dict[UUID, list[GroupAccessResponse]]:
+    result: dict[UUID, list[GroupAccessResponse]] = {}
     ids = tuple(group_ids)
     if not ids:
         return result
     try:
-        rows = db.scalars(
-            select(GroupAccess)
-            .where(GroupAccess.group_id.in_(ids), GroupAccess.is_deleted.is_(False))
-            .order_by(GroupAccess.group_id, GroupAccess.department_id, GroupAccess.module_id)
-        ).all()
+        rows = (
+            db.execute(
+                select(GroupAccess, Department.department_name, Module.module_name)
+                .join(Department, Department.id == GroupAccess.department_id)
+                .outerjoin(Module, Module.id == GroupAccess.module_id)
+                .where(GroupAccess.group_id.in_(ids), GroupAccess.is_deleted.is_(False))
+                .order_by(GroupAccess.group_id, GroupAccess.department_id, GroupAccess.module_id)
+            )
+            .tuples()
+            .all()
+        )
     except SQLAlchemyError as error:
         raise unavailable(db) from error
-    for row in rows:
+    for row, department_name, module_name in rows:
         result.setdefault(row.group_id, []).append(
-            GroupAccessEntry.model_validate(
-                {"department_id": row.department_id, "module_id": row.module_id, "level": row.level}
+            GroupAccessResponse(
+                department_id=row.department_id,
+                department_name=department_name,
+                module_id=row.module_id,
+                module_name=module_name,
+                level=AccessLevel(row.level),
             )
         )
     return result

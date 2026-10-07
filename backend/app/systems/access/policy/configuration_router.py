@@ -20,8 +20,8 @@ from app.systems.access.policy.checks import forbidden
 from app.systems.access.policy.delegation import replace_members
 from app.systems.access.policy.models import Group
 from app.systems.access.policy.schemas import (
-    GroupAccessEntry,
     GroupAccessReplace,
+    GroupAccessResponse,
     GroupCreate,
     GroupListRequest,
     GroupMembersReplace,
@@ -154,7 +154,7 @@ def _private(response: Response) -> None:
 def _group_response(
     row: Group,
     member_ids: list[UUID],
-    access: list[GroupAccessEntry],
+    access: list[GroupAccessResponse],
 ) -> GroupResponse:
     return GroupResponse.model_validate(
         {

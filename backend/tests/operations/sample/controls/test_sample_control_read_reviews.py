@@ -89,7 +89,16 @@ def test_authored_reviews_follow_server_ids_and_frontend_queries(tmp_path: Path,
         elif path.endswith("/access-preview"):
             body = {"level": "write", "read": True, "write": True, "manage": False}
         elif path.endswith("/post-authors"):
-            body = [{"id": user_ids[mine_actor], "label": "Pack colleague"}]
+            body = {
+                "items": [{"id": user_ids[mine_actor], "label": "Pack colleague"}],
+                "pagination": {
+                    "limit": 25,
+                    "offset": 0,
+                    "count": 1,
+                    "total": 1,
+                    "has_more": False,
+                },
+            }
         elif path.endswith("/manage-state"):
             body = {
                 "id": post_id,
@@ -162,6 +171,7 @@ def test_authored_reviews_follow_server_ids_and_frontend_queries(tmp_path: Path,
         "archived": "active",
     }
     assert requests[f"/api/boards/{board_id}/access-preview"]["user_id"] in user_ids.values()
+    assert requests[f"/api/boards/{board_id}/post-authors"] == {"limit": "25", "offset": "0"}
     occurrence = requests[f"/api/boards/{board_id}/events/occurrences"]
     assert occurrence == {
         "window_start": "2026-10-01",
@@ -220,7 +230,19 @@ def test_board_review_stops_when_access_or_selected_revision_is_invalid(
                 json={"level": None, "read": False, "write": False, "manage": False},
             )
         if request.url.path.endswith("/post-authors"):
-            return httpx.Response(200, json=[])
+            return httpx.Response(
+                200,
+                json={
+                    "items": [],
+                    "pagination": {
+                        "limit": 25,
+                        "offset": 0,
+                        "count": 0,
+                        "total": 0,
+                        "has_more": False,
+                    },
+                },
+            )
         if request.url.path.endswith("/manage-state"):
             return httpx.Response(200, json={"id": post_id})
         if request.url.path.endswith("/revisions"):

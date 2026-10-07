@@ -68,7 +68,12 @@ def test_group_list_serializes_members_pagination_and_private_cache_headers(
         "group_access_map",
         lambda *_args: {
             group.id: [
-                schemas.GroupAccessEntry(department_id=department_id, level=AccessLevel.WRITE)
+                schemas.GroupAccessResponse(
+                    department_id=department_id,
+                    department_name="Operations",
+                    module_name=None,
+                    level=AccessLevel.WRITE,
+                )
             ]
         },
     )

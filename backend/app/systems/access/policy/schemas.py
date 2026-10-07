@@ -34,6 +34,11 @@ class GroupAccessReplace(_StrictModel):
     access: list[GroupAccessEntry] = Field(max_length=500)
 
 
+class GroupAccessResponse(GroupAccessEntry):
+    department_name: str
+    module_name: str | None
+
+
 class GroupCreate(_StrictModel):
     name: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=2000)
@@ -69,7 +74,7 @@ class GroupResponse(BaseModel):
     description: str
     revision: int
     member_ids: list[UUID]
-    access: list[GroupAccessEntry]
+    access: list[GroupAccessResponse]
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None

@@ -5150,6 +5150,54 @@
         "title": "GroupAccessReplace",
         "type": "object"
       },
+      "GroupAccessResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "department_id": {
+            "format": "uuid",
+            "title": "Department Id",
+            "type": "string"
+          },
+          "department_name": {
+            "title": "Department Name",
+            "type": "string"
+          },
+          "level": {
+            "$ref": "#/components/schemas/AccessLevel"
+          },
+          "module_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module Id"
+          },
+          "module_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module Name"
+          }
+        },
+        "required": [
+          "department_id",
+          "level",
+          "department_name",
+          "module_name"
+        ],
+        "title": "GroupAccessResponse",
+        "type": "object"
+      },
       "GroupCreate": {
         "additionalProperties": false,
         "properties": {
@@ -5225,7 +5273,7 @@
         "properties": {
           "access": {
             "items": {
-              "$ref": "#/components/schemas/GroupAccessEntry"
+              "$ref": "#/components/schemas/GroupAccessResponse"
             },
             "title": "Access",
             "type": "array"
@@ -7560,6 +7608,34 @@
         ],
         "title": "PostAuthorChoice",
         "type": "object"
+      },
+      "PostAuthorListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PostAuthorChoice"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "PostAuthorListResponse",
+        "type": "object"
+      },
+      "PostAuthorSortField": {
+        "enum": [
+          "label",
+          "username"
+        ],
+        "title": "PostAuthorSortField",
+        "type": "string"
       },
       "PostCreate": {
         "additionalProperties": false,
@@ -16665,6 +16741,23 @@
               ],
               "title": "Department Id"
             }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
           }
         ],
         "responses": {
@@ -20988,6 +21081,80 @@
               "title": "Board Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PostAuthorSortField"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
           }
         ],
         "responses": {
@@ -20995,11 +21162,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/PostAuthorChoice"
-                  },
-                  "title": "Response List Post Authors Api Boards  Board Id  Post Authors Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/PostAuthorListResponse"
                 }
               }
             },

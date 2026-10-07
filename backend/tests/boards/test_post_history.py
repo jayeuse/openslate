@@ -215,5 +215,5 @@ def test_the_author_filter_lists_only_active_unexpired_authors(
     expiring.expires_at = now - timedelta(minutes=1)
     db.flush()
 
-    labels = client(db, reader, *ROUTERS).get(f"/api/boards/{board.id}/post-authors").json()
-    assert [item["id"] for item in labels] == [str(active.id)]
+    response = client(db, reader, *ROUTERS).get(f"/api/boards/{board.id}/post-authors")
+    assert [item["id"] for item in response.json()["items"]] == [str(active.id)]

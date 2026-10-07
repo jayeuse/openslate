@@ -99,7 +99,7 @@ def test_authors_are_distinct_ordered_and_only_from_visible_publications(
     response = _client(db, viewer).get(f"/api/boards/{board.id}/post-authors")
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "private, no-store"
-    assert response.json() == sorted(
+    assert response.json()["items"] == sorted(
         [
             {"id": str(visible_a.id), "label": visible_a.username},
             {"id": str(visible_b.id), "label": visible_b.username},
@@ -125,7 +125,7 @@ def test_managers_also_see_the_authors_of_expired_posts(
 
     response = _client(db, manager).get(f"/api/boards/{board.id}/post-authors")
     assert response.status_code == 200
-    assert response.json() == [{"id": str(expired.id), "label": expired.username}]
+    assert response.json()["items"] == [{"id": str(expired.id), "label": expired.username}]
 
 
 def test_inactive_deleted_or_unestablished_authors_are_not_choices(
@@ -150,7 +150,7 @@ def test_inactive_deleted_or_unestablished_authors_are_not_choices(
 
     response = _client(db, viewer).get(f"/api/boards/{board.id}/post-authors")
     assert response.status_code == 200
-    assert response.json() == [{"id": str(active.id), "label": active.username}]
+    assert response.json()["items"] == [{"id": str(active.id), "label": active.username}]
 
 
 def test_missing_board_access_does_not_reveal_authors(
@@ -167,7 +167,7 @@ def test_missing_board_access_does_not_reveal_authors(
     assert _client(db, outsider).get(endpoint).status_code == 404
 
 
-def test_author_choices_are_bounded_to_active_board_post_limit(
+def test_author_choices_page_every_visible_author_without_a_global_cap(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
@@ -189,8 +189,89 @@ def test_author_choices_are_bounded_to_active_board_post_limit(
         _published(db, board, author)
     db.commit()
 
-    response = _client(db, owner).get(f"/api/boards/{board.id}/post-authors")
+    client = _client(db, owner)
+    endpoint = f"/api/boards/{board.id}/post-authors"
+    response = client.get(endpoint, params={"limit": 100})
     assert response.status_code == 200
-    assert len(response.json()) == 500
-    assert response.json()[0]["label"] == "authors_bounded_000"
-    assert response.json()[-1]["label"] == "authors_bounded_499"
+    body = response.json()
+    assert body["pagination"] == {
+        "limit": 100,
+        "offset": 0,
+        "count": 100,
+        "total": 501,
+        "has_more": True,
+    }
+    assert body["items"][0]["label"] == "authors_bounded_000"
+    assert body["items"][-1]["label"] == "authors_bounded_099"
+    last = client.get(endpoint, params={"limit": 100, "offset": 500}).json()
+    assert [item["label"] for item in last["items"]] == ["authors_bounded_500"]
+    assert last["pagination"]["total"] == 501
+    assert last["pagination"]["has_more"] is False
+
+
+def test_author_search_uses_display_names_and_usernames_with_stable_pages(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    owner = _actor(db, "authors-search-owner")
+    board = _board(db, owner)
+    named = [_actor(db, "authors-search-named") for _ in range(2)]
+    fallback = _actor(db, "authors-search-fallback")
+    decoy = _actor(db, "authors-search-decoy")
+    for author in named:
+        author.display_name = "Adrian 50%_team"
+    decoy.display_name = "Adrian 50XXteam"
+    for author in [*named, fallback, decoy]:
+        _published(db, board, author)
+    db.commit()
+    client = _client(db, owner)
+    endpoint = f"/api/boards/{board.id}/post-authors"
+
+    pages = [
+        client.get(endpoint, params={"search": " ADRIAN 50%_ ", "limit": 1, "offset": offset})
+        for offset in range(2)
+    ]
+    assert all(response.status_code == 200 for response in pages)
+    assert [response.json()["items"][0]["id"] for response in pages] == [
+        str(author.id) for author in sorted(named, key=lambda author: author.id)
+    ]
+    for offset, response in enumerate(pages):
+        body = response.json()
+        assert body["items"][0]["label"] == "Adrian 50%_team"
+        assert body["pagination"]["total"] == 2
+        assert body["pagination"]["has_more"] is (offset == 0)
+    for author in [named[0], fallback]:
+        response = client.get(endpoint, params={"search": author.username})
+        assert response.status_code == 200
+        assert response.json()["items"] == [
+            {"id": str(author.id), "label": author.display_name or author.username}
+        ]
+    empty = client.get(endpoint, params={"search": "absent-author"}).json()
+    assert empty["items"] == []
+    assert empty["pagination"]["total"] == 0
+    assert empty["pagination"]["has_more"] is False
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"limit": 0},
+        {"limit": 101},
+        {"offset": -1},
+        {"sort_by": "unknown"},
+        {"deleted": "include"},
+        {"deleted": "only"},
+        {"search": "a" * 101},
+    ],
+)
+def test_author_list_rejects_invalid_or_unsupported_parameters(
+    integration_owner_db: Session, params: dict[str, int | str]
+) -> None:
+    db = integration_owner_db
+    owner = _actor(db, "authors-params-owner")
+    board = _board(db, owner)
+    db.commit()
+
+    response = _client(db, owner).get(f"/api/boards/{board.id}/post-authors", params=params)
+
+    assert response.status_code == 422

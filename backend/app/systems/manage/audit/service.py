@@ -216,15 +216,23 @@ def list_audit_log_options(
     *,
     department_id: UUID | None = None,
     reader: User | None = None,
+    search: str | None = None,
 ) -> tuple[list[str], list[tuple[UUID, str | None]]]:
     conditions = _reader_conditions(db, reader)
     if department_id is not None:
         conditions.append(AuditLog.department_id == department_id)
 
+    pattern = None
+    entity_conditions = [*conditions]
+    if search:
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        entity_conditions.append(AuditLog.entity_type.ilike(pattern, escape="\\"))
+
     entity_types = list(
         db.scalars(
             select(AuditLog.entity_type)
-            .where(*conditions)
+            .where(*entity_conditions)
             .group_by(AuditLog.entity_type)
             .order_by(func.max(AuditLog.created_at).desc(), AuditLog.entity_type.asc())
             .limit(200)
@@ -249,10 +257,31 @@ def list_audit_log_options(
         .where(*conditions, AuditLog.performed_by.is_not(None))
         .subquery()
     )
+    actor_conditions = [recent_actor_rows.c.actor_rank == 1]
+    if pattern is not None:
+        current_name_matches = exists(
+            select(User.id).where(
+                User.id == recent_actor_rows.c.performed_by,
+                User.status == UserStatus.ACTIVE.value,
+                User.is_deleted.is_(False),
+                User.deleted_at.is_(None),
+                established_user_clause(),
+                or_(
+                    User.display_name.ilike(pattern, escape="\\"),
+                    User.username.ilike(pattern, escape="\\"),
+                ),
+            )
+        )
+        actor_conditions.append(
+            or_(
+                recent_actor_rows.c.actor_label.ilike(pattern, escape="\\"),
+                current_name_matches,
+            )
+        )
     actor_rows = (
         db.execute(
             select(recent_actor_rows.c.performed_by, recent_actor_rows.c.actor_label)
-            .where(recent_actor_rows.c.actor_rank == 1)
+            .where(*actor_conditions)
             .order_by(
                 recent_actor_rows.c.last_used.desc(),
                 recent_actor_rows.c.performed_by.asc(),
