@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import event, inspect, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, SessionTransaction
 
 from app.core.database.session import AuditSession
 from app.core.observability import log_event
@@ -28,6 +28,7 @@ from app.systems.sandbox.relationships.models import RelationshipEdge
 
 PENDING_CHANGES_KEY = "audit_pending_changes"
 REALTIME_INVALIDATION_KEY = "realtime_invalidation_pending"
+SAVEPOINT_INVALIDATION_KEY = "realtime_invalidation_savepoints"
 
 
 @dataclass
@@ -249,9 +250,29 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
         session.add(audit_log)
 
 
+@event.listens_for(AuditSession, "after_transaction_create")
+def remember_savepoint_invalidations(
+    session: AuditSession, transaction: SessionTransaction
+) -> None:
+    if transaction.nested:
+        # begin_nested flushes earlier work first, so this is the preceding items' buffer.
+        snapshots = session.info.setdefault(SAVEPOINT_INVALIDATION_KEY, {})
+        snapshots[transaction] = list(session.info.get(REALTIME_INVALIDATION_KEY, []))
+
+
 @event.listens_for(AuditSession, "after_rollback")
 def clear_pending_changes(session: AuditSession) -> None:
     session.info.pop(PENDING_CHANGES_KEY, None)
+    if session.in_nested_transaction():
+        snapshots = session.info.get(SAVEPOINT_INVALIDATION_KEY, {})
+        previous = snapshots.pop(session.get_nested_transaction(), None)
+        if previous is not None:
+            if previous:
+                session.info[REALTIME_INVALIDATION_KEY] = previous
+            else:
+                session.info.pop(REALTIME_INVALIDATION_KEY, None)
+        return
+    session.info.pop(SAVEPOINT_INVALIDATION_KEY, None)
     session.info.pop(REALTIME_INVALIDATION_KEY, None)
 
 
@@ -259,6 +280,11 @@ def clear_pending_changes(session: AuditSession) -> None:
 def broadcast_committed_changes(session: AuditSession) -> None:
     """Best-effort cache invalidation after the audited transaction commits."""
 
+    if session.in_nested_transaction():
+        snapshots = session.info.get(SAVEPOINT_INVALIDATION_KEY, {})
+        snapshots.pop(session.get_nested_transaction(), None)
+        return
+    session.info.pop(SAVEPOINT_INVALIDATION_KEY, None)
     invalidations = session.info.pop(REALTIME_INVALIDATION_KEY, [])
     if not invalidations:
         return

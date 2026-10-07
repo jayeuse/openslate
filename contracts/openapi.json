@@ -9031,6 +9031,227 @@
         "title": "RecordAssignmentNotificationResponse",
         "type": "object"
       },
+      "RecordBatchFieldError": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "field_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field Id"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "field_id",
+          "message"
+        ],
+        "title": "RecordBatchFieldError",
+        "type": "object"
+      },
+      "RecordBatchForbidden": {
+        "properties": {
+          "record_id": {
+            "format": "uuid",
+            "title": "Record Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "forbidden",
+            "default": "forbidden",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "record_id"
+        ],
+        "title": "RecordBatchForbidden",
+        "type": "object"
+      },
+      "RecordBatchInvalid": {
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/RecordBatchFieldError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "record_id": {
+            "format": "uuid",
+            "title": "Record Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "invalid",
+            "default": "invalid",
+            "title": "Status",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "record_id",
+          "errors"
+        ],
+        "title": "RecordBatchInvalid",
+        "type": "object"
+      },
+      "RecordBatchItem": {
+        "additionalProperties": false,
+        "properties": {
+          "field_id": {
+            "format": "uuid",
+            "title": "Field Id",
+            "type": "string"
+          },
+          "record_id": {
+            "format": "uuid",
+            "title": "Record Id",
+            "type": "string"
+          },
+          "revision": {
+            "format": "date-time",
+            "title": "Revision",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/JsonValue"
+          }
+        },
+        "required": [
+          "record_id",
+          "revision",
+          "field_id",
+          "value"
+        ],
+        "title": "RecordBatchItem",
+        "type": "object"
+      },
+      "RecordBatchResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "forbidden": "#/components/schemas/RecordBatchForbidden",
+                  "invalid": "#/components/schemas/RecordBatchInvalid",
+                  "stale": "#/components/schemas/RecordBatchStale",
+                  "updated": "#/components/schemas/RecordBatchUpdated"
+                },
+                "propertyName": "status"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/RecordBatchUpdated"
+                },
+                {
+                  "$ref": "#/components/schemas/RecordBatchStale"
+                },
+                {
+                  "$ref": "#/components/schemas/RecordBatchInvalid"
+                },
+                {
+                  "$ref": "#/components/schemas/RecordBatchForbidden"
+                }
+              ]
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "RecordBatchResponse",
+        "type": "object"
+      },
+      "RecordBatchStale": {
+        "properties": {
+          "record_id": {
+            "format": "uuid",
+            "title": "Record Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "stale",
+            "default": "stale",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "record_id"
+        ],
+        "title": "RecordBatchStale",
+        "type": "object"
+      },
+      "RecordBatchUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecordBatchItem"
+            },
+            "maxItems": 100,
+            "title": "Items",
+            "type": "array"
+          },
+          "module_id": {
+            "format": "uuid",
+            "title": "Module Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "module_id",
+          "items"
+        ],
+        "title": "RecordBatchUpdate",
+        "type": "object"
+      },
+      "RecordBatchUpdated": {
+        "properties": {
+          "record": {
+            "$ref": "#/components/schemas/RecordResponse"
+          },
+          "record_id": {
+            "format": "uuid",
+            "title": "Record Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "updated",
+            "default": "updated",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "record_id",
+          "record"
+        ],
+        "title": "RecordBatchUpdated",
+        "type": "object"
+      },
       "RecordCreate": {
         "additionalProperties": false,
         "properties": {
@@ -26543,6 +26764,52 @@
           }
         ],
         "summary": "Aggregate Snapshot Route",
+        "tags": [
+          "records"
+        ]
+      }
+    },
+    "/api/records/batch-update": {
+      "post": {
+        "operationId": "batch_update_records_api_records_batch_update_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordBatchUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordBatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Batch Update Records",
         "tags": [
           "records"
         ]

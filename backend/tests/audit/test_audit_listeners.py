@@ -42,6 +42,9 @@ class FakeSession:
     def add(self, instance: object) -> None:
         self.added.append(instance)
 
+    def in_nested_transaction(self) -> bool:
+        return False
+
     def scalars(self, query) -> object:
         self.scalars_calls += 1
         return SimpleNamespace(all=lambda: self.scalar_rows)

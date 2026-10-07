@@ -92,6 +92,7 @@ from app.systems.sandbox.modules.router import router as modules_router
 from app.systems.sandbox.publications.router import router as sandbox_publications_router
 from app.systems.sandbox.record_triggers.router import router as sandbox_record_triggers_router
 from app.systems.sandbox.record_triggers.worker import TriggerWorker
+from app.systems.sandbox.records.batch_router import router as record_batch_router
 from app.systems.sandbox.records.import_router import router as record_import_router
 from app.systems.sandbox.records.query_router import router as record_queries_router
 from app.systems.sandbox.records.router import router as records_router
@@ -361,6 +362,7 @@ def create_app() -> FastAPI:
     app.include_router(sandbox_test_runs_router, prefix="/api")
     app.include_router(modules_router, prefix="/api")
     app.include_router(fields_router, prefix="/api")
+    app.include_router(record_batch_router, prefix="/api")
     app.include_router(record_import_router, prefix="/api")
     app.include_router(record_queries_router, prefix="/api")
     app.include_router(records_router, prefix="/api")

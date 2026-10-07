@@ -61,7 +61,8 @@ def lock_row[ModelT](db: Session, model: type[ModelT], object_id: UUID) -> Model
             ),
         )
     except OperationalError as error:
-        db.rollback()
+        if not db.in_nested_transaction():
+            db.rollback()
         raise RelationshipUnavailable(
             "Relationship operation is temporarily unavailable"
         ) from error
@@ -79,7 +80,8 @@ def lock_modules(db: Session, module_ids: Sequence[UUID]) -> dict[UUID, Module]:
             ).all()
         )
     except OperationalError as error:
-        db.rollback()
+        if not db.in_nested_transaction():
+            db.rollback()
         raise RelationshipUnavailable(
             "Relationship operation is temporarily unavailable"
         ) from error
@@ -170,7 +172,8 @@ def _lock_relationship_rows(
         locked_source = records_by_id.get(source.id)
         locked_target = records_by_id.get(target.id) if target is not None else None
     except OperationalError as error:
-        db.rollback()
+        if not db.in_nested_transaction():
+            db.rollback()
         raise RelationshipUnavailable(
             "Relationship operation is temporarily unavailable"
         ) from error
