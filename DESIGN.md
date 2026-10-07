@@ -250,7 +250,7 @@ components:
 
 **Creative North Star: "The Themeable Slate"**
 
-OpenSlate has no fixed identity. It is a slate that each organization themes. The owner picks one look for the whole organization in Manage > Organization > Organization look, and each person then picks light or dark. There are four looks, each with a light and a dark mode: **Slate** (the default), **Whiteboard**, **Triplicate**, and **Stockroom**. A look changes color, type, materials, shapes, and motion. It never changes layout, behavior, or words. The Sandbox is where the looks differ most: the owner's own departments and modules, drawn large as an ERD-style canvas, in the look the owner chose.
+OpenSlate has no fixed identity. It is a slate that each organization themes. The owner picks one look for the whole organization in Manage > Organization > Organization look, and each person then picks System (the device's color mode), Light, or Dark. There are four looks, each with a light and a dark mode: **Slate** (the default), **Whiteboard**, **Triplicate**, and **Stockroom**. A look changes color, type, materials, shapes, and motion. It never changes layout, behavior, or words. The Sandbox is where the looks differ most: the owner's own departments and modules, drawn large as an ERD-style canvas, in the look the owner chose.
 
 The system is built as a token contract plus a short list of named skin places. `frontend/src/app/globals.css` defines the contract and the Slate values on `:root` and `.dark`. Each other look lives in `frontend/src/app/themes/<look>.css`. It overrides the same token names on `:root[data-theme="<look>"]` and adds a few rules on the skin places. `[data-theme-preview="<look>"]` scopes a look's tokens to one element, for the look picker. The frontmatter above mirrors Slate light only, as a machine-readable default. The stylesheets are normative for every look and mode. When the two disagree, the stylesheets win.
 
@@ -273,7 +273,7 @@ Density is calm and practical: 14px body text, 36px buttons, hairline rules, and
 | Triplicate      | `themes/triplicate.css`           | Archivo (width axis) / Geist Mono       | 2px                 | The carbon-copy business form. The page is ruled paper; the top bar is a printed header with a double rule. Navy printed structure, ballpoint blue for what people typed, condensed tracked labels, perforated card headers and dialog tops, rubber-stamp chips, numbered ledger rows, double-ruled notices. On the canvas: each department is a tinted carbon copy, modules share their department's paper, field names are in ballpoint blue, dashed carbon relationships with solid handoffs. Dark is carbon paper. |
 | Stockroom       | `themes/stockroom.css`            | Archivo (width axis) / Martian Mono     | 2px                 | Steel shelving and kraft boxes. A flat wall-colored page, a painted steel sidebar, a top bar on a steel rail, stencilled uppercase page titles, a heavy shelf rule under card headers, label-maker tape chips, steel table-head bands, steel-topped dialogs. On the canvas: steel uprights on the frame and on each department bay, kraft module boxes with a white paper end label and a steel shelf lip.                                                                                                     |
 
-The choice is saved in the browser under `openslate-org-theme` (`public/theme-init.js` applies it before paint; `lib/appearance-preferences.ts` owns it). The light and dark choice is saved under `openslate-theme`. The organization look moves to a workspace setting when the backend has one.
+The workspace stores the organization look; each account stores its color mode, motion, and keyboard shortcut preferences. Text size and page density stay device-local. Browser storage caches the look under `openslate-org-theme`, color mode under `openslate-theme`, and reduced motion under `openslate-motion`; `public/theme-init.js` applies them before paint, then the server preferences reconcile them through `lib/appearance-preferences.ts`.
 
 ### Named Rules
 
@@ -562,7 +562,7 @@ Wrong: wrapping the page body in a `ViewTransition` so every sidebar click slide
 
 ### Reduce motion setting
 
-Appearance has a **Reduce motion** switch (per person, per browser, stored as `openslate-motion`). On, it sets `data-motion="reduced"` on `<html>` before first paint (`public/theme-init.js`), and every reduced-motion rule answers to that attribute as well as to the device's `prefers-reduced-motion`: the Tailwind `motion-reduce:` variant is redefined in `globals.css` to cover both, and each hand-written reduced rule has a `[data-motion="reduced"]` twin. Off, OpenSlate follows the device setting; when the device already asks for reduced motion, the page says so.
+Appearance has a **Reduce motion** switch saved to the person's account and cached as `openslate-motion` in the browser. On, it sets `data-motion="reduced"` on `<html>` before first paint (`public/theme-init.js`), and every reduced-motion rule answers to that attribute as well as to the device's `prefers-reduced-motion`: the Tailwind `motion-reduce:` variant is redefined in `globals.css` to cover both, and each hand-written reduced rule has a `[data-motion="reduced"]` twin. Off, OpenSlate follows the device setting; when the device already asks for reduced motion, the page says so.
 
 **The Signal Not Travel Rule.** Reduced motion stops glides, height changes, and signatures, but keeps the color and state changes that say something changed.
 
@@ -657,7 +657,7 @@ The Sandbox header names the real state of the draft: "Nothing to publish yet", 
 
 ### Organization look picker
 
-A radio group of four tiles (two columns from 640px, four from 1280px). Each tile shows a small canvas swatch drawn with that look's own tokens (`data-theme-preview`): a department head with its identity mark, and a table card with a header and two field rows. The checked tile takes an `--action` border and ring. The note under the tiles says the look is saved in this browser only.
+A radio group of four tiles (two columns from 640px, four from 1280px). Each tile shows a small canvas swatch drawn with that look's own tokens (`data-theme-preview`): a department head with its identity mark, and a table card with a header and two field rows. The checked tile takes an `--action` border and ring. The look is saved for the workspace; each person keeps their own color mode.
 
 ### Sandbox canvas (signature)
 

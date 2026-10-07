@@ -253,6 +253,10 @@ test("13b: unavailable monitoring summary never manufactures zero and explicit R
   release?.();
   const mfa = card(page, "Administrator MFA");
   await expect(mfa).toContainText("MFA observations could not be loaded.");
+  await expect(mfa.getByRole("alert")).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
   await expect(mfa).not.toContainText("Private failure canary");
   await expect(mfa.getByRole("link")).toHaveCount(0);
   for (const title of ["No recorded sign-in", "Known inactive people"]) {

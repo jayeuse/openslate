@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
 import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 import {
   queryOpenViewGroupedRecords,
@@ -228,9 +230,7 @@ export function LiveKanban({
           loading: false,
           error: denied
             ? "You no longer have access to these records. Sign in or ask for access, then retry."
-            : error instanceof Error && error.message
-              ? error.message
-              : "Kanban lanes could not be loaded.",
+            : apiErrorMessage(error, "Kanban lanes could not be loaded."),
         });
       });
     return () => {
@@ -316,8 +316,11 @@ export function LiveKanban({
       </div>
 
       {requestError ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-          <p role="alert">
+        <Alert
+          variant="destructive"
+          className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"
+        >
+          <p>
             {requestError} The last successful page remains visible when
             available.
           </p>
@@ -329,7 +332,7 @@ export function LiveKanban({
           >
             {selectedGroup ? "Retry lane records" : "Retry lanes"}
           </Button>
-        </div>
+        </Alert>
       ) : null}
 
       {loading && groups.length === 0 ? (

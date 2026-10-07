@@ -237,7 +237,7 @@ export function LiveTimeline({
       {error ? (
         <Alert
           role="alert"
-          variant="warning"
+          variant="destructive"
           className="m-4 flex flex-wrap items-center justify-between gap-3"
         >
           <p>{windowPageErrorMessage(error, result, offset)}</p>

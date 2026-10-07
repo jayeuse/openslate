@@ -418,8 +418,11 @@ export function ServerBoardAttachments(props: Props) {
             </p>
           ) : null}
           {listStatus === "error" ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-destructive text-sm">
+            <Alert
+              variant="destructive"
+              className="flex flex-wrap items-center gap-2"
+            >
+              <p className="text-sm">
                 Attachments are unavailable for this content.
               </p>
               <Button
@@ -430,7 +433,7 @@ export function ServerBoardAttachments(props: Props) {
               >
                 Retry
               </Button>
-            </div>
+            </Alert>
           ) : null}
           {listStatus === "ready" && items.length === 0 ? (
             <p className="text-muted-foreground text-sm">No attachments yet.</p>

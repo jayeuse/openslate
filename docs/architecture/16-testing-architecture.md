@@ -26,6 +26,14 @@ least 90% overall and at least 90% on changed executable lines, with coverage fo
 complete application source inventory. Do not lower thresholds or omit source files to
 accommodate a change.
 
+The actual client-address [integration proof](../../backend/tests/workspace/test_workspace_security_proxy.py)
+requires a native Caddy executable on `PATH`, available IPv6 loopback, and its
+owned test listen ports. [`caddy_runtime.py`](../../backend/tests/caddy_runtime.py)
+refuses Docker fallback for that IPv6 peer proof. The backend CI coverage shards
+are configured to extract the executable from the pinned test Caddy image and add
+it to `PATH`; configuration does not establish hosted CI execution or native
+deployment acceptance.
+
 CI splits the backend suite into five parallel jobs. Each job runs `--backend-coverage-shard
 N/5` on its own disposable stack. A shard checks that its tests pass and that the source
 did not change, but it does not apply the coverage thresholds. The `coverage-gate` job

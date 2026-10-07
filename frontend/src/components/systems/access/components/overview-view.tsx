@@ -283,7 +283,7 @@ export function OverviewView() {
                       Administrator MFA
                     </h3>
                     {summary.isError ? (
-                      <div role="alert" className="space-y-3">
+                      <Alert variant="destructive" className="space-y-3">
                         <p className="text-sm">
                           MFA observations could not be loaded.
                         </p>
@@ -294,7 +294,7 @@ export function OverviewView() {
                         >
                           Retry MFA observations
                         </Button>
-                      </div>
+                      </Alert>
                     ) : (
                       <LoadingRegion
                         loading={summary.isPending}

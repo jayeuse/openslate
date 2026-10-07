@@ -421,19 +421,61 @@ test("an upload with an unreadable response keeps the file for a retry", async (
 });
 
 test("a published post shows downloads only", async ({ page }) => {
-  await installAttachmentApi(page, {
+  const api = await installAttachmentApi(page, {
     status: "published",
     seeded: ["Fire drill route.pdf"],
   });
+  let listUnavailable = true;
+  await page.route(
+    (url) =>
+      url.pathname === `/api/boards/${boardId}/posts/${postId}/attachments`,
+    (route) => {
+      if (route.request().method() === "GET" && listUnavailable)
+        return route.fulfill({
+          status: 503,
+          json: { detail: "Private attachment failure canary" },
+        });
+      return route.fallback();
+    },
+  );
   await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
   const reader = page.getByRole("dialog", { name: title, exact: true });
+  const failedList = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/boards/${boardId}/posts/${postId}/attachments` &&
+      response.request().method() === "GET" &&
+      response.status() === 503,
+  );
   await reader.getByRole("button", { name: "Attachments" }).click();
+  expect((await failedList).status()).toBe(503);
   const panel = reader.getByRole("region", { name: "Post attachments" });
+  await expect(panel.getByRole("alert")).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
+  await expect(panel.getByRole("alert")).toContainText(
+    "Attachments are unavailable for this content.",
+  );
+  await expect(panel).not.toContainText("Private attachment failure canary");
+  await expect(
+    panel.getByText("No attachments yet.", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    panel.getByRole("button", {
+      name: "Download Fire drill route.pdf",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  expect(api.mutations).toEqual([]);
+  listUnavailable = false;
+  await panel.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(
     panel.getByRole("button", { name: "Download Fire drill route.pdf" }),
   ).toBeVisible();
   await expect(panel.getByRole("button", { name: /^Remove / })).toHaveCount(0);
   await expect(panel.getByLabel("Add an attachment")).toHaveCount(0);
+  expect(api.mutations).toEqual([]);
 });
 
 test("an upload refused with 422 shows an alert and leaves the list unchanged", async ({

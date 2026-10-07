@@ -53,10 +53,14 @@ and messages are not authoritative application authorization or durable data.
 SSE consumers treat events as cache invalidations and never as row data.
 OpenView Views, Charts, and Reports use the cache bridge; Boards widgets/record
 links, Manage maintenance, and Platform connected notifications also use the
-[shared authenticated stream](../../frontend/src/components/systems/openview/adapters/invalidation-events.ts).
+[shared authenticated stream](../../frontend/src/components/systems/shared/adapters/invalidation-events.ts).
+The persistent shell's [notification bell](../../frontend/src/components/systems/platform/components/notification-bell.tsx)
+subscribes to unread-count invalidations and reads server-backed notifications;
+the server rechecks recipient and source access before returning them.
 
-OpenView's live Record inspector is read-only: it displays data returned through
-authorized query and Record-read APIs and exposes no Record mutation flow
+OpenView's live Record inspector displays field values read-only until an
+authorized writer opens Edit. Its Details, linked-record, and Files actions
+enforce current permissions, including attachment upload and archive
 ([`live-record-inspector.tsx`](../../frontend/src/components/systems/openview/components/live-record-inspector.tsx)).
 Sandbox Test evaluates temporary values against the draft; it does not create or
 change live Records.

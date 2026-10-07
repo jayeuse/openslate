@@ -39,10 +39,10 @@ def migration_user():
 
 def test_upgrade_initializes_unknown_observations_without_inventing_legacy_facts():
     environment = guarded_migration_environment()
-    run_alembic(environment, "downgrade", PREVIOUS)
     engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
     identity, session_id = uuid4(), uuid4()
     try:
+        run_alembic(environment, "downgrade", PREVIOUS)
         with engine.begin() as connection:
             connection.execute(
                 text(
@@ -75,7 +75,7 @@ def test_upgrade_initializes_unknown_observations_without_inventing_legacy_facts
                 text("SELECT to_jsonb(identity_sessions) FROM identity_sessions WHERE id=:id"),
                 {"id": session_id},
             )
-        run_alembic(environment, "upgrade", "head")
+        run_alembic(environment, "upgrade", REVISION)
         with engine.connect() as connection:
             # Observable upgrade outcome, before referencing a potentially absent column/table.
             assert (
@@ -127,12 +127,18 @@ def test_upgrade_initializes_unknown_observations_without_inventing_legacy_facts
                 )
                 == 0
             )
-        subprocess.run([sys.executable, "-m", "alembic", "check"], env=environment, check=True)
     finally:
-        with engine.begin() as connection:
-            connection.execute(text("DELETE FROM users WHERE id=:id"), {"id": identity})
-        engine.dispose()
-        run_alembic(environment, "upgrade", "head")
+        try:
+            with engine.begin() as connection:
+                connection.execute(text("DELETE FROM users WHERE id=:id"), {"id": identity})
+        finally:
+            try:
+                run_alembic(environment, "upgrade", "head")
+                subprocess.run(
+                    [sys.executable, "-m", "alembic", "check"], env=environment, check=True
+                )
+            finally:
+                engine.dispose()
 
 
 @pytest.mark.parametrize(
@@ -223,6 +229,7 @@ def test_downgrade_refuses_collected_facts_before_ddl(fact, migration_user):
     engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
     session_id = uuid4()
     try:
+        run_alembic(environment, "downgrade", REVISION)
         with engine.begin() as connection:
             if fact == "ip":
                 connection.execute(
@@ -269,8 +276,11 @@ def test_downgrade_refuses_collected_facts_before_ddl(fact, migration_user):
             )
         run_alembic(environment, "downgrade", PREVIOUS)
     finally:
-        run_alembic(environment, "upgrade", "head")
-        engine.dispose()
+        try:
+            run_alembic(environment, "upgrade", "head")
+            subprocess.run([sys.executable, "-m", "alembic", "check"], env=environment, check=True)
+        finally:
+            engine.dispose()
 
 
 @pytest.mark.parametrize("fact", ["ip", "observation"])

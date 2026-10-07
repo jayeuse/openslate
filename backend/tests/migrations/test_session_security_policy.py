@@ -1,6 +1,7 @@
 """Compatible policy migration and fail-closed downgrade on guarded PostgreSQL."""
 
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -13,6 +14,7 @@ from tests.operations.migration_support import guarded_migration_environment, ru
 
 pytestmark = pytest.mark.integration
 PREVIOUS = "f750b931b1e5"
+REVISION = "37e161cacb06"
 FIELDS = (
     "session_absolute_lifetime_minutes",
     "session_concurrent_limit",
@@ -39,12 +41,12 @@ def _rows(connection, table, clause="true", parameters=None):
 @pytest.mark.parametrize("legacy", ["optional", "admins", "everyone"])
 def test_upgrade_maps_roles_and_established_episodes_without_eviction(legacy):
     environment = guarded_migration_environment()
-    run_alembic(environment, "downgrade", PREVIOUS)
     engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
     identities = [uuid7() for _ in range(7)]
     session_id, fingerprint = uuid7(), uuid7().hex * 2
     timestamp = datetime.now(UTC)
     try:
+        run_alembic(environment, "downgrade", PREVIOUS)
         with engine.begin() as connection:
             original = _rows(connection, "workspace_profiles")[0]
             connection.execute(
@@ -117,7 +119,7 @@ def test_upgrade_maps_roles_and_established_episodes_without_eviction(legacy):
             before_budget = _rows(
                 connection, "identity_rate_limit_buckets", "fingerprint=:key", {"key": fingerprint}
             )
-        run_alembic(environment, "upgrade", "head")
+        run_alembic(environment, "upgrade", REVISION)
         with engine.connect() as connection:
             policy = _rows(connection, "workspace_profiles")[0]
             # JSON provides an observable missing-value red without a missing-column error.
@@ -166,30 +168,39 @@ def test_upgrade_maps_roles_and_established_episodes_without_eviction(legacy):
                 == before_budget
             )
     finally:
-        with engine.begin() as connection:
-            connection.execute(
-                text("DELETE FROM identity_sessions WHERE id=:id"), {"id": session_id}
-            )
-            connection.execute(
-                text("DELETE FROM identity_rate_limit_buckets WHERE fingerprint=:key"),
-                {"key": fingerprint},
-            )
-            connection.execute(text("DELETE FROM users WHERE id=ANY(:ids)"), {"ids": identities})
-            if "mfa_require_admin" in _rows(connection, "workspace_profiles")[0]:
+        try:
+            with engine.begin() as connection:
                 connection.execute(
-                    text(
-                        "UPDATE workspace_profiles SET mfa_require_admin=false,"
-                        "mfa_require_member=false,mfa_require_guest=false"
-                    )
+                    text("DELETE FROM identity_sessions WHERE id=:id"), {"id": session_id}
                 )
-        run_alembic(environment, "downgrade", PREVIOUS)
-        with engine.begin() as connection:
-            connection.execute(
-                text("UPDATE workspace_profiles SET mfa_policy=:mode"),
-                {"mode": original["mfa_policy"]},
-            )
-        run_alembic(environment, "upgrade", "head")
-        engine.dispose()
+                connection.execute(
+                    text("DELETE FROM identity_rate_limit_buckets WHERE fingerprint=:key"),
+                    {"key": fingerprint},
+                )
+                connection.execute(
+                    text("DELETE FROM users WHERE id=ANY(:ids)"), {"ids": identities}
+                )
+                if "mfa_require_admin" in _rows(connection, "workspace_profiles")[0]:
+                    connection.execute(
+                        text(
+                            "UPDATE workspace_profiles SET mfa_require_admin=false,"
+                            "mfa_require_member=false,mfa_require_guest=false"
+                        )
+                    )
+            run_alembic(environment, "downgrade", PREVIOUS)
+            with engine.begin() as connection:
+                connection.execute(
+                    text("UPDATE workspace_profiles SET mfa_policy=:mode"),
+                    {"mode": original["mfa_policy"]},
+                )
+        finally:
+            try:
+                run_alembic(environment, "upgrade", "head")
+                subprocess.run(
+                    [sys.executable, "-m", "alembic", "check"], env=environment, check=True
+                )
+            finally:
+                engine.dispose()
 
 
 @pytest.mark.parametrize(

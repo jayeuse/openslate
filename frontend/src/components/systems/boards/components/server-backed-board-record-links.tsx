@@ -293,7 +293,7 @@ export function ServerBoardRecordLinks(props: Props) {
       <h4 className="text-sm font-semibold">Record links</h4>
       {listStatus === "loading" && <p role="status">Loading linked Records…</p>}
       {listStatus === "error" && (
-        <Alert variant="warning">
+        <Alert variant="destructive">
           Record links could not be loaded.{" "}
           <Button
             type="button"
@@ -365,7 +365,11 @@ export function ServerBoardRecordLinks(props: Props) {
               ))}
             </select>
           </label>
-          {sourceError && <p role="alert">Data sources could not be loaded.</p>}
+          {sourceError && (
+            <Alert variant="destructive">
+              Data sources could not be loaded.
+            </Alert>
+          )}
           <div className="flex gap-2">
             <Button
               type="button"
@@ -403,7 +407,9 @@ export function ServerBoardRecordLinks(props: Props) {
                 <p role="status">Loading Records…</p>
               )}
               {recordStatus === "error" && (
-                <p role="alert">Records could not be loaded.</p>
+                <Alert variant="destructive">
+                  Records could not be loaded.
+                </Alert>
               )}
               {recordStatus === "ready" && (
                 <>

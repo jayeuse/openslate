@@ -35,6 +35,12 @@ production, and non-loopback development require the exact configured Origin.
 Relaxed loopback development accepts a missing Origin or a valid local browser
 Origin.
 
+Production Uvicorn resolves forwarded client addresses only from the configured
+Caddy/API private subnet; Caddy overwrites `X-Forwarded-For` with its socket peer.
+IP policy and throttling use that resolved server address, not arbitrary browser
+headers. Only Caddy and API may join the trusted network; see the
+[proxy boundary](../../infra/supabase/README.md#production-application-overlay).
+
 Supabase Auth owns password credentials and invitation/recovery action tokens;
 OpenSlate retains local login throttling. Lifecycle password challenges
 reverify through Supabase Auth and require the result to map back to the same
@@ -58,6 +64,17 @@ Storage write. Downloads are served as attachments with `nosniff`. OpenSlate
 runs no antivirus scan; type validation is not malware detection. A private
 bucket or privileged Storage key does not replace application authorization.
 
+Encrypted [backup exports](../../backend/app/systems/manage/backups/downloads.py)
+require an eligible administrator and current-password reauthentication through
+Supabase Auth. Admission is a short-lived, single-use handle bound to the actor,
+session, and export in an HttpOnly, Secure, Strict cookie scoped to the content
+path; responses expose only its expiry. The host produces an encrypted Restic
+repository archive in its confined export root. The API's read-only export bind
+contains finished archives; source repositories, Restic password files, and private
+backup configuration are not mounted into it. Content preparation validates the
+owned file and commits a `backup.export.download` ATTEMPT before streaming.
+An ATTEMPT is not proof that the browser saved the archive.
+
 Audit history is also scope-aware. Administrators can list across departments;
 other users must hold department-level `manage` and explicitly filter one
 department. Audit-log detail, export, and SecurityEvent access remain
@@ -79,11 +96,14 @@ Storage, and SMTP-configuration component states
 ([`readiness.py`](../../backend/app/core/readiness.py)). This component report
 does not establish mail delivery, schema compatibility, backup integrity, or
 complete stack readiness. The encrypted [Restic backup](../../packaging/backup/backup_installation.py)
-and [restore](../../packaging/backup/restore_installation.py) commands exist,
-but production TLS, the complete five-volume backup/restore path, file
-access through the restored API, reboot recovery, and final release acceptance
-remain unverified. Windows Docker Desktop/WSL2 is the intended Windows server
-path, but Windows-host startup, reboot, and restore acceptance are pending.
+and [restore](../../packaging/backup/restore_installation.py) commands support the
+operator procedure. A guarded production Compose rehearsal exercised TLS trust,
+encrypted five-volume restore, restored-file authorization, and service restart
+using Linux containers on macOS Docker Desktop. Local encrypted-export verification
+is separate from pending production-bind and native-browser gateway acceptance.
+Native Linux host boot/reboot and final release acceptance remain pending. Windows
+Docker Desktop/WSL2 is the intended Windows server path, but Windows-host startup,
+reboot, and restore acceptance are pending.
 macOS is not a server target, and no native server installer is part of this
 Compose scope. These deployment boundaries must not be described as verified
 production controls. See [Deployment Architecture](12-deployment-architecture.md)

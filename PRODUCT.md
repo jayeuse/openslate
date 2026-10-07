@@ -73,10 +73,9 @@ movement rather than imposing one industry template.
 The current repository is a self-hosted Next.js and FastAPI application. It
 uses Supabase PostgreSQL, Auth, and Storage; FastAPI owns authorization,
 revocable sessions, and file access, and authenticated SSE carries
-invalidations. Parts of the workspace still run on local sample state. The
-Sandbox's save, publish, and simulation experiences must not be represented as
-persistent production automation until they are connected to authorized
-backend workflows.
+invalidations. OpenComms alone runs on local sample state. Sandbox structure
+save and publish use authorized backend workflows; its Test inputs are temporary
+and never create operational records. Simulation is not production automation.
 
 ## Capabilities and Constraints
 

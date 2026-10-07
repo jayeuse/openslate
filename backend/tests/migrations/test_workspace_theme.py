@@ -11,14 +11,15 @@ from tests.operations.migration_support import guarded_migration_environment, ru
 
 pytestmark = pytest.mark.integration
 PREVIOUS_HEAD = "a16df813658f"
+REVISION = "32182dce4bf8"
 
 
 def test_workspace_theme_upgrade_backfills_without_rewriting_existing_settings():
     environment = guarded_migration_environment()
-    run_alembic(environment, "downgrade", PREVIOUS_HEAD)
     engine = guarded_create_engine(environment["MIGRATION_DATABASE_URL"])
     original = None
     try:
+        run_alembic(environment, "downgrade", PREVIOUS_HEAD)
         with engine.begin() as connection:
             original = (
                 connection.execute(
@@ -39,7 +40,7 @@ def test_workspace_theme_upgrade_backfills_without_rewriting_existing_settings()
                 )
             )
             before = connection.scalar(text("SELECT to_jsonb(p) FROM workspace_profiles p"))
-        run_alembic(environment, "upgrade", "head")
+        run_alembic(environment, "upgrade", REVISION)
         with engine.connect() as connection:
             after = connection.scalar(text("SELECT to_jsonb(p) FROM workspace_profiles p"))
             assert after == {**before, "theme": "slate"}
@@ -52,22 +53,23 @@ def test_workspace_theme_upgrade_backfills_without_rewriting_existing_settings()
             ).one()
             assert column[:3] == ("character varying", 16, "NO")
             assert column.column_default.startswith("'slate'")
-        subprocess.run([sys.executable, "-m", "alembic", "check"], check=True, env=environment)
         run_alembic(environment, "downgrade", PREVIOUS_HEAD)
         with engine.connect() as connection:
             reverted = connection.scalar(text("SELECT to_jsonb(p) FROM workspace_profiles p"))
             assert reverted == before
-        run_alembic(environment, "upgrade", "head")
     finally:
-        run_alembic(environment, "upgrade", "head")
-        if original is not None:
-            with engine.begin() as connection:
-                connection.execute(
-                    text(
-                        "UPDATE workspace_profiles SET display_name=:display_name, "
-                        "currency=:currency,mark=:mark,contact_email=:contact_email, "
-                        "timezone=:timezone,revision=:revision"
-                    ),
-                    original,
-                )
-        engine.dispose()
+        try:
+            run_alembic(environment, "upgrade", "head")
+            if original is not None:
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            "UPDATE workspace_profiles SET display_name=:display_name, "
+                            "currency=:currency,mark=:mark,contact_email=:contact_email, "
+                            "timezone=:timezone,revision=:revision"
+                        ),
+                        original,
+                    )
+            subprocess.run([sys.executable, "-m", "alembic", "check"], check=True, env=environment)
+        finally:
+            engine.dispose()

@@ -32,11 +32,18 @@ inventory. The internal provider gateway logs omit request paths, query strings,
 referrers, and headers so invitation tokens and provider keys are not written to those
 access logs; see the [Supabase operations guide](../../infra/supabase/README.md).
 
-Audited application ORM changes and security events are stored in PostgreSQL. They are
-application records, not a centralized monitoring or metrics system. The file workflow
-exposes durable queued, claimed, clean, rejected, and uncertain states for operational
-recovery. SSE carries opaque client invalidations; it is neither an audit stream nor a
-monitoring transport.
+Audited application ORM changes and security events are stored in PostgreSQL. Access
+shows administrator Security Events and People session/activity monitoring; these are
+application records, not centralized host telemetry or metrics. SSE carries opaque
+client invalidations; it is neither an audit stream nor a monitoring transport.
+
+Access Security configures separate session and security-event retention periods,
+each defaulting to 365 days with strict 1–3650 day bounds. The
+[identity worker](../../backend/app/systems/access/identity/provider_signout_worker.py)
+has independent bounded maintenance passes for eligible terminal sessions and old
+events; each deletion and its safe maintenance proof commit atomically. Event deletion
+uses the narrow database-owned retention routine, preserving ordinary append-only
+permissions. Durable per-user sign-in/activity history is independent of session cleanup.
 
 ## Administrative operation diagnostics
 
@@ -55,8 +62,10 @@ The repository does not provide centralized telemetry, alerting, backup freshnes
 reporting, a packaged-host diagnostics bundle, or a customer support export workflow.
 `/api/ready` is a bounded component signal, not a full installation or release check.
 Operators must monitor provider services, disk and volume capacity, SMTP delivery,
-and backup repository/restore readiness
-separately. No scheduled backup or hosted operations service is implemented.
+and backup repository/restore readiness separately. Saved backup cadence/retention
+and queued exports are implemented through the [bounded host runner](../../infra/supabase/RESTORE.md#run-the-installation-backup-policy)
+when invoked. It installs no host scheduler; operators must arrange invocation.
+Centralized backup freshness monitoring and a hosted operations service remain absent.
 
 ## Performance investigation
 

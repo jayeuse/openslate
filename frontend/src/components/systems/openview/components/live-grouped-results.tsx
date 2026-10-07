@@ -4,6 +4,7 @@ import type {
   OpenViewAnalyticsPagination,
   OpenViewGroupSelector,
 } from "../adapters/analytics-api";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { TablePagination } from "@/components/ui/table-pagination";
@@ -74,8 +75,11 @@ export function LiveGroupedResults({
       </div>
 
       {error ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-          <p role="alert">{error}</p>
+        <Alert
+          variant="destructive"
+          className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"
+        >
+          <p>{error}</p>
           <Button
             type="button"
             variant="outline"
@@ -85,7 +89,7 @@ export function LiveGroupedResults({
           >
             {selectedGroup ? "Retry group records" : "Retry groups"}
           </Button>
-        </div>
+        </Alert>
       ) : null}
 
       {loading && !hasPage ? (

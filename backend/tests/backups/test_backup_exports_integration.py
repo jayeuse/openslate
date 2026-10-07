@@ -5,7 +5,12 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import event, func, inspect, select
+from alembic import command
+from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from alembic.script import ScriptDirectory
+from sqlalchemy import event, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -285,22 +290,18 @@ def test_downgrade_refuses_export_history_without_changing_current_revision(expo
     world = export_world
     created = world.create()
     assert created.status_code == 201
-    from alembic import command
-    from alembic.config import Config
-    from sqlalchemy import text
-
-    config = Config("alembic.ini")
-    with pytest.raises(RuntimeError, match="export"):
-        command.downgrade(config, "7d4538964ae2")
-    with Session(world.auth.owner) as db:
-        assert db.scalar(text("SELECT version_num FROM alembic_version")) == "dc22b5c205a4"
-        assert (
-            db.scalar(
-                text("SELECT count(*) FROM backup_export_operations WHERE id=:id"),
-                {"id": UUID(created.json()["id"])},
-            )
-            == 1
+    migration = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("dc22b5c205a4")
+    with world.auth.owner.connect() as db:
+        revision = db.scalar(text("SELECT version_num FROM alembic_version"))
+        with Operations.context(MigrationContext.configure(db)):
+            with pytest.raises(RuntimeError, match="backup export history"):
+                migration.module.downgrade()
+        assert db.scalar(text("SELECT version_num FROM alembic_version")) == revision
+        remaining = db.scalar(
+            text("SELECT count(*) FROM backup_export_operations WHERE id=:id"),
+            {"id": UUID(created.json()["id"])},
         )
+        assert remaining == 1
 
 
 @pytest.mark.parametrize(
@@ -483,16 +484,17 @@ def test_export_secret_body_limit_works_without_trusting_declared_length(export_
 
 
 def test_empty_export_downgrade_upgrade_and_alembic_catalog_are_clean(integration_owner_db):
-    from alembic import command
-    from alembic.config import Config
-    from sqlalchemy import text
-
     config = Config("alembic.ini")
     integration_owner_db.rollback()
     with get_engine().connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM backup_export_operations")) == 0
-    command.downgrade(config, "7d4538964ae2")
-    command.upgrade(config, "dc22b5c205a4")
-    command.check(config)
-    with get_engine().connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "dc22b5c205a4"
+    try:
+        command.downgrade(config, "7d4538964ae2")
+        command.upgrade(config, "dc22b5c205a4")
+        with get_engine().connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version")) == "dc22b5c205a4"
+            )
+    finally:
+        command.upgrade(config, "head")
+        command.check(config)

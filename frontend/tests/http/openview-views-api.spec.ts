@@ -1689,7 +1689,7 @@ async function installViewsApi(
       return route.fulfill({
         status: 500,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "Grouped query temporarily failed." }),
+        body: JSON.stringify({ detail: "Private grouped failure canary" }),
       });
     }
     const rows = kanbanRows;
@@ -2919,10 +2919,33 @@ for (const layout of ["table", "grid", "gallery"] as const) {
     });
     expect(api.recordQueryRequests).toHaveLength(ordinaryRequestCount);
 
+    if (layout === "table") api.failNextGroupedQuery();
     await page
       .getByRole("navigation", { name: "Record result pages" })
       .getByRole("button", { name: "Go to next page" })
       .click();
+    if (layout === "table") {
+      const grouping = page.getByRole("region", {
+        name: "Grouping results",
+        exact: true,
+      });
+      await expect(grouping.getByRole("alert")).toHaveAttribute(
+        "data-variant",
+        "destructive",
+      );
+      await expect(grouping.getByRole("alert")).toContainText(
+        "Grouped records could not be loaded.",
+      );
+      await expect(grouping).not.toContainText(
+        "Private grouped failure canary",
+      );
+      await expect(
+        grouping.getByText("No groups match this view.", { exact: true }),
+      ).toHaveCount(0);
+      await grouping
+        .getByRole("button", { name: "Retry group records", exact: true })
+        .click();
+    }
     await expect(page.getByText("Showing 26–38 of 38")).toBeVisible();
     if (layout === "table") {
       await expect(page.getByRole("table").getByRole("row")).toHaveCount(14);
@@ -3750,8 +3773,41 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
   await expect(
     groupField.getByRole("option", { name: "Serial number" }),
   ).toHaveCount(0);
+  let lanesUnavailable = true;
+  // Keep the dependency unavailable across draft-driven reads until explicit recovery.
+  await page.route("**/api/records/grouped-query", (route) => {
+    if (lanesUnavailable)
+      return route.fulfill({
+        status: 500,
+        json: { detail: "Private grouped failure canary" },
+      });
+    return route.fallback();
+  });
   await groupField.selectOption(nameFieldId);
   await closeDialog(settings);
+  const kanban = page.getByRole("region", {
+    name: "Kanban results",
+    exact: true,
+  });
+  await expect(kanban.getByRole("alert")).toContainText(
+    "The last successful page remains visible when available.",
+  );
+  // New presentation check is soft so the same RED also reaches privacy.
+  await expect
+    .soft(kanban.getByRole("alert"))
+    .toHaveAttribute("data-variant", "destructive");
+  await expect(kanban).not.toContainText("Private grouped failure canary");
+  await expect(kanban.getByRole("alert")).toContainText(
+    "Kanban lanes could not be loaded.",
+  );
+  await expect(
+    kanban.getByText("No lanes match this view.", { exact: true }),
+  ).toHaveCount(0);
+  lanesUnavailable = false;
+  await kanban
+    .getByRole("button", { name: "Retry lanes", exact: true })
+    .click();
+  await expect(page.getByText("Lanes 1–12 of 13").first()).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(
     page
@@ -3810,11 +3866,14 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
     .getByRole("navigation", { name: "Kanban lane record pages" })
     .getByRole("button", { name: "Go to next page" })
     .click();
-  await expect(
-    page.getByRole("alert").filter({
-      hasText: "Grouped query temporarily failed.",
-    }),
-  ).toBeVisible();
+  await expect(kanban.getByRole("alert")).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
+  await expect(kanban.getByRole("alert")).toContainText(
+    "Kanban lanes could not be loaded.",
+  );
+  await expect(kanban).not.toContainText("Private grouped failure canary");
   await expect(
     page.getByText("Showing 1–25 of 26 records").first(),
   ).toBeVisible();
@@ -4690,9 +4749,36 @@ test("Timeline renders complete intervals and keeps unscheduled records separate
     ]),
   );
 
+  api.failNextWindowQuery();
   await page
     .getByRole("navigation", { name: "Date window record pages" })
     .getByRole("button", { name: "Go to next page" })
+    .click();
+  const timeline = page.getByRole("region", {
+    name: "Timeline records",
+    exact: true,
+  });
+  await expect(timeline.getByRole("alert")).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
+  await expect(timeline.getByRole("alert")).toContainText(
+    "Window records could not be loaded.",
+  );
+  await expect(timeline.getByRole("alert")).toContainText(
+    "Requested page 2; showing previous page 1–25.",
+  );
+  await expect(timeline).not.toContainText("Window query temporarily failed.");
+  await expect(
+    page.getByRole("button", { name: "Open record: Window equipment 01" }),
+  ).toBeVisible();
+  await expect(
+    timeline
+      .getByRole("list", { name: "Timeline intervals" })
+      .getByRole("listitem"),
+  ).toHaveCount(25);
+  await timeline
+    .getByRole("button", { name: "Retry timeline records", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Open record: Window equipment 26" }),

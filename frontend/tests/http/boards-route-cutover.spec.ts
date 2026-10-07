@@ -1465,6 +1465,18 @@ test("an author links a Record using its server-derived title", async ({
   };
   let submitted: unknown = null;
   let linked = false;
+  let listUnavailable = true;
+  let sourcePageUnavailable = true;
+  let recordsUnavailable = true;
+  const dataSources = Array.from({ length: 26 }, (_, index) => ({
+    id:
+      index === 0
+        ? moduleId
+        : `00000000-0000-4000-8000-${String(100 + index).padStart(12, "0")}`,
+    name: index === 0 ? "Requests" : `Data source ${index + 1}`,
+    department_id: boardId,
+    title_field_id: index === 0 ? fieldId : null,
+  }));
   const wireLink = {
     id: linkId,
     record_id: recordId,
@@ -1498,6 +1510,11 @@ test("an author links a Record using its server-derived title", async ({
         linked = true;
         return route.fulfill({ json: wireLink });
       }
+      if (listUnavailable)
+        return route.fulfill({
+          status: 503,
+          json: { detail: "Private failure canary" },
+        });
       return route.fulfill({
         json: {
           items: linked ? [wireLink] : [],
@@ -1534,28 +1551,35 @@ test("an author links a Record using its server-derived title", async ({
           },
         },
       });
+    const offset = Number(
+      new URL(route.request().url()).searchParams.get("offset") ?? 0,
+    );
+    if (offset === 25 && sourcePageUnavailable)
+      return route.fulfill({
+        status: 503,
+        json: { detail: "Private failure canary" },
+      });
+    const items = dataSources.slice(offset, offset + 25);
     return route.fulfill({
       json: {
-        items: [
-          {
-            id: moduleId,
-            name: "Requests",
-            department_id: boardId,
-            title_field_id: fieldId,
-          },
-        ],
+        items,
         pagination: {
           limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
+          offset,
+          count: items.length,
+          total: 26,
+          has_more: offset === 0,
         },
       },
     });
   });
-  await page.route("**/api/records/query", (route) =>
-    route.fulfill({
+  await page.route("**/api/records/query", (route) => {
+    if (recordsUnavailable)
+      return route.fulfill({
+        status: 503,
+        json: { detail: "Private failure canary" },
+      });
+    return route.fulfill({
       json: {
         items: [
           {
@@ -1578,8 +1602,8 @@ test("an author links a Record using its server-derived title", async ({
           has_more: false,
         },
       },
-    }),
-  );
+    });
+  });
 
   await page.goto(`/boards?board=${boardId}&section=posts`);
   await page.getByRole("button", { name: "More post actions" }).click();
@@ -1587,10 +1611,72 @@ test("an author links a Record using its server-derived title", async ({
   const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
   await editor.getByRole("button", { name: "Request handoff" }).click();
   const links = editor.getByRole("region", { name: "Record links" });
+  await expect(links).toContainText("Record links could not be loaded.");
+  await expect
+    .soft(
+      links
+        .getByRole("alert")
+        .filter({ hasText: "Record links could not be loaded." }),
+    )
+    .toHaveAttribute("data-variant", "destructive");
+  await expect(links).not.toContainText("No linked Records.");
+  await expect(links).not.toContainText("Private failure canary");
+  expect(submitted).toBeNull();
+  listUnavailable = false;
+  await links.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    links.getByText("No linked Records.", { exact: true }),
+  ).toBeVisible();
+
+  await links
+    .getByRole("button", { name: "Next sources", exact: true })
+    .click();
+  await expect(links).toContainText("Data sources could not be loaded.");
+  await expect
+    .soft(
+      links
+        .getByRole("alert")
+        .filter({ hasText: "Data sources could not be loaded." }),
+    )
+    .toHaveAttribute("data-variant", "destructive");
+  await expect(links).not.toContainText("Private failure canary");
+  expect(submitted).toBeNull();
+  sourcePageUnavailable = false;
+  await links
+    .getByRole("button", { name: "Previous sources", exact: true })
+    .click();
+  await expect(
+    links.getByText("Data sources could not be loaded."),
+  ).toHaveCount(0);
+  await expect(
+    links.getByRole("button", { name: "Previous sources", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    links.getByRole("button", { name: "Next sources", exact: true }),
+  ).toBeEnabled();
+
   await links.getByLabel("Record data source").selectOption(moduleId);
+  await expect(links).toContainText("Records could not be loaded.");
+  await expect
+    .soft(
+      links
+        .getByRole("alert")
+        .filter({ hasText: "Records could not be loaded." }),
+    )
+    .toHaveAttribute("data-variant", "destructive");
+  await expect(links).not.toContainText("Private failure canary");
+  await expect(
+    links.getByRole("button", { name: "Link Record", exact: true }),
+  ).toBeDisabled();
+  expect(submitted).toBeNull();
+  recordsUnavailable = false;
+  await links.getByLabel("Search Records", { exact: true }).fill("Request");
+  await expect(links.getByLabel("Record to link")).toBeVisible();
+  await expect(links.getByText("Records could not be loaded.")).toHaveCount(0);
   await links.getByLabel("Record to link").selectOption(recordId);
   await links.getByRole("button", { name: "Link Record" }).click();
   await expect(links.getByRole("link", { name: "Request 27" })).toBeVisible();
+  await expect(links.getByRole("status")).toHaveText("Record linked.");
   await captureOpenViewReview(page, "boards-record-link-add");
   expect(submitted).toEqual({
     record_id: recordId,
