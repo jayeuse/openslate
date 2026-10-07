@@ -1050,16 +1050,22 @@ for (const width of [1440, 390])
     expect(state.writes).toHaveLength(2);
   });
 
-test("13c: malformed retention policy cannot manufacture defaults and explicit Retry recovers", async ({
-  page,
-}) => {
+async function openMalformedRetentionPolicy(
+  page: Page,
+  field: "session_retention_days" | "security_event_retention_days",
+  invalid: unknown,
+) {
   const state = await mockManageSecurity(page);
   state.policy.session_retention_days = 57;
   state.policy.security_event_retention_days = 823;
-  let responsePolicy: Record<string, unknown> | null = null;
+  const malformed: { policy: Record<string, unknown> | null } = {
+    policy: { ...state.policy },
+  };
+  if (invalid === undefined) delete malformed.policy![field];
+  else malformed.policy![field] = invalid;
   await page.route("**/api/workspace/security", async (route) => {
-    if (route.request().method() === "GET" && responsePolicy) {
-      await route.fulfill({ json: responsePolicy });
+    if (route.request().method() === "GET" && malformed.policy) {
+      await route.fulfill({ json: malformed.policy });
       return;
     }
     await route.fallback();
@@ -1068,36 +1074,49 @@ test("13c: malformed retention policy cannot manufacture defaults and explicit R
     name: "Account policy",
     exact: true,
   });
-  for (const field of [
-    "session_retention_days",
-    "security_event_retention_days",
-  ] as const) {
-    for (const invalid of [undefined, null, false, "365", 365.5, 0, 3651]) {
-      responsePolicy = { ...state.policy };
-      if (invalid === undefined) delete responsePolicy[field];
-      else responsePolicy[field] = invalid;
-      await page.goto("/access?view=security");
-      await page
-        .getByRole("button", { name: "Edit policy", exact: true })
-        .click();
-      await expect(
-        policy
-          .getByRole("alert")
-          .filter({ hasText: "Account policy could not be loaded." }),
-      ).toHaveAttribute("data-variant", "destructive");
-      await expect(
-        policy.getByLabel("Session retention (days)", { exact: true }),
-      ).toHaveCount(0);
-      await expect(
-        policy.getByLabel("Security event retention (days)", { exact: true }),
-      ).toHaveCount(0);
-      await expect(
-        policy.getByLabel("Session timeout", { exact: true }),
-      ).toHaveCount(0);
-      expect(state.writes).toEqual([]);
-    }
+  await page.goto("/access?view=security");
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  await expect(
+    policy
+      .getByRole("alert")
+      .filter({ hasText: "Account policy could not be loaded." }),
+  ).toHaveAttribute("data-variant", "destructive");
+  await expect(
+    policy.getByLabel("Session retention (days)", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    policy.getByLabel("Security event retention (days)", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    policy.getByLabel("Session timeout", { exact: true }),
+  ).toHaveCount(0);
+  expect(state.writes).toEqual([]);
+  return { state, policy, malformed };
+}
+
+// One page load per case: fourteen loads in one test exceed the CI time budget.
+for (const field of [
+  "session_retention_days",
+  "security_event_retention_days",
+] as const) {
+  for (const invalid of [undefined, null, false, "365", 365.5, 0, 3651]) {
+    test(`13c: malformed ${field} ${JSON.stringify(invalid) ?? "missing"} cannot manufacture defaults`, async ({
+      page,
+    }) => {
+      await openMalformedRetentionPolicy(page, field, invalid);
+    });
   }
-  responsePolicy = null;
+}
+
+test("13c: explicit Retry recovers a malformed retention policy", async ({
+  page,
+}) => {
+  const { state, policy, malformed } = await openMalformedRetentionPolicy(
+    page,
+    "security_event_retention_days",
+    3651,
+  );
+  malformed.policy = null;
   await policy
     .getByRole("button", { name: "Retry account policy", exact: true })
     .click();
