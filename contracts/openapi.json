@@ -3556,6 +3556,30 @@
             ],
             "title": "Job Title"
           },
+          "last_active_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Active At"
+          },
+          "last_sign_in_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sign In At"
+          },
           "mfa_observed_at": {
             "anyOf": [
               {
@@ -3637,7 +3661,9 @@
           "performed_by",
           "active_session_count",
           "mfa_verified_totp",
-          "mfa_observed_at"
+          "mfa_observed_at",
+          "last_sign_in_at",
+          "last_active_at"
         ],
         "title": "DirectoryRowResponse",
         "type": "object"
@@ -13209,11 +13235,36 @@
             "minimum": 0.0,
             "title": "Admins Without Mfa",
             "type": "integer"
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "inactive_days": {
+            "maximum": 3650.0,
+            "minimum": 1.0,
+            "title": "Inactive Days",
+            "type": "integer"
+          },
+          "inactive_people": {
+            "minimum": 0.0,
+            "title": "Inactive People",
+            "type": "integer"
+          },
+          "no_recorded_sign_in": {
+            "minimum": 0.0,
+            "title": "No Recorded Sign In",
+            "type": "integer"
           }
         },
         "required": [
           "admins_without_mfa",
-          "admins_mfa_unknown"
+          "admins_mfa_unknown",
+          "no_recorded_sign_in",
+          "inactive_people",
+          "as_of",
+          "inactive_days"
         ],
         "title": "UserSummaryResponse",
         "type": "object"
@@ -29757,6 +29808,38 @@
               ],
               "title": "Mfa"
             }
+          },
+          {
+            "in": "query",
+            "name": "history",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "no-recorded-sign-in",
+                    "inactive"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "History"
+            }
+          },
+          {
+            "in": "query",
+            "name": "inactive_days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "ge": 1,
+              "le": 3650,
+              "title": "Inactive Days",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -29839,6 +29922,20 @@
     "/api/users/summary": {
       "get": {
         "operationId": "user_summary_api_users_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "inactive_days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "ge": 1,
+              "le": 3650,
+              "title": "Inactive Days",
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -29849,6 +29946,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [

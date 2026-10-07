@@ -85,6 +85,8 @@ class IdentityMfaObservation(Base):
     observed_provider_user_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     verified_totp: Mapped[bool | None] = mapped_column(Boolean)
     observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sign_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class IdentityRateLimitBucket(Base):

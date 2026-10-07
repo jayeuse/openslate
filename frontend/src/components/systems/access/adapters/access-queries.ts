@@ -6,6 +6,7 @@ import {
   type QueryKey,
 } from "@tanstack/react-query";
 import { getMfaStatus } from "@/lib/mfa-api";
+import { INACTIVE_DAYS_DEFAULT } from "../state/api-contracts";
 import { ApiError } from "@/lib/api";
 import {
   getAccessSecurityPolicy,
@@ -63,6 +64,8 @@ export const accessKeys = {
   directoryPage: (request: AccessUserListOptions) =>
     ["access", "users", "directory", request] as const,
   userSummary: () => ["access", "users", "summary"] as const,
+  userSummaryForDays: (inactiveDays: number) =>
+    ["access", "users", "summary", inactiveDays] as const,
   userAccessAll: ["access", "users", "access"] as const,
   userAccess: (userId: string) =>
     ["access", "users", "access", userId] as const,
@@ -99,10 +102,11 @@ export const directoryPageOptions = (request: AccessUserListOptions) =>
     queryFn: ({ signal }) => listAccessUsers({ ...request, signal }),
   });
 
-export const userSummaryOptions = () =>
+export const userSummaryOptions = (inactiveDays = INACTIVE_DAYS_DEFAULT) =>
   queryOptions({
-    queryKey: accessKeys.userSummary(),
-    queryFn: ({ signal }) => getAccessUserSummary({ signal }),
+    queryKey: accessKeys.userSummaryForDays(inactiveDays),
+    queryFn: ({ signal }) =>
+      getAccessUserSummary({ signal, inactive_days: inactiveDays }),
   });
 
 /** Observation writes do not emit a User ORM invalidation. Never refresh the

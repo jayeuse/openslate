@@ -515,9 +515,11 @@ test("13b: group members retain the complete later-page catalog and refresh page
   ).toBeDisabled();
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("link", { name: "People", exact: true }).click();
+  await expect(page).toHaveURL(/\/access\?view=people(?:&|$)/);
+  const people = page.getByRole("table", { name: "People", exact: true });
+  await expect(people).toBeVisible();
   await page.getByRole("button", { name: "More filters", exact: true }).click();
   await page.getByLabel("Group", { exact: true }).selectOption(ids.readers);
-  const people = page.getByRole("table", { name: "People", exact: true });
   await expect(people.getByRole("row", { name: /Zzz Member/ })).toBeVisible();
   expect(
     api.sent("PUT", `/api/access/groups/${ids.readers}/members`)[0]?.body,

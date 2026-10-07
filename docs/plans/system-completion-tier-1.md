@@ -257,16 +257,20 @@ Pain points and solutions for these actions:
 |---|---|---|---|
 | M1 | Security events feed with filters: type, outcome, person, date | The route exists. Add the filters. | M |
 | M2 | Record the missing events: sign-in success, repeated sign-in failure, lockout, IP blocked, password change, recovery, policy change | Instrument `auth/router.py` and `provider_actions.py`. Put the IP address in `metadata`. | M–L |
-| M3 | People columns: last sign-in, last active, active sessions, MFA enrolled | Subqueries on `IdentitySession`, plus a local MFA projection | M |
+| M3 | People columns: last recorded sign-in, last recorded activity, active sessions, MFA enrolled | Durable nullable observations in the existing local identity projection; current session counts remain separate | M |
 | M4 | IP address on each session | A new `identity_sessions.ip_address` column | S–M |
-| M5 | Overview cards: admins without MFA, people who never signed in, people inactive for N days | A summary counts endpoint | M |
+| M5 | Overview cards: admins without MFA, people with no recorded sign-in, people with recorded activity older than N days | Admin summary counts; N defaults to 30 and accepts integer days from 1 through 3650 | M |
 | M6 | Organization-wide sessions table, moved from Manage | None | S |
-| M7 | Retention for security events and old sessions | A purge job. Start with a fixed 365-day default. | M–L |
+| M7 | Separate retention for security events and old sessions | Persisted administrator settings, each defaulting to 365 days; bounded cleanup | M–L |
 | M8 | Server-side paging for People. Today the page loads every user. | The list API already pages | M |
 
 Pain point for M2: an attacker can flood the event table with failed sign-ins. Solution: record each lockout and each success. Combine repeated failures into one event per source and hour.
 
 **Do not add now:** password expiry, password history, location-based rules, alert emails, or automatic disabling of inactive accounts.
+
+The approved monitoring follow-up records future successful sign-in and session activity independently of retained session rows. Successful local admission advances sign-in; admission, accepted refresh and successful MFA verification advance activity monotonically in their successful transaction. Failed authentication, enrollment alone, revocation and policy reads do not advance either value. These timestamps describe the local person's recorded history and survive provider rebinding; provider-bound MFA evidence remains separate. Existing history is not backfilled and no legacy completeness marker is added. Null values mean “No recorded sign-in” or “No recorded activity”; they cannot establish that a person has never signed in. Inactivity counts include only recorded activity strictly older than the selected cutoff. Summary attention counts and corresponding People drilldowns cover active, established, nondeleted, unexpired accounts. The summary reports its cutoff inputs (`as_of`, `inactive_days`); history filters apply before People counts and pagination. Preserve server paging, session IP, MFA facts and current session counts.
+
+Security retention belongs in the existing Access Security Save/Discard form, separately from backup retention. Each period accepts strict integer days from 1 through 3650; zero and indefinite retention are not supported. Explain that shortening a period can make older rows eligible at the next cleanup. Preserve policy authorization, revision conflicts and auditing, bounded cleanup, active-session and unresolved provider-signout protections. Security events remain append-only outside the narrowly granted retention routine, and a failed retention proof must roll back its deletion. Apply separate model-driven forward migrations for durable observations and retention settings; do not alter applied migrations or delete existing development data merely to demonstrate cleanup.
 
 **Order of slices:**
 
@@ -511,7 +515,7 @@ The owner accepted these decisions on 2026-10-05. To change one, edit this table
 | D9 | Guests see the organization contact details | No. Return contact fields to members and admins only. | S19 |
 | D10 | Remove the 410 rollback route | Yes | S01 |
 | D11 | Admin MFA reset requires the acting admin's MFA (AAL2) | Yes | S23 |
-| D12 | Retention for security events | 365 days | S28 |
+| D12 | Separate session and security-event retention | Administrator-editable integer days, 1–3650 inclusive, each default 365; no indefinite option. This approved follow-up supersedes the original fixed-365-day decision. Backup retention stays separate. | S28 |
 
 ## 8. Possible bugs found during the audit
 
@@ -550,7 +554,7 @@ The items in Tier 2, OpenComms, and the work after OpenComms stay in that order.
 
 - Work in the main checkout on one branch, `codex/system-completion-tier-1`, made from `main`. Do not use a worktree.
 - Make one commit for each slice. Use a Conventional Commit message, for example `feat(files): add record attachments panel`.
-- Do not push, open a pull request, or rewrite history. The owner approves the push. The pre-push gate runs only then.
+- Do not push, open a pull request, or rewrite history. For this explicitly authorized run, keep the original Final acceptance checks and run the canonical pre-push gate once at that final checkpoint without pushing. A later push still requires the owner's approval.
 - Keep the scope to this plan. The plan approves the listed migrations, endpoints, and schema changes. Anything else needs the owner's approval.
 - Keep Comms working. Do not edit `frontend/src/components/systems/comms/**`, except where a slice names a Comms file.
 - Keep the designed UI. Extend the current components and tokens. Do not replace a designed page with a plain form.

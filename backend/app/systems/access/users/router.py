@@ -23,7 +23,12 @@ from app.systems.access.users.coordination import (
 from app.systems.access.users.coordination import (
     get_user as load_user,
 )
-from app.systems.access.users.directory import UserListRequest, directory_list, directory_summary
+from app.systems.access.users.directory import (
+    UserListRequest,
+    UserSummaryRequest,
+    directory_list,
+    directory_summary,
+)
 from app.systems.access.users.directory import UserSortField as UserSortField
 from app.systems.access.users.models import User
 from app.systems.access.users.schemas import (
@@ -67,10 +72,11 @@ def list_users(
 def user_summary(
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
+    params: Annotated[UserSummaryRequest, Query()],
     response: Response,
 ) -> UserSummaryResponse:
     response.headers["Cache-Control"] = "no-store"
-    return directory_summary(db, utc_now())
+    return directory_summary(db, utc_now(), params.inactive_days)
 
 
 @router.get("/{user_id}", response_model=UserResponse)

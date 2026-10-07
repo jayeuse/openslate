@@ -180,6 +180,8 @@ export async function mockSecurityEvents(page: Page) {
         active_session_count: 0,
         mfa_verified_totp: null,
         mfa_observed_at: null,
+        last_sign_in_at: null,
+        last_active_at: null,
       }));
     await route.fulfill({
       status: state.usersStatus,

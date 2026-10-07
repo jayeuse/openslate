@@ -25,6 +25,7 @@ from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.identity.mfa_observations import (
     commit_bound_observation,
     observation_started_at,
+    record_activity,
     record_provider_observation,
 )
 from app.systems.access.identity.models import IdentitySession
@@ -224,6 +225,7 @@ def verify_factor(
             reconcile_session_cap(db, user.id, session.id, policy, now=timestamp)
         _record(db, user_id, "verified")
         record_provider_observation(db, user_id, after_provider, started_at)
+        record_activity(db, user_id, after_provider.id, timestamp)
         db.commit()
     except (SQLAlchemyError, SupabaseAuthUnavailable) as error:
         _invalidate_after_rotation(db, user_id, session_id, client, tokens.access_token)

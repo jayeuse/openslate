@@ -31,6 +31,7 @@ from app.systems.access.identity.mfa import MFARequired, requires_mfa
 from app.systems.access.identity.mfa_observations import (
     initialize_observation,
     observation_started_at,
+    record_activity,
     record_provider_observation,
 )
 from app.systems.access.identity.models import IdentitySession
@@ -161,6 +162,7 @@ def admit_provider_session(
     ):
         reconcile_session_cap(db, user.id, session.id, policy, now=timestamp)
     record_provider_observation(db, user.id, provider_user, started_at)
+    record_activity(db, user.id, provider_user.id, timestamp, sign_in=True)
     return IssuedSession(tokens.access_token, handle, csrf, session.id, False)
 
 
@@ -323,6 +325,7 @@ def refresh_provider_session(
         session_id = session.id
         try:
             record_provider_observation(db, resolved[0].id, resolved[2], resolved[3])
+            record_activity(db, resolved[0].id, resolved[2].id, timestamp)
             db.commit()
         except SQLAlchemyError as error:
             db.rollback()
@@ -359,6 +362,7 @@ def refresh_provider_session(
     assert resolved is not None
     try:
         record_provider_observation(db, resolved[0].id, resolved[2], resolved[3])
+        record_activity(db, resolved[0].id, resolved[2].id, timestamp)
         db.commit()
     except SQLAlchemyError as error:
         db.rollback()

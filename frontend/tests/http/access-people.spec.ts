@@ -42,6 +42,44 @@ async function openPerson(page: Page, name: string) {
   await expect(panel(page, name)).toBeVisible();
 }
 
+async function recordedTime(page: Page, value: string) {
+  return page.evaluate(
+    (instant) =>
+      new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(instant)),
+    value,
+  );
+}
+
+async function expectHistoryField(
+  page: Page,
+  name: string,
+  label: string,
+  expected: string,
+  width = 1440,
+) {
+  const people = page.getByRole(width === 390 ? "list" : "table", {
+    name: "People",
+    exact: true,
+  });
+  const row = people
+    .getByRole(width === 390 ? "listitem" : "row")
+    .filter({ hasText: name });
+  if (width === 390) {
+    // The designed mobile definition list associates each label with its value.
+    await expect(
+      row.getByText(label, { exact: true }).locator("+ dd"),
+    ).toHaveText(expected);
+  } else {
+    const column = await people
+      .getByRole("columnheader", { name: label, exact: true })
+      .evaluate((header) => (header as HTMLTableCellElement).cellIndex);
+    await expect(row.getByRole("cell").nth(column)).toHaveText(expected);
+  }
+}
+
 test("the directory shows role, status, groups and derived departments, and searches", async ({
   page,
 }) => {
@@ -623,7 +661,7 @@ test("13b: combined directory filters and sort aliases reach the server with the
 });
 
 for (const width of [1440, 390])
-  test(`13b: observed MFA and active local counts remain truthful at ${width}px`, async ({
+  test(`13b: recorded history, observed MFA and active local counts remain truthful at ${width}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
@@ -632,16 +670,22 @@ for (const width of [1440, 390])
       active_session_count: 1,
       mfa_verified_totp: true,
       mfa_observed_at: created,
+      last_sign_in_at: "2026-09-12T09:15:00Z",
+      last_active_at: "2026-10-01T07:45:00Z",
     });
     api.monitoring.set(ids.ben, {
       active_session_count: 2,
       mfa_verified_totp: false,
       mfa_observed_at: created,
+      last_sign_in_at: null,
+      last_active_at: "2026-10-02T08:30:00Z",
     });
     api.monitoring.set(ids.ana, {
       active_session_count: 0,
       mfa_verified_totp: null,
       mfa_observed_at: null,
+      last_sign_in_at: null,
+      last_active_at: null,
     });
     await page.goto("/access?view=people");
     const people =
@@ -666,9 +710,49 @@ for (const width of [1440, 390])
       row("Ana Santos").getByText("0", { exact: true }),
     ).toBeVisible();
     await expect(people).toContainText(/Observed/);
-    await expect(people).not.toContainText(
-      /never signed in|last sign-in|inactive for|provider live/i,
+    await expectHistoryField(
+      page,
+      "Rosa Reyes",
+      "Last sign-in",
+      await recordedTime(page, "2026-09-12T09:15:00Z"),
+      width,
     );
+    await expectHistoryField(
+      page,
+      "Rosa Reyes",
+      "Last activity",
+      await recordedTime(page, "2026-10-01T07:45:00Z"),
+      width,
+    );
+    await expectHistoryField(
+      page,
+      "Ben Cruz",
+      "Last sign-in",
+      "No recorded sign-in",
+      width,
+    );
+    await expectHistoryField(
+      page,
+      "Ben Cruz",
+      "Last activity",
+      await recordedTime(page, "2026-10-02T08:30:00Z"),
+      width,
+    );
+    await expectHistoryField(
+      page,
+      "Ana Santos",
+      "Last sign-in",
+      "No recorded sign-in",
+      width,
+    );
+    await expectHistoryField(
+      page,
+      "Ana Santos",
+      "Last activity",
+      "No recorded activity",
+      width,
+    );
+    await expect(people).not.toContainText(/never signed in|provider live/i);
     expect(
       await page.evaluate(
         () =>
@@ -780,43 +864,51 @@ test("13b: opening an invitation loads later-page sponsor choices without changi
   });
 });
 
-test("13b: malformed monitoring stays unavailable and a fresh Retry returns supported facts", async ({
-  page,
-}) => {
-  const api = await mockPeopleApi(page);
-  let malformed = true;
-  api.on("GET", "/api/users", (route) =>
-    malformed
-      ? route.fulfill({
-          json: listPage(
-            [
-              {
-                ...api.users.get(ids.ben),
-                active_session_count: -1,
-                mfa_verified_totp: false,
-                mfa_observed_at: created,
-              },
-            ],
-            new URL(route.request().url()),
-          ),
-        })
-      : "next",
-  );
-  await page.goto("/access?view=people");
-  await expect(
-    page.getByRole("alert").filter({ hasText: "People could not be loaded" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("table", { name: "People", exact: true }),
-  ).toHaveCount(0);
-  malformed = false;
-  await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(
-    page
-      .getByRole("table", { name: "People", exact: true })
-      .getByRole("row", { name: /Ben Cruz/ }),
-  ).toContainText("Not verified");
-});
+for (const [contract, fields] of [
+  ["monitoring", { active_session_count: -1, last_sign_in_at: null }],
+  [
+    "history contract",
+    { active_session_count: 2, last_sign_in_at: "not-an-instant" },
+  ],
+] as const)
+  test(`13b: malformed ${contract} stays unavailable and a fresh Retry returns supported facts`, async ({
+    page,
+  }) => {
+    const api = await mockPeopleApi(page);
+    let malformed = true;
+    api.on("GET", "/api/users", (route) =>
+      malformed
+        ? route.fulfill({
+            json: listPage(
+              [
+                {
+                  ...api.users.get(ids.ben),
+                  mfa_verified_totp: false,
+                  mfa_observed_at: created,
+                  last_active_at: null,
+                  ...fields,
+                },
+              ],
+              new URL(route.request().url()),
+            ),
+          })
+        : "next",
+    );
+    await page.goto("/access?view=people");
+    await expect(
+      page.getByRole("alert").filter({ hasText: "People could not be loaded" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("table", { name: "People", exact: true }),
+    ).toHaveCount(0);
+    malformed = false;
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(
+      page
+        .getByRole("table", { name: "People", exact: true })
+        .getByRole("row", { name: /Ben Cruz/ }),
+    ).toContainText("Not verified");
+  });
 
 test("13b: person sessions show sign-in addresses and accepted revocation refreshes the directory count", async ({
   page,
@@ -835,6 +927,8 @@ test("13b: person sessions show sign-in addresses and accepted revocation refres
     active_session_count: 3,
     mfa_verified_totp: false,
     mfa_observed_at: created,
+    last_sign_in_at: "2026-09-12T09:15:00Z",
+    last_active_at: "2026-10-01T07:45:00Z",
   });
   await page.goto(`/access?view=people&user=${ids.ben}`);
   let sheet = panel(page, "Ben Cruz");
@@ -856,6 +950,18 @@ test("13b: person sessions show sign-in addresses and accepted revocation refres
     .getByRole("table", { name: "People", exact: true })
     .getByRole("row", { name: /Ben Cruz/ });
   await expect(ben.getByText("2", { exact: true })).toBeVisible();
+  await expectHistoryField(
+    page,
+    "Ben Cruz",
+    "Last sign-in",
+    await recordedTime(page, "2026-09-12T09:15:00Z"),
+  );
+  await expectHistoryField(
+    page,
+    "Ben Cruz",
+    "Last activity",
+    await recordedTime(page, "2026-10-01T07:45:00Z"),
+  );
   await openPerson(page, "Ben Cruz");
   sheet = panel(page, "Ben Cruz");
   await sheet.getByRole("tab", { name: "Sessions", exact: true }).click();
@@ -871,6 +977,18 @@ test("13b: person sessions show sign-in addresses and accepted revocation refres
   ).toHaveCount(0);
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
   await expect(ben.getByText("0", { exact: true })).toBeVisible();
+  await expectHistoryField(
+    page,
+    "Ben Cruz",
+    "Last sign-in",
+    await recordedTime(page, "2026-09-12T09:15:00Z"),
+  );
+  await expectHistoryField(
+    page,
+    "Ben Cruz",
+    "Last activity",
+    await recordedTime(page, "2026-10-01T07:45:00Z"),
+  );
 });
 
 test("13b: an accepted person edit returns an out-of-range last page to current rows", async ({

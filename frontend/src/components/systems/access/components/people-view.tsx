@@ -118,6 +118,20 @@ function MfaObservation({ person }: { person: AccessDirectoryUser }) {
   );
 }
 
+function RecordedHistory({
+  value,
+  empty,
+}: {
+  value: string | null;
+  empty: string;
+}) {
+  return value === null ? (
+    <span className="text-muted-foreground">{empty}</span>
+  ) : (
+    <time dateTime={value}>{formatDateTime(value)}</time>
+  );
+}
+
 function NameList({
   items,
   empty,
@@ -303,6 +317,26 @@ export function PeopleView() {
           </span>
         ),
       },
+      {
+        id: "last-sign-in",
+        header: "Last sign-in",
+        cell: ({ row }) => (
+          <RecordedHistory
+            value={row.original.user.last_sign_in_at}
+            empty="No recorded sign-in"
+          />
+        ),
+      },
+      {
+        id: "last-activity",
+        header: "Last activity",
+        cell: ({ row }) => (
+          <RecordedHistory
+            value={row.original.user.last_active_at}
+            empty="No recorded activity"
+          />
+        ),
+      },
     ],
     [],
   );
@@ -364,9 +398,25 @@ export function PeopleView() {
       </div>
 
       <p className="text-muted-foreground text-xs">
-        MFA uses the last recorded observation. Session counts are active local
-        sessions.
+        Sign-in and activity show recorded local history. MFA uses the last
+        recorded observation. Session counts are active local sessions.
       </p>
+      {filters.history && filters.history !== "all" ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <p className="text-muted-foreground">
+            {filters.history === "no-recorded-sign-in"
+              ? "Showing active people with no recorded sign-in."
+              : `Showing active people with recorded activity older than ${filters.inactiveDays} days.`}
+          </p>
+          <Button
+            variant="ghost"
+            className="min-h-11"
+            onClick={() => changeFilters({ history: "all" })}
+          >
+            Clear history filter
+          </Button>
+        </div>
+      ) : null}
 
       <AccessSearchToolbar
         searchLabel="Search people"
@@ -547,6 +597,20 @@ export function PeopleView() {
                         </dt>
                         <dd className="tabular-nums">
                           {row.user.active_session_count}
+                        </dd>
+                        <dt className="text-muted-foreground">Last sign-in</dt>
+                        <dd className="min-w-0">
+                          <RecordedHistory
+                            value={row.user.last_sign_in_at}
+                            empty="No recorded sign-in"
+                          />
+                        </dd>
+                        <dt className="text-muted-foreground">Last activity</dt>
+                        <dd className="min-w-0">
+                          <RecordedHistory
+                            value={row.user.last_active_at}
+                            empty="No recorded activity"
+                          />
                         </dd>
                       </dl>
                     </CardContent>

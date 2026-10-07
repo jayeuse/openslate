@@ -1,6 +1,12 @@
 "use client";
 
-import { useId, useMemo, useState, type ReactNode } from "react";
+import {
+  useId,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import type { Route } from "next";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -13,6 +19,7 @@ import {
   UsersRound,
 } from "lucide-react";
 
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -32,9 +39,20 @@ import {
   userListOptions,
   userSummaryOptions,
 } from "../adapters/access-queries";
-import { EXPIRING_SOON_DAYS } from "../helpers/people";
+import {
+  EXPIRING_SOON_DAYS,
+  formatDateTime,
+  inactiveDaysError,
+  parseInactiveDays,
+} from "../helpers/people";
+import {
+  INACTIVE_DAYS_DEFAULT,
+  INACTIVE_DAYS_MIN,
+  INACTIVE_DAYS_MAX,
+} from "../state/api-contracts";
 import { overviewHealth, type OverviewHealth } from "../helpers/overview";
 import { InvitationSettings } from "./invitation-settings";
+import { TextField } from "./people-fields";
 
 type HealthCard = {
   id: keyof OverviewHealth;
@@ -146,7 +164,12 @@ export function OverviewView() {
   const settingsTitleId = useId();
   const users = useQuery(userListOptions("include"));
   const groups = useQuery(groupListOptions("exclude"));
-  const summary = useQuery(userSummaryOptions());
+  const [inactiveDays, setInactiveDays] = useState(INACTIVE_DAYS_DEFAULT);
+  const [inactiveDraft, setInactiveDraft] = useState(
+    String(INACTIVE_DAYS_DEFAULT),
+  );
+  const [inactiveError, setInactiveError] = useState<string | null>(null);
+  const summary = useQuery(userSummaryOptions(inactiveDays));
   const [now] = useState(() => Date.now());
   const health = useMemo(
     () =>
@@ -160,6 +183,35 @@ export function OverviewView() {
     (error) => error instanceof ApiError && error.status === 403,
   );
   const failed = users.isError || groups.isError;
+  const historyCards = [
+    {
+      id: "sign-in",
+      title: "No recorded sign-in",
+      count: summary.data?.no_recorded_sign_in,
+      description:
+        "Active people with no recorded local sign-in. Earlier sign-ins may not have been recorded.",
+      href: "/access?view=people&history=no-recorded-sign-in",
+    },
+    {
+      id: "activity",
+      title: "Known inactive people",
+      count: summary.data?.inactive_people,
+      description: `Active people with recorded activity older than ${summary.data?.inactive_days ?? inactiveDays} days. People with no recorded activity are excluded.`,
+      href: `/access?view=people&history=inactive&inactive_days=${summary.data?.inactive_days ?? inactiveDays}`,
+    },
+  ];
+
+  function applyInactiveDays(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const error = inactiveDaysError(inactiveDraft);
+    setInactiveError(error);
+    if (error) return;
+    const days = parseInactiveDays(inactiveDraft);
+    if (days !== null) {
+      setInactiveDays(days);
+      setInactiveDraft(String(days));
+    }
+  }
 
   if (denied)
     return (
@@ -293,6 +345,108 @@ export function OverviewView() {
                     )}
                   </Card>
                 </li>
+                {historyCards.map((card) => (
+                  <li key={card.id} className="flex min-w-0">
+                    <Card
+                      aria-labelledby={`${settingsTitleId}-${card.id}`}
+                      className="flex w-full min-w-0 flex-col gap-3 self-stretch p-4"
+                    >
+                      <h3
+                        id={`${settingsTitleId}-${card.id}`}
+                        data-slot="card-title"
+                        className="flex items-center gap-2 text-sm font-semibold"
+                      >
+                        <Clock3
+                          aria-hidden="true"
+                          className="text-muted-foreground size-4 shrink-0"
+                        />
+                        {card.title}
+                      </h3>
+                      {summary.isError ? (
+                        <Alert variant="destructive" className="space-y-3">
+                          <p className="text-sm">
+                            Recorded history could not be loaded.
+                          </p>
+                          <Button
+                            variant="outline"
+                            className="min-h-11"
+                            onClick={() => void summary.refetch()}
+                          >
+                            Retry recorded history
+                          </Button>
+                        </Alert>
+                      ) : (
+                        <LoadingRegion
+                          loading={summary.isPending}
+                          label="Loading recorded history…"
+                          skeleton={<Skeleton className="h-24 w-full" />}
+                        >
+                          {card.count !== undefined && summary.data ? (
+                            <div className="space-y-3">
+                              <p className="text-3xl font-semibold tabular-nums">
+                                {card.count}
+                              </p>
+                              <p className="text-muted-foreground text-sm">
+                                {card.description}
+                              </p>
+                              <p className="text-muted-foreground text-xs">
+                                As of{" "}
+                                <time dateTime={summary.data.as_of}>
+                                  {formatDateTime(summary.data.as_of)}
+                                </time>
+                              </p>
+                              {card.count > 0 ? (
+                                <Button
+                                  asChild
+                                  variant="outline"
+                                  className="min-h-11 w-full justify-between"
+                                >
+                                  <GuardedWorkspaceLink
+                                    href={card.href as Route}
+                                  >
+                                    Show these people
+                                    <ArrowRight aria-hidden="true" />
+                                  </GuardedWorkspaceLink>
+                                </Button>
+                              ) : (
+                                <p className="text-muted-foreground flex min-h-11 items-center text-sm">
+                                  Nothing to review
+                                </p>
+                              )}
+                            </div>
+                          ) : null}
+                        </LoadingRegion>
+                      )}
+                      {card.id === "activity" ? (
+                        <form
+                          onSubmit={applyInactiveDays}
+                          className="mt-auto space-y-3 border-t pt-3"
+                          noValidate
+                        >
+                          <TextField
+                            id={`${settingsTitleId}-inactive-days`}
+                            label="Inactive for (days)"
+                            inputMode="numeric"
+                            value={inactiveDraft}
+                            onChange={(value) => {
+                              setInactiveDraft(value);
+                              setInactiveError(null);
+                            }}
+                            description={`Whole days from ${INACTIVE_DAYS_MIN} to ${INACTIVE_DAYS_MAX}.`}
+                            error={inactiveError}
+                          />
+                          <Button
+                            type="submit"
+                            variant="outline"
+                            className="min-h-11 w-full"
+                          >
+                            Apply inactivity period
+                          </Button>
+                        </form>
+                      ) : null}
+                    </Card>
+                  </li>
+                ))}
                 {healthCards(health).map((card) => (
                   <li key={card.id} className="flex min-w-0">
                     <Card

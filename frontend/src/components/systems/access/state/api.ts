@@ -49,6 +49,7 @@ import {
   type AccessUserListOptions,
   type AccessUserPatch,
   type AccessUserSummary,
+  type AccessUserSummaryOptions,
   type AccessVersioned,
   type RequestOptions,
   type StandardListOptions,
@@ -124,6 +125,8 @@ export function listAccessUsers(
       group_id: options.group_id,
       department_id: options.department_id,
       mfa: options.mfa,
+      history: options.history,
+      inactive_days: options.inactive_days,
     }),
     pageSchema(directoryUserSchema),
     { cache: "no-store", signal: options.signal },
@@ -131,12 +134,16 @@ export function listAccessUsers(
 }
 
 export function getAccessUserSummary(
-  options: RequestOptions = {},
+  options: AccessUserSummaryOptions = {},
 ): Promise<AccessUserSummary> {
-  return apiFetch("/users/summary", userSummarySchema, {
-    cache: "no-store",
-    signal: options.signal,
-  });
+  return apiFetch(
+    queryPath("/users/summary", { inactive_days: options.inactive_days }),
+    userSummarySchema,
+    {
+      cache: "no-store",
+      signal: options.signal,
+    },
+  );
 }
 
 export function getAccessUser(

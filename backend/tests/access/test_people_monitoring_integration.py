@@ -247,7 +247,14 @@ def test_mfa_summary_is_global_and_its_card_predicates_are_the_same_rows(directo
     summary = client.get("/api/users/summary")
     assert summary.status_code == 200
     assert summary.headers["cache-control"] == "no-store"
-    assert set(summary.json()) == {"admins_without_mfa", "admins_mfa_unknown"}
+    assert set(summary.json()) == {
+        "admins_without_mfa",
+        "admins_mfa_unknown",
+        "no_recorded_sign_in",
+        "inactive_people",
+        "as_of",
+        "inactive_days",
+    }
     for kind, field, expected in (
         ("without", "admins_without_mfa", {"false"}),
         ("unknown", "admins_mfa_unknown", {"unknown", "stale"}),
@@ -315,3 +322,98 @@ def test_committed_signin_records_only_the_canonical_transport_peer(event_world,
         assert response.status_code == 200
         rows = client.get("/api/auth/sessions").json()
         assert next(row for row in rows if row["current"])["ip_address"] == expected
+
+
+def test_recorded_history_summary_and_drilldowns_use_the_same_known_population(directory_world):
+    from datetime import datetime
+
+    context = directory_world
+    world = context.world
+    values = {
+        "active": (-45, -31),
+        "false": (None, None),
+        "unknown": (None, -2),
+        "stale": (-1, -30),
+        "pending": (None, -60),
+        "disabled": (None, -60),
+        "expired": (None, -60),
+        "deleted": (None, -60),
+    }
+    with Session(world.owner) as db:
+        for key, (signin, active) in values.items():
+            row = db.get(IdentityMfaObservation, context.people[key])
+            if row is None:
+                row = IdentityMfaObservation(user_id=context.people[key])
+                db.add(row)
+            row.last_sign_in_at = None if signin is None else world.clock + timedelta(days=signin)
+            row.last_active_at = None if active is None else world.clock + timedelta(days=active)
+        db.commit()
+    response = world.client.get("/api/users/summary")
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    summary = response.json()
+    assert summary.get("inactive_days") == 30
+    assert datetime.fromisoformat(summary["as_of"].replace("Z", "+00:00")) == world.clock
+    for kind, field, expected in [
+        ("no-recorded-sign-in", "no_recorded_sign_in", {"false", "unknown"}),
+        ("inactive", "inactive_people", {"active"}),
+    ]:
+        global_rows = world.client.get("/api/users", params={"history": kind, "limit": 1}).json()
+        assert global_rows["pagination"]["total"] == summary[field]
+        page = get_rows(context, history=kind, limit=1)
+        assert page["pagination"]["total"] == len(expected)
+        complete = get_rows(context, history=kind, limit=100)
+        assert {UUID(row["id"]) for row in complete["items"]} == {
+            context.people[key] for key in expected
+        }
+    row = next(
+        item for item in get_rows(context)["items"] if item["id"] == str(context.people["stale"])
+    )
+    assert {"last_sign_in_at", "last_active_at"} <= row.keys()
+    assert row["mfa_verified_totp"] is None and row["last_active_at"] is not None
+    assert "last_sign_in_at" in row
+    # Threshold is echoed, cutoff is exclusive, and null activity is never inactive.
+    assert get_rows(context, history="inactive", inactive_days=31)["items"] == []
+    shorter = world.client.get("/api/users/summary", params={"inactive_days": "1"}).json()
+    assert shorter["inactive_days"] == 1
+    assert (
+        shorter["inactive_people"]
+        == world.client.get(
+            "/api/users", params={"history": "inactive", "inactive_days": "1", "limit": 1}
+        ).json()["pagination"]["total"]
+    )
+    detail = world.client.get(f"/api/users/{context.people['active']}").json()
+    assert not {"last_sign_in_at", "last_active_at"} & detail.keys()
+    assert (
+        not {"last_sign_in_at", "last_active_at"} & world.client.get("/api/auth/me").json().keys()
+    )
+
+
+@pytest.mark.parametrize("path", ["/api/users", "/api/users/summary"])
+@pytest.mark.parametrize("value", ["0", "3651", "true", "false", "1.5", "30.0"])
+def test_recorded_history_days_reject_noninteger_and_out_of_range_queries(
+    directory_world, path, value
+):
+    assert (
+        directory_world.world.client.get(path, params={"inactive_days": value}).status_code == 422
+    )
+
+
+def test_recorded_history_endpoints_retain_exact_admin_admission(directory_world):
+    world = directory_world.world
+    with Session(world.owner) as db:
+        actor = db.get(User, world.actor_id)
+        actor.role = "member"
+        db.commit()
+    try:
+        for path in ("/api/users", "/api/users/summary"):
+            response = world.client.get(
+                path,
+                params={"history": "inactive", "inactive_days": "30"}
+                if path.endswith("users")
+                else {"inactive_days": "30"},
+            )
+            assert response.status_code == 403
+    finally:
+        with Session(world.owner) as db:
+            db.get(User, world.actor_id).role = "admin"
+            db.commit()

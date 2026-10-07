@@ -127,6 +127,8 @@ export type Handler = (
 export type MockOptions = {
   /** The signed-in person; an administrator by default. */
   identity?: { id: string; role: User["role"]; access: AccessEntry[] };
+  /** A controlled API clock for cutoff and observation-metadata journeys. */
+  now?: number;
 };
 
 export type Workspace = {
@@ -140,6 +142,8 @@ export type Monitoring = {
   active_session_count: number;
   mfa_verified_totp: boolean | null;
   mfa_observed_at: string | null;
+  last_sign_in_at?: string | null;
+  last_active_at?: string | null;
 };
 export type Session = {
   id: string;
@@ -154,6 +158,8 @@ const unknownMonitoring: Monitoring = {
   active_session_count: 0,
   mfa_verified_totp: null,
   mfa_observed_at: null,
+  last_sign_in_at: null,
+  last_active_at: null,
 };
 
 export type Api = {
@@ -161,6 +167,7 @@ export type Api = {
   sessions: Session[];
   listReads: URLSearchParams[];
   summaryReads: number;
+  summaryQueries: URLSearchParams[];
   users: Map<string, User>;
   groups: Map<string, Group>;
   workspace: Workspace;
@@ -331,6 +338,7 @@ export async function mockAccessApi(
     sessions,
     listReads: [],
     summaryReads: 0,
+    summaryQueries: [],
     users,
     groups,
     workspace: {
@@ -360,8 +368,10 @@ export async function mockAccessApi(
     calls.push(call);
     if (method === "GET" && path === "/api/users")
       api.listReads.push(new URLSearchParams(url.searchParams));
-    if (method === "GET" && path === "/api/users/summary")
+    if (method === "GET" && path === "/api/users/summary") {
       api.summaryReads += 1;
+      api.summaryQueries.push(new URLSearchParams(url.searchParams));
+    }
     const override = handlers.get(`${method} ${path}`);
     if (override && (await override(route, call)) !== "next") return;
 
@@ -373,17 +383,27 @@ export async function mockAccessApi(
       return route.fulfill({
         json: options.identity ?? { id: ids.rosa, role: "admin", access: [] },
       });
-    const capturedAt = Date.now();
-    const eligible = (user: User) =>
+    const capturedAt = options.now ?? Date.now();
+    const established = (user: User) =>
       !user.is_deleted &&
-      user.role === "admin" &&
       user.status === "active" &&
       (!user.expires_at || Date.parse(user.expires_at) > capturedAt);
+    const eligible = (user: User) => established(user) && user.role === "admin";
     const mfaMatches = (user: User, mode: string) =>
       eligible(user) &&
       (mode === "without"
         ? monitoring.get(user.id)?.mfa_verified_totp === false
         : monitoring.get(user.id)?.mfa_verified_totp == null);
+    const inactiveDays = Number(url.searchParams.get("inactive_days") ?? 30);
+    const historyMatches = (user: User, history: string) => {
+      if (!established(user)) return false;
+      const observation = monitoring.get(user.id) ?? unknownMonitoring;
+      return history === "no-recorded-sign-in"
+        ? observation.last_sign_in_at == null
+        : observation.last_active_at != null &&
+            Date.parse(observation.last_active_at) <
+              capturedAt - inactiveDays * DAY;
+    };
     if (path === "/api/users/summary" && method === "GET") {
       const all = [...users.values()];
       return route.fulfill({
@@ -392,6 +412,14 @@ export async function mockAccessApi(
             .length,
           admins_mfa_unknown: all.filter((user) => mfaMatches(user, "unknown"))
             .length,
+          no_recorded_sign_in: all.filter((user) =>
+            historyMatches(user, "no-recorded-sign-in"),
+          ).length,
+          inactive_people: all.filter((user) =>
+            historyMatches(user, "inactive"),
+          ).length,
+          as_of: new Date(capturedAt).toISOString(),
+          inactive_days: inactiveDays,
         },
       });
     }
@@ -401,6 +429,7 @@ export async function mockAccessApi(
       const role = query.get("role");
       const status = query.get("status");
       const mfa = query.get("mfa");
+      const history = query.get("history");
       const groupId = query.get("group_id");
       const departmentId = query.get("department_id");
       const search = (query.get("search") ?? "").toLowerCase();
@@ -431,6 +460,7 @@ export async function mockAccessApi(
         )
           return false;
         if (mfa && !mfaMatches(user, mfa)) return false;
+        if (history && !historyMatches(user, history)) return false;
         const memberOf =
           user.role === "admin"
             ? []
@@ -496,7 +526,10 @@ export async function mockAccessApi(
       return route.fulfill({
         json: listPage(
           matching.map((user) => {
-            const observation = monitoring.get(user.id) ?? unknownMonitoring;
+            const observation = {
+              ...unknownMonitoring,
+              ...monitoring.get(user.id),
+            };
             const active =
               !user.is_deleted &&
               user.status === "active" &&

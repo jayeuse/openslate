@@ -34,6 +34,8 @@ class DirectoryRowResponse(UserResponse):
     active_session_count: int = Field(ge=0)
     mfa_verified_totp: StrictBool | None
     mfa_observed_at: datetime | None
+    last_sign_in_at: datetime | None
+    last_active_at: datetime | None
 
 
 class UserListResponse(StandardListResponse[DirectoryRowResponse]):
@@ -44,6 +46,10 @@ class UserSummaryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     admins_without_mfa: int = Field(ge=0)
     admins_mfa_unknown: int = Field(ge=0)
+    no_recorded_sign_in: int = Field(ge=0)
+    inactive_people: int = Field(ge=0)
+    as_of: datetime
+    inactive_days: int = Field(ge=1, le=3650)
 
 
 class AccessEntryResponse(BaseModel):

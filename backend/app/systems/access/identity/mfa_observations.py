@@ -80,3 +80,27 @@ def commit_bound_observation(
     except SQLAlchemyError as error:
         db.rollback()
         raise SupabaseAuthUnavailable("Unable to persist MFA observation") from error
+
+
+def record_activity(
+    db: Session, user_id: UUID, provider_id: UUID, timestamp: datetime, *, sign_in: bool = False
+) -> None:
+    """Advance lifetime User history in the caller's successful auth transaction.
+
+    Never first-insert from Session-first refresh, and keep history independent
+    from provider evidence's separate read-start ordering fence.
+    """
+    observation = db.scalar(
+        select(IdentityMfaObservation)
+        .where(IdentityMfaObservation.user_id == user_id)
+        .execution_options(populate_existing=True)
+        .with_for_update(of=IdentityMfaObservation)
+    )
+    if observation is None:
+        return
+    if db.scalar(select(User.supabase_user_id).where(User.id == user_id)) != provider_id:
+        return
+    if observation.last_active_at is None or timestamp > observation.last_active_at:
+        observation.last_active_at = timestamp
+    if sign_in and (observation.last_sign_in_at is None or timestamp > observation.last_sign_in_at):
+        observation.last_sign_in_at = timestamp

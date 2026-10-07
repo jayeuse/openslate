@@ -2,9 +2,10 @@
 
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from sqlalchemy import Select, and_, case, func, or_, select, tuple_
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -37,12 +38,30 @@ class UserSortField(StrEnum):
     EXPIRES_AT = "expires_at"
 
 
+def _integer_days(value: Any) -> Any:
+    if isinstance(value, bool) or (
+        isinstance(value, str) and not (value.isascii() and value.isdecimal())
+    ):
+        raise ValueError("inactive_days must be an integer")
+    return value
+
+
+InactiveDays = Annotated[int, BeforeValidator(_integer_days), Field(ge=1, le=3650)]
+
+
+class UserSummaryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    inactive_days: InactiveDays = 30
+
+
 class UserListRequest(StandardListRequest[UserSortField]):
     role: UserRole | None = None
     group_id: UUID | Literal["none"] | None = None
     department_id: UUID | None = None
     status: Literal["pending", "active", "disabled", "expired", "ending"] | None = None
     mfa: Literal["without", "unknown"] | None = None
+    history: Literal["no-recorded-sign-in", "inactive"] | None = None
+    inactive_days: InactiveDays = 30
 
 
 _NAME = func.lower(func.coalesce(func.nullif(func.trim(User.display_name), ""), User.username))
@@ -84,6 +103,18 @@ def _mfa_predicate(kind: str, now: datetime) -> ColumnElement[bool]:
         else ~known
     )
     return and_(User.role == "admin", _active_account(now), evidence)
+
+
+def _history_predicate(kind: str, now: datetime, inactive_days: int) -> ColumnElement[bool]:
+    evidence = select(1).where(IdentityMfaObservation.user_id == User.id)
+    condition = (
+        ~evidence.where(IdentityMfaObservation.last_sign_in_at.is_not(None)).exists()
+        if kind == "no-recorded-sign-in"
+        else evidence.where(
+            IdentityMfaObservation.last_active_at < now - timedelta(days=inactive_days)
+        ).exists()
+    )
+    return and_(_active_account(now), condition)
 
 
 def _filtered_users(params: UserListRequest, now: datetime) -> Select[tuple[User]]:
@@ -135,6 +166,8 @@ def _filtered_users(params: UserListRequest, now: datetime) -> Select[tuple[User
         statement = statement.where(User.role != "admin", granted)
     if params.mfa is not None:
         statement = statement.where(_mfa_predicate(params.mfa, now))
+    if params.history is not None:
+        statement = statement.where(_history_predicate(params.history, now, params.inactive_days))
     return statement
 
 
@@ -182,6 +215,8 @@ def directory_list(db: Session, params: UserListRequest, now: datetime) -> UserL
                 case((_known_observation(), IdentityMfaObservation.observed_at), else_=None).label(
                     "mfa_observed_at"
                 ),
+                IdentityMfaObservation.last_sign_in_at,
+                IdentityMfaObservation.last_active_at,
             )
             .outerjoin(IdentityMfaObservation, IdentityMfaObservation.user_id == User.id)
             .where(User.id.in_([item.id for item in result.items]))
@@ -195,6 +230,8 @@ def directory_list(db: Session, params: UserListRequest, now: datetime) -> UserL
                     "active_session_count": metadata[item.id]["active_session_count"],
                     "mfa_verified_totp": metadata[item.id]["mfa_verified_totp"],
                     "mfa_observed_at": metadata[item.id]["mfa_observed_at"],
+                    "last_sign_in_at": metadata[item.id]["last_sign_in_at"],
+                    "last_active_at": metadata[item.id]["last_active_at"],
                 }
             )
             for item in result.items
@@ -203,11 +240,20 @@ def directory_list(db: Session, params: UserListRequest, now: datetime) -> UserL
     )
 
 
-def directory_summary(db: Session, now: datetime) -> UserSummaryResponse:
+def directory_summary(db: Session, now: datetime, inactive_days: int = 30) -> UserSummaryResponse:
     counts = db.execute(
         select(
             func.count().filter(_mfa_predicate("without", now)),
             func.count().filter(_mfa_predicate("unknown", now)),
+            func.count().filter(_history_predicate("no-recorded-sign-in", now, inactive_days)),
+            func.count().filter(_history_predicate("inactive", now, inactive_days)),
         ).select_from(User)
     ).one()
-    return UserSummaryResponse(admins_without_mfa=counts[0], admins_mfa_unknown=counts[1])
+    return UserSummaryResponse(
+        admins_without_mfa=counts[0],
+        admins_mfa_unknown=counts[1],
+        no_recorded_sign_in=counts[2],
+        inactive_people=counts[3],
+        as_of=now,
+        inactive_days=inactive_days,
+    )

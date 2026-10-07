@@ -1,4 +1,9 @@
 import { ApiContractError, ApiError } from "@/lib/api";
+import {
+  INACTIVE_DAYS_DEFAULT,
+  INACTIVE_DAYS_MIN,
+  INACTIVE_DAYS_MAX,
+} from "../state/api-contracts";
 
 import type {
   AccessDepartment,
@@ -175,6 +180,8 @@ export type DirectoryFilters = {
   departmentId: string;
   sort: DirectorySort;
   mfa?: "all" | "without" | "unknown";
+  history?: "all" | "no-recorded-sign-in" | "inactive";
+  inactiveDays?: number;
 };
 
 export const defaultDirectoryFilters: DirectoryFilters = {
@@ -185,6 +192,8 @@ export const defaultDirectoryFilters: DirectoryFilters = {
   departmentId: "all",
   sort: "name",
   mfa: "all",
+  history: "all",
+  inactiveDays: INACTIVE_DAYS_DEFAULT,
 };
 
 const directorySorts: readonly DirectorySort[] = [
@@ -233,6 +242,14 @@ export function directoryFiltersFromParams(
       params.get("mfa"),
       "all",
     ),
+    history: oneOf(
+      ["all", "no-recorded-sign-in", "inactive"] as const,
+      params.get("history"),
+      "all",
+    ),
+    inactiveDays:
+      parseInactiveDays(params.get("inactive_days") ?? "") ??
+      INACTIVE_DAYS_DEFAULT,
   };
 }
 
@@ -243,6 +260,7 @@ export function activeFilterCount(filters: DirectoryFilters): number {
     filters.groupId !== "all",
     filters.departmentId !== "all",
     Boolean(filters.mfa && filters.mfa !== "all"),
+    Boolean(filters.history && filters.history !== "all"),
   ].filter(Boolean).length;
 }
 
@@ -273,6 +291,11 @@ export function directoryRequest(
     department_id:
       filters.departmentId === "all" ? undefined : filters.departmentId,
     mfa: filters.mfa === "all" ? undefined : filters.mfa,
+    history: filters.history === "all" ? undefined : filters.history,
+    inactive_days:
+      filters.history === "inactive"
+        ? (filters.inactiveDays ?? INACTIVE_DAYS_DEFAULT)
+        : undefined,
     sort_by:
       filters.sort === "newest"
         ? "created_at"
@@ -284,6 +307,20 @@ export function directoryRequest(
 }
 
 // Guest expiry
+
+/** The applied inactivity period, distinct from an incomplete input draft. */
+export function parseInactiveDays(value: string): number | null {
+  if (!/^\d+$/.test(value.trim())) return null;
+  const days = Number(value.trim());
+  return days >= INACTIVE_DAYS_MIN && days <= INACTIVE_DAYS_MAX ? days : null;
+}
+
+export function inactiveDaysError(value: string): string | null {
+  if (!value.trim()) return "Enter the number of days.";
+  return parseInactiveDays(value) === null
+    ? `Enter a whole number from ${INACTIVE_DAYS_MIN} to ${INACTIVE_DAYS_MAX}.`
+    : null;
+}
 
 export const GUEST_DAYS_MIN = 1;
 export const GUEST_DAYS_MAX = 365;
