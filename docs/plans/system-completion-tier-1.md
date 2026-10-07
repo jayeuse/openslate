@@ -658,3 +658,21 @@ Follow these rules:
 
 Correct: `Screenshots done; stopped next dev on 3000; ran tests/http/record-files.spec.ts.`
 Wrong: `next dev on 3000 still running; started Playwright; lock error; stopped the run.`
+
+### 11.6 Complete sample acceptance for the implemented controls
+
+Extend the Harbor Small and School Small runs to exercise the implemented file purposes and logo, notifications, organization appearance and retention, People monitoring, security events, and recovery controls through the same APIs as the UI. Each covered operation needs an executor, meaningful verification, and successful request evidence. Retired notification deferrals must be removed when their real controls exist.
+
+Include genuine MFA step-up and administrator MFA reset using owned sample identities and the provider's enrollment and verification flow. Preserve the installation owner's identity and MFA settings. Verify factor removal and session revocation, then clean up only the owned sample state; an AAL1 rejection does not prove successful reset.
+
+Include actual host backup and encrypted export delivery from a proven source in the same sample installation. Preserve the existing control that leaves its own backup request unstarted by using a separate, explicitly owned source for host acceptance. Verify the resulting archive and authenticated download, and restore the required running services after the necessary backup window. Separate Restic fixtures or synthetic delivery records cannot stand in for this lineage.
+
+Keep credentials, MFA material, and passphrases private. Do not fabricate request journals or audit rows, use provider-admin or direct database insertion as sample population, weaken instance or filesystem guards, or classify failed requests as successful route coverage. Run the two Small profiles separately with the guarded reset between them; Standard remains outside this run.
+
+### 11.7 Hardware-appropriate Final verification (owner-approved October 7)
+
+The owner authorized adapting execution to this development machine while retaining assertions, all required suites/scenarios, the 90% coverage thresholds, isolation, cleanup guards and the no-push boundary. The owner separately removed the mandatory ten-minute test/pre-push gate requirement: total duration alone no longer fails a complete passing gate and requires no timing exception. Individual hang/deadline protections remain meaningful and intact.
+
+Measure a small representative selection before choosing worker concurrency. Avoid overlapping heavy suites/builds, reduce disposable-stack concurrency where measurements warrant, and reuse safe setup without compromising isolation. Use existing `prepush.py --serial --coverage-stacks 1` controls on this constrained machine; frontend worker selection is recorded with its measurement. Diagnose genuine failures independently of resource pressure; no blind retries, weakened assertions, skipped required checks or arbitrary timeout inflation. Record actual runtimes and retained failures.
+
+Inspection found the removed total-duration requirement in root `AGENTS.md`; `scripts/prepush.py` records elapsed times but has no ten-minute rejection/deadline enforcement. Its existing per-command/runner safeguards are preserved.
