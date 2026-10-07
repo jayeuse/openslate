@@ -212,6 +212,7 @@ export class ApiError extends Error {
     message: string,
     public details?: unknown,
     public code?: LifecycleErrorCode,
+    public retryAfter?: number,
   ) {
     super(message);
   }
@@ -489,6 +490,11 @@ async function parseResponse(
         ? body.detail
         : "Request could not be completed";
     const errorDetail = isErrorDetail(detail) ? detail : undefined;
+    const retryHeader = response.headers.get("Retry-After")?.trim();
+    const retryAfter =
+      retryHeader && /^\d+$/.test(retryHeader)
+        ? Number(retryHeader)
+        : undefined;
     throw new ApiError(
       response.status,
       typeof detail === "string"
@@ -498,6 +504,9 @@ async function parseResponse(
           : "Request could not be completed",
       detail,
       typeof errorDetail?.code === "string" ? errorDetail.code : undefined,
+      retryAfter !== undefined && Number.isSafeInteger(retryAfter)
+        ? retryAfter
+        : undefined,
     );
   }
   return body;

@@ -369,7 +369,8 @@ test("Organization cached look paints the first frame and public read reconciles
       "whiteboard",
     );
     expect(await cached(page)).toBe("whiteboard");
-    expect(api.refreshes).toBe(0);
+    // The public entry checks for an existing session; appearance adds no refresh.
+    expect(api.refreshes).toBe(1);
   } finally {
     gate.release();
   }
@@ -406,7 +407,7 @@ for (const fault of [
       "stockroom",
     );
     expect(await cached(page)).toBe("stockroom");
-    expect(api.refreshes).toBe(0);
+    expect(api.refreshes).toBe(1);
   });
 }
 

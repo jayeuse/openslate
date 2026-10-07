@@ -31,6 +31,14 @@ const routeTitles = [
 test("each route names itself in the browser tab", async ({ page }) => {
   await signIn(page);
   for (const [path, title] of routeTitles) {
+    if (path === "/login") {
+      await page.route("**/api/auth/session", (route) =>
+        route.fulfill({ json: { authenticated: false } }),
+      );
+      await page.route("**/api/auth/refresh", (route) =>
+        route.fulfill({ status: 401, json: { detail: "Unauthenticated" } }),
+      );
+    }
     await page.goto(path);
     await expect(page, path).toHaveTitle(title);
   }
