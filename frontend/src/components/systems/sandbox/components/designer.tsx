@@ -1,3 +1,4 @@
+import { useUserPreferences } from "@/components/theme-provider";
 import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import type {
   SandboxBinding,
@@ -118,7 +119,6 @@ import {
   SandboxCommandError,
   type SandboxCommandResult,
 } from "../state/commands";
-import type { SandboxCreateRequest } from "./sandbox-controls";
 import { EmptyCanvasPanel } from "./empty-canvas-panel";
 import {
   SANDBOX_WORKBENCH_MAX_WIDTH,
@@ -219,12 +219,10 @@ export function Designer({
   change,
   initializeLayout,
   notify,
-  onViewPreferenceChange,
-  createRequest,
-  onCreateRequestHandled,
   onStartFromTemplate,
   pending,
   bindings,
+  purgeEnabled,
   onLifecycle,
   onDraftStateChange,
 }: {
@@ -244,18 +242,17 @@ export function Designer({
   ) => Promise<SandboxCommandResult<Design>>;
   initializeLayout: (layout: SandboxCanvasLayout) => void;
   notify: (s: string) => void;
-  onViewPreferenceChange: () => void;
-  createRequest: SandboxCreateRequest | null;
-  onCreateRequestHandled: (id: number) => void;
   onStartFromTemplate: () => void;
   pending: boolean;
   bindings: readonly SandboxBinding[] | null;
+  purgeEnabled: boolean;
   onLifecycle: (
     binding: SandboxLifecycleBinding,
     operation: SandboxLifecycleOperation,
   ) => Promise<SandboxCommandResult<Design>>;
   onDraftStateChange: (dirty: boolean) => void;
 }) {
+  const { keyboardShortcuts } = useUserPreferences();
   const [viewPreferences, setViewPreferences] =
     useState<SandboxViewPreferences>(loadSandboxViewPreferences);
   // Narrow screens open on the canvas, the Sandbox's main surface.
@@ -332,7 +329,6 @@ export function Designer({
     );
     if (unchanged) return;
     const next = { ...current, ...patch };
-    onViewPreferenceChange();
     viewPreferencesRef.current = next;
     setViewPreferences(next);
     saveSandboxViewPreferences(next);
@@ -439,7 +435,6 @@ export function Designer({
   >([]);
   const [relationshipError, setRelationshipError] = useState("");
   const [editorError, setEditorError] = useState("");
-  const handledCreateRequest = useRef<number | null>(null);
   const handledFocusTarget = useRef<string | null>(null);
   const selectedField = projectedField(design, selected);
   const selectedRelationship = design.relationships.find(
@@ -505,66 +500,6 @@ export function Designer({
     });
     return () => cancelAnimationFrame(frame);
   }, [design, focusTargetId, pane]);
-  useEffect(() => {
-    if (
-      !createRequest ||
-      createRequest.kind === "trigger-rule" ||
-      handledCreateRequest.current === createRequest.id
-    )
-      return;
-    handledCreateRequest.current = createRequest.id;
-
-    const requestedField = projectedField(design, selected);
-    const requestedRelationship = design.relationships.find(
-      (item) => item.id === selected,
-    );
-    const currentModule = design.modules.find(
-      (item) =>
-        item.id ===
-        (requestedField?.moduleId ?? requestedRelationship?.source ?? selected),
-    );
-    const currentDepartment =
-      design.departments.find(
-        (item) => item.id === (currentModule?.department ?? selected),
-      ) ?? design.departments[0];
-    const parentModule = currentModule ?? design.modules[0];
-
-    setEditingRelationship(null);
-    setName("");
-    setType("Text");
-    setRequired(false);
-    setValue("");
-    setOptions("");
-    setRelationshipError("");
-    setEditorError("");
-    setFieldMappings([]);
-    showPane("Inspector");
-
-    if (createRequest.kind === "department") {
-      setEditor("department");
-      onCreateRequestHandled(createRequest.id);
-      return;
-    }
-    if (createRequest.kind === "module") {
-      if (currentDepartment) setSelected(currentDepartment.id);
-      setEditor("module");
-      onCreateRequestHandled(createRequest.id);
-      return;
-    }
-    if (createRequest.kind === "field") {
-      if (parentModule) setSelected(parentModule.id);
-      setEditor("field");
-      onCreateRequestHandled(createRequest.id);
-      return;
-    }
-
-    const sourceId = parentModule?.id ?? "";
-    setSelected(sourceId);
-    setSource(sourceId);
-    setTarget(design.modules.find((item) => item.id !== sourceId)?.id ?? "");
-    setEditor("relationship");
-    onCreateRequestHandled(createRequest.id);
-  }, [createRequest, design, onCreateRequestHandled, selected]);
   // The canvas re-syncs its whole graph whenever this object changes, so keep
   // it stable across renders that do not change the design or selection.
   const projected = useMemo(
@@ -591,11 +526,11 @@ export function Designer({
         document.querySelector('[role="dialog"], [role="alertdialog"]')
       )
         return;
-      if (event.key === "?") {
+      if (event.key === "?" && keyboardShortcuts === true) {
         event.preventDefault();
         setCanvasHelpOpen(true);
         setPane("Canvas");
-      } else if (event.key === "0") {
+      } else if (event.key === "0" && keyboardShortcuts === true) {
         event.preventDefault();
         setPane("Canvas");
         requestAnimationFrame(fitCanvas);
@@ -606,7 +541,7 @@ export function Designer({
     }
     window.addEventListener("keydown", handleDesignerShortcut);
     return () => window.removeEventListener("keydown", handleDesignerShortcut);
-  }, [keyboardTarget]);
+  }, [keyboardTarget, keyboardShortcuts]);
 
   function requestDelete(target: SandboxInspectorTarget): void {
     deleteFallbackId.current = null;
@@ -730,7 +665,7 @@ export function Designer({
           : projectedField(design, target.id)?.field.closed;
     return {
       closed: binding?.is_deleted ?? draftClosed ?? false,
-      canPurge: Boolean(binding?.is_deleted),
+      canPurge: purgeEnabled && Boolean(binding?.is_deleted),
       disabled:
         pending || bindings === null || Boolean(binding && localDraftDirty),
     };
@@ -739,7 +674,11 @@ export function Designer({
     target: SandboxInspectorTarget,
   ): Promise<SandboxCommandResult<Design>> {
     const binding = bindingFor(target);
-    if (!binding?.is_deleted || lifecycleState(target).disabled)
+    if (
+      !lifecycleState(target).canPurge ||
+      lifecycleState(target).disabled ||
+      !binding
+    )
       return {
         ok: false,
         error:
@@ -1556,7 +1495,6 @@ export function Designer({
       className="h-full min-w-0 p-3 [&_section]:w-full [&_section]:min-w-0"
     >
       <SandboxInspector
-        mode="outline"
         state={projected}
         onSelect={selectItem}
         onEdit={(id) => {
@@ -1575,20 +1513,6 @@ export function Designer({
             `sandbox.design.field:${id}`,
           )
         }
-        onUpdateLinkLabel={(id, label) =>
-          change((previous) => {
-            if (!previous.relationships.some((item) => item.id === id))
-              throw new SandboxCommandError(
-                "This relationship was deleted. Keep the edit open and try again.",
-              );
-            return {
-              ...previous,
-              relationships: previous.relationships.map((item) =>
-                item.id === id ? { ...item, name: label } : item,
-              ),
-            };
-          }, `sandbox.design.link:${id}`)
-        }
         onDeleteSelected={requestDelete}
         onDuplicate={duplicateTarget}
         onToggleLifecycle={toggleLifecycle}
@@ -1605,7 +1529,6 @@ export function Designer({
           open("field");
           setType(fieldTypeNames[fieldType]);
         }}
-        onMoveModule={moveModule}
         pending={pending}
         onAddRelationship={() => {
           setSelected(selectedModule?.id ?? design.modules[0]?.id ?? "");
@@ -2450,10 +2373,13 @@ export function Designer({
                       Use Structure for complete keyboard editing.
                     </p>
                     <p className="text-muted-foreground mt-1">
-                      Designer shortcuts: press 0 to fit the canvas, ? for this
-                      help, and Delete to review removal of the selected item.
-                      Shortcuts are paused while editing or while a dialog is
-                      open.
+                      {keyboardShortcuts === true
+                        ? "Designer shortcuts: press 0 to fit the canvas and ? for this help. "
+                        : keyboardShortcuts === false
+                          ? "Convenience shortcuts are off in Appearance. Use the Fit and View buttons. "
+                          : "Convenience shortcuts are available once your account preferences load. "}
+                      Delete reviews removal of the selected item. Shortcuts
+                      ignore text editing and open dialogs.
                     </p>
                   </section>
                 ) : null}

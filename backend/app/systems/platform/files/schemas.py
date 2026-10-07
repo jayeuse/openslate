@@ -27,6 +27,7 @@ class FileCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     purpose: FilePurpose
     record_id: UUID | None = None
+    department_id: UUID | None = None
     filename: str = Field(min_length=1, max_length=255)
     expected_size: int = Field(gt=0, le=25 * 1024 * 1024, strict=True)
 
@@ -43,6 +44,8 @@ class FileCreate(BaseModel):
             raise ValueError("Board attachments require a Board-scoped reservation")
         if (self.purpose == FilePurpose.RECORD_ATTACHMENT) != (self.record_id is not None):
             raise ValueError("Only record attachments require a record")
+        if (self.purpose == FilePurpose.LIBRARY_DOCUMENT) != (self.department_id is not None):
+            raise ValueError("Only library documents require a department")
         if self.purpose == FilePurpose.WORKSPACE_LOGO and self.expected_size > 2 * 1024 * 1024:
             raise ValueError("Logos must not exceed 2 MiB")
         return self
@@ -65,6 +68,7 @@ class FileResponse(BaseModel):
     purpose: FilePurpose
     record_id: UUID | None
     board_id: UUID | None
+    department_id: UUID | None
     creator_id: UUID
     filename: str
     media_type: str | None
@@ -82,9 +86,17 @@ class FileSortField(StrEnum):
     UPDATED_AT = "updated_at"
 
 
-class FileListRequest(StandardListRequest[FileSortField]):
+class LibraryFileSortField(StrEnum):
+    CREATED_AT = "created_at"
+    UPDATED_AT = "updated_at"
+    NAME = "name"
+    SIZE = "size"
+
+
+class FileListRequest(StandardListRequest[LibraryFileSortField]):
     purpose: FilePurpose
     record_id: UUID | None = None
+    department_id: UUID | None = None
 
 
 class BoardFileListRequest(StandardListRequest[FileSortField]):
@@ -93,3 +105,8 @@ class BoardFileListRequest(StandardListRequest[FileSortField]):
 
 class FileListResponse(StandardListResponse[FileResponse]):
     pass
+
+
+class LibraryFileListResponse(FileListResponse):
+    creator_labels: dict[UUID, str]
+    storage_used_bytes: int = Field(ge=0)

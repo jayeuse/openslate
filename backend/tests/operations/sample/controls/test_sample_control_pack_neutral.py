@@ -87,7 +87,41 @@ def test_small_control_planning_uses_supplied_data_even_with_an_unknown_pack_key
     bulk = next(
         action for action in manage if action.values["operation"] == "revoke_admin_sessions"
     )
-    assert actions[-2] == bulk
+    required = {
+        "real_mfa_reset",
+        "generic_record_file",
+        "generic_library_file",
+        "workspace_logo_files",
+        "review_people_security",
+        "review_workspace_appearance",
+        "review_notifications",
+    }
+    operations = [action.values["operation"] for action in actions]
+    assert required <= set(operations), "Every implemented control must enter the real run plan"
+    # The host backup step joins the plan only for host acceptance runs.
+    assert "physical_backup_export" not in operations
+    assert all(operations.count(operation) == 1 for operation in required)
+    assert operations.index("self_service_security") < operations.index("real_mfa_reset")
+    assert operations.index("real_mfa_reset") < operations.index("review_people_security")
+    assert all(
+        operations.index(operation) < operations.index("review_backup_status")
+        for operation in (
+            "review_people_security",
+            "generic_record_file",
+            "generic_library_file",
+            "workspace_logo_files",
+        )
+    ), "Mail-dependent and file controls must finish before host backup work"
+    host_operations = [
+        action.values["operation"]
+        for action in plan_controls(replace(dataset, host_acceptance=True))
+    ]
+    assert host_operations.index("workspace_logo_files") < host_operations.index(
+        "physical_backup_export"
+    )
+    assert host_operations.index("physical_backup_export") < host_operations.index("queue_backup")
+    assert actions[-3] == bulk
+    assert actions[-2].values["operation"] == "review_notifications"
     assert actions[-1].values["operation"] == "revoke_user_sessions"
     actors = {person.key for person in dataset.organization.actors.people} | {"admin"}
     assert all(action.actor_key in actors for action in actions)

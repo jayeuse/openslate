@@ -89,7 +89,7 @@ export default function RecoveryPage() {
     setPending(true);
     try {
       await completeRecovery(recoveryToken, password);
-      router.replace("/login");
+      router.replace("/login?completed=password");
     } catch {
       setCompletionState("error");
     } finally {

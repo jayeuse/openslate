@@ -198,8 +198,20 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
     db.flush()
     db.add_all([revision_link, owned_revision_link, post_work, reminder_work])
     db.flush()
-    post_notice = InAppNotification(work_id=post_work.id, recipient_id=author.id)
-    reminder_notice = InAppNotification(work_id=reminder_work.id, recipient_id=author.id)
+    post_notice = InAppNotification(
+        work_id=post_work.id,
+        recipient_id=author.id,
+        kind="post-publish",
+        subject_type="board_post",
+        subject_id=post.id,
+    )
+    reminder_notice = InAppNotification(
+        work_id=reminder_work.id,
+        recipient_id=author.id,
+        kind="event-reminder",
+        subject_type="board_event",
+        subject_id=reminder.event_id,
+    )
     db.add_all([post_notice, reminder_notice])
     db.commit()
 

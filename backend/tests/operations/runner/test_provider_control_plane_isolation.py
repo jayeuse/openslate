@@ -51,7 +51,27 @@ def test_gateway_explicitly_denies_metadata_paths_before_studio_fallback() -> No
         assert route_index < fallback
         assert routes[route_index]["direct_response"]["status"] == 404
     assert all(route.get("route", {}).get("cluster") != "meta" for route in routes)
-    clusters = yaml.safe_load(
-        (SUPABASE / "upstream/envoy/cds.yaml").read_text(encoding="utf-8")
-    )["resources"]
+    clusters = yaml.safe_load((SUPABASE / "upstream/envoy/cds.yaml").read_text(encoding="utf-8"))[
+        "resources"
+    ]
     assert all(cluster["name"] != "meta" for cluster in clusters)
+
+
+def test_api_mounts_only_logs_and_the_read_only_finished_export_root() -> None:
+    production = yaml.load(
+        (SUPABASE / "compose.production.yaml").read_text(encoding="utf-8"),
+        Loader=ComposeLoader,
+    )
+    api = production["services"]["api"]
+    mounts = api["volumes"]
+    assert {mount["target"] for mount in mounts} == {
+        "/var/log/openslate",
+        "/var/lib/openslate/backup-exports",
+    }
+    export = next(mount for mount in mounts if mount["target"].endswith("/backup-exports"))
+    assert export["type"] == "bind" and export["read_only"] is True
+    assert export["source"].startswith("${OPENSLATE_BACKUP_EXPORT_ROOT:")
+    assert export["bind"]["create_host_path"] is False
+    assert api["environment"]["BACKUP_EXPORT_ROOT"] == "/var/lib/openslate/backup-exports"
+    assert api["user"] == "10001:10001" and api["read_only"] is True
+    assert api["cap_drop"] == ["ALL"]

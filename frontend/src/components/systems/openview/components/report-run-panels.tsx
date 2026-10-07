@@ -1,6 +1,8 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { Download, Printer } from "lucide-react";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,16 +33,67 @@ import type {
   OpenViewReportRun,
   OpenViewSharedReportRun,
 } from "../adapters/reports-api";
+import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
 import { AvailableOutputsSkeleton } from "./openview-skeletons";
 
 export type ReportOutputAction = "download" | "print";
 
-export function formatReportRunDate(value: string): string {
-  return `${new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "UTC",
-  }).format(new Date(value))} UTC`;
+export function SelectedReportRunPanel({
+  report,
+  run,
+  actionPending,
+  onOutputRun,
+}: {
+  report: OpenViewReport;
+  run: OpenViewReportRun;
+  actionPending: string;
+  onOutputRun: (
+    run: OpenViewReportRun,
+    reportName: string,
+    action: ReportOutputAction,
+  ) => void | Promise<void>;
+}) {
+  const region = useQuery(workspaceCalendarQueryOptions()).data;
+  const dateLabel = formatReportRunDate(run.createdAt, region);
+  return (
+    <section aria-label="Selected output">
+      <Card>
+        <CardHeader>
+          <CardTitle>{report.name}</CardTitle>
+          <CardDescription>Selected output</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-muted-foreground text-sm">
+            <time dateTime={run.createdAt}>{dateLabel}</time> · Recipe version{" "}
+            {run.recipeRevision} · {run.rowCount}{" "}
+            {run.rowCount === 1 ? "row" : "rows"}
+          </p>
+          <ReportRunActions
+            run={run}
+            runName={report.name}
+            dateLabel={dateLabel}
+            actionPending={actionPending}
+            onOutputRun={(output, name, action) =>
+              onOutputRun(output, name, action)
+            }
+          />
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+/** Run times use the workspace region; callers without it get the device format. */
+export function formatReportRunDate(
+  value: string,
+  region?: WorkspaceRegion,
+): string {
+  const options = { dateStyle: "medium", timeStyle: "short" } as const;
+  if (region) return formatWorkspaceDateTime(value, region, options);
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf())
+    ? value
+    : new Intl.DateTimeFormat(undefined, options).format(date);
 }
 
 type ReportRunRow = OpenViewReportRun | OpenViewSharedReportRun;
@@ -121,6 +174,7 @@ function ReportRunsTable({
   onPageSizeChange,
   onOutputRun,
 }: ReportRunsTableProps) {
+  const region = useQuery(workspaceCalendarQueryOptions()).data;
   return (
     <>
       <ul
@@ -130,7 +184,7 @@ function ReportRunsTable({
         {runs.map((run) => {
           const sharedRun = "reportName" in run ? run : null;
           const runName = sharedRun?.reportName ?? reportName ?? "Report";
-          const dateLabel = formatReportRunDate(run.createdAt);
+          const dateLabel = formatReportRunDate(run.createdAt, region);
           return (
             <li
               key={run.id}
@@ -176,7 +230,7 @@ function ReportRunsTable({
               {showReportName ? (
                 <TableHead scope="col">Report</TableHead>
               ) : null}
-              <TableHead scope="col">Created (UTC)</TableHead>
+              <TableHead scope="col">Created</TableHead>
               <TableHead scope="col">Recipe version</TableHead>
               <TableHead scope="col" className="text-right">
                 Rows
@@ -188,7 +242,7 @@ function ReportRunsTable({
             {runs.map((run) => {
               const sharedRun = "reportName" in run ? run : null;
               const runName = sharedRun?.reportName ?? reportName ?? "Report";
-              const dateLabel = formatReportRunDate(run.createdAt);
+              const dateLabel = formatReportRunDate(run.createdAt, region);
               return (
                 <TableRow key={run.id}>
                   {showReportName ? (

@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useId } from "react";
+import { Check } from "lucide-react";
+
+import { FieldLegend, FieldSet } from "@/components/ui/field";
+import { cn } from "@/lib/utils";
 import {
-  applyOrganizationTheme,
   ORGANIZATION_THEMES,
-  persistOrganizationTheme,
-  readBrowserOrganizationTheme,
   type OrganizationTheme,
 } from "@/lib/appearance-preferences";
 
@@ -65,70 +66,80 @@ function LookSwatch({ theme }: { theme: OrganizationTheme }) {
   );
 }
 
-export function OrganizationLook() {
-  const headingId = useId();
-  // The browser choice is read after mount so the server render (Slate)
-  // and the first client render match.
-  const [theme, setTheme] = useState<OrganizationTheme>("slate");
-  useEffect(() => {
-    // Also follow a look chosen in another tab.
-    const read = () => setTheme(readBrowserOrganizationTheme());
-    read();
-    window.addEventListener("storage", read);
-    return () => window.removeEventListener("storage", read);
-  }, []);
-
-  function choose(next: OrganizationTheme) {
-    setTheme(next);
-    applyOrganizationTheme(next);
-    persistOrganizationTheme(next);
-  }
+export function OrganizationLook({
+  theme,
+  onChange,
+  readOnly,
+  disabled,
+}: {
+  theme: OrganizationTheme;
+  onChange: (theme: OrganizationTheme) => void;
+  readOnly: boolean;
+  disabled: boolean;
+}) {
+  const legendId = useId();
+  const locked = disabled || readOnly;
 
   return (
-    <section aria-labelledby={headingId} className="min-w-0 lg:col-span-2">
-      <h2
-        data-slot="section-title"
-        id={headingId}
-        className="text-lg font-semibold tracking-tight"
+    <FieldSet className="min-w-0 gap-0">
+      <FieldLegend
+        id={legendId}
+        className="mb-1 text-lg font-semibold tracking-tight"
       >
         Organization look
-      </h2>
-      <p className="text-muted-foreground mt-1 max-w-prose text-sm leading-6">
+      </FieldLegend>
+      <p className="text-muted-foreground mb-4 max-w-prose text-sm leading-6">
         Choose how OpenSlate looks for your organization. Words, layout, and how
         things work stay the same. Each person still picks light or dark.
       </p>
       <div
         role="radiogroup"
-        aria-labelledby={headingId}
-        className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
+        aria-labelledby={legendId}
+        aria-readonly={readOnly}
+        className="grid gap-3 sm:grid-cols-2"
       >
         {ORGANIZATION_THEMES.map((id) => (
           <label
             key={id}
-            className="border-border has-[:checked]:border-primary has-[:focus-visible]:outline-ring grid cursor-pointer gap-3 rounded-[var(--radius)] border p-3 has-[:checked]:ring-1 has-[:checked]:ring-[var(--action)] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2"
+            className={cn(
+              "border-border has-[:checked]:border-primary has-[:focus-visible]:outline-ring grid gap-3 rounded-[var(--radius)] border p-3 has-[:checked]:ring-1 has-[:checked]:ring-[var(--action)] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 forced-colors:has-[:checked]:border-[Highlight] forced-colors:has-[:checked]:outline-2 forced-colors:has-[:checked]:outline-[Highlight]",
+              locked ? "cursor-default" : "cursor-pointer",
+            )}
           >
             <input
               type="radio"
               name="organization-look"
               value={id}
               checked={theme === id}
-              onChange={() => choose(id)}
+              onChange={() => onChange(id)}
+              disabled={locked}
               className="sr-only"
             />
             <LookSwatch theme={id} />
-            <span className="grid gap-0.5">
-              <span className="text-sm font-medium">{LOOKS[id].name}</span>
-              <span className="text-muted-foreground text-sm">
-                {LOOKS[id].description}
+            <span className="flex items-start justify-between gap-2">
+              <span className="grid min-w-0 gap-0.5">
+                <span className="text-sm font-medium">{LOOKS[id].name}</span>
+                <span className="text-muted-foreground text-sm">
+                  {LOOKS[id].description}
+                </span>
               </span>
+              <Check
+                size={15}
+                aria-hidden="true"
+                className={cn(
+                  "text-action-text mt-0.5 shrink-0",
+                  theme === id ? undefined : "invisible",
+                )}
+              />
             </span>
           </label>
         ))}
       </div>
       <p className="text-muted-foreground mt-3 text-sm">
-        Changes apply right away. For now the look is saved in this browser
-        only.
+        {readOnly
+          ? "An administrator chooses the saved look for your organization."
+          : "Preview changes right away. Save settings to use this look for your organization."}
       </p>
-    </section>
+    </FieldSet>
   );
 }

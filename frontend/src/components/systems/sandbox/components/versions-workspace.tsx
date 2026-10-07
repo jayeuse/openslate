@@ -46,7 +46,8 @@ type Props = {
     id: string,
   ) => Promise<SandboxCommandResult<SandboxDocumentResponse>>;
   deleteVersion: (id: string) => Promise<SandboxCommandResult<null>>;
-  notify: (message: string) => void;
+  notifyError: (message: string) => void;
+  notifyDone: (message: string) => void;
   pending: boolean;
 };
 
@@ -209,7 +210,8 @@ export function VersionsWorkspace({
   updateVersion,
   restoreVersion,
   deleteVersion,
-  notify,
+  notifyError,
+  notifyDone,
   pending,
 }: Props) {
   const newestFirst = [...versions].sort(
@@ -220,6 +222,7 @@ export function VersionsWorkspace({
   const selectedCompareA = validVersionSelection(versions, compareA, "first");
   const selectedCompareB = validVersionSelection(versions, compareB, "last");
   const [comparing, setComparing] = useState(false);
+  const [actionError, setActionError] = useState("");
   const [checkpointLabelEdit, setCheckpointLabelEdit] =
     useState<CheckpointLabelEdit | null>(null);
   const [confirm, setConfirm] = useState<{
@@ -274,31 +277,33 @@ export function VersionsWorkspace({
 
   async function apply() {
     if (!confirm || pending) return;
+    setActionError("");
     const action = confirm;
     const version = versions.find((candidate) => candidate.id === action.id);
     if (!version) {
-      notify("This version is no longer available.");
+      notifyError("This version is no longer available.");
       return;
     }
     if (action.kind === "delete") {
       const result = await deleteVersion(action.id);
       if (!result.ok) {
-        notify(result.error);
+        setActionError(result.error);
         return;
       }
-      notify(`${version.label} deleted from shared history.`);
+      notifyDone(`${version.label} deleted from shared history.`);
     } else {
       const result = await restoreVersion(action.id);
       if (!result.ok) {
-        notify(result.error);
+        setActionError(result.error);
         return;
       }
-      notify(
+      notifyDone(
         `Draft restored from ${version.label}. Shared history added a recovery checkpoint.`,
       );
     }
     const deleted = action.kind === "delete";
     setConfirm(null);
+    setActionError("");
     requestAnimationFrame(() => {
       const returnTarget = versionActionReturnFocus.current;
       if (!deleted && returnTarget?.isConnected) returnTarget.focus();
@@ -309,6 +314,7 @@ export function VersionsWorkspace({
   function closeVersionConfirm() {
     if (pending) return;
     setConfirm(null);
+    setActionError("");
     requestAnimationFrame(() => {
       const returnTarget = versionActionReturnFocus.current;
       if (returnTarget?.isConnected) returnTarget.focus();
@@ -533,11 +539,11 @@ export function VersionsWorkspace({
                       getVersion(selectedCompareB),
                     ]);
                     if (!first.ok) {
-                      notify(first.error);
+                      notifyError(first.error);
                       return;
                     }
                     if (!second.ok) {
-                      notify(second.error);
+                      notifyError(second.error);
                       return;
                     }
                     setComparison({ first: first.value, second: second.value });
@@ -648,7 +654,7 @@ export function VersionsWorkspace({
                         return;
                       }
                       setCheckpointLabelEdit(null);
-                      notify("Checkpoint label updated in shared history.");
+                      notifyDone("Checkpoint label updated in shared history.");
                     }}
                   >
                     <LabeledField label="Checkpoint label">
@@ -729,6 +735,7 @@ export function VersionsWorkspace({
                     disabled={pending}
                     onClick={(event) => {
                       versionActionReturnFocus.current = event.currentTarget;
+                      setActionError("");
                       setConfirm({ kind: "restore", id: selectedVersion.id });
                     }}
                   >
@@ -745,6 +752,7 @@ export function VersionsWorkspace({
                     }
                     onClick={(event) => {
                       versionActionReturnFocus.current = event.currentTarget;
+                      setActionError("");
                       setConfirm({ kind: "delete", id: selectedVersion.id });
                     }}
                   >
@@ -794,6 +802,9 @@ export function VersionsWorkspace({
                   : `Restore the draft from ${confirmVersion.label}? Shared history will add a recovery checkpoint.`}
               </AlertDialogDescription>
             </AlertDialogHeader>
+            {actionError ? (
+              <Alert variant="destructive">{actionError}</Alert>
+            ) : null}
             <AlertDialogFooter>
               <Button
                 variant="outline"

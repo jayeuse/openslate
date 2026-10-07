@@ -5,7 +5,7 @@ import { ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { subscribeOpenViewInvalidations } from "@/components/systems/openview/adapters/invalidation-events";
+import { subscribeWorkspaceInvalidations } from "@/components/systems/shared/adapters/invalidation-events";
 import { invalidatesRecords } from "@/components/systems/openview/adapters/openview-queries";
 import {
   listOpenViewDataSourceFields,
@@ -115,7 +115,7 @@ export function ServerBoardRecordLinks(props: Props) {
   }, [busyChange]);
   useEffect(() => {
     const refresh = () => setListReload((value) => value + 1);
-    return subscribeOpenViewInvalidations((event) => {
+    return subscribeWorkspaceInvalidations((event) => {
       if (event.type === "resync") {
         refresh();
         return;
@@ -293,7 +293,7 @@ export function ServerBoardRecordLinks(props: Props) {
       <h4 className="text-sm font-semibold">Record links</h4>
       {listStatus === "loading" && <p role="status">Loading linked Records…</p>}
       {listStatus === "error" && (
-        <Alert variant="warning">
+        <Alert variant="destructive">
           Record links could not be loaded.{" "}
           <Button
             type="button"
@@ -365,7 +365,11 @@ export function ServerBoardRecordLinks(props: Props) {
               ))}
             </select>
           </label>
-          {sourceError && <p role="alert">Data sources could not be loaded.</p>}
+          {sourceError && (
+            <Alert variant="destructive">
+              Data sources could not be loaded.
+            </Alert>
+          )}
           <div className="flex gap-2">
             <Button
               type="button"
@@ -403,7 +407,9 @@ export function ServerBoardRecordLinks(props: Props) {
                 <p role="status">Loading Records…</p>
               )}
               {recordStatus === "error" && (
-                <p role="alert">Records could not be loaded.</p>
+                <Alert variant="destructive">
+                  Records could not be loaded.
+                </Alert>
               )}
               {recordStatus === "ready" && (
                 <>

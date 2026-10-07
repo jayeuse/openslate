@@ -274,7 +274,13 @@ def test_report_archive_restore_and_permanent_delete_preserve_then_release_runs(
     )
     db.add(work)
     db.flush()
-    notification = InAppNotification(work_id=work.id, recipient_id=owner.id)
+    notification = InAppNotification(
+        work_id=work.id,
+        recipient_id=owner.id,
+        kind="report-run",
+        subject_type="report_run",
+        subject_id=run.id,
+    )
     db.add(notification)
     schedule = ReportSchedule(
         report_id=report_id,

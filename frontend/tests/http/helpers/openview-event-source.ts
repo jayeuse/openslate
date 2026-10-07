@@ -2,12 +2,20 @@ import type { Page } from "@playwright/test";
 
 type EventSourceHarnessWindow = Window & {
   __sendOpenViewEvent?: (type: string, data: string) => void;
+  __openViewStreamState?: () => {
+    constructed: number;
+    active: number;
+    closed: number;
+  };
+  __failOpenViewStream?: () => void;
+  reportEventSources?: Array<EventTarget & { closed: boolean }>;
 };
 
 export async function installOpenViewEventSource(page: Page): Promise<void> {
   await page.addInitScript(() => {
     type Listener = EventListenerOrEventListenerObject;
     const streams = new Set<FakeEventSource>();
+    const history: FakeEventSource[] = [];
 
     class FakeEventSource extends EventTarget {
       static readonly CONNECTING = 0;
@@ -16,6 +24,7 @@ export async function installOpenViewEventSource(page: Page): Promise<void> {
       readonly url: string;
       readonly withCredentials = false;
       readyState = FakeEventSource.OPEN;
+      closed = false;
       onopen: ((event: Event) => void) | null = null;
       onmessage: ((event: MessageEvent) => void) | null = null;
       onerror: ((event: Event) => void) | null = null;
@@ -24,6 +33,7 @@ export async function installOpenViewEventSource(page: Page): Promise<void> {
         super();
         this.url = url;
         streams.add(this);
+        history.push(this);
         queueMicrotask(() => {
           const event = new Event("open");
           this.dispatchEvent(event);
@@ -32,6 +42,7 @@ export async function installOpenViewEventSource(page: Page): Promise<void> {
       }
 
       close() {
+        this.closed = true;
         this.readyState = FakeEventSource.CLOSED;
         streams.delete(this);
       }
@@ -45,6 +56,7 @@ export async function installOpenViewEventSource(page: Page): Promise<void> {
       }
 
       send(type: string, data: string) {
+        if (type === "resync") this.readyState = FakeEventSource.OPEN;
         const event = new MessageEvent(type, { data });
         this.dispatchEvent(event);
         if (type === "message") this.onmessage?.(event);
@@ -57,6 +69,18 @@ export async function installOpenViewEventSource(page: Page): Promise<void> {
     });
     (window as EventSourceHarnessWindow).__sendOpenViewEvent = (type, data) => {
       for (const stream of streams) stream.send(type, data);
+    };
+    (window as EventSourceHarnessWindow).reportEventSources = history;
+    (window as EventSourceHarnessWindow).__openViewStreamState = () => ({
+      constructed: history.length,
+      active: streams.size,
+      closed: history.filter((stream) => stream.closed).length,
+    });
+    (window as EventSourceHarnessWindow).__failOpenViewStream = () => {
+      for (const stream of streams) {
+        stream.readyState = FakeEventSource.CONNECTING;
+        stream.dispatchEvent(new Event("error"));
+      }
     };
   });
 }

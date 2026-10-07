@@ -7,7 +7,6 @@ export default function AuthenticatedGroupLayout({
   children: ReactNode;
 }) {
   // Keep the session gate and shared shell mounted across workspace routes.
-  // UI-first workspace state is local; no business-data or realtime providers
-  // mount here. Public authentication routes remain outside this group.
+  // Public authentication routes remain outside this group.
   return <AppPage>{children}</AppPage>;
 }

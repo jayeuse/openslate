@@ -104,6 +104,8 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         "POSTGRES_DATABASE",
         "FRONTEND_DEV_PORT",
         "WEB_ASSETS_ROOT",
+        "BACKUP_EXPORT_ROOT",
+        "OPENSLATE_BACKUP_EXPORT_ROOT",
         "SUPABASE_DB_PORT",
         "SUPABASE_API_PORT",
         "SUPABASE_MAIL_PORT",
@@ -722,15 +724,17 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
             raise ConfigurationError("DATABASE_BOOTSTRAP_URL must use a cluster-admin login")
     absolute_path(values, "LOG_DIR")
     instance_id(values)
-    if "WEB_ASSETS_ROOT" in values:
-        absolute_path(values, "WEB_ASSETS_ROOT")
+    for name in ("WEB_ASSETS_ROOT", "BACKUP_EXPORT_ROOT", "OPENSLATE_BACKUP_EXPORT_ROOT"):
+        if name in values:
+            absolute_path(values, name)
     from pydantic import ValidationError
 
     from app.core.config import Settings
 
     inputs: dict[str, object] = {name.lower(): values[name] for name in SETTINGS_KEYS}
-    if "WEB_ASSETS_ROOT" in values:
-        inputs["web_assets_root"] = values["WEB_ASSETS_ROOT"]
+    for name in ("WEB_ASSETS_ROOT", "BACKUP_EXPORT_ROOT"):
+        if name in values:
+            inputs[name.lower()] = values[name]
     try:
         Settings.model_validate(inputs)
     except ValidationError as error:

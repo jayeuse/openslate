@@ -1,5 +1,6 @@
 """Authenticated TOTP enrollment, completion and cancellation routes."""
 
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -34,6 +35,9 @@ class MfaStatus(BaseModel):
     user_id: UUID
     assurance_level: Literal["aal1", "aal2"]
     required: bool
+    policy_required: bool
+    required_since: datetime | None
+    enrollment_deadline: datetime | None
     factors: list[FactorResponse]
 
 

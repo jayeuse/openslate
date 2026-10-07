@@ -6,7 +6,7 @@ import json
 import os
 import re
 import stat
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -375,9 +375,17 @@ def populate_sample_data(
     seed: int,
     anchor_date: date,
     organization: OrganizationPack | None = None,
+    mfa_observer: Callable[..., object] | None = None,
+    host_control: Callable[..., object] | None = None,
 ) -> SamplePopulationReport:
     """Create a private run, populate through user APIs, then prove the readback."""
-    dataset = build_dataset(profile, seed, anchor_date, organization=organization)
+    dataset = build_dataset(
+        profile,
+        seed,
+        anchor_date,
+        organization=organization,
+        host_acceptance=host_control is not None,
+    )
     from operations.sample.phases.expectations import phase_plan_summary
 
     phases = phase_plan_summary(dataset)
@@ -402,6 +410,7 @@ def populate_sample_data(
         "profile": profile,
         "seed": seed,
         "anchor_date": anchor_date.isoformat(),
+        "host_acceptance": host_control is not None,
         "admin_id": expected_admin_id,
         "started_at": None,
         "finished_at": None,
@@ -432,6 +441,8 @@ def populate_sample_data(
             run_id=run_id,
             dataset=dataset,
             manifest=manifest,
+            mfa_observer=mfa_observer,
+            host_control=host_control,
         )
         manifest["mappings"] = _journal_mappings(directory / "requests.jsonl")
         manifest["observed"] = dict(observed)

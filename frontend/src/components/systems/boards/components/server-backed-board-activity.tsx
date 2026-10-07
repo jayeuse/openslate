@@ -4,6 +4,7 @@ import { createElement, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import type {
   BoardActivity,
   BoardToolsPage,
@@ -13,21 +14,27 @@ import { BoardEmpty } from "./ui";
 
 const PAGE_SIZE = 25;
 
-function activityTime(timestamp: string): string {
-  return new Intl.DateTimeFormat(undefined, {
+function activityTime(
+  timestamp: string,
+  region: WorkspaceRegion | undefined,
+): string {
+  if (!region) return "Date unavailable";
+  return formatWorkspaceDateTime(timestamp, region, {
     year: "numeric",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
     timeZoneName: "short",
-  }).format(new Date(timestamp));
+  });
 }
 
 export function ServerBoardActivityDisplay({
+  region,
   page,
 }: {
   page: BoardToolsPage<BoardActivity>;
+  region?: WorkspaceRegion;
 }) {
   const { offset, count, total } = page.pagination;
   return createElement(
@@ -86,7 +93,7 @@ export function ServerBoardActivityDisplay({
                 createElement(
                   "time",
                   { dateTime: item.createdAt },
-                  activityTime(item.createdAt),
+                  activityTime(item.createdAt, region),
                 ),
                 item.actorLabel ? ` · ${item.actorLabel}` : null,
               ),
@@ -97,11 +104,13 @@ export function ServerBoardActivityDisplay({
 }
 
 export function ServerBackedBoardActivity({
+  region,
   boardId,
   refreshKey,
   onAccessDenied,
 }: {
   boardId: string;
+  region: WorkspaceRegion | undefined;
   refreshKey: number;
   onAccessDenied: () => void;
 }) {
@@ -132,7 +141,7 @@ export function ServerBackedBoardActivity({
         </Button>
       </div>
       {state.error && (
-        <Alert variant={page ? "warning" : "destructive"}>
+        <Alert variant="destructive">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span>
               {page ? "Showing the last loaded activity. " : ""}
@@ -149,7 +158,7 @@ export function ServerBackedBoardActivity({
           </div>
         </Alert>
       )}
-      {page && <ServerBoardActivityDisplay page={page} />}
+      {page && <ServerBoardActivityDisplay page={page} region={region} />}
       {!page && state.status === "loading" && (
         <p role="status" className="text-muted-foreground py-8 text-sm">
           Loading Board activity…

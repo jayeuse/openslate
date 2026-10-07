@@ -89,6 +89,28 @@ jobs:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --locked
+      - name: Provision pinned native Caddy
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          caddy_image="$(timeout 10 uv run --no-sync python -c 'from tests.caddy_runtime import CADDY_IMAGE; print(CADDY_IMAGE)')"
+          [[ "$caddy_image" =~ ^caddy@sha256:[0-9a-f]{64}$ ]]
+          caddy_dir="$(mktemp -d "${RUNNER_TEMP:?}/openslate-caddy.XXXXXX")"
+          caddy_container="openslate-ci-${caddy_dir##*/}"
+          cleanup() {
+            result=$?
+            trap - EXIT
+            timeout 30 docker rm --force "$caddy_container" >/dev/null || result=1
+            exit "$result"
+          }
+          trap cleanup EXIT
+          timeout 120 docker pull "$caddy_image"
+          timeout 30 docker create --name "$caddy_container" "$caddy_image" >/dev/null
+          timeout 30 docker cp "$caddy_container:/usr/bin/caddy" "$caddy_dir/caddy"
+          chmod 0755 "$caddy_dir/caddy"
+          timeout 10 "$caddy_dir/caddy" version
+          printf '%s\n' "$caddy_dir" >> "${GITHUB_PATH:?}"
       - name: Run one disposable Supabase test shard
         env:
           COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}

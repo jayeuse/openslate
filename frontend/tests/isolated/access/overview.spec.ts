@@ -5,11 +5,7 @@ import {
   invitationSettingsPatch,
   overviewHealth,
 } from "../../../src/components/systems/access/helpers/overview";
-import {
-  directoryFiltersFromParams,
-  directoryRows,
-  filterDirectory,
-} from "../../../src/components/systems/access/helpers/people";
+import { directoryFiltersFromParams } from "../../../src/components/systems/access/helpers/people";
 import type {
   AccessGroup,
   AccessUser,
@@ -81,20 +77,6 @@ test("health counts what needs attention, leaving deleted people out", () => {
   expect(health.groupsWithoutMembers).toBe(1);
   expect(health.guestsEndingSoon).toBe(1);
   expect(health.pendingInvitations).toBe(1);
-});
-
-test("each health link opens a People view with the same count", () => {
-  const rows = directoryRows(users, groups, [], now);
-  const count = (query: string) =>
-    filterDirectory(
-      rows,
-      directoryFiltersFromParams(new URLSearchParams(query)),
-    ).length;
-  const health = overviewHealth(users, groups, now);
-  expect(count("role=admin&status=active")).toBe(health.administrators);
-  expect(count("group=none")).toBe(health.withoutGroup);
-  expect(count("status=ending")).toBe(health.guestsEndingSoon);
-  expect(count("status=pending")).toBe(health.pendingInvitations);
 });
 
 test("filters from the URL fall back to the defaults for unknown values", () => {

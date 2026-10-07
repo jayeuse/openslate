@@ -5,6 +5,15 @@ from uuid import uuid4
 import pytest
 
 from app.systems.access.users.models import User
+from app.systems.sandbox.departments.models import Department
+
+
+def library_department(db):
+    department = Department(department_name=f"File fixture {uuid4()}")
+    db.add(department)
+    # Reservation expiry may roll back; its real parent must already be persisted.
+    db.commit()
+    return department.id
 
 
 @pytest.fixture

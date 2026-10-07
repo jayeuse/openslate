@@ -9,10 +9,12 @@ from math import isfinite
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.record_triggers.outbox import enqueue_record_event
+from app.systems.sandbox.records.assignment_notifications import notify_record_assignments
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.mutation_validation import (
     RecordValidationError,
@@ -150,6 +152,7 @@ def prepare_import_rows(
 def create_import_records(db: Session, module_id: UUID, rows: list[PreparedImportRow]) -> None:
     """Attach each valid row and its event; the route owns the single commit."""
 
+    fields = list(db.scalars(select(Field).where(Field.module_id == module_id)))
     for row in rows:
         if row.issues:
             continue
@@ -157,4 +160,10 @@ def create_import_records(db: Session, module_id: UUID, rows: list[PreparedImpor
         db.add(record)
         db.flush()
         enqueue_record_event(db, record, previous=None)
+        notify_record_assignments(
+            db,
+            record,
+            previous=None,
+            fields=fields,
+        )
         row.record_id = record.id

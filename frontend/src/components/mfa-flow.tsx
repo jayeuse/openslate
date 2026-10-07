@@ -23,6 +23,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "@/components/ui/toast";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 type OwnedFactor = { userId: string; factorId: string };
 type Mode = "hidden" | "workspace" | "gate";
 const cleanupMessage =
@@ -68,7 +69,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
         setCleanup(target);
         setCleanupError(cleanupMessage);
       } else
-        toast.add({
+        toast.addPublic({
           type: "error",
           title: "Authenticator cleanup could not finish",
           description:
@@ -132,7 +133,9 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
       setStatus(current);
     } catch {
       if (mounted.current && started === generation.current)
-        setError("We could not load your MFA settings. Try again.");
+        setError(
+          "We could not load your two-step verification settings. Try again.",
+        );
     } finally {
       if (mounted.current && started === generation.current) setPending(false);
     }
@@ -212,7 +215,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
         if (mounted.current && started === generation.current)
           setError(
             accepted
-              ? "Verification succeeded, but updated MFA settings could not be loaded. Retry."
+              ? "Verification succeeded, but your updated settings could not load. Retry."
               : caught instanceof ApiError && caught.status === 400
                 ? "Verification code was not accepted. Enter a new code and try again."
                 : "The code could not be verified. Try again.",
@@ -293,10 +296,7 @@ export function useMfaFlow() {
 
 export function MfaCleanupNotice({ flow }: { flow: MfaFlow }) {
   return flow.cleanupError ? (
-    <Alert
-      role="alert"
-      className="bg-background fixed bottom-4 left-4 z-[90] max-w-sm shadow-lg"
-    >
+    <Alert role="alert" variant="destructive" className="mb-5">
       <p>{flow.cleanupError}</p>
       {flow.cleanupRetryable && (
         <Button
@@ -311,12 +311,41 @@ export function MfaCleanupNotice({ flow }: { flow: MfaFlow }) {
   ) : null;
 }
 
+/** Workspace-local when the workspace region is known; else this device's zone. */
+function requirementDate(value: string, region: WorkspaceRegion | undefined) {
+  if (region)
+    return formatWorkspaceDateTime(value, region, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(new Date(value));
+}
+function utcTitle(value: string) {
+  return (
+    new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "UTC",
+    }).format(new Date(value)) + " UTC"
+  );
+}
+
 export function MfaPresentation({
   flow,
   gate = false,
+  region,
 }: {
   flow: MfaFlow;
   gate?: boolean;
+  /** The workspace region; absent before two-step verification completes. */
+  region?: WorkspaceRegion;
 }) {
   const [code, setCode] = useState("");
   const [confirmRemoval, setConfirmRemoval] = useState(false);
@@ -329,12 +358,58 @@ export function MfaPresentation({
     verified !== undefined &&
     flow.credentials === null;
   const step = ready ? 3 : factorId ? 2 : 1;
+  const requirement = flow.status?.policy_required ? flow.status : null;
   return (
     <div className="flex min-w-0 flex-col gap-4 py-2">
-      <Progress value={step} max={3} aria-label="MFA enrollment progress" />
+      <Progress
+        value={step}
+        max={3}
+        aria-label="Two-step verification setup progress"
+      />
       <p className="text-muted-foreground text-sm">
         Step {step} of 3 · Authenticator app
       </p>
+      {requirement && (
+        <div className="min-w-0 space-y-3">
+          {(requirement.required_since || requirement.enrollment_deadline) && (
+            <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">
+              {requirement.required_since && (
+                <div className="min-w-0">
+                  <dt className="text-muted-foreground">Required since</dt>
+                  <dd className="mt-1 break-words tabular-nums">
+                    <time
+                      dateTime={requirement.required_since}
+                      title={utcTitle(requirement.required_since)}
+                    >
+                      {requirementDate(requirement.required_since, region)}
+                    </time>
+                  </dd>
+                </div>
+              )}
+              {requirement.enrollment_deadline && (
+                <div className="min-w-0">
+                  <dt className="text-muted-foreground">Set up by</dt>
+                  <dd className="mt-1 break-words tabular-nums">
+                    <time
+                      dateTime={requirement.enrollment_deadline}
+                      title={utcTitle(requirement.enrollment_deadline)}
+                    >
+                      {requirementDate(requirement.enrollment_deadline, region)}
+                    </time>
+                  </dd>
+                </div>
+              )}
+            </dl>
+          )}
+          {!verified && (
+            <Alert role="note" variant="warning">
+              {requirement.required
+                ? "Two-step verification is required now. Set up an authenticator app to continue."
+                : "Set up an authenticator app before the date above. You can keep using the workspace until then."}
+            </Alert>
+          )}
+        </div>
+      )}
       {flow.error && (
         <Alert role="alert" variant="destructive">
           {flow.error}
@@ -353,8 +428,8 @@ export function MfaPresentation({
       {flow.status === null ? (
         <p role="status">
           {flow.pending
-            ? "Loading MFA settings…"
-            : "MFA settings are unavailable."}
+            ? "Loading two-step verification…"
+            : "Two-step verification settings are unavailable."}
         </p>
       ) : ready ? (
         <>
@@ -481,7 +556,7 @@ export function MfaPresentation({
       {flow.pending && flow.status !== null && (
         <p role="status">Completing your request…</p>
       )}
-      {!ready && (
+      {!ready && !gate && (
         <Button
           className="min-h-11"
           variant="outline"

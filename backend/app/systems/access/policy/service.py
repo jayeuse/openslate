@@ -8,6 +8,10 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
+from app.systems.access.policy.access_notifications import (
+    lock_access_recipients,
+    notify_access_changes,
+)
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import (
     GroupAccessEntry,
@@ -197,6 +201,7 @@ def replace_group_members(
         raise conflict("Administrators have access everywhere and are not group members")
     if existing_ids == set(desired):
         return False
+    before = lock_access_recipients(db, existing_ids ^ set(desired))
     for item in existing:
         if item.user_id not in desired:
             db.delete(item)
@@ -204,6 +209,7 @@ def replace_group_members(
         if user_id not in existing_ids:
             db.add(GroupMember(group_id=row.id, user_id=user_id, performed_by=actor_id))
     db.flush()
+    notify_access_changes(db, before)
     return True
 
 
@@ -378,6 +384,7 @@ def replace_group_access(
             (item.department_id, item.module_id): item for item in locked_access(db, row.id)
         }
         desired = {(entry.department_id, entry.module_id): entry.level.value for entry in entries}
+        before = lock_access_recipients(db, set(group_member_ids(db, row.id)))
         changed = False
         for key, item in existing.items():
             if key not in desired:
@@ -403,6 +410,7 @@ def replace_group_access(
         if changed:
             row.revision += 1
             row.performed_by = actor_id
+        notify_access_changes(db, before)
         commit(db, "Unable to change group access")
         db.refresh(row)
         return row

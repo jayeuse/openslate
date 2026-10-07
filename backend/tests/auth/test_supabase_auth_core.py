@@ -14,7 +14,7 @@ from jwt.algorithms import ECAlgorithm
 from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
-from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.users.models import User, UserRole, UserStatus
 
 
@@ -79,6 +79,32 @@ def _client_for_key(private_key: ec.EllipticCurvePrivateKey, *, user_id=None, fa
         return httpx.Response(404)
 
     return SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
+
+
+def _session_database(user: User, session: IdentitySession) -> Mock:
+    observation = IdentityMfaObservation(
+        user_id=user.id,
+        observed_provider_user_id=user.supabase_user_id,
+        verified_totp=False,
+        observed_at=session.created_at - timedelta(seconds=1),
+    )
+    rows = {
+        User: user,
+        User.supabase_user_id: user.supabase_user_id,
+        IdentitySession: session,
+        IdentityMfaObservation: observation,
+    }
+    db = Mock(spec=Session)
+    db.scalar.side_effect = lambda query: rows[query.column_descriptions[0]["expr"]]
+
+    def get(model, identifier, **_kwargs):
+        row = rows[model]
+        key = "user_id" if model is IdentityMfaObservation else "id"
+        return row if getattr(row, key) == identifier else None
+
+    db.get.side_effect = get
+    db.execute.return_value.scalar_one.return_value = True
+    return db
 
 
 def test_provider_access_accepts_missing_nbf_but_enforces_nbf_when_present() -> None:
@@ -239,6 +265,7 @@ def test_valid_provider_jwt_still_requires_live_local_and_provider_sessions() ->
     )
     from app.systems.access.identity.provider_sessions import resolve_provider_session
 
+    now = datetime.now(UTC)
     user_id, provider_user_id, provider_session_id = uuid4(), uuid4(), uuid4()
     local_session = IdentitySession(
         id=uuid4(),
@@ -247,7 +274,9 @@ def test_valid_provider_jwt_still_requires_live_local_and_provider_sessions() ->
         provider_session_id=provider_session_id,
         refresh_token_digest="x" * 64,
         csrf_token_digest="y" * 64,
-        expires_at=datetime.now(UTC) + timedelta(days=1),
+        created_at=now,
+        refreshed_at=now,
+        expires_at=now + timedelta(days=1),
     )
     user = User(
         id=user_id,
@@ -257,38 +286,33 @@ def test_valid_provider_jwt_still_requires_live_local_and_provider_sessions() ->
         status=UserStatus.ACTIVE.value,
         role=UserRole.MEMBER,
     )
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [local_session, user]
-    db.execute.return_value.scalar_one.return_value = True
+    db = _session_database(user, local_session)
     client = Mock()
     client.get_admin_user.return_value = ProviderUser(provider_user_id, None)
     identity = ProviderAccessIdentity(
         provider_user_id,
         provider_session_id,
-        datetime.now(UTC),
-        datetime.now(UTC) + timedelta(minutes=10),
+        now,
+        now + timedelta(minutes=10),
     )
 
-    resolved = resolve_provider_session(db, identity, client)
+    resolved = resolve_provider_session(db, identity, client, now=now)
     assert resolved is not None
     assert resolved[0] is user
     assert resolved[1] is local_session
     assert user.role == UserRole.MEMBER.value
 
-    local_session.revoked_at = datetime.now(UTC)
-    db.scalar.side_effect = [local_session]
-    assert resolve_provider_session(db, identity, client) is None
+    local_session.revoked_at = now
+    assert resolve_provider_session(db, identity, client, now=now) is None
 
     local_session.revoked_at = None
-    db.scalar.side_effect = [local_session, user]
     client.get_admin_user.side_effect = InvalidProviderCredentials("admin user deleted")
-    assert resolve_provider_session(db, identity, client) is None
+    assert resolve_provider_session(db, identity, client, now=now) is None
 
     from app.core.integrations.supabase_auth import ProviderUserNotFound
 
-    db.scalar.side_effect = [local_session, user]
     client.get_admin_user.side_effect = ProviderUserNotFound("admin user deleted")
-    assert resolve_provider_session(db, identity, client) is None
+    assert resolve_provider_session(db, identity, client, now=now) is None
 
 
 def test_concurrent_refresh_reuses_current_provider_token_and_stable_handle(
@@ -299,6 +323,7 @@ def test_concurrent_refresh_reuses_current_provider_token_and_stable_handle(
     from app.core.integrations.supabase_auth import ProviderAccessIdentity, ProviderUser
     from app.systems.access.identity.provider_sessions import refresh_provider_session
 
+    now = datetime.now(UTC)
     key = Fernet.generate_key().decode("ascii")
     monkeypatch.setattr(
         "app.systems.access.identity.provider_sessions.get_settings",
@@ -322,21 +347,21 @@ def test_concurrent_refresh_reuses_current_provider_token_and_stable_handle(
         provider_refresh_token_encrypted=Fernet(key).encrypt(b"current-refresh").decode(),
         refresh_token_digest=__import__("hashlib").sha256(b"h" * 48).hexdigest(),
         csrf_token_digest=__import__("hashlib").sha256(b"c" * 48).hexdigest(),
-        expires_at=datetime.now(UTC) + timedelta(days=1),
+        created_at=now,
+        refreshed_at=now,
+        expires_at=now + timedelta(days=1),
     )
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [session, session, user]
-    db.execute.return_value.scalar_one.return_value = True
+    db = _session_database(user, session)
     client = Mock()
     client.verify_access_token.return_value = ProviderAccessIdentity(
         provider_user_id,
         provider_session_id,
-        datetime.now(UTC),
-        datetime.now(UTC) + timedelta(minutes=10),
+        now,
+        now + timedelta(minutes=10),
     )
     client.get_admin_user.return_value = ProviderUser(provider_user_id, None)
 
-    issued = refresh_provider_session(db, "h" * 48, client, csrf_token="c" * 48)
+    issued = refresh_provider_session(db, "h" * 48, client, csrf_token="c" * 48, now=now)
 
     assert issued.access_token == "current-access"
     assert issued.refresh_token == "h" * 48
@@ -354,6 +379,8 @@ def test_api_dependency_requires_bound_provider_and_rejects_mixed_credentials(
     from app.common.dependencies import auth as dependency
     from app.core.database import get_db
 
+    now = datetime.now(UTC)
+    monkeypatch.setattr("app.systems.access.identity.provider_sessions.utc_now", lambda: now)
     key = ec.generate_private_key(ec.SECP256R1())
     user_id, provider_id, provider_session_id = uuid4(), uuid4(), uuid4()
     access = _signed_access(key, user_id=str(provider_id), session_id=str(provider_session_id))
@@ -374,11 +401,11 @@ def test_api_dependency_requires_bound_provider_and_rejects_mixed_credentials(
         provider_session_id=provider_session_id,
         refresh_token_digest="x" * 64,
         csrf_token_digest="y" * 64,
-        expires_at=datetime.now(UTC) + timedelta(days=1),
+        created_at=now,
+        refreshed_at=now,
+        expires_at=now + timedelta(days=1),
     )
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [session, user, session, user]
-    db.execute.return_value.scalar_one.return_value = True
+    db = _session_database(user, session)
     app = FastAPI()
     app.dependency_overrides[get_db] = lambda: db
 
@@ -415,6 +442,7 @@ def test_ambiguous_refresh_persistence_failure_revokes_the_local_session(
     )
     from app.systems.access.identity.provider_sessions import refresh_provider_session
 
+    now = datetime.now(UTC)
     key = Fernet.generate_key().decode("ascii")
     monkeypatch.setattr(
         "app.systems.access.identity.provider_sessions.get_settings",
@@ -438,12 +466,11 @@ def test_ambiguous_refresh_persistence_failure_revokes_the_local_session(
         provider_refresh_token_encrypted=Fernet(key).encrypt(b"old-refresh").decode(),
         refresh_token_digest=__import__("hashlib").sha256(b"h" * 48).hexdigest(),
         csrf_token_digest=__import__("hashlib").sha256(b"c" * 48).hexdigest(),
-        expires_at=datetime.now(UTC) + timedelta(days=1),
+        created_at=now,
+        refreshed_at=now,
+        expires_at=now + timedelta(days=1),
     )
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [session, session, user]
-    db.get.return_value = session
-    db.execute.return_value.scalar_one.return_value = True
+    db = _session_database(user, session)
     db.commit.side_effect = [SQLAlchemyError("transient write failure"), None]
     client = Mock()
     client.verify_access_token.side_effect = [
@@ -451,15 +478,15 @@ def test_ambiguous_refresh_persistence_failure_revokes_the_local_session(
         ProviderAccessIdentity(
             provider_user_id,
             provider_session_id,
-            datetime.now(UTC),
-            datetime.now(UTC) + timedelta(minutes=10),
+            now,
+            now + timedelta(minutes=10),
         ),
     ]
     client.refresh.return_value = ProviderTokens("new-access", "new-refresh", provider_user_id, 600)
     client.get_admin_user.return_value = ProviderUser(provider_user_id, None)
 
     with pytest.raises(SupabaseAuthUnavailable):
-        refresh_provider_session(db, "h" * 48, client, csrf_token="c" * 48)
+        refresh_provider_session(db, "h" * 48, client, csrf_token="c" * 48, now=now)
 
     assert session.revoked_at is not None
     assert db.commit.call_count == 2

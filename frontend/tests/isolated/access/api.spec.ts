@@ -37,6 +37,7 @@ import {
   pageOf,
   session,
   user,
+  directoryUser,
   workspace,
 } from "./fixtures";
 
@@ -50,7 +51,7 @@ test("list reads send only the backend's query fields and forward the abort sign
   const controller = new AbortController();
   const mock = installFetch((input) => {
     const path = new URL(String(input), "http://access.invalid").pathname;
-    if (path === "/api/users") return Response.json(pageOf([user]));
+    if (path === "/api/users") return Response.json(pageOf([directoryUser]));
     if (path === "/api/access/groups") return Response.json(pageOf([group]));
     if (path === "/api/access/member-candidates")
       return Response.json(pageOf([memberCandidate]));

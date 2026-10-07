@@ -232,7 +232,7 @@ test("a failed draft cleanup blocks an account switch and explains recovery", as
       window as Window & { restoreDraftStorage?: () => void }
     ).restoreDraftStorage?.();
   });
-  await page.getByRole("button", { name: "Retry" }).click();
+  await page.getByRole("button", { name: "Check again" }).click();
   await expect(
     page.getByRole("navigation", { name: "Main navigation" }),
   ).toBeVisible();

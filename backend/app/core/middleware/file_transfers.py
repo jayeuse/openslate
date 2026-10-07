@@ -83,3 +83,12 @@ class FileDispatchMiddleware:
             return
         with dispatch:
             await self.app(scope, receive, send)
+
+
+def backup_export_body_limit(path: str, method: str) -> int | None:
+    if method == "POST" and (
+        path == "/api/backups/exports"
+        or re.fullmatch(r"/api/backups/exports/[^/]+/download-admission", path)
+    ):
+        return 1024
+    return None

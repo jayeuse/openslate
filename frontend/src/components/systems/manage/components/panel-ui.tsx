@@ -1,5 +1,4 @@
 "use client";
-import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CardFooter } from "@/components/ui/card";
@@ -10,28 +9,8 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination";
 import { Select, SelectItem } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  type ManageSection,
-  type ManageSettings,
-  type ManageSnapshotDiff,
-} from "../state/state";
+import type { ManageSection, ManageSettings } from "../state/model";
 export function SettingSelect({
   id,
   label,
@@ -126,9 +105,7 @@ export function SettingInput({
         className="min-h-11"
       />
       {description ? (
-        <FieldDescription id={descriptionId} className="md:sr-only">
-          {description}
-        </FieldDescription>
+        <FieldDescription id={descriptionId}>{description}</FieldDescription>
       ) : null}
       <FieldError id={errorId}>{error}</FieldError>
     </Field>
@@ -216,110 +193,6 @@ export function SummaryItem({
   );
 }
 
-export function SettingsChanges({
-  differences,
-}: {
-  differences: ManageSnapshotDiff[];
-}) {
-  const [page, setPage] = useState(1);
-  if (!differences.length)
-    return (
-      <p className="text-muted-foreground py-3 text-sm">
-        No saved settings will change.
-      </p>
-    );
-  const pageCount = Math.ceil(differences.length / 5);
-  const safePage = Math.min(page, pageCount);
-  const visibleDifferences = differences.slice(
-    (safePage - 1) * 5,
-    safePage * 5,
-  );
-  return (
-    <div className="mt-3 space-y-3">
-      <Table aria-label="Settings changes">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Setting</TableHead>
-            <TableHead>Current value</TableHead>
-            <TableHead>Replacement</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {visibleDifferences.map((difference) => (
-            <TableRow key={difference.key}>
-              <TableCell className="whitespace-normal">
-                {difference.label}
-              </TableCell>
-              <TableCell className="wrap-anywhere whitespace-normal">
-                {difference.before || "Not set"}
-              </TableCell>
-              <TableCell className="wrap-anywhere whitespace-normal">
-                {difference.after || "Not set"}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-      {pageCount > 1 ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
-          <p className="text-muted-foreground text-sm">
-            Page {safePage} of {pageCount}
-          </p>
-          <Pagination
-            aria-label="Settings change pages"
-            className="mx-0 w-auto justify-start sm:justify-end"
-          >
-            <PaginationContent>
-              <PaginationItem>
-                <PaginationPrevious
-                  href="#settings-changes"
-                  aria-disabled={safePage === 1}
-                  tabIndex={safePage === 1 ? -1 : undefined}
-                  className={
-                    safePage === 1
-                      ? "pointer-events-none opacity-50"
-                      : undefined
-                  }
-                  onClick={(event) => {
-                    event.preventDefault();
-                    if (safePage > 1) setPage(safePage - 1);
-                  }}
-                />
-              </PaginationItem>
-              <PaginationItem>
-                <PaginationLink
-                  href="#settings-changes"
-                  size="default"
-                  isActive
-                  aria-label={`Settings change page ${safePage} of ${pageCount}`}
-                  onClick={(event) => event.preventDefault()}
-                >
-                  {safePage} / {pageCount}
-                </PaginationLink>
-              </PaginationItem>
-              <PaginationItem>
-                <PaginationNext
-                  href="#settings-changes"
-                  aria-disabled={safePage === pageCount}
-                  tabIndex={safePage === pageCount ? -1 : undefined}
-                  className={
-                    safePage === pageCount
-                      ? "pointer-events-none opacity-50"
-                      : undefined
-                  }
-                  onClick={(event) => {
-                    event.preventDefault();
-                    if (safePage < pageCount) setPage(safePage + 1);
-                  }}
-                />
-              </PaginationItem>
-            </PaginationContent>
-          </Pagination>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 export type SettingsPanelForm = {
   dirty: boolean;
   current: ManageSettings;

@@ -2,7 +2,7 @@
 
 from secrets import token_urlsafe
 from unittest.mock import Mock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -23,6 +23,7 @@ from app.systems.access.users import invitations_router
 from app.systems.access.users.coordination import InvitationConflict, InvitationNotFound
 from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.models import SecurityEvent
+from app.systems.platform.scheduling.models import InAppNotification
 from tests.auth.test_provider_email_integration import _email_action
 
 pytest_plugins = ("tests.auth.test_provider_email_integration",)
@@ -225,6 +226,16 @@ def test_revoked_provider_invitation_is_denied_and_resend_can_be_accepted(
             == 400
         )
         assert admin.delete(path).status_code == 409
+        with Session(owner) as db:
+            notices = list(
+                db.scalars(
+                    select(InAppNotification).where(
+                        InAppNotification.kind == "invitation-accepted",
+                        InAppNotification.subject_id == UUID(invited_id),
+                    )
+                )
+            )
+            assert len(notices) == 1 and notices[0].recipient_id == local_id
         assert recipient.get("/api/auth/me").status_code == 401
         assert (
             recipient.post(
@@ -238,6 +249,14 @@ def test_revoked_provider_invitation_is_denied_and_resend_can_be_accepted(
         with Session(owner) as db:
             user = db.scalar(select(User).where(User.email == invite_email))
             if user is not None:
+                for notice in db.scalars(
+                    select(InAppNotification).where(
+                        InAppNotification.kind == "invitation-accepted",
+                        InAppNotification.subject_id == user.id,
+                    )
+                ):
+                    db.delete(notice)
+                db.flush()
                 if user.supabase_user_id is not None:
                     removed = httpx.delete(
                         settings.supabase_url + f"/auth/v1/admin/users/{user.supabase_user_id}",

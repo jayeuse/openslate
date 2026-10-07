@@ -19,7 +19,16 @@ async function installServerBoards(page: Page) {
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ today: "2026-09-23" }),
+      body: JSON.stringify({
+        display_name: "OpenSlate",
+        mark: "OS",
+        logo_file_id: null,
+        revision: 1,
+        today: "2026-09-23",
+        week_start: "monday",
+        locale: "en-US",
+        timezone: "UTC",
+      }),
     }),
   );
   await page.route("**/api/auth/session", (route) =>

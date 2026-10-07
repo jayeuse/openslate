@@ -1,6 +1,71 @@
 {
   "components": {
     "schemas": {
+      "AccessChangedNotificationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "access-changed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "scheduled_for": {
+            "title": "Scheduled For",
+            "type": "null"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "user",
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at",
+          "subject_type",
+          "subject_id",
+          "kind"
+        ],
+        "title": "AccessChangedNotificationResponse",
+        "type": "object"
+      },
       "AccessEntryResponse": {
         "description": "The user's effective level on a department (``module_id`` null) or on one module.\n\nA module entry overrides its department entry. A module with neither is hidden.",
         "properties": {
@@ -141,6 +206,17 @@
             "title": "Id",
             "type": "string"
           },
+          "ip_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip Address"
+          },
           "person_name": {
             "title": "Person Name",
             "type": "string"
@@ -173,6 +249,7 @@
           "refreshed_at",
           "expires_at",
           "user_agent",
+          "ip_address",
           "current",
           "user_id",
           "person_name",
@@ -252,6 +329,17 @@
             "title": "Id",
             "type": "string"
           },
+          "ip_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip Address"
+          },
           "refreshed_at": {
             "format": "date-time",
             "title": "Refreshed At",
@@ -275,6 +363,7 @@
           "refreshed_at",
           "expires_at",
           "user_agent",
+          "ip_address",
           "current"
         ],
         "title": "AdminSessionResponse",
@@ -437,6 +526,50 @@
           "pagination"
         ],
         "title": "AggregateSnapshotResponse",
+        "type": "object"
+      },
+      "AppearancePreferences": {
+        "additionalProperties": false,
+        "properties": {
+          "keyboard_shortcuts": {
+            "title": "Keyboard Shortcuts",
+            "type": "boolean"
+          },
+          "motion": {
+            "enum": [
+              "system",
+              "reduce"
+            ],
+            "title": "Motion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "motion",
+          "keyboard_shortcuts"
+        ],
+        "title": "AppearancePreferences",
+        "type": "object"
+      },
+      "AppearancePreferencesUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "keyboard_shortcuts": {
+            "default": true,
+            "title": "Keyboard Shortcuts",
+            "type": "boolean"
+          },
+          "motion": {
+            "default": "system",
+            "enum": [
+              "system",
+              "reduce"
+            ],
+            "title": "Motion",
+            "type": "string"
+          }
+        },
+        "title": "AppearancePreferencesUpdate",
         "type": "object"
       },
       "AssignTaskAction": {
@@ -1018,6 +1151,207 @@
           "name"
         ],
         "title": "BackupCreate",
+        "type": "object"
+      },
+      "BackupExportCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "backup_run_id": {
+            "format": "uuid",
+            "title": "Backup Run Id",
+            "type": "string"
+          },
+          "passphrase": {
+            "format": "password",
+            "maxLength": 128,
+            "minLength": 16,
+            "title": "Passphrase",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "backup_run_id",
+          "passphrase"
+        ],
+        "title": "BackupExportCreate",
+        "type": "object"
+      },
+      "BackupExportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "backup_run_id": {
+            "format": "uuid",
+            "title": "Backup Run Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "source_unavailable",
+                  "source_unproven",
+                  "copy_failed",
+                  "verification_failed",
+                  "export_interrupted",
+                  "result_unconfirmed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "ready_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ready At"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "preparing",
+              "ready",
+              "failed",
+              "interrupted",
+              "expired"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "backup_run_id",
+          "state",
+          "requested_at",
+          "ready_at",
+          "expires_at",
+          "size_bytes",
+          "sha256",
+          "failure_code"
+        ],
+        "title": "BackupExportResponse",
+        "type": "object"
+      },
+      "BackupFailureNotificationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "backup-failed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "scheduled_for": {
+            "title": "Scheduled For",
+            "type": "null"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "backup_run",
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at",
+          "subject_type",
+          "subject_id",
+          "kind"
+        ],
+        "title": "BackupFailureNotificationResponse",
         "type": "object"
       },
       "BackupPolicyResponse": {
@@ -3139,6 +3473,201 @@
         "title": "DesignField",
         "type": "object"
       },
+      "DirectoryRowResponse": {
+        "properties": {
+          "active_session_count": {
+            "minimum": 0.0,
+            "title": "Active Session Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invitation_sent_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invitation Sent At"
+          },
+          "is_deleted": {
+            "title": "Is Deleted",
+            "type": "boolean"
+          },
+          "job_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Title"
+          },
+          "last_active_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Active At"
+          },
+          "last_sign_in_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sign In At"
+          },
+          "mfa_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Observed At"
+          },
+          "mfa_verified_totp": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Verified Totp"
+          },
+          "performed_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Performed By"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "sponsor_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sponsor User Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "username",
+          "status",
+          "role",
+          "display_name",
+          "job_title",
+          "sponsor_user_id",
+          "expires_at",
+          "invitation_sent_at",
+          "created_at",
+          "updated_at",
+          "deleted_at",
+          "is_deleted",
+          "performed_by",
+          "active_session_count",
+          "mfa_verified_totp",
+          "mfa_observed_at",
+          "last_sign_in_at",
+          "last_active_at"
+        ],
+        "title": "DirectoryRowResponse",
+        "type": "object"
+      },
       "DocumentReplaceRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3700,6 +4229,16 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "board_event",
+            "title": "Subject Type",
+            "type": "string"
           }
         },
         "required": [
@@ -3708,6 +4247,8 @@
           "scheduled_for",
           "created_at",
           "read_at",
+          "subject_type",
+          "subject_id",
           "kind",
           "board_id",
           "event_id",
@@ -3915,6 +4456,39 @@
         "title": "EventSort",
         "type": "string"
       },
+      "ExportDownloadAdmissionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "format": "password",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "title": "ExportDownloadAdmissionRequest",
+        "type": "object"
+      },
+      "ExportDownloadAdmissionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expires_at"
+        ],
+        "title": "ExportDownloadAdmissionResponse",
+        "type": "object"
+      },
       "FactorResponse": {
         "properties": {
           "factor_type": {
@@ -3941,6 +4515,78 @@
           "status"
         ],
         "title": "FactorResponse",
+        "type": "object"
+      },
+      "FailedReportNotificationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "report-run-failed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "report_id": {
+            "format": "uuid",
+            "title": "Report Id",
+            "type": "string"
+          },
+          "scheduled_for": {
+            "format": "date-time",
+            "title": "Scheduled For",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "scheduled_work",
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at",
+          "subject_type",
+          "subject_id",
+          "kind",
+          "report_id"
+        ],
+        "title": "FailedReportNotificationResponse",
         "type": "object"
       },
       "FieldChangedTrigger": {
@@ -4226,6 +4872,18 @@
       "FileCreate": {
         "additionalProperties": false,
         "properties": {
+          "department_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department Id"
+          },
           "expected_size": {
             "exclusiveMinimum": 0.0,
             "maximum": 26214400.0,
@@ -4327,6 +4985,18 @@
             "title": "Creator Id",
             "type": "string"
           },
+          "department_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department Id"
+          },
           "expected_size": {
             "title": "Expected Size",
             "type": "integer"
@@ -4395,6 +5065,7 @@
           "purpose",
           "record_id",
           "board_id",
+          "department_id",
           "creator_id",
           "filename",
           "media_type",
@@ -5003,6 +5674,71 @@
         "title": "ImportRequest",
         "type": "object"
       },
+      "InvitationAcceptedNotificationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "invitation-accepted",
+            "title": "Kind",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "scheduled_for": {
+            "title": "Scheduled For",
+            "type": "null"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "user",
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at",
+          "subject_type",
+          "subject_id",
+          "kind"
+        ],
+        "title": "InvitationAcceptedNotificationResponse",
+        "type": "object"
+      },
       "InvitationCreate": {
         "additionalProperties": false,
         "description": "Administrator-selected profile and authorization for a provider email invite.",
@@ -5150,6 +5886,53 @@
         ],
         "title": "LayoutBox",
         "type": "object"
+      },
+      "LibraryFileListResponse": {
+        "properties": {
+          "creator_labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "format": "uuid"
+            },
+            "title": "Creator Labels",
+            "type": "object"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FileResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          },
+          "storage_used_bytes": {
+            "minimum": 0.0,
+            "title": "Storage Used Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "pagination",
+          "creator_labels",
+          "storage_used_bytes"
+        ],
+        "title": "LibraryFileListResponse",
+        "type": "object"
+      },
+      "LibraryFileSortField": {
+        "enum": [
+          "created_at",
+          "updated_at",
+          "name",
+          "size"
+        ],
+        "title": "LibraryFileSortField",
+        "type": "string"
       },
       "LifecycleBlocker": {
         "additionalProperties": false,
@@ -5830,6 +6613,18 @@
             "title": "Assurance Level",
             "type": "string"
           },
+          "enrollment_deadline": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrollment Deadline"
+          },
           "factors": {
             "items": {
               "$ref": "#/components/schemas/FactorResponse"
@@ -5837,9 +6632,25 @@
             "title": "Factors",
             "type": "array"
           },
+          "policy_required": {
+            "title": "Policy Required",
+            "type": "boolean"
+          },
           "required": {
             "title": "Required",
             "type": "boolean"
+          },
+          "required_since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Since"
           },
           "user_id": {
             "format": "uuid",
@@ -5851,6 +6662,9 @@
           "user_id",
           "assurance_level",
           "required",
+          "policy_required",
+          "required_since",
+          "enrollment_deadline",
           "factors"
         ],
         "title": "MfaStatus",
@@ -6057,9 +6871,15 @@
             "items": {
               "discriminator": {
                 "mapping": {
+                  "access-changed": "#/components/schemas/AccessChangedNotificationResponse",
+                  "backup-failed": "#/components/schemas/BackupFailureNotificationResponse",
                   "event-reminder": "#/components/schemas/EventReminderNotificationResponse",
+                  "invitation-accepted": "#/components/schemas/InvitationAcceptedNotificationResponse",
                   "post-publish": "#/components/schemas/PostNotificationResponse",
-                  "report-run": "#/components/schemas/ReportNotificationResponse"
+                  "record-assigned": "#/components/schemas/RecordAssignmentNotificationResponse",
+                  "report-run": "#/components/schemas/ReportNotificationResponse",
+                  "report-run-failed": "#/components/schemas/FailedReportNotificationResponse",
+                  "sandbox-published": "#/components/schemas/SandboxPublishedNotificationResponse"
                 },
                 "propertyName": "kind"
               },
@@ -6068,10 +6888,28 @@
                   "$ref": "#/components/schemas/ReportNotificationResponse"
                 },
                 {
+                  "$ref": "#/components/schemas/FailedReportNotificationResponse"
+                },
+                {
                   "$ref": "#/components/schemas/PostNotificationResponse"
                 },
                 {
                   "$ref": "#/components/schemas/EventReminderNotificationResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/BackupFailureNotificationResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/RecordAssignmentNotificationResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/InvitationAcceptedNotificationResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/SandboxPublishedNotificationResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/AccessChangedNotificationResponse"
                 }
               ]
             },
@@ -6957,6 +7795,16 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "board_post",
+            "title": "Subject Type",
+            "type": "string"
           }
         },
         "required": [
@@ -6965,6 +7813,8 @@
           "scheduled_for",
           "created_at",
           "read_at",
+          "subject_type",
+          "subject_id",
           "kind",
           "board_id",
           "post_id",
@@ -8020,6 +8870,91 @@
         "title": "QuerySort",
         "type": "object"
       },
+      "ReadAllResponse": {
+        "properties": {
+          "updated_count": {
+            "minimum": 0.0,
+            "title": "Updated Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated_count"
+        ],
+        "title": "ReadAllResponse",
+        "type": "object"
+      },
+      "RecordAssignmentNotificationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "record-assigned",
+            "title": "Kind",
+            "type": "string"
+          },
+          "module_id": {
+            "format": "uuid",
+            "title": "Module Id",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "scheduled_for": {
+            "title": "Scheduled For",
+            "type": "null"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "record",
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at",
+          "subject_type",
+          "subject_id",
+          "kind",
+          "module_id"
+        ],
+        "title": "RecordAssignmentNotificationResponse",
+        "type": "object"
+      },
       "RecordCreate": {
         "additionalProperties": false,
         "properties": {
@@ -9008,6 +9943,16 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "report_run",
+            "title": "Subject Type",
+            "type": "string"
           }
         },
         "required": [
@@ -9016,6 +9961,8 @@
           "scheduled_for",
           "created_at",
           "read_at",
+          "subject_type",
+          "subject_id",
           "kind",
           "report_id",
           "run_id"
@@ -9448,6 +10395,77 @@
           "schemaVersion"
         ],
         "title": "SandboxDocument",
+        "type": "object"
+      },
+      "SandboxPublishedNotificationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "sandbox-published",
+            "title": "Kind",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "scheduled_for": {
+            "title": "Scheduled For",
+            "type": "null"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "sandbox_version",
+            "title": "Subject Type",
+            "type": "string"
+          },
+          "version_sequence": {
+            "exclusiveMinimum": 0.0,
+            "title": "Version Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at",
+          "subject_type",
+          "subject_id",
+          "kind",
+          "version_sequence"
+        ],
+        "title": "SandboxPublishedNotificationResponse",
         "type": "object"
       },
       "SandboxSnapshot": {
@@ -11631,6 +12649,20 @@
         "title": "TriggerRunResponse",
         "type": "object"
       },
+      "UnreadCountResponse": {
+        "properties": {
+          "unread_count": {
+            "minimum": 0.0,
+            "title": "Unread Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unread_count"
+        ],
+        "title": "UnreadCountResponse",
+        "type": "object"
+      },
       "UnspecifiedGroupSelector": {
         "additionalProperties": false,
         "properties": {
@@ -11821,7 +12853,7 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/UserResponse"
+              "$ref": "#/components/schemas/DirectoryRowResponse"
             },
             "title": "Items",
             "type": "array"
@@ -11837,12 +12869,62 @@
         "title": "UserListResponse",
         "type": "object"
       },
-      "UserPreferencesResponse": {
+      "UserMfaResetRequest": {
+        "additionalProperties": false,
+        "properties": {},
+        "title": "UserMfaResetRequest",
+        "type": "object"
+      },
+      "UserMfaResetResponse": {
+        "additionalProperties": false,
         "properties": {
+          "factors_cleared": {
+            "const": true,
+            "default": true,
+            "title": "Factors Cleared",
+            "type": "boolean"
+          },
+          "local_revocation": {
+            "const": "committed",
+            "default": "committed",
+            "title": "Local Revocation",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "revoked_sessions": {
+            "minimum": 0.0,
+            "title": "Revoked Sessions",
+            "type": "integer"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "user_id",
+          "revoked_sessions"
+        ],
+        "title": "UserMfaResetResponse",
+        "type": "object"
+      },
+      "UserPreferencesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "appearance": {
+            "$ref": "#/components/schemas/AppearancePreferences"
+          },
           "theme": {
             "enum": [
               "light",
-              "dark"
+              "dark",
+              "system"
             ],
             "title": "Theme",
             "type": "string"
@@ -11855,7 +12937,8 @@
         },
         "required": [
           "user_id",
-          "theme"
+          "theme",
+          "appearance"
         ],
         "title": "UserPreferencesResponse",
         "type": "object"
@@ -11863,19 +12946,82 @@
       "UserPreferencesUpdate": {
         "additionalProperties": false,
         "properties": {
+          "appearance": {
+            "$ref": "#/components/schemas/AppearancePreferencesUpdate"
+          },
           "theme": {
+            "default": "system",
             "enum": [
               "light",
-              "dark"
+              "dark",
+              "system"
             ],
             "title": "Theme",
             "type": "string"
           }
         },
-        "required": [
-          "theme"
-        ],
         "title": "UserPreferencesUpdate",
+        "type": "object"
+      },
+      "UserRecoveryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "revoke_sessions": {
+            "default": false,
+            "title": "Revoke Sessions",
+            "type": "boolean"
+          }
+        },
+        "title": "UserRecoveryRequest",
+        "type": "object"
+      },
+      "UserRecoveryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "email_request": {
+            "const": "accepted",
+            "default": "accepted",
+            "title": "Email Request",
+            "type": "string"
+          },
+          "local_revocation": {
+            "enum": [
+              "not_requested",
+              "committed"
+            ],
+            "title": "Local Revocation",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "revoked_sessions": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked Sessions"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "user_id",
+          "local_revocation",
+          "revoked_sessions"
+        ],
+        "title": "UserRecoveryResponse",
         "type": "object"
       },
       "UserResponse": {
@@ -12025,12 +13171,45 @@
         "title": "UserRole",
         "type": "string"
       },
+      "UserSecurityResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "smtp_configured": {
+            "title": "Smtp Configured",
+            "type": "boolean"
+          },
+          "target_eligible": {
+            "title": "Target Eligible",
+            "type": "boolean"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "verified_factor_count": {
+            "minimum": 0.0,
+            "title": "Verified Factor Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id",
+          "verified_factor_count",
+          "target_eligible",
+          "smtp_configured"
+        ],
+        "title": "UserSecurityResponse",
+        "type": "object"
+      },
       "UserSortField": {
         "enum": [
           "email",
           "username",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "name",
+          "expires_at"
         ],
         "title": "UserSortField",
         "type": "string"
@@ -12043,6 +13222,52 @@
         ],
         "title": "UserStatus",
         "type": "string"
+      },
+      "UserSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "admins_mfa_unknown": {
+            "minimum": 0.0,
+            "title": "Admins Mfa Unknown",
+            "type": "integer"
+          },
+          "admins_without_mfa": {
+            "minimum": 0.0,
+            "title": "Admins Without Mfa",
+            "type": "integer"
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "inactive_days": {
+            "maximum": 3650.0,
+            "minimum": 1.0,
+            "title": "Inactive Days",
+            "type": "integer"
+          },
+          "inactive_people": {
+            "minimum": 0.0,
+            "title": "Inactive People",
+            "type": "integer"
+          },
+          "no_recorded_sign_in": {
+            "minimum": 0.0,
+            "title": "No Recorded Sign In",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "admins_without_mfa",
+          "admins_mfa_unknown",
+          "no_recorded_sign_in",
+          "inactive_people",
+          "as_of",
+          "inactive_days"
+        ],
+        "title": "UserSummaryResponse",
+        "type": "object"
       },
       "UserUpdate": {
         "additionalProperties": false,
@@ -13099,7 +14324,171 @@
         "title": "WindowRecordResponse",
         "type": "object"
       },
+      "WorkspaceAppearanceResponse": {
+        "additionalProperties": false,
+        "description": "The only workspace value available before sign-in.",
+        "properties": {
+          "theme": {
+            "$ref": "#/components/schemas/WorkspaceTheme"
+          }
+        },
+        "required": [
+          "theme"
+        ],
+        "title": "WorkspaceAppearanceResponse",
+        "type": "object"
+      },
+      "WorkspaceCallerIpResponse": {
+        "properties": {
+          "address": {
+            "format": "ipvanyaddress",
+            "title": "Address",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "title": "WorkspaceCallerIpResponse",
+        "type": "object"
+      },
+      "WorkspaceGuestResponse": {
+        "description": "Guests receive the common profile without any contact keys.",
+        "properties": {
+          "business_hours": {
+            "title": "Business Hours",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "guest_duration_days": {
+            "title": "Guest Duration Days",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invitation_expiry_days": {
+            "title": "Invitation Expiry Days",
+            "type": "integer"
+          },
+          "legal_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Name"
+          },
+          "locale": {
+            "title": "Locale",
+            "type": "string"
+          },
+          "logo_file_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo File Id"
+          },
+          "mark": {
+            "title": "Mark",
+            "type": "string"
+          },
+          "purge_enabled": {
+            "readOnly": true,
+            "title": "Purge Enabled",
+            "type": "boolean"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "theme": {
+            "$ref": "#/components/schemas/WorkspaceTheme"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "today": {
+            "format": "date",
+            "readOnly": true,
+            "title": "Today",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "week_start": {
+            "enum": [
+              "monday",
+              "sunday"
+            ],
+            "title": "Week Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "legal_name",
+          "description",
+          "logo_file_id",
+          "timezone",
+          "locale",
+          "mark",
+          "currency",
+          "week_start",
+          "business_hours",
+          "theme",
+          "invitation_expiry_days",
+          "guest_duration_days",
+          "revision",
+          "created_at",
+          "updated_at",
+          "today",
+          "purge_enabled"
+        ],
+        "title": "WorkspaceGuestResponse",
+        "type": "object"
+      },
       "WorkspaceResponse": {
+        "description": "Full profile for members and administrators, including intentional nulls.",
         "properties": {
           "business_hours": {
             "title": "Business Hours",
@@ -13206,9 +14595,17 @@
             ],
             "title": "Postal Address"
           },
+          "purge_enabled": {
+            "readOnly": true,
+            "title": "Purge Enabled",
+            "type": "boolean"
+          },
           "revision": {
             "title": "Revision",
             "type": "integer"
+          },
+          "theme": {
+            "$ref": "#/components/schemas/WorkspaceTheme"
           },
           "timezone": {
             "title": "Timezone",
@@ -13239,9 +14636,6 @@
           "display_name",
           "legal_name",
           "description",
-          "contact_email",
-          "contact_phone",
-          "postal_address",
           "logo_file_id",
           "timezone",
           "locale",
@@ -13249,12 +14643,17 @@
           "currency",
           "week_start",
           "business_hours",
+          "theme",
           "invitation_expiry_days",
           "guest_duration_days",
           "revision",
           "created_at",
           "updated_at",
-          "today"
+          "contact_email",
+          "contact_phone",
+          "postal_address",
+          "today",
+          "purge_enabled"
         ],
         "title": "WorkspaceResponse",
         "type": "object"
@@ -13268,14 +14667,33 @@
             "title": "Ip Allow List",
             "type": "array"
           },
-          "mfa_policy": {
-            "enum": [
-              "optional",
-              "admins",
-              "everyone"
-            ],
-            "title": "Mfa Policy",
-            "type": "string"
+          "login_cooldown_minutes": {
+            "title": "Login Cooldown Minutes",
+            "type": "integer"
+          },
+          "login_failed_attempt_threshold": {
+            "title": "Login Failed Attempt Threshold",
+            "type": "integer"
+          },
+          "login_window_minutes": {
+            "title": "Login Window Minutes",
+            "type": "integer"
+          },
+          "mfa_grace_days": {
+            "title": "Mfa Grace Days",
+            "type": "integer"
+          },
+          "mfa_require_admin": {
+            "title": "Mfa Require Admin",
+            "type": "boolean"
+          },
+          "mfa_require_guest": {
+            "title": "Mfa Require Guest",
+            "type": "boolean"
+          },
+          "mfa_require_member": {
+            "title": "Mfa Require Member",
+            "type": "boolean"
           },
           "password_min_length": {
             "title": "Password Min Length",
@@ -13293,6 +14711,40 @@
             "title": "Revision",
             "type": "integer"
           },
+          "security_event_retention_days": {
+            "maximum": 3650.0,
+            "minimum": 1.0,
+            "title": "Security Event Retention Days",
+            "type": "integer"
+          },
+          "session_absolute_lifetime_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Absolute Lifetime Minutes"
+          },
+          "session_concurrent_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Concurrent Limit"
+          },
+          "session_retention_days": {
+            "maximum": 3650.0,
+            "minimum": 1.0,
+            "title": "Session Retention Days",
+            "type": "integer"
+          },
           "session_timeout_minutes": {
             "enum": [
               15,
@@ -13307,10 +14759,20 @@
         "required": [
           "revision",
           "session_timeout_minutes",
+          "session_retention_days",
+          "security_event_retention_days",
           "password_min_length",
           "password_require_mixed_case",
           "password_require_number",
-          "mfa_policy",
+          "session_absolute_lifetime_minutes",
+          "session_concurrent_limit",
+          "mfa_require_admin",
+          "mfa_require_member",
+          "mfa_require_guest",
+          "mfa_grace_days",
+          "login_failed_attempt_threshold",
+          "login_window_minutes",
+          "login_cooldown_minutes",
           "ip_allow_list"
         ],
         "title": "WorkspaceSecurityResponse",
@@ -13335,21 +14797,90 @@
             ],
             "title": "Ip Allow List"
           },
-          "mfa_policy": {
+          "login_cooldown_minutes": {
             "anyOf": [
               {
-                "enum": [
-                  "optional",
-                  "admins",
-                  "everyone"
-                ],
-                "type": "string"
+                "maximum": 1440.0,
+                "minimum": 1.0,
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Mfa Policy"
+            "title": "Login Cooldown Minutes"
+          },
+          "login_failed_attempt_threshold": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Login Failed Attempt Threshold"
+          },
+          "login_window_minutes": {
+            "anyOf": [
+              {
+                "maximum": 1440.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Login Window Minutes"
+          },
+          "mfa_grace_days": {
+            "anyOf": [
+              {
+                "maximum": 30.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Grace Days"
+          },
+          "mfa_require_admin": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Require Admin"
+          },
+          "mfa_require_guest": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Require Guest"
+          },
+          "mfa_require_member": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Require Member"
           },
           "password_min_length": {
             "anyOf": [
@@ -13391,6 +14922,58 @@
             "title": "Revision",
             "type": "integer"
           },
+          "security_event_retention_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Event Retention Days"
+          },
+          "session_absolute_lifetime_minutes": {
+            "anyOf": [
+              {
+                "maximum": 43200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Absolute Lifetime Minutes"
+          },
+          "session_concurrent_limit": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Concurrent Limit"
+          },
+          "session_retention_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Retention Days"
+          },
           "session_timeout_minutes": {
             "anyOf": [
               {
@@ -13414,6 +14997,15 @@
         ],
         "title": "WorkspaceSecurityUpdate",
         "type": "object"
+      },
+      "WorkspaceTheme": {
+        "enum": [
+          "slate",
+          "whiteboard",
+          "triplicate",
+          "stockroom"
+        ],
+        "type": "string"
       },
       "WorkspaceUpdate": {
         "additionalProperties": false,
@@ -13582,6 +15174,16 @@
             "minimum": 1.0,
             "title": "Revision",
             "type": "integer"
+          },
+          "theme": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceTheme"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "timezone": {
             "anyOf": [
@@ -16379,6 +17981,228 @@
           }
         ],
         "summary": "Queue Backup",
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/api/backups/exports": {
+      "post": {
+        "operationId": "queue_backup_export",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupExportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupExportResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Queue Backup Export",
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/api/backups/exports/{export_id}": {
+      "get": {
+        "operationId": "get_backup_export",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupExportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Backup Export",
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/api/backups/exports/{export_id}/content": {
+      "get": {
+        "operationId": "download_backup_export_content",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Download Backup Export Content",
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/api/backups/exports/{export_id}/download-admission": {
+      "post": {
+        "operationId": "admit_backup_export_download",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportDownloadAdmissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportDownloadAdmissionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admit Backup Export Download",
         "tags": [
           "backups"
         ]
@@ -22744,7 +24568,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/FileSortField"
+                  "$ref": "#/components/schemas/LibraryFileSortField"
                 },
                 {
                   "type": "null"
@@ -22812,6 +24636,23 @@
               ],
               "title": "Record Id"
             }
+          },
+          {
+            "in": "query",
+            "name": "department_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Department Id"
+            }
           }
         ],
         "responses": {
@@ -22819,7 +24660,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FileListResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/LibraryFileListResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FileListResponse"
+                    }
+                  ],
+                  "title": "Response List Files Api Files Get"
                 }
               }
             },
@@ -24026,6 +25875,23 @@
               "$ref": "#/components/schemas/DeletedFilter",
               "default": "exclude"
             }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "unread",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
           }
         ],
         "responses": {
@@ -24061,6 +25927,58 @@
         ]
       }
     },
+    "/api/notifications/read-all": {
+      "post": {
+        "operationId": "mark_all_notifications_read_api_notifications_read_all_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadAllResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mark All Notifications Read",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/notifications/unread-count": {
+      "get": {
+        "operationId": "unread_notification_count_api_notifications_unread_count_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadCountResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unread Notification Count",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
     "/api/notifications/{notification_id}/read": {
       "post": {
         "description": "A repeated mark-read preserves the original timestamp and audit entry.",
@@ -24084,9 +26002,15 @@
                 "schema": {
                   "discriminator": {
                     "mapping": {
+                      "access-changed": "#/components/schemas/AccessChangedNotificationResponse",
+                      "backup-failed": "#/components/schemas/BackupFailureNotificationResponse",
                       "event-reminder": "#/components/schemas/EventReminderNotificationResponse",
+                      "invitation-accepted": "#/components/schemas/InvitationAcceptedNotificationResponse",
                       "post-publish": "#/components/schemas/PostNotificationResponse",
-                      "report-run": "#/components/schemas/ReportNotificationResponse"
+                      "record-assigned": "#/components/schemas/RecordAssignmentNotificationResponse",
+                      "report-run": "#/components/schemas/ReportNotificationResponse",
+                      "report-run-failed": "#/components/schemas/FailedReportNotificationResponse",
+                      "sandbox-published": "#/components/schemas/SandboxPublishedNotificationResponse"
                     },
                     "propertyName": "kind"
                   },
@@ -24095,10 +26019,28 @@
                       "$ref": "#/components/schemas/ReportNotificationResponse"
                     },
                     {
+                      "$ref": "#/components/schemas/FailedReportNotificationResponse"
+                    },
+                    {
                       "$ref": "#/components/schemas/PostNotificationResponse"
                     },
                     {
                       "$ref": "#/components/schemas/EventReminderNotificationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BackupFailureNotificationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RecordAssignmentNotificationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InvitationAcceptedNotificationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SandboxPublishedNotificationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AccessChangedNotificationResponse"
                     }
                   ],
                   "title": "Response Mark Notification Read Api Notifications  Notification Id  Read Post"
@@ -27277,64 +29219,6 @@
         ]
       }
     },
-    "/api/sandbox/versions/{version_id}/rollbacks": {
-      "post": {
-        "operationId": "rollback_sandbox_release",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "version_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Version Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VersionMutationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DocumentResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Post Rollback",
-        "tags": [
-          "sandbox-designs"
-        ]
-      }
-    },
     "/api/search": {
       "get": {
         "operationId": "search_api_search_get",
@@ -27476,6 +29360,91 @@
                 }
               ],
               "title": "Operation Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "outcome",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SecurityEventOutcome"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "in": "query",
+            "name": "person_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Person Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "occurred_after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Occurred After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "occurred_before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Occurred Before"
             }
           },
           {
@@ -27798,6 +29767,119 @@
               ],
               "title": "Role"
             }
+          },
+          {
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "const": "none",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "department_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Department Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pending",
+                    "active",
+                    "disabled",
+                    "expired",
+                    "ending"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mfa",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "without",
+                    "unknown"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mfa"
+            }
+          },
+          {
+            "in": "query",
+            "name": "history",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "no-recorded-sign-in",
+                    "inactive"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "History"
+            }
+          },
+          {
+            "in": "query",
+            "name": "inactive_days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "ge": 1,
+              "le": 3650,
+              "title": "Inactive Days",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -27872,6 +29954,56 @@
           }
         ],
         "summary": "Create User",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/summary": {
+      "get": {
+        "operationId": "user_summary_api_users_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "inactive_days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "ge": 1,
+              "le": 3650,
+              "title": "Inactive Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "User Summary",
         "tags": [
           "users"
         ]
@@ -28069,6 +30201,64 @@
         ]
       }
     },
+    "/api/users/{user_id}/mfa/reset": {
+      "post": {
+        "operationId": "reset_user_mfa_api_users__user_id__mfa_reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserMfaResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserMfaResetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reset User Mfa",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/api/users/{user_id}/preferences": {
       "get": {
         "operationId": "get_user_preferences_api_users__user_id__preferences_get",
@@ -28173,6 +30363,64 @@
         ]
       }
     },
+    "/api/users/{user_id}/recovery": {
+      "post": {
+        "operationId": "recover_user_api_users__user_id__recovery_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserRecoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRecoveryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Recover User",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/api/users/{user_id}/restore": {
       "post": {
         "operationId": "restore_user_api_users__user_id__restore_post",
@@ -28216,6 +30464,54 @@
           }
         ],
         "summary": "Restore User",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/security": {
+      "get": {
+        "operationId": "get_user_security_api_users__user_id__security_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSecurityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get User Security",
         "tags": [
           "users"
         ]
@@ -29082,7 +31378,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WorkspaceResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkspaceResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkspaceGuestResponse"
+                    }
+                  ],
+                  "title": "Response Get Workspace Api Workspace Get"
                 }
               }
             },
@@ -29139,6 +31443,27 @@
           }
         ],
         "summary": "Update Workspace",
+        "tags": [
+          "workspace"
+        ]
+      }
+    },
+    "/api/workspace/appearance": {
+      "get": {
+        "operationId": "get_workspace_appearance_api_workspace_appearance_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceAppearanceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Workspace Appearance",
         "tags": [
           "workspace"
         ]
@@ -29233,6 +31558,32 @@
           }
         ],
         "summary": "Update Workspace Security",
+        "tags": [
+          "workspace"
+        ]
+      }
+    },
+    "/api/workspace/security/caller-ip": {
+      "get": {
+        "operationId": "get_workspace_caller_ip_api_workspace_security_caller_ip_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceCallerIpResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Workspace Caller Ip",
         "tags": [
           "workspace"
         ]

@@ -5,21 +5,40 @@ export async function mockManageSecurity(page: Page) {
     policy: {
       revision: 1,
       session_timeout_minutes: 60,
+      session_absolute_lifetime_minutes: null as number | null,
+      session_concurrent_limit: null as number | null,
+      session_retention_days: 365,
+      security_event_retention_days: 365,
       password_min_length: 12,
       password_require_mixed_case: true,
       password_require_number: false,
-      mfa_policy: "optional",
+      mfa_require_admin: false,
+      mfa_require_member: false,
+      mfa_require_guest: false,
+      mfa_grace_days: 0,
+      login_failed_attempt_threshold: 5,
+      login_window_minutes: 15,
+      login_cooldown_minutes: 15,
       ip_allow_list: [] as string[],
     },
     workspace: {
       id: "00000000-0000-4000-8000-000000000090",
       display_name: "Harbor School",
+      legal_name: null,
+      description: null,
+      contact_email: null,
+      contact_phone: null,
+      postal_address: null,
       locale: "en-PH",
       timezone: "Asia/Manila",
+      logo_file_id: null,
       mark: "HS",
       currency: "PHP",
       week_start: "monday",
       business_hours: "09:00–18:00",
+      theme: "slate",
+      // GET /workspace always returns today; without it the region read fails.
+      today: "2026-10-06",
       revision: 1,
     },
     sessions: [
@@ -35,6 +54,7 @@ export async function mockManageSecurity(page: Page) {
       user_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
       person_name,
       user_agent: index === 6 ? null : `${browser} test agent`,
+      ip_address: null as string | null,
       device,
       browser,
       created_at: "2026-10-01T01:00:00Z",
@@ -44,6 +64,9 @@ export async function mockManageSecurity(page: Page) {
     })),
     sessionReads: [] as URLSearchParams[],
     policyReads: 0,
+    callerReads: 0,
+    callerAddress: "127.0.0.1",
+    callerReadStatus: 200,
     workspaceReads: 0,
     writes: [] as { path: string; body: unknown }[],
     policyReadStatus: 200,
@@ -92,6 +115,21 @@ export async function mockManageSecurity(page: Page) {
     }
     state.workspace.revision = state.policy.revision;
     await route.fulfill({ json: state.policy });
+  });
+  await page.route("**/api/workspace/security/caller-ip", async (route) => {
+    state.callerReads += 1;
+    await route.fulfill({
+      status: state.callerReadStatus,
+      json:
+        state.callerReadStatus === 200
+          ? { address: state.callerAddress }
+          : {
+              detail: {
+                code: "caller_address_unavailable",
+                message: "Current address unavailable",
+              },
+            },
+    });
   });
   await page.route("**/api/auth/admin-sessions**", async (route) => {
     if (route.request().method() === "DELETE") {

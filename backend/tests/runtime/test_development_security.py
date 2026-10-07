@@ -19,6 +19,8 @@ from app.systems.access.identity import rate_limits
 from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.provider_login import login_with_provider
 from app.systems.access.identity.rate_limits import invitation_completion_permitted
+from app.systems.manage.audit.models import SecurityEvent, SecurityEventOutcome
+from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.config_support import settings_values
 
 
@@ -133,6 +135,11 @@ def test_loopback_development_skips_anonymous_identity_rate_limit_storage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
+    scalar_rows = {
+        WorkspaceProfile: WorkspaceProfile(session_timeout_minutes=60),
+        SecurityEvent.id: None,
+    }
+    db.scalar.side_effect = lambda query: scalar_rows[query.column_descriptions[0]["expr"]]
     cleanup = Mock()
     lock = Mock()
     record = Mock()
@@ -142,7 +149,7 @@ def test_loopback_development_skips_anonymous_identity_rate_limit_storage(
     provider = Mock()
     provider.password_grant.side_effect = InvalidProviderCredentials("invalid")
 
-    with pytest.raises(InvalidCredentials):
+    with pytest.raises(InvalidCredentials, match="Invalid credentials"):
         login_with_provider(
             db, "unknown@example.test", "wrong password", provider, enforce_rate_limit=False
         )
@@ -151,8 +158,14 @@ def test_loopback_development_skips_anonymous_identity_rate_limit_storage(
     cleanup.assert_not_called()
     lock.assert_not_called()
     record.assert_not_called()
-    db.add.assert_not_called()
-    db.execute.assert_not_called()
+    db.add.assert_called_once()
+    event = db.add.call_args.args[0]
+    assert isinstance(event, SecurityEvent)
+    assert event.event_type == "identity.sign_in_failure"
+    assert event.outcome is SecurityEventOutcome.FAILURE
+    assert event.source == "identity.login"
+    assert event.reason == "credentials_rejected"
+    assert event.actor_id is None and event.subject_id is None
 
 
 def test_loopback_development_cookie_mutations_still_require_csrf(

@@ -217,6 +217,7 @@ def verify_sample_data(
         date.fromisoformat(manifest["anchor_date"]),
         organization=pack,
         module_counts_override=counts,
+        host_acceptance=manifest.get("host_acceptance") is True,
     )
     observed: dict[str, int] = {}
     issues: list[str] = []
@@ -305,7 +306,9 @@ def verify_sample_data(
         finally:
             client.request("POST", "/api/auth/logout")
     if "control_plan" in manifest:
-        route_counts, route_issues = verify_route_coverage(run_directory)
+        route_counts, route_issues = verify_route_coverage(
+            run_directory, host_acceptance=dataset.host_acceptance
+        )
         observed.update(route_counts)
         issues.extend(route_issues)
     return SampleVerificationReport(

@@ -2,13 +2,16 @@
 
 import hashlib
 import json
+import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from operations.backup_runner import run_once
+import pytest
+
+from operations.backup_runner import ArchiveRunner, Clock, run_once
 
 NOW = datetime(2026, 10, 3, 12, tzinfo=UTC)
 
@@ -50,16 +53,24 @@ def private_file(path: Path, value: str) -> Path:
 
 
 def runner_config(tmp_path: Path, *, deployment: str = "production") -> tuple[Path, Path]:
-    for name in ("repository", "staging", "markers", "state", "tls"):
+    for name in ("repository", "staging", "markers", "state", "tls", "logs"):
         (tmp_path / name).mkdir(mode=0o700)
+    (tmp_path / "backup-exports").mkdir(mode=0o750)
+    (tmp_path / "backup-exports").chmod(0o750)
     private_file(tmp_path / "tls" / "certificate", "synthetic certificate")
-    provider = private_file(tmp_path / "provider.env", "OPENSLATE_INSTANCE_ID=client-a\n")
+    provider = private_file(
+        tmp_path / "provider.env",
+        "OPENSLATE_INSTANCE_ID=client-a\n"
+        f"OPENSLATE_BACKUP_EXPORT_ROOT={tmp_path / 'backup-exports'}\n"
+        f"OPENSLATE_LOG_ROOT={tmp_path / 'logs'}\n",
+    )
     app = private_file(
         tmp_path / "app.env",
         "ENVIRONMENT=production\nOPENSLATE_INSTANCE_ID=client-a\n"
         "POSTGRES_HOST=db\nPOSTGRES_PORT=5432\nPOSTGRES_DATABASE=postgres\n"
         "DATABASE_URL=postgresql://openslate_runtime:synthetic@db:5432/postgres\n"
-        "PUBLIC_ORIGIN=https://example.invalid\n",
+        "PUBLIC_ORIGIN=https://example.invalid\n"
+        "BACKUP_EXPORT_ROOT=/var/lib/openslate/backup-exports\n",
     )
     caddy = private_file(tmp_path / "Caddyfile", "synthetic caddy configuration")
     password = private_file(tmp_path / "password", "synthetic test password")
@@ -127,6 +138,7 @@ class SyntheticCommands:
         self.config = json.loads(config.read_text())
         self.calls: list[tuple[list[str], dict[str, Any]]] = []
         self.operations: list[dict[str, Any]] = []
+        self.export_operations: list[dict[str, Any]] = []
         self.claim: dict[str, Any] | None = None
         self.candidates: list[dict[str, Any]] = []
         self.snapshots = {SNAPSHOT}
@@ -186,6 +198,7 @@ class SyntheticCommands:
                     "POSTGRES_DATABASE=postgres",
                     "DATABASE_URL=postgresql://openslate_runtime:synthetic@db:5432/postgres",
                     "PUBLIC_ORIGIN=https://example.invalid",
+                    "BACKUP_EXPORT_ROOT=/var/lib/openslate/backup-exports",
                 ],
             },
             "State": {
@@ -200,7 +213,27 @@ class SyntheticCommands:
                     "RW": writable,
                 }
                 for logical, destination, writable in mounts.get(name, ())
-            ],
+            ]
+            + (
+                [
+                    {
+                        "Type": "bind",
+                        "Source": str(Path(self.config["restic_repository"]).parent / "logs"),
+                        "Destination": "/var/log/openslate",
+                        "RW": True,
+                    },
+                    {
+                        "Type": "bind",
+                        "Source": str(
+                            Path(self.config["restic_repository"]).parent / "backup-exports"
+                        ),
+                        "Destination": "/var/lib/openslate/backup-exports",
+                        "RW": False,
+                    },
+                ]
+                if name == "api"
+                else []
+            ),
             "NetworkSettings": {
                 "Networks": {self.config["project_name"] + "_provider": {"NetworkID": "b" * 64}}
             },
@@ -301,14 +334,31 @@ class SyntheticCommands:
             return self.result(args, b"", 0 if self.readiness and found else 1)
         if args[:2] == ["docker", "run"] and args[-1] == "operations/backup_state.py":
             request = json.loads(kwargs["input"])
-            self.operations.append(request)
             op = request["op"]
+            is_export = op in {"claim-export", "inspect-export", "export-outcome", "export-cleaned"}
+            if is_export:
+                self.export_operations.append(request)
+            else:
+                self.operations.append(request)
             if not next(
                 item
                 for item in self.containers
                 if item["Config"]["Labels"]["com.docker.compose.service"] == "db"
             )["State"]["Running"]:
                 return self.result(args, {"code": "database_unavailable"}, 3)
+            if is_export:
+                if op == "inspect-export":
+                    return self.result(
+                        args,
+                        {
+                            "unresolved": None,
+                            "claim": None,
+                            "cleanup_candidates": [],
+                        },
+                    )
+                if op == "claim-export":
+                    return self.result(args, {"status": "none", "claim": None})
+                return self.result(args, {"code": "export_identity_conflict"}, 2)
             if op == "inspect":
                 self.policy["adopted"] = self.adopted
                 result = {
@@ -419,13 +469,27 @@ def successful_archive(host: Any, journal: dict[str, Any]) -> None:
 
 
 def execute(
-    config: Path, state: Path, commands: SyntheticCommands, **options: Any
+    config: Path,
+    state: Path,
+    commands: SyntheticCommands,
+    *,
+    project_export_group: bool = True,
+    archive_runner: ArchiveRunner = successful_archive,
+    now: Clock = lambda: NOW,
+    **options: Any,
 ) -> dict[str, object]:
-    return run_once(
-        config,
-        state,
-        command_runner=commands,
-        archive_runner=successful_archive,
-        now=lambda: NOW,
-        **options,
-    )
+    """Native-temp positives project only gid; they do not prove deployed ownership."""
+    from operations.backups import export_files
+
+    assert export_files.EXPORT_GID == 10001
+    with pytest.MonkeyPatch.context() as projection:
+        if project_export_group:
+            projection.setattr(export_files, "EXPORT_GID", os.getegid())
+        return run_once(
+            config,
+            state,
+            command_runner=commands,
+            archive_runner=archive_runner,
+            now=now,
+            **options,
+        )

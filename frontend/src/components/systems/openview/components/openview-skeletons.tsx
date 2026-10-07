@@ -161,3 +161,18 @@ export function AvailableOutputsSkeleton() {
     </>
   );
 }
+
+/** The OpenView route's Suspense frame while its URL state is read. */
+export function OpenViewLoading() {
+  return (
+    <div
+      className="flex flex-col gap-4"
+      role="status"
+      aria-label="Opening OpenView"
+    >
+      <Skeleton className="h-8 w-52" />
+      <Skeleton className="h-12 w-full" />
+      <Skeleton className="h-64 w-full" />
+    </div>
+  );
+}

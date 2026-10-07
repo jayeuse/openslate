@@ -73,7 +73,17 @@ export async function installBoardApi(
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ today: "2026-09-25" }),
+      body: JSON.stringify({
+        display_name: "OpenSlate",
+        mark: "OS",
+        logo_file_id: null,
+        revision: 1,
+        today: "2026-09-25",
+        week_start: "monday",
+        locale: "en-US",
+        timezone: "UTC",
+        purge_enabled: true,
+      }),
     }),
   );
   await page.route("**/api/views/data-sources**", (route) =>

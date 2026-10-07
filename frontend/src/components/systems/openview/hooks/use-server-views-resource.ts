@@ -8,7 +8,8 @@ import {
   type SetStateAction,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
+import { apiErrorMessage } from "@/lib/api-errors";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 import {
   extendsRead,
   moduleFieldKeys,
@@ -39,11 +40,6 @@ function mergeViewsById(
   const views = new Map(current.map((view) => [view.id, view]));
   for (const view of next) views.set(view.id, view);
   return [...views.values()];
-}
-
-function messageFor(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
 }
 
 const AUTHORIZATION_ERROR =
@@ -77,7 +73,7 @@ export function useServerViewsResource(requestedModule: string | null) {
   // Cached reads refresh through OpenViewQuerySync on the same stream.
   useEffect(
     () =>
-      subscribeOpenViewInvalidations((event) => {
+      subscribeWorkspaceInvalidations((event) => {
         if (event.type === "resync" || invalidatesRecords(event.entity))
           setRecordInvalidation((value) => value + 1);
       }),
@@ -133,7 +129,7 @@ export function useServerViewsResource(requestedModule: string | null) {
   const catalogError = authorizationDenied
     ? AUTHORIZATION_ERROR
     : catalogLoadError
-      ? messageFor(
+      ? apiErrorMessage(
           catalogLoadError,
           "The OpenView catalog could not be loaded.",
         )
@@ -150,7 +146,7 @@ export function useServerViewsResource(requestedModule: string | null) {
   const moduleError = authorizationDenied
     ? ""
     : moduleLoadError
-      ? messageFor(moduleLoadError, "The data source could not be loaded.")
+      ? apiErrorMessage(moduleLoadError, "The data source could not be loaded.")
       : "";
 
   // Saved-view commands update the cached workspace of the module they
@@ -194,7 +190,7 @@ export function useServerViewsResource(requestedModule: string | null) {
       }
       setMetadataRetryTarget("catalog");
       setMetadataError(
-        messageFor(error, "More data sources could not be loaded."),
+        apiErrorMessage(error, "More data sources could not be loaded."),
       );
     } finally {
       setMetadataLoadingMore(false);
@@ -259,7 +255,7 @@ export function useServerViewsResource(requestedModule: string | null) {
       }
       setMetadataRetryTarget("module");
       setMetadataError(
-        messageFor(error, "More saved-view metadata could not be loaded."),
+        apiErrorMessage(error, "More saved-view metadata could not be loaded."),
       );
     } finally {
       setMetadataLoadingMore(false);

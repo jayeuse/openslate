@@ -8,6 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.users.models import User
+from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.security_policy import session_expiry_expression
 
 
 def _now(now: datetime | None = None) -> datetime:
@@ -35,11 +38,15 @@ def revoke_user_sessions(
     """Revoke active sessions other than an optional preserved session."""
 
     timestamp = _now(now)
+    # Order against admission/MFA without upgrading existing administrator shared locks.
+    db.scalar(select(User.id).where(User.id == user_id).with_for_update(of=User, read=True))
     changed = 0
     for session in db.scalars(
-        select(IdentitySession).where(
-            IdentitySession.user_id == user_id, IdentitySession.revoked_at.is_(None)
-        )
+        select(IdentitySession)
+        .where(IdentitySession.user_id == user_id, IdentitySession.revoked_at.is_(None))
+        .order_by(IdentitySession.id)
+        .execution_options(populate_existing=True)
+        .with_for_update(of=IdentitySession)
     ):
         if session.id != except_session_id and session.revoked_at is None:
             session.revoked_at = timestamp
@@ -55,3 +62,32 @@ def _schedule_provider_signout(session: IdentitySession, timestamp: datetime) ->
     session.provider_signout_next_attempt_at = timestamp
     session.provider_signout_attempts = 0
     session.provider_signout_completed_at = None
+
+
+def reconcile_session_cap(
+    db: Session,
+    user_id: UUID,
+    current_session_id: UUID,
+    policy: WorkspaceProfile,
+    *,
+    now: datetime,
+) -> None:
+    limit = policy.session_concurrent_limit
+    if limit is None:
+        return
+    inventory = list(
+        db.scalars(
+            select(IdentitySession)
+            .where(
+                IdentitySession.user_id == user_id,
+                IdentitySession.revoked_at.is_(None),
+                session_expiry_expression(policy) > now,
+            )
+            .order_by(IdentitySession.created_at, IdentitySession.id)
+            .execution_options(populate_existing=True)
+            .with_for_update(of=IdentitySession)
+        )
+    )
+    victims = [item for item in inventory if item.id != current_session_id]
+    for victim in victims[: max(0, len(inventory) - limit)]:
+        revoke_session(db, victim.id, user_id, now=now)

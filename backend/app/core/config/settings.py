@@ -111,6 +111,9 @@ class Settings(EnvironmentSettings):
     e2e_background_workers: bool = Field(default=False, validation_alias="E2E_BACKGROUND_WORKERS")
     public_origin: str = Field(validation_alias="PUBLIC_ORIGIN")
     web_assets_root: Path | None = Field(default=None, validation_alias="WEB_ASSETS_ROOT")
+    backup_export_root: Path = Field(
+        default=Path("/var/lib/openslate/backup-exports"), validation_alias="BACKUP_EXPORT_ROOT"
+    )
     request_body_max_bytes: int = Field(gt=0, validation_alias="REQUEST_BODY_MAX_BYTES")
     database_pool_size: int = Field(gt=0, validation_alias="DATABASE_POOL_SIZE")
     database_max_overflow: int = Field(ge=0, validation_alias="DATABASE_MAX_OVERFLOW")
@@ -214,7 +217,7 @@ class Settings(EnvironmentSettings):
             raise ValueError("must be a valid Fernet key") from None
         return value
 
-    @field_validator("log_dir", "web_assets_root")
+    @field_validator("log_dir", "web_assets_root", "backup_export_root")
     @classmethod
     def require_absolute_path(cls, value: Path | None) -> Path | None:
         if value is None:

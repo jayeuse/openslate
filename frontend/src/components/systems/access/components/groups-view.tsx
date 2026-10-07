@@ -310,7 +310,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
       </div>
 
       {members.isError ? (
-        <Alert variant="warning" role="status">
+        <Alert variant="destructive">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <span>
               The people who can join groups could not be loaded, so members

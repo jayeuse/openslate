@@ -183,7 +183,7 @@ export function ChartDefinitionForm({
         {sourcesError ? (
           <Alert
             role="alert"
-            variant="warning"
+            variant="destructive"
             className="mb-4 flex flex-wrap items-center justify-between gap-3"
           >
             <span>
@@ -205,7 +205,7 @@ export function ChartDefinitionForm({
         {fieldsError ? (
           <Alert
             role="alert"
-            variant="warning"
+            variant="destructive"
             className="mb-4 flex flex-wrap items-center justify-between gap-3"
           >
             <span>{fieldsError}</span>
@@ -222,7 +222,7 @@ export function ChartDefinitionForm({
         {metadataError ? (
           <Alert
             role="alert"
-            variant="warning"
+            variant="destructive"
             className="mb-4 flex flex-wrap items-center justify-between gap-3"
           >
             <span>{metadataError}</span>

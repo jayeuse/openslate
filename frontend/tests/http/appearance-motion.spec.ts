@@ -45,3 +45,34 @@ test("reduce motion in Appearance stops glides and survives a reload", async ({
   await expect(page.locator("html")).not.toHaveAttribute("data-motion");
   expect(await sidebarGlide(page)).toBe("width");
 });
+
+test("System motion follows OS changes without preference writes", async ({
+  page,
+}) => {
+  await signIn(page);
+  let writes = 0;
+  await page.route("**/api/users/*/preferences", (route) => {
+    if (route.request().method() === "PATCH") writes++;
+    return route.fulfill({
+      json: {
+        user_id: "00000000-0000-4000-8000-000000000101",
+        theme: "light",
+        appearance: { motion: "system", keyboard_shortcuts: true },
+      },
+    });
+  });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/settings/appearance");
+  await expect(
+    page.getByRole("switch", { name: "Reduce motion" }),
+  ).toBeEnabled();
+  expect(await sidebarGlide(page)).toBe("width");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect.poll(() => sidebarGlide(page)).toBe("none");
+  await expect(
+    page.getByRole("switch", { name: "Reduce motion" }),
+  ).not.toBeChecked();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect.poll(() => sidebarGlide(page)).toBe("width");
+  expect(writes).toBe(0);
+});

@@ -20,4 +20,4 @@
 | SSE invalidation | Authenticated opaque signal asking a client to refetch authorized application data through FastAPI. It does not include protected row snapshots. |
 | `/api/ready` | Bounded component readiness report for Database, Auth, Storage, and SMTP configuration, all required; mail delivery, schema compatibility, and backup integrity need separate checks. |
 | `WEB_ASSETS_ROOT` | Server-side path to the static frontend export served by FastAPI in production. |
-| Workspace sample state | Browser-local placeholder data used by UI-first screens; it is not authoritative application authorization or durable backend data. |
+| Comms sample state | Account-scoped browser-local example conversations, preferences, and tools mounted only by the Comms route layout. It is not authoritative application authorization or durable backend data; the other workspace routes use live FastAPI adapters. |

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.policy.checks import module_level
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.policy.scope import includes
+from app.systems.access.policy.scope import includes, level_for
 from app.systems.access.users.eligibility import is_active_account, is_established_user
 from app.systems.access.users.models import User, UserRole
 from app.systems.boards.access import board_level
@@ -26,7 +26,8 @@ from app.systems.sandbox.records.models import Record
 
 def error(code: str, message: str, status: int = 409) -> HTTPException:
     return HTTPException(
-        status, detail={"code": code, "message": message},
+        status,
+        detail={"code": code, "message": message},
         headers={"Cache-Control": "no-store"},
     )
 
@@ -38,12 +39,14 @@ def authorize(
     *,
     write: bool = False,
     record_id: UUID | None = None,
+    department_id: UUID | None = None,
+    manage: bool = False,
 ) -> User:
     """Authorize a file action before acquiring parent or inventory locks.
 
     A record attachment follows its record's module: read to see it, write to
-    change it. A record the user cannot read is reported as missing. Other file
-    purposes are administrator-only.
+    change it. Libraries use the direct department level, with manage for
+    archive/reopen. Hidden parents are reported as missing. Logos require admin.
     """
 
     if purpose not in {"record_attachment", "library_document", "workspace_logo"}:
@@ -63,6 +66,18 @@ def authorize(
         if write and not includes(granted, AccessLevel.WRITE):
             raise error("forbidden", "Forbidden", 403)
         return user
+    if purpose == "library_document":
+        if department_id is None:
+            raise error("file_parent_required", "Library documents require a department", 422)
+        granted = level_for(db, user, department_id)
+        if granted is None:
+            raise error("file_not_found", "File parent not found", 404)
+        required = (
+            AccessLevel.MANAGE if manage else AccessLevel.WRITE if write else AccessLevel.READ
+        )
+        if not includes(granted, required):
+            raise error("forbidden", "Forbidden", 403)
+        return user
     if user.role != UserRole.ADMIN.value:
         raise error("forbidden", "Forbidden", 403)
     return user
@@ -70,9 +85,7 @@ def authorize(
 
 def fresh_user(db: Session, actor_id: UUID) -> User:
     user = db.scalar(
-        select(User)
-        .where(User.id == actor_id)
-        .execution_options(populate_existing=True)
+        select(User).where(User.id == actor_id).execution_options(populate_existing=True)
     )
     if (
         user is None
@@ -86,7 +99,11 @@ def fresh_user(db: Session, actor_id: UUID) -> User:
 
 
 def board_parent(
-    db: Session, board_id: UUID | None, *, active: bool, lock: bool = False,
+    db: Session,
+    board_id: UUID | None,
+    *,
+    active: bool,
+    lock: bool = False,
     shared_lock: bool = False,
 ) -> Board:
     if board_id is None:
@@ -105,7 +122,11 @@ def board_parent(
 
 
 def authorize_board_file(
-    db: Session, user: User, board_id: UUID, *, write: bool,
+    db: Session,
+    user: User,
+    board_id: UUID,
+    *,
+    write: bool,
     lock: bool = False,
 ) -> Board:
     """The Board level decides: read to see a file, write to add or change one."""
@@ -119,7 +140,13 @@ def authorize_board_file(
 
 
 def authorize_contextual_file(
-    db: Session, user: User, file: File, *, board_id: UUID | None, write: bool,
+    db: Session,
+    user: User,
+    file: File,
+    *,
+    board_id: UUID | None,
+    write: bool,
+    manage: bool = False,
 ) -> None:
     if file.purpose == "board_attachment":
         if board_id is None or file.board_id != board_id:
@@ -128,20 +155,30 @@ def authorize_contextual_file(
     elif board_id is not None:
         raise error("file_not_found", "File not found", 404)
     else:
-        authorize(db, user, file.purpose, write=write, record_id=file.record_id)
+        authorize(
+            db,
+            user,
+            file.purpose,
+            write=write,
+            record_id=file.record_id,
+            department_id=file.department_id,
+            manage=manage,
+        )
 
 
 def require_unlinked(db: Session, file_id: UUID) -> None:
     active_link = db.scalar(
-        select(BoardAttachment.id).where(
+        select(BoardAttachment.id)
+        .where(
             BoardAttachment.file_id == file_id,
             BoardAttachment.is_linked.is_(True),
-        ).limit(1)
+        )
+        .limit(1)
     )
     published_link = db.scalar(
-        select(BoardPostRevisionAttachment.id).where(
-            BoardPostRevisionAttachment.file_id == file_id
-        ).limit(1)
+        select(BoardPostRevisionAttachment.id)
+        .where(BoardPostRevisionAttachment.file_id == file_id)
+        .limit(1)
     )
     if active_link is not None or published_link is not None:
         raise error("file_linked", "Detach the file from content before purging")
@@ -155,7 +192,17 @@ def parent(
     lock: bool = False,
     shared_lock: bool = False,
     board_id: UUID | None = None,
+    department_id: UUID | None = None,
 ) -> None:
+    if department_id is not None:
+        statement = select(Department).where(Department.id == department_id)
+        if lock:
+            statement = statement.with_for_update(nowait=True, read=shared_lock)
+        department = db.scalar(statement.execution_options(populate_existing=True))
+        if department is None:
+            raise error("file_not_found", "File parent not found", 404)
+        if active and department.is_deleted:
+            raise error("file_parent_closed", "File parent is not active")
     if board_id is not None:
         board_parent(db, board_id, active=active, lock=lock, shared_lock=shared_lock)
     if record_id is None:
@@ -192,8 +239,13 @@ def load(
     if file is None:
         raise error("file_not_found", "File not found", 404)
     parent(
-        db, file.record_id, active=active_parent, lock=lock, shared_lock=shared_lock,
+        db,
+        file.record_id,
+        active=active_parent,
+        lock=lock,
+        shared_lock=shared_lock,
         board_id=file.board_id,
+        department_id=file.department_id,
     )
     if lock:
         db.refresh(file, with_for_update={"nowait": True, "read": shared_lock})

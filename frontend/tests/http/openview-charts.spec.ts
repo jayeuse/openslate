@@ -233,3 +233,30 @@ test("Charts filter on stable choice and eligible person IDs", async ({
   await page.getByRole("button", { name: "Filters (2)" }).click();
   await captureOpenViewReview(page, "charts-select-person-labels");
 });
+
+test("Chart source failures keep retry visible with destructive safe feedback", async ({
+  page,
+}) => {
+  await installOpenViewEventSource(page);
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      json: { authenticated: true, user_id: userId, setup_required: false },
+    }),
+  );
+  await page.route("**/api/views/data-sources?*", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { detail: "Private chart data-source detail" },
+    }),
+  );
+  await page.goto("/openview?section=charts");
+  await page.getByRole("button", { name: "Filters (0)", exact: true }).click();
+  const failure = page.getByRole("alert").filter({
+    has: page.getByRole("button", { name: "Retry catalog", exact: true }),
+  });
+  await expect(failure).toContainText("temporarily unavailable");
+  await expect(failure).toHaveAttribute("data-variant", "destructive");
+  await expect(
+    page.getByText("Private chart data-source detail", { exact: true }),
+  ).toHaveCount(0);
+});

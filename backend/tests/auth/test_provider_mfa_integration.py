@@ -170,7 +170,9 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         assert browser.get("/api/auth/me").status_code == 200
         with Session(owner) as db:
             profile = db.scalar(select(WorkspaceProfile))
-            profile.mfa_policy = "everyone"
+            profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = (
+                True
+            )
             db.commit()
         get_supabase_auth_client().admin_delete_factor(provider_id, UUID(factor_id))
         missing = browser.get("/api/auth/mfa")
@@ -188,7 +190,9 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         assert browser.post(verification, json={"code": _totp(seed)}).status_code == 200
         with Session(owner) as db:
             profile = db.scalar(select(WorkspaceProfile))
-            profile.mfa_policy = "optional"
+            profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = (
+                False
+            )
             db.commit()
         pending = TestClient(app, base_url=settings.public_origin)
         clients.append(pending)

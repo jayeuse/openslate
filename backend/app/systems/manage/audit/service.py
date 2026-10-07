@@ -27,7 +27,12 @@ from app.core.middleware.request_context import get_current_request_context
 from app.core.observability import log_event
 from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.models import User, UserRole, UserStatus
-from app.systems.manage.audit.models import AuditAction, AuditLog, SecurityEvent
+from app.systems.manage.audit.models import (
+    AuditAction,
+    AuditLog,
+    SecurityEvent,
+    SecurityEventOutcome,
+)
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.access import readable_link_clause
@@ -339,10 +344,27 @@ def list_security_events(
     params: StandardListRequest[SecurityEventSortField],
     *,
     operation_id: UUID | None = None,
+    event_type: str | None = None,
+    outcome: SecurityEventOutcome | None = None,
+    person_id: UUID | None = None,
+    occurred_after: datetime | None = None,
+    occurred_before: datetime | None = None,
 ) -> ListQueryResult[SecurityEvent]:
     conditions: list[ColumnElement[bool]] = []
     if operation_id is not None:
         conditions.append(SecurityEvent.operation_id == operation_id)
+    if event_type is not None:
+        conditions.append(SecurityEvent.event_type == event_type)
+    if outcome is not None:
+        conditions.append(SecurityEvent.outcome == outcome)
+    if person_id is not None:
+        conditions.append(
+            or_(SecurityEvent.actor_id == person_id, SecurityEvent.subject_id == person_id)
+        )
+    if occurred_after is not None:
+        conditions.append(SecurityEvent.occurred_at >= occurred_after)
+    if occurred_before is not None:
+        conditions.append(SecurityEvent.occurred_at < occurred_before)
 
     statement = select(SecurityEvent).where(*conditions)
     return execute_standard_list(db, statement, params, SECURITY_EVENT_LIST_SPEC)

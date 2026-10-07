@@ -556,16 +556,6 @@ export function listSandboxTriggerRuns(
   );
 }
 
-export function getSandboxTest(
-  id: string,
-  options: RequestOptions = {},
-): Promise<SandboxTestRun> {
-  return apiFetch(`/sandbox/tests/${encodeURIComponent(id)}`, testRunSchema, {
-    cache: "no-store",
-    signal: options.signal,
-  });
-}
-
 export async function clearSandboxTests(
   options: RequestOptions = {},
 ): Promise<void> {

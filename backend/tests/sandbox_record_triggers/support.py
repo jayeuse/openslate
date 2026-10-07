@@ -16,6 +16,7 @@ from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.models import Board
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
+from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.models import SandboxVersion
@@ -84,6 +85,16 @@ def cleanup_committed_trigger(
     """Remove only rows committed by a direct multi-session trigger test."""
 
     with engine.begin() as connection:
+        version_ids = select(SandboxVersion.id).where(
+            SandboxVersion.performed_by == actor_id, SandboxVersion.kind == "published"
+        )
+        connection.execute(
+            delete(InAppNotification).where(
+                InAppNotification.kind == "sandbox-published",
+                InAppNotification.subject_type == "sandbox_version",
+                InAppNotification.subject_id.in_(version_ids),
+            )
+        )
         event_ids = list(
             connection.scalars(
                 select(RecordTriggerEvent.id).where(RecordTriggerEvent.module_id == module_id)

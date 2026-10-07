@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { failureLabel, updateProcedureUrl } from "../adapters/backup-api";
 import type { useManageMaintenance } from "../state/controller";
-import { formatBackupTime } from "./backup-panel";
+import { formatBackupTime, useWorkspaceRegion } from "./backup-panel";
 
 export function UpdatesPanel({
   maintenance,
@@ -14,6 +14,7 @@ export function UpdatesPanel({
   maintenance: ReturnType<typeof useManageMaintenance>;
 }) {
   const version = maintenance.acceptedVersion;
+  const region = useWorkspaceRegion();
   const statusText = version
     ? {
         unknown: version.observed_at
@@ -88,7 +89,7 @@ export function UpdatesPanel({
             disabled={maintenance.version.isFetching}
             onClick={() => void maintenance.refreshVersion()}
           >
-            <Search data-icon="inline-start" /> Check for updates
+            <Search data-icon="inline-start" /> Refresh release status
           </Button>
           <Button asChild variant="outline" className="min-h-11">
             <a href={updateProcedureUrl} target="_blank" rel="noreferrer">
@@ -104,24 +105,23 @@ export function UpdatesPanel({
           ) : null}
         </div>
         <p className="text-muted-foreground text-sm">
-          Check for updates refreshes the release status recorded by the host
-          runner. Software updates are applied by a server operator using the
-          procedure included with this release. Repository access may be
-          required.
+          Refresh release status shows the latest release check from your
+          server. The person who runs your server installs updates with the
+          procedure included with this release.
         </p>
         {version ? (
           <div className="border-border min-w-0 space-y-3 border-t pt-5">
             <h3 data-slot="section-title" className="font-semibold">
-              Host runner observation
+              Release check
             </h3>
             <dl className="text-muted-foreground space-y-2 text-sm">
               <div>
-                <dt>Last successful observation</dt>
-                <dd>{formatBackupTime(version.observed_at)}</dd>
+                <dt>Last successful check</dt>
+                <dd>{formatBackupTime(version.observed_at, region)}</dd>
               </div>
               <div>
-                <dt>Last check</dt>
-                <dd>{formatBackupTime(version.checked_at)}</dd>
+                <dt>Last attempt</dt>
+                <dd>{formatBackupTime(version.checked_at, region)}</dd>
               </div>
               {version.failure_code ? (
                 <div>

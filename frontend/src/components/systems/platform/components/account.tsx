@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { manageWorkspaceOptions } from "@/components/systems/manage/adapters/manage-queries";
+import { accessKeys } from "../../access/adapters/access-queries";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { ApiError } from "@/lib/api";
 import { Action, Choice, Panel } from "../../shared/components/ui";
@@ -29,8 +30,8 @@ import {
   platformKeys,
 } from "../adapters/platform-queries";
 import {
-  useUserThemePreference,
-  UserThemeStatus,
+  useUserPreferences,
+  UserPreferencesStatus,
 } from "@/components/theme-provider";
 
 type AccountConfirmation =
@@ -117,7 +118,7 @@ function formatLastActive(
 }
 
 export default function Account() {
-  const theme = useUserThemePreference();
+  const theme = useUserPreferences();
   const queryClient = useQueryClient();
   const completeSignOut = useWorkspaceSignOut();
   const actionTrigger = useRef<HTMLButtonElement | null>(null);
@@ -195,10 +196,13 @@ export default function Account() {
       if (accountId) {
         setRefreshingAfterPassword(true);
         try {
-          await queryClient.invalidateQueries({
-            queryKey: platformKeys.accountSessions(accountId),
-            exact: true,
-          });
+          await Promise.all([
+            queryClient.invalidateQueries({
+              queryKey: platformKeys.accountSessions(accountId),
+              exact: true,
+            }),
+            queryClient.invalidateQueries({ queryKey: accessKeys.directory() }),
+          ]);
         } catch {
           // The query's visible error state explains when the refreshed list
           // could not be loaded.
@@ -233,10 +237,13 @@ export default function Account() {
           "Other sessions ended. Your current session remains active.",
         );
       }
-      await queryClient.invalidateQueries({
-        queryKey: platformKeys.accountSessions(accountId),
-        exact: true,
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: platformKeys.accountSessions(accountId),
+          exact: true,
+        }),
+        queryClient.invalidateQueries({ queryKey: accessKeys.directory() }),
+      ]);
     } catch (error) {
       setConfirmation(null);
       setSessionActionError(sessionActionErrorMessage(error));
@@ -248,16 +255,18 @@ export default function Account() {
         <p className="text-muted-foreground text-sm">
           Theme saves to your signed-in account and follows you across devices.
         </p>
-        <Choice label="Display language" value="unavailable" disabled>
-          <option value="unavailable">Not available yet</option>
-        </Choice>
-        <p className="text-muted-foreground text-sm">Not available yet.</p>
         <Choice
           label="Theme"
           value={theme.mode ?? ""}
           disabled={theme.disabled}
           onChange={(event) =>
-            theme.setMode(event.target.value === "dark" ? "dark" : "light")
+            theme.setMode(
+              event.target.value === "system"
+                ? "system"
+                : event.target.value === "dark"
+                  ? "dark"
+                  : "light",
+            )
           }
         >
           <option value="" disabled>
@@ -265,18 +274,9 @@ export default function Account() {
           </option>
           <option value="light">Light</option>
           <option value="dark">Dark</option>
+          <option value="system">System</option>
         </Choice>
-        <UserThemeStatus />
-        <Choice label="My presence" value="unavailable" disabled>
-          <option value="unavailable">Not available yet</option>
-        </Choice>
-        <p className="text-muted-foreground text-sm">Not available yet.</p>
-        <div className="space-y-3 border-t pt-4">
-          <h3 data-slot="section-title" className="font-medium">
-            Team presence
-          </h3>
-          <p className="text-muted-foreground text-sm">Not available yet.</p>
-        </div>
+        <UserPreferencesStatus />
       </Panel>
       <Panel title="Account security">
         <div className="space-y-3">
@@ -462,6 +462,9 @@ export default function Account() {
                         title={session.user_agent ?? undefined}
                       >
                         {accountDeviceLabel(session.user_agent)}
+                      </p>
+                      <p className="text-muted-foreground text-xs break-all">
+                        Sign-in IP: {session.ip_address ?? "Unknown"}
                       </p>
                       <p className="text-muted-foreground text-xs">
                         {session.current ? "Current session · " : ""}

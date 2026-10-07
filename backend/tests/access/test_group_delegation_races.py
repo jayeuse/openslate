@@ -23,6 +23,7 @@ import app.systems.access.policy.service as policy_service
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import GroupAccessEntry
 from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from tests.conftest import guarded_create_engine
 
@@ -98,6 +99,14 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
             db.execute(delete(GroupMember).where(GroupMember.group_id.in_(groups)))
             db.execute(delete(GroupAccess).where(GroupAccess.group_id.in_(groups)))
             db.execute(delete(Group).where(Group.id.in_(groups)))
+            db.execute(
+                delete(InAppNotification).where(
+                    InAppNotification.kind == "access-changed",
+                    InAppNotification.subject_type == "user",
+                    InAppNotification.recipient_id.in_(users),
+                    InAppNotification.subject_id == InAppNotification.recipient_id,
+                )
+            )
             db.execute(delete(User).where(User.id.in_(users)))
             db.execute(delete(Department).where(Department.id.in_((data.inventory, data.finance))))
             db.commit()

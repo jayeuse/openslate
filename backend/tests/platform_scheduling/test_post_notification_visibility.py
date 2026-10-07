@@ -93,7 +93,13 @@ def test_post_notice_list_and_read_hide_after_department_revocation_or_board_arc
     )
     db.add(work)
     db.flush()
-    notice = InAppNotification(work_id=work.id, recipient_id=viewer.id)
+    notice = InAppNotification(
+        work_id=work.id,
+        recipient_id=viewer.id,
+        kind="post-publish",
+        subject_type="board_post",
+        subject_id=post.id,
+    )
     db.add(notice)
     db.commit()
 
@@ -114,18 +120,21 @@ def test_post_notice_list_and_read_hide_after_department_revocation_or_board_arc
     visible = client.get("/api/notifications")
     assert visible.status_code == 200, visible.text
     assert visible.json()["pagination"]["total"] == 1
+    assert client.get("/api/notifications/unread-count").json() == {"unread_count": 1}
     assert visible.json()["items"][0]["kind"] == "post-publish"
     assert visible.json()["items"][0]["board_id"] == str(board.id)
     assert visible.json()["items"][0]["post_id"] == str(post.id)
     assert visible.json()["items"][0]["publication_revision_id"] == str(revision.id)
     assert "Private published" not in visible.text
     path = f"/api/notifications/{notice.id}/read"
-    assert client.post(path).status_code == 200
 
     db.delete(access)
     db.commit()
     db.expire_all()
     assert client.get("/api/notifications").json()["pagination"]["total"] == 0
+    assert client.get("/api/notifications/unread-count").json() == {"unread_count": 0}
+    assert client.post("/api/notifications/read-all").json() == {"updated_count": 0}
+    assert db.get(InAppNotification, notice.id).read_at is None
     assert client.post(path).status_code == 404
 
     make_group_access(db, [viewer], department, level=AccessLevel.READ)
@@ -136,4 +145,13 @@ def test_post_notice_list_and_read_hide_after_department_revocation_or_board_arc
     db.commit()
     db.expire_all()
     assert client.get("/api/notifications").json()["pagination"]["total"] == 0
+    assert client.get("/api/notifications/unread-count").json() == {"unread_count": 0}
+    assert client.post("/api/notifications/read-all").json() == {"updated_count": 0}
+    assert db.get(InAppNotification, notice.id).read_at is None
     assert client.post(path).status_code == 404
+
+    board.status = "active"
+    db.commit()
+    db.expire_all()
+    assert client.post(path).status_code == 200
+    assert client.get("/api/notifications/unread-count").json() == {"unread_count": 0}

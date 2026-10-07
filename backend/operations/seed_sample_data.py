@@ -10,7 +10,7 @@ import getpass
 import secrets
 import sys
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -387,7 +387,12 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    mfa_observer: Callable[..., object] | None = None,
+    host_control: Callable[..., object] | None = None,
+) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command in {"plan", "populate"} and args.seed is None:
@@ -397,7 +402,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         report, api_url, mailpit_url = _local_preflight()
         if args.command == "plan":
             dataset = build_dataset(
-                args.profile, args.seed, args.anchor_date, organization=get_pack(args.organization)
+                args.profile,
+                args.seed,
+                args.anchor_date,
+                organization=get_pack(args.organization),
+                host_acceptance=host_control is not None,
             )
             _print_plan(dataset, report, mailpit_url)
             return 0
@@ -430,6 +439,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.seed,
                     args.anchor_date,
                     organization=get_pack(args.organization),
+                    host_acceptance=host_control is not None,
                 )
                 _print_plan(dataset, report, mailpit_url)
                 result = populate_sample_data(
@@ -444,6 +454,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     seed=args.seed,
                     anchor_date=args.anchor_date,
                     organization=get_pack(args.organization),
+                    mfa_observer=mfa_observer,
+                    host_control=host_control,
                 )
             else:
                 result = verify_sample_data(

@@ -22,6 +22,7 @@ from app.systems.access.identity.provider_login import login_with_provider
 from app.systems.access.identity.rate_limits import login_fingerprint
 from app.systems.access.users.models import User, UserStatus
 from app.systems.platform.files.models import File
+from app.systems.sandbox.departments.models import Department
 from tests.conftest import guarded_create_engine
 from tests.operations import migration_support
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
@@ -58,16 +59,19 @@ def test_baseline_has_one_head_and_provider_identity_file_catalog(integration_ow
     assert (
         not {"identity_credentials", "identity_action_tokens", "identity_delivery_outbox"} & tables
     )
-    assert not {
-        "roles",
-        "access_rules",
-        "access_policy_versions",
-        "access_policy_defaults",
-        "access_default_groups",
-        "access_default_departments",
-        "service_identities",
-        "user_departments",
-    } & tables
+    assert (
+        not {
+            "roles",
+            "access_rules",
+            "access_policy_versions",
+            "access_policy_defaults",
+            "access_default_groups",
+            "access_default_departments",
+            "service_identities",
+            "user_departments",
+        }
+        & tables
+    )
     assert _catalog(
         integration_owner_db,
         "SELECT display_name, timezone, locale FROM public.workspace_profiles",
@@ -204,9 +208,7 @@ def test_concurrent_failed_logins_create_one_rate_limit_bucket_without_a_databas
             with Session(engine) as db:
                 barrier.wait(timeout=5)
                 with pytest.raises(InvalidCredentials):
-                    login_with_provider(
-                        db, email, "wrong-password", get_supabase_auth_client()
-                    )
+                    login_with_provider(db, email, "wrong-password", get_supabase_auth_client())
                 db.commit()
         finally:
             engine.dispose()
@@ -301,6 +303,7 @@ def test_postgres_notifications_arrive_only_after_the_publishing_transaction_com
 @pytest.mark.integration
 def test_runtime_role_can_create_guarded_private_file_metadata() -> None:
     creator_id = None
+    department_id = None
     owner_engine = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     try:
         with Session(owner_engine) as owner_db:
@@ -312,17 +315,22 @@ def test_runtime_role_can_create_guarded_private_file_metadata() -> None:
                 role=role,
             )
             owner_db.add(creator)
+            department = Department(department_name=f"File metadata {uuid7()}")
+            owner_db.add(department)
             owner_db.commit()
             creator_id = creator.id
+            department_id = department.id
     finally:
         owner_engine.dispose()
 
     assert creator_id is not None
+    assert department_id is not None
     runtime_engine = guarded_create_engine(os.environ["TEST_DATABASE_URL"])
     try:
         with Session(runtime_engine) as runtime_db:
             file = File(
                 purpose="library_document",
+                department_id=department_id,
                 creator_id=creator_id,
                 filename="private.pdf",
                 expected_size=1024,
@@ -340,6 +348,10 @@ def test_runtime_role_can_create_guarded_private_file_metadata() -> None:
                 connection.execute(
                     text("DELETE FROM public.files WHERE creator_id = :creator"),
                     {"creator": creator_id},
+                )
+                connection.execute(
+                    text("DELETE FROM public.departments WHERE id = :department"),
+                    {"department": department_id},
                 )
                 connection.execute(
                     text("DELETE FROM public.users WHERE id = :creator"), {"creator": creator_id}

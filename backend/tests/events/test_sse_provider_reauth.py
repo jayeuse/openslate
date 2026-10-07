@@ -74,6 +74,8 @@ def test_sse_reauthorization_enforces_signed_mfa_and_current_ip_policy(monkeypat
         user_id=local_id,
         provider_user_id=provider_id,
         provider_session_id=provider_session,
+        created_at=datetime.now(UTC),
+        refreshed_at=datetime.now(UTC),
         expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     db = Mock(spec=Session)
@@ -82,7 +84,13 @@ def test_sse_reauthorization_enforces_signed_mfa_and_current_ip_policy(monkeypat
     )
     db.execute.return_value.scalar_one.return_value = True
     profile = WorkspaceProfile(
-        mfa_policy="optional", ip_allow_list=[] if denial == "mfa_required" else ["10.0.0.0/8"]
+        mfa_require_admin=False,
+        mfa_require_member=False,
+        mfa_require_guest=False,
+        mfa_grace_days=0,
+        session_timeout_minutes=60,
+        session_absolute_lifetime_minutes=None,
+        ip_allow_list=[] if denial == "mfa_required" else ["10.0.0.0/8"],
     )
     monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db: profile)
     monkeypatch.setattr(events_router, "load_workspace_policy", lambda _db: profile, raising=False)

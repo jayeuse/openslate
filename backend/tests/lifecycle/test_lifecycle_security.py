@@ -33,6 +33,20 @@ CONFIRMATION_PASSWORD = token_urlsafe(32)
 ACTOR_ID = UUID("00000000-0000-0000-0000-000000000123")
 
 
+@pytest.fixture(autouse=True)
+def unit_login_policy(request, monkeypatch):
+    if request.node.get_closest_marker("integration") is None:
+        from app.systems.manage.workspace.models import WorkspaceProfile
+
+        monkeypatch.setattr(
+            password_module,
+            "load_workspace_policy",
+            lambda _db: WorkspaceProfile(
+                login_failed_attempt_threshold=5, login_window_minutes=15, login_cooldown_minutes=15
+            ),
+        )
+
+
 def test_challenge_tokens_are_256_bit_and_only_the_hash_is_persistable() -> None:
     token = CHALLENGE_TOKEN
 
@@ -162,6 +176,7 @@ def test_provider_password_step_up_preserves_backend_attempt_budget(
         cleanup_expired_buckets=lambda *_a, **_kw: None,
         login_fingerprint=lambda *_a: "fingerprint",
         lock_bucket=lambda *_a: blocked,
+        login_retry_after=lambda *_a: 60,
     )
     monkeypatch.setattr(password_module, "rate_limits", budget, raising=False)
     client = Mock()

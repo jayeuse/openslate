@@ -1,21 +1,14 @@
 "use client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  MoreHorizontal,
-  LockKeyhole,
-  Database,
-  X,
-  RotateCcw,
-} from "lucide-react";
+import type { Route } from "next";
+import { AlertTriangle, CheckCircle2, Database, X } from "lucide-react";
 import {
   Suspense,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
-  type MouseEvent,
   type ReactNode,
 } from "react";
 import { Alert } from "@/components/ui/alert";
@@ -29,98 +22,151 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SampleDataNote } from "@/components/sample-data-note";
-import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import {
+  GuardedWorkspaceLink,
+  useWorkspaceNavigationGuard,
+  useWorkspaceNavigationRequest,
+} from "@/components/workspace-navigation-guard";
 import { DiscardChangesDialog } from "../access/components/people-fields";
+import { useOrganizationTheme } from "@/components/organization-theme-provider";
+import {
+  useVerifiedWorkspaceUserId,
+  useWorkspaceInteractionSuspended,
+} from "@/components/systems/shared/runtime/workspace-identity";
+import { authMeOptions } from "../access/adapters/access-queries";
+import type { OrganizationTheme } from "@/lib/appearance-preferences";
 import { ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
 import { requestSessionRecheck } from "@/lib/auth-api";
-import { useMfaFlow } from "@/components/mfa-flow";
 import ManageAudit from "./components/audit";
 import {
-  decodeManageSettings,
-  diffManageSettings,
   initialManageSettings,
-  useManageController,
   type ManageSection,
   type ManageSettings,
-} from "./state/state";
-import { SettingsChanges } from "./components/panel-ui";
-import {
-  ManageMfaDialog,
-  ManageConfirmationDialog,
-  type ConfirmState,
-} from "./components/manage-dialogs";
+} from "./state/model";
 import { OrganizationPanel } from "./components/organization-panel";
 import {
   afterManageWorkspaceChange,
-  afterManageSecurityChange,
-  afterManageSessionsChange,
   manageWorkspaceOptions,
   manageKeys,
-  manageSecurityOptions,
-  manageSessionsOptions,
+  newestManageWorkspace,
+  acceptedWorkspaceRevision,
+  workspaceLogoOptions,
 } from "./adapters/manage-queries";
 import {
+  getManageWorkspace,
   isStaleWorkspaceRevision,
+  isWorkspaceLogoCleanupPartial,
   organizationLocaleTag,
   workspaceSettingsFormFields,
   workspaceSettingsPatch,
+  workspaceHasContacts,
   updateManageWorkspace,
   type WorkspaceSettingsFormDraft,
+  type WorkspaceSettingsFormFields,
+  type WorkspaceProfileField,
+  type ManageWorkspaceSettingsPatch,
 } from "./adapters/workspace-api";
 import {
-  defaultManageSessionsRequest,
-  endAllManageRemoteSessions,
-  endManageSession,
-  securitySettingsFormFields,
-  securitySettingsPatch,
-  updateManageSecurityPolicy,
-  type ManageAdminSession,
-  type SecuritySettingsFormDraft,
-} from "./adapters/security-api";
-import { SecurityPanel, SecurityPolicyForm } from "./components/security-panel";
+  validLogoSelection,
+  reserveWorkspaceLogo,
+  uploadWorkspaceLogo,
+  getWorkspaceLogoFile,
+  reconcileWorkspaceLogo,
+  WorkspaceLogoBindingChanged,
+  type WorkspaceLogoFile,
+} from "./adapters/workspace-logo-api";
 import {
   BackupPanel,
   BackupRunnerStatus,
   SnapshotScheduleForm,
 } from "./components/backup-panel";
 import { useManageMaintenance } from "./state/controller";
-import { backupScheduleLabels } from "./adapters/backup-api";
+import {
+  backupScheduleLabels,
+  isManageBackupExportId,
+} from "./adapters/backup-api";
 import { UpdatesPanel } from "./components/updates-panel";
 import { LicensingPanel } from "./components/licensing-panel";
 
-type ViewTab =
-  "Organization" | "Security" | "Audit" | "Backup" | "Updates & licensing";
+type ViewTab = "Organization" | "Audit" | "Backup" | "Updates & licensing";
+type LogoDraft =
+  | { kind: "new" | "reservation-unknown"; file: File }
+  | { kind: "candidate"; file: File; candidate: WorkspaceLogoFile }
+  | { kind: "remove" };
+const COMMITTED_READBACK_MESSAGE =
+  "Settings saved. Current organization settings could not be loaded. Retry before making another change.";
+const readyLogo = (file: WorkspaceLogoFile) =>
+  file.state === "ready" && !file.is_deleted;
 
 function organizationErrors(
   draft: WorkspaceSettingsFormDraft,
   workspaceReady: boolean,
-): Partial<Record<keyof ManageSettings, string>> {
-  const errors: Partial<Record<keyof ManageSettings, string>> = {};
+): Partial<Record<keyof WorkspaceSettingsFormFields, string>> {
+  const errors: Partial<Record<keyof WorkspaceSettingsFormFields, string>> = {};
   if (!workspaceReady) return errors;
   if (draft.name !== undefined) {
     if (!draft.name.trim()) errors.name = "Enter an organization name.";
     else if (draft.name.length > 200)
       errors.name = "Use 200 characters or fewer.";
   }
-  if (draft.logo !== undefined && draft.logo.trim().length > 32)
-    errors.logo = "Use 32 characters or fewer.";
+  if (draft.logo !== undefined && draft.logo.trim().length > 3)
+    errors.logo = "Use 3 characters or fewer.";
   if (draft.hours !== undefined && draft.hours.trim().length > 200)
     errors.hours = "Use 200 characters or fewer.";
+  const limits = {
+    legalName: 200,
+    description: 2000,
+    contactEmail: 254,
+    contactPhone: 50,
+    postalAddress: 2000,
+  } as const;
+  for (const key of Object.keys(limits) as WorkspaceProfileField[]) {
+    if ((draft[key]?.trim().length ?? 0) > limits[key])
+      errors[key] = `Use ${limits[key]} characters or fewer.`;
+  }
+  return errors;
+}
+
+function profileResponseErrors(
+  error: ApiError,
+): Partial<Record<WorkspaceProfileField, string>> {
+  if (!Array.isArray(error.details)) return {};
+  const keys = {
+    legal_name: "legalName",
+    description: "description",
+    contact_email: "contactEmail",
+    contact_phone: "contactPhone",
+    postal_address: "postalAddress",
+  } as const;
+  const errors: Partial<Record<WorkspaceProfileField, string>> = {};
+  for (const detail of error.details) {
+    if (
+      typeof detail !== "object" ||
+      detail === null ||
+      !("loc" in detail) ||
+      !Array.isArray(detail.loc)
+    )
+      continue;
+    const name: unknown = detail.loc[1];
+    if (
+      detail.loc[0] !== "body" ||
+      typeof name !== "string" ||
+      !Object.hasOwn(keys, name)
+    )
+      continue;
+    const key = keys[name as keyof typeof keys];
+    errors[key] =
+      key === "contactEmail"
+        ? "Enter a valid email address."
+        : "Check this field and try again.";
+  }
   return errors;
 }
 
 const manageTabs: readonly ViewTab[] = [
   "Organization",
-  "Security",
   "Audit",
   "Backup",
   "Updates & licensing",
@@ -133,13 +179,6 @@ function manageTabFromQuery(value: string | null): ViewTab {
   return (
     manageTabs.find((tab) => tab.toLowerCase() === normalized) ?? "Organization"
   );
-}
-
-function sectionForTab(tab: ViewTab): ManageSection | null {
-  if (tab === "Organization") return "organization";
-  if (tab === "Security") return "security";
-  if (tab === "Backup") return "backup";
-  return null;
 }
 
 export default function Manage() {
@@ -161,14 +200,111 @@ export default function Manage() {
 function ManageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const legacySecurity = searchParams.get("view")?.toLowerCase() === "security";
   const requestedTab = manageTabFromQuery(searchParams.get("view"));
-  const manage = useManageController();
+  const requestNavigation = useWorkspaceNavigationRequest();
+  const legacyRequested = useRef(false);
   const queryClient = useQueryClient();
-  const { settings, storageUnavailable } = manage;
+  const userId = useVerifiedWorkspaceUserId();
+  const suspended = useWorkspaceInteractionSuspended();
+  const organizationTheme = useOrganizationTheme();
+  const {
+    confirm: confirmTheme,
+    preview: previewTheme,
+    release: releaseTheme,
+    getCommittedTheme,
+  } = organizationTheme;
+  const [roleAwaitingVerification, setRoleAwaitingVerification] =
+    useState(false);
+  const roleVerificationCycle = useRef(0);
+  const identity = useQuery({
+    ...authMeOptions(),
+    enabled: !suspended && !roleAwaitingVerification,
+  });
+  useLayoutEffect(() => {
+    if (suspended) {
+      roleVerificationCycle.current += 1;
+      setRoleAwaitingVerification(true);
+    }
+  }, [suspended]);
+  const canEditOrganization =
+    !suspended &&
+    !roleAwaitingVerification &&
+    !identity.isError &&
+    identity.data?.id === userId &&
+    identity.data.role === "admin";
+  const liveWorkspace = useRef(false);
+  const workspaceOwner = useRef(Symbol("organization-preview"));
+  const workspaceEpoch = useRef(0);
+  const workspaceCommand = useRef<AbortController | null>(null);
+  const workspaceWriting = useRef(false);
+  const workspaceNeedsReadback = useRef(false);
+  const workspaceAdmission = useRef({
+    suspended,
+    canEdit: canEditOrganization,
+  });
+  useLayoutEffect(() => {
+    liveWorkspace.current = true;
+    const owner = workspaceOwner.current;
+    return () => {
+      liveWorkspace.current = false;
+      workspaceEpoch.current += 1;
+      workspaceCommand.current?.abort();
+      releaseTheme(owner);
+    };
+  }, [releaseTheme]);
+  useEffect(() => {
+    if (suspended || !roleAwaitingVerification) return;
+    const cycle = roleVerificationCycle.current;
+    let cancelled = false;
+    const ownsRead = () =>
+      !cancelled &&
+      liveWorkspace.current &&
+      cycle === roleVerificationCycle.current &&
+      !workspaceAdmission.current.suspended;
+    // A read started before verification cannot admit this cycle. Keep the
+    // ordinary trusted background behavior; only verification requires this
+    // cancellation followed by a fresh, account-owned role read.
+    void queryClient
+      .cancelQueries({ queryKey: authMeOptions().queryKey, exact: true })
+      .then(() =>
+        ownsRead()
+          ? queryClient.fetchQuery({ ...authMeOptions(), staleTime: 0 })
+          : undefined,
+      )
+      .then((currentIdentity) => {
+        if (currentIdentity && ownsRead()) setRoleAwaitingVerification(false);
+      })
+      .catch(() => {
+        // The failed identity read keeps the picker read-only. A subsequent
+        // session recheck starts another owned verification cycle.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [suspended, roleAwaitingVerification, queryClient]);
   const maintenance = useManageMaintenance({
-    recoveryActive: requestedTab === "Security" || requestedTab === "Backup",
+    recoveryActive: requestedTab === "Backup",
     historyActive: requestedTab === "Backup",
     versionActive: requestedTab === "Updates & licensing",
+    exportId:
+      searchParams.get("export") !== null &&
+      isManageBackupExportId(searchParams.get("export")!)
+        ? searchParams.get("export")!.toLowerCase()
+        : null,
+    invalidExportId:
+      searchParams.get("export") !== null &&
+      !isManageBackupExportId(searchParams.get("export")!),
+    exportAllowed: canEditOrganization,
+    exportActorId: userId,
+    onExportChange: (id) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("view", "backup");
+      params.set("export", id);
+      router.replace(("/manage?" + params.toString()) as Route, {
+        scroll: false,
+      });
+    },
   });
   const tab = requestedTab;
   const [workspaceDraft, setWorkspaceDraft] =
@@ -177,109 +313,144 @@ function ManageContent() {
   const [workspaceRefreshRequired, setWorkspaceRefreshRequired] =
     useState(false);
   const [workspaceSavePending, setWorkspaceSavePending] = useState(false);
+  const [logoDraft, setLogoDraft] = useState<LogoDraft | null>(null);
+  const [logoError, setLogoError] = useState("");
+  const [logoNotice, setLogoNotice] = useState("");
+  const [logoCleanupId, setLogoCleanupId] = useState<string | null>(null);
+  const [committedReadbackRequired, setCommittedReadbackRequired] =
+    useState(false);
+  const acknowledgedRevision = useRef<number | null>(null);
+  const [profileServerErrors, setProfileServerErrors] = useState<
+    Partial<Record<WorkspaceProfileField, string>>
+  >({});
   const workspaceQuery = useQuery({
     ...manageWorkspaceOptions(),
-    enabled: tab === "Organization",
+    enabled: tab === "Organization" && !suspended && !legacySecurity,
+    // A resumed verified editor needs a current revision, including after an
+    // uncertain response. Cached data stays visible during this fresh read.
+    staleTime: 0,
+    queryFn: async ({ signal }) => {
+      const epoch = workspaceEpoch.current;
+      const workspace = newestManageWorkspace(
+        queryClient,
+        await getManageWorkspace(signal),
+      );
+      if (
+        liveWorkspace.current &&
+        !signal.aborted &&
+        epoch === workspaceEpoch.current &&
+        !workspaceAdmission.current.suspended
+      )
+        confirmTheme(workspace.theme);
+      return workspace;
+    },
   });
-  const [securityDraft, setSecurityDraft] = useState<SecuritySettingsFormDraft>(
-    {},
-  );
-  const [securityStale, setSecurityStale] = useState(false);
-  const [securityRefreshRequired, setSecurityRefreshRequired] = useState(false);
-  const [securitySavePending, setSecuritySavePending] = useState(false);
-  const [sessionEndPending, setSessionEndPending] = useState(false);
-  const [sessionsReadDenied, setSessionsReadDenied] = useState(false);
-  const [policyReadDenied, setPolicyReadDenied] = useState(false);
-  const [sessionRequest, setSessionRequest] = useState(
-    defaultManageSessionsRequest,
-  );
-  const securityQuery = useQuery({
-    ...manageSecurityOptions(),
-    enabled: (tab === "Security" || tab === "Backup") && !policyReadDenied,
-  });
-  const sessionsQuery = useQuery({
-    ...manageSessionsOptions(sessionRequest),
-    enabled: (tab === "Security" || tab === "Backup") && !sessionsReadDenied,
-  });
-  const currentPolicyReadDenied =
-    securityQuery.error instanceof ApiError &&
-    securityQuery.error.status === 403;
-  if (currentPolicyReadDenied && !policyReadDenied) setPolicyReadDenied(true);
-  const securityDenied = policyReadDenied || currentPolicyReadDenied;
-  const currentSessionReadDenied =
-    sessionsQuery.error instanceof ApiError &&
-    sessionsQuery.error.status === 403;
-  // A cached filter revisit cannot clear a server refusal. Only Retry's fresh
-  // successful read can admit the session collection again for this account.
-  if (currentSessionReadDenied && !sessionsReadDenied)
-    setSessionsReadDenied(true);
-  const sessionsDenied = sessionsReadDenied || currentSessionReadDenied;
-  useEffect(() => {
-    const refusedKeys = [
-      ...(sessionsReadDenied ? [manageKeys.sessions()] : []),
-      ...(policyReadDenied ? [manageKeys.security()] : []),
-    ];
-    for (const queryKey of refusedKeys) {
-      void queryClient.cancelQueries({ queryKey }).then(() => {
-        queryClient.removeQueries({ queryKey });
-      });
-    }
-  }, [sessionsReadDenied, policyReadDenied, queryClient]);
-  const securityFields =
-    securityQuery.data && !securityDenied
-      ? securitySettingsFormFields(securityQuery.data)
+  const verifiedOrganizationRole =
+    !suspended &&
+    !roleAwaitingVerification &&
+    !identity.isError &&
+    identity.data?.id === userId
+      ? identity.data.role
       : null;
-  const securityPatch = securityQuery.data
-    ? securitySettingsPatch(securityQuery.data, securityDraft)
-    : null;
-  const securityDirty =
-    securityPatch !== null ||
-    (!securityQuery.data && Object.keys(securityDraft).length > 0);
-  const livePending =
-    workspaceSavePending ||
-    securitySavePending ||
-    sessionEndPending ||
-    maintenance.pending;
+  const profileMismatch =
+    workspaceQuery.data !== undefined &&
+    (verifiedOrganizationRole === "admin" ||
+      verifiedOrganizationRole === "member") &&
+    !workspaceHasContacts(workspaceQuery.data);
+  const canEditLoadedOrganization = canEditOrganization && !profileMismatch;
+  // Only a verified non-administrator is told the settings are read only; an
+  // unverified or loading role keeps the neutral source line.
+  const organizationReadOnly =
+    verifiedOrganizationRole !== null && verifiedOrganizationRole !== "admin";
+  const contactsVisible =
+    (verifiedOrganizationRole === "admin" ||
+      verifiedOrganizationRole === "member") &&
+    workspaceQuery.data !== undefined &&
+    workspaceHasContacts(workspaceQuery.data);
+  const savedLogoQuery = useQuery({
+    ...workspaceLogoOptions(workspaceQuery.data?.logo_file_id ?? ""),
+    enabled:
+      tab === "Organization" &&
+      verifiedOrganizationRole !== null &&
+      !profileMismatch &&
+      Boolean(workspaceQuery.data?.logo_file_id),
+  });
+  useEffect(() => {
+    if (
+      savedLogoQuery.error instanceof WorkspaceLogoBindingChanged &&
+      !suspended &&
+      !workspaceWriting.current
+    )
+      void workspaceQuery.refetch();
+  }, [savedLogoQuery.error, suspended, workspaceQuery.refetch]);
+  const logoReadDenied =
+    savedLogoQuery.error instanceof ApiError &&
+    (savedLogoQuery.error.status === 401 ||
+      savedLogoQuery.error.status === 403);
+  const logoDenialReported = useRef(false);
+  useEffect(() => {
+    if (!logoReadDenied) logoDenialReported.current = false;
+    else if (!suspended && !logoDenialReported.current) {
+      logoDenialReported.current = true;
+      requestSessionRecheck();
+    }
+  }, [logoReadDenied, suspended]);
+  useLayoutEffect(() => {
+    const previous = workspaceAdmission.current;
+    workspaceAdmission.current = {
+      suspended,
+      canEdit: canEditLoadedOrganization,
+    };
+    if (suspended || (previous.canEdit && !canEditLoadedOrganization)) {
+      workspaceEpoch.current += 1;
+      workspaceCommand.current?.abort();
+      if (workspaceWriting.current) {
+        workspaceNeedsReadback.current = true;
+        workspaceWriting.current = false;
+        setWorkspaceSavePending(false);
+        setWorkspaceRefreshRequired(true);
+      }
+    }
+  }, [suspended, canEditLoadedOrganization]);
+  useLayoutEffect(() => {
+    const owner = workspaceOwner.current;
+    if (
+      tab === "Organization" &&
+      canEditLoadedOrganization &&
+      workspaceDraft.theme !== undefined
+    )
+      previewTheme(owner, workspaceDraft.theme);
+    else releaseTheme(owner);
+    return () => releaseTheme(owner);
+  }, [
+    tab,
+    canEditLoadedOrganization,
+    workspaceDraft.theme,
+    previewTheme,
+    releaseTheme,
+  ]);
+  const livePending = workspaceSavePending || maintenance.pending;
   const [notice, setNotice] = useState("");
   const [navigationNotice, setNavigationNotice] = useState("");
   const [pendingLeave, setPendingLeave] = useState<{
     resume: () => void;
   } | null>(null);
   const [error, setError] = useState("");
-  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  const [draftAcknowledged, setDraftAcknowledged] = useState(false);
-  const mfa = useMfaFlow();
-  const cancelMfa = mfa.cancel;
-  useEffect(() => () => cancelMfa(), [cancelMfa]);
-  const [policyOpen, setPolicyOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const policyOpener = useRef<HTMLButtonElement | null>(null);
   const scheduleOpener = useRef<HTMLButtonElement | null>(null);
-  const confirmOpener = useRef<HTMLElement | null>(null);
-  const mfaOpener = useRef<HTMLButtonElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
-  const optionsOpener = useRef<HTMLButtonElement | null>(null);
-  const sessionConfirmationRefused =
-    sessionsDenied && confirm?.origin === "admin-sessions";
-  if (sessionConfirmationRefused) setConfirm(null);
-  const recoveryView = tab === "Security" || tab === "Backup";
-  const pageTitle = recoveryView ? "Security & recovery" : tab;
-  const sampleSubject =
-    tab === "Audit"
-      ? "Audit entries"
-      : tab === "Updates & licensing"
-        ? "Versions and licenses"
-        : recoveryView
-          ? "Sessions and snapshots"
-          : "Settings";
+  const recoveryView = tab === "Backup";
+  const pageTitle = tab;
   const liveSourceStatus =
     tab === "Organization"
-      ? "Settings save to the organization."
+      ? organizationReadOnly
+        ? "Only an administrator can change these settings."
+        : "Settings save to the organization."
       : tab === "Audit"
         ? "Audit entries are loaded from your organization."
         : recoveryView
-          ? "Account policy, sessions, backup policy, and backup history are loaded from your server."
-          : "The running version and host runner release observations are loaded from your server. No license is required.";
+          ? "Backup policy and backup history are loaded from your server."
+          : "The running version and the latest release check come from your server. No license is required.";
   const pageDescription =
     tab === "Organization"
       ? "Make this workspace feel like your organization."
@@ -287,55 +458,44 @@ function ManageContent() {
         ? "See who changed what, then inspect the details."
         : tab === "Updates & licensing"
           ? "Your running version and license status, together in one place."
-          : "Review sessions and manage backup requests.";
+          : "Manage backup schedules and requests.";
 
-  const section = sectionForTab(tab);
   const workspacePatch = workspaceQuery.data
-    ? workspaceSettingsPatch(workspaceQuery.data, workspaceDraft)
+    ? workspaceSettingsPatch(
+        workspaceQuery.data,
+        workspaceDraft,
+        organizationTheme.theme,
+      )
     : null;
-  const workspaceDraftDirty = workspacePatch !== null;
+  const workspaceDraftDirty = workspacePatch !== null || logoDraft !== null;
   const allDraftsDirty =
-    securityDirty || maintenance.dirty || workspaceDraftDirty;
-  const currentFor = (view: ViewTab): ManageSettings => {
-    const currentSection = sectionForTab(view);
-    return currentSection ? manage.getDraft(currentSection) : settings;
-  };
-  const sampleCurrent = currentFor(tab);
+    maintenance.dirty || (workspaceDraftDirty && !committedReadbackRequired);
   const workspaceFields = workspaceQuery.data
     ? workspaceSettingsFormFields(workspaceQuery.data)
     : null;
-  const current =
-    tab === "Organization" && workspaceFields
-      ? { ...sampleCurrent, ...workspaceFields, ...workspaceDraft }
-      : sampleCurrent;
-  const previewSettings =
-    tab === "Organization" && workspaceFields
-      ? current
-      : decodeManageSettings(current);
-  const dirty =
-    tab === "Organization"
-      ? workspaceDraftDirty
-      : section
-        ? manage.dirty(section)
-        : false;
-  const sectionErrors = section ? manage.errors(section) : {};
-  const errors =
-    tab === "Organization"
-      ? organizationErrors(workspaceDraft, workspaceQuery.data !== undefined)
-      : sectionErrors;
+  const current: ManageSettings = {
+    ...initialManageSettings,
+    ...workspaceFields,
+    ...workspaceDraft,
+  };
+  const dirty = workspaceDraftDirty && !committedReadbackRequired;
+  const errors = organizationErrors(
+    workspaceDraft,
+    workspaceQuery.data !== undefined,
+  );
   const localeCode = organizationLocaleTag(current.locale);
   const regionalDate = new Intl.DateTimeFormat(localeCode, {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: previewSettings.timezone,
+    timeZone: current.timezone,
   }).format(new Date("2026-09-11T09:00:00Z"));
   const regionalCurrency = new Intl.NumberFormat(localeCode, {
     style: "currency",
-    currency: previewSettings.currency,
+    currency: current.currency,
   }).format(12500);
 
   useWorkspaceNavigationGuard((href, resume) => {
-    if (manage.pending || livePending) {
+    if (livePending) {
       setNavigationNotice(
         "Finish the current change before leaving this page.",
       );
@@ -343,15 +503,32 @@ function ManageContent() {
     }
     setNavigationNotice("");
     // Switching Manage sections keeps drafts; only leaving Manage loses them.
+    const destination = new URL(href, window.location.origin);
     const leavesManage =
-      new URL(href, window.location.origin).pathname !==
-      window.location.pathname;
+      destination.pathname !== window.location.pathname ||
+      (destination.pathname === "/manage" &&
+        destination.searchParams.get("view") === "security");
     if (allDraftsDirty && leavesManage) {
       setPendingLeave({ resume });
       return false;
     }
     return true;
   });
+
+  useEffect(() => {
+    if (!legacySecurity) {
+      legacyRequested.current = false;
+      return;
+    }
+    if (legacyRequested.current) return;
+    legacyRequested.current = true;
+    if (
+      requestNavigation("/access?view=security", () =>
+        router.replace("/access?view=security"),
+      )
+    )
+      router.replace("/access?view=security");
+  }, [legacySecurity, requestNavigation, router]);
 
   useEffect(() => {
     if (!allDraftsDirty) return;
@@ -367,13 +544,57 @@ function ManageContent() {
     const leave = pendingLeave;
     setPendingLeave(null);
     setWorkspaceDraft({});
+    setLogoDraft(null);
+    setLogoError("");
+    setLogoNotice("");
     setWorkspaceStale(false);
     setWorkspaceRefreshRequired(false);
+    setProfileServerErrors({});
     maintenance.discardDraft();
-    setSecurityDraft({});
-    setSecurityStale(false);
-    setSecurityRefreshRequired(false);
     leave?.resume();
+  }
+
+  function changeOrganizationTheme(theme: OrganizationTheme) {
+    if (
+      !workspaceAdmission.current.canEdit ||
+      workspaceWriting.current ||
+      !workspaceQuery.data ||
+      workspaceQuery.isError ||
+      profileMismatch
+    )
+      return;
+    setWorkspaceDraft((draft) => {
+      const next: WorkspaceSettingsFormDraft = { ...draft, theme };
+      if (theme === getCommittedTheme()) delete next.theme;
+      return next;
+    });
+    setNotice("");
+    setError("");
+  }
+
+  function changeProfileField(key: WorkspaceProfileField, value: string) {
+    if (
+      !workspaceAdmission.current.canEdit ||
+      workspaceWriting.current ||
+      !workspaceQuery.data ||
+      workspaceQuery.isError ||
+      profileMismatch
+    )
+      return;
+    const saved = workspaceSettingsFormFields(workspaceQuery.data);
+    setWorkspaceDraft((draft) => {
+      const next = { ...draft, [key]: value };
+      if ((value.trim() || null) === (saved[key]?.trim() || null))
+        delete next[key];
+      return next;
+    });
+    setProfileServerErrors((currentErrors) => {
+      const next = { ...currentErrors };
+      delete next[key];
+      return next;
+    });
+    setNotice("");
+    setError("");
   }
 
   function changeSetting(
@@ -391,6 +612,8 @@ function ManageContent() {
         key === "week" ||
         key === "hours")
     ) {
+      if (!workspaceAdmission.current.canEdit || workspaceWriting.current)
+        return;
       const saved = workspaceQuery.data
         ? workspaceSettingsFormFields(workspaceQuery.data)
         : null;
@@ -408,39 +631,21 @@ function ManageContent() {
       setError("");
       return;
     }
-    if (
-      target === "security" &&
-      (key === "password" ||
-        key === "timeout" ||
-        key === "mfa" ||
-        key === "ips")
-    ) {
-      setSecurityDraft((draft) => {
-        const next = { ...draft, [key]: value };
-        if (securityFields && value === securityFields[key]) delete next[key];
-        return next;
-      });
-      setNotice("");
-      setError("");
-      return;
-    }
-    manage.change(target, key, value);
     setNotice("");
     setError("");
   }
 
   function clearDraft(target: ManageSection) {
-    if (manage.pending || livePending) return;
-    if (target === "security") {
-      setSecurityDraft({});
-      setSecurityStale(false);
-      setSecurityRefreshRequired(false);
-    } else if (target === "backup") maintenance.discardDraft();
-    else manage.discard(target);
+    if (livePending) return;
+    if (target === "backup") maintenance.discardDraft();
     if (target === "organization") {
       setWorkspaceDraft({});
+      setLogoDraft(null);
+      setLogoError("");
+      setLogoNotice("");
       setWorkspaceStale(false);
       setWorkspaceRefreshRequired(false);
+      setProfileServerErrors({});
     }
     setError("");
     setNotice("Unsaved changes discarded.");
@@ -451,42 +656,259 @@ function ManageContent() {
       await saveOrganization();
       return;
     }
-    if (target === "security") {
-      await saveSecurity();
-      return;
-    }
     if (target === "backup") {
       await maintenance.savePolicy();
       return;
     }
-    const result = await manage.save(target);
-    if (!result.ok) {
-      setError(result.message);
-      return;
-    }
-    setError("");
-    setNotice(
-      storageUnavailable
-        ? "Settings updated in memory only. Browser storage is unavailable."
-        : result.message,
-    );
   }
 
   async function retryWorkspace() {
+    if (workspaceAdmission.current.suspended || workspaceWriting.current)
+      return;
+    const epoch = workspaceEpoch.current;
     const result = await workspaceQuery.refetch();
+    if (
+      !liveWorkspace.current ||
+      epoch !== workspaceEpoch.current ||
+      workspaceAdmission.current.suspended
+    )
+      return;
     if (result.isError || !result.data) {
       setError("The organization settings could not be loaded. Try again.");
       return;
     }
     setError("");
-    if (workspaceRefreshRequired) {
+    if (committedReadbackRequired) {
+      const current = result.data;
+      if (
+        current.revision <
+        Math.max(
+          acknowledgedRevision.current ?? 0,
+          acceptedWorkspaceRevision(queryClient),
+        )
+      ) {
+        setError(
+          "The current organization settings could not be loaded. Try again.",
+        );
+        return;
+      }
+      afterManageWorkspaceChange(queryClient, current);
+      confirmTheme(current.theme);
+      releaseTheme(workspaceOwner.current);
+      setWorkspaceDraft({});
+      setLogoDraft(null);
+      acknowledgedRevision.current = null;
+      setCommittedReadbackRequired(false);
+      setWorkspaceStale(false);
+      setNotice("Organization settings saved.");
+    }
+    workspaceNeedsReadback.current = false;
+    if (workspaceRefreshRequired && !committedReadbackRequired) {
       setWorkspaceRefreshRequired(false);
       setWorkspaceStale(true);
     }
   }
 
+  function chooseLogo(file: File) {
+    if (
+      !workspaceAdmission.current.canEdit ||
+      workspaceWriting.current ||
+      committedReadbackRequired
+    )
+      return;
+    if (!validLogoSelection(file)) {
+      setLogoError("Choose a PNG or JPEG between 1 byte and 2 MB.");
+      return;
+    }
+    setLogoDraft({ kind: "new", file });
+    setLogoError("");
+    setLogoNotice("");
+    setNotice("");
+  }
+
+  function removeLogo() {
+    if (
+      !workspaceAdmission.current.canEdit ||
+      workspaceWriting.current ||
+      committedReadbackRequired
+    )
+      return;
+    setLogoDraft(workspaceQuery.data?.logo_file_id ? { kind: "remove" } : null);
+    setLogoError("");
+    setLogoNotice("");
+    setNotice("");
+  }
+
+  async function prepareLogo(
+    owns: () => boolean,
+    signal: AbortSignal,
+  ): Promise<{ kind: "ready"; id?: string | null } | { kind: "stopped" }> {
+    const selection = logoDraft;
+    if (!selection) return { kind: "ready" };
+    if (selection.kind === "remove") return { kind: "ready", id: null };
+    if (selection.kind === "reservation-unknown") {
+      setLogoError(
+        "The logo reservation could not be confirmed. Review Logo files, or choose a logo again.",
+      );
+      return { kind: "stopped" };
+    }
+    let candidate = selection.kind === "candidate" ? selection.candidate : null;
+    if (!candidate) {
+      try {
+        candidate = await reserveWorkspaceLogo(selection.file, signal);
+      } catch (caught) {
+        if (!owns()) return { kind: "stopped" };
+        if (!(
+          caught instanceof ApiError &&
+          caught.status >= 400 &&
+          caught.status < 500
+        ))
+          setLogoDraft({ kind: "reservation-unknown", file: selection.file });
+        if (
+          caught instanceof ApiError &&
+          (caught.status === 401 || caught.status === 403)
+        )
+          requestSessionRecheck();
+        setLogoError(
+          "The logo reservation could not be confirmed. Review Logo files, or choose a logo again.",
+        );
+        return { kind: "stopped" };
+      }
+      if (!owns()) return { kind: "stopped" };
+      setLogoDraft({ kind: "candidate", file: selection.file, candidate });
+      try {
+        candidate = await uploadWorkspaceLogo(
+          candidate.id,
+          selection.file,
+          signal,
+        );
+      } catch (caught) {
+        if (!owns()) return { kind: "stopped" };
+        if (
+          caught instanceof ApiError &&
+          (caught.status === 401 || caught.status === 403)
+        )
+          requestSessionRecheck();
+        try {
+          candidate = await getWorkspaceLogoFile(candidate.id, signal);
+        } catch {
+          /* Retain the exact reservation; a fresh check is explicit. */
+        }
+        if (!owns()) return { kind: "stopped" };
+        setLogoDraft({ kind: "candidate", file: selection.file, candidate });
+        setLogoError(
+          "The logo upload could not be confirmed. Check upload before saving.",
+        );
+        return { kind: "stopped" };
+      }
+    } else {
+      try {
+        candidate = await getWorkspaceLogoFile(candidate.id, signal);
+      } catch (caught) {
+        if (!owns()) return { kind: "stopped" };
+        setLogoError(
+          apiErrorMessage(
+            caught,
+            "The logo upload could not be checked. Try again.",
+          ),
+        );
+        if (
+          caught instanceof ApiError &&
+          (caught.status === 401 || caught.status === 403)
+        )
+          requestSessionRecheck();
+        return { kind: "stopped" };
+      }
+    }
+    if (!owns()) return { kind: "stopped" };
+    setLogoDraft({ kind: "candidate", file: selection.file, candidate });
+    if (!readyLogo(candidate)) {
+      setLogoError("The logo upload is not ready. Check upload before saving.");
+      return { kind: "stopped" };
+    }
+    setLogoError("");
+    return { kind: "ready", id: candidate.id };
+  }
+
+  async function recoverLogo(fileId: string, operation: "upload" | "cleanup") {
+    if (!workspaceAdmission.current.canEdit || workspaceWriting.current) return;
+    const epoch = ++workspaceEpoch.current;
+    const controller = new AbortController();
+    workspaceCommand.current = controller;
+    workspaceWriting.current = true;
+    setWorkspaceSavePending(true);
+    const owns = () =>
+      liveWorkspace.current &&
+      epoch === workspaceEpoch.current &&
+      !controller.signal.aborted &&
+      workspaceAdmission.current.canEdit;
+    setLogoError("");
+    try {
+      let file =
+        operation === "upload"
+          ? await getWorkspaceLogoFile(fileId, controller.signal)
+          : null;
+      if (!owns()) return;
+      if (!file || file.state === "uploading")
+        file = await reconcileWorkspaceLogo(fileId, controller.signal);
+      if (!owns()) return;
+      if (operation === "upload") {
+        const confirmed = file;
+        setLogoDraft((draft) =>
+          draft?.kind === "candidate" && draft.candidate.id === fileId
+            ? { ...draft, candidate: confirmed }
+            : draft,
+        );
+        if (readyLogo(file))
+          setLogoNotice("Logo upload confirmed. Save settings to use it.");
+        else
+          setLogoError(
+            "This upload is not ready. Choose the logo again or discard this change.",
+          );
+      } else if (file.state === "purged") {
+        if (logoCleanupId === fileId) setLogoCleanupId(null);
+        setLogoNotice("Previous logo cleanup completed.");
+      } else
+        setLogoError(
+          "Cleanup is still unfinished. Retry when the current operation has ended.",
+        );
+    } catch (caught) {
+      if (!owns()) return;
+      const purgeDisabled =
+        caught instanceof ApiError &&
+        caught.status === 403 &&
+        caught.code === "purge_disabled";
+      setLogoError(
+        purgeDisabled
+          ? "Manual permanent deletion is disabled."
+          : apiErrorMessage(
+              caught,
+              "The logo could not be checked. Try again.",
+            ),
+      );
+      if (
+        caught instanceof ApiError &&
+        (caught.status === 401 || (caught.status === 403 && !purgeDisabled))
+      )
+        requestSessionRecheck();
+    } finally {
+      if (owns()) {
+        workspaceWriting.current = false;
+        setWorkspaceSavePending(false);
+      }
+    }
+  }
+
   async function saveOrganization() {
-    if (manage.pending || livePending) return;
+    if (
+      livePending ||
+      workspaceWriting.current ||
+      committedReadbackRequired ||
+      !workspaceAdmission.current.canEdit ||
+      workspaceQuery.isError ||
+      profileMismatch
+    )
+      return;
     const validationError = Object.values(
       organizationErrors(workspaceDraft, workspaceQuery.data !== undefined),
     )[0];
@@ -494,259 +916,247 @@ function ManageContent() {
       setError(validationError);
       return;
     }
-
     if (!workspaceQuery.data) {
       setError(
         "The organization settings could not be loaded. Retry before saving.",
       );
       return;
     }
-
-    const patch = workspaceQuery.data
-      ? workspaceSettingsPatch(workspaceQuery.data, workspaceDraft)
-      : null;
+    const epoch = ++workspaceEpoch.current;
+    const controller = new AbortController();
+    workspaceCommand.current = controller;
+    workspaceWriting.current = true;
+    setWorkspaceSavePending(true);
+    const ownsCommand = () =>
+      liveWorkspace.current &&
+      epoch === workspaceEpoch.current &&
+      !controller.signal.aborted &&
+      workspaceAdmission.current.canEdit;
+    let attemptedPatch: ManageWorkspaceSettingsPatch | null = null;
+    let capturedOldLogo: string | null = null;
+    let knownCommitted = false;
     setNotice("");
     setError("");
-    if (patch) {
-      setWorkspaceSavePending(true);
-      try {
-        const saved = await updateManageWorkspace(patch);
-        afterManageWorkspaceChange(queryClient, saved);
-        setWorkspaceDraft({});
-        setWorkspaceStale(false);
-        setWorkspaceRefreshRequired(false);
-        setNotice("Organization settings saved.");
-      } catch (caught) {
-        if (isStaleWorkspaceRevision(caught)) {
+    setLogoError("");
+    setLogoNotice("");
+    setProfileServerErrors({});
+    const readbackNeeded = () => {
+      releaseTheme(workspaceOwner.current);
+      workspaceNeedsReadback.current = true;
+      setWorkspaceRefreshRequired(true);
+      setCommittedReadbackRequired(true);
+      setNotice(COMMITTED_READBACK_MESSAGE);
+      setError("");
+    };
+    const adoptCurrent = (
+      current: ReturnType<typeof newestManageWorkspace>,
+    ) => {
+      if (
+        current.revision < acceptedWorkspaceRevision(queryClient) ||
+        !afterManageWorkspaceChange(queryClient, current)
+      )
+        return false;
+      confirmTheme(current.theme);
+      return true;
+    };
+    const finishDraft = () => {
+      releaseTheme(workspaceOwner.current);
+      setWorkspaceDraft({});
+      setLogoDraft(null);
+      setWorkspaceStale(false);
+      setWorkspaceRefreshRequired(false);
+      setCommittedReadbackRequired(false);
+      acknowledgedRevision.current = null;
+      workspaceNeedsReadback.current = false;
+    };
+    try {
+      await queryClient.cancelQueries({
+        queryKey: manageKeys.workspace(),
+        exact: true,
+      });
+      if (!ownsCommand()) return;
+      let workspace = workspaceQuery.data;
+      if (workspaceNeedsReadback.current) {
+        const refreshed = await workspaceQuery.refetch();
+        if (!ownsCommand()) return;
+        if (refreshed.isError || !refreshed.data) {
           setWorkspaceRefreshRequired(true);
-          const refreshed = await workspaceQuery.refetch();
-          if (refreshed.isError || !refreshed.data) {
-            setError(
-              "Workspace settings changed, but the latest values could not be loaded. Retry before saving again.",
-            );
-          } else {
-            setWorkspaceRefreshRequired(false);
-            setWorkspaceStale(true);
-            setError("");
-          }
+          setError(
+            "The organization settings could not be loaded. Retry before saving.",
+          );
           return;
         }
-        setError(
-          caught instanceof ApiError && caught.status === 403
-            ? "Only administrators can change these settings. Reload the page to check your access."
-            : "The settings could not be saved. Try again.",
-        );
+        workspace = refreshed.data;
+        workspaceNeedsReadback.current = false;
+        setWorkspaceRefreshRequired(false);
+      }
+      const prepared = await prepareLogo(ownsCommand, controller.signal);
+      if (!ownsCommand() || prepared.kind === "stopped") return;
+      let patch = workspaceSettingsPatch(
+        workspace,
+        workspaceDraft,
+        getCommittedTheme(),
+      );
+      if (prepared.id !== undefined && prepared.id !== workspace.logo_file_id)
+        patch = {
+          ...patch,
+          revision: workspace.revision,
+          logo_file_id: prepared.id,
+        };
+      if (patch) {
+        attemptedPatch = patch;
+        capturedOldLogo = workspace.logo_file_id;
+        // A logo response is a detached acknowledgement of this admitted write.
+        // Only a fresh authorized read may become the current form/brand/theme.
+        const receipt = await updateManageWorkspace(patch, controller.signal);
+        if (!ownsCommand()) return;
+        knownCommitted = true;
+        acknowledgedRevision.current = receipt.revision;
+        let current = receipt;
+        if (
+          "logo_file_id" in patch ||
+          receipt.revision < acceptedWorkspaceRevision(queryClient)
+        ) {
+          const read = newestManageWorkspace(
+            queryClient,
+            await getManageWorkspace(controller.signal),
+          );
+          if (!ownsCommand()) return;
+          if (!workspaceHasContacts(read)) {
+            afterManageWorkspaceChange(queryClient, read);
+            readbackNeeded();
+            requestSessionRecheck();
+            return;
+          }
+          current = read;
+        }
+        if (!adoptCurrent(current)) {
+          readbackNeeded();
+          return;
+        }
+      }
+      if (!ownsCommand()) return;
+      finishDraft();
+      setNotice("Organization settings saved.");
+    } catch (caught) {
+      if (!ownsCommand()) return;
+      workspaceNeedsReadback.current = attemptedPatch !== null;
+      if (isStaleWorkspaceRevision(caught)) {
+        setWorkspaceRefreshRequired(true);
+        const refreshed = await workspaceQuery.refetch();
+        if (!ownsCommand()) return;
+        if (refreshed.isError || !refreshed.data)
+          setError(
+            "Workspace settings changed, but the latest values could not be loaded. Retry before saving again.",
+          );
+        else {
+          workspaceNeedsReadback.current = false;
+          setWorkspaceRefreshRequired(false);
+          setWorkspaceStale(true);
+          setError("");
+        }
         return;
-      } finally {
+      }
+      const partial = isWorkspaceLogoCleanupPartial(caught);
+      if (partial) {
+        knownCommitted = true;
+        acknowledgedRevision.current = (attemptedPatch?.revision ?? 0) + 1;
+        setLogoCleanupId(capturedOldLogo);
+      }
+      const denied =
+        caught instanceof ApiError &&
+        (caught.status === 401 || caught.status === 403);
+      if (knownCommitted && !partial) {
+        readbackNeeded();
+        if (denied) requestSessionRecheck();
+        return;
+      }
+      if (
+        !denied &&
+        attemptedPatch &&
+        (knownCommitted || "logo_file_id" in attemptedPatch)
+      ) {
+        try {
+          const current = newestManageWorkspace(
+            queryClient,
+            await getManageWorkspace(controller.signal),
+          );
+          if (!ownsCommand()) return;
+          if (!workspaceHasContacts(current)) {
+            afterManageWorkspaceChange(queryClient, current);
+            if (knownCommitted) readbackNeeded();
+            requestSessionRecheck();
+            return;
+          }
+          const values = new Map(Object.entries(current));
+          const matches =
+            current.revision > attemptedPatch.revision &&
+            Object.entries(attemptedPatch).every(
+              ([key, value]) => key === "revision" || values.get(key) === value,
+            );
+          if (adoptCurrent(current) && (knownCommitted || matches)) {
+            finishDraft();
+            setNotice(partial ? "" : "Organization settings saved.");
+            // A lost response needs old-File readback; a confirmed 200 already
+            // guarantees cleanup. No public origin field grants client authority.
+            if (capturedOldLogo && (partial || !knownCommitted)) {
+              try {
+                const old = await getWorkspaceLogoFile(
+                  capturedOldLogo,
+                  controller.signal,
+                );
+                if (!ownsCommand()) return;
+                if (old.state === "purged") {
+                  setLogoCleanupId(null);
+                  if (partial)
+                    setLogoNotice("Previous logo cleanup completed.");
+                } else {
+                  setLogoCleanupId(capturedOldLogo);
+                }
+              } catch (readError) {
+                if (!ownsCommand()) return;
+                setLogoCleanupId(capturedOldLogo);
+                if (
+                  readError instanceof ApiError &&
+                  (readError.status === 401 || readError.status === 403)
+                )
+                  requestSessionRecheck();
+              }
+            }
+            return;
+          }
+        } catch (readError) {
+          if (!ownsCommand()) return;
+          if (
+            readError instanceof ApiError &&
+            (readError.status === 401 || readError.status === 403)
+          )
+            requestSessionRecheck();
+        }
+      }
+      if (knownCommitted) {
+        readbackNeeded();
+        if (denied) requestSessionRecheck();
+        return;
+      }
+      if (denied) requestSessionRecheck();
+      if (caught instanceof ApiError && caught.status === 422)
+        setProfileServerErrors(profileResponseErrors(caught));
+      setError(
+        caught instanceof ApiError && caught.status === 403
+          ? "Only administrators can change these settings. Reload the page to check your access."
+          : "The settings could not be saved. Try again.",
+      );
+    } finally {
+      if (ownsCommand()) {
+        workspaceWriting.current = false;
         setWorkspaceSavePending(false);
       }
-    } else if (Object.keys(workspaceDraft).length > 0) {
-      setWorkspaceDraft({});
-      setWorkspaceStale(false);
     }
-
-    setError("");
-    setNotice("Organization settings saved.");
-  }
-
-  async function retrySecurity() {
-    const result = await securityQuery.refetch();
-    if (!result.isError && result.data) {
-      setPolicyReadDenied(false);
-      setSecurityRefreshRequired(false);
-      setError("");
-    }
-  }
-
-  async function retrySessions() {
-    const result = await sessionsQuery.refetch();
-    if (!result.isError && result.data) setSessionsReadDenied(false);
-  }
-
-  async function saveSecurity() {
-    if (manage.pending || livePending) return;
-    if (!securityQuery.data || securityDenied || securityRefreshRequired) {
-      setError("Account policy could not be loaded. Retry before saving.");
-      return;
-    }
-    const patch = securitySettingsPatch(securityQuery.data, securityDraft);
-    if (!patch) {
-      setSecurityDraft({});
-      return;
-    }
-    setError("");
-    setNotice("");
-    setSecuritySavePending(true);
-    try {
-      const saved = await updateManageSecurityPolicy(patch);
-      afterManageSecurityChange(queryClient, saved);
-      setSecurityDraft({});
-      setSecurityStale(false);
-      setSecurityRefreshRequired(false);
-      setNotice("Account policy saved.");
-      requestSessionRecheck();
-    } catch (caught) {
-      if (isStaleWorkspaceRevision(caught)) {
-        setSecurityStale(true);
-        setSecurityRefreshRequired(true);
-        const refreshed = await securityQuery.refetch();
-        if (!refreshed.isError && refreshed.data)
-          setSecurityRefreshRequired(false);
-        else
-          setError(
-            "The latest policy could not be loaded. Retry before saving again.",
-          );
-      } else {
-        setError(
-          caught instanceof ApiError && caught.code === "ip_lockout"
-            ? "The IP allow list would block your current address. Include your current address before saving."
-            : caught instanceof ApiError && caught.status === 422
-              ? "Check the policy values and IP addresses. Your changes are still here."
-              : caught instanceof ApiError && caught.status === 403
-                ? "Only administrators can change account policy. Reload the page to check your access."
-                : "The policy could not be saved. Try again.",
-        );
-      }
-    } finally {
-      setSecuritySavePending(false);
-    }
-  }
-
-  function requestConfirm(next: ConfirmState, event?: MouseEvent<HTMLElement>) {
-    confirmOpener.current = event?.currentTarget ?? null;
-    setDraftAcknowledged(false);
-    setError("");
-    setConfirm(next);
-  }
-
-  function requestReset(event: MouseEvent<HTMLElement>) {
-    requestConfirm(
-      {
-        title: "Reset Manage configuration",
-        description:
-          "Restore browser preview settings to bundled defaults and discard unsaved Manage drafts. Persisted organization and account policy are unchanged.",
-        confirmLabel: "Reset Manage configuration",
-        requiresDraftAck: allDraftsDirty,
-        body: (
-          <SettingsChanges
-            differences={diffManageSettings(settings, initialManageSettings)}
-          />
-        ),
-        action: async () => {
-          const result = await manage.reset({
-            discardDrafts: allDraftsDirty,
-          });
-          if (result.ok) {
-            setWorkspaceDraft({});
-            setWorkspaceStale(false);
-            setWorkspaceRefreshRequired(false);
-            maintenance.discardDraft();
-            setSecurityDraft({});
-            setSecurityStale(false);
-            setSecurityRefreshRequired(false);
-          }
-          setError(result.ok ? "" : result.message);
-          setNotice(
-            result.ok
-              ? "Preview settings restored. Organization and account policy are unchanged."
-              : "",
-          );
-
-          return result.ok;
-        },
-      },
-      event,
-    );
-  }
-
-  async function runSessionEnd(action: () => Promise<null>, all: boolean) {
-    if (manage.pending || livePending) return false;
-    setSessionEndPending(true);
-    setError("");
-    setNotice("");
-    try {
-      await action();
-      await afterManageSessionsChange(queryClient);
-      setSessionRequest((request) => ({ ...request, offset: 0 }));
-      setNotice(
-        all
-          ? "Remote sessions ended. Your current session stays active."
-          : "Session ended.",
-      );
-      return true;
-    } catch {
-      setError(
-        all
-          ? "Remote sessions could not be ended. Try again."
-          : "The session could not be ended. Try again.",
-      );
-      return false;
-    } finally {
-      setSessionEndPending(false);
-    }
-  }
-
-  function endSession(
-    session: ManageAdminSession,
-    event: MouseEvent<HTMLElement>,
-  ) {
-    if (session.current) return;
-    requestConfirm(
-      {
-        origin: "admin-sessions",
-        title: "End session",
-        description: `${session.person_name}'s ${session.device} ${session.browser} session will be signed out. Your current session stays active.`,
-        confirmLabel: "Confirm end session",
-        action: () => runSessionEnd(() => endManageSession(session), false),
-      },
-      event,
-    );
-  }
-
-  function endAllRemoteSessions(event: MouseEvent<HTMLElement>) {
-    requestConfirm(
-      {
-        origin: "admin-sessions",
-        title: "End all remote sessions",
-        description:
-          "End all other active sessions across the organization? Your current session stays active.",
-        confirmLabel: "Confirm end all remote sessions",
-        action: () => runSessionEnd(endAllManageRemoteSessions, true),
-      },
-      event,
-    );
-  }
-
-  function openMfa(event?: MouseEvent<HTMLButtonElement>) {
-    mfaOpener.current = event?.currentTarget ?? null;
-    mfa.openManage();
   }
 
   const panelClass =
     "min-w-0 w-full rounded-[var(--radius)] border-border bg-card";
-
-  if (
-    manage.resource.status !== "ready" &&
-    tab !== "Backup" &&
-    tab !== "Updates & licensing"
-  )
-    return (
-      <section className="space-y-4">
-        <h1 data-slot="page-title" className="text-2xl font-semibold">
-          Manage
-        </h1>
-        {manage.resource.status === "loading" ? (
-          <p role="status">Loading management settings…</p>
-        ) : (
-          <Alert role="alert" variant="destructive">
-            <p>{manage.resource.error}</p>
-            <Button variant="outline" onClick={manage.resource.reload}>
-              Try again
-            </Button>
-          </Alert>
-        )}
-      </section>
-    );
 
   const renderPageHeader = (actions?: ReactNode) => (
     <header className="flex flex-wrap items-center justify-between gap-3">
@@ -764,91 +1174,45 @@ function ManageContent() {
         <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
           {pageDescription}
         </p>
-        <SampleDataNote
-          ariaLabel={
+        <p
+          role="note"
+          aria-label={
             tab === "Backup" || tab === "Updates & licensing"
               ? "Server data"
-              : liveSourceStatus
-                ? "Organization data"
-                : undefined
+              : "Organization data"
           }
-          className="mt-3"
-          sourceLabel={
-            tab === "Backup" || tab === "Updates & licensing"
-              ? "Server"
-              : liveSourceStatus
-                ? "Organization"
-                : undefined
-          }
-          suffix={liveSourceStatus ? "" : undefined}
+          className="text-muted-foreground mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
         >
-          {liveSourceStatus ?? `${sampleSubject} here are examples.`}
-        </SampleDataNote>
+          <Badge variant="outline">
+            {tab === "Backup" || tab === "Updates & licensing"
+              ? "Server"
+              : "Organization"}
+          </Badge>
+          <span> {liveSourceStatus}</span>
+        </p>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {actions}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                ref={optionsOpener}
-                type="button"
-                variant="outline"
-                size="icon"
-                className="size-11"
-                aria-label="Manage options"
-              />
-            }
-          >
-            <MoreHorizontal aria-hidden="true" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              onClick={(event) => {
-                requestReset(event);
-                confirmOpener.current = optionsOpener.current;
-              }}
-            >
-              <RotateCcw aria-hidden="true" /> Reset Manage
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      {actions ? (
+        <div className="flex shrink-0 items-center gap-2">{actions}</div>
+      ) : null}
     </header>
   );
+
+  if (legacySecurity && !allDraftsDirty && !livePending)
+    return <p role="status">Opening Access Security…</p>;
 
   return (
     <div className="min-w-0 space-y-6">
       <fieldset
-        disabled={manage.pending || livePending}
-        aria-busy={manage.pending || livePending}
+        disabled={livePending}
+        aria-busy={livePending}
         className="min-w-0 space-y-6"
       >
-        {manage.pending || livePending ? (
+        {livePending ? (
           <p role="status" className="text-muted-foreground text-sm">
             Saving changes…
           </p>
         ) : null}
-        {manage.resource.error ? (
-          <Alert role="alert" variant="warning">
-            <p>
-              {manage.resource.error} Your last loaded settings are still shown.
-            </p>
-            <Button variant="outline" onClick={manage.resource.reload}>
-              Retry refresh
-            </Button>
-          </Alert>
-        ) : null}
         {tab !== "Audit" ? renderPageHeader() : null}
-
-        {storageUnavailable &&
-        tab !== "Backup" &&
-        tab !== "Updates & licensing" ? (
-          <Alert role="note" variant="warning">
-            Browser storage is unavailable. Your latest changes exist in memory
-            only and may be lost on reload.
-          </Alert>
-        ) : null}
 
         <div className="flex flex-col gap-6">
           {navigationNotice ? (
@@ -859,8 +1223,11 @@ function ManageContent() {
           <DiscardChangesDialog
             open={pendingLeave !== null}
             title="Discard unsaved Manage changes?"
-            description="Your unsaved organization, security or backup changes will be lost."
-            onKeep={() => setPendingLeave(null)}
+            description="Your unsaved organization or backup changes will be lost."
+            onKeep={() => {
+              setPendingLeave(null);
+              if (legacySecurity) router.replace("/manage?view=organization");
+            }}
             onDiscard={discardAndLeave}
           />
           {notice || (recoveryView && maintenance.notice) ? (
@@ -898,56 +1265,95 @@ function ManageContent() {
               regionalCurrency={regionalCurrency}
               workspace={workspaceQuery.data}
               workspaceLoading={workspaceQuery.isPending}
-              workspaceLoadFailed={workspaceQuery.isError}
+              workspaceLoadFailed={
+                workspaceQuery.isError ||
+                profileMismatch ||
+                committedReadbackRequired
+              }
+              logo={{
+                blob:
+                  verifiedOrganizationRole === null || logoReadDenied
+                    ? undefined
+                    : logoDraft?.kind === "remove"
+                      ? null
+                      : canEditLoadedOrganization &&
+                          logoDraft &&
+                          "file" in logoDraft
+                        ? logoDraft.file
+                        : savedLogoQuery.isError
+                          ? undefined
+                          : savedLogoQuery.data,
+                concealed: verifiedOrganizationRole === null || logoReadDenied,
+                selection:
+                  logoDraft?.kind === "remove"
+                    ? { kind: "removed" }
+                    : logoDraft &&
+                        "file" in logoDraft &&
+                        canEditLoadedOrganization
+                      ? { kind: "selected", name: logoDraft.file.name }
+                      : { kind: "none" },
+                error: logoError,
+                notice: logoNotice,
+                cleanupPending: logoCleanupId !== null,
+                onSelect: chooseLogo,
+                onRemove: removeLogo,
+                onCheckUpload:
+                  logoDraft?.kind === "candidate" &&
+                  (!readyLogo(logoDraft.candidate) || Boolean(logoError))
+                    ? () => void recoverLogo(logoDraft.candidate.id, "upload")
+                    : undefined,
+                onRetryCleanup: logoCleanupId
+                  ? () => void recoverLogo(logoCleanupId, "cleanup")
+                  : undefined,
+                onRetryImage:
+                  savedLogoQuery.isError && !suspended && !logoReadDenied
+                    ? () => void savedLogoQuery.refetch()
+                    : undefined,
+              }}
+              profile={
+                workspaceFields && !profileMismatch
+                  ? { ...workspaceFields, ...workspaceDraft }
+                  : undefined
+              }
+              profileErrors={{ ...errors, ...profileServerErrors }}
+              onProfileChange={changeProfileField}
+              contactsVisible={contactsVisible}
               onRetryWorkspace={retryWorkspace}
               staleRevision={workspaceStale}
+              theme={
+                (canEditOrganization ? workspaceDraft.theme : undefined) ??
+                organizationTheme.theme
+              }
+              onThemeChange={changeOrganizationTheme}
+              readOnly={!canEditLoadedOrganization}
+              editDisabled={
+                !canEditLoadedOrganization ||
+                !workspaceQuery.data ||
+                workspaceQuery.isError ||
+                committedReadbackRequired
+              }
             />
           ) : null}
 
           {recoveryView ? (
             <section
-              aria-label="Security and recovery workspace"
+              aria-label="Backup workspace"
               className="min-w-0 space-y-5"
             >
-              <Alert role="note">
-                Backup requests are queued for a configured host runner. Restore
-                and software updates are offline server-operator procedures.
-              </Alert>
-              <div className="grid gap-4 lg:grid-cols-2">
-                <div className="bg-card flex flex-wrap items-center gap-4 rounded-lg border p-5">
-                  <LockKeyhole
-                    aria-hidden="true"
-                    className="text-muted-foreground size-6 shrink-0"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 data-slot="section-title" className="font-semibold">
-                        Account policy
-                      </h2>
-                      {securityDirty ? (
-                        <Badge variant="warning">Unsaved changes</Badge>
-                      ) : null}
-                    </div>
-                    <p className="text-muted-foreground mt-1 text-sm">
-                      {securityFields
-                        ? `${securityFields.mfa === "Optional" ? "Optional two-factor" : securityFields.mfa} · ${securityFields.timeout} timeout`
-                        : securityQuery.isPending && !securityDenied
-                          ? "Loading policy…"
-                          : "Account policy unavailable"}
-                    </p>
-                  </div>
-                  <Button
-                    ref={policyOpener}
-                    variant="outline"
-                    className="min-h-11"
-                    onClick={() => {
-                      setError("");
-                      setPolicyOpen(true);
-                    }}
-                  >
-                    Edit policy
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <Alert role="note" className="min-w-0 sm:flex-1">
+                  Your server makes the backups you request here. Restoring a
+                  backup and installing updates are done on the server itself.
+                </Alert>
+                {canEditOrganization ? (
+                  <Button asChild variant="outline" className="min-h-11">
+                    <GuardedWorkspaceLink href="/access?view=security">
+                      Security
+                    </GuardedWorkspaceLink>
                   </Button>
-                </div>
+                ) : null}
+              </div>
+              <div className="min-w-0">
                 <div className="bg-card flex flex-wrap items-center gap-4 rounded-lg border p-5">
                   <Database
                     aria-hidden="true"
@@ -1002,62 +1408,7 @@ function ManageContent() {
                   </Button>
                 </div>
               </div>
-              <Tabs
-                value={tab === "Backup" ? "snapshots" : "sessions"}
-                onValueChange={(value) => {
-                  if (!manage.pending && !livePending)
-                    router.push(
-                      `/manage?view=${value === "snapshots" ? "backup" : "security"}`,
-                      { scroll: false },
-                    );
-                }}
-              >
-                <TabsList aria-label="Security and recovery views">
-                  <TabsTrigger value="sessions" className="min-h-11 gap-2 px-4">
-                    Sessions{" "}
-                    <Badge variant="outline">
-                      {sessionsDenied
-                        ? "—"
-                        : (sessionsQuery.data?.pagination.total ?? "—")}
-                    </Badge>
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="snapshots"
-                    className="min-h-11 gap-2 px-4"
-                  >
-                    Backups{" "}
-                    <Badge variant="outline">
-                      {maintenance.acceptedHistory?.pagination.total ?? "—"}
-                    </Badge>
-                  </TabsTrigger>
-                </TabsList>
-                <TabsContent value="sessions" keepMounted className="min-w-0">
-                  <SecurityPanel
-                    sessions={
-                      sessionsDenied || sessionsQuery.isError
-                        ? {
-                            status: "error",
-                            message: sessionsDenied
-                              ? "Only administrators can review sessions."
-                              : "Sessions could not be loaded.",
-                            page: sessionsDenied
-                              ? undefined
-                              : sessionsQuery.data,
-                          }
-                        : sessionsQuery.isPending
-                          ? { status: "loading" }
-                          : { status: "ready", page: sessionsQuery.data }
-                    }
-                    request={sessionRequest}
-                    onRequestChange={setSessionRequest}
-                    onRetry={() => void retrySessions()}
-                    actions={{ endAllRemoteSessions, endSession }}
-                  />
-                </TabsContent>
-                <TabsContent value="snapshots" keepMounted className="min-w-0">
-                  <BackupPanel maintenance={maintenance} />
-                </TabsContent>
-              </Tabs>
+              <BackupPanel maintenance={maintenance} />
             </section>
           ) : null}
 
@@ -1068,8 +1419,8 @@ function ManageContent() {
           {tab === "Updates & licensing" ? (
             <div className="min-w-0 space-y-5">
               <Alert role="note">
-                This page reads the running server version and recorded release
-                observations. Updates are applied by your server operator. No
+                This page shows the running version and the latest release
+                check. The person who runs your server installs updates. No
                 license is required.
               </Alert>
               <div className="bg-card grid min-w-0 divide-y overflow-hidden rounded-lg border xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] xl:divide-x xl:divide-y-0">
@@ -1080,95 +1431,6 @@ function ManageContent() {
           ) : null}
         </div>
       </fieldset>
-      <Dialog
-        open={policyOpen}
-        onOpenChange={setPolicyOpen}
-        dismissible={!manage.pending && !livePending}
-      >
-        <DialogContent
-          className="max-w-3xl"
-          finalFocus={() => policyOpener.current}
-        >
-          <DialogHeader className="mb-5">
-            <div className="flex items-center justify-between gap-3">
-              <DialogTitle>Account policy</DialogTitle>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Close account policy"
-                disabled={manage.pending || livePending}
-                onClick={() => setPolicyOpen(false)}
-              >
-                <X aria-hidden="true" />
-              </Button>
-            </div>
-            <DialogDescription>
-              Set the account policy enforced by your organization. Closing
-              keeps your unsaved changes.
-            </DialogDescription>
-          </DialogHeader>
-          <fieldset
-            disabled={manage.pending || livePending}
-            aria-busy={manage.pending || livePending}
-            className="min-w-0 space-y-4"
-          >
-            {error ? (
-              <Alert role="alert" variant="destructive">
-                {error}
-              </Alert>
-            ) : null}
-            {securityStale ? (
-              <Alert role="note" variant="warning">
-                Policy changed since you opened it. Your draft is kept; review
-                the latest values before saving again.
-              </Alert>
-            ) : null}
-            {securityQuery.isPending && !securityDenied ? (
-              <p role="status">Loading account policy…</p>
-            ) : null}
-            {securityDenied ||
-            securityQuery.isError ||
-            securityRefreshRequired ? (
-              <Alert role="alert" variant="destructive">
-                <p>
-                  {securityDenied
-                    ? "Only administrators can review account policy."
-                    : "Account policy could not be loaded."}
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void retrySecurity()}
-                >
-                  Retry account policy
-                </Button>
-              </Alert>
-            ) : null}
-            {securityFields ? (
-              <SecurityPolicyForm
-                form={{
-                  dirty: securityDirty,
-                  current: { ...settings, ...securityFields, ...securityDraft },
-                  errors: {},
-                  saveSection,
-                  clearDraft,
-                  changeSetting,
-                }}
-                onPreviewMfa={() => {
-                  setPolicyOpen(false);
-                  openMfa();
-                  mfaOpener.current = policyOpener.current;
-                }}
-              />
-            ) : null}
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setPolicyOpen(false)}>
-                Close
-              </Button>
-            </DialogFooter>
-          </fieldset>
-        </DialogContent>
-      </Dialog>
       <Dialog
         open={scheduleOpen}
         onOpenChange={setScheduleOpen}
@@ -1192,8 +1454,8 @@ function ManageContent() {
               </Button>
             </div>
             <DialogDescription>
-              Save the server’s schedule and retention policy. Your server
-              operator configures the host runner.
+              Choose when backups run and how long they are kept. The person who
+              runs your server sets up the backup service.
             </DialogDescription>
           </DialogHeader>
           <fieldset
@@ -1210,17 +1472,6 @@ function ManageContent() {
           </fieldset>
         </DialogContent>
       </Dialog>
-      <ManageMfaDialog opener={mfaOpener} />
-      <ManageConfirmationDialog
-        confirm={sessionConfirmationRefused ? null : confirm}
-        pending={manage.pending || livePending}
-        error={error}
-        draftAcknowledged={draftAcknowledged}
-        confirmOpener={confirmOpener}
-        headingRef={headingRef}
-        onClose={() => setConfirm(null)}
-        onDraftAcknowledgedChange={setDraftAcknowledged}
-      />
     </div>
   );
 }

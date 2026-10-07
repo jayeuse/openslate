@@ -43,6 +43,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "getAccessUserSummary",
+    "method": "GET",
+    "path": "/api/users/summary"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "inviteAccessUser",
     "method": "POST",
     "path": "/api/auth/invitations"
@@ -73,15 +79,15 @@
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
-    "function": "listAccessUsers",
-    "method": "GET",
-    "path": "/api/users"
-  },
-  {
-    "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "listAccessUserSessions",
     "method": "GET",
     "path": "/api/users/{param}/sessions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "listAccessUsers",
+    "method": "GET",
+    "path": "/api/users"
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
@@ -553,6 +559,18 @@
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "admitManageBackupExportDownload",
+    "method": "POST",
+    "path": "/api/backups/exports/{param}/download-admission"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "getManageBackupExport",
+    "method": "GET",
+    "path": "/api/backups/exports/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
     "function": "getManageBackupStatus",
     "method": "GET",
     "path": "/api/backups/status"
@@ -577,43 +595,109 @@
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "queueManageBackupExport",
+    "method": "POST",
+    "path": "/api/backups/exports"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
     "function": "updateManageBackupPolicy",
     "method": "PATCH",
     "path": "/api/backups/status"
   },
   {
-    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
-    "function": "endAllManageRemoteSessions",
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "getPersonSecurity",
+    "method": "GET",
+    "path": "/api/users/{param}/security"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "recoverPerson",
+    "method": "POST",
+    "path": "/api/users/{param}/recovery"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "resetPersonMfa",
+    "method": "POST",
+    "path": "/api/users/{param}/mfa/reset"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "endAllAccessRemoteSessions",
     "method": "DELETE",
     "path": "/api/auth/admin-sessions"
   },
   {
-    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
-    "function": "endManageSession",
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "endAccessSession",
     "method": "DELETE",
     "path": "/api/users/{param}/sessions/{param}"
   },
   {
-    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
-    "function": "getManageSecurityPolicy",
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "getAccessCallerIp",
+    "method": "GET",
+    "path": "/api/workspace/security/caller-ip"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "getAccessSecurityPolicy",
     "method": "GET",
     "path": "/api/workspace/security"
   },
   {
-    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
-    "function": "listManageSessions",
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "listAccessSessions",
     "method": "GET",
     "path": "/api/auth/admin-sessions"
   },
   {
-    "adapter": "frontend/src/components/systems/manage/adapters/security-api.ts",
-    "function": "updateManageSecurityPolicy",
+    "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
+    "function": "updateAccessSecurityPolicy",
     "method": "PATCH",
     "path": "/api/workspace/security"
   },
   {
+    "adapter": "frontend/src/components/systems/access/adapters/security-events-api.ts",
+    "function": "getAccessSecurityEvent",
+    "method": "GET",
+    "path": "/api/security-events/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/adapters/security-events-api.ts",
+    "function": "listAccessSecurityEvents",
+    "method": "GET",
+    "path": "/api/security-events"
+  },
+  {
     "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
     "function": "getManageWorkspace",
+    "method": "GET",
+    "path": "/api/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
+    "function": "getWorkspaceAppearance",
+    "method": "GET",
+    "path": "/api/workspace/appearance"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
+    "function": "getWorkspaceBrand",
+    "method": "GET",
+    "path": "/api/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
+    "function": "getWorkspaceCalendarSettings",
+    "method": "GET",
+    "path": "/api/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
+    "function": "getWorkspaceLifecycleSettings",
     "method": "GET",
     "path": "/api/workspace"
   },
@@ -624,16 +708,52 @@
     "path": "/api/workspace"
   },
   {
-    "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
-    "function": "queryOpenViewAggregates",
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-logo-api.ts",
+    "function": "getWorkspaceLogo",
+    "method": "GET",
+    "path": "/api/workspace/logo"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-logo-api.ts",
+    "function": "getWorkspaceLogoFile",
+    "method": "GET",
+    "path": "/api/files/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-logo-api.ts",
+    "function": "listWorkspaceLogoFiles",
+    "method": "GET",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-logo-api.ts",
+    "function": "reconcileWorkspaceLogo",
     "method": "POST",
-    "path": "/api/records/aggregate-query"
+    "path": "/api/files/{param}/reconcile"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-logo-api.ts",
+    "function": "reserveWorkspaceLogo",
+    "method": "POST",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/workspace-logo-api.ts",
+    "function": "uploadWorkspaceLogo",
+    "method": "PUT",
+    "path": "/api/files/{param}/content"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
     "function": "queryOpenViewAggregateSnapshot",
     "method": "POST",
     "path": "/api/records/aggregate-snapshot"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
+    "function": "queryOpenViewAggregates",
+    "method": "POST",
+    "path": "/api/records/aggregate-query"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
@@ -684,10 +804,40 @@
     "path": "/api/departments"
   },
   {
-    "adapter": "frontend/src/components/systems/openview/adapters/invalidation-events.ts",
-    "function": "subscribeOpenViewInvalidations",
+    "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
+    "function": "archiveRecordFile",
+    "method": "POST",
+    "path": "/api/files/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
+    "function": "downloadRecordFile",
     "method": "GET",
-    "path": "/api/events"
+    "path": "/api/files/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
+    "function": "getRecordFile",
+    "method": "GET",
+    "path": "/api/files/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
+    "function": "listRecordFiles",
+    "method": "GET",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
+    "function": "reserveRecordFile",
+    "method": "POST",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/record-files-api.ts",
+    "function": "uploadRecordFile",
+    "method": "PUT",
+    "path": "/api/files/{param}/content"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
@@ -778,18 +928,6 @@
     "function": "updateOpenViewRecord",
     "method": "PATCH",
     "path": "/api/records/{param}"
-  },
-  {
-    "adapter": "frontend/src/components/systems/openview/adapters/report-notification-api.ts",
-    "function": "listOpenViewReportNotifications",
-    "method": "GET",
-    "path": "/api/notifications"
-  },
-  {
-    "adapter": "frontend/src/components/systems/openview/adapters/report-notification-api.ts",
-    "function": "markOpenViewReportNotificationRead",
-    "method": "POST",
-    "path": "/api/notifications/{param}/read"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/report-schedule-api.ts",
@@ -966,6 +1104,48 @@
     "path": "/api/auth/sessions"
   },
   {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "archiveLibraryFile",
+    "method": "POST",
+    "path": "/api/files/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "downloadLibraryFile",
+    "method": "GET",
+    "path": "/api/files/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "getLibraryFile",
+    "method": "GET",
+    "path": "/api/files/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "listLibraryFiles",
+    "method": "GET",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "reopenLibraryFile",
+    "method": "POST",
+    "path": "/api/files/{param}/reopen"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "reserveLibraryFile",
+    "method": "POST",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/platform/adapters/library-files-api.ts",
+    "function": "uploadLibraryFile",
+    "method": "PUT",
+    "path": "/api/files/{param}/content"
+  },
+  {
     "adapter": "frontend/src/components/systems/platform/adapters/platform-search-api.ts",
     "function": "readPlatformSearch",
     "method": "GET",
@@ -1018,12 +1198,6 @@
     "function": "exportSandboxBundle",
     "method": "GET",
     "path": "/api/sandbox/export"
-  },
-  {
-    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
-    "function": "getSandboxTest",
-    "method": "GET",
-    "path": "/api/sandbox/tests/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
@@ -1188,8 +1362,38 @@
     "path": "/api/modules/{param}/purge/preview"
   },
   {
+    "adapter": "frontend/src/components/systems/shared/adapters/invalidation-events.ts",
+    "function": "subscribeWorkspaceInvalidations",
+    "method": "GET",
+    "path": "/api/events"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/notifications-api.ts",
+    "function": "getNotificationUnreadCount",
+    "method": "GET",
+    "path": "/api/notifications/unread-count"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/notifications-api.ts",
+    "function": "listNotifications",
+    "method": "GET",
+    "path": "/api/notifications"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/notifications-api.ts",
+    "function": "markAllNotificationsRead",
+    "method": "POST",
+    "path": "/api/notifications/read-all"
+  },
+  {
+    "adapter": "frontend/src/components/systems/shared/adapters/notifications-api.ts",
+    "function": "markNotificationRead",
+    "method": "POST",
+    "path": "/api/notifications/{param}/read"
+  },
+  {
     "adapter": "frontend/src/lib/api.ts",
-    "function": "hasAuthenticatedSession",
+    "function": "checkedSession",
     "method": "GET",
     "path": "/api/auth/session"
   },
@@ -1273,13 +1477,13 @@
   },
   {
     "adapter": "frontend/src/lib/user-theme-preferences.ts",
-    "function": "readUserTheme",
+    "function": "readUserPreferences",
     "method": "GET",
     "path": "/api/users/{param}/preferences"
   },
   {
     "adapter": "frontend/src/lib/user-theme-preferences.ts",
-    "function": "saveUserTheme",
+    "function": "saveUserPreferences",
     "method": "PATCH",
     "path": "/api/users/{param}/preferences"
   }

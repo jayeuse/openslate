@@ -66,6 +66,10 @@ def verify_access_controls(
     del admin_id
     issues: list[str] = []
     actions, results = _control_data(manifest, "access_controls", issues)
+    # People security shares this kind but has its own verifier.
+    actions = [
+        action for action in actions if action.values.get("operation") != "review_people_security"
+    ]
     operations = {action.values.get("operation"): action for action in actions}
     expected_operations = {
         "create_temporary_group",

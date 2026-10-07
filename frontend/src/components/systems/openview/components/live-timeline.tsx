@@ -18,6 +18,7 @@ import {
 import type { OpenViewWindowQueryRequest } from "../adapters/window-api";
 import type { OpenViewDataSourceField } from "../adapters/views-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
+import { formatOpenViewFieldValue } from "./live-record-cards";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -31,13 +32,6 @@ import {
 const PAGE_SIZE = 25;
 
 type TimelineScope = "window" | "unscheduled";
-
-function recordTitle(value: unknown, fallback: string): string {
-  if (typeof value === "string" && value.trim()) return value;
-  if (typeof value === "number" || typeof value === "boolean")
-    return String(value);
-  return fallback;
-}
 
 function progressValue(
   value: unknown,
@@ -85,6 +79,7 @@ function intervalPosition(
 }
 
 export function LiveTimeline({
+  region,
   moduleId,
   definition,
   dateRange,
@@ -221,6 +216,7 @@ export function LiveTimeline({
         }}
         onShiftWindow={shiftWindow}
         timezone={timezone}
+        locale={region?.locale}
       />
       {loading && result ? (
         <p
@@ -236,7 +232,7 @@ export function LiveTimeline({
       {error ? (
         <Alert
           role="alert"
-          variant="warning"
+          variant="destructive"
           className="m-4 flex flex-wrap items-center justify-between gap-3"
         >
           <p>{windowPageErrorMessage(error, result, offset)}</p>
@@ -291,8 +287,10 @@ export function LiveTimeline({
         <ul aria-label="Timeline intervals" className="divide-y">
           {result.items.map((row) => {
             const title = titleField
-              ? recordTitle(
+              ? formatOpenViewFieldValue(
                   openViewRecordFieldValue(row, titleField),
+                  titleField.type,
+                  region,
                   `Record ${row.id.slice(0, 8)}`,
                 )
               : `Record ${row.id.slice(0, 8)}`;
@@ -350,9 +348,15 @@ export function LiveTimeline({
                           startValue,
                           startField.type,
                           timezone,
+                          region?.locale,
                         )}
                         {" – "}
-                        {formatWindowDate(endValue, endField.type, timezone)}
+                        {formatWindowDate(
+                          endValue,
+                          endField.type,
+                          timezone,
+                          region?.locale,
+                        )}
                       </p>
                     ) : (
                       <p className="text-muted-foreground text-sm">
@@ -366,6 +370,7 @@ export function LiveTimeline({
                           row.data[deadlineField.id],
                           deadlineField.type,
                           timezone,
+                          region?.locale,
                         )}
                       </p>
                     ) : null}
@@ -400,21 +405,39 @@ export function LiveTimeline({
                         className="text-muted-foreground text-sm"
                       >
                         {field.name}:{" "}
-                        {recordTitle(openViewRecordFieldValue(row, field), "—")}
+                        {formatOpenViewFieldValue(
+                          openViewRecordFieldValue(row, field),
+                          field.type,
+                          region,
+                        )}
                       </p>
                     ))}
                   </div>
                   {scope === "window" ? (
                     <div className="flex min-w-0 flex-col justify-center gap-2">
                       <div className="text-muted-foreground flex justify-between text-xs">
-                        <span>{windowDates.start}</span>
-                        <span>{windowDates.end}</span>
+                        <span>
+                          {formatWindowDate(
+                            windowDates.start,
+                            "date",
+                            timezone,
+                            region?.locale,
+                          )}
+                        </span>
+                        <span>
+                          {formatWindowDate(
+                            windowDates.end,
+                            "date",
+                            timezone,
+                            region?.locale,
+                          )}
+                        </span>
                       </div>
                       <div
                         role="img"
                         aria-label={
                           position
-                            ? `${title} interval, ${formatWindowDate(startValue, startField.type, timezone)} to ${formatWindowDate(endValue, endField.type, timezone)}`
+                            ? `${title} interval, ${formatWindowDate(startValue, startField.type, timezone, region?.locale)} to ${formatWindowDate(endValue, endField.type, timezone, region?.locale)}`
                             : `${title} interval dates unavailable`
                         }
                         className="bg-muted relative h-3 overflow-hidden rounded-full"

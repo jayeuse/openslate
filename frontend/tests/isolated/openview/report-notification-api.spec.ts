@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { ApiContractError, ApiError } from "../../../src/lib/api";
 import {
-  listOpenViewReportNotifications,
-  markOpenViewReportNotificationRead,
-} from "../../../src/components/systems/openview/adapters/report-notification-api";
+  listNotifications,
+  markNotificationRead,
+} from "../../../src/components/systems/shared/adapters/notifications-api";
 
 const notificationId = "00000000-0000-4000-8000-000000000201";
 const otherNotificationId = "00000000-0000-4000-8000-000000000202";
@@ -45,6 +45,8 @@ function wireNotification(overrides: Record<string, unknown> = {}) {
   return {
     id: notificationId,
     kind: "report-run",
+    subject_type: "report_run",
+    subject_id: runId,
     report_id: reportId,
     run_id: runId,
     status: "unread",
@@ -68,17 +70,19 @@ test("lists current-user notification references with bounded paging and no cach
     jsonResponse({
       items: [wireNotification()],
       pagination: String(input).includes("limit=5")
-        ? { ...pagination, limit: 5, offset: 10 }
+        ? { ...pagination, limit: 5, offset: 10, total: 11 }
         : pagination,
     }),
   );
   try {
-    const page = await listOpenViewReportNotifications();
+    const page = await listNotifications();
     expect(page).toEqual({
       items: [
         {
           id: notificationId,
           kind: "report-run",
+          subjectType: "report_run",
+          subjectId: runId,
           reportId,
           runId,
           status: "unread",
@@ -100,7 +104,7 @@ test("lists current-user notification references with bounded paging and no cach
     );
     expect(mock.requests[0]?.init?.cache).toBe("no-store");
 
-    const laterPage = await listOpenViewReportNotifications({
+    const laterPage = await listNotifications({
       limit: 5,
       offset: 10,
     });
@@ -119,11 +123,11 @@ test("marks one notification read without a body or inferred report authority", 
     jsonResponse(wireNotification({ status: "read", read_at: timestamp })),
   );
   try {
-    await expect(
-      markOpenViewReportNotificationRead(notificationId),
-    ).resolves.toEqual({
+    await expect(markNotificationRead(notificationId)).resolves.toEqual({
       id: notificationId,
       kind: "report-run",
+      subjectType: "report_run",
+      subjectId: runId,
       reportId,
       runId,
       status: "read",
@@ -149,6 +153,8 @@ test("accepts reference-only Board post and Event reminder variants", async () =
         {
           id: notificationId,
           kind: "post-publish",
+          subject_type: "board_post",
+          subject_id: postId,
           board_id: boardId,
           post_id: postId,
           publication_revision_id: publicationRevisionId,
@@ -160,6 +166,8 @@ test("accepts reference-only Board post and Event reminder variants", async () =
         {
           id: otherNotificationId,
           kind: "event-reminder",
+          subject_type: "board_event",
+          subject_id: eventId,
           board_id: boardId,
           event_id: eventId,
           occurrence_id: `${eventId}:2026-09-23`,
@@ -174,11 +182,13 @@ test("accepts reference-only Board post and Event reminder variants", async () =
     }),
   );
   try {
-    const result = await listOpenViewReportNotifications();
+    const result = await listNotifications();
     expect(result.items).toEqual([
       {
         id: notificationId,
         kind: "post-publish",
+        subjectType: "board_post",
+        subjectId: postId,
         boardId,
         postId,
         publicationRevisionId,
@@ -190,6 +200,8 @@ test("accepts reference-only Board post and Event reminder variants", async () =
       {
         id: otherNotificationId,
         kind: "event-reminder",
+        subjectType: "board_event",
+        subjectId: eventId,
         boardId,
         eventId,
         occurrenceId: `${eventId}:2026-09-23`,
@@ -208,18 +220,10 @@ test("accepts reference-only Board post and Event reminder variants", async () =
 test("rejects invalid paging and IDs before a request", async () => {
   const mock = installFetch(() => jsonResponse({ items: [], pagination }));
   try {
-    await expect(
-      listOpenViewReportNotifications({ limit: 101 }),
-    ).rejects.toThrow();
-    await expect(
-      listOpenViewReportNotifications({ offset: -1 }),
-    ).rejects.toThrow();
-    await expect(
-      listOpenViewReportNotifications({ offset: 0.5 }),
-    ).rejects.toThrow();
-    await expect(
-      markOpenViewReportNotificationRead("not-a-uuid"),
-    ).rejects.toThrow();
+    await expect(listNotifications({ limit: 101 })).rejects.toThrow();
+    await expect(listNotifications({ offset: -1 })).rejects.toThrow();
+    await expect(listNotifications({ offset: 0.5 })).rejects.toThrow();
+    await expect(markNotificationRead("not-a-uuid")).rejects.toThrow();
     expect(mock.requests).toHaveLength(0);
   } finally {
     mock.restore();
@@ -233,6 +237,47 @@ test("rejects malformed or mismatched private notification response data", async
       items: [wireNotification({ created_at: "2026-09-23T08:00:00+08:00" })],
       pagination,
     },
+    { items: [wireNotification({ subject_type: undefined })], pagination },
+    { items: [wireNotification({ subject_id: undefined })], pagination },
+    { items: [wireNotification({ subject_type: "board_post" })], pagination },
+    { items: [wireNotification({ subject_id: postId })], pagination },
+    {
+      items: [
+        {
+          id: notificationId,
+          kind: "post-publish",
+          subject_type: "board_post",
+          subject_id: eventId,
+          board_id: boardId,
+          post_id: postId,
+          publication_revision_id: publicationRevisionId,
+          status: "unread",
+          scheduled_for: timestamp,
+          created_at: timestamp,
+          read_at: null,
+        },
+      ],
+      pagination,
+    },
+    {
+      items: [
+        {
+          id: notificationId,
+          kind: "event-reminder",
+          subject_type: "board_event",
+          subject_id: postId,
+          board_id: boardId,
+          event_id: eventId,
+          occurrence_id: `${eventId}:2026-09-23`,
+          occurrence_start_at: timestamp,
+          status: "unread",
+          scheduled_for: timestamp,
+          created_at: timestamp,
+          read_at: null,
+        },
+      ],
+      pagination,
+    },
     wireNotification({
       id: otherNotificationId,
       status: "read",
@@ -241,15 +286,14 @@ test("rejects malformed or mismatched private notification response data", async
   ];
   const mock = installFetch(() => jsonResponse(responses.shift()));
   try {
-    await expect(listOpenViewReportNotifications()).rejects.toBeInstanceOf(
+    while (responses.length > 1) {
+      await expect(listNotifications()).rejects.toBeInstanceOf(
+        ApiContractError,
+      );
+    }
+    await expect(markNotificationRead(notificationId)).rejects.toBeInstanceOf(
       ApiContractError,
     );
-    await expect(listOpenViewReportNotifications()).rejects.toBeInstanceOf(
-      ApiContractError,
-    );
-    await expect(
-      markOpenViewReportNotificationRead(notificationId),
-    ).rejects.toBeInstanceOf(ApiContractError);
   } finally {
     mock.restore();
   }
@@ -262,14 +306,12 @@ test("does not expose untrusted server error text", async () => {
   ];
   const mock = installFetch(() => responses.shift()!);
   try {
-    await expect(
-      markOpenViewReportNotificationRead(notificationId),
-    ).rejects.toMatchObject({
+    await expect(markNotificationRead(notificationId)).rejects.toMatchObject({
       status: 404,
       message: "Notification not found",
     });
     try {
-      await listOpenViewReportNotifications();
+      await listNotifications();
       throw new Error("Expected a safe API error");
     } catch (error) {
       expect(error).toBeInstanceOf(ApiError);
@@ -279,6 +321,96 @@ test("does not expose untrusted server error text", async () => {
       );
       expect(JSON.stringify(error)).not.toContain("internal database secret");
     }
+  } finally {
+    mock.restore();
+  }
+});
+
+test("accepts six new reference variants while retaining strict dates and metadata", async () => {
+  const base = {
+    id: notificationId,
+    status: "unread",
+    created_at: timestamp,
+    read_at: null,
+  };
+  const variants = [
+    {
+      ...base,
+      kind: "report-run-failed",
+      subject_type: "scheduled_work",
+      subject_id: otherNotificationId,
+      report_id: reportId,
+      scheduled_for: timestamp,
+    },
+    {
+      ...base,
+      kind: "backup-failed",
+      subject_type: "backup_run",
+      subject_id: otherNotificationId,
+      scheduled_for: null,
+    },
+    {
+      ...base,
+      kind: "record-assigned",
+      subject_type: "record",
+      subject_id: otherNotificationId,
+      module_id: reportId,
+      scheduled_for: null,
+    },
+    {
+      ...base,
+      kind: "invitation-accepted",
+      subject_type: "user",
+      subject_id: otherNotificationId,
+      scheduled_for: null,
+    },
+    {
+      ...base,
+      kind: "sandbox-published",
+      subject_type: "sandbox_version",
+      subject_id: otherNotificationId,
+      version_sequence: 8,
+      scheduled_for: null,
+    },
+    {
+      ...base,
+      kind: "access-changed",
+      subject_type: "user",
+      subject_id: otherNotificationId,
+      scheduled_for: null,
+    },
+  ];
+  let body: unknown;
+  const mock = installFetch(() => jsonResponse(body));
+  try {
+    for (const item of variants) {
+      body = { items: [item], pagination };
+      const result = await listNotifications();
+      expect(result.items[0]).toMatchObject({
+        kind: item.kind,
+        subjectId: item.subject_id,
+        scheduledFor: item.scheduled_for,
+      });
+      for (const malformed of [
+        {
+          ...item,
+          scheduled_for: item.scheduled_for === null ? timestamp : null,
+        },
+        { ...item, subject_type: "unknown" },
+        { ...item, work_id: otherNotificationId },
+        {
+          ...item,
+          module_id: item.kind === "record-assigned" ? undefined : reportId,
+        },
+      ]) {
+        body = { items: [malformed], pagination };
+        await expect(listNotifications()).rejects.toBeInstanceOf(
+          ApiContractError,
+        );
+      }
+    }
+    body = { items: [wireNotification({ scheduled_for: null })], pagination };
+    await expect(listNotifications()).rejects.toBeInstanceOf(ApiContractError);
   } finally {
     mock.restore();
   }

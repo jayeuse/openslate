@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
+import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 import { listBoardEventOccurrences } from "../adapters/board-events-api";
 import type { BoardEventOccurrencePage } from "../adapters/board-events-api";
 
@@ -41,7 +42,11 @@ function dateKey(date: Date): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
 }
 
-export function calendarWindowForMonth(month: string): CalendarWindow {
+/** The label uses the workspace format; without a region it is the plain month. */
+export function calendarWindowForMonth(
+  month: string,
+  region?: WorkspaceRegion,
+): CalendarWindow {
   const first = monthDate(month);
   const last = new Date(
     Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0, 12),
@@ -49,11 +54,12 @@ export function calendarWindowForMonth(month: string): CalendarWindow {
   return {
     start: dateKey(first),
     end: dateKey(last),
-    label: new Intl.DateTimeFormat(undefined, {
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC",
-    }).format(first),
+    label: region
+      ? formatWorkspaceDate(dateKey(first), region, {
+          month: "long",
+          year: "numeric",
+        })
+      : month,
   };
 }
 

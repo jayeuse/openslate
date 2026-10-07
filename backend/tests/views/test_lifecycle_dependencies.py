@@ -184,3 +184,66 @@ def test_close_does_not_archive_file_or_view(query_db):
     execute_lifecycle(query_db, plan)
     assert not attachment.is_deleted and attachment.state == "awaiting_upload"
     assert not view.is_deleted
+
+
+def test_department_library_blocks_purge_tracks_drift_then_deletes_confirmed_inventory(query_db):
+    import pytest
+    from sqlalchemy import select
+
+    from app.systems.manage.audit.models import AuditLog
+    from app.systems.sandbox.departments.models import Department
+    from app.systems.sandbox.lifecycle.exceptions import LifecyclePlanDriftError
+    from app.systems.sandbox.lifecycle.execution import execute_lifecycle
+
+    db = query_db
+    owner = actor(db)
+    now = datetime.now(UTC)
+    department = Department(department_name=f"Library {uuid7()}", is_deleted=True, deleted_at=now)
+    other = Department(department_name=f"Other library {uuid7()}", is_deleted=True, deleted_at=now)
+    db.add_all([department, other])
+    db.flush()
+    file = File(
+        purpose="library_document",
+        department_id=department.id,
+        creator_id=owner.id,
+        filename="retained.pdf",
+        expected_size=100,
+        object_key=uuid7().hex,
+        state="awaiting_upload",
+        is_deleted=True,
+        deleted_at=now,
+    )
+    db.add(file)
+    db.commit()
+    department_id, file_id = department.id, file.id
+    blocked = plan_lifecycle(db, "department", department_id, "purge", None)
+    assert file_id in blocked.scope_ids["files"]
+    blocker = next(item for item in blocked.blockers if item.entity_id == file_id)
+    assert blocker.code == "purge_file_dependency"
+    assert (
+        blocker.conflicting_entity_type == "departments"
+        and blocker.conflicting_entity_id == department_id
+    )
+    file.state = "purged"
+    db.commit()
+    approved = plan_lifecycle(db, "department", department_id, "purge", None)
+    assert not approved.blockers and approved.impact_digest != blocked.impact_digest
+    file.department_id = other.id
+    db.commit()
+    with pytest.raises(LifecyclePlanDriftError):
+        execute_lifecycle(db, approved)
+    assert db.get(File, file_id) is not None and db.get(Department, department_id) is not None
+    file = db.get(File, file_id)
+    file.department_id = department_id
+    db.commit()
+    execute_lifecycle(db, plan_lifecycle(db, "department", department_id, "purge", None))
+    assert db.get(File, file_id) is None and db.get(Department, department_id) is None
+    assert db.get(Department, other.id) is not None
+    deleted = db.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_type == "files",
+            AuditLog.entity_id == file_id,
+            AuditLog.action == "delete",
+        )
+    )
+    assert deleted is not None and deleted.department_id == department_id

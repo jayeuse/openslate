@@ -24,6 +24,7 @@ class PlatformWire:
     def __init__(self, dataset, fault="none", original_theme="dark"):
         self.dataset, self.fault, self.theme = dataset, fault, original_theme
         self.original_theme = original_theme
+        self.appearance = {"motion": "reduce", "keyboard_shortcuts": False}
         self.requests, self.records, self.created, self.tokens = [], {}, [], {}
         self.previews, self.commits, self.purges = 0, 0, 0
         self.pending_reviews = {}
@@ -283,8 +284,10 @@ class PlatformWire:
         if path.endswith("/preferences"):
             assert path == f"/api/users/{ADMIN_ID}/preferences"
             if method == "PATCH":
-                assert set(body) == {"theme"} and body["theme"] in ("light", "dark")
+                assert set(body) == {"theme"} and body["theme"] in ("light", "dark", "system")
                 self.theme = body["theme"]
+                if self.fault == "appearance_lost":
+                    self.appearance = {"motion": "system", "keyboard_shortcuts": True}
             value = self.theme
             if (
                 self.fault == "theme_unsaved"
@@ -303,6 +306,7 @@ class PlatformWire:
                 json={
                     "user_id": str(uuid4()) if self.fault == "theme_owner" else ADMIN_ID,
                     "theme": value,
+                    "appearance": dict(self.appearance),
                 },
             )
         if path == "/api/search":

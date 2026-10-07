@@ -17,7 +17,7 @@ export function Alert({
   };
   return (
     <div
-      role="status"
+      role={variant === "destructive" ? "alert" : "status"}
       data-slot="alert"
       data-variant={variant}
       className={cn(

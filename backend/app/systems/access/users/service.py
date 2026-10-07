@@ -17,6 +17,7 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
     get_supabase_auth_client,
 )
+from app.systems.access.identity.mfa_observations import initialize_observation
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.users.coordination import (
@@ -25,6 +26,7 @@ from app.systems.access.users.coordination import (
     InvitationNotFound,
     ProfileValidationError,
     get_user,
+    token_cutoff,
     validate_identity_profile,
 )
 from app.systems.access.users.invitation_provider import prepare_invitation_user
@@ -66,8 +68,11 @@ def _security_event(
 
 
 def _record_invitation_failure(
-    operation_id: UUID, actor_id: UUID | None, *,
-    event_type: str = "user.invitation", subject_id: UUID | None = None,
+    operation_id: UUID,
+    actor_id: UUID | None,
+    *,
+    event_type: str = "user.invitation",
+    subject_id: UUID | None = None,
 ) -> None:
     """Record a secondary failure event without replacing the primary safe error."""
 
@@ -120,9 +125,7 @@ def _other_administrator_exists(db: Session, excluded_user_id: UUID) -> bool:
 
 def _guest_duration_days(db: Session) -> int:
     value = db.scalar(
-        select(WorkspaceProfile.guest_duration_days).where(
-            WorkspaceProfile.singleton_key.is_(True)
-        )
+        select(WorkspaceProfile.guest_duration_days).where(WorkspaceProfile.singleton_key.is_(True))
     )
     if type(value) is not int or not 1 <= value <= 365:
         raise InvitationError("Invitation settings are unavailable")
@@ -203,6 +206,7 @@ def invite_user(
         )
         db.add(user)
         db.flush()
+        initialize_observation(db, user.id)
         for group_id in group_ids:
             db.add(GroupMember(group_id=group_id, user_id=user.id, performed_by=actor_id))
         db.commit()
@@ -271,7 +275,7 @@ def revoke_invitation(db: Session, user_id: UUID, *, actor_id: UUID) -> None:
             raise InvitationConflict("Invitation is no longer pending")
         timestamp = utc_now()
         profile.invitation_sent_at = None
-        profile.tokens_valid_after = timestamp
+        profile.tokens_valid_after = token_cutoff(timestamp)
         revoke_user_sessions(db, profile.id, except_session_id=None, now=timestamp)
         append_security_event(
             db,
@@ -304,8 +308,11 @@ def resend_invitation(
 
     operation_id = uuid7()
     _security_event(
-        event_type="user.invitation_resend", outcome=SecurityEventOutcome.ATTEMPT,
-        operation_id=operation_id, actor_id=actor_id, subject_id=user_id,
+        event_type="user.invitation_resend",
+        outcome=SecurityEventOutcome.ATTEMPT,
+        operation_id=operation_id,
+        actor_id=actor_id,
+        subject_id=user_id,
     )
     provider = client or get_supabase_auth_client()
     try:
@@ -380,9 +387,7 @@ def reconcile_invitation(
             raise InvitationError("Invitation is not pending")
         if bootstrap:
             _lock_administrator_changes(db)
-            if profile.role != UserRole.ADMIN.value or _other_administrator_exists(
-                db, profile.id
-            ):
+            if profile.role != UserRole.ADMIN.value or _other_administrator_exists(db, profile.id):
                 raise InvitationError("Bootstrap reservation is unavailable")
         operation_id = profile.provider_invitation_operation_id
         provider_user = prepare_invitation_user(provider, profile)

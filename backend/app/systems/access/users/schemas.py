@@ -2,8 +2,9 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
+from app.common.listing import StandardListResponse
 from app.common.normalization import normalize_email, normalize_username
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import UserRole, UserStatus
@@ -29,6 +30,28 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class DirectoryRowResponse(UserResponse):
+    active_session_count: int = Field(ge=0)
+    mfa_verified_totp: StrictBool | None
+    mfa_observed_at: datetime | None
+    last_sign_in_at: datetime | None
+    last_active_at: datetime | None
+
+
+class UserListResponse(StandardListResponse[DirectoryRowResponse]):
+    pass
+
+
+class UserSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    admins_without_mfa: int = Field(ge=0)
+    admins_mfa_unknown: int = Field(ge=0)
+    no_recorded_sign_in: int = Field(ge=0)
+    inactive_people: int = Field(ge=0)
+    as_of: datetime
+    inactive_days: int = Field(ge=1, le=3650)
+
+
 class AccessEntryResponse(BaseModel):
     """The user's effective level on a department (``module_id`` null) or on one module.
 
@@ -44,15 +67,33 @@ class AuthMeResponse(UserResponse):
     access: list[AccessEntryResponse]
 
 
+class AppearancePreferences(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    motion: Literal["system", "reduce"]
+    keyboard_shortcuts: StrictBool
+
+
+class AppearancePreferencesUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    motion: Literal["system", "reduce"] = "system"
+    keyboard_shortcuts: StrictBool = True
+
+
 class UserPreferencesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     user_id: UUID
-    theme: Literal["light", "dark"]
+    theme: Literal["light", "dark", "system"]
+    appearance: AppearancePreferences
 
 
 class UserPreferencesUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    theme: Literal["light", "dark"]
+    theme: Literal["light", "dark", "system"] = "system"
+    appearance: AppearancePreferencesUpdate = Field(default_factory=AppearancePreferencesUpdate)
 
 
 class AccessGroupResponse(BaseModel):
@@ -132,3 +173,39 @@ class UserUpdate(BaseModel):
     @classmethod
     def normalize_username(cls, value: Any) -> Any:
         return normalize_username(value)
+
+
+class UserSecurityResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: UUID
+    verified_factor_count: int = Field(ge=0)
+    target_eligible: StrictBool
+    smtp_configured: StrictBool
+
+
+class UserRecoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revoke_sessions: StrictBool = False
+
+
+class UserRecoveryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation_id: UUID
+    user_id: UUID
+    email_request: Literal["accepted"] = "accepted"
+    local_revocation: Literal["not_requested", "committed"]
+    revoked_sessions: int | None = Field(ge=0)
+
+
+class UserMfaResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class UserMfaResetResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation_id: UUID
+    user_id: UUID
+    factors_cleared: Literal[True] = True
+    local_revocation: Literal["committed"] = "committed"
+    revoked_sessions: int = Field(ge=0)

@@ -289,12 +289,15 @@ def test_bulk_session_control_fails_when_post_readback_is_not_empty(tmp_path: Pa
         "policy_not_saved",
         "pagination",
         "remaining_page",
+        "session_retention_ignored",
+        "event_retention_ignored",
+        "retention_restore_lost",
     ),
 )
 def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, problem):
-    from operations.sample.client import SampleClientError
+    from operations.sample.client import SampleWriteOutcomeUnknown
     from operations.sample.controls.actions import execute_control_action
-    from tests.operations.sample.controls.test_sample_control_read_reviews import _manage_run
+    from tests.operations.sample.controls.sample_manage_wire import _manage_run
 
     dataset, actions, context, state = _manage_run(tmp_path, "harbor", problem)
     if problem == "credential_identity":
@@ -310,19 +313,53 @@ def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, probl
         "review_mfa_status"
         if problem == "mfa_identity"
         else "update_workspace_security"
-        if problem == "policy_not_saved"
+        if problem
+        in {
+            "policy_not_saved",
+            "session_retention_ignored",
+            "event_retention_ignored",
+            "retention_restore_lost",
+        }
         else "review_admin_sessions"
         if problem == "pagination"
         else "revoke_admin_sessions"
     )
     action = next(a for a in actions if a.values["operation"] == operation)
+    messages = {
+        "missing_credential": "Primary actor credential binding is invalid",
+        "credential_identity": "Primary actor credential binding is invalid",
+        "bulk_unknown": "DELETE outcome is unknown",
+        "reauth_denied": "Manage write did not match its planned result",
+        "mfa_identity": "Sample MFA status differs from the unenrolled actor",
+        "policy_not_saved": "Workspace security update was not persisted",
+        "pagination": "Administrator session pagination is incomplete or ambiguous",
+        "remaining_page": "Administrator session pagination is incomplete or ambiguous",
+        "session_retention_ignored": "Workspace security update was not persisted",
+        "event_retention_ignored": "Workspace security update was not persisted",
+        "retention_restore_lost": "Workspace security policy was not restored",
+    }
+    expected_error = (
+        SampleWriteOutcomeUnknown if problem == "bulk_unknown" else SamplePhaseActionError
+    )
     try:
-        with pytest.raises((SamplePhaseActionError, SampleClientError)):
+        with pytest.raises(expected_error, match=messages[problem]) as error:
             execute_control_action(action, dataset, context)
+        if isinstance(error.value, SamplePhaseActionError):
+            if problem == "reauth_denied":
+                assert error.value.step.startswith("reauth:")
+                assert error.value.status_code == 401
+            else:
+                assert error.value.step == action.key
+        else:
+            assert error.value.status_code == 503
+            assert error.value.attempt_id is not None
+            assert error.value.request_id is not None
         deletes = [row for row in state["seen"] if row == ("DELETE", "/api/auth/admin-sessions")]
         assert len(deletes) == (problem in {"bulk_unknown", "reauth_denied", "remaining_page"})
         if problem == "remaining_page":
             assert len(state["logins"]) == len(context.clients)
+        if "retention" in problem:
+            assert len(state["patches"]) == (2 if problem == "retention_restore_lost" else 1)
         if problem == "bulk_unknown":
             journal = [
                 json.loads(line) for line in (tmp_path / "manage.jsonl").read_text().splitlines()

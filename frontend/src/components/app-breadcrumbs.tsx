@@ -30,8 +30,8 @@ const routeLabels: Record<string, string> = {
 const crumbTarget = "inline-flex min-h-6 items-center";
 
 /**
- * Workspace › workspace › open section. Phones drop the Workspace root so the
- * crumbs that change stay readable.
+ * Workspace › workspace › open section. Phones show only the open section so
+ * it never truncates at large text sizes; the sidebar names the workspace.
  */
 export function AppBreadcrumbs() {
   const pathname = usePathname();
@@ -66,7 +66,7 @@ export function AppBreadcrumbs() {
         <BreadcrumbSeparator className="max-sm:hidden" />
         {location ? (
           <>
-            <BreadcrumbItem className="shrink-0">
+            <BreadcrumbItem className="shrink-0 max-sm:hidden">
               <BreadcrumbLink
                 className={crumbTarget}
                 render={
@@ -78,7 +78,7 @@ export function AppBreadcrumbs() {
                 {location.workspace.label}
               </BreadcrumbLink>
             </BreadcrumbItem>
-            <BreadcrumbSeparator />
+            <BreadcrumbSeparator className="max-sm:hidden" />
           </>
         ) : null}
         <BreadcrumbItem className="min-w-0">

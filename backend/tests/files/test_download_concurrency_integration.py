@@ -3,6 +3,7 @@
 from hashlib import sha256
 from io import BytesIO
 from threading import Event, Thread
+from types import SimpleNamespace
 from typing import Annotated
 from uuid import uuid4
 
@@ -101,6 +102,8 @@ def committed_logo(guarded_db):
 
 def client_for(engine, actor_id, storage):
     app = create_app()
+    # Only the readers and mutation callback participate in this concurrency fixture.
+    app.state.provider_signout_worker = SimpleNamespace(start=lambda: None, stop=lambda: True)
 
     def database(request: Request):
         with AuditSession(engine) as db:
@@ -196,22 +199,30 @@ def test_logo_mutation_during_storage_read_prevents_stale_delivery(
     engine, actor_id, file_id, content = committed_logo
 
     class Storage:
+        def __init__(self):
+            self.deleted = set()
+
+        def delete(self, key):
+            self.deleted.add(key)
+
         def download(self, key):
+            if key in self.deleted:
+                return None
             with AuditSession(engine) as db:
                 if mutation == "archive":
                     service.archive(db, actor_id, file_id)
                 else:
                     profile = db.scalar(select(WorkspaceProfile))
-                    actor = db.scalar(
-                        select(User).where(User.id == actor_id)
-                    )
+                    actor = db.scalar(select(User).where(User.id == actor_id))
                     update_workspace(
                         WorkspaceUpdate(revision=profile.revision, logo_file_id=None), actor, db
                     )
             return content
 
     monkeypatch.setattr(service, "append_committed_security_event", lambda payload: None)
-    with client_for(engine, actor_id, Storage()) as client:
+    storage = Storage()
+    monkeypatch.setattr("app.systems.manage.workspace.router.get_storage", lambda: storage)
+    with client_for(engine, actor_id, storage) as client:
         result = client.get("/api/workspace/logo")
     assert result.status_code == 404, result.text
     assert result.content != content

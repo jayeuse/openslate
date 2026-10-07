@@ -12,6 +12,7 @@ from app.systems.boards.models import Board
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.platform.scheduling.models import (
     InAppNotification,
+    NotificationKind,
     ScheduledWork,
     WorkKind,
     WorkState,
@@ -67,5 +68,12 @@ def stage_publication_inbox(
     with db.no_autoflush:
         recipients = sorted(board_reader_ids(db, board))
     db.add_all(
-        InAppNotification(work_id=work.id, recipient_id=recipient_id) for recipient_id in recipients
+        InAppNotification(
+            work_id=work.id,
+            recipient_id=recipient_id,
+            kind=NotificationKind.POST_PUBLISH,
+            subject_type="board_post",
+            subject_id=item.id,
+        )
+        for recipient_id in recipients
     )

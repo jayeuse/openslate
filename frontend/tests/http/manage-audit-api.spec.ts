@@ -329,12 +329,19 @@ test.beforeEach(async ({ page }) => {
       json: {
         id: fixtureId(77),
         display_name: "Harbor workspace",
+        legal_name: null,
+        description: null,
+        contact_email: null,
+        contact_phone: null,
+        postal_address: null,
         locale: "fr-FR",
         timezone: "Asia/Manila",
+        logo_file_id: null,
         mark: "RS",
         currency: "PHP",
         week_start: "monday",
         business_hours: "09:00–18:00",
+        theme: "slate",
         revision: 4,
       },
     }),
@@ -808,7 +815,7 @@ for (const code of ["mfa_required", "ip_not_allowed"] as const) {
     if (code === "mfa_required")
       await expect(
         curtain.getByRole("heading", {
-          name: "Complete multi-factor authentication",
+          name: "Complete two-step verification",
           exact: true,
         }),
       ).toBeVisible();
@@ -826,7 +833,7 @@ for (const code of ["mfa_required", "ip_not_allowed"] as const) {
     state.networkDenied = false;
     await curtain
       .getByRole("button", {
-        name: code === "mfa_required" ? "Retry session check" : "Retry",
+        name: code === "mfa_required" ? "Check again" : "Retry",
         exact: true,
       })
       .click();
@@ -1095,12 +1102,19 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
           json: {
             id: fixtureId(77),
             display_name: "Harbor workspace",
+            legal_name: null,
+            description: null,
+            contact_email: null,
+            contact_phone: null,
+            postal_address: null,
             locale: "fr-FR",
             timezone: "Asia/Manila",
+            logo_file_id: null,
             mark: "RS",
             currency: "PHP",
             week_start: "monday",
             business_hours: "09:00–18:00",
+            theme: "slate",
             revision: 4,
           },
         })
@@ -1247,12 +1261,19 @@ test("Audit date filters use workspace-local day bounds across a daylight-saving
       json: {
         id: fixtureId(77),
         display_name: "Harbor workspace",
+        legal_name: null,
+        description: null,
+        contact_email: null,
+        contact_phone: null,
+        postal_address: null,
         locale: "en-US",
         timezone: "America/New_York",
+        logo_file_id: null,
         mark: "RS",
         currency: "PHP",
         week_start: "monday",
         business_hours: "09:00–18:00",
+        theme: "slate",
         revision: 4,
       },
     }),

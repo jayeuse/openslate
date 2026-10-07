@@ -5,10 +5,21 @@ import {
   type QueryClient,
   type QueryKey,
 } from "@tanstack/react-query";
+import { getMfaStatus } from "@/lib/mfa-api";
+import { INACTIVE_DAYS_DEFAULT } from "../state/api-contracts";
+import { ApiError } from "@/lib/api";
+import {
+  getAccessSecurityPolicy,
+  getPersonSecurity,
+  listAccessSessions,
+  type AccessSecurityPolicy,
+  type AccessSessionsRequest,
+} from "./security-api";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import {
   getAccessInvitationSettings,
   getAccessUserAccess,
+  getAccessUserSummary,
   listAccessDepartments,
   listAccessGroups,
   listAccessMemberCandidates,
@@ -17,13 +28,19 @@ import {
   listAccessUsers,
   type AccessDeletedFilter,
   type AccessInvitationSettings,
+  type AccessUserListOptions,
 } from "../state/api";
 import { loadAllAccessPages } from "../state/pagination";
+import {
+  getAccessSecurityEvent,
+  listAccessSecurityEvents,
+  type AccessSecurityEventsRequest,
+} from "./security-events-api";
 
 // Section-level Access reads share the per-account client cache. Every key
 // starts with "access", so one prefix marks the area stale. Access lists are
-// complete collections: the directory, the group editor pickers and the
-// overview health counts all need every row, not a first page. A person's
+// complete collections where pickers and existing health counts need every
+// row. The directory uses a separate server page. A person's
 // effective access and sessions are cached under the users key, so a change
 // to that person (a disable revokes sessions) marks them stale. Single-row
 // detail reads stay in their components.
@@ -33,12 +50,27 @@ import { loadAllAccessPages } from "../state/pagination";
 
 export const accessKeys = {
   all: ["access"] as const,
+  security: () => ["access", "security"] as const,
+  securityEvents: () => ["access", "security-events"] as const,
+  securityEventList: (request: AccessSecurityEventsRequest) =>
+    ["access", "security-events", request] as const,
+  adminSessions: () => ["access", "admin-sessions"] as const,
+  adminSessionList: (request: AccessSessionsRequest) =>
+    ["access", "admin-sessions", request] as const,
   users: ["access", "users"] as const,
   userList: (deleted: AccessDeletedFilter) =>
     ["access", "users", "list", deleted] as const,
+  directory: () => ["access", "users", "directory"] as const,
+  directoryPage: (request: AccessUserListOptions) =>
+    ["access", "users", "directory", request] as const,
+  userSummary: () => ["access", "users", "summary"] as const,
+  userSummaryForDays: (inactiveDays: number) =>
+    ["access", "users", "summary", inactiveDays] as const,
   userAccessAll: ["access", "users", "access"] as const,
   userAccess: (userId: string) =>
     ["access", "users", "access", userId] as const,
+  personSecurity: (userId: string) =>
+    ["access", "users", "security", userId] as const,
   userSessions: (userId: string) =>
     ["access", "users", "sessions", userId] as const,
   groups: ["access", "groups"] as const,
@@ -63,6 +95,28 @@ export const userListOptions = (deleted: AccessDeletedFilter) =>
         { signal },
       ),
   });
+
+export const directoryPageOptions = (request: AccessUserListOptions) =>
+  queryOptions({
+    queryKey: accessKeys.directoryPage(request),
+    queryFn: ({ signal }) => listAccessUsers({ ...request, signal }),
+  });
+
+export const userSummaryOptions = (inactiveDays = INACTIVE_DAYS_DEFAULT) =>
+  queryOptions({
+    queryKey: accessKeys.userSummaryForDays(inactiveDays),
+    queryFn: ({ signal }) =>
+      getAccessUserSummary({ signal, inactive_days: inactiveDays }),
+  });
+
+/** Observation writes do not emit a User ORM invalidation. Never refresh the
+ * person-security query here: its accepted read calls this follow-up. */
+export function afterAccessMfaObservation(client: QueryClient) {
+  return invalidateAll(client, [
+    accessKeys.directory(),
+    accessKeys.userSummary(),
+  ]);
+}
 
 /** One person's effective access and the groups that give it. */
 export const userAccessOptions = (userId: string) =>
@@ -163,6 +217,7 @@ export function afterAccessGroupChange(client: QueryClient): Promise<void> {
   return invalidateAll(client, [
     accessKeys.groups,
     accessKeys.userAccessAll,
+    accessKeys.directory(),
     authMeOptions().queryKey,
   ]);
 }
@@ -182,4 +237,142 @@ async function invalidateAll(
   await Promise.all(
     queryKeys.map((queryKey) => client.invalidateQueries({ queryKey })),
   );
+}
+
+// Privileged-read refusal belongs to the verified account's existing client.
+// Ordinary successes cannot clear it; only the owner's explicit fresh Retry can.
+type SecurityRead = "policy" | "sessions" | "events";
+type ReadAdmission = { sequence: number; accepted: number; denied: boolean };
+const securityReads = new WeakMap<
+  QueryClient,
+  Record<SecurityRead, ReadAdmission>
+>();
+function securityRead(client: QueryClient, kind: SecurityRead) {
+  let reads = securityReads.get(client);
+  if (!reads) {
+    reads = {
+      policy: { sequence: 0, accepted: 0, denied: false },
+      sessions: { sequence: 0, accepted: 0, denied: false },
+      events: { sequence: 0, accepted: 0, denied: false },
+    };
+    securityReads.set(client, reads);
+  }
+  return reads[kind];
+}
+export function isAccessSecurityDenied(
+  client: QueryClient,
+  kind: SecurityRead,
+) {
+  return securityRead(client, kind).denied;
+}
+export function setAccessSecurityDenied(
+  client: QueryClient,
+  kind: SecurityRead,
+  denied: boolean,
+) {
+  securityRead(client, kind).denied = denied;
+}
+async function readSecurity<T>(
+  client: QueryClient,
+  kind: SecurityRead,
+  signal: AbortSignal,
+  read: () => Promise<T>,
+): Promise<T> {
+  const admission = securityRead(client, kind);
+  const sequence = ++admission.sequence;
+  try {
+    const result = await read();
+    if (!signal.aborted)
+      admission.accepted = Math.max(admission.accepted, sequence);
+    return result;
+  } catch (error) {
+    if (
+      !signal.aborted &&
+      sequence >= admission.accepted &&
+      error instanceof ApiError &&
+      (error.status === 401 || error.status === 403)
+    ) {
+      securityRead(client, "policy").denied = true;
+      securityRead(client, "sessions").denied = true;
+      securityRead(client, "events").denied = true;
+    }
+    throw error;
+  }
+}
+export const accessSecurityOptions = (client: QueryClient) =>
+  queryOptions({
+    queryKey: accessKeys.security(),
+    queryFn: ({ signal }) =>
+      readSecurity(client, "policy", signal, () =>
+        getAccessSecurityPolicy(signal),
+      ),
+  });
+export const accessAdminSessionsOptions = (
+  client: QueryClient,
+  request: AccessSessionsRequest,
+) =>
+  queryOptions({
+    queryKey: accessKeys.adminSessionList(request),
+    queryFn: ({ signal }) =>
+      readSecurity(client, "sessions", signal, () =>
+        listAccessSessions(request, signal),
+      ),
+  });
+export const accessSecurityEventsOptions = (
+  client: QueryClient,
+  request: AccessSecurityEventsRequest,
+) =>
+  queryOptions({
+    queryKey: accessKeys.securityEventList(request),
+    queryFn: ({ signal }) =>
+      readSecurity(client, "events", signal, () =>
+        listAccessSecurityEvents(request, signal),
+      ),
+  });
+export function readAccessSecurityEvent(
+  client: QueryClient,
+  eventId: string,
+  signal: AbortSignal,
+) {
+  return readSecurity(client, "events", signal, () =>
+    getAccessSecurityEvent(eventId, signal),
+  );
+}
+export function afterAccessSecurityChange(
+  client: QueryClient,
+  policy: AccessSecurityPolicy,
+) {
+  client.setQueryData(accessKeys.security(), policy);
+}
+export function afterAccessAdminSessionsChange(client: QueryClient) {
+  return invalidateAll(client, [
+    accessKeys.adminSessions(),
+    accessKeys.directory(),
+  ]);
+}
+
+export const personSecurityOptions = (userId: string, actorId: string) =>
+  queryOptions({
+    queryKey: accessKeys.personSecurity(userId),
+    queryFn: async ({ signal, client }) => {
+      const [status, actor] = await Promise.all([
+        getPersonSecurity(userId, signal),
+        getMfaStatus(signal),
+      ]);
+      if (actor.user_id !== actorId)
+        throw new Error("Security identity changed.");
+      if (!signal.aborted) await afterAccessMfaObservation(client);
+      return { status, assurance: actor.assurance_level };
+    },
+  });
+export function afterPersonSecurityChange(client: QueryClient, userId: string) {
+  return Promise.all([
+    client.fetchQuery({ ...userSessionsOptions(userId), staleTime: 0 }),
+    client.invalidateQueries({ queryKey: accessKeys.adminSessions() }),
+    afterAccessMfaObservation(client),
+    client.invalidateQueries({
+      queryKey: accessKeys.personSecurity(userId),
+      refetchType: "none",
+    }),
+  ]);
 }

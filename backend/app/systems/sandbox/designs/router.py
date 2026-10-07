@@ -183,24 +183,6 @@ def post_restoration(
     )
 
 
-@router.post(
-    "/versions/{version_id}/rollbacks",
-    response_model=DocumentResponse,
-    status_code=status.HTTP_201_CREATED,
-    operation_id="rollback_sandbox_release",
-)
-def post_rollback(
-    version_id: UUID,
-    payload: VersionMutationRequest,
-    actor: WriteActor,
-    db: Database,
-) -> DocumentResponse:
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail={"code": "rollback_removed", "message": "Restore changes only the draft"},
-    )
-
-
 @router.post("/imports", response_model=DocumentResponse, operation_id="import_sandbox_document")
 def post_import(payload: ImportRequest, actor: WriteActor, db: Database) -> DocumentResponse:
     return _run(

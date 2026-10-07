@@ -250,16 +250,25 @@ def execute_manage_control(
         policy(read("/api/workspace/security"))
     elif operation == "update_workspace_security":
         original = policy(read("/api/workspace/security"))
-        if original["mfa_policy"] != "optional" or original["ip_allow_list"] != []:
+        if (
+            any(original[f"mfa_require_{role}"] for role in ("admin", "member", "guest"))
+            or original["ip_allow_list"] != []
+        ):
             raise SamplePhaseActionError(
                 "Sample security baseline could restrict actor access", step=action.key
             )
         changes: dict[str, Any] = {
             "session_timeout_minutes": 30 if original["session_timeout_minutes"] != 30 else 60,
+            "session_retention_days": 367 if original["session_retention_days"] == 366 else 366,
+            "security_event_retention_days": 731
+            if original["security_event_retention_days"] == 730
+            else 730,
             "password_min_length": 20,
             "password_require_mixed_case": False,
             "password_require_number": False,
-            "mfa_policy": "optional",
+            "mfa_require_admin": False,
+            "mfa_require_member": False,
+            "mfa_require_guest": False,
             "ip_allow_list": [],
         }
         updated = policy(

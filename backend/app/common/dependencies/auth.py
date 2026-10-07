@@ -22,6 +22,8 @@ from app.systems.access.identity.provider_sessions import resolve_provider_sessi
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit.context import set_audit_actor
+from app.systems.manage.audit.security_failures import append_committed_failure
+from app.systems.manage.audit.service import SecurityEventPersistenceError
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import ip_allowed, load_workspace_policy
 
@@ -106,7 +108,7 @@ def _resolve_identity(
     if resolved is None:
         raise _unauthorized()
     user, session = resolved
-    require_allowed_source(request, db, policy)
+    require_allowed_source(request, db, policy, person_id=user.id)
     session_id = session.id
     cookie_authenticated = cookie_token is not None
     if cookie_authenticated and request.method in _UNSAFE_METHODS:
@@ -117,7 +119,11 @@ def _resolve_identity(
 
 
 def require_allowed_source(
-    request: Request, db: Session, policy: WorkspaceProfile | None = None
+    request: Request,
+    db: Session,
+    policy: WorkspaceProfile | None = None,
+    *,
+    person_id: UUID | None = None,
 ) -> None:
     try:
         permitted = ip_allowed(
@@ -127,6 +133,14 @@ def require_allowed_source(
     except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
         raise HTTPException(status_code=503, detail="Authentication service unavailable") from error
     if not permitted:
+        source = request.client.host if request.client else None
+        db.rollback()
+        try:
+            append_committed_failure(
+                "identity.ip_blocked", source, actor_id=person_id, subject_id=person_id
+            )
+        except SecurityEventPersistenceError as error:
+            raise HTTPException(503, detail="Authentication service unavailable") from error
         raise HTTPException(
             status_code=403,
             detail={"code": "ip_not_allowed", "message": "Access from this address is not allowed"},

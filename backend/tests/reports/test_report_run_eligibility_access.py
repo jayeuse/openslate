@@ -173,13 +173,20 @@ def test_scheduled_run_notifies_each_reader_until_they_lose_module_read(
         assert outsider_page.status_code == 200, outsider_page.text
         assert outsider_page.headers["cache-control"] == "private, no-store"
         assert outsider_page.json()["pagination"]["total"] == 1
+        assert client.get(
+            "/api/notifications/unread-count", headers=fixture.headers(fixture.outsider_token)
+        ).json() == {"unread_count": 1}
         notice = outsider_page.json()["items"][0]
         assert notice["kind"] == "report-run"
         assert notice["report_id"] == str(fixture.report_id)
         assert notice["run_id"] == str(run_id)
+        assert notice["subject_type"] == "report_run"
+        assert notice["subject_id"] == str(run_id)
         assert set(notice) == {
             "id",
             "kind",
+            "subject_type",
+            "subject_id",
             "report_id",
             "run_id",
             "status",
@@ -199,6 +206,14 @@ def test_scheduled_run_notifies_each_reader_until_they_lose_module_read(
         hidden = client.get("/api/notifications", headers=outsider_headers)
         assert hidden.status_code == 200
         assert hidden.json()["pagination"]["total"] == 0
+        assert client.get("/api/notifications/unread-count", headers=outsider_headers).json() == {
+            "unread_count": 0
+        }
+        assert client.post("/api/notifications/read-all", headers=outsider_headers).json() == {
+            "updated_count": 0
+        }
+        with Session(fixture.owner_engine) as observed:
+            assert observed.get(InAppNotification, UUID(notice["id"])).read_at is None
         assert fixture.client.get(csv_path, headers=outsider_headers).status_code == 404
         owner_page = client.get("/api/notifications", headers=fixture.headers())
         assert owner_page.json()["pagination"]["total"] == 1

@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
+import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 import {
   queryOpenViewGroupedRecords,
   type OpenViewGroupSelector,
@@ -23,6 +26,7 @@ const RECORD_PAGE_SIZE = 25;
 type GroupedPage = Awaited<ReturnType<typeof queryOpenViewGroupedRecords>>;
 
 type LiveKanbanProps = {
+  region: WorkspaceRegion | undefined;
   moduleId: string;
   definition: OpenViewQueryDefinition;
   refreshKey?: number;
@@ -63,13 +67,12 @@ function valueText(value: unknown): string {
   return "—";
 }
 
-function dateText(value: string): string {
-  return new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(
-    new Date(value),
-  );
+function dateText(value: string, region: WorkspaceRegion | undefined): string {
+  return region ? formatWorkspaceDate(value, region) : "Date unavailable";
 }
 
 function KanbanMemberCards({
+  region,
   rows,
   fields,
   primaryFieldId,
@@ -78,6 +81,7 @@ function KanbanMemberCards({
   onOpenRecord,
 }: {
   rows: readonly OpenViewRecord[];
+  region: WorkspaceRegion | undefined;
   fields: readonly OpenViewDataSourceField[];
   primaryFieldId: string | null;
   secondaryFieldId: string | null;
@@ -139,7 +143,9 @@ function KanbanMemberCards({
               ) : null}
               <p className="text-muted-foreground mt-auto text-xs">
                 Updated{" "}
-                <time dateTime={row.updatedAt}>{dateText(row.updatedAt)}</time>
+                <time dateTime={row.updatedAt}>
+                  {dateText(row.updatedAt, region)}
+                </time>
               </p>
             </article>
           </li>
@@ -150,6 +156,7 @@ function KanbanMemberCards({
 }
 
 export function LiveKanban({
+  region,
   moduleId,
   definition,
   refreshKey = 0,
@@ -223,9 +230,7 @@ export function LiveKanban({
           loading: false,
           error: denied
             ? "You no longer have access to these records. Sign in or ask for access, then retry."
-            : error instanceof Error && error.message
-              ? error.message
-              : "Kanban lanes could not be loaded.",
+            : apiErrorMessage(error, "Kanban lanes could not be loaded."),
         });
       });
     return () => {
@@ -311,8 +316,11 @@ export function LiveKanban({
       </div>
 
       {requestError ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-          <p role="alert">
+        <Alert
+          variant="destructive"
+          className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"
+        >
+          <p>
             {requestError} The last successful page remains visible when
             available.
           </p>
@@ -324,7 +332,7 @@ export function LiveKanban({
           >
             {selectedGroup ? "Retry lane records" : "Retry lanes"}
           </Button>
-        </div>
+        </Alert>
       ) : null}
 
       {loading && groups.length === 0 ? (
@@ -455,6 +463,7 @@ export function LiveKanban({
                 </p>
               ) : memberPage?.items.length ? (
                 <KanbanMemberCards
+                  region={region}
                   rows={memberPage.items}
                   fields={fields}
                   primaryFieldId={primaryFieldId}

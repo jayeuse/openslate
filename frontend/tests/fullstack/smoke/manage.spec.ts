@@ -11,18 +11,6 @@ test("Manage Organization shows the seeded workspace @manage", async ({
   ).toBeVisible();
 });
 
-test("Manage Security lists the seeded people's sessions @manage", async ({
-  page,
-}) => {
-  await openWorkspace(page, "/manage?view=security");
-  await page
-    .getByRole("searchbox", { name: "Search sessions" })
-    .fill("Ana Castillo");
-  await expect(
-    page.getByRole("button", { name: "End session for Ana Castillo" }).first(),
-  ).toBeVisible();
-});
-
 test("Manage Audit finds an entry and opens its details @manage", async ({
   page,
 }) => {

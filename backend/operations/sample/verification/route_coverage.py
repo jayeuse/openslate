@@ -20,6 +20,30 @@ Route = tuple[str, str]
 # must acquire an executor and verification before it can be added here.
 SEEDER_ROUTES: frozenset[Route] = frozenset(
     {
+        ("POST", "/api/auth/mfa/factors"),
+        ("POST", "/api/auth/mfa/factors/{factor_id}/verification"),
+        ("DELETE", "/api/auth/mfa/factors/{factor_id}"),
+        ("GET", "/api/users/{user_id}/security"),
+        ("POST", "/api/users/{user_id}/mfa/reset"),
+        ("GET", "/api/security-events"),
+        ("GET", "/api/security-events/{event_id}"),
+        ("GET", "/api/users/summary"),
+        ("POST", "/api/users/{user_id}/recovery"),
+        ("POST", "/api/files"),
+        ("GET", "/api/files"),
+        ("GET", "/api/files/{file_id}"),
+        ("PUT", "/api/files/{file_id}/content"),
+        ("GET", "/api/files/{file_id}/content"),
+        ("POST", "/api/files/{file_id}/archive"),
+        ("POST", "/api/files/{file_id}/reopen"),
+        ("POST", "/api/files/{file_id}/reconcile"),
+        ("GET", "/api/workspace/logo"),
+        ("GET", "/api/workspace/appearance"),
+        ("GET", "/api/workspace/security/caller-ip"),
+        ("GET", "/api/notifications"),
+        ("GET", "/api/notifications/unread-count"),
+        ("POST", "/api/notifications/{notification_id}/read"),
+        ("POST", "/api/notifications/read-all"),
         ("DELETE", "/api/access/groups/{group_id}"),
         ("DELETE", "/api/auth/invitations/{user_id}"),
         ("DELETE", "/api/auth/sessions/{session_id}"),
@@ -55,6 +79,12 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("GET", "/api/auth/sessions"),
         ("GET", "/api/backups"),
         ("GET", "/api/backups/status"),
+        ("GET", "/api/health"),
+        ("GET", "/api/ready"),
+        ("POST", "/api/backups/exports"),
+        ("GET", "/api/backups/exports/{export_id}"),
+        ("POST", "/api/backups/exports/{export_id}/download-admission"),
+        ("GET", "/api/backups/exports/{export_id}/content"),
         ("GET", "/api/boards"),
         ("GET", "/api/boards/{board_id}"),
         ("GET", "/api/boards/{board_id}/access-preview"),
@@ -223,26 +253,9 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
     }
 )
 
-# Exact operations only; a category is never a prefix wildcard.
-INTERACTIVE_ACCEPTANCE_ROUTES: dict[Route, str] = {
-    (
-        "POST",
-        "/api/auth/mfa/factors",
-    ): "Real authenticator enrollment requires provider acceptance outside packs (Phase B8).",
-    (
-        "POST",
-        "/api/auth/mfa/factors/{factor_id}/verification",
-    ): "Real authenticator verification requires provider acceptance outside packs (Phase B8).",
-    (
-        "DELETE",
-        "/api/auth/mfa/factors/{factor_id}",
-    ): "Provider factor removal is covered by the same interactive acceptance journey (Phase B8).",
-}
-
-DEFERRED_ROUTES: dict[Route, str] = {
-    ("GET", "/api/notifications"): "notifications",
-    ("POST", "/api/notifications/{notification_id}/read"): "notifications",
-}
+# Each frontend operation requires an executor and actual successful request evidence.
+INTERACTIVE_ACCEPTANCE_ROUTES: dict[Route, str] = {}
+DEFERRED_ROUTES: dict[Route, str] = {}
 
 
 @lru_cache(maxsize=1)
@@ -365,7 +378,22 @@ def read_route_evidence(journal: Path) -> dict[str, Any]:
     }
 
 
-def verify_route_coverage(directory: Path) -> tuple[dict[str, int], list[str]]:
+# Only the host backup export step calls these; ordinary runs leave that step out.
+HOST_ACCEPTANCE_ROUTES: frozenset[Route] = frozenset(
+    {
+        ("GET", "/api/health"),
+        ("GET", "/api/ready"),
+        ("POST", "/api/backups/exports"),
+        ("GET", "/api/backups/exports/{export_id}"),
+        ("POST", "/api/backups/exports/{export_id}/download-admission"),
+        ("GET", "/api/backups/exports/{export_id}/content"),
+    }
+)
+
+
+def verify_route_coverage(
+    directory: Path, *, host_acceptance: bool = False
+) -> tuple[dict[str, int], list[str]]:
     """Require executed UI coverage across population and its read-only verification."""
     requests: Counter[Route] = Counter()
     failures: Counter[str] = Counter()
@@ -377,7 +405,8 @@ def verify_route_coverage(directory: Path) -> tuple[dict[str, int], list[str]]:
             failures.update(evidence["failures_5xx"])
     except (OSError, ValueError, UnicodeError):
         return {}, ["Actual UI route evidence is missing, unfinished or invalid"]
-    missing = SEEDER_ROUTES - requests.keys()
+    required = SEEDER_ROUTES if host_acceptance else SEEDER_ROUTES - HOST_ACCEPTANCE_ROUTES
+    missing = required - requests.keys()
     report = {
         "event": "route_coverage",
         "covered": [
@@ -389,6 +418,7 @@ def verify_route_coverage(directory: Path) -> tuple[dict[str, int], list[str]]:
             for (method, path), category in sorted(DEFERRED_ROUTES.items())
         ],
         "uncovered": [{"method": method, "path": path} for method, path in sorted(missing)],
+        "host_acceptance": host_acceptance,
         "failures_5xx": dict(sorted(failures.items())),
         "interactive_acceptance": [
             {"method": method, "path": path, "reason": reason}
@@ -401,7 +431,7 @@ def verify_route_coverage(directory: Path) -> tuple[dict[str, int], list[str]]:
         return {}, ["Actual UI route coverage report could not be saved"]
     return (
         {
-            "ui_routes_covered": len(SEEDER_ROUTES) - len(missing),
+            "ui_routes_covered": len(required) - len(missing),
             "ui_routes_deferred": len(DEFERRED_ROUTES),
             "ui_routes_interactive": len(INTERACTIVE_ACCEPTANCE_ROUTES),
             "ui_routes_uncovered": len(missing),

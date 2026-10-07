@@ -46,6 +46,26 @@ export const userSchema = z.strictObject({
   performed_by: uuid.nullable(),
 });
 
+/** GET /api/users only: local inventory and recorded identity observations. */
+export const directoryUserSchema = userSchema.extend({
+  active_session_count: z.number().int().nonnegative(),
+  mfa_verified_totp: z.boolean().nullable(),
+  mfa_observed_at: dateTime.nullable(),
+  last_sign_in_at: dateTime.nullable(),
+  last_active_at: dateTime.nullable(),
+});
+export const INACTIVE_DAYS_DEFAULT = 30;
+export const INACTIVE_DAYS_MIN = 1;
+export const INACTIVE_DAYS_MAX = 3650;
+export const userSummarySchema = z.strictObject({
+  admins_without_mfa: z.number().int().nonnegative(),
+  admins_mfa_unknown: z.number().int().nonnegative(),
+  no_recorded_sign_in: z.number().int().nonnegative(),
+  inactive_people: z.number().int().nonnegative(),
+  as_of: dateTime,
+  inactive_days: z.number().int().min(INACTIVE_DAYS_MIN).max(INACTIVE_DAYS_MAX),
+});
+
 /** `users/schemas.py` InvitationResponse. */
 export const invitationSchema = z.strictObject({
   user: userSchema,
@@ -96,6 +116,7 @@ export const sessionSchema = z.strictObject({
   expires_at: dateTime,
   user_agent: z.string().nullable(),
   current: z.boolean(),
+  ip_address: z.string().nullable(),
 });
 
 /**
@@ -247,6 +268,8 @@ export type AccessPage<Item> = {
 export type AccessVersioned<Data> = { data: Data; etag: string };
 
 export type AccessUser = z.output<typeof userSchema>;
+export type AccessDirectoryUser = z.output<typeof directoryUserSchema>;
+export type AccessUserSummary = z.output<typeof userSummarySchema>;
 export type AccessInvitationResponse = z.output<typeof invitationSchema>;
 export type AccessInvitationCreate = z.input<typeof invitationCreateSchema>;
 export type AccessUserPatch = z.input<typeof userPatchSchema>;
@@ -267,6 +290,9 @@ export type AccessInvitationSettingsPatch = z.input<
 >;
 
 export type RequestOptions = { signal?: AbortSignal };
+export type AccessUserSummaryOptions = RequestOptions & {
+  inactive_days?: number;
+};
 
 export type StandardListOptions<SortBy extends string> = RequestOptions & {
   limit?: number;
@@ -278,8 +304,16 @@ export type StandardListOptions<SortBy extends string> = RequestOptions & {
 };
 
 export type AccessUserListOptions = StandardListOptions<
-  "email" | "username" | "created_at" | "updated_at"
-> & { role?: AccessUserRole };
+  "email" | "username" | "created_at" | "updated_at" | "name" | "expires_at"
+> & {
+  role?: AccessUserRole;
+  status?: "pending" | "active" | "disabled" | "expired" | "ending";
+  group_id?: string;
+  department_id?: string;
+  mfa?: "without" | "unknown";
+  history?: "no-recorded-sign-in" | "inactive";
+  inactive_days?: number;
+};
 export type AccessGroupListOptions = StandardListOptions<
   "name" | "created_at" | "updated_at"
 >;

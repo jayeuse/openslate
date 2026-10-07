@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from typing import Any, cast
 
+from app.systems.access.users.schemas import AppearancePreferences
 from operations.sample.blueprint import SampleDataset
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import SamplePhaseActionError
@@ -144,8 +145,13 @@ def verify_platform_evidence(
             ):
                 add(f"{step}_{key}", method, path + suffix, status)
     else:
-        if result.get("original_theme") not in ("light", "dark"):
+        if result.get("original_theme") not in ("light", "dark", "system"):
             issues.append("Platform original self theme is invalid")
+            return
+        try:
+            AppearancePreferences.model_validate(result.get("original_appearance"), strict=True)
+        except ValueError:
+            issues.append("Platform original appearance settings are invalid")
             return
         for step, method in (
             (("read_original_theme", "GET"),)

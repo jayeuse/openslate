@@ -27,6 +27,7 @@ class AdminSessionResponse(BaseModel):
     refreshed_at: datetime
     expires_at: datetime
     user_agent: str | None
+    ip_address: str | None
     current: bool
 
     model_config = ConfigDict(extra="forbid")

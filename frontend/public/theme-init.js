@@ -24,15 +24,38 @@ try {
 try {
   const root = document.documentElement;
   const preference = (key, fallback, values) => {
-    const value = localStorage.getItem(key);
-    return values.includes(value) ? value : fallback;
+    try {
+      const value = localStorage.getItem(key);
+      return values.includes(value) ? value : fallback;
+    } catch {
+      return fallback;
+    }
   };
-  const mode = preference("openslate-theme", "light", ["light", "dark"]);
-  root.classList.toggle("dark", mode === "dark");
-  // Reduce motion chosen in Appearance (lib/appearance-preferences.ts).
-  if (localStorage.getItem("openslate-motion") === "reduced")
+  const mode = preference("openslate-theme", "system", [
+    "light",
+    "dark",
+    "system",
+  ]);
+  root.classList.toggle(
+    "dark",
+    mode === "dark" ||
+      (mode === "system" &&
+        typeof matchMedia === "function" &&
+        matchMedia("(prefers-color-scheme: dark)").matches),
+  );
+  if (preference("openslate-motion", "system", ["reduced"]) === "reduced")
     root.dataset.motion = "reduced";
-  // Organization look (lib/appearance-preferences.ts). Slate is the default.
+  else delete root.dataset.motion;
+  root.dataset.textSize = preference("openslate-text-size", "100", [
+    "100",
+    "112.5",
+    "125",
+  ]);
+  root.dataset.density = preference("openslate-density", "default", [
+    "default",
+    "compact",
+    "spacious",
+  ]);
   const theme = preference("openslate-org-theme", "slate", [
     "slate",
     "whiteboard",

@@ -1,23 +1,18 @@
 """User listing, retrieval, and invitation-backed creation endpoints."""
 
-from enum import StrEnum
-from typing import Annotated, Any, cast
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.dependencies import get_current_user, require_admin
-from app.common.listing import (
-    ListQuerySpec,
-    StandardListRequest,
-    StandardListResponse,
-    execute_standard_list,
-)
+from app.common.dependencies.auth import CurrentIdentity, get_current_identity
+from app.core.base_model import utc_now
 from app.core.database import get_db
+from app.systems.access.auth.cookies import clear_browser_session
 from app.systems.access.policy.scope import explain_access
 from app.systems.access.users.coordination import (
     InvitationConflict,
@@ -28,16 +23,31 @@ from app.systems.access.users.coordination import (
 from app.systems.access.users.coordination import (
     get_user as load_user,
 )
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.directory import (
+    UserListRequest,
+    UserSummaryRequest,
+    directory_list,
+    directory_summary,
+)
+from app.systems.access.users.directory import UserSortField as UserSortField
+from app.systems.access.users.models import User
 from app.systems.access.users.schemas import (
     InvitationCreate,
     InvitationResponse,
     UserAccessResponse,
     UserCreate,
+    UserListResponse,
+    UserMfaResetRequest,
+    UserMfaResetResponse,
     UserPreferencesResponse,
     UserPreferencesUpdate,
+    UserRecoveryRequest,
+    UserRecoveryResponse,
     UserResponse,
+    UserSecurityResponse,
+    UserSummaryResponse,
 )
+from app.systems.access.users.security import read_security, recover_person, reset_person_mfa
 from app.systems.access.users.service import (
     invite_user,
 )
@@ -47,48 +57,26 @@ AdminUser = Annotated[User, Depends(require_admin)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-class UserSortField(StrEnum):
-    EMAIL = "email"
-    USERNAME = "username"
-    CREATED_AT = "created_at"
-    UPDATED_AT = "updated_at"
-
-
-class UserListResponse(StandardListResponse[UserResponse]):
-    pass
-
-
-class UserListRequest(StandardListRequest[UserSortField]):
-    role: UserRole | None = None
-
-
-USER_LIST_SPEC = ListQuerySpec(
-    sort_fields={
-        UserSortField.EMAIL: cast(ColumnElement[Any], User.email),
-        UserSortField.USERNAME: cast(ColumnElement[Any], User.username),
-        UserSortField.CREATED_AT: cast(ColumnElement[Any], User.created_at),
-        UserSortField.UPDATED_AT: cast(ColumnElement[Any], User.updated_at),
-    },
-    default_sort=UserSortField.USERNAME,
-    tie_breaker=cast(ColumnElement[Any], User.id),
-    search_fields=(cast(ColumnElement[str], User.email), cast(ColumnElement[str], User.username)),
-    deleted_field=cast(ColumnElement[bool], User.is_deleted),
-)
-
-
 @router.get("", response_model=UserListResponse)
 def list_users(
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
     params: Annotated[UserListRequest, Query()],
+    response: Response,
 ) -> UserListResponse:
-    statement = select(User)
-    if params.role is not None:
-        statement = statement.where(User.role == params.role.value)
-    result = execute_standard_list(db, statement, params, USER_LIST_SPEC)
-    return UserListResponse.model_validate(
-        {"items": result.items, "pagination": result.pagination}, from_attributes=True
-    )
+    response.headers["Cache-Control"] = "no-store"
+    return directory_list(db, params, utc_now())
+
+
+@router.get("/summary", response_model=UserSummaryResponse)
+def user_summary(
+    _: AdminUser,
+    db: Annotated[Session, Depends(get_db)],
+    params: Annotated[UserSummaryRequest, Query()],
+    response: Response,
+) -> UserSummaryResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return directory_summary(db, utc_now(), params.inactive_days)
 
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -117,7 +105,7 @@ def get_user_preferences(
         )
     response.headers["Cache-Control"] = "no-store"
     return UserPreferencesResponse.model_validate(
-        {"user_id": actor.id, "theme": actor.theme_preference}
+        {"user_id": actor.id, "theme": actor.theme_preference, "appearance": actor.appearance}
     )
 
 
@@ -141,8 +129,16 @@ def update_user_preferences(
         # Authentication may have read an older preference. Serialize this
         # independent write before deciding whether a same-value update is harmless.
         db.refresh(actor, with_for_update=True)
-        if actor.theme_preference != payload.theme:
+        changed = False
+        if "theme" in payload.model_fields_set and actor.theme_preference != payload.theme:
             actor.theme_preference = payload.theme
+            changed = True
+        if "appearance" in payload.model_fields_set:
+            appearance = {**actor.appearance, **payload.appearance.model_dump(exclude_unset=True)}
+            if appearance != actor.appearance:
+                actor.appearance = appearance
+                changed = True
+        if changed:
             db.commit()
             db.refresh(actor)
     except SQLAlchemyError as error:
@@ -150,7 +146,7 @@ def update_user_preferences(
         raise HTTPException(status_code=503, detail="Unable to update preferences") from error
     response.headers["Cache-Control"] = "no-store"
     return UserPreferencesResponse.model_validate(
-        {"user_id": actor.id, "theme": actor.theme_preference}
+        {"user_id": actor.id, "theme": actor.theme_preference, "appearance": actor.appearance}
     )
 
 
@@ -215,3 +211,70 @@ def create_user(
         user=UserResponse.model_validate(user),
         delivery="email",
     )
+
+
+@router.get("/{user_id}/security", response_model=UserSecurityResponse)
+def get_user_security(
+    user_id: UUID,
+    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+    response: Response,
+) -> UserSecurityResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return read_security(db, identity, request, user_id)
+
+
+@router.post("/{user_id}/recovery", response_model=UserRecoveryResponse)
+def recover_user(
+    user_id: UUID,
+    payload: UserRecoveryRequest,
+    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+    response: Response,
+) -> UserRecoveryResponse | Response:
+    response.headers["Cache-Control"] = "no-store"
+    self_effect = user_id == identity.user.id and payload.revoke_sessions
+    try:
+        result = recover_person(db, identity, request, user_id, payload.revoke_sessions)
+    except HTTPException as error:
+        return security_effect_error(error, self_effect)
+    if self_effect:
+        clear_browser_session(response)
+    return result
+
+
+@router.post("/{user_id}/mfa/reset", response_model=UserMfaResetResponse)
+def reset_user_mfa(
+    user_id: UUID,
+    payload: UserMfaResetRequest,
+    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+    response: Response,
+) -> UserMfaResetResponse | Response:
+    response.headers["Cache-Control"] = "no-store"
+    self_effect = user_id == identity.user.id
+    try:
+        result = reset_person_mfa(db, identity, request, user_id)
+    except HTTPException as error:
+        return security_effect_error(error, self_effect)
+    if self_effect:
+        clear_browser_session(response)
+    return result
+
+
+def security_effect_error(error: HTTPException, self_effect: bool) -> Response:
+    response = JSONResponse(
+        status_code=error.status_code,
+        content={"detail": error.detail},
+        headers={"Cache-Control": "no-store"},
+    )
+    if (
+        self_effect
+        and isinstance(error.detail, dict)
+        and error.detail.get("local_revocation") in {"committed", "unconfirmed"}
+    ):
+        clear_browser_session(response)
+    return response

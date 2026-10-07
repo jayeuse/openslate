@@ -28,6 +28,7 @@ from app.systems.access.policy.checks import require_fresh_module_access
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import GroupAccessEntry
 from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import guarded_create_engine
@@ -109,6 +110,11 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
             db.execute(delete(Group).where(Group.id == data.group))
             db.execute(delete(IdentitySession).where(IdentitySession.id == data.session))
             db.execute(delete(Module).where(Module.id == data.module))
+            db.execute(
+                delete(InAppNotification).where(
+                    InAppNotification.recipient_id.in_((data.admin, data.reader))
+                )
+            )
             db.execute(delete(User).where(User.id.in_((data.admin, data.reader))))
             db.execute(delete(Department).where(Department.id.in_((data.inventory, data.finance))))
             db.commit()

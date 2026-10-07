@@ -28,6 +28,7 @@ function fileWire(stored: StoredFile, state: string, uploaded: boolean) {
     id: stored.id,
     purpose: "board_attachment",
     record_id: null,
+    department_id: null,
     board_id: boardId,
     creator_id: userId,
     filename: stored.file.name,
@@ -258,7 +259,7 @@ test("an author uploads, downloads and removes post attachments in one step each
   const panel = await openDraftAttachments(page);
   const input = panel.getByLabel("Add an attachment");
   await expect(
-    panel.getByText("Files up to 25 MiB. PDF, PNG, JPEG, DOCX, XLSX or PPTX."),
+    panel.getByText("Files up to 25 MB. PDF, PNG, JPEG, DOCX, XLSX or PPTX."),
   ).toBeVisible();
   const names = [
     "Dock 3 loading plan.pdf",
@@ -348,6 +349,56 @@ test("a failed attach keeps the uploaded file ready for a retry", async ({
   );
 });
 
+test("an unfinished upload guards removal while existing downloads remain available", async ({
+  page,
+}) => {
+  await installAttachmentApi(page, { status: "draft" });
+  const panel = await openDraftAttachments(page);
+  const input = panel.getByLabel("Add an attachment");
+  const existingName = "Dock 3 loading plan.pdf";
+  await input.setInputFiles(dummyFile(existingName));
+  await expect(panel.getByText(`${existingName} attached.`)).toBeVisible();
+
+  let releaseUpload = () => {};
+  const uploadReleased = new Promise<void>((resolve) => {
+    releaseUpload = resolve;
+  });
+  await page.route(
+    `**/api/boards/${boardId}/files/*/content`,
+    async (route) => {
+      await uploadReleased;
+      await route.fallback();
+    },
+  );
+  const nextName = "Yard layout.png";
+  const remove = panel.getByRole("button", {
+    name: `Remove ${existingName}`,
+  });
+  try {
+    await Promise.all([
+      page.waitForRequest(
+        (request) =>
+          request.method() === "PUT" &&
+          new URL(request.url()).pathname.startsWith(
+            `/api/boards/${boardId}/files/`,
+          ),
+      ),
+      input.setInputFiles(dummyFile(nextName)),
+    ]);
+    await expect(panel.getByText(`Uploading ${nextName}…`)).toBeVisible();
+    await expect(input).toBeDisabled();
+    await expect(remove).toBeDisabled();
+    await expect(
+      panel.getByRole("button", { name: `Download ${existingName}` }),
+    ).toBeEnabled();
+    releaseUpload();
+    await expect(panel.getByText(`${nextName} attached.`)).toBeVisible();
+    await expect(remove).toBeEnabled();
+  } finally {
+    releaseUpload();
+  }
+});
+
 test("an upload with an unreadable response keeps the file for a retry", async ({
   page,
 }) => {
@@ -370,19 +421,61 @@ test("an upload with an unreadable response keeps the file for a retry", async (
 });
 
 test("a published post shows downloads only", async ({ page }) => {
-  await installAttachmentApi(page, {
+  const api = await installAttachmentApi(page, {
     status: "published",
     seeded: ["Fire drill route.pdf"],
   });
+  let listUnavailable = true;
+  await page.route(
+    (url) =>
+      url.pathname === `/api/boards/${boardId}/posts/${postId}/attachments`,
+    (route) => {
+      if (route.request().method() === "GET" && listUnavailable)
+        return route.fulfill({
+          status: 503,
+          json: { detail: "Private attachment failure canary" },
+        });
+      return route.fallback();
+    },
+  );
   await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
   const reader = page.getByRole("dialog", { name: title, exact: true });
+  const failedList = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/boards/${boardId}/posts/${postId}/attachments` &&
+      response.request().method() === "GET" &&
+      response.status() === 503,
+  );
   await reader.getByRole("button", { name: "Attachments" }).click();
+  expect((await failedList).status()).toBe(503);
   const panel = reader.getByRole("region", { name: "Post attachments" });
+  await expect(panel.getByRole("alert")).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
+  await expect(panel.getByRole("alert")).toContainText(
+    "Attachments are unavailable for this content.",
+  );
+  await expect(panel).not.toContainText("Private attachment failure canary");
+  await expect(
+    panel.getByText("No attachments yet.", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    panel.getByRole("button", {
+      name: "Download Fire drill route.pdf",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  expect(api.mutations).toEqual([]);
+  listUnavailable = false;
+  await panel.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(
     panel.getByRole("button", { name: "Download Fire drill route.pdf" }),
   ).toBeVisible();
   await expect(panel.getByRole("button", { name: /^Remove / })).toHaveCount(0);
   await expect(panel.getByLabel("Add an attachment")).toHaveCount(0);
+  expect(api.mutations).toEqual([]);
 });
 
 test("an upload refused with 422 shows an alert and leaves the list unchanged", async ({

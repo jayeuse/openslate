@@ -98,6 +98,7 @@ def build_dataset(
     *,
     organization: OrganizationPack | None = None,
     module_counts_override: Mapping[str, int] | None = None,
+    host_acceptance: bool = False,
 ) -> SampleDataset:
     """Build the design, records and plan from one immutable organization pack."""
     pack = organization or default_pack()
@@ -132,4 +133,5 @@ def build_dataset(
             seed, module_ids, field_ids, records, document, trigger_ids
         ),
         named_scenarios=pack.generators.named_scenarios,
+        host_acceptance=host_acceptance,
     )

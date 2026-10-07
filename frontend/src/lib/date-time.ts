@@ -70,25 +70,44 @@ export function datetimeInputToUtc(
 export function formatWorkspaceDateTime(
   value: string,
   region: WorkspaceRegion,
+  options: Omit<Intl.DateTimeFormatOptions, "timeZone"> = {
+    dateStyle: "medium",
+    timeStyle: "short",
+  },
 ): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat(workspaceLocale(region.locale), {
+    ...options,
     timeZone: region.timezone,
-    dateStyle: "medium",
-    timeStyle: "long",
   }).format(date);
 }
 
 export function formatWorkspaceDate(
   value: string,
   region: WorkspaceRegion,
+  options: Omit<Intl.DateTimeFormatOptions, "timeZone"> = {
+    dateStyle: "medium",
+  },
 ): string {
   const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
   const date = new Date(dateOnly ? `${value}T00:00:00Z` : value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat(workspaceLocale(region.locale), {
+    ...options,
     timeZone: dateOnly ? "UTC" : region.timezone,
-    dateStyle: "medium",
   }).format(date);
+}
+
+/** A wall-clock "HH:MM" time in the workspace's 12- or 24-hour convention. */
+export function formatWorkspaceClockTime(
+  value: string,
+  region: Pick<WorkspaceRegion, "locale">,
+): string {
+  const match = /^([01][0-9]|2[0-3]):([0-5][0-9])$/.exec(value);
+  if (!match) return value;
+  return new Intl.DateTimeFormat(workspaceLocale(region.locale), {
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(2000, 0, 1, Number(match[1]), Number(match[2]))));
 }

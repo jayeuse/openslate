@@ -925,10 +925,10 @@ async function exerciseConnectedBoard(
 
   await page.goto("/platform#notifications");
   await expect(
-    page.getByRole("heading", { name: "Connected notifications" }),
+    page.getByRole("heading", { name: "Notifications" }),
   ).toBeVisible();
   const notices = page.getByRole("list", {
-    name: "Connected delivery notices",
+    name: "Notifications",
   });
   await expect(notices.getByText("Board post", { exact: true })).toBeVisible();
 }

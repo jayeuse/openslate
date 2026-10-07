@@ -71,10 +71,12 @@ def test_serialize_record_contains_only_local_profile_fields() -> None:
         "display_name": None,
         "role": "member",
         "theme_preference": None,
+        "appearance": None,
         "job_title": None,
         "sponsor_user_id": None,
         "expires_at": None,
         "status": "active",
+        "mfa_required_since": None,
     }
     assert "password_hash" not in snapshot
     assert "id" not in snapshot

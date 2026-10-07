@@ -9,11 +9,13 @@ from babel.numbers import is_currency
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from app.common.normalization import normalize_email
+from app.core.config import get_settings
 
 _LOCALE_TAG_PATTERN = re.compile(
     r"^[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?"
     r"(?:-(?:[0-9][A-Za-z0-9]{3}|[A-Za-z0-9]{5,8}))*$"
 )
+type WorkspaceTheme = Literal["slate", "whiteboard", "triplicate", "stockroom"]
 
 
 class _WorkspaceRequest(BaseModel):
@@ -42,6 +44,7 @@ class WorkspaceUpdate(_WorkspaceRequest):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     week_start: Literal["monday", "sunday"] | None = None
     business_hours: str | None = Field(default=None, max_length=200)
+    theme: WorkspaceTheme | None = None
     invitation_expiry_days: int | None = Field(default=None, ge=1, le=365)
     guest_duration_days: int | None = Field(default=None, ge=1, le=365)
 
@@ -132,6 +135,7 @@ class WorkspaceUpdate(_WorkspaceRequest):
             "currency",
             "week_start",
             "business_hours",
+            "theme",
         } & self.model_fields_set:
             if getattr(self, field) is None:
                 raise ValueError(f"{field} must not be null")
@@ -140,14 +144,11 @@ class WorkspaceUpdate(_WorkspaceRequest):
         return self
 
 
-class WorkspaceResponse(BaseModel):
+class WorkspaceCommonResponse(BaseModel):
     id: UUID
     display_name: str
     legal_name: str | None
     description: str | None
-    contact_email: str | None
-    contact_phone: str | None
-    postal_address: str | None
     logo_file_id: UUID | None
     timezone: str
     locale: str
@@ -155,6 +156,7 @@ class WorkspaceResponse(BaseModel):
     currency: str
     week_start: Literal["monday", "sunday"]
     business_hours: str
+    theme: WorkspaceTheme
     invitation_expiry_days: int
     guest_duration_days: int
     revision: int
@@ -166,3 +168,26 @@ class WorkspaceResponse(BaseModel):
     @computed_field
     def today(self) -> date:
         return datetime.now(ZoneInfo(self.timezone)).date()
+
+    @computed_field
+    def purge_enabled(self) -> bool:
+        return get_settings().lifecycle_purge_enabled
+
+
+class WorkspaceResponse(WorkspaceCommonResponse):
+    """Full profile for members and administrators, including intentional nulls."""
+
+    contact_email: str | None
+    contact_phone: str | None
+    postal_address: str | None
+
+
+class WorkspaceGuestResponse(WorkspaceCommonResponse):
+    """Guests receive the common profile without any contact keys."""
+
+
+class WorkspaceAppearanceResponse(BaseModel):
+    """The only workspace value available before sign-in."""
+
+    theme: WorkspaceTheme
+    model_config = ConfigDict(extra="forbid")

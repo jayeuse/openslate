@@ -13,6 +13,8 @@ import type { OpenViewWindowQueryRequest } from "../adapters/window-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
 import { RecordDetailsControls } from "./record-details-controls";
 import { RecordHistoryPanel } from "./record-history-panel";
+import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
+import { RecordFilesPanel } from "./record-files-panel";
 import { RecordLinksPanel } from "./record-links-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,6 +72,7 @@ export type RecordControls = {
 };
 
 type LiveRecordInspectorProps = {
+  region: WorkspaceRegion | undefined;
   actions: ReactNode;
   controls?: RecordControls;
   record: OpenViewRecord | null;
@@ -89,13 +92,17 @@ function readableValue(value: unknown): string {
   return "—";
 }
 
-function updatedDate(value: string): string {
+function updatedDate(
+  value: string,
+  region: WorkspaceRegion | undefined,
+): string {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return "Date unavailable";
-  return new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(date);
+  return region ? formatWorkspaceDate(value, region) : "Date unavailable";
 }
 
 export function LiveRecordInspector({
+  region,
   actions,
   record,
   recordLoading,
@@ -169,15 +176,21 @@ export function LiveRecordInspector({
           </div>
           {controls ? (
             <Tabs defaultValue="details" className="min-w-0 pt-4">
-              <TabsList aria-label="Record sections" className="max-w-full">
-                <TabsTrigger value="details" className="min-h-11">
+              <TabsList
+                aria-label="Record sections"
+                className="max-w-full flex-nowrap justify-start overflow-x-auto"
+              >
+                <TabsTrigger value="details" className="min-h-11 shrink-0">
                   Details
                 </TabsTrigger>
-                <TabsTrigger value="links" className="min-h-11">
+                <TabsTrigger value="links" className="min-h-11 shrink-0">
                   Linked records
                 </TabsTrigger>
+                <TabsTrigger value="files" className="min-h-11 shrink-0">
+                  Files
+                </TabsTrigger>
                 {controls.canReadHistory ? (
-                  <TabsTrigger value="history" className="min-h-11">
+                  <TabsTrigger value="history" className="min-h-11 shrink-0">
                     History
                   </TabsTrigger>
                 ) : null}
@@ -204,9 +217,18 @@ export function LiveRecordInspector({
                   onChanged={controls.onChanged}
                 />
               </TabsContent>
+              <TabsContent value="files" className="mt-0">
+                <RecordFilesPanel
+                  key={record.id}
+                  record={record}
+                  canWrite={controls.canWrite}
+                  region={region}
+                />
+              </TabsContent>
               {controls.canReadHistory ? (
                 <TabsContent value="history" className="mt-0">
                   <RecordHistoryPanel
+                    region={region}
                     recordId={record.id}
                     moduleId={controls.moduleId}
                     departmentId={controls.departmentId}
@@ -222,7 +244,7 @@ export function LiveRecordInspector({
           <p className="text-muted-foreground border-t pt-3 text-sm">
             Updated{" "}
             <time dateTime={record.updatedAt}>
-              {updatedDate(record.updatedAt)}
+              {updatedDate(record.updatedAt, region)}
             </time>
           </p>
         </>

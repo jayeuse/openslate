@@ -170,6 +170,7 @@ def test_control_verifier_checks_request_and_all_final_families(
         "read_checks",
         "end_state",
         "unrestored_theme",
+        "malformed_final_appearance",
         "record_remaining",
         "mapping_receipt",
         "search_step",
@@ -190,7 +191,9 @@ def test_platform_verification_requires_exact_requests_and_restored_state(
     wire = PlatformWire(dataset)
     context = _context(tmp_path, wire.handle)
     wire.bind(context)
-    actions = tuple(row for row in plan_controls(dataset) if row.kind == "platform_controls")
+    from operations.sample.controls.platform import OPERATIONS
+
+    actions = tuple(row for row in plan_controls(dataset) if row.values["operation"] in OPERATIONS)
     setup = next(
         row
         for row in plan_controls(dataset)
@@ -238,6 +241,8 @@ def test_platform_verification_requires_exact_requests_and_restored_state(
             results[0]["mappings"][0]["server_id"] = BOARD_ID
         if fault == "unrestored_theme":
             wire.theme = "light"
+        if fault == "malformed_final_appearance":
+            wire.appearance["keyboard_shortcuts"] = 0
         if fault == "record_remaining":
             key = wire.created[0]
             wire.records[key] = {"id": key, "module_id": BOARD_ID, "data": {}, "is_deleted": True}
@@ -259,6 +264,8 @@ def test_platform_verification_requires_exact_requests_and_restored_state(
             )
         else:
             assert issues
+            if fault == "malformed_final_appearance":
+                assert "platform_theme_restored" not in counts
     finally:
         context.clients["admin"].close()
 

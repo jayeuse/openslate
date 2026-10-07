@@ -133,17 +133,54 @@ class ScheduledWork(Base):
     )
 
 
+class NotificationKind(StrEnum):
+    REPORT_RUN = "report-run"
+    POST_PUBLISH = "post-publish"
+    EVENT_REMINDER = "event-reminder"
+    REPORT_RUN_FAILED = "report-run-failed"
+    BACKUP_FAILED = "backup-failed"
+    RECORD_ASSIGNED = "record-assigned"
+    INVITATION_ACCEPTED = "invitation-accepted"
+    SANDBOX_PUBLISHED = "sandbox-published"
+    ACCESS_CHANGED = "access-changed"
+
+
 class InAppNotification(BaseModel):
-    """A recipient-specific reference to completed work, without private content."""
+    """A recipient-specific source reference without private content."""
 
     __tablename__ = "in_app_notifications"
     __table_args__ = (
+        CheckConstraint(
+            "(kind = 'report-run' AND subject_type = 'report_run' AND work_id IS NOT NULL) OR "
+            "(kind = 'post-publish' AND subject_type = 'board_post' AND work_id IS NOT NULL) OR "
+            "(kind = 'event-reminder' AND subject_type = 'board_event' AND work_id IS NOT NULL) OR "
+            "(kind = 'report-run-failed' AND subject_type = 'scheduled_work' "
+            "AND work_id IS NOT NULL AND subject_id = work_id) OR "
+            "(kind = 'backup-failed' AND subject_type = 'backup_run' AND work_id IS NULL) OR "
+            "(kind = 'record-assigned' AND subject_type = 'record' AND work_id IS NULL) OR "
+            "(kind = 'invitation-accepted' AND subject_type = 'user' AND work_id IS NULL) OR "
+            "(kind = 'sandbox-published' AND subject_type = 'sandbox_version' "
+            "AND work_id IS NULL) OR "
+            "(kind = 'access-changed' AND subject_type = 'user' AND work_id IS NULL "
+            "AND subject_id = recipient_id)",
+            name="ck_in_app_notifications_reference",
+        ),
         UniqueConstraint("work_id", "recipient_id", name="uq_in_app_notifications_work_recipient"),
         Index("ix_in_app_notifications_recipient_created", "recipient_id", "created_at", "id"),
+        Index(
+            "ix_in_app_notifications_recipient_unread",
+            "recipient_id",
+            "created_at",
+            "id",
+            postgresql_where=text("read_at IS NULL AND is_deleted = false"),
+        ),
     )
 
-    work_id: Mapped[UUID] = mapped_column(
-        ForeignKey("scheduled_work.id", ondelete="RESTRICT"), nullable=False
+    kind: Mapped[NotificationKind] = mapped_column(String(32), nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    work_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("scheduled_work.id", ondelete="RESTRICT"), nullable=True
     )
     recipient_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False

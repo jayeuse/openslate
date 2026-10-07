@@ -20,6 +20,7 @@ from app.systems.platform.scheduling.post_execution import (
     claim_due_post_work,
     finalize_post_claim,
 )
+from app.systems.platform.scheduling.service import list_current_user_notifications
 from tests.boards.test_post_routes import _actor, _board, _client, _create_payload, _grant
 from tests.boards.test_post_schedule_work import _create, _schedule, _subject
 
@@ -49,9 +50,7 @@ def test_manual_publish_route_commits_revision_and_inbox_before_reply(
     assert published.status_code == 200, published.text
     with Session(db.get_bind()) as observer:
         revision = observer.scalar(
-            select(BoardPostRevision).where(
-                BoardPostRevision.post_id == post_id
-            )
+            select(BoardPostRevision).where(BoardPostRevision.post_id == post_id)
         )
         assert revision is not None
         work = observer.scalar(
@@ -129,6 +128,12 @@ def test_manual_publication_inbox_snapshots_only_current_board_readers(
     assert {owner.id, viewer.id, manager.id} <= recipients
     assert outsider.id not in recipients
     assert expired_viewer.id not in recipients
+    [notice] = list_current_user_notifications(db, viewer.id)
+    assert (notice.kind, notice.subject_type, notice.subject_id) == (
+        "post-publish",
+        "board_post",
+        item.id,
+    )
 
     replay = publish_locked(
         db,

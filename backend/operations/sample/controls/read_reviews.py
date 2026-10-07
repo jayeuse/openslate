@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any, cast
 
+from pydantic import ValidationError
+
+from app.systems.manage.workspace.schemas import WorkspaceAppearanceResponse, WorkspaceResponse
+from app.systems.manage.workspace.security_schemas import WorkspaceCallerIpResponse
 from operations.sample.blueprint import SampleDataset
 from operations.sample.controls.board_files import board_author
 from operations.sample.controls.boards import _board_manager_and_record
@@ -42,6 +47,9 @@ CONTROL_ROUTES = frozenset(
         ("GET", "/api/boards/{board_id}/posts/{post_id}/revisions"),
         ("GET", "/api/boards/{board_id}/posts/{post_id}/revisions/{revision_id}"),
         ("GET", "/api/access/member-candidates"),
+        ("GET", "/api/workspace/appearance"),
+        ("GET", "/api/workspace"),
+        ("GET", "/api/workspace/security/caller-ip"),
     }
 )
 
@@ -102,6 +110,7 @@ def plan_read_reviews(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             "review_my_events", _first_event_author(dataset, board_department, name), board_key, 1
         ),
         _action("review_member_candidates", "admin", "control:member-candidates", 1),
+        _action("review_workspace_appearance", "admin", "control:workspace-appearance", 3),
     )
 
 
@@ -141,7 +150,41 @@ def execute_read_review(
 
     page = {"limit": 25, "offset": 0}
     operation = action.values["operation"]
-    if operation == "review_view_fields":
+    if operation == "review_workspace_appearance":
+        _id(context.user_ids, action.actor_key, label="administrator", step=action.key)
+        try:
+            appearance = WorkspaceAppearanceResponse.model_validate_json(
+                json.dumps(read("/api/workspace/appearance")), strict=True
+            )
+        except ValidationError:
+            raise SamplePhaseActionError(
+                "Workspace appearance response is invalid", step="workspace_appearance"
+            ) from None
+        try:
+            workspace = WorkspaceResponse.model_validate_json(
+                json.dumps(read("/api/workspace")), strict=True
+            )
+        except ValidationError:
+            raise SamplePhaseActionError(
+                "Workspace profile response is invalid", step="workspace_theme"
+            ) from None
+        if (
+            workspace.theme != appearance.theme
+            or workspace.display_name != dataset.organization.identity.workspace_name
+        ):
+            raise SamplePhaseActionError(
+                "Public appearance differs from the authored workspace", step="workspace_theme"
+            )
+        caller = read("/api/workspace/security/caller-ip")
+        try:
+            if set(caller) != {"address"} or not isinstance(caller.get("address"), str):
+                raise ValueError
+            WorkspaceCallerIpResponse.model_validate_json(json.dumps(caller), strict=True)
+        except (ValidationError, ValueError):
+            raise SamplePhaseActionError(
+                "Current caller IP response is invalid", step="caller_ip"
+            ) from None
+    elif operation == "review_view_fields":
         module_id = _mapped_id(context, "modules", action.target_key, step=action.key)
         sources = _rows(read("/api/views/data-sources", {"limit": 100, "offset": 0}), action.key)
         if not any(row.get("id") == module_id for row in sources):

@@ -338,6 +338,239 @@ test("compact Calendar enters Agenda and permits manual Month selection", async 
   ).toHaveAttribute("aria-pressed", "true");
 });
 
+test.describe("Boards workspace regional activity", () => {
+  test.use({ locale: "en-US", timezoneId: "UTC" });
+  test("Board activity retains its timezone label while formatting the workspace timestamp", async ({
+    page,
+  }) => {
+    await installBoardApi(page, () => true);
+    await page.route("**/api/workspace", (route) =>
+      route.fulfill({
+        json: {
+          display_name: "OpenSlate",
+          mark: "OS",
+          logo_file_id: null,
+          revision: 1,
+          today: "2026-09-25",
+          week_start: "monday",
+          locale: "fr-FR",
+          timezone: "America/Los_Angeles",
+        },
+      }),
+    );
+    await page.route(`**/api/boards/${boardId}/activity?**`, (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: "00000000-0000-4000-8000-000000000199",
+              created_at: "2026-09-23T00:00:00Z",
+              kind: "board",
+              action: "update",
+              summary: "Regional activity",
+              actor_label: "Regional test actor",
+            },
+          ],
+          pagination: {
+            limit: 25,
+            offset: 0,
+            count: 1,
+            total: 1,
+            has_more: false,
+          },
+        },
+      }),
+    );
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    await page.getByRole("button", { name: "Board menu", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "View activity", exact: true })
+      .click();
+    const activity = page.getByRole("dialog", {
+      name: "Board activity",
+      exact: true,
+    });
+    await expect(
+      activity.getByText("Regional activity", { exact: true }),
+    ).toBeVisible();
+    await expect(activity.locator("time")).toHaveText(
+      /22 sept\. 2026.*17:00.*(?:UTC|GMT).*7/,
+    );
+  });
+
+  test("Calendar main Refresh replaces a held cold workspace read", async ({
+    page,
+  }) => {
+    await installOpenViewEventSource(page);
+    await installBoardApi(page, () => true);
+    const events: Array<Record<string, unknown>> = [];
+    let workspaceReads = 0;
+    let oldReleased = false;
+    let releaseOld!: () => void;
+    let markFirstStarted!: () => void;
+    let markOldDelivered!: () => void;
+    let markOldSettled!: () => void;
+    const heldOld = new Promise<void>((resolve) => {
+      releaseOld = resolve;
+    });
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const oldDelivered = new Promise<void>((resolve) => {
+      markOldDelivered = resolve;
+    });
+    const oldSettled = new Promise<void>((resolve) => {
+      markOldSettled = resolve;
+    });
+    await page.route("**/api/workspace", async (route) => {
+      const read = ++workspaceReads;
+      events.push({ event: "workspace-read", read, oldReleased });
+      if (read === 1) {
+        const oldRequest = route.request();
+        page.on("requestfinished", (request) => {
+          if (request !== oldRequest) return;
+          events.push({ event: "old-network-finished" });
+          markOldSettled();
+        });
+        page.on("requestfailed", (request) => {
+          if (request !== oldRequest) return;
+          events.push({
+            event: "old-network-failed",
+            failure: request.failure()?.errorText,
+          });
+          markOldSettled();
+        });
+        markFirstStarted();
+        await heldOld;
+        try {
+          await route.fulfill({
+            json: {
+              display_name: "OpenSlate",
+              mark: "OS",
+              logo_file_id: null,
+              revision: 1,
+              today: "2026-09-25",
+              week_start: "monday",
+              locale: "en-US",
+              timezone: "UTC",
+            },
+          });
+          events.push({ event: "old-delivery", fulfilled: true });
+        } catch (error) {
+          events.push({
+            event: "old-delivery",
+            fulfilled: false,
+            error: String(error),
+          });
+        } finally {
+          markOldDelivered();
+        }
+        return;
+      }
+      await route.fulfill({
+        json: {
+          display_name: "OpenSlate",
+          mark: "OS",
+          logo_file_id: null,
+          revision: 1,
+          today: "2026-09-26",
+          week_start: "monday",
+          locale: "en-US",
+          timezone: "UTC",
+        },
+      });
+      events.push({ event: "latest-delivery", read });
+    });
+    try {
+      await page.goto(`/boards?board=${boardId}&section=calendar`);
+      await firstStarted;
+      await expect(
+        page.getByRole("heading", { name: board.name, exact: true }),
+      ).toBeVisible();
+      const refresh = page.getByRole("button", {
+        name: "Refresh",
+        exact: true,
+      });
+      await expect(refresh).toBeEnabled();
+      await refresh.click();
+      await expect.poll(() => workspaceReads).toBeGreaterThan(1);
+      const latest = page.getByRole("button", { name: /View .*Sep 26/ });
+      await expect(latest).toHaveAttribute("aria-current", "date");
+      events.push({ event: "latest-day-before-old-release", workspaceReads });
+      oldReleased = true;
+      releaseOld();
+      await Promise.all([oldDelivered, oldSettled]);
+      await expect(latest).toHaveAttribute("aria-current", "date");
+      events.push({ event: "latest-day-after-old-settled", workspaceReads });
+    } finally {
+      if (!oldReleased) {
+        oldReleased = true;
+        releaseOld();
+      }
+      await test.info().attach("cold-main-refresh-observations", {
+        body: JSON.stringify({ workspaceReads, oldReleased, events }, null, 2),
+        contentType: "application/json",
+      });
+    }
+  });
+
+  test("Calendar manual Refresh and rollover keep the selected day and last-good settings", async ({
+    page,
+  }) => {
+    await page.clock.install({ time: new Date("2026-09-25T12:00:00Z") });
+    await installBoardApi(page, () => true);
+    let today = "2026-09-25";
+    let failRegionalRead = false;
+    await page.route("**/api/workspace", (route) =>
+      failRegionalRead
+        ? route.fulfill({ status: 503, json: { detail: "Unavailable" } })
+        : route.fulfill({
+            json: {
+              display_name: "OpenSlate",
+              mark: "OS",
+              logo_file_id: null,
+              revision: 1,
+              today,
+              week_start: "monday",
+              locale: "en-US",
+              timezone: "UTC",
+            },
+          }),
+    );
+    await page.goto(`/boards?board=${boardId}&section=calendar`);
+    const chosen = page.getByRole("button", { name: /View .*Sep 27/ });
+    await chosen.click();
+    today = "2026-09-26";
+    const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+    await refresh.click();
+    await expect(
+      page.getByRole("button", { name: /View .*Sep 26/ }),
+    ).toHaveAttribute("aria-current", "date");
+    await expect(chosen).toHaveAttribute("aria-pressed", "true");
+    failRegionalRead = true;
+    today = "2026-09-27";
+    await refresh.click();
+    const retry = page.getByRole("button", {
+      name: "Retry Workspace date",
+      exact: true,
+    });
+    await expect(retry).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /View .*Sep 26/ }),
+    ).toHaveAttribute("aria-current", "date");
+    await expect(chosen).toHaveAttribute("aria-pressed", "true");
+    failRegionalRead = false;
+    await retry.click();
+    await expect(chosen).toHaveAttribute("aria-current", "date");
+    today = "2026-09-28";
+    await page.clock.runFor(60_000);
+    await expect(
+      page.getByRole("button", { name: /View .*Sep 28/ }),
+    ).toHaveAttribute("aria-current", "date");
+    await expect(chosen).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
 test("post editor retains a canceled close and discards only on confirmation", async ({
   page,
 }) => {
@@ -560,6 +793,7 @@ test("an event author can archive their event, while another author's event stay
     event: event(id, authorId, title, boardRevision),
   });
   let archived = false;
+  let archiveAttempts = 0;
   let archiveBody: unknown = null;
   await page.route(
     `**/api/boards/${boardId}/events/occurrences?**`,
@@ -596,6 +830,17 @@ test("an event author can archive their event, while another author's event stay
     `**/api/boards/${boardId}/events/${eventId}/archive`,
     async (route) => {
       archiveBody = route.request().postDataJSON();
+      archiveAttempts++;
+      if (archiveAttempts === 1)
+        return route.fulfill({
+          status: 409,
+          json: {
+            detail: {
+              code: "stale_revision",
+              message: "Private event implementation detail",
+            },
+          },
+        });
       archived = true;
       return route.fulfill({
         contentType: "application/json",
@@ -648,6 +893,16 @@ test("an event author can archive their event, while another author's event stay
     name: "Archive event?",
   });
   await expect(confirmation).toBeVisible();
+  await confirmation
+    .getByRole("button", { name: "Archive event", exact: true })
+    .click();
+  await expect(confirmation).toBeVisible();
+  const actionFailure = confirmation.getByRole("alert");
+  await expect(actionFailure).toContainText("changed");
+  await expect(actionFailure).toHaveAttribute("data-variant", "destructive");
+  await expect(
+    page.getByText("Private event implementation detail"),
+  ).toHaveCount(0);
   const archivedResponse = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname ===
@@ -1210,6 +1465,18 @@ test("an author links a Record using its server-derived title", async ({
   };
   let submitted: unknown = null;
   let linked = false;
+  let listUnavailable = true;
+  let sourcePageUnavailable = true;
+  let recordsUnavailable = true;
+  const dataSources = Array.from({ length: 26 }, (_, index) => ({
+    id:
+      index === 0
+        ? moduleId
+        : `00000000-0000-4000-8000-${String(100 + index).padStart(12, "0")}`,
+    name: index === 0 ? "Requests" : `Data source ${index + 1}`,
+    department_id: boardId,
+    title_field_id: index === 0 ? fieldId : null,
+  }));
   const wireLink = {
     id: linkId,
     record_id: recordId,
@@ -1243,6 +1510,11 @@ test("an author links a Record using its server-derived title", async ({
         linked = true;
         return route.fulfill({ json: wireLink });
       }
+      if (listUnavailable)
+        return route.fulfill({
+          status: 503,
+          json: { detail: "Private failure canary" },
+        });
       return route.fulfill({
         json: {
           items: linked ? [wireLink] : [],
@@ -1279,28 +1551,35 @@ test("an author links a Record using its server-derived title", async ({
           },
         },
       });
+    const offset = Number(
+      new URL(route.request().url()).searchParams.get("offset") ?? 0,
+    );
+    if (offset === 25 && sourcePageUnavailable)
+      return route.fulfill({
+        status: 503,
+        json: { detail: "Private failure canary" },
+      });
+    const items = dataSources.slice(offset, offset + 25);
     return route.fulfill({
       json: {
-        items: [
-          {
-            id: moduleId,
-            name: "Requests",
-            department_id: boardId,
-            title_field_id: fieldId,
-          },
-        ],
+        items,
         pagination: {
           limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
+          offset,
+          count: items.length,
+          total: 26,
+          has_more: offset === 0,
         },
       },
     });
   });
-  await page.route("**/api/records/query", (route) =>
-    route.fulfill({
+  await page.route("**/api/records/query", (route) => {
+    if (recordsUnavailable)
+      return route.fulfill({
+        status: 503,
+        json: { detail: "Private failure canary" },
+      });
+    return route.fulfill({
       json: {
         items: [
           {
@@ -1323,8 +1602,8 @@ test("an author links a Record using its server-derived title", async ({
           has_more: false,
         },
       },
-    }),
-  );
+    });
+  });
 
   await page.goto(`/boards?board=${boardId}&section=posts`);
   await page.getByRole("button", { name: "More post actions" }).click();
@@ -1332,10 +1611,72 @@ test("an author links a Record using its server-derived title", async ({
   const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
   await editor.getByRole("button", { name: "Request handoff" }).click();
   const links = editor.getByRole("region", { name: "Record links" });
+  await expect(links).toContainText("Record links could not be loaded.");
+  await expect
+    .soft(
+      links
+        .getByRole("alert")
+        .filter({ hasText: "Record links could not be loaded." }),
+    )
+    .toHaveAttribute("data-variant", "destructive");
+  await expect(links).not.toContainText("No linked Records.");
+  await expect(links).not.toContainText("Private failure canary");
+  expect(submitted).toBeNull();
+  listUnavailable = false;
+  await links.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    links.getByText("No linked Records.", { exact: true }),
+  ).toBeVisible();
+
+  await links
+    .getByRole("button", { name: "Next sources", exact: true })
+    .click();
+  await expect(links).toContainText("Data sources could not be loaded.");
+  await expect
+    .soft(
+      links
+        .getByRole("alert")
+        .filter({ hasText: "Data sources could not be loaded." }),
+    )
+    .toHaveAttribute("data-variant", "destructive");
+  await expect(links).not.toContainText("Private failure canary");
+  expect(submitted).toBeNull();
+  sourcePageUnavailable = false;
+  await links
+    .getByRole("button", { name: "Previous sources", exact: true })
+    .click();
+  await expect(
+    links.getByText("Data sources could not be loaded."),
+  ).toHaveCount(0);
+  await expect(
+    links.getByRole("button", { name: "Previous sources", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    links.getByRole("button", { name: "Next sources", exact: true }),
+  ).toBeEnabled();
+
   await links.getByLabel("Record data source").selectOption(moduleId);
+  await expect(links).toContainText("Records could not be loaded.");
+  await expect
+    .soft(
+      links
+        .getByRole("alert")
+        .filter({ hasText: "Records could not be loaded." }),
+    )
+    .toHaveAttribute("data-variant", "destructive");
+  await expect(links).not.toContainText("Private failure canary");
+  await expect(
+    links.getByRole("button", { name: "Link Record", exact: true }),
+  ).toBeDisabled();
+  expect(submitted).toBeNull();
+  recordsUnavailable = false;
+  await links.getByLabel("Search Records", { exact: true }).fill("Request");
+  await expect(links.getByLabel("Record to link")).toBeVisible();
+  await expect(links.getByText("Records could not be loaded.")).toHaveCount(0);
   await links.getByLabel("Record to link").selectOption(recordId);
   await links.getByRole("button", { name: "Link Record" }).click();
   await expect(links.getByRole("link", { name: "Request 27" })).toBeVisible();
+  await expect(links.getByRole("status")).toHaveText("Record linked.");
   await captureOpenViewReview(page, "boards-record-link-add");
   expect(submitted).toEqual({
     record_id: recordId,

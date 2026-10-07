@@ -13,6 +13,12 @@ from operations.reset import planning as reset_planning
 
 
 def test_reset_includes_views_boards_dashboards_and_reports_in_safe_delete_order() -> None:
+    table = "identity_mfa_observations"
+    assert table in reset_models.APPLICATION_TABLES
+    assert table in reset_models.NON_PRESERVED_TABLES
+    assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
+    assert (table, f"SELECT count(*) FROM public.{table}") in reset_models._COUNT_STATEMENTS
+    assert table in reset_models.DELETE_ORDER
     for removed in ("saved_view_defaults", "dashboard_defaults", "openview_chart_preferences"):
         assert removed not in reset_models.APPLICATION_TABLES
         assert removed not in reset_models.DELETE_ORDER
@@ -184,7 +190,7 @@ def test_reset_rejects_urls_that_do_not_match_the_attested_instance() -> None:
 
 
 def test_reset_preserves_and_locks_backup_policy_history_and_version_tables() -> None:
-    for table in ("backup_policies", "backup_runs", "update_statuses"):
+    for table in ("backup_export_operations", "backup_policies", "backup_runs", "update_statuses"):
         assert table in reset_models.APPLICATION_TABLES
         assert table not in reset_models.NON_PRESERVED_TABLES
         assert table not in reset_models.DELETE_ORDER
@@ -305,6 +311,7 @@ def _backup_rows():
         admin,
         deleted,
         {
+            "backup_export_operations": [],
             "backup_policies": [dict(base, id=str(uuid4()), revision=2, schedule="weekly")],
             "update_statuses": [dict(base, id=str(uuid4()), latest_version="0.2.0")],
             "backup_runs": [

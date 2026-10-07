@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from uuid6 import uuid7
 
+from app.core.config import get_settings
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.files.models import File
 
@@ -40,6 +41,7 @@ def _profile(revision: int = 3) -> WorkspaceProfile:
         currency="PHP",
         week_start="monday",
         business_hours="09:00–18:00",
+        theme="slate",
         invitation_expiry_days=7,
         guest_duration_days=30,
         revision=revision,
@@ -68,7 +70,7 @@ class _Session:
 def _client(
     monkeypatch: pytest.MonkeyPatch,
     database: _Session,
-    actor: object = type("Actor", (), {"id": uuid7()})(),
+    actor: object = type("Actor", (), {"id": uuid7(), "role": "admin"})(),
 ) -> TestClient:
     from app.common.dependencies import get_current_user
     from app.core.database import get_db
@@ -76,6 +78,8 @@ def _client(
 
     workspace_router = _router_module()
     application = create_app()
+    monkeypatch.setattr(workspace_router, "lock_quota", lambda _db: None)
+    monkeypatch.setattr(database, "flush", lambda: None, raising=False)
     application.dependency_overrides[get_db] = lambda: database
     application.dependency_overrides[get_current_user] = lambda: actor
     monkeypatch.setattr(
@@ -169,10 +173,13 @@ def test_workspace_update_schema_keeps_omitted_region_fields_out_of_the_update()
     assert "locale" not in payload.model_fields_set
 
 
+@pytest.mark.parametrize("purge_enabled", [False, True])
 def test_get_workspace_returns_existing_singleton_without_creating_it(
     monkeypatch: pytest.MonkeyPatch,
+    purge_enabled: bool,
 ) -> None:
     database = _Session(_profile())
+    monkeypatch.setattr(get_settings(), "lifecycle_purge_enabled", purge_enabled)
 
     before = datetime.now(UTC).date()
     response = _client(monkeypatch, database).get("/api/workspace")
@@ -182,6 +189,7 @@ def test_get_workspace_returns_existing_singleton_without_creating_it(
     assert response.json()["display_name"] == "OpenSlate"
     assert response.json()["revision"] == 3
     assert response.json()["today"] in {before.isoformat(), after.isoformat()}
+    assert response.json()["purge_enabled"] is purge_enabled
     assert database.commit_count == 0
 
 
@@ -231,6 +239,12 @@ def test_workspace_patch_rejects_stale_revision_without_writing(
         {"revision": 3, "mark": "x" * 33},
         {"revision": 3, "business_hours": None},
         {"revision": 3, "business_hours": "x" * 201},
+        {"revision": 3, "theme": None},
+        {"revision": 3, "theme": "sepia"},
+        {"revision": 3, "theme": "Stockroom"},
+        {"revision": 3, "theme": " stockroom "},
+        {"revision": 3, "purge_enabled": False},
+        {"revision": 3, "purge_enabled": True},
     ],
 )
 def test_workspace_patch_rejects_invalid_supplied_region_without_writing(
@@ -320,6 +334,7 @@ def test_workspace_response_contract_has_only_public_profile_fields() -> None:
         "currency",
         "week_start",
         "business_hours",
+        "theme",
         "invitation_expiry_days",
         "guest_duration_days",
         "revision",
@@ -327,6 +342,9 @@ def test_workspace_response_contract_has_only_public_profile_fields() -> None:
         "updated_at",
     }
     assert all(field not in fields for field in {"singleton_key", "performed_by", "is_deleted"})
+    properties = schemas.WorkspaceResponse.model_json_schema(mode="serialization")["properties"]
+    assert properties["purge_enabled"]["type"] == "boolean"
+    assert properties["purge_enabled"]["readOnly"] is True
 
 
 def test_workspace_response_exposes_server_day_in_workspace_timezone() -> None:

@@ -13,6 +13,11 @@ from uuid6 import uuid7
 from app.common.dependencies import require_admin, require_fresh_exact_admin
 from app.core.database import get_db
 from app.systems.access.identity.session_revocation import revoke_user_sessions
+from app.systems.access.policy.access_notifications import (
+    AccessSnapshot,
+    notify_access_changes,
+    snapshot_access,
+)
 from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.users.coordination import (
     ProfileValidationError,
@@ -34,6 +39,7 @@ from app.systems.manage.audit.service import (
     SecurityEventPersistenceError,
     append_committed_security_event,
 )
+from app.systems.manage.workspace.security_policy import apply_role_mfa_episode
 
 router = APIRouter(prefix="/users", tags=["users"])
 AdminUser = Annotated[User, Depends(require_admin)]
@@ -235,6 +241,9 @@ def update_user(
             ),
             expiry_requested="expires_at" in payload.model_fields_set,
         )
+    before = snapshot_access(db, (user,)) if role_change_requested else None
+    if role_change_requested:
+        apply_role_mfa_episode(db, user, destination_role)
     try:
         _apply_profile_update(db, user, payload, destination_role=destination_role)
     except ProfileValidationError as error:
@@ -250,6 +259,7 @@ def update_user(
             target_id=target_id,
             payload=payload,
             destination_role=destination_role,
+            before=before,
         )
     if payload.status == UserStatus.DISABLED:
         return _disable_user(
@@ -259,10 +269,12 @@ def update_user(
             target_id=target_id,
             payload=payload,
             destination_role=destination_role,
+            before=before,
         )
     user.role = destination_role
     if payload.username is not None:
         user.username = payload.username
+    notify_access_changes(db, before)
     commit(db, "Username unavailable")
     return user
 
@@ -275,6 +287,7 @@ def _activate_user(
     target_id: UUID,
     payload: UserUpdate,
     destination_role: str,
+    before: AccessSnapshot | None,
 ) -> User:
     operation_id = uuid7()
     _record_outcome(
@@ -295,6 +308,7 @@ def _activate_user(
         if payload.username is not None:
             user.username = payload.username
         user.status = UserStatus.ACTIVE.value
+        notify_access_changes(db, before)
         commit(db, "Username unavailable")
     except HTTPException as error:
         if db.in_transaction():
@@ -326,6 +340,7 @@ def _disable_user(
     target_id: UUID,
     payload: UserUpdate,
     destination_role: str,
+    before: AccessSnapshot | None,
 ) -> User:
     operation_id = uuid7()
     _record_outcome(
@@ -342,6 +357,7 @@ def _disable_user(
     advance_token_cutoff(user)
     revoke_user_sessions(db, user.id, except_session_id=None)
     try:
+        notify_access_changes(db, before)
         commit(db, "Username unavailable")
     except HTTPException as error:
         _record_outcome(

@@ -10,6 +10,7 @@ EXPECTED_DATABASE_USER = "openslate_owner"
 
 APPLICATION_TABLES = (
     "audit_logs",
+    "backup_export_operations",
     "backup_policies",
     "backup_runs",
     "board_attachments",
@@ -32,6 +33,7 @@ APPLICATION_TABLES = (
     "group_members",
     "groups",
     "in_app_notifications",
+    "identity_mfa_observations",
     "identity_rate_limit_buckets",
     "identity_sessions",
     "lifecycle_confirmation_challenges",
@@ -67,6 +69,7 @@ NON_PRESERVED_TABLES = tuple(
     for table in APPLICATION_TABLES
     if table
     not in {
+        "backup_export_operations",
         "backup_policies",
         "backup_runs",
         "boards",
@@ -83,6 +86,7 @@ DELETE_ORDER = (
     "group_members",
     "groups",
     "identity_sessions",
+    "identity_mfa_observations",
     "identity_rate_limit_buckets",
     "lifecycle_confirmation_challenges",
     "lifecycle_rate_limit_failures",
@@ -148,7 +152,8 @@ SELECT id, supabase_user_id FROM public.users WHERE id <> %s ORDER BY id
 _WORKSPACE_STATEMENT = """
 SELECT id, singleton_key, display_name, legal_name, description, contact_email,
        contact_phone, postal_address, logo_file_id, timezone, locale, revision,
-       deleted_at, is_deleted, performed_by, invitation_expiry_days, guest_duration_days
+       deleted_at, is_deleted, performed_by, invitation_expiry_days, guest_duration_days,
+       currency, week_start, business_hours, mark, theme
   FROM public.workspace_profiles
 """
 _EFFECTIVE_ADMIN_PROFILES_STATEMENT = """
@@ -165,7 +170,8 @@ FROM public.users AS profile
 """
 _LOCK_APPLICATION_STATEMENT = """
 LOCK TABLE public.alembic_version, public.audit_logs,
- public.backup_policies, public.backup_runs, public.update_statuses,
+ public.backup_export_operations, public.backup_policies, public.backup_runs,
+ public.update_statuses,
  public.board_attachments, public.board_event_reminders, public.board_events,
  public.board_groups, public.board_post_revision_attachments,
  public.board_post_revision_record_links,
@@ -176,6 +182,7 @@ LOCK TABLE public.alembic_version, public.audit_logs,
  public.files, public.group_access, public.group_members, public.groups,
  public.in_app_notifications,
  public.identity_rate_limit_buckets, public.identity_sessions,
+ public.identity_mfa_observations,
  public.lifecycle_confirmation_challenges, public.lifecycle_rate_limit_buckets,
  public.lifecycle_rate_limit_failures, public.modules, public.records,
  public.report_run_eligible_users, public.report_run_rows, public.report_runs,
@@ -244,6 +251,11 @@ class WorkspaceSnapshot:
     performed_by: object
     invitation_expiry_days: object
     guest_duration_days: object
+    currency: object
+    week_start: object
+    business_hours: object
+    mark: object
+    theme: object
 
 
 def stable_snapshot_payload(snapshot: object) -> dict[str, object]:

@@ -1,10 +1,19 @@
 import {
+  endAllAccessRemoteSessions,
+  endAccessSession,
+  getAccessCallerIp,
+  getAccessSecurityPolicy,
+  listAccessSessions,
+  updateAccessSecurityPolicy,
+} from "../../../src/components/systems/access/adapters/security-api";
+import {
   createAccessGroup,
   deleteAccessGroup,
   deleteAccessUser,
   getAccessGroup,
   getAccessInvitationSettings,
   getAccessUser,
+  getAccessUserSummary,
   getAccessUserAccess,
   inviteAccessUser,
   listAccessDepartments,
@@ -40,12 +49,88 @@ const list = {
   deleted: "exclude",
 } as const;
 
+// Policy controls represent independent values, including non-preset combinations.
+const securityPolicy = {
+  session_timeout_minutes: 30,
+  password_min_length: 13,
+  password_require_mixed_case: false,
+  password_require_number: true,
+};
+
 describeContracts("Access", [
+  {
+    name: "getAccessCallerIp",
+    run: () => getAccessCallerIp(),
+    responses: { "GET /api/workspace/security/caller-ip": { address: "::1" } },
+  },
+  {
+    name: "getAccessSecurityPolicy",
+    run: () => getAccessSecurityPolicy(),
+    responses: { "GET /api/workspace/security": securityPolicy },
+  },
+  {
+    name: "updateAccessSecurityPolicy",
+    run: () =>
+      updateAccessSecurityPolicy({
+        revision: 2,
+        session_timeout_minutes: 30,
+        password_min_length: 16,
+        password_require_mixed_case: true,
+        password_require_number: true,
+        session_absolute_lifetime_minutes: null,
+        session_concurrent_limit: null,
+        mfa_require_admin: true,
+        mfa_require_member: false,
+        mfa_require_guest: false,
+        mfa_grace_days: 0,
+        login_failed_attempt_threshold: 5,
+        login_window_minutes: 15,
+        login_cooldown_minutes: 15,
+        ip_allow_list: ["10.0.0.0/8"],
+      }),
+    responses: { "PATCH /api/workspace/security": securityPolicy },
+  },
+  {
+    name: "listAccessSessions",
+    run: () =>
+      listAccessSessions({
+        limit: 4,
+        offset: 0,
+        search: "ana",
+        sort_by: "person_name",
+        sort_order: "asc",
+        status: "remote",
+        device: "Desktop",
+      }),
+  },
+  {
+    name: "endAccessSession",
+    run: () =>
+      endAccessSession({
+        id: sessionId,
+        user_id: userId,
+        person_name: "Ana",
+        user_agent: null,
+        device: "Desktop",
+        browser: "Firefox",
+        created_at: "2026-01-01T00:00:00Z",
+        refreshed_at: "2026-01-01T00:00:00Z",
+        expires_at: "2026-01-02T00:00:00Z",
+        current: false,
+        ip_address: null,
+      }),
+  },
+  {
+    name: "endAllAccessRemoteSessions",
+    run: () => endAllAccessRemoteSessions(),
+  },
+
   {
     name: "listAccessUsers",
     run: () =>
       listAccessUsers({ ...list, sort_by: "username", role: "member" }),
   },
+  { name: "getAccessUserSummary", run: () => getAccessUserSummary() },
   { name: "getAccessUser", run: () => getAccessUser(userId) },
   {
     name: "inviteAccessUser",

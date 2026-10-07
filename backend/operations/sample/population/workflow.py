@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -69,6 +69,8 @@ def run_population(
     run_id: str,
     dataset: SampleDataset,
     manifest: dict[str, Any],
+    mfa_observer: Callable[..., object] | None = None,
+    host_control: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     """Perform the sample workflow sequentially and persist only safe evidence."""
     journal = run_directory / "requests.jsonl"
@@ -288,6 +290,16 @@ def run_population(
                 **counts,
             }
         )
+        private_values: dict[str, Any] = {
+            "credentials": people_result.actors,
+            "new_client": new_client,
+            "mailpit_url": mailpit_url,
+            "origin": origin,
+        }
+        if mfa_observer is not None:
+            private_values["mfa_observer"] = mfa_observer
+        if host_control is not None:
+            private_values["host_control"] = host_control
         phase_counts = run_population_phases(
             dataset,
             manifest,
@@ -300,12 +312,7 @@ def run_population(
             admin_password=admin_password,
             save=lambda: _write_manifest(run_directory, manifest),
             mappings=lambda: _journal_mappings(journal),
-            private_values={
-                "credentials": people_result.actors,
-                "new_client": new_client,
-                "mailpit_url": mailpit_url,
-                "origin": origin,
-            },
+            private_values=private_values,
         )
         manifest["observed"].update(phase_counts)
         return cast(dict[str, int], manifest["observed"])

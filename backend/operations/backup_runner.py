@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -29,6 +30,13 @@ from app.systems.manage.backups.schemas import (
     ReleaseCommand,
 )
 from operations.backups.archive import backup_child, marker_facts, retention, run_archive
+from operations.backups.exports import (
+    export_child,
+    maintain_exports,
+    recover_export,
+    replay_cleanup,
+    run_export,
+)
 from operations.backups.host import (
     CommandRunner,
     Host,
@@ -305,6 +313,11 @@ def run_once(
         raise RunnerError("invalid_input")
     with host.locked():
         active = host.active()
+        if active is not None and active.get("kind") == "export":
+            if not recover:
+                raise RunnerError("recovery_required")
+            disposition(host, active)
+            return recover_export(host, active, now)
         if active is not None and recover:
             return recover_claim(host, active, now)
         if active is not None and active["phase"] == "prepared" and active["claim"] is None:
@@ -346,7 +359,9 @@ def run_once(
                 return {"state": "adopted"}
             raise RunnerError("adoption_required")
         if recover:
+            replay_cleanup(host, time.monotonic() + 15)
             return {"state": "idle"}
+        maintain_exports(host, now)
         checked = view.get("last_release_checked_at")
         if checked is None or now() - datetime.fromisoformat(checked) >= timedelta(hours=6):
             release = ReleaseCommand.model_validate(
@@ -364,7 +379,7 @@ def run_once(
         claimed = host.bridge({"op": "claim", "claim_id": journal["claim_id"]}, journal)["claim"]
         if claimed is None:
             host.finish_empty(journal)
-            return {"state": "idle"}
+            return run_export(host, now)
         claim = ClaimResponse.model_validate(claimed)
         if (
             claim.installation_id != host.config.installation_id
@@ -432,7 +447,9 @@ def main(argv: list[str] | None = None) -> int:
     """Emit safe JSON only; preserve private recovery evidence on operational failure."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "action", choices=("run", "recover", "_backup-child"), metavar="{run,recover}"
+        "action",
+        choices=("run", "recover", "_backup-child", "_export-child"),
+        metavar="{run,recover}",
     )
     parser.add_argument("--backup-config", type=Path, required=True)
     parser.add_argument("--state-directory", type=Path, required=True)
@@ -441,12 +458,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lock-fd", type=int, default=-1, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
-        if args.action == "_backup-child":
+        if args.action in {"_backup-child", "_export-child"}:
             if os.name == "nt" or args.claim_id is None or args.lock_fd < 0:
                 raise RunnerError("invalid_input")
-            backup_child(
-                Host(args.backup_config, args.state_directory), args.claim_id, args.lock_fd
-            )
+            child = export_child if args.action == "_export-child" else backup_child
+            child(Host(args.backup_config, args.state_directory), args.claim_id, args.lock_fd)
             return 0
         result = run_once(
             args.backup_config,

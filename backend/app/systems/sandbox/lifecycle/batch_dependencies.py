@@ -86,9 +86,14 @@ def load_purge_dependencies(
         db, department_ids, departments_by_id, fingerprint
     )
     field_ids = [field.id for field in scope.fields]
+    file_filters = []
+    if record_ids:
+        file_filters.append(File.record_id.in_(record_ids))
+    if department_ids:
+        file_filters.append(File.department_id.in_(department_ids))
     files = (
-        list(db.scalars(select(File).where(File.record_id.in_(record_ids)).order_by(File.id)))
-        if record_ids
+        list(db.scalars(select(File).where(or_(*file_filters)).order_by(File.id)))
+        if file_filters
         else []
     )
     record_link_rows, record_link_blockers, record_link_ids, record_link_board_ids = (
@@ -283,6 +288,7 @@ def load_purge_dependencies(
                     "state",
                     "purpose",
                     "record_id",
+                    "department_id",
                     "actual_size",
                     "expected_size",
                     "digest",
@@ -303,8 +309,10 @@ def load_purge_dependencies(
                         "Purge the attached file and confirm object deletion "
                         "before purging its parent"
                     ),
-                    conflicting_entity_type="records",
-                    conflicting_entity_id=file.record_id,
+                    conflicting_entity_type="departments"
+                    if file.department_id is not None
+                    else "records",
+                    conflicting_entity_id=file.department_id or file.record_id,
                 )
             )
     for view in views:

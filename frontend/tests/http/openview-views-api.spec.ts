@@ -10,8 +10,10 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { readFile } from "node:fs/promises";
 
 const userId = "00000000-0000-4000-8000-000000000001";
+test.use({ trace: "off", screenshot: "off", video: "off" });
 const moduleId = "00000000-0000-4000-8000-000000000010";
 const departmentId = "00000000-0000-4000-8000-000000000011";
 const nameFieldId = "00000000-0000-4000-8000-000000000012";
@@ -33,6 +35,826 @@ const secondViewId = "00000000-0000-4000-8000-000000000019";
 const duplicateViewId = "00000000-0000-4000-8000-000000000030";
 const recordOneId = "00000000-0000-4000-8000-000000000015";
 const recordTwoId = "00000000-0000-4000-8000-000000000016";
+
+const attachmentId = "00000000-0000-4000-8000-000000000091";
+const pendingAttachmentId = "00000000-0000-4000-8000-000000000092";
+const otherAccountId = "00000000-0000-4000-8000-000000000093";
+
+function recordAttachment(
+  id = attachmentId,
+  parent = recordOneId,
+  filename = "Equipment guide.pdf",
+) {
+  return {
+    id,
+    purpose: "record_attachment",
+    record_id: parent,
+    department_id: null as string | null,
+    board_id: null,
+    creator_id: userId,
+    filename,
+    media_type: "application/pdf" as string | null,
+    expected_size: 4,
+    actual_size: 4 as number | null,
+    state: "ready",
+    failure_code: null,
+    is_deleted: false,
+    created_at: "2026-09-23T00:00:00Z",
+    updated_at: "2026-09-23T00:00:00Z",
+  };
+}
+
+async function installRecordFilesApi(
+  page: Page,
+  options: { role?: "admin" | "member" | "guest"; deleted?: boolean } = {},
+) {
+  const viewOptions = {
+    disableInitialSearch: true,
+    deletedRecord: options.deleted,
+  };
+  const views = await installViewsApi(page, viewOptions);
+  let activeUser = userId;
+  const files = [recordAttachment()];
+  const calls: { method: string; path: string; body: unknown }[] = [];
+  let listStatus = 200;
+  let listBroken: "foreign" | "department" | "pagination" | null = null;
+  let archiveStatus = 200;
+  let downloadBroken = false;
+  let uploadMode:
+    "ready" | "ready-error" | "awaiting" | "uploading" | "rejected" = "ready";
+  let readbackStatus = 200;
+  let uploadHold: { started: () => void; wait: Promise<void> } | null = null;
+  let archiveHold: { started: () => void; wait: Promise<void> } | null = null;
+  const readHold = new Map<string, Promise<void>>();
+  const listReads: {
+    parent: string | null;
+    offset: number;
+    account: string;
+  }[] = [];
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user_id: activeUser,
+        setup_required: false,
+      },
+    }),
+  );
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        id: activeUser,
+        role: options.role ?? "admin",
+        access:
+          options.role && options.role !== "admin"
+            ? [
+                {
+                  department_id: departmentId,
+                  module_id: moduleId,
+                  level: options.role === "guest" ? "write" : "read",
+                },
+              ]
+            : [],
+      },
+    }),
+  );
+  await page.route("**/api/files**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const method = request.method();
+    calls.push({
+      method,
+      path: url.pathname,
+      body:
+        method === "PUT"
+          ? request.postDataBuffer()?.toString()
+          : request.postData()
+            ? request.postDataJSON()
+            : null,
+    });
+    if (url.pathname === "/api/files" && method === "GET") {
+      const parent = url.searchParams.get("record_id");
+      const offset = Number(url.searchParams.get("offset"));
+      const limit = Number(url.searchParams.get("limit"));
+      const account = activeUser;
+      listReads.push({ parent, offset, account });
+      await readHold.get(parent ?? "");
+      if (listStatus !== 200)
+        return route.fulfill({
+          status: listStatus,
+          json: { detail: "Private database path must not be shown" },
+        });
+      expect(url.searchParams.get("purpose")).toBe("record_attachment");
+      expect(url.searchParams.get("deleted")).toBe("exclude");
+      const matching = files.filter(
+        (file) => file.record_id === parent && !file.is_deleted,
+      );
+      const available =
+        account === userId
+          ? matching
+          : [
+              recordAttachment(
+                attachmentId,
+                parent ?? recordOneId,
+                "Second account guide.pdf",
+              ),
+            ];
+      const items = available.slice(offset, offset + limit);
+      const response = pageResponse(
+        items,
+        limit,
+        offset,
+        available.length,
+        offset + items.length < available.length,
+      );
+      if (listBroken === "foreign")
+        response.items = [
+          recordAttachment(
+            attachmentId,
+            recordTwoId,
+            "Foreign private file.pdf",
+          ),
+        ];
+      if (listBroken === "pagination")
+        response.pagination.count = items.length + 1;
+      if (listBroken === "department")
+        response.items = items.map((file) => ({
+          ...file,
+          department_id: departmentId,
+          filename: "Foreign private file.pdf",
+        }));
+      return route.fulfill({ json: response });
+    }
+    if (url.pathname === "/api/files" && method === "POST") {
+      const body = request.postDataJSON() as {
+        record_id: string;
+        filename: string;
+        expected_size: number;
+        purpose: string;
+      };
+      expect(body.purpose).toBe("record_attachment");
+      const reserved = {
+        ...recordAttachment(pendingAttachmentId, body.record_id, body.filename),
+        expected_size: body.expected_size,
+        actual_size: null,
+        state: "awaiting_upload",
+        media_type: null,
+      };
+      files.push(reserved);
+      return route.fulfill({ status: 201, json: reserved });
+    }
+    const id = url.pathname.split("/")[3];
+    const file = files.find((item) => item.id === id);
+    if (!file)
+      return route.fulfill({ status: 404, json: { detail: "Missing" } });
+    if (method === "PUT") {
+      const barrier = uploadHold;
+      uploadHold = null;
+      barrier?.started();
+      if (barrier) await barrier.wait;
+      file.state =
+        uploadMode === "ready-error"
+          ? "ready"
+          : uploadMode === "awaiting"
+            ? "awaiting_upload"
+            : uploadMode;
+      file.actual_size = file.state === "ready" ? file.expected_size : null;
+      if (file.state === "ready") file.media_type = "application/pdf";
+      if (uploadMode !== "ready")
+        return route.fulfill({
+          status: uploadMode === "rejected" ? 422 : 503,
+          json: { detail: "Private storage exception must not be shown" },
+        });
+      return route.fulfill({ json: file });
+    }
+    if (url.pathname.endsWith("/archive")) {
+      const barrier = archiveHold;
+      archiveHold = null;
+      barrier?.started();
+      if (barrier) await barrier.wait;
+      if (archiveStatus !== 200)
+        return route.fulfill({
+          status: archiveStatus,
+          json: { detail: "Private archive exception must not be shown" },
+        });
+      file.is_deleted = true;
+      return route.fulfill({ json: file });
+    }
+    if (url.pathname.endsWith("/content"))
+      return route.fulfill({
+        contentType: "application/pdf",
+        body: Buffer.from("%PDF"),
+        headers: {
+          "Content-Disposition": 'attachment; filename="Equipment guide.pdf"',
+          "X-Content-Type-Options": downloadBroken ? "sniff" : "nosniff",
+        },
+      });
+    if (readbackStatus !== 200)
+      return route.fulfill({
+        status: readbackStatus,
+        json: { detail: "Private status exception must not be shown" },
+      });
+    return route.fulfill({ json: file });
+  });
+  const hold = () => {
+    let started: () => void = () => undefined;
+    let release: () => void = () => undefined;
+    const began = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { began, release, barrier: { started, wait } };
+  };
+  return {
+    views,
+    closeRecord: () => {
+      viewOptions.deletedRecord = true;
+    },
+    files,
+    calls,
+    listReads,
+    setListStatus: (value: number) => {
+      listStatus = value;
+    },
+    breakList: (value: typeof listBroken) => {
+      listBroken = value;
+    },
+    setArchiveStatus: (value: number) => {
+      archiveStatus = value;
+    },
+    breakDownload: (value: boolean) => {
+      downloadBroken = value;
+    },
+    setUploadMode: (value: typeof uploadMode) => {
+      uploadMode = value;
+    },
+    setReadbackStatus: (value: number) => {
+      readbackStatus = value;
+    },
+    setUser: (value: string) => {
+      activeUser = value;
+    },
+    holdUpload: () => {
+      const held = hold();
+      uploadHold = held.barrier;
+      return held;
+    },
+    holdArchive: () => {
+      const held = hold();
+      archiveHold = held.barrier;
+      return held;
+    },
+    holdList: (parent: string) => {
+      const held = hold();
+      readHold.set(parent, held.barrier.wait);
+      return () => {
+        readHold.delete(parent);
+        held.release();
+      };
+    },
+  };
+}
+
+async function openRecordFiles(page: Page, parent = recordOneId) {
+  await page.goto(
+    `/openview?section=views&module=${moduleId}&view=${viewId}&record=${parent}`,
+  );
+  const dialog = page.getByRole("dialog", { name: "Record details" });
+  await dialog.getByRole("tab", { name: "Files", exact: true }).click();
+  return dialog.getByRole("tabpanel", { name: "Files", exact: true });
+}
+
+const attachmentUpload = {
+  name: "Maintenance notes.pdf",
+  mimeType: "application/pdf",
+  buffer: Buffer.from("%PDF"),
+};
+
+test("Record files: a settled unfinished upload does not block archiving under a closed record", async ({
+  page,
+}) => {
+  const api = await installRecordFilesApi(page);
+  api.setUploadMode("awaiting");
+  const files = await openRecordFiles(page);
+  await expect(files.getByLabel("Upload file")).toBeEnabled();
+  await files.getByLabel("Upload file").setInputFiles(attachmentUpload);
+  await expect(
+    files.getByText("Choose the same file to retry this upload."),
+  ).toBeVisible();
+  api.closeRecord();
+  await api.views.triggerInvalidation("records");
+  const dialog = page.getByRole("dialog", { name: "Record details" });
+  await expect(dialog.getByText("Deleted", { exact: true })).toBeVisible();
+  await expect(files.getByLabel("Upload file")).toHaveCount(0);
+  const archiveGuide = files.getByRole("button", {
+    name: "Archive Equipment guide.pdf",
+  });
+  await expect(archiveGuide).toBeEnabled();
+  await archiveGuide.click();
+  await expect(
+    files.getByRole("button", { name: "Download Equipment guide.pdf" }),
+  ).toHaveCount(0);
+  await expect(
+    files.getByRole("button", { name: "Check status" }),
+  ).toBeVisible();
+  api.setArchiveStatus(503);
+  await files
+    .getByRole("button", { name: "Archive Maintenance notes.pdf" })
+    .click();
+  await expect(
+    page
+      .getByRole("region", { name: "Status messages" })
+      .getByText("Could not archive the file. Try again.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    files.getByRole("button", { name: "Check status" }),
+  ).toBeVisible();
+  api.setArchiveStatus(200);
+  await files
+    .getByRole("button", { name: "Archive Maintenance notes.pdf" })
+    .click();
+  await expect(files.getByText("No files attached.")).toBeVisible();
+  await expect(files.getByRole("button", { name: "Check status" })).toHaveCount(
+    0,
+  );
+  await expect(files.getByRole("alert")).toHaveCount(0);
+  expect(
+    api.calls.filter(
+      (call) => call.method === "POST" && call.path === "/api/files",
+    ),
+  ).toHaveLength(1);
+  expect(api.calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+});
+
+for (const terminal of ["purged", "deleting", "archived"] as const) {
+  test(`Record files: ${terminal} upload status releases the guard without offering a download`, async ({
+    page,
+  }) => {
+    const api = await installRecordFilesApi(page);
+    api.setUploadMode("uploading");
+    const files = await openRecordFiles(page);
+    await expect(files.getByLabel("Upload file")).toBeEnabled();
+    await files.getByLabel("Upload file").setInputFiles(attachmentUpload);
+    await expect(
+      files.getByRole("button", { name: "Check status" }),
+    ).toBeVisible();
+    await expect(files.getByLabel("Upload file")).toBeDisabled();
+    const pending = api.files.find((file) => file.id === pendingAttachmentId)!;
+    if (terminal === "archived") pending.is_deleted = true;
+    else pending.state = terminal;
+    await files.getByRole("button", { name: "Check status" }).click();
+    await expect(files.getByRole("alert")).toContainText("no longer available");
+    await expect(files.getByLabel("Upload file")).toBeEnabled();
+    await expect(
+      files.getByRole("button", { name: "Download Maintenance notes.pdf" }),
+    ).toHaveCount(0);
+    expect(api.calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+  });
+}
+
+test("Record files: an old account upload producer cannot announce completion in the next account", async ({
+  page,
+}) => {
+  const api = await installRecordFilesApi(page);
+  const held = api.holdUpload();
+  const files = await openRecordFiles(page);
+  await expect(files.getByLabel("Upload file")).toBeEnabled();
+  await files.getByLabel("Upload file").setInputFiles(attachmentUpload);
+  await held.began;
+  api.setUser(otherAccountId);
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  const dialog = page.getByRole("dialog", { name: "Record details" });
+  await dialog.getByRole("tab", { name: "Files", exact: true }).click();
+  await expect(
+    files.getByRole("button", { name: "Download Second account guide.pdf" }),
+  ).toBeVisible();
+  held.release();
+  await expect(
+    page.getByText("Maintenance notes.pdf", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("region", { name: "Status messages" })
+      .getByText("Maintenance notes.pdf uploaded.", { exact: true }),
+  ).toHaveCount(0);
+  expect(api.calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+});
+
+for (const status of [401, 403, 404]) {
+  test(`Record files: ${status} read refusal hides cached files and upload recovery data`, async ({
+    page,
+  }) => {
+    const api = await installRecordFilesApi(page);
+    const files = await openRecordFiles(page);
+    await expect(
+      files.getByRole("button", { name: "Download Equipment guide.pdf" }),
+    ).toBeVisible();
+    api.setUploadMode("uploading");
+    await expect(files.getByLabel("Upload file")).toBeEnabled();
+    await files.getByLabel("Upload file").setInputFiles(attachmentUpload);
+    await expect(
+      files.getByRole("button", { name: "Check status" }),
+    ).toBeVisible();
+    api.setListStatus(status);
+    await api.views.triggerInvalidation("files");
+    await expect(
+      page.getByText("Equipment guide.pdf", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("Maintenance notes.pdf", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Check status" }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Download/ })).toHaveCount(
+      0,
+    );
+    await expect(page.getByText(/Private database path/)).toHaveCount(0);
+  });
+}
+
+test("Record files: cached revisits and shared invalidations refresh file reads", async ({
+  page,
+}) => {
+  const api = await installRecordFilesApi(page);
+  const files = await openRecordFiles(page);
+  await expect(
+    files.getByRole("button", { name: "Download Equipment guide.pdf" }),
+  ).toBeVisible();
+  const initialReads = api.listReads.length;
+  const dialog = page.getByRole("dialog", { name: "Record details" });
+  await dialog.getByRole("tab", { name: "Details", exact: true }).click();
+  await dialog.getByRole("tab", { name: "Files", exact: true }).click();
+  await expect(
+    files.getByRole("button", { name: "Download Equipment guide.pdf" }),
+  ).toBeVisible();
+  expect(api.listReads).toHaveLength(initialReads);
+  api.files[0].filename = "Updated equipment guide.pdf";
+  await api.views.triggerInvalidation("files");
+  await expect(
+    files.getByRole("button", { name: "Download Updated equipment guide.pdf" }),
+  ).toBeVisible();
+  api.breakDownload(true);
+  await files
+    .getByRole("button", { name: "Download Updated equipment guide.pdf" })
+    .click();
+  await expect(
+    page
+      .getByRole("region", { name: "Status messages" })
+      .getByText(/invalid attachment response/),
+  ).toBeVisible();
+  api.files[0].filename = "Resynced equipment guide.pdf";
+  await sendOpenViewEvent(page, "resync");
+  await expect(
+    files.getByRole("button", {
+      name: "Download Resynced equipment guide.pdf",
+    }),
+  ).toBeVisible();
+  expect(api.listReads.length).toBeGreaterThan(initialReads);
+});
+
+for (const broken of ["foreign", "department", "pagination"] as const) {
+  test(`Record files: ${broken} list responses fail safely and pagination retries complete the list`, async ({
+    page,
+  }) => {
+    const api = await installRecordFilesApi(page);
+    api.breakList(broken);
+    const files = await openRecordFiles(page);
+    await expect(files.getByRole("alert")).toBeVisible();
+    await expect(files.getByRole("button", { name: /^Download/ })).toHaveCount(
+      0,
+    );
+    await expect(page.getByText("Foreign private file.pdf")).toHaveCount(0);
+    api.breakList(null);
+    for (let index = 0; index < 26; index += 1)
+      api.files.push(
+        recordAttachment(
+          `00000000-0000-4000-8000-${String(index + 200).padStart(12, "0")}`,
+          recordOneId,
+          `Manual ${index + 1}.pdf`,
+        ),
+      );
+    await files.getByRole("button", { name: "Retry files" }).click();
+    await expect(
+      files.getByRole("button", { name: "Download Manual 24.pdf" }),
+    ).toBeVisible();
+    api.setListStatus(503);
+    await files.getByRole("button", { name: "Load more files" }).click();
+    await expect(files.getByRole("alert")).toBeVisible();
+    await expect(
+      files.getByRole("button", { name: "Download Equipment guide.pdf" }),
+    ).toBeVisible();
+    api.setListStatus(200);
+    await files.getByRole("button", { name: "Load more files" }).click();
+    await expect(
+      files.getByRole("button", { name: "Download Manual 26.pdf" }),
+    ).toBeVisible();
+    expect(api.listReads.filter((read) => read.offset === 25)).toHaveLength(2);
+    await expect(
+      files.getByRole("button", { name: "Load more files" }),
+    ).toHaveCount(0);
+    await api.views.triggerInvalidation("files");
+    await expect(
+      files.getByRole("button", { name: "Load more files" }),
+    ).toBeVisible();
+    await expect(
+      files.getByRole("button", { name: "Download Manual 26.pdf" }),
+    ).toHaveCount(0);
+    // Another writer archived later rows after the first page was read.
+    // A terminal empty page beyond the new total is still a valid response.
+    api.files.splice(3);
+    await files.getByRole("button", { name: "Load more files" }).click();
+    await expect(
+      files.getByRole("button", { name: "Load more files" }),
+    ).toHaveCount(0);
+    await expect(files.getByRole("alert")).toHaveCount(0);
+  });
+}
+
+test("Record files: an uncertain committed upload is read back without reserving or sending it twice", async ({
+  page,
+}) => {
+  const api = await installRecordFilesApi(page);
+  api.setUploadMode("ready-error");
+  const files = await openRecordFiles(page);
+  await expect(files.getByLabel("Upload file")).toBeEnabled();
+  await files.getByLabel("Upload file").setInputFiles(attachmentUpload);
+  await expect(
+    files.getByRole("button", { name: "Download Maintenance notes.pdf" }),
+  ).toBeVisible();
+  expect(
+    api.calls.filter(
+      (call) => call.method === "POST" && call.path === "/api/files",
+    ),
+  ).toHaveLength(1);
+  expect(api.calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+  expect(
+    api.calls.filter(
+      (call) =>
+        call.method === "GET" &&
+        call.path === `/api/files/${pendingAttachmentId}`,
+    ),
+  ).toHaveLength(1);
+  await expect(page.getByText(/Private storage exception/)).toHaveCount(0);
+});
+
+test("Record files: unresolved uploads survive tab unmount and require a matching explicit retry", async ({
+  page,
+}) => {
+  const api = await installRecordFilesApi(page);
+  api.setUploadMode("awaiting");
+  api.setReadbackStatus(503);
+  const files = await openRecordFiles(page);
+  await expect(files.getByLabel("Upload file")).toBeEnabled();
+  await files.getByLabel("Upload file").setInputFiles(attachmentUpload);
+  await expect(
+    files.getByRole("button", { name: "Check status" }),
+  ).toBeVisible();
+  await expect(files.getByLabel("Upload file")).toBeDisabled();
+  await api.views.triggerInvalidation("files");
+  await sendOpenViewEvent(page, "resync");
+  const dialog = page.getByRole("dialog", { name: "Record details" });
+  await dialog.getByRole("tab", { name: "Details", exact: true }).click();
+  api.setReadbackStatus(200);
+  await dialog.getByRole("tab", { name: "Files", exact: true }).click();
+  await expect(
+    files.getByText("Choose the same file to retry this upload."),
+  ).toBeVisible();
+  await expect(files.getByLabel("Upload file")).toBeEnabled();
+  await files
+    .getByLabel("Upload file")
+    .setInputFiles({ ...attachmentUpload, name: "Wrong file.pdf" });
+  await expect(files.getByRole("alert")).toContainText(
+    "same file name and size",
+  );
+  expect(api.calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+  api.setUploadMode("ready");
+  await expect(files.getByLabel("Upload file")).toBeEnabled();
+  await files.getByLabel("Upload file").setInputFiles(attachmentUpload);
+  await expect(
+    files.getByRole("button", { name: "Download Maintenance notes.pdf" }),
+  ).toBeVisible();
+  expect(
+    api.calls.filter(
+      (call) => call.method === "POST" && call.path === "/api/files",
+    ),
+  ).toHaveLength(1);
+  expect(api.calls.filter((call) => call.method === "PUT")).toHaveLength(2);
+});
+
+test("Record files: in-flight upload results cannot follow another record or a changed account", async ({
+  page,
+}) => {
+  const api = await installRecordFilesApi(page);
+  const held = api.holdUpload();
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  await page
+    .getByRole("button", { name: "Centrifugal pump 04", exact: true })
+    .click();
+  const initialDialog = page.getByRole("dialog", { name: "Record details" });
+  await initialDialog.getByRole("tab", { name: "Files", exact: true }).click();
+  const files = initialDialog.getByRole("tabpanel", {
+    name: "Files",
+    exact: true,
+  });
+  await expect(files.getByLabel("Upload file")).toBeEnabled();
+  await files.getByLabel("Upload file").setInputFiles(attachmentUpload);
+  await held.began;
+  await expect(files.getByLabel("Upload file")).toBeDisabled();
+  const dialog = page.getByRole("dialog", { name: "Record details" });
+  await dialog.getByRole("tab", { name: "Details", exact: true }).click();
+  await dialog.getByRole("button", { name: "Next record" }).click();
+  await expect(
+    dialog.getByRole("heading", { name: "Cooling panel 02", exact: true }),
+  ).toBeVisible();
+  await dialog.getByRole("tab", { name: "Files", exact: true }).click();
+  await expect(files.getByText("No files attached.")).toBeVisible();
+  held.release();
+  await expect(
+    page
+      .getByRole("region", { name: "Status messages" })
+      .getByText("Maintenance notes.pdf uploaded.", { exact: true }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Previous record" }).click();
+  await expect(
+    dialog.getByRole("heading", { name: "Centrifugal pump 04", exact: true }),
+  ).toBeVisible();
+  await dialog.getByRole("tab", { name: "Files", exact: true }).click();
+  await expect(
+    files.getByRole("button", { name: "Download Maintenance notes.pdf" }),
+  ).toBeVisible();
+  expect(api.calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+  api.setUser(otherAccountId);
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await expect(
+    page.getByText("Maintenance notes.pdf", { exact: true }),
+  ).toHaveCount(0);
+  await dialog.getByRole("tab", { name: "Files", exact: true }).click();
+  await expect(
+    files.getByRole("button", { name: "Download Second account guide.pdf" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Maintenance notes.pdf", { exact: true }),
+  ).toHaveCount(0);
+});
+
+for (const role of ["member", "guest"] as const) {
+  test(`Record files: ${role} readers download ready files without mutation controls`, async ({
+    page,
+  }) => {
+    const api = await installRecordFilesApi(page, { role });
+    api.files.push({
+      ...recordAttachment(
+        pendingAttachmentId,
+        recordOneId,
+        "Unfinished scan.pdf",
+      ),
+      state: "uploading",
+      actual_size: null,
+    });
+    const files = await openRecordFiles(page);
+    await expect(
+      files.getByRole("button", { name: "Download Equipment guide.pdf" }),
+    ).toBeVisible();
+    await expect(
+      files.getByRole("button", { name: /Download Unfinished/ }),
+    ).toHaveCount(0);
+    await expect(
+      files.getByText("Unfinished scan.pdf", { exact: true }),
+    ).toBeVisible();
+    await expect(files.getByLabel("Upload file")).toHaveCount(0);
+    await expect(files.getByRole("button", { name: /^Archive/ })).toHaveCount(
+      0,
+    );
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      files
+        .getByRole("button", { name: "Download Equipment guide.pdf" })
+        .click(),
+    ]);
+    expect(download.suggestedFilename()).toBe("Equipment guide.pdf");
+    const path = await download.path();
+    expect(path).not.toBeNull();
+    expect((await readFile(path!)).toString()).toBe("%PDF");
+    expect(api.calls.filter((call) => call.method !== "GET")).toEqual([]);
+  });
+}
+
+test("Record files: a writer uploads, downloads and archives with guarded list actions", async ({
+  page,
+}) => {
+  const api = await installRecordFilesApi(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const files = await openRecordFiles(page);
+  await expect(files.getByLabel("Upload file")).toBeEnabled();
+  await files.getByLabel("Upload file").setInputFiles(attachmentUpload);
+  await expect(
+    files.getByRole("button", { name: "Download Maintenance notes.pdf" }),
+  ).toBeVisible();
+  expect(
+    api.calls.find(
+      (call) => call.method === "POST" && call.path === "/api/files",
+    )?.body,
+  ).toEqual({
+    purpose: "record_attachment",
+    record_id: recordOneId,
+    filename: attachmentUpload.name,
+    expected_size: 4,
+  });
+  expect(api.calls.find((call) => call.method === "PUT")?.body).toBe("%PDF");
+  await expect(
+    page
+      .getByRole("region", { name: "Status messages" })
+      .getByText("Maintenance notes.pdf uploaded.", { exact: true }),
+  ).toBeVisible();
+  const held = api.holdArchive();
+  await files
+    .getByRole("button", { name: "Archive Maintenance notes.pdf" })
+    .click();
+  await held.began;
+  await expect(
+    files.getByRole("button", { name: "Archive Maintenance notes.pdf" }),
+  ).toBeDisabled();
+  await expect(files.getByLabel("Upload file")).toBeDisabled();
+  held.release();
+  await expect(
+    files.getByRole("button", { name: "Download Maintenance notes.pdf" }),
+  ).toHaveCount(0);
+  expect(
+    api.calls.filter(
+      (call) => call.path === `/api/files/${pendingAttachmentId}/archive`,
+    ),
+  ).toHaveLength(1);
+  expect(
+    await files.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
+  api.setArchiveStatus(503);
+  await files
+    .getByRole("button", { name: "Archive Equipment guide.pdf" })
+    .click();
+  await expect(
+    page
+      .getByRole("region", { name: "Status messages" })
+      .getByText("Could not archive the file. Try again.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    files.getByRole("button", { name: "Download Equipment guide.pdf" }),
+  ).toBeVisible();
+  await expect(page.getByText(/Private archive exception/)).toHaveCount(0);
+  api.setArchiveStatus(200);
+  await files
+    .getByRole("button", { name: "Archive Equipment guide.pdf" })
+    .click();
+  await expect(files.getByText("No files attached.")).toBeVisible();
+});
+
+test("Record files: closed records allow archive without uploads", async ({
+  page,
+}) => {
+  const api = await installRecordFilesApi(page, { deleted: true });
+  const files = await openRecordFiles(page);
+  await expect(files.getByLabel("Upload file")).toHaveCount(0);
+  await files
+    .getByRole("button", { name: "Archive Equipment guide.pdf" })
+    .click();
+  await expect(files.getByText("No files attached.")).toBeVisible();
+  expect(
+    api.calls.filter((call) => call.method === "POST").map((call) => call.path),
+  ).toEqual([`/api/files/${attachmentId}/archive`]);
+});
+
+test("Record files: local validation writes nothing and a server rejection offers no download", async ({
+  page,
+}) => {
+  const api = await installRecordFilesApi(page);
+  const files = await openRecordFiles(page);
+  const upload = files.getByLabel("Upload file");
+  await expect(upload).toBeEnabled();
+  await upload.setInputFiles({ ...attachmentUpload, buffer: Buffer.alloc(0) });
+  await expect(files.getByRole("alert")).toContainText("larger than 0 bytes");
+  await upload.setInputFiles({
+    ...attachmentUpload,
+    buffer: Buffer.alloc(25 * 1024 * 1024 + 1),
+  });
+  await expect(files.getByRole("alert")).toContainText("no larger than 25 MB");
+  await upload.setInputFiles({
+    ...attachmentUpload,
+    name: "x".repeat(256) + ".pdf",
+  });
+  await expect(files.getByRole("alert")).toContainText("plain file name");
+  expect(api.calls.filter((call) => call.method !== "GET")).toEqual([]);
+  api.setUploadMode("rejected");
+  await upload.setInputFiles(attachmentUpload);
+  await expect(files.getByRole("alert")).toContainText("rejected");
+  await expect(
+    files.getByRole("button", { name: "Download Maintenance notes.pdf" }),
+  ).toHaveCount(0);
+  await expect(page.getByText(/Private storage exception/)).toHaveCount(0);
+});
 
 type QueryDefinition = {
   version: 1;
@@ -196,6 +1018,7 @@ async function installViewsApi(
     additionalViews?: SavedView[];
     deepViewBeyondBound?: boolean;
     calendarDateTimeValue?: string;
+    weekStart?: "monday" | "sunday";
   } = {},
 ) {
   await installOpenViewEventSource(page);
@@ -341,6 +1164,18 @@ async function installViewsApi(
   }[] = [];
   const windowQueryRequests: Record<string, unknown>[] = [];
   let failNextWindowQuery = false;
+  const workspace = {
+    display_name: "OpenSlate",
+    mark: "OS",
+    logo_file_id: null,
+    revision: 1,
+    today: "2026-09-20",
+    week_start: options.weekStart ?? "monday",
+    locale: "en-US",
+    timezone: "UTC",
+    purge_enabled: true as boolean | undefined,
+  };
+  let workspaceFailure = false;
   let denyRecordQueries = false;
   let deniedRecordId: string | null = null;
   let nextRecordLookupBarrier: {
@@ -385,6 +1220,16 @@ async function installViewsApi(
         setup_required: false,
       }),
     }),
+  );
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill(
+      workspaceFailure
+        ? {
+            status: 503,
+            json: { detail: "Organization settings temporarily unavailable" },
+          }
+        : { json: workspace },
+    ),
   );
   await page.route("**/api/departments**", (route) =>
     route.fulfill({
@@ -844,7 +1689,7 @@ async function installViewsApi(
       return route.fulfill({
         status: 500,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "Grouped query temporarily failed." }),
+        body: JSON.stringify({ detail: "Private grouped failure canary" }),
       });
     }
     const rows = kanbanRows;
@@ -974,6 +1819,10 @@ async function installViewsApi(
     });
   });
   return {
+    workspace,
+    failWorkspaceRead: (failed: boolean) => {
+      workspaceFailure = failed;
+    },
     requests: apiRequests,
     triggerInvalidation: (entity: string) =>
       sendOpenViewEvent(page, "invalidate", { entity }),
@@ -1646,9 +2495,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await expect(
     page.getByRole("status").filter({ hasText: "default" }),
   ).toBeVisible();
-  await expect(
-    page.getByText("Department default", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("Module default", { exact: true })).toBeVisible();
   expect(api.defaultView()).toBe(viewId);
   expect(
     api.requests.some((request) => request.includes("deleted=include")),
@@ -2072,10 +2919,33 @@ for (const layout of ["table", "grid", "gallery"] as const) {
     });
     expect(api.recordQueryRequests).toHaveLength(ordinaryRequestCount);
 
+    if (layout === "table") api.failNextGroupedQuery();
     await page
       .getByRole("navigation", { name: "Record result pages" })
       .getByRole("button", { name: "Go to next page" })
       .click();
+    if (layout === "table") {
+      const grouping = page.getByRole("region", {
+        name: "Grouping results",
+        exact: true,
+      });
+      await expect(grouping.getByRole("alert")).toHaveAttribute(
+        "data-variant",
+        "destructive",
+      );
+      await expect(grouping.getByRole("alert")).toContainText(
+        "Grouped records could not be loaded.",
+      );
+      await expect(grouping).not.toContainText(
+        "Private grouped failure canary",
+      );
+      await expect(
+        grouping.getByText("No groups match this view.", { exact: true }),
+      ).toHaveCount(0);
+      await grouping
+        .getByRole("button", { name: "Retry group records", exact: true })
+        .click();
+    }
     await expect(page.getByText("Showing 26–38 of 38")).toBeVisible();
     if (layout === "table") {
       await expect(page.getByRole("table").getByRole("row")).toHaveCount(14);
@@ -2191,6 +3061,37 @@ test("saved table presentation controls persist and drive the rendered table", a
     "Serial number",
     "Updated",
   ]);
+  const longCell = table.getByRole("cell").filter({ hasText: longName });
+  // Measure painted text against its own cell, allowing any local clipping
+  // mechanism. Page scroll width alone cannot detect overlap into a neighbour.
+  const noWrapBounds = await longCell.evaluate((cell) => {
+    const value = cell.querySelector("button") ?? cell;
+    const range = document.createRange();
+    range.selectNodeContents(value);
+    let paintedRight = range.getBoundingClientRect().right;
+    for (
+      let ancestor: Element | null = value;
+      ancestor && cell.contains(ancestor);
+      ancestor = ancestor.parentElement
+    ) {
+      if (getComputedStyle(ancestor).overflowX !== "visible")
+        paintedRight = Math.min(
+          paintedRight,
+          ancestor.getBoundingClientRect().right,
+        );
+    }
+    return {
+      rawText: cell.textContent,
+      paintedRight,
+      cellRight: cell.getBoundingClientRect().right,
+    };
+  });
+  await test.info().attach("table-no-wrap-paint-bounds", {
+    body: JSON.stringify(noWrapBounds),
+    contentType: "application/json",
+  });
+  expect(noWrapBounds.rawText).toBe(longName);
+  expect(noWrapBounds.paintedRight).toBeLessThanOrEqual(noWrapBounds.cellRight);
 
   const columnsDialog = await openColumns(page);
   await columnsDialog.getByRole("button", { name: "Move Status up" }).click();
@@ -2872,8 +3773,41 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
   await expect(
     groupField.getByRole("option", { name: "Serial number" }),
   ).toHaveCount(0);
+  let lanesUnavailable = true;
+  // Keep the dependency unavailable across draft-driven reads until explicit recovery.
+  await page.route("**/api/records/grouped-query", (route) => {
+    if (lanesUnavailable)
+      return route.fulfill({
+        status: 500,
+        json: { detail: "Private grouped failure canary" },
+      });
+    return route.fallback();
+  });
   await groupField.selectOption(nameFieldId);
   await closeDialog(settings);
+  const kanban = page.getByRole("region", {
+    name: "Kanban results",
+    exact: true,
+  });
+  await expect(kanban.getByRole("alert")).toContainText(
+    "The last successful page remains visible when available.",
+  );
+  // New presentation check is soft so the same RED also reaches privacy.
+  await expect
+    .soft(kanban.getByRole("alert"))
+    .toHaveAttribute("data-variant", "destructive");
+  await expect(kanban).not.toContainText("Private grouped failure canary");
+  await expect(kanban.getByRole("alert")).toContainText(
+    "Kanban lanes could not be loaded.",
+  );
+  await expect(
+    kanban.getByText("No lanes match this view.", { exact: true }),
+  ).toHaveCount(0);
+  lanesUnavailable = false;
+  await kanban
+    .getByRole("button", { name: "Retry lanes", exact: true })
+    .click();
+  await expect(page.getByText("Lanes 1–12 of 13").first()).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(
     page
@@ -2932,11 +3866,14 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
     .getByRole("navigation", { name: "Kanban lane record pages" })
     .getByRole("button", { name: "Go to next page" })
     .click();
-  await expect(
-    page.getByRole("alert").filter({
-      hasText: "Grouped query temporarily failed.",
-    }),
-  ).toBeVisible();
+  await expect(kanban.getByRole("alert")).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
+  await expect(kanban.getByRole("alert")).toContainText(
+    "Kanban lanes could not be loaded.",
+  );
+  await expect(kanban).not.toContainText("Private grouped failure canary");
   await expect(
     page.getByText("Showing 1–25 of 26 records").first(),
   ).toBeVisible();
@@ -2987,6 +3924,135 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
   });
   await linkedRecord.getByRole("button", { name: "Close" }).click();
   await expect(laneRecords.getByRole("listitem")).toHaveCount(1);
+});
+
+test.describe("organization calendar week start", () => {
+  test.use({
+    timezoneId: "UTC",
+  });
+  for (const weekStart of ["monday", "sunday"] as const) {
+    test(`OpenView ${weekStart} preference aligns the initial week query and month columns`, async ({
+      page,
+    }) => {
+      await page.clock.setFixedTime(new Date("2026-09-20T12:00:00Z"));
+      const api = await installViewsApi(page, {
+        initialLayout: "calendar",
+        initialPresentation: { date_range: "week", scale: "month" },
+        weekStart,
+      });
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      await expect(page.getByLabel("Window starts")).toHaveValue(
+        weekStart === "monday" ? "2026-09-14" : "2026-09-20",
+      );
+      await expect(page.getByLabel("Window ends")).toHaveValue(
+        weekStart === "monday" ? "2026-09-20" : "2026-09-26",
+      );
+      await expect
+        .poll(() => api.windowQueryRequests.at(-1))
+        .toMatchObject({
+          from_date: weekStart === "monday" ? "2026-09-14" : "2026-09-20",
+          to_date: weekStart === "monday" ? "2026-09-20" : "2026-09-26",
+        });
+      const calendar = page.getByRole("region", {
+        name: "September 2026 calendar",
+        exact: true,
+      });
+      await expect(calendar).toBeVisible();
+      await expect(
+        calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
+      ).toHaveText(
+        weekStart === "monday"
+          ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+          : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+      );
+      const tuesday = await calendar
+        .getByText("Tue", { exact: true })
+        .boundingBox();
+      const firstDay = await calendar
+        .getByText("1", { exact: true })
+        .boundingBox();
+      expect(tuesday).not.toBeNull();
+      expect(firstDay).not.toBeNull();
+      expect(
+        Math.abs(
+          firstDay!.x + firstDay!.width / 2 - (tuesday!.x + tuesday!.width / 2),
+        ),
+      ).toBeLessThan(2);
+    });
+  }
+
+  test("OpenView waits for organization settings, retries failures, and retains a manual range during preference refresh", async ({
+    page,
+  }) => {
+    await page.clock.setFixedTime(new Date("2026-09-20T12:00:00Z"));
+    const api = await installViewsApi(page, {
+      initialLayout: "calendar",
+      initialPresentation: { date_range: "week", scale: "month" },
+      weekStart: "sunday",
+    });
+    api.failWorkspaceRead(true);
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    await expect(
+      page.getByRole("button", {
+        name: "Retry calendar settings",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.getByLabel("Window starts")).toHaveCount(0);
+    expect(api.windowQueryRequests).toEqual([]);
+
+    api.failWorkspaceRead(false);
+    await page
+      .getByRole("button", { name: "Retry calendar settings", exact: true })
+      .click();
+    await expect(page.getByLabel("Window starts")).toHaveValue("2026-09-20");
+    await page.getByLabel("Window starts").fill("2026-09-01");
+    await page.getByLabel("Window ends").fill("2026-09-30");
+    await expect(
+      page.getByRole("button", {
+        name: "Open record: Window equipment 01",
+        exact: true,
+      }),
+    ).toBeVisible();
+    api.failWorkspaceRead(true);
+    await api.triggerInvalidation("workspace_profiles");
+    await expect(
+      page.getByRole("button", {
+        name: "Retry calendar settings",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.getByLabel("Window starts")).toHaveValue("2026-09-01");
+    await expect(page.getByLabel("Window ends")).toHaveValue("2026-09-30");
+    await expect(
+      page.getByRole("button", {
+        name: "Open record: Window equipment 01",
+        exact: true,
+      }),
+    ).toBeVisible();
+
+    api.workspace.week_start = "monday";
+    api.failWorkspaceRead(false);
+    await page
+      .getByRole("button", { name: "Retry calendar settings", exact: true })
+      .click();
+    const calendar = page.getByRole("region", {
+      name: "September 2026 calendar",
+      exact: true,
+    });
+    await expect(
+      calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
+    ).toHaveText(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+    await expect(page.getByLabel("Window starts")).toHaveValue("2026-09-01");
+    await expect(page.getByLabel("Window ends")).toHaveValue("2026-09-30");
+    await expect
+      .poll(() => api.windowQueryRequests.at(-1))
+      .toMatchObject({ from_date: "2026-09-01", to_date: "2026-09-30" });
+  });
 });
 
 test("Calendar displays workspace-local window matches, pages results, and retries failures", async ({
@@ -3330,6 +4396,313 @@ test.describe("Calendar DATETIME rendering in a non-UTC browser timezone", () =>
   });
 });
 
+test.describe("OpenView workspace regional dates", () => {
+  test.use({ locale: "en-US", timezoneId: "UTC" });
+
+  for (const layout of ["table", "grid", "gallery", "kanban"] as const) {
+    test(`${layout} Updated dates use the workspace locale and cross-midnight date`, async ({
+      page,
+    }) => {
+      const api = await installViewsApi(page, {
+        initialLayout: layout,
+        initialGroupByFieldId: layout === "kanban" ? nameFieldId : undefined,
+        disableInitialSearch: true,
+      });
+      api.workspace.locale = "fr-FR";
+      api.workspace.timezone = "America/Los_Angeles";
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      if (layout === "kanban") {
+        await page
+          .getByRole("navigation", { name: "Kanban lane pages", exact: true })
+          .getByRole("button", { name: "Go to next page", exact: true })
+          .click();
+        await page
+          .getByRole("button", { name: "In service, 26 records", exact: true })
+          .click();
+        await expect(
+          page
+            .getByRole("list", { name: "Kanban lane records" })
+            .getByText("22 sept. 2026", { exact: false })
+            .first(),
+        ).toBeVisible();
+      } else {
+        await expect(
+          page
+            .getByLabel("Record results", { exact: true })
+            .getByText("22 sept. 2026", { exact: false })
+            .first(),
+        ).toBeVisible();
+      }
+    });
+  }
+
+  test("record details and history localize workspace timestamps with their existing precision", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, { disableInitialSearch: true });
+    api.workspace.locale = "fr-FR";
+    api.workspace.timezone = "America/Los_Angeles";
+    await page.route("**/api/audit-logs?**", (route) =>
+      route.fulfill({
+        json: pageResponse(
+          [
+            {
+              id: "00000000-0000-4000-8000-000000000199",
+              created_at: "2026-09-23T00:00:00Z",
+              performed_by: userId,
+              action: "update",
+              before: { data: { [nameFieldId]: "Earlier title" } },
+              after: { data: { [nameFieldId]: "Centrifugal pump 04" } },
+              actor_label: "Regional test actor",
+            },
+          ],
+          50,
+        ),
+      }),
+    );
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
+    );
+    const inspector = page.getByRole("dialog", {
+      name: "Record details",
+      exact: true,
+    });
+    await expect(
+      inspector.getByText("Updated 22 sept. 2026", { exact: false }),
+    ).toBeVisible();
+    await inspector.getByRole("tab", { name: "History", exact: true }).click();
+    await expect(
+      inspector.getByText(/22 sept\. 2026.*17:00/).first(),
+    ).toBeVisible();
+  });
+
+  test("Calendar localizes visible dates while retaining its response timezone and machine keys", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, {
+      initialLayout: "calendar",
+      calendarDateTimeValue: "2026-09-01T10:00:00",
+    });
+    api.workspace.locale = "fr-FR";
+    api.workspace.timezone = "America/Los_Angeles";
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    await page.getByLabel("Window starts").fill("2026-09-01");
+    await page.getByLabel("Window ends").fill("2026-09-30");
+    await expect(
+      page
+        .getByRole("heading", { name: "1 sept. 2026, 18:00", exact: true })
+        .first(),
+    ).toBeVisible();
+    await expect(page.getByText(/1 sept\. 2026.*18:00/).first()).toBeVisible();
+    await expect(
+      page.getByText("Workspace timezone: Asia/Manila", { exact: false }),
+    ).toBeVisible();
+    expect(api.windowQueryRequests.at(-1)).toMatchObject({
+      mode: "calendar",
+      scope: "window",
+      from_date: "2026-09-01",
+      to_date: "2026-09-30",
+    });
+  });
+
+  test("Timeline localizes date-only and response-zone intervals without changing window requests", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, {
+      initialLayout: "timeline",
+      initialPresentation: {
+        timeline_deadline_field_id: timelineTimestampDeadlineFieldId,
+      },
+    });
+    api.workspace.locale = "fr-FR";
+    api.workspace.timezone = "America/Los_Angeles";
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    await page.getByLabel("Window starts").fill("2026-08-25");
+    await page.getByLabel("Window ends").fill("2026-09-15");
+    const intervals = page.getByRole("list", {
+      name: "Timeline intervals",
+      exact: true,
+    });
+    await expect(
+      intervals.getByText("25 août 2026", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(
+      intervals.getByText("15 sept. 2026", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(page.getByLabel("Window starts")).toHaveValue("2026-08-25");
+    await expect(page.getByLabel("Window ends")).toHaveValue("2026-09-15");
+    await expect(
+      page.getByText("29 août 2026", { exact: false }).first(),
+    ).toBeVisible();
+    await expect(page.getByText(/7 sept\. 2026.*0?2:30/).first()).toBeVisible();
+    expect(api.windowQueryRequests.at(-1)).toMatchObject({
+      mode: "timeline",
+      from_date: "2026-08-25",
+      to_date: "2026-09-15",
+    });
+  });
+
+  test("failed regional reads keep record content usable and recover dates separately", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, { disableInitialSearch: true });
+    api.workspace.locale = "fr-FR";
+    api.workspace.timezone = "America/Los_Angeles";
+    api.failWorkspaceRead(true);
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    const results = page.getByLabel("Record results", { exact: true });
+    await expect(
+      results.getByRole("button", { name: "Centrifugal pump 04", exact: true }),
+    ).toBeVisible();
+    await expect(
+      results.getByText("Date unavailable", { exact: true }).first(),
+    ).toBeVisible();
+    api.failWorkspaceRead(false);
+    await page
+      .getByRole("button", { name: "Retry regional settings", exact: true })
+      .click();
+    await expect(
+      results.getByText("22 sept. 2026", { exact: false }).first(),
+    ).toBeVisible();
+    api.failWorkspaceRead(true);
+    await api.triggerInvalidation("workspace_profiles");
+    await expect(
+      page.getByRole("button", {
+        name: "Retry regional settings",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      results.getByText("22 sept. 2026", { exact: false }).first(),
+    ).toBeVisible();
+  });
+
+  test("regional invalidation replaces a cold old read without discarding a local view draft", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, { disableInitialSearch: true });
+    let release = () => {};
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let held = true;
+    await page.route("**/api/workspace", async (route) => {
+      if (held) {
+        await pending;
+        await route
+          .fulfill({
+            json: { ...api.workspace, locale: "en-US", timezone: "UTC" },
+          })
+          .catch(() => {});
+      } else await route.fulfill({ json: api.workspace });
+    });
+    try {
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      const results = page.getByLabel("Record results", { exact: true });
+      await expect(
+        results.getByRole("button", {
+          name: "Centrifugal pump 04",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        results.getByText("Date unavailable", { exact: true }).first(),
+      ).toBeVisible();
+      await page
+        .getByRole("searchbox", { name: "Search Equipment", exact: true })
+        .fill("Cooling");
+      held = false;
+      api.workspace.locale = "fr-FR";
+      api.workspace.timezone = "America/Los_Angeles";
+      await api.triggerInvalidation("workspace_profiles");
+      await expect(
+        results.getByText("22 sept. 2026", { exact: false }).first(),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("searchbox", { name: "Search Equipment", exact: true }),
+      ).toHaveValue("Cooling");
+      release();
+      await expect(
+        results.getByText("22 sept. 2026", { exact: false }).first(),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Save changes", exact: true }),
+      ).toBeEnabled();
+    } finally {
+      release();
+    }
+  });
+
+  test("a prior account regional response cannot replace the next account dates", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, { disableInitialSearch: true });
+    let actor = userId;
+    let release = () => {};
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/auth/session", (route) =>
+      route.fulfill({
+        json: { authenticated: true, user_id: actor, setup_required: false },
+      }),
+    );
+    await page.route("**/api/auth/me", (route) =>
+      route.fulfill({ json: { id: actor, role: "admin", access: [] } }),
+    );
+    await page.route("**/api/workspace", async (route) => {
+      if (actor === userId) {
+        await pending;
+        await route
+          .fulfill({
+            json: {
+              ...api.workspace,
+              locale: "fr-FR",
+              timezone: "America/Los_Angeles",
+            },
+          })
+          .catch(() => {});
+      } else
+        await route.fulfill({
+          json: { ...api.workspace, locale: "ja-JP", timezone: "Asia/Tokyo" },
+        });
+    });
+    try {
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      const results = page.getByLabel("Record results", { exact: true });
+      await expect(
+        results.getByText("Date unavailable", { exact: true }).first(),
+      ).toBeVisible();
+      actor = otherAccountId;
+      await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+      await expect(
+        results.getByText("2026/09/23", { exact: false }).first(),
+      ).toBeVisible();
+      release();
+      await expect(
+        results.getByText("2026/09/23", { exact: false }).first(),
+      ).toBeVisible();
+      await expect(
+        results.getByText("22 sept. 2026", { exact: false }),
+      ).toHaveCount(0);
+    } finally {
+      release();
+    }
+  });
+});
+
 test("Timeline renders complete intervals and keeps unscheduled records separate", async ({
   page,
 }) => {
@@ -3376,9 +4749,36 @@ test("Timeline renders complete intervals and keeps unscheduled records separate
     ]),
   );
 
+  api.failNextWindowQuery();
   await page
     .getByRole("navigation", { name: "Date window record pages" })
     .getByRole("button", { name: "Go to next page" })
+    .click();
+  const timeline = page.getByRole("region", {
+    name: "Timeline records",
+    exact: true,
+  });
+  await expect(timeline.getByRole("alert")).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
+  await expect(timeline.getByRole("alert")).toContainText(
+    "Window records could not be loaded.",
+  );
+  await expect(timeline.getByRole("alert")).toContainText(
+    "Requested page 2; showing previous page 1–25.",
+  );
+  await expect(timeline).not.toContainText("Window query temporarily failed.");
+  await expect(
+    page.getByRole("button", { name: "Open record: Window equipment 01" }),
+  ).toBeVisible();
+  await expect(
+    timeline
+      .getByRole("list", { name: "Timeline intervals" })
+      .getByRole("listitem"),
+  ).toHaveCount(25);
+  await timeline
+    .getByRole("button", { name: "Retry timeline records", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Open record: Window equipment 26" }),
@@ -4161,7 +5561,7 @@ test("record details delete only after confirmation", async ({ page }) => {
 test("an administrator can preview and confirm deleted-record purging with a fresh password for each attempt", async ({
   page,
 }) => {
-  await installViewsApi(page, {
+  const api = await installViewsApi(page, {
     disableInitialSearch: true,
     deletedRecord: true,
   });
@@ -4300,6 +5700,18 @@ test("an administrator can preview and confirm deleted-record purging with a fre
       exact: true,
     }),
   ).toHaveCount(0);
+  api.workspace.purge_enabled = false;
+  await api.triggerInvalidation("workspace_profiles");
+  await expect(details.getByLabel("Administrator password")).toHaveCount(0);
+  await expect(
+    details.getByRole("button", { name: "Restore record" }),
+  ).toBeEnabled();
+  api.workspace.purge_enabled = true;
+  await api.triggerInvalidation("workspace_profiles");
+  await details
+    .getByRole("button", { name: "Permanently delete", exact: true })
+    .click();
+  await expect(details.getByLabel("Administrator password")).toBeVisible();
   await details.getByLabel("Type the record ID").fill(recordOneId);
   await details
     .getByLabel("Administrator password")
@@ -4307,6 +5719,7 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await details.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(details.getByText("Links to other records")).toHaveCount(0);
   expect(recordPurgeCalls.map(({ path }) => path)).toEqual([
+    `/api/records/${recordOneId}/purge/preview`,
     `/api/records/${recordOneId}/purge/preview`,
   ]);
   await details.getByRole("button", { name: "Permanently delete" }).click();
@@ -4341,16 +5754,17 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   expect(recordPurgeCalls.map(({ method, path }) => [method, path])).toEqual([
     ["POST", `/api/records/${recordOneId}/purge/preview`],
     ["POST", `/api/records/${recordOneId}/purge/preview`],
+    ["POST", `/api/records/${recordOneId}/purge/preview`],
     ["POST", `/api/records/${recordOneId}/purge`],
     ["POST", `/api/records/${recordOneId}/purge/preview`],
     ["POST", `/api/records/${recordOneId}/purge`],
   ]);
-  expect(recordPurgeCalls[2]?.body).toEqual({
+  expect(recordPurgeCalls[3]?.body).toEqual({
     token: preview.token,
     confirmation_name: recordOneId,
     password: "synthetic-test-passphrase",
   });
-  expect(recordPurgeCalls[4]?.body).toEqual({
+  expect(recordPurgeCalls[5]?.body).toEqual({
     token: preview.token,
     confirmation_name: recordOneId,
     password: "synthetic-test-passphrase",
@@ -4455,6 +5869,30 @@ test("members with write access can restore a deleted record but cannot see perm
   ).toHaveCount(0);
 });
 
+for (const state of ["disabled", "unknown", "unavailable"] as const) {
+  test(`a deleted record remains restorable while permanent deletion is ${state}`, async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, {
+      disableInitialSearch: true,
+      deletedRecord: true,
+    });
+    await installRecordCommands(page);
+    api.workspace.purge_enabled = state === "unknown" ? undefined : false;
+    api.failWorkspaceRead(state === "unavailable");
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
+    );
+    const details = page.getByRole("dialog", { name: "Record details" });
+    await expect(
+      details.getByRole("button", { name: "Restore record" }),
+    ).toBeEnabled();
+    await expect(
+      details.getByRole("button", { name: "Permanently delete", exact: true }),
+    ).toHaveCount(0);
+  });
+}
+
 test("New record checks required values, then opens the created record", async ({
   page,
 }) => {
@@ -4476,3 +5914,105 @@ test("New record checks required values, then opens the created record", async (
     data: { [nameFieldId]: "Booster pump 09" },
   });
 });
+
+test("a Comms example record link shows a notice and returns to live Views", async ({
+  page,
+}) => {
+  await installViewsApi(page, { initialDefault: true });
+  await page.goto("/openview?record=sample-sr-1004");
+
+  const notice = page
+    .getByRole("status")
+    .filter({ hasText: "This example record is not in OpenView" });
+  await expect(notice).toBeVisible();
+  const views = notice.getByRole("link", { name: "Views", exact: true });
+  await expect(views).toHaveAttribute("href", "/openview?section=views");
+  await views.click();
+
+  await expect(page).toHaveURL(/\/openview\?section=views$/);
+  await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
+    viewId,
+  );
+  await expect(
+    page.getByText("This example record is not in OpenView", { exact: true }),
+  ).toHaveCount(0);
+});
+
+test("OpenView request failures use safe destructive feedback without server detail", async ({
+  page,
+}) => {
+  await installViewsApi(page);
+  await page.route("**/api/views/data-sources?*", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { detail: "Private database routing detail" },
+    }),
+  );
+  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
+  const failure = page
+    .getByRole("alert")
+    .filter({ hasText: "temporarily unavailable" });
+  await expect(failure).toBeVisible();
+  await expect(failure).toHaveAttribute("data-variant", "destructive");
+  await expect(page.getByText("Private database routing detail")).toHaveCount(
+    0,
+  );
+});
+
+for (const layout of ["table", "kanban"] as const) {
+  for (const mode of ["light", "dark"] as const) {
+    test(`${layout} Saved view controls fit mobile Larger Spacious in ${mode}`, async ({
+      page,
+    }) => {
+      await installViewsApi(page, {
+        initialLayout: layout,
+        initialGroupByFieldId: statusFieldId,
+      });
+      await page.route(`**/api/users/${userId}/preferences`, (route) =>
+        route.fulfill({
+          json: {
+            user_id: userId,
+            theme: mode,
+            appearance: { motion: "system", keyboard_shortcuts: true },
+          },
+        }),
+      );
+      await page.addInitScript(() => {
+        localStorage.setItem("openslate-text-size", "125");
+        localStorage.setItem("openslate-density", "spacious");
+      });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      const saved = page.getByRole("combobox", {
+        name: "Saved view",
+        exact: true,
+      });
+      const archived = page.getByRole("button", {
+        name: "Archived views",
+        exact: true,
+      });
+      await expect(saved).toHaveValue(viewId);
+      await expect(saved).toBeEnabled();
+      await expect(archived).toBeEnabled();
+      for (const control of [
+        saved,
+        archived,
+        page.getByText("Saved view", { exact: true }),
+      ]) {
+        const box = await control.boundingBox();
+        if (!box) throw new Error("Saved view control geometry unavailable");
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(390);
+      }
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(390);
+      await archived.click();
+      await expect(
+        page.getByRole("dialog", { name: "Archived views", exact: true }),
+      ).toBeVisible();
+    });
+  }
+}

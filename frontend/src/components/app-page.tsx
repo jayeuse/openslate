@@ -18,7 +18,10 @@ import {
   sessionRecheckEvent,
   signOut,
 } from "@/lib/auth-api";
-import { ApiError } from "@/lib/api";
+import { ApiError, refreshBrowserSession } from "@/lib/api";
+import { toast } from "@/components/ui/toast";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { getMfaStatus, type MfaStatus } from "@/lib/mfa-api";
 import {
   MfaFlowContext,
@@ -33,6 +36,10 @@ type AppPageProps = {
 
 type SessionCheck =
   "valid" | "setup" | "invalid" | "unavailable" | "mfa" | "network";
+
+// The shortest persisted workspace idle policy is fifteen minutes. Renewal
+// is initiated by trusted input, never by a timer or background request.
+const activityRenewalInterval = 5 * 60_000;
 
 type CheckQueue = {
   active: boolean;
@@ -66,42 +73,42 @@ function SessionVerificationMessage({
   signOutError?: boolean;
 }) {
   return (
-    <div className="max-w-sm px-6 text-center">
+    <div className="mx-auto max-w-sm px-6">
       {draftCleanupFailed ? (
-        <p className="text-foreground text-sm" role="alert">
+        <Alert variant="destructive">
           We could not clear saved Access drafts in this tab. Close this tab
           before another person signs in, or clear this site&apos;s session data
           and retry.
-        </p>
+        </Alert>
       ) : unavailable ? (
-        <p className="text-foreground text-sm" role="alert">
+        <Alert variant="destructive">
           We can’t verify your session right now. Your sign-in details are still
           available.
-        </p>
+        </Alert>
       ) : (
-        <p className="text-muted-foreground text-sm" role="status">
+        <p className="text-muted-foreground text-center text-sm" role="status">
           Checking your session…
         </p>
       )}
-      <button
-        className="bg-primary text-primary-foreground mt-5 inline-flex min-h-11 items-center justify-center rounded-md px-4 text-sm font-medium"
-        onClick={onRetry}
-        type="button"
-      >
-        {unavailable ? "Retry" : "Retry session check"}
-      </button>
-      {onSignOut && (
-        <button
-          className="mt-5 ml-3 min-h-11 rounded-md border px-4 text-sm"
-          onClick={onSignOut}
-        >
-          Sign out
-        </button>
-      )}
+      <div className="mt-5 flex flex-wrap justify-center gap-3">
+        <Button className="min-h-11" onClick={onRetry} type="button">
+          {unavailable ? "Retry" : "Check again"}
+        </Button>
+        {onSignOut && (
+          <Button
+            className="min-h-11"
+            variant="outline"
+            onClick={onSignOut}
+            type="button"
+          >
+            Sign out
+          </Button>
+        )}
+      </div>
       {signOutError && (
-        <p className="mt-3 text-sm" role="alert">
+        <Alert variant="destructive" className="mt-3">
           Sign-out could not finish. Try again.
-        </p>
+        </Alert>
       )}
     </div>
   );
@@ -151,6 +158,8 @@ export function AppPage({ children }: AppPageProps) {
   const [verifiedUserId, setVerifiedUserId] = useState<string | null>(null);
   const verifiedUserIdRef = useRef<string | null>(null);
   const signOutAccepted = useRef(false);
+  const activityAttempt = useRef<{ userId: string; at: number } | null>(null);
+  const stopActivityRenewal = useRef<(() => void) | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
   const mounted = useRef(false);
   const curtain = useRef<HTMLDialogElement | null>(null);
@@ -172,6 +181,64 @@ export function AppPage({ children }: AppPageProps) {
       supersedeSessionCheck(queue.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (checking || unavailable || verifiedUserId === null) return;
+    if (activityAttempt.current?.userId !== verifiedUserId)
+      activityAttempt.current = { userId: verifiedUserId, at: Date.now() };
+    const controller = new AbortController();
+    let renewing = false;
+    function onActivity(event: Event) {
+      if (
+        !event.isTrusted ||
+        document.visibilityState !== "visible" ||
+        controller.signal.aborted ||
+        signOutAccepted.current ||
+        queue.current.active ||
+        verifiedUserIdRef.current !== verifiedUserId ||
+        renewing
+      )
+        return;
+      const now = Date.now();
+      if (
+        !activityAttempt.current ||
+        now - activityAttempt.current.at < activityRenewalInterval
+      )
+        return;
+      activityAttempt.current.at = now;
+      renewing = true;
+      void refreshBrowserSession({
+        userId: verifiedUserId!,
+        signal: controller.signal,
+      }).then((result) => {
+        renewing = false;
+        if (
+          controller.signal.aborted ||
+          !mounted.current ||
+          signOutAccepted.current ||
+          verifiedUserIdRef.current !== verifiedUserId
+        )
+          return;
+        if (result === "rejected" || result === "unavailable")
+          requestSessionRecheck();
+      });
+    }
+    const events = ["pointerdown", "keydown", "wheel"] as const;
+    for (const event of events)
+      document.addEventListener(event, onActivity, {
+        capture: true,
+        passive: true,
+      });
+    function cleanup() {
+      controller.abort();
+      for (const event of events)
+        document.removeEventListener(event, onActivity, true);
+      if (stopActivityRenewal.current === cleanup)
+        stopActivityRenewal.current = null;
+    }
+    stopActivityRenewal.current = cleanup;
+    return cleanup;
+  }, [checking, unavailable, verifiedUserId]);
 
   useEffect(() => {
     function concealWorkspace() {
@@ -306,6 +373,7 @@ export function AppPage({ children }: AppPageProps) {
         // the loop will immediately process the newest queued request.
         if (current.nextVersion > requested.version) continue;
         if (result === "invalid") {
+          toast.clearWorkspace();
           clearMfa();
           if (!clearAccessDraftsForAccountChange()) {
             current.queued = null;
@@ -315,14 +383,24 @@ export function AppPage({ children }: AppPageProps) {
             break;
           }
           current.queued = null;
-          void clearVerifiedWorkspaceSessionSnapshot(verifiedUserIdRef.current);
+          const cleanup = clearVerifiedWorkspaceSessionSnapshot(
+            verifiedUserIdRef.current,
+          );
           verifiedUserIdRef.current = null;
           setVerifiedUserId(null);
           setChecking(true);
+          const cleared = await cleanup;
+          if (!mounted.current || current.requestId !== requestId) return;
+          if (current.nextVersion > requested.version) continue;
+          if (!cleared) {
+            setDraftCleanupFailed(true);
+            break;
+          }
           router.replace("/login");
           return;
         }
         if (result === "setup") {
+          toast.clearWorkspace();
           clearMfa();
           if (!clearAccessDraftsForAccountChange()) {
             current.queued = null;
@@ -332,10 +410,19 @@ export function AppPage({ children }: AppPageProps) {
             break;
           }
           current.queued = null;
-          void clearVerifiedWorkspaceSessionSnapshot(verifiedUserIdRef.current);
+          const cleanup = clearVerifiedWorkspaceSessionSnapshot(
+            verifiedUserIdRef.current,
+          );
           verifiedUserIdRef.current = null;
           setVerifiedUserId(null);
           setChecking(true);
+          const cleared = await cleanup;
+          if (!mounted.current || current.requestId !== requestId) return;
+          if (current.nextVersion > requested.version) continue;
+          if (!cleared) {
+            setDraftCleanupFailed(true);
+            break;
+          }
           router.replace("/auth/setup");
           return;
         }
@@ -345,6 +432,8 @@ export function AppPage({ children }: AppPageProps) {
             continue;
           }
           const previousUserId = verifiedUserIdRef.current;
+          if (previousUserId !== null && previousUserId !== responseUserId)
+            toast.clearWorkspace();
           const draftsCleared =
             previousUserId !== null && previousUserId !== responseUserId
               ? clearAccessDraftsForAccountChange()
@@ -356,8 +445,20 @@ export function AppPage({ children }: AppPageProps) {
             setDraftCleanupFailed(true);
             break;
           }
-          if (previousUserId !== null && previousUserId !== responseUserId)
-            void clearVerifiedWorkspaceSessionSnapshot(previousUserId);
+          if (previousUserId !== null && previousUserId !== responseUserId) {
+            const cleanup =
+              clearVerifiedWorkspaceSessionSnapshot(previousUserId);
+            verifiedUserIdRef.current = null;
+            setVerifiedUserId(null);
+            setChecking(true);
+            const cleared = await cleanup;
+            if (!mounted.current || current.requestId !== requestId) return;
+            if (current.nextVersion > requested.version) continue;
+            if (!cleared) {
+              setDraftCleanupFailed(true);
+              break;
+            }
+          }
           verifiedUserIdRef.current = responseUserId;
           bindMfa(responseUserId, "workspace");
           setMfaRequired(false);
@@ -421,6 +522,8 @@ export function AppPage({ children }: AppPageProps) {
   }
 
   function finishFactorRemoval() {
+    toast.clearWorkspace();
+    stopActivityRenewal.current?.();
     supersedeSessionCheck(queue.current);
     clearMfa();
     setMfaRequired(false);
@@ -453,53 +556,67 @@ export function AppPage({ children }: AppPageProps) {
     mfaRequired && mfa.mode === "gate" ? (
       <section
         className="w-full max-w-lg px-6 py-8"
-        aria-label="Multi-factor authentication"
+        aria-label="Two-step verification"
       >
         <h2 className="text-xl font-semibold">
-          Complete multi-factor authentication
+          Complete two-step verification
         </h2>
         <p className="text-muted-foreground mt-2 text-sm">
           Verify this account before continuing to your workspace.
         </p>
         <MfaPresentation flow={mfa} gate />
-        <button
-          className="min-h-11 rounded-md border px-4 text-sm"
-          onClick={retrySessionCheck}
-        >
-          Retry session check
-        </button>
-        <button
-          className="mt-4 min-h-11 rounded-md border px-4 text-sm"
-          onClick={() => void signOutFromGate()}
-        >
-          Sign out
-        </button>
-        {signOutError && (
-          <p role="alert">Sign-out could not finish. Try again.</p>
-        )}
-      </section>
-    ) : networkDenied ? (
-      <div className="max-w-sm px-6 text-center">
-        <p role="alert">
-          Access from this address is not allowed. Use an allowed network, or
-          contact your administrator.
-        </p>
-        <div className="mt-5 flex flex-wrap justify-center gap-3">
-          <button
-            className="min-h-11 rounded-md border px-4 text-sm"
+        <div className="mt-2 flex flex-wrap gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
             onClick={retrySessionCheck}
           >
-            Retry
-          </button>
-          <button
-            className="min-h-11 rounded-md border px-4 text-sm"
+            Check again
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
             onClick={() => void signOutFromGate()}
           >
             Sign out
-          </button>
+          </Button>
         </div>
         {signOutError && (
-          <p role="alert">Sign-out could not finish. Try again.</p>
+          <Alert variant="destructive" className="mt-3">
+            Sign-out could not finish. Try again.
+          </Alert>
+        )}
+      </section>
+    ) : networkDenied ? (
+      <div className="mx-auto max-w-sm px-6">
+        <Alert variant="destructive">
+          Access from this address is not allowed. Use an allowed network, or
+          contact your administrator.
+        </Alert>
+        <div className="mt-5 flex flex-wrap justify-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={retrySessionCheck}
+          >
+            Retry
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={() => void signOutFromGate()}
+          >
+            Sign out
+          </Button>
+        </div>
+        {signOutError && (
+          <Alert variant="destructive" className="mt-3">
+            Sign-out could not finish. Try again.
+          </Alert>
         )}
       </div>
     ) : (
@@ -517,6 +634,7 @@ export function AppPage({ children }: AppPageProps) {
     // The server has accepted sign-out. The shell owns cleanup/recovery now;
     // focus checks and responses started earlier must not replace that screen.
     signOutAccepted.current = true;
+    stopActivityRenewal.current?.();
     supersedeSessionCheck(queue.current);
     curtain.current?.close();
     setChecking(false);
@@ -526,8 +644,10 @@ export function AppPage({ children }: AppPageProps) {
   if (verifiedUserId === null || forceFallback) {
     return (
       <main className="bg-background text-foreground grid min-h-screen place-items-center">
-        {verification}
-        <MfaCleanupNotice flow={mfa} />
+        <div className="w-full max-w-xl space-y-5">
+          {verification}
+          <MfaCleanupNotice flow={mfa} />
+        </div>
       </main>
     );
   }
@@ -550,6 +670,7 @@ export function AppPage({ children }: AppPageProps) {
               verifiedUserId={verifiedUserId}
               onSignOutAccepted={acceptSignOut}
             >
+              <MfaCleanupNotice flow={mfa} />
               {children}
             </AppShell>
           </AppQueryProvider>
@@ -576,9 +697,13 @@ export function AppPage({ children }: AppPageProps) {
         onCancel={(event) => event.preventDefault()}
         ref={curtain}
       >
-        <div className="grid min-h-full place-items-center">{verification}</div>
+        <div className="grid min-h-full place-items-center">
+          <div className="w-full max-w-xl space-y-5">
+            {verification}
+            <MfaCleanupNotice flow={mfa} />
+          </div>
+        </div>
       </dialog>
-      <MfaCleanupNotice flow={mfa} />
     </MfaFlowContext.Provider>
   );
 }

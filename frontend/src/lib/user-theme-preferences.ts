@@ -1,17 +1,33 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { ApiError, apiFetch } from "@/lib/api";
-import type { AppearanceMode } from "@/lib/appearance-preferences";
+import type {
+  AppearanceMode,
+  MotionPreference,
+} from "@/lib/appearance-preferences";
 
-const preferenceSchema = z.object({
-  user_id: z.string().uuid(),
-  theme: z.enum(["light", "dark"]),
-});
+const preferenceSchema = z
+  .object({
+    user_id: z.string().uuid(),
+    theme: z.enum(["light", "dark", "system"]),
+    appearance: z
+      .object({
+        motion: z.enum(["system", "reduce"]),
+        keyboard_shortcuts: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
 
-export const userThemeKey = (userId: string) =>
-  ["platform", "user-theme", userId] as const;
+export type UserPreferences = z.infer<typeof preferenceSchema>;
+export type UserPreferencesPatch = {
+  theme?: AppearanceMode;
+  appearance?: { motion?: MotionPreference; keyboard_shortcuts?: boolean };
+};
+export const userPreferencesKey = (userId: string) =>
+  ["platform", "user-preferences", userId] as const;
 
-async function userThemeRequest(userId: string, init: RequestInit) {
+async function userPreferencesRequest(userId: string, init: RequestInit) {
   const preference = await apiFetch(
     `/users/${encodeURIComponent(userId)}/preferences`,
     preferenceSchema,
@@ -20,31 +36,31 @@ async function userThemeRequest(userId: string, init: RequestInit) {
   if (preference.user_id !== userId)
     throw new ApiError(
       403,
-      "Theme belongs to another account",
+      "Preferences belong to another account",
       undefined,
       "preferences_owner_mismatch",
     );
   return preference;
 }
 
-export function readUserTheme(userId: string, signal?: AbortSignal) {
-  return userThemeRequest(userId, { signal });
+export function readUserPreferences(userId: string, signal?: AbortSignal) {
+  return userPreferencesRequest(userId, { signal });
 }
-
-export const userThemeOptions = (userId: string) =>
+export const userPreferencesOptions = (userId: string) =>
   queryOptions({
-    queryKey: userThemeKey(userId),
-    queryFn: ({ signal }) => readUserTheme(userId, signal),
+    queryKey: userPreferencesKey(userId),
+    queryFn: ({ signal }) => readUserPreferences(userId, signal),
   });
-
-export function saveUserTheme(userId: string, theme: AppearanceMode) {
-  return userThemeRequest(userId, {
+export function saveUserPreferences(
+  userId: string,
+  patch: UserPreferencesPatch,
+) {
+  return userPreferencesRequest(userId, {
     method: "PATCH",
-    body: JSON.stringify({ theme }),
+    body: JSON.stringify(patch),
   });
 }
-
-export function themeNeedsSessionRecheck(error: unknown): boolean {
+export function preferencesNeedSessionRecheck(error: unknown): boolean {
   return (
     error instanceof ApiError &&
     (error.status === 401 || error.code === "preferences_owner_mismatch")

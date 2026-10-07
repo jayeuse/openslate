@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import httpx
+import pytest
 
 import operations.sample.verification.route_coverage as coverage
 from app.main import app
@@ -37,18 +38,14 @@ def test_every_frontend_operation_exists_and_has_simulated_run_coverage() -> Non
     covered = {(method, _shape(path)) for method, path in SEEDER_ROUTES}
     deferred = {(method, _shape(path)) for method, path in DEFERRED_ROUTES}
     interactive_routes = getattr(coverage, "INTERACTIVE_ACCEPTANCE_ROUTES", {})
-    assert set(interactive_routes) == {
-        ("POST", "/api/auth/mfa/factors"),
-        ("POST", "/api/auth/mfa/factors/{factor_id}/verification"),
-        ("DELETE", "/api/auth/mfa/factors/{factor_id}"),
-    }
+    assert interactive_routes == {}, "Owned MFA must execute in the sample run"
     interactive = {(method, _shape(path)) for method, path in interactive_routes}
     assert not (frontend - registered), f"UI routes absent from OpenAPI: {frontend - registered}"
     assert not (covered & deferred), "A deferred operation must not claim run coverage"
     assert not (interactive & (covered | deferred))
     uncovered = frontend - covered - deferred - interactive
     assert not uncovered, f"UI routes without simulated run coverage: {sorted(uncovered)}"
-    assert set(DEFERRED_ROUTES.values()) <= {"notifications", "comms"}
+    assert DEFERRED_ROUTES == {}, "Implemented notification controls may not remain deferred"
 
 
 def test_route_evidence_contains_templates_without_identifiers_or_payloads(tmp_path: Path) -> None:
@@ -123,9 +120,84 @@ def test_route_coverage_reconciles_the_cookie_free_invitation_journal(tmp_path: 
     ) as acceptance:
         assert acceptance.complete_invitation("a" * 56, "fixture-password").status_code == 204
 
-    counts, issues = coverage.verify_route_coverage(tmp_path)
+    counts, issues = coverage.verify_route_coverage(tmp_path, host_acceptance=True)
 
     assert counts["ui_routes_covered"] == len(coverage.SEEDER_ROUTES)
     assert counts["ui_routes_uncovered"] == 0
-    assert counts["ui_routes_interactive"] == 3
+    assert counts["ui_routes_interactive"] == 0
     assert issues == []
+
+
+def test_host_only_routes_are_required_only_for_host_acceptance(tmp_path: Path) -> None:
+    covered = coverage.SEEDER_ROUTES - coverage.HOST_ACCEPTANCE_ROUTES
+    for name in ("requests.jsonl", "invitation-requests.jsonl", "verification-requests.jsonl"):
+        (tmp_path / name).touch(mode=0o600)
+    for method, route in sorted(covered):
+        attempt = str(uuid4())
+        append_event(
+            tmp_path / "requests.jsonl",
+            {
+                "event": "request_started",
+                "attempt_id": attempt,
+                "method": method,
+                "route_template": route,
+            },
+        )
+        append_event(
+            tmp_path / "requests.jsonl",
+            {"event": "request_finished", "attempt_id": attempt, "status_code": 200},
+        )
+
+    plain_counts, plain_issues = coverage.verify_route_coverage(tmp_path)
+    _, host_issues = coverage.verify_route_coverage(tmp_path, host_acceptance=True)
+
+    assert plain_issues == []
+    assert plain_counts["ui_routes_covered"] == len(covered)
+    assert len(host_issues) == len(coverage.HOST_ACCEPTANCE_ROUTES)
+
+
+@pytest.mark.parametrize(
+    "route,path",
+    [
+        (("POST", "/api/users/{user_id}/mfa/reset"), "/api/users/" + str(uuid4()) + "/mfa/reset"),
+        (
+            ("POST", "/api/auth/mfa/factors/{factor_id}/verification"),
+            "/api/auth/mfa/factors/" + str(uuid4()) + "/verification",
+        ),
+        (("POST", "/api/notifications/read-all"), "/api/notifications/read-all"),
+        (
+            ("POST", "/api/backups/exports/{export_id}/download-admission"),
+            "/api/backups/exports/" + str(uuid4()) + "/download-admission",
+        ),
+        (
+            ("GET", "/api/backups/exports/{export_id}/content"),
+            "/api/backups/exports/" + str(uuid4()) + "/content",
+        ),
+    ],
+)
+def test_new_control_routes_require_actual_success_after_denial(tmp_path, route, path):
+    assert route in coverage.SEEDER_ROUTES, "The route needs an executable control"
+    journal = tmp_path / "requests.jsonl"
+    status = 403
+
+    def handler(request):
+        if request.url.path == "/api/auth/login":
+            return httpx.Response(200, headers={"Set-Cookie": "openslate_csrf=fixture; Path=/"})
+        return httpx.Response(status, json={"detail": "fixture"})
+
+    with SampleClient(
+        "https://api.example.test",
+        "https://workspace.example.test",
+        journal,
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        client.login("operator@example.test", "fixture-password")
+        assert client.request(route[0], path).status_code == 403
+        denied = coverage.read_route_evidence(journal)
+        assert not any((row["method"], row["path"]) == route for row in denied["covered"])
+        status = 200
+        assert client.request(route[0], path).status_code == 200
+    accepted = coverage.read_route_evidence(journal)
+    assert [
+        row["requests"] for row in accepted["covered"] if (row["method"], row["path"]) == route
+    ] == [1]

@@ -25,11 +25,6 @@ const surfaces = [
     says: "Audit entries are loaded from your organization.",
     temporary: false,
   },
-  {
-    path: "/platform?section=files",
-    says: "Records, files, and people here are examples.",
-    temporary: true,
-  },
 ];
 
 for (const surface of surfaces) {
@@ -83,14 +78,73 @@ test("Platform search describes readable workspace content without example claim
         name: `${kind} search results`,
         exact: true,
       }),
-    ).toContainText(`Unavailable · ${kind} search is not available yet.`);
+    ).toHaveCount(0);
 });
 
-test("Platform notifications label only the sample list", async ({ page }) => {
+test("Platform notifications contains the connected inbox without sample controls", async ({
+  page,
+}) => {
   await openSignedIn(page, "/platform?section=notifications");
-  const note = page.getByRole("note", { name: "Example data" });
-  await expect(note).toHaveCount(1);
-  await expect(note).toContainText(
-    "Preview notifications are examples and are not delivered.",
+  await expect(
+    page.getByRole("region", { name: "Notifications", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("note", { name: "Example data" })).toHaveCount(0);
+  for (const name of ["Preview notifications", "Preview preferences"])
+    await expect(page.getByRole("heading", { name, exact: true })).toHaveCount(
+      0,
+    );
+  await expect(
+    page.getByRole("button", { name: "Simulate record update", exact: true }),
+  ).toHaveCount(0);
+  for (const name of [
+    "Thread reply notifications",
+    "Record update notifications",
+    "Daily digest",
+  ])
+    await expect(page.getByRole("switch", { name, exact: true })).toHaveCount(
+      0,
+    );
+});
+
+test("Platform Files opens the department library without a fake file tab or example data", async ({
+  page,
+}) => {
+  await page.route(
+    (url) => url.pathname === "/api/departments",
+    (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({
+            json: {
+              items: [],
+              pagination: {
+                limit: 100,
+                offset: 0,
+                count: 0,
+                total: 0,
+                has_more: false,
+              },
+            },
+          })
+        : route.fallback(),
   );
+  await openSignedIn(
+    page,
+    "/platform?section=files&file=sample-file-checklist",
+  );
+  await expect(page).toHaveURL(
+    /\/platform\?section=files&file=sample-file-checklist$/,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Department file library", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("combobox", { name: "Department", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText("No departments are available to you.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "File library", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("note", { name: "Example data" })).toHaveCount(0);
 });

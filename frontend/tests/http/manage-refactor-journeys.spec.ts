@@ -19,6 +19,7 @@ type WorkspaceProfile = {
   currency: string;
   week_start: "monday" | "sunday";
   business_hours: string;
+  theme: "slate" | "whiteboard" | "triplicate" | "stockroom";
   invitation_expiry_days: number;
   guest_duration_days: number;
   revision: number;
@@ -42,6 +43,7 @@ const initialWorkspace: WorkspaceProfile = {
   currency: "PHP",
   week_start: "monday",
   business_hours: "09:00–18:00",
+  theme: "slate",
   invitation_expiry_days: 7,
   guest_duration_days: 30,
   revision: 4,
@@ -52,6 +54,19 @@ const initialWorkspace: WorkspaceProfile = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+async function chooseRegionalOption(
+  page: Page,
+  label: string,
+  search: string,
+  option: string | RegExp,
+) {
+  await page.getByRole("combobox", { name: label, exact: true }).click();
+  await page.getByRole("dialog").getByRole("combobox").fill(search);
+  await page
+    .getByRole("option", { name: option, exact: typeof option === "string" })
+    .click();
 }
 
 function installWorkspaceRoute(
@@ -114,6 +129,15 @@ function installWorkspaceRoute(
 }
 
 test.beforeEach(async ({ page }) => {
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        id: "00000000-0000-4000-8000-000000000101",
+        role: "admin",
+        access: [],
+      },
+    }),
+  );
   await page.route("**/api/auth/session", (route) =>
     route.fulfill({
       json: {
@@ -143,12 +167,15 @@ test("Manage organization loads and saves all seven workspace fields", async ({
     name: "Organization name",
     exact: true,
   });
-  const locale = page.getByRole("combobox", { name: "Locale", exact: true });
+  const locale = page.getByRole("combobox", {
+    name: "Regional format",
+    exact: true,
+  });
   const timezone = page.getByRole("combobox", {
     name: "Timezone",
     exact: true,
   });
-  const mark = page.getByRole("combobox", {
+  const mark = page.getByRole("textbox", {
     name: "Organization mark",
     exact: true,
   });
@@ -165,25 +192,26 @@ test("Manage organization loads and saves all seven workspace fields", async ({
     exact: true,
   });
   await expect(mark).toHaveValue("");
-  await expect(mark.locator("option:checked")).toHaveText("No mark");
-  await expect(currency).toHaveValue("SGD");
+  await expect(currency).toContainText("SGD");
   await expect(week).toHaveValue("Sunday");
   await expect(hours).toHaveValue("08:00–17:00");
   await expect(
     page.getByRole("note", { name: "Organization data", exact: true }),
   ).not.toContainText("are examples");
   await expect(name).toHaveValue("Harbor workspace");
-  await expect(locale).toHaveValue("en-PH");
-  await expect(locale.locator("option:checked")).toHaveText(
-    "English (Philippines)",
-  );
-  await expect(timezone).toHaveValue("Asia/Manila");
+  await expect(locale).toContainText("English (Philippines)");
+  await expect(timezone).toContainText("Asia/Manila");
 
   await name.fill("Harbor operations");
-  await locale.selectOption("Filipino");
-  await timezone.selectOption("UTC");
-  await mark.selectOption("Compass");
-  await currency.selectOption("USD");
+  await chooseRegionalOption(
+    page,
+    "Regional format",
+    "Singapore",
+    "English (Singapore)",
+  );
+  await chooseRegionalOption(page, "Timezone", "UTC", /^UTC\+00:00.*UTC$/);
+  await mark.fill("HOP");
+  await chooseRegionalOption(page, "Currency", "USD", /USD.*US Dollar/);
   await week.selectOption("Monday");
   await hours.fill("10:00–19:00");
   await page.getByRole("button", { name: "Save settings" }).click();
@@ -196,9 +224,9 @@ test("Manage organization loads and saves all seven workspace fields", async ({
     {
       revision: 4,
       display_name: "Harbor operations",
-      locale: "fil-PH",
+      locale: "en-SG",
       timezone: "UTC",
-      mark: "Compass",
+      mark: "HOP",
       currency: "USD",
       week_start: "monday",
       business_hours: "10:00–19:00",
@@ -208,20 +236,20 @@ test("Manage organization loads and saves all seven workspace fields", async ({
   await expect(name).toHaveValue("Harbor operations");
   await expect(
     page.getByRole("combobox", { name: "Currency", exact: true }),
-  ).toHaveValue("USD");
-  await expect(mark).toHaveValue("Compass");
+  ).toContainText("USD");
+  await expect(mark).toHaveValue("HOP");
   await expect(week).toHaveValue("Monday");
   await expect(hours).toHaveValue("10:00–19:00");
   expect(workspace.read()).toMatchObject({
     display_name: "Harbor operations",
-    locale: "fil-PH",
+    locale: "en-SG",
     timezone: "UTC",
-    mark: "Compass",
+    mark: "HOP",
     currency: "USD",
     week_start: "monday",
     business_hours: "10:00–19:00",
   });
-  await mark.selectOption({ label: "No mark" });
+  await mark.fill("");
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(
     page.getByRole("button", { name: "Discard changes", exact: true }),
@@ -229,7 +257,6 @@ test("Manage organization loads and saves all seven workspace fields", async ({
   expect(workspace.patches[1]).toEqual({ revision: 5, mark: "" });
   await page.reload();
   await expect(mark).toHaveValue("");
-  await expect(mark.locator("option:checked")).toHaveText("No mark");
   expect(workspace.read().mark).toBe("");
 });
 
@@ -336,10 +363,17 @@ test("Manage organization shows readable locale names and sends locale tags", as
     locale: "fr-FR",
   });
   await page.goto("/manage?view=organization");
-  const locale = page.getByRole("combobox", { name: "Locale", exact: true });
-  await expect(locale).toHaveValue("fr-FR");
-  await expect(locale.locator("option:checked")).toHaveText("French (France)");
-  await locale.selectOption({ label: "English (US)" });
+  const locale = page.getByRole("combobox", {
+    name: "Regional format",
+    exact: true,
+  });
+  await expect(locale).toContainText("French (France)");
+  await chooseRegionalOption(
+    page,
+    "Regional format",
+    "English (US)",
+    "English (US)",
+  );
   await page
     .getByRole("button", { name: "Save settings", exact: true })
     .click();
@@ -348,8 +382,145 @@ test("Manage organization shows readable locale names and sends locale tags", as
   ).toBeDisabled();
   expect(workspace.patches).toEqual([{ revision: 4, locale: "en-US" }]);
   await page.reload();
-  await expect(locale).toHaveValue("en-US");
-  await expect(locale.locator("option:checked")).toHaveText("English (US)");
+  await expect(locale).toContainText("English (US)");
+});
+
+test.describe("Organization regional choices", () => {
+  test.use({ locale: "en-US", timezoneId: "UTC" });
+
+  test("regional choices search names and save stable format, zone and currency values", async ({
+    page,
+  }) => {
+    await page.clock.install({ time: new Date("2026-07-01T12:00:00Z") });
+    const workspace = installWorkspaceRoute(page);
+    await page.goto("/manage?view=organization");
+    const format = page.getByRole("combobox", {
+      name: "Regional format",
+      exact: true,
+    });
+    await expect(format).toContainText("English (Philippines)");
+    await page
+      .getByRole("combobox", { name: "Regional format", exact: true })
+      .click();
+    await expect(page.getByRole("dialog").getByRole("option")).toHaveText([
+      "English (Australia)",
+      "English (Canada)",
+      "English (Europe)",
+      "English (India)",
+      "English (Ireland)",
+      "English (New Zealand)",
+      "English (Philippines)",
+      "English (Singapore)",
+      "English (South Africa)",
+      "English (UK)",
+      "English (US)",
+    ]);
+    await page.keyboard.press("Escape");
+    // The closing popup's search box shares the field name until it unmounts.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await chooseRegionalOption(
+      page,
+      "Regional format",
+      "Ireland",
+      "English (Ireland)",
+    );
+    await chooseRegionalOption(
+      page,
+      "Timezone",
+      "New York",
+      /UTC-04:00.*America\/New York/,
+    );
+    await chooseRegionalOption(page, "Currency", "Yen", /JPY.*Yen/);
+    await page
+      .getByRole("button", { name: "Save settings", exact: true })
+      .click();
+    await expect(
+      page.getByText("Organization settings saved.", { exact: true }),
+    ).toBeVisible();
+    expect(workspace.patches).toEqual([
+      {
+        revision: 4,
+        locale: "en-IE",
+        timezone: "America/New_York",
+        currency: "JPY",
+      },
+    ]);
+    await page.reload();
+    await expect(format).toContainText("English (Ireland)");
+    await expect(
+      page.getByRole("combobox", { name: "Timezone", exact: true }),
+    ).toContainText("America/New York");
+    await expect(
+      page.getByRole("combobox", { name: "Currency", exact: true }),
+    ).toContainText("JPY");
+    await expect(
+      page.getByRole("button", { name: "Save settings", exact: true }),
+    ).toBeDisabled();
+  });
+
+  test("regional choices retain saved aliases and current currency without a command, and support keyboard dismissal", async ({
+    page,
+  }) => {
+    await page.clock.install({ time: new Date("2026-01-01T12:00:00Z") });
+    const workspace = installWorkspaceRoute(page, {
+      ...initialWorkspace,
+      locale: "fr-CA",
+      timezone: "US/Eastern",
+      currency: "XAU",
+    });
+    await page.goto("/manage?view=organization");
+    const format = page.getByRole("combobox", {
+      name: "Regional format",
+      exact: true,
+    });
+    const timezone = page.getByRole("combobox", {
+      name: "Timezone",
+      exact: true,
+    });
+    const currency = page.getByRole("combobox", {
+      name: "Currency",
+      exact: true,
+    });
+    await expect(format).toContainText("Canadian French");
+    await expect(timezone).toContainText("US/Eastern");
+    await expect(timezone).toContainText("UTC-05:00");
+    await expect(currency).toContainText("XAU");
+    await expect(currency).toContainText(/current/i);
+    await timezone.focus();
+    await page.keyboard.press("Enter");
+    const search = page.getByRole("dialog").getByRole("combobox");
+    await expect(search).toBeFocused();
+    await search.fill("UTC");
+    await expect(
+      page.getByRole("option", { name: /^UTC\+00:00.*UTC$/ }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(
+      page
+        .getByRole("region", { name: "Organization settings", exact: true })
+        .getByRole("combobox", { name: "Timezone", exact: true }),
+    ).toBeFocused();
+    await expect(
+      page.getByRole("button", { name: "Save settings", exact: true }),
+    ).toBeDisabled();
+    expect(workspace.patches).toEqual([]);
+  });
+
+  test("regional choices do not advertise excluded fund or testing currencies", async ({
+    page,
+  }) => {
+    installWorkspaceRoute(page);
+    await page.goto("/manage?view=organization");
+    await page.getByRole("combobox", { name: "Currency", exact: true }).click();
+    const search = page.getByRole("dialog").getByRole("combobox");
+    for (const code of ["XTS", "XAU", "USN"]) {
+      await search.fill(code);
+      await expect(
+        page.getByText("No matches. Try another search.", { exact: true }),
+      ).toBeVisible();
+      await expect(page.getByRole("dialog").getByRole("option")).toHaveCount(0);
+    }
+  });
 });
 
 test("Manage organization keeps all its draft fields after a failed save", async ({
@@ -371,7 +542,7 @@ test("Manage organization keeps all its draft fields after a failed save", async
     name: "Organization name",
     exact: true,
   });
-  const mark = page.getByRole("combobox", {
+  const mark = page.getByRole("textbox", {
     name: "Organization mark",
     exact: true,
   });
@@ -389,8 +560,8 @@ test("Manage organization keeps all its draft fields after a failed save", async
   });
   await expect(name).toHaveValue("Riverside Services");
   await name.fill("Pending workspace");
-  await mark.selectOption("Compass");
-  await currency.selectOption("USD");
+  await mark.fill("HOP");
+  await chooseRegionalOption(page, "Currency", "USD", /USD.*US Dollar/);
   await week.selectOption("Sunday");
   await hours.fill("10:00–19:00");
   await page
@@ -402,8 +573,8 @@ test("Manage organization keeps all its draft fields after a failed save", async
       .filter({ hasText: "The settings could not be saved. Try again." }),
   ).toBeVisible();
   await expect(name).toHaveValue("Pending workspace");
-  await expect(mark).toHaveValue("Compass");
-  await expect(currency).toHaveValue("USD");
+  await expect(mark).toHaveValue("HOP");
+  await expect(currency).toContainText("USD");
   await expect(week).toHaveValue("Sunday");
   await expect(hours).toHaveValue("10:00–19:00");
   expect(workspace.patches).toEqual([]);
@@ -414,13 +585,15 @@ test("Manage organization keeps all its draft fields after a failed save", async
   await expect(
     page.getByRole("button", { name: "Discard changes", exact: true }),
   ).toBeDisabled();
-  expect(workspace.read()).toMatchObject({
-    display_name: "Pending workspace",
-    mark: "Compass",
-    currency: "USD",
-    week_start: "sunday",
-    business_hours: "10:00–19:00",
-  });
+  await expect
+    .poll(() => workspace.read())
+    .toMatchObject({
+      display_name: "Pending workspace",
+      mark: "HOP",
+      currency: "USD",
+      week_start: "sunday",
+      business_hours: "10:00–19:00",
+    });
 });
 
 test("Manage preserves section drafts without saving on leave or discard, validates saves, and retains accepted settings after reload", async ({
@@ -439,7 +612,7 @@ test("Manage preserves section drafts without saving on leave or discard, valida
     name: "Currency",
     exact: true,
   });
-  const mark = page.getByRole("combobox", {
+  const mark = page.getByRole("textbox", {
     name: "Organization mark",
     exact: true,
   });
@@ -451,17 +624,15 @@ test("Manage preserves section drafts without saving on leave or discard, valida
     name: "Business hours",
     exact: true,
   });
-  await currency.selectOption("USD");
-  await mark.selectOption("Compass");
+  await chooseRegionalOption(page, "Currency", "USD", /USD.*US Dollar/);
+  await mark.fill("HOP");
   await week.selectOption("Sunday");
   await hours.fill("10:00–19:00");
-  await page
-    .getByRole("link", { name: "Security & recovery", exact: true })
-    .click();
+  await page.getByRole("link", { name: "Audit", exact: true }).click();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
   await expect(name).toHaveValue("Refactor journey workspace");
-  await expect(currency).toHaveValue("USD");
-  await expect(mark).toHaveValue("Compass");
+  await expect(currency).toContainText("USD");
+  await expect(mark).toHaveValue("HOP");
   await expect(week).toHaveValue("Sunday");
   await expect(hours).toHaveValue("10:00–19:00");
   expect(workspace.patches).toEqual([]);
@@ -470,7 +641,7 @@ test("Manage preserves section drafts without saving on leave or discard, valida
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
   await expect(name).toHaveValue(original);
-  await expect(currency).toHaveValue("PHP");
+  await expect(currency).toContainText("PHP");
   await expect(mark).toHaveValue("RS");
   await expect(week).toHaveValue("Monday");
   await expect(hours).toHaveValue("09:00–18:00");
@@ -493,7 +664,7 @@ test("Manage preserves section drafts without saving on leave or discard, valida
   await expect(name).toHaveValue("Accepted journey workspace");
 });
 
-test("Manage reset cancellation retains drafts and confirmation requires draft acknowledgement", async ({
+test("Manage organization retains draft controls without the sample Reset Manage action", async ({
   page,
 }) => {
   await page.goto("/manage?view=organization");
@@ -501,37 +672,21 @@ test("Manage reset cancellation retains drafts and confirmation requires draft a
     name: "Organization name",
     exact: true,
   });
-  await expect(name).toBeVisible();
-  const original = await name.inputValue();
+  await expect(name).toHaveValue("Riverside Services");
+  await expect(
+    page.getByRole("button", { name: "Manage options", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: "Reset Manage", exact: true }),
+  ).toHaveCount(0);
   await name.fill("Keep this draft");
-  const options = page.getByRole("button", {
-    name: "Manage options",
-    exact: true,
-  });
-  await options.click();
-  const reset = page.getByRole("menuitem", {
-    name: "Reset Manage",
-    exact: true,
-  });
-  await reset.click();
-  const dialog = page.getByRole("alertdialog");
-  const confirm = dialog.getByRole("button", {
-    name: "Reset Manage configuration",
-    exact: true,
-  });
-  await expect(confirm).toBeDisabled();
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toBeHidden();
-  await expect(name).toHaveValue("Keep this draft");
-  await expect(options).toBeFocused();
-  await options.click();
-  await reset.click();
-  await dialog
-    .getByRole("checkbox", { name: "Discard affected unsaved drafts" })
-    .check();
-  await confirm.click();
-  await expect(dialog).toBeHidden();
-  await expect(name).toHaveValue(original);
+  await expect(
+    page.getByRole("button", { name: "Discard changes", exact: true }),
+  ).toBeEnabled();
+  await page
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(name).toHaveValue("Riverside Services");
 });
 
 test("Backup request name validation and cancel restore focus without any local snapshot mutation", async ({
@@ -599,7 +754,7 @@ test("Updates and licensing share a real read-only destination and never simulat
     }),
   ).toHaveCount(0);
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software).toContainText("Release information unavailable");
   expect(state.versionReads).toBeGreaterThanOrEqual(2);
@@ -619,7 +774,7 @@ test("Updates and licensing share a real read-only destination and never simulat
     release_url: "https://github.com/jayeuse/openslate/releases/tag/v0.2.0",
   };
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software).toContainText("Version 0.2.0 is available");
   await expect(
@@ -647,7 +802,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
   await expect(software.getByText("1.4.2", { exact: true })).toHaveCount(0);
   state.versionReadStatus = 200;
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software.getByText("0.1.0", { exact: true })).toBeVisible();
   state.version.status = "stale";
@@ -660,7 +815,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
   );
   state.versionReadStatus = 403;
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software).toContainText(
     "Only administrators can review version status",
@@ -672,10 +827,10 @@ test("Recorded version loading, denial, stale and current observations remain ho
   state.version.failure_code = null;
   state.version.observed_at = "2026-10-08T04:00:00Z";
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software.getByText("Up to date", { exact: true })).toBeVisible();
-  await expect(software).toContainText("Host runner observation");
+  await expect(software).toContainText("Release check");
   state.version.current_version = "2.7.1-development";
   state.version.status = "unknown";
   state.version.latest_version = "2.7.1";
@@ -684,7 +839,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
   state.version.release_url =
     "https://github.com/jayeuse/openslate/releases/tag/v2.7.1";
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(
     software.getByText("2.7.1-development", { exact: true }),
@@ -706,7 +861,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
   state.version.checked_at = null;
   state.version.release_url = null;
   await software
-    .getByRole("button", { name: "Check for updates", exact: true })
+    .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software).toContainText("No release observation recorded");
   await expect(
@@ -741,4 +896,51 @@ test("leaving Manage with an unsaved organization draft asks before discarding i
     .getByRole("button", { name: "Discard changes" })
     .click();
   await expect(page).toHaveURL(/\/access/);
+});
+
+test("Organization Larger text reflows at 1024 and phone widths with all settings reachable", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("openslate-text-size", "125");
+    localStorage.setItem("openslate-density", "spacious");
+  });
+  for (const width of [1024, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/manage?view=organization");
+    const name = page.getByRole("textbox", {
+      name: "Organization name",
+      exact: true,
+    });
+    await expect(name).toHaveValue("Riverside Services");
+    const settings = page.getByRole("region", {
+      name: "Organization settings",
+      exact: true,
+    });
+    const controls = settings
+      .getByRole("textbox")
+      .or(settings.getByRole("combobox"));
+    const boxes = await controls.evaluateAll((elements) =>
+      elements
+        .filter((el) => el.getBoundingClientRect().width > 0)
+        .map((el) => {
+          const box = el.getBoundingClientRect();
+          return { x: box.x, right: box.right };
+        }),
+    );
+    expect(boxes.length).toBeGreaterThanOrEqual(7);
+    for (const box of boxes) {
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.right).toBeLessThanOrEqual(width);
+    }
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+    await page
+      .getByRole("combobox", { name: "Timezone", exact: true })
+      .scrollIntoViewIfNeeded();
+    await expect(
+      page.getByRole("combobox", { name: "Timezone", exact: true }),
+    ).toBeInViewport();
+  }
 });

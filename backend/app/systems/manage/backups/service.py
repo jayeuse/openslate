@@ -14,7 +14,12 @@ from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
 from app.core.config import get_instance_settings, get_settings
-from app.systems.manage.backups.models import BackupPolicy, BackupRun, UpdateStatus
+from app.systems.manage.backups.models import (
+    BackupExportOperation,
+    BackupPolicy,
+    BackupRun,
+    UpdateStatus,
+)
 from app.systems.manage.backups.schemas import (
     VERSION_PATTERN,
     BackupPolicyResponse,
@@ -29,6 +34,7 @@ from app.systems.manage.backups.schemas import (
 )
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.materializer import next_due_after
+from app.systems.platform.scheduling.notification_creation import notify_backup_failure
 
 
 class BackupStateError(RuntimeError):
@@ -250,7 +256,18 @@ def claim_run(
     prior = exact_claim(db, instance, claim_id)
     if prior is not None:
         return prior
-    if unresolved_run(db, instance) is not None:
+    if (
+        unresolved_run(db, instance) is not None
+        or db.scalar(
+            select(BackupExportOperation.id)
+            .where(
+                BackupExportOperation.installation_id == instance,
+                BackupExportOperation.state == "preparing",
+            )
+            .limit(1)
+        )
+        is not None
+    ):
         raise BackupStateError("backup_recovery_required")
     if policy.installation_id != instance:
         raise BackupStateError("backup_adoption_required")
@@ -332,6 +349,8 @@ def record_outcome(db: Session, instance: str, command: OutcomeCommand) -> Backu
         raise BackupStateError("backup_outcome_conflict")
     for field in fields:
         setattr(run, field, getattr(command, field))
+    if run.reconciled_at is not None and run.state in {"failed", "interrupted"}:
+        notify_backup_failure(db, run)
     db.flush()
     return run
 

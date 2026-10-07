@@ -28,6 +28,7 @@ from app.systems.sandbox.record_triggers.models import (
     TriggerEventState,
 )
 from app.systems.sandbox.record_triggers.outbox import enqueue_child_field_event
+from app.systems.sandbox.records.assignment_notifications import notify_record_assignments
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.mutation_validation import validate_live_user_assignments
 
@@ -68,6 +69,7 @@ def execute_claim(db: Session, claim: ClaimedTriggerEvent) -> bool:
         db.flush()
 
     for record, previous in changed.values():
+        notify_record_assignments(db, record, previous=previous, fields=fields.values())
         enqueue_child_field_event(
             db, record=record, previous=previous, parent=event, action_budget=root.action_budget
         )

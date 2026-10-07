@@ -9,9 +9,10 @@ import {
   useTransition,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Route } from "next";
 import { ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
 import { Columns3, MoreHorizontal, Plus, Settings2, X } from "lucide-react";
 import {
   queryOpenViewGroupedRecords,
@@ -40,6 +41,8 @@ import { isCalendarDateField } from "./live-calendar";
 import { LiveKanban } from "./live-kanban";
 import { LiveCalendar } from "./live-calendar";
 import { LiveTimeline } from "./live-timeline";
+import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -272,11 +275,6 @@ function quickSortLabel(
   return `${field.name} · ${order}`;
 }
 
-function messageFor(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
-}
-
 function isAuthorizationDenied(error: unknown): boolean {
   return error instanceof ApiError && [401, 403].includes(error.status);
 }
@@ -439,6 +437,28 @@ export default function ServerBackedViewsWorkspace({
     (view) => view.isDefault && !view.isDeleted,
   )?.id;
   const identity = useQuery(authMeOptions());
+  const workspaceCalendar = useQuery(workspaceCalendarQueryOptions());
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const queryKey = workspaceCalendarQueryOptions().queryKey;
+    const refreshSettings = () => {
+      const cold = queryClient
+        .getQueryCache()
+        .findAll({ queryKey, fetchStatus: "fetching" })
+        .filter((query) => query.state.data === undefined);
+      void Promise.all(
+        cold.map((query) => query.cancel({ revert: true })),
+      ).then(() => queryClient.invalidateQueries({ queryKey }));
+    };
+    const unsubscribe = subscribeWorkspaceInvalidations((event) => {
+      if (event.type === "resync" || event.entity === "workspace_profiles")
+        refreshSettings();
+    }, refreshSettings);
+    return () => {
+      unsubscribe();
+      void queryClient.invalidateQueries({ queryKey, refetchType: "none" });
+    };
+  }, [queryClient]);
   // Only a manager of the module creates, changes or archives its views.
   const canManageViews = canManageOpenView(
     identity.data,
@@ -795,7 +815,7 @@ export default function ServerBackedViewsWorkspace({
           total: previous?.moduleId === moduleId ? previous.total : 0,
           hasMore: previous?.moduleId === moduleId ? previous.hasMore : false,
           loading: false,
-          error: messageFor(error, "Records could not be loaded."),
+          error: apiErrorMessage(error, "Records could not be loaded."),
         }));
       });
     return () => {
@@ -865,7 +885,7 @@ export default function ServerBackedViewsWorkspace({
           key: generalGroupRequestKey,
           page: null,
           loading: false,
-          error: messageFor(error, "Grouped records could not be loaded."),
+          error: apiErrorMessage(error, "Grouped records could not be loaded."),
         });
       });
     return () => {
@@ -1070,9 +1090,7 @@ export default function ServerBackedViewsWorkspace({
       field.id !== draft.presentation.secondaryFieldId,
   );
   const presentationLayoutLabel = SAVED_VIEW_LAYOUT_LABELS[presentationLayout];
-  const activeLayout: LiveRecordLayout = isLiveRecordLayout(presentationLayout)
-    ? presentationLayout
-    : "table";
+  const activeLayout = presentationLayout;
   const cardLayout =
     presentationLayout === "grid" || presentationLayout === "gallery"
       ? presentationLayout
@@ -1795,12 +1813,12 @@ export default function ServerBackedViewsWorkspace({
           setActionError("");
         } catch (refreshError) {
           setSaveError(
-            `${messageFor(refreshError, "The latest saved view could not be reloaded.")} Your local edits remain open.`,
+            `${apiErrorMessage(refreshError, "The latest saved view could not be reloaded.")} Your local edits remain open.`,
           );
         }
       } else {
         setSaveError(
-          messageFor(
+          apiErrorMessage(
             error,
             "The view could not be saved. Your edits remain open.",
           ),
@@ -1885,7 +1903,7 @@ export default function ServerBackedViewsWorkspace({
       refreshModule();
     } catch (error) {
       setArchiveError(
-        messageFor(error, "The saved view could not be archived."),
+        apiErrorMessage(error, "The saved view could not be archived."),
       );
     } finally {
       setPendingAction("");
@@ -1920,7 +1938,7 @@ export default function ServerBackedViewsWorkspace({
       refreshModule();
     } catch (error) {
       setArchivedError(
-        messageFor(error, "The saved view could not be restored."),
+        apiErrorMessage(error, "The saved view could not be restored."),
       );
     } finally {
       setPendingAction("");
@@ -1970,7 +1988,7 @@ export default function ServerBackedViewsWorkspace({
       refreshModule();
     } catch (error) {
       setActionError(
-        messageFor(error, "The default view could not be changed."),
+        apiErrorMessage(error, "The default view could not be changed."),
       );
     } finally {
       setPendingAction("");
@@ -2040,7 +2058,7 @@ export default function ServerBackedViewsWorkspace({
       setNotice(`“${duplicated.name}” was duplicated.`);
     } catch (error) {
       setActionError(
-        messageFor(
+        apiErrorMessage(
           error,
           "The saved view could not be duplicated. Your edits remain open.",
         ),
@@ -2162,6 +2180,24 @@ export default function ServerBackedViewsWorkspace({
         }
       >
         <div className="flex min-w-0 flex-col gap-5">
+          {workspaceCalendar.isError && activeLayout !== "calendar" && (
+            <Alert variant="destructive">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  {workspaceCalendar.data
+                    ? "Regional settings could not be refreshed. The last loaded settings are still in use."
+                    : "Could not load regional settings. Dates are unavailable."}
+                </span>
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={() => void workspaceCalendar.refetch()}
+                >
+                  Retry regional settings
+                </Button>
+              </div>
+            </Alert>
+          )}
           <header
             data-slot="card"
             className="bg-card border-card-edge shadow-card flex flex-wrap items-end justify-between gap-3 rounded-[var(--radius)] border p-4 sm:p-5"
@@ -2221,7 +2257,7 @@ export default function ServerBackedViewsWorkspace({
               ) : null}
             </div>
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-              <Field className="min-w-56 flex-1 sm:flex-none">
+              <Field className="min-w-0 flex-1 basis-full sm:min-w-56 sm:flex-none">
                 <FieldLabel htmlFor="openview-saved-view">
                   Saved view
                 </FieldLabel>
@@ -2281,7 +2317,7 @@ export default function ServerBackedViewsWorkspace({
           {catalogError ? (
             <Alert
               role="alert"
-              variant="warning"
+              variant="destructive"
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <span>
@@ -2303,7 +2339,7 @@ export default function ServerBackedViewsWorkspace({
           {metadataError ? (
             <Alert
               role="alert"
-              variant="warning"
+              variant="destructive"
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <span>{metadataError}</span>
@@ -2320,7 +2356,7 @@ export default function ServerBackedViewsWorkspace({
           {moduleError ? (
             <Alert
               role="alert"
-              variant="warning"
+              variant="destructive"
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <span>
@@ -2358,7 +2394,7 @@ export default function ServerBackedViewsWorkspace({
           {rowError ? (
             <Alert
               role="alert"
-              variant="warning"
+              variant="destructive"
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <span>
@@ -2404,7 +2440,7 @@ export default function ServerBackedViewsWorkspace({
           ) : null}
           {notice ? <Alert role="status">{notice}</Alert> : null}
           {actionError ? (
-            <Alert role="alert" variant="warning">
+            <Alert role="alert" variant="destructive">
               {actionError}
             </Alert>
           ) : null}
@@ -2457,7 +2493,7 @@ export default function ServerBackedViewsWorkspace({
                         </Badge>
                       ) : null}
                       {activeSaved?.isDefault ? (
-                        <Badge variant="outline">Department default</Badge>
+                        <Badge variant="outline">Module default</Badge>
                       ) : null}
                       {dirty ? (
                         <Badge variant="outline">Temporary changes</Badge>
@@ -2785,18 +2821,6 @@ export default function ServerBackedViewsWorkspace({
                     </div>
                   </div>
 
-                  {!isLiveRecordLayout(presentationLayout) ? (
-                    <Alert role="note">
-                      <p className="font-medium">
-                        {presentationLayoutLabel} layout is saved
-                      </p>
-                      <p className="mt-1">
-                        This layout is not available yet. Records are shown in a
-                        Table preview while the saved presentation stays intact.
-                      </p>
-                    </Alert>
-                  ) : null}
-
                   <Tabs
                     value={activeLayout}
                     onValueChange={changeLayout}
@@ -2892,7 +2916,7 @@ export default function ServerBackedViewsWorkspace({
                             : "Complete the condition in More filters before loading matching records."}
                         </Alert>
                       ) : generalGroupedView && generalGroupError ? (
-                        <Alert role="status">
+                        <Alert role="alert" variant="destructive">
                           Grouped results are unavailable. Use the retry action
                           above.
                         </Alert>
@@ -2903,6 +2927,7 @@ export default function ServerBackedViewsWorkspace({
                       ) : activeLayout === "kanban" ? (
                         groupByField && moduleId ? (
                           <LiveKanban
+                            region={workspaceCalendar.data}
                             key={
                               moduleId +
                               ":" +
@@ -2931,6 +2956,13 @@ export default function ServerBackedViewsWorkspace({
                       ) : activeLayout === "calendar" ? (
                         moduleId && calendarDateField ? (
                           <LiveCalendar
+                            region={workspaceCalendar.data}
+                            workspaceCalendar={workspaceCalendar.data}
+                            settingsPending={workspaceCalendar.isPending}
+                            settingsError={workspaceCalendar.isError}
+                            onRetrySettings={() =>
+                              void workspaceCalendar.refetch()
+                            }
                             key={moduleId + ":" + selectedViewId + ":calendar"}
                             moduleId={moduleId}
                             definition={normalizedDraftDefinition}
@@ -2951,6 +2983,7 @@ export default function ServerBackedViewsWorkspace({
                       ) : activeLayout === "timeline" ? (
                         moduleId && timelineStartField && timelineEndField ? (
                           <LiveTimeline
+                            region={workspaceCalendar.data}
                             key={moduleId + ":" + selectedViewId + ":timeline"}
                             moduleId={moduleId}
                             definition={normalizedDraftDefinition}
@@ -3020,6 +3053,7 @@ export default function ServerBackedViewsWorkspace({
                         </Empty>
                       ) : (
                         <LiveRecordResults
+                          region={workspaceCalendar.data}
                           title={activeSaved?.name ?? "Unsaved view"}
                           scopeLabel={
                             generalGroupedView && generalSelectedGroup
@@ -3129,11 +3163,6 @@ export default function ServerBackedViewsWorkspace({
                             value={presentationLayout}
                             onValueChange={changeLayout}
                           >
-                            {!isLiveRecordLayout(presentationLayout) ? (
-                              <option value={presentationLayout} disabled>
-                                {presentationLayoutLabel} (not available)
-                              </option>
-                            ) : null}
                             <option value="table">Table</option>
                             <option value="grid">Grid</option>
                             <option value="gallery">Gallery</option>
@@ -3206,6 +3235,7 @@ export default function ServerBackedViewsWorkspace({
                     </DialogHeader>
                     <div className="min-h-0 flex-1 overflow-y-auto">
                       <LiveRecordInspector
+                        region={workspaceCalendar.data}
                         actions={recordEditing ? null : inspectionActions}
                         record={linkedRecord}
                         recordLoading={linkedRecordLoading}
@@ -3300,7 +3330,7 @@ export default function ServerBackedViewsWorkspace({
               {saveConflict ? (
                 <Alert
                   role="alert"
-                  variant="warning"
+                  variant="destructive"
                   className="flex flex-col gap-3"
                 >
                   <p className="font-medium">
@@ -3421,7 +3451,7 @@ export default function ServerBackedViewsWorkspace({
                 </AlertDialogDescription>
               </AlertDialogHeader>
               {archiveError ? (
-                <Alert role="alert" variant="warning">
+                <Alert role="alert" variant="destructive">
                   {archiveError}
                 </Alert>
               ) : null}
@@ -3465,7 +3495,7 @@ export default function ServerBackedViewsWorkspace({
                 </DialogDescription>
               </DialogHeader>
               {archivedError ? (
-                <Alert role="alert" variant="warning">
+                <Alert role="alert" variant="destructive">
                   {archivedError}
                 </Alert>
               ) : null}
@@ -3576,7 +3606,7 @@ export default function ServerBackedViewsWorkspace({
   );
 }
 
-function OpenViewHeader() {
+export function OpenViewHeader() {
   return (
     <header className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
       <div className="min-w-0">

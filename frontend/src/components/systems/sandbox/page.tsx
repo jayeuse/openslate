@@ -5,7 +5,13 @@ import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Redo2, Undo2 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  subscribeWorkspaceLifecycleSettings,
+  workspaceLifecycleQueryOptions,
+} from "../manage/adapters/workspace-api";
 import { ApiContractError, ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
+import { reportDone, reportError } from "@/lib/feedback";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -139,10 +145,10 @@ function sectionHref(
 function commandFailure(error: unknown): SandboxCommandFailure {
   return {
     ok: false,
-    error:
-      error instanceof Error
-        ? error.message
-        : "This Sandbox change could not be saved. Try again.",
+    error: apiErrorMessage(
+      error,
+      "This Sandbox change could not be saved. Try again.",
+    ),
   };
 }
 
@@ -255,6 +261,12 @@ export default function SandboxPage() {
   const router = useRouter();
   const [session, setSession] = useState<SandboxDocumentSession | null>(null);
   const queryClient = useQueryClient();
+  const workspace = useQuery(workspaceLifecycleQueryOptions());
+  const purgeEnabled = workspace.isSuccess && workspace.data.purge_enabled;
+  useEffect(
+    () => subscribeWorkspaceLifecycleSettings(queryClient),
+    [queryClient],
+  );
   const bindingsQuery = useQuery(
     sandboxBindingsOptions(session?.revision ?? 0),
   );
@@ -264,6 +276,17 @@ export default function SandboxPage() {
   const [designerDraftDirty, setDesignerDraftDirty] = useState(false);
   const lifecycleLock = useRef(false);
   const commandPending = useRef(false);
+  useEffect(() => {
+    if (
+      !purgeEnabled &&
+      lifecycleRequest?.operation === "purge" &&
+      !commandPending.current
+    ) {
+      setLifecycleRequest(null);
+      lifecycleLock.current = false;
+      setLifecycleRecovery(false);
+    }
+  }, [purgeEnabled, lifecycleRequest]);
   const [versions, setVersions] = useState<SandboxVersion[]>([]);
   const [testRuns, setTestRuns] = useState<SandboxTestRun[]>([]);
   const [triggerRuns, setTriggerRuns] = useState<SandboxTriggerRun[]>([]);
@@ -275,6 +298,7 @@ export default function SandboxPage() {
   const [loadError, setLoadError] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
+  const [feedbackError, setFeedbackError] = useState("");
   // Bumped by each successful Publish; the look's title signature plays once.
   const [publishCount, setPublishCount] = useState(0);
   const [conflict, setConflict] = useState<Conflict | null>(null);
@@ -501,16 +525,17 @@ export default function SandboxPage() {
           ),
         });
         setConflict(null);
+        setFeedbackError("");
         return { ok: true, value: confirmed.projected };
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) {
           setConflict({ proposedDocument: document, reason: "conflict" });
-          setMessage(
+          setFeedbackError(
             "The shared Sandbox changed elsewhere. Reload it, then reapply your proposed document before saving.",
           );
         } else {
           setConflict({ proposedDocument: document, reason: "save-failed" });
-          setMessage(
+          setFeedbackError(
             "Your change was not saved. It remains local until you reapply it successfully.",
           );
         }
@@ -594,10 +619,12 @@ export default function SandboxPage() {
         bindings,
       );
       setSession(openSandboxDocumentSession(document));
+      setFeedbackError("");
       setLifecycleRecovery(false);
       lifecycleLock.current = false;
     } catch {
-      setMessage(
+      setMessage("");
+      setFeedbackError(
         "Live state could not be refreshed. Retry before changing this item.",
       );
     } finally {
@@ -610,6 +637,8 @@ export default function SandboxPage() {
     binding: SandboxLifecycleBinding,
     operation: SandboxLifecycleOperation,
   ): Promise<SandboxCommandResult<Design>> {
+    if (operation === "purge" && !purgeEnabled)
+      return { ok: false, error: "Permanent deletion is unavailable." };
     if (
       !session ||
       !bindingsReady ||
@@ -638,7 +667,12 @@ export default function SandboxPage() {
     lifecycleLock.current = false;
   }
   async function confirmLifecycle(input?: LifecyclePurgeInput) {
-    if (!lifecycleRequest || commandPending.current) return;
+    if (
+      !lifecycleRequest ||
+      commandPending.current ||
+      (lifecycleRequest.operation === "purge" && !purgeEnabled)
+    )
+      return;
     commandPending.current = true;
     try {
       await confirmSandboxLifecycle(lifecycleRequest, input);
@@ -655,13 +689,15 @@ export default function SandboxPage() {
           bindings,
         );
         setSession(openSandboxDocumentSession(document));
+        setFeedbackError("");
         setMessage(
           "Live change confirmed. The current design has been refreshed.",
         );
         lifecycleLock.current = false;
       } catch {
         setLifecycleRecovery(true);
-        setMessage(
+        setMessage("");
+        setFeedbackError(
           "The live change was confirmed. Reload live state before making another change.",
         );
       }
@@ -870,11 +906,12 @@ export default function SandboxPage() {
       const response = await loadSandboxDocument();
       setSession(openSandboxDocumentSession(response));
       setConflict(null);
+      setFeedbackError("");
       setMessage(
         "Shared Sandbox reloaded. Your local unsaved changes were discarded.",
       );
     } catch (error) {
-      setMessage(commandFailure(error).error);
+      setFeedbackError(commandFailure(error).error);
     } finally {
       setPending(false);
     }
@@ -892,7 +929,7 @@ export default function SandboxPage() {
       if (result.ok)
         setMessage("Your local draft was reapplied to the shared Sandbox.");
     } catch (error) {
-      setMessage(commandFailure(error).error);
+      setFeedbackError(commandFailure(error).error);
     } finally {
       setPending(false);
     }
@@ -916,12 +953,19 @@ export default function SandboxPage() {
       className={`space-y-5 ${section === "Build" ? "xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[640px] xl:flex-col xl:gap-5 xl:space-y-0" : ""}`}
     >
       {conflict ? (
-        <Alert role="alert" variant="warning" className="flex flex-wrap gap-2">
-          <span>
-            {conflict.reason === "conflict"
-              ? "Save conflict: your proposed document is still local."
-              : "Save did not complete: your proposed document is still local."}
-          </span>
+        <Alert
+          role="alert"
+          variant="destructive"
+          className="flex flex-wrap gap-2"
+        >
+          <div className="space-y-1">
+            <p>
+              {conflict.reason === "conflict"
+                ? "Save conflict: your proposed document is still local."
+                : "Save did not complete: your proposed document is still local."}
+            </p>
+            {feedbackError ? <p>{feedbackError}</p> : null}
+          </div>
           <Button
             size="sm"
             variant="outline"
@@ -943,7 +987,9 @@ export default function SandboxPage() {
       (bindingsQuery.error || bindingMismatch || lifecycleRecovery) ? (
         <Alert
           role="alert"
-          variant="warning"
+          variant={
+            bindingsQuery.error || lifecycleRecovery ? "destructive" : "warning"
+          }
           className="flex flex-wrap items-center gap-2"
         >
           <span>
@@ -1073,6 +1119,9 @@ export default function SandboxPage() {
           section === "Build" ? sandboxBuildRegionClass : sandboxRegionClass
         }
       >
+        {feedbackError && !conflict ? (
+          <Alert variant="destructive">{feedbackError}</Alert>
+        ) : null}
         {message ? <Alert role="status">{message}</Alert> : null}
         {issues.length ? (
           <Alert variant="warning" role="status">
@@ -1113,9 +1162,6 @@ export default function SandboxPage() {
             change={change}
             initializeLayout={initializeLayout}
             notify={setMessage}
-            onViewPreferenceChange={() => undefined}
-            createRequest={null}
-            onCreateRequestHandled={() => undefined}
             onStartFromTemplate={() => setTemplatesOpen(true)}
             pending={
               commandBusy ||
@@ -1124,6 +1170,7 @@ export default function SandboxPage() {
               Boolean(conflict)
             }
             bindings={bindingsReady ? bindingsQuery.data!.items : null}
+            purgeEnabled={purgeEnabled}
             onLifecycle={requestLifecycle}
             onDraftStateChange={setDesignerDraftDirty}
           />
@@ -1238,7 +1285,8 @@ export default function SandboxPage() {
                 setPending(false);
               }
             }}
-            notify={setMessage}
+            notifyError={reportError}
+            notifyDone={reportDone}
             pending={commandBusy}
           />
         ) : null}
@@ -1294,7 +1342,11 @@ export default function SandboxPage() {
           />
         ) : null}
         <SandboxLifecycleDialog
-          request={lifecycleRequest}
+          request={
+            lifecycleRequest?.operation === "purge" && !purgeEnabled
+              ? null
+              : lifecycleRequest
+          }
           onCancel={cancelLifecycle}
           onConfirm={confirmLifecycle}
         />

@@ -5,6 +5,8 @@ from typing import ClassVar
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -14,6 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
@@ -59,6 +62,31 @@ class IdentitySession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     user_agent: Mapped[str | None] = mapped_column(String(500))
+    ip_address: Mapped[str | None] = mapped_column(INET)
+
+
+class IdentityMfaObservation(Base):
+    """Last complete bound observation, independently of profile audit metadata."""
+
+    __tablename__ = "identity_mfa_observations"
+    __audit_enabled__: ClassVar[bool] = False
+    __table_args__ = (
+        CheckConstraint(
+            "((observed_provider_user_id IS NULL AND verified_totp IS NULL "
+            "AND observed_at IS NULL) OR (observed_provider_user_id IS NOT NULL "
+            "AND observed_at IS NOT NULL)) IS TRUE",
+            name="ck_identity_mfa_observations_authority",
+        ),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    observed_provider_user_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    verified_totp: Mapped[bool | None] = mapped_column(Boolean)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sign_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class IdentityRateLimitBucket(Base):

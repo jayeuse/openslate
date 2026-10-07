@@ -352,6 +352,32 @@ async function installDashboardApi(
       body: JSON.stringify({ detail: "Not available in this route test" }),
     }),
   );
+  await page.route("**/api/workspace", (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({
+          json: {
+            id: "00000000-0000-4000-8000-000000000102",
+            display_name: "OpenSlate",
+            legal_name: null,
+            description: null,
+            contact_email: null,
+            contact_phone: null,
+            postal_address: null,
+            logo_file_id: null,
+            locale: "en-PH",
+            timezone: "Asia/Manila",
+            mark: "OS",
+            currency: "PHP",
+            week_start: "monday",
+            business_hours: "09:00–18:00",
+            theme: "slate",
+            revision: 1,
+            today: "2026-10-07",
+            purge_enabled: false,
+          },
+        })
+      : route.fallback(),
+  );
   let current = initial;
   let alternate: DashboardWire | null = null;
   let forceConflict = false;
@@ -403,6 +429,13 @@ async function installDashboardApi(
       contentType: "application/json",
       body: JSON.stringify({ id: userId, ...identity }),
     }),
+  );
+  await page.route("**/api/auth/refresh", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          json: { authenticated: true, setup_required: false },
+        })
+      : route.fallback(),
   );
   await page.route("**/api/departments**", async (route) =>
     route.fulfill({
@@ -1840,7 +1873,7 @@ test("stale Dashboard save keeps the name and ordered widget draft available", a
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
   await expect(
-    page.getByText("This Dashboard changed since you opened it."),
+    page.getByText("This item changed. Refresh it and try again."),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Unsaved operations draft" }),
@@ -2756,7 +2789,14 @@ test("a refused Dashboard read hides the retained Dashboard and offers Retry", a
     0,
   );
   // Retry reads the refused widget again, not only the list and catalog.
-  await page.getByRole("button", { name: "Retry" }).click();
+  await page
+    .getByRole("alert")
+    .filter({
+      hasText:
+        "OpenView data is unavailable. Sign in or ask for access, then retry.",
+    })
+    .getByRole("button", { name: "Retry", exact: true })
+    .click();
   await expect(table.locator("tbody tr")).toHaveCount(25);
 });
 

@@ -2,6 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../../src/lib/api";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
 import type {
   BoardManagementBoard,
   BoardPurgePreview,
@@ -88,6 +92,19 @@ function purgeRow(entityType: string, entityId: string) {
 }
 
 async function installArchivedBoard(page: Page) {
+  await installOpenViewEventSource(page);
+  const workspace = {
+    display_name: "OpenSlate",
+    mark: "OS",
+    logo_file_id: null,
+    revision: 1,
+    today: "2026-09-25",
+    week_start: "monday",
+    locale: "en-US",
+    timezone: "UTC",
+    purge_enabled: true as boolean | undefined,
+  };
+  let workspaceFailure = false;
   const archived = {
     id: boardId,
     scope: "project",
@@ -111,7 +128,11 @@ async function installArchivedBoard(page: Page) {
         json: { id: actorId, role: "admin", access: [] },
       });
     if (path === "/api/workspace")
-      return route.fulfill({ json: { today: "2026-09-25" } });
+      return route.fulfill(
+        workspaceFailure
+          ? { status: 503, json: { detail: "Workspace unavailable" } }
+          : { json: workspace },
+      );
     if (path === "/api/boards")
       return route.fulfill({
         json: {
@@ -149,6 +170,12 @@ async function installArchivedBoard(page: Page) {
       },
     });
   });
+  return {
+    workspace,
+    failWorkspaceRead: (failed: boolean) => {
+      workspaceFailure = failed;
+    },
+  };
 }
 
 test("a new Board is a project Board with only a name and description", () => {
@@ -370,6 +397,33 @@ test("archived Board permanent-deletion controls are hidden from non-admins", ()
   expect(html).toContain("Restore Board");
 });
 
+for (const state of ["disabled", "unknown", "unavailable"] as const) {
+  test(`an archived Board remains restorable while permanent deletion is ${state}`, async ({
+    page,
+  }) => {
+    const api = await installArchivedBoard(page);
+    api.workspace.purge_enabled = state === "unknown" ? undefined : false;
+    api.failWorkspaceRead(state === "unavailable");
+    await page.goto(
+      `/boards?board=${boardId}&section=overview&status=archived`,
+    );
+    await page.getByRole("button", { name: "Board menu", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+      .click();
+    const manage = page.getByRole("dialog", { name: "Manage Board" });
+    await expect(
+      manage.getByRole("button", { name: "Restore Board" }),
+    ).toBeEnabled();
+    await expect(
+      manage.getByRole("button", {
+        name: "Permanently delete Board",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+  });
+}
+
 test("Board purge preserves safe lifecycle messages when the server returns their actual status", async () => {
   const management =
     (await import("../../src/components/systems/boards/components/server-backed-board-management")) as unknown as {
@@ -406,7 +460,7 @@ test("Board purge preserves safe lifecycle messages when the server returns thei
 test("Board purge explains its impact and keeps stale challenges recoverable without losing access", async ({
   page,
 }) => {
-  await installArchivedBoard(page);
+  const api = await installArchivedBoard(page);
   let previews = 0;
   let deletions = 0;
   const preview: BoardPurgePreview = {
@@ -437,7 +491,7 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
       previews += 1;
       return route.fulfill({
         json:
-          previews < 3
+          previews < 4
             ? preview
             : {
                 ...preview,
@@ -494,6 +548,17 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
   ).toBeVisible();
   await expect(manage.getByText(boardId, { exact: true })).toBeVisible();
   await expect(manage.getByLabel("Administrator password")).toBeVisible();
+  api.failWorkspaceRead(true);
+  await sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" });
+  await expect(manage.getByLabel("Administrator password")).toHaveCount(0);
+  await expect(
+    manage.getByRole("button", { name: "Restore Board" }),
+  ).toBeEnabled();
+  expect(deletions).toBe(0);
+  api.failWorkspaceRead(false);
+  await sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" });
+  await begin.click();
+  await expect(manage.getByLabel("Administrator password")).toBeVisible();
   await expect(manage.getByText(/Dispatch records.*Operations/)).toBeVisible();
   await expect(
     manage.getByText(/Dispatch handoff 24.*Dispatch records.*Operations/),
@@ -535,4 +600,97 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
   await expect(manage.getByLabel("Administrator password")).toHaveCount(0);
   await expect(confirm).toHaveCount(0);
   expect(deletions).toBe(2);
+});
+
+test("Board creation closes its form and confirms the created Board", async ({
+  page,
+}) => {
+  await installArchivedBoard(page);
+  const created = {
+    id: departmentId,
+    scope: "project",
+    department_id: null,
+    name: "New dispatch",
+    description: "Owned feedback journey",
+    status: "active",
+    revision: 1,
+    level: "manage",
+    created_at: board.createdAt,
+    updated_at: board.updatedAt,
+  };
+  await page.route("**/api/boards", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 201, json: created })
+      : route.fallback(),
+  );
+  await page.route(`**/api/boards/${departmentId}`, (route) =>
+    route.fulfill({ json: created }),
+  );
+  await page.route(`**/api/boards/${departmentId}/my-access`, (route) =>
+    route.fulfill({
+      json: { level: "manage", read: true, write: true, manage: true },
+    }),
+  );
+  await page.goto(`/boards?board=${boardId}&section=overview&status=archived`);
+  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "New project Board", exact: true })
+    .click();
+  const form = page.getByRole("dialog", { name: "New project Board" });
+  await form.getByLabel("Board name").fill(created.name);
+  await form.getByRole("button", { name: "Create Board", exact: true }).click();
+  await expect(form).toBeHidden();
+  await expect(
+    page
+      .getByRole("region", { name: "Status messages", exact: true })
+      .getByText("Board created.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Status messages", exact: true })
+      .getByText("Board created.", { exact: true }),
+  ).toHaveCount(1);
+});
+
+test("Board permanent deletion closes its review and confirms completion", async ({
+  page,
+}) => {
+  await installArchivedBoard(page);
+  await page.route(`**/api/boards/${boardId}/purge**`, (route) =>
+    route.request().url().endsWith("/preview")
+      ? route.fulfill({ json: purgePreview })
+      : route.fulfill({
+          json: {
+            impact: purgePreview.impact,
+            operation_id: null,
+          },
+        }),
+  );
+  await page.goto(`/boards?board=${boardId}&section=overview&status=archived`);
+  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+    .click();
+  const form = page.getByRole("dialog", { name: "Manage Board" });
+  await form
+    .getByRole("button", { name: "Permanently delete Board", exact: true })
+    .click();
+  await form.getByLabel("Type the Board ID").fill(boardId);
+  await form
+    .getByLabel("Administrator password")
+    .fill("synthetic-owned-passphrase");
+  await form
+    .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+    .click();
+  await expect(form).toBeHidden();
+  await expect(
+    page
+      .getByRole("region", { name: "Status messages", exact: true })
+      .getByText("Board permanently deleted.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Status messages", exact: true })
+      .getByText("Board permanently deleted.", { exact: true }),
+  ).toHaveCount(1);
 });

@@ -18,6 +18,7 @@ from app.systems.boards.reminder_models import BoardEventReminder
 from app.systems.openview.dashboards.models import Dashboard
 from app.systems.openview.reports.models import Report
 from app.systems.openview.views.models import SavedView
+from app.systems.platform.files.models import File
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
@@ -28,8 +29,13 @@ DepartmentRef = UUID | Department | None
 
 _MODULE_CHILDREN = (Field, Record, SavedView, Report)
 _BOARD_CHILDREN = (
-    BoardPost, BoardEvent, BoardWidget, BoardGroup, BoardAttachment,
-    BoardRecordLink, BoardEventReminder,
+    BoardPost,
+    BoardEvent,
+    BoardWidget,
+    BoardGroup,
+    BoardAttachment,
+    BoardRecordLink,
+    BoardEventReminder,
 )
 _REVISION_CHILDREN = (BoardPostRevisionAttachment, BoardPostRevisionRecordLink)
 
@@ -48,8 +54,10 @@ def _parent(instance: object, relationship: str, foreign_id: UUID | None) -> obj
     if relationship in state.mapper.relationships:
         attribute = state.attrs[relationship]
         value = attribute.loaded_value
-        if value is not LoaderCallableStatus.NO_VALUE and value is not None and (
-            foreign_id is None or attribute.history.has_changes()
+        if (
+            value is not LoaderCallableStatus.NO_VALUE
+            and value is not None
+            and (foreign_id is None or attribute.history.has_changes())
         ):
             return cast(object, value)
     return foreign_id
@@ -72,72 +80,101 @@ class DepartmentAncestry:
         revision_ids = _ids(
             (item for item in instances if isinstance(item, _REVISION_CHILDREN)), "revision_id"
         )
-        self.revision_posts = {
-            revision_id: post_id
-            for revision_id, post_id in session.execute(
-                select(BoardPostRevision.id, BoardPostRevision.post_id).where(
-                    BoardPostRevision.id.in_(revision_ids - self.revisions.keys())
-                )
-            ).tuples()
-        } if revision_ids - self.revisions.keys() else {}
+        self.revision_posts = (
+            {
+                revision_id: post_id
+                for revision_id, post_id in session.execute(
+                    select(BoardPostRevision.id, BoardPostRevision.post_id).where(
+                        BoardPostRevision.id.in_(revision_ids - self.revisions.keys())
+                    )
+                ).tuples()
+            }
+            if revision_ids - self.revisions.keys()
+            else {}
+        )
 
-        post_ids = _ids(
-            (item for item in instances if isinstance(item, BoardPostRevision)), "post_id"
-        ) | set(self.revision_posts.values()) | {
-            item.post_id for key, item in self.revisions.items() if key in revision_ids
-            and isinstance(item.post_id, UUID)
-        }
-        self.post_boards = {
-            post_id: board_id
-            for post_id, board_id in session.execute(
-                select(BoardPost.id, BoardPost.board_id).where(
-                    BoardPost.id.in_(post_ids - self.posts.keys())
-                )
-            ).tuples()
-        } if post_ids - self.posts.keys() else {}
+        post_ids = (
+            _ids((item for item in instances if isinstance(item, BoardPostRevision)), "post_id")
+            | set(self.revision_posts.values())
+            | {
+                item.post_id
+                for key, item in self.revisions.items()
+                if key in revision_ids and isinstance(item.post_id, UUID)
+            }
+        )
+        self.post_boards = (
+            {
+                post_id: board_id
+                for post_id, board_id in session.execute(
+                    select(BoardPost.id, BoardPost.board_id).where(
+                        BoardPost.id.in_(post_ids - self.posts.keys())
+                    )
+                ).tuples()
+            }
+            if post_ids - self.posts.keys()
+            else {}
+        )
 
-        board_ids = _ids(
-            (item for item in instances if isinstance(item, _BOARD_CHILDREN)), "board_id"
-        ) | set(self.post_boards.values()) | {
-            item.board_id for key, item in self.posts.items() if key in post_ids
-            and isinstance(item.board_id, UUID)
-        }
-        self.board_departments = {
-            board_id: (scope, department_id)
-            for board_id, scope, department_id in session.execute(
-                select(Board.id, Board.scope, Board.department_id).where(
-                    Board.id.in_(board_ids - self.boards.keys())
-                )
-            ).tuples()
-        } if board_ids - self.boards.keys() else {}
+        board_ids = (
+            _ids((item for item in instances if isinstance(item, _BOARD_CHILDREN)), "board_id")
+            | set(self.post_boards.values())
+            | {
+                item.board_id
+                for key, item in self.posts.items()
+                if key in post_ids and isinstance(item.board_id, UUID)
+            }
+        )
+        self.board_departments = (
+            {
+                board_id: (scope, department_id)
+                for board_id, scope, department_id in session.execute(
+                    select(Board.id, Board.scope, Board.department_id).where(
+                        Board.id.in_(board_ids - self.boards.keys())
+                    )
+                ).tuples()
+            }
+            if board_ids - self.boards.keys()
+            else {}
+        )
 
         source_ids = _ids(
             (item for item in instances if isinstance(item, RelationshipEdge)),
             "source_record_id",
         )
-        self.record_modules = {
-            record_id: module_id
-            for record_id, module_id in session.execute(
-                select(Record.id, Record.module_id).where(
-                    Record.id.in_(source_ids - self.records.keys())
-                )
-            ).tuples()
-        } if source_ids - self.records.keys() else {}
+        self.record_modules = (
+            {
+                record_id: module_id
+                for record_id, module_id in session.execute(
+                    select(Record.id, Record.module_id).where(
+                        Record.id.in_(source_ids - self.records.keys())
+                    )
+                ).tuples()
+            }
+            if source_ids - self.records.keys()
+            else {}
+        )
 
-        module_ids = _ids(
-            (item for item in instances if isinstance(item, _MODULE_CHILDREN)), "module_id"
-        ) | set(self.record_modules.values()) | {
-            item.module_id for key, item in self.records.items() if key in source_ids
-            and isinstance(item.module_id, UUID)
-        }
-        self.module_departments = {
-            module_id: department_id
-            for module_id, department_id in session.execute(
-                select(Module.id, Module.department_id).where(
-                    Module.id.in_(module_ids - self.modules.keys())
-                )
-            ).tuples()
-        } if module_ids - self.modules.keys() else {}
+        module_ids = (
+            _ids((item for item in instances if isinstance(item, _MODULE_CHILDREN)), "module_id")
+            | set(self.record_modules.values())
+            | {
+                item.module_id
+                for key, item in self.records.items()
+                if key in source_ids and isinstance(item.module_id, UUID)
+            }
+        )
+        self.module_departments = (
+            {
+                module_id: department_id
+                for module_id, department_id in session.execute(
+                    select(Module.id, Module.department_id).where(
+                        Module.id.in_(module_ids - self.modules.keys())
+                    )
+                ).tuples()
+            }
+            if module_ids - self.modules.keys()
+            else {}
+        )
 
     def _module(self, module: Module | UUID | None) -> DepartmentRef:
         if isinstance(module, UUID):
@@ -189,6 +226,8 @@ class DepartmentAncestry:
         return self._post(revision.post_id) if revision is not None else None
 
     def for_instance(self, instance: Any) -> DepartmentRef:
+        if isinstance(instance, File):
+            return instance.department_id if instance.purpose == "library_document" else None
         if isinstance(instance, Department):
             return instance
         if isinstance(instance, Module):

@@ -1,4 +1,9 @@
 import { ApiContractError, ApiError } from "@/lib/api";
+import {
+  INACTIVE_DAYS_DEFAULT,
+  INACTIVE_DAYS_MIN,
+  INACTIVE_DAYS_MAX,
+} from "../state/api-contracts";
 
 import type {
   AccessDepartment,
@@ -10,6 +15,7 @@ import type {
   AccessUserAccess,
   AccessUserPatch,
   AccessUserRole,
+  AccessUserListOptions,
 } from "../state/api-contracts";
 import {
   hasThreeWayConflict,
@@ -95,8 +101,8 @@ export function personState(
 
 export type NamedItem = { id: string; name: string };
 
-export type DirectoryRow = {
-  user: AccessUser;
+export type DirectoryRow<User extends AccessUser = AccessUser> = {
+  user: User;
   name: string;
   state: PersonState;
   groups: NamedItem[];
@@ -141,12 +147,12 @@ export function departmentsOf(
   return [...reached].map(([id, name]) => ({ id, name })).sort(byName);
 }
 
-export function directoryRows(
-  users: readonly AccessUser[],
+export function directoryRows<User extends AccessUser>(
+  users: readonly User[],
   groups: readonly AccessGroup[],
   departments: readonly AccessDepartment[],
   now: number,
-): DirectoryRow[] {
+): DirectoryRow<User>[] {
   return users.map((user) => {
     const admin = user.role === "admin";
     const memberOf = admin ? [] : groupsOf(user.id, groups);
@@ -173,6 +179,9 @@ export type DirectoryFilters = {
   groupId: string;
   departmentId: string;
   sort: DirectorySort;
+  mfa?: "all" | "without" | "unknown";
+  history?: "all" | "no-recorded-sign-in" | "inactive";
+  inactiveDays?: number;
 };
 
 export const defaultDirectoryFilters: DirectoryFilters = {
@@ -182,66 +191,10 @@ export const defaultDirectoryFilters: DirectoryFilters = {
   groupId: "all",
   departmentId: "all",
   sort: "name",
+  mfa: "all",
+  history: "all",
+  inactiveDays: INACTIVE_DAYS_DEFAULT,
 };
-
-function matchesStatus(row: DirectoryRow, status: DirectoryStatusFilter) {
-  if (status === "all") return true;
-  if (status === "current") return row.state.id !== "deleted";
-  if (status === "ending") return row.state.expiresSoon;
-  return row.state.id === status;
-}
-
-function compareRows(sort: DirectorySort) {
-  return (left: DirectoryRow, right: DirectoryRow): number => {
-    if (sort === "email")
-      return left.user.email.localeCompare(right.user.email);
-    if (sort === "newest")
-      return right.user.created_at.localeCompare(left.user.created_at);
-    if (sort === "expiry") {
-      const a = expiryTime(left.user) ?? Number.POSITIVE_INFINITY;
-      const b = expiryTime(right.user) ?? Number.POSITIVE_INFINITY;
-      if (a !== b) return a < b ? -1 : 1;
-    }
-    return (
-      left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) ||
-      left.user.username.localeCompare(right.user.username)
-    );
-  };
-}
-
-/** Filter and sort the complete directory; paging happens afterwards. */
-export function filterDirectory(
-  rows: readonly DirectoryRow[],
-  filters: DirectoryFilters,
-): DirectoryRow[] {
-  const query = filters.query.trim().toLocaleLowerCase();
-  return rows
-    .filter(
-      (row) =>
-        matchesStatus(row, filters.status) &&
-        (filters.role === "all" || row.user.role === filters.role) &&
-        (filters.groupId === "all" ||
-          (filters.groupId === "none"
-            ? // Administrators need no group, so they are never "in no group".
-              row.user.role !== "admin" && row.groups.length === 0
-            : row.groups.some((group) => group.id === filters.groupId))) &&
-        (filters.departmentId === "all" ||
-          row.departments.some(
-            (department) => department.id === filters.departmentId,
-          )) &&
-        (!query ||
-          [
-            row.name,
-            row.user.email,
-            row.user.username,
-            row.user.job_title ?? "",
-          ]
-            .join("\n")
-            .toLocaleLowerCase()
-            .includes(query)),
-    )
-    .sort(compareRows(filters.sort));
-}
 
 const directorySorts: readonly DirectorySort[] = [
   "name",
@@ -284,6 +237,19 @@ export function directoryFiltersFromParams(
     groupId: params.get("group") ?? "all",
     departmentId: params.get("department") ?? "all",
     sort: oneOf(directorySorts, params.get("sort"), "name"),
+    mfa: oneOf(
+      ["all", "without", "unknown"] as const,
+      params.get("mfa"),
+      "all",
+    ),
+    history: oneOf(
+      ["all", "no-recorded-sign-in", "inactive"] as const,
+      params.get("history"),
+      "all",
+    ),
+    inactiveDays:
+      parseInactiveDays(params.get("inactive_days") ?? "") ??
+      INACTIVE_DAYS_DEFAULT,
   };
 }
 
@@ -293,10 +259,68 @@ export function activeFilterCount(filters: DirectoryFilters): number {
     filters.status !== "current",
     filters.groupId !== "all",
     filters.departmentId !== "all",
+    Boolean(filters.mfa && filters.mfa !== "all"),
+    Boolean(filters.history && filters.history !== "all"),
   ].filter(Boolean).length;
 }
 
+/** Predicates belong to the server, before its total and page window. */
+export function directoryRequest(
+  filters: DirectoryFilters,
+  limit: number,
+  offset: number,
+): AccessUserListOptions {
+  return {
+    limit,
+    offset,
+    search: filters.query.trim() || undefined,
+    role: filters.role === "all" ? undefined : filters.role,
+    deleted:
+      filters.status === "all"
+        ? "include"
+        : filters.status === "deleted"
+          ? "only"
+          : "exclude",
+    status:
+      filters.status === "current" ||
+      filters.status === "all" ||
+      filters.status === "deleted"
+        ? undefined
+        : filters.status,
+    group_id: filters.groupId === "all" ? undefined : filters.groupId,
+    department_id:
+      filters.departmentId === "all" ? undefined : filters.departmentId,
+    mfa: filters.mfa === "all" ? undefined : filters.mfa,
+    history: filters.history === "all" ? undefined : filters.history,
+    inactive_days:
+      filters.history === "inactive"
+        ? (filters.inactiveDays ?? INACTIVE_DAYS_DEFAULT)
+        : undefined,
+    sort_by:
+      filters.sort === "newest"
+        ? "created_at"
+        : filters.sort === "expiry"
+          ? "expires_at"
+          : filters.sort,
+    sort_order: filters.sort === "newest" ? "desc" : "asc",
+  };
+}
+
 // Guest expiry
+
+/** The applied inactivity period, distinct from an incomplete input draft. */
+export function parseInactiveDays(value: string): number | null {
+  if (!/^\d+$/.test(value.trim())) return null;
+  const days = Number(value.trim());
+  return days >= INACTIVE_DAYS_MIN && days <= INACTIVE_DAYS_MAX ? days : null;
+}
+
+export function inactiveDaysError(value: string): string | null {
+  if (!value.trim()) return "Enter the number of days.";
+  return parseInactiveDays(value) === null
+    ? `Enter a whole number from ${INACTIVE_DAYS_MIN} to ${INACTIVE_DAYS_MAX}.`
+    : null;
+}
 
 export const GUEST_DAYS_MIN = 1;
 export const GUEST_DAYS_MAX = 365;

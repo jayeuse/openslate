@@ -2,7 +2,7 @@ import type { Page, Route } from "@playwright/test";
 
 // A mocked Access API for the People, Groups and Overview HTTP specs. Every
 // response matches the strict frontend contracts, and every list answers
-// with the 100-item pages the complete-collection loader expects. Groups
+// with requested server pages; complete catalog consumers still request100. Groups
 // carry an ETag ("<id>:<revision>") and refuse a stale If-Match with 412,
 // like the backend.
 
@@ -104,11 +104,12 @@ const catalogFields = {
 
 export function listPage(items: object[], url: URL) {
   const offset = Number(url.searchParams.get("offset") ?? 0);
-  const slice = items.slice(offset, offset + 100);
+  const limit = Number(url.searchParams.get("limit") ?? 100);
+  const slice = items.slice(offset, offset + limit);
   return {
     items: slice,
     pagination: {
-      limit: 100,
+      limit,
       offset,
       count: slice.length,
       total: items.length,
@@ -126,6 +127,8 @@ export type Handler = (
 export type MockOptions = {
   /** The signed-in person; an administrator by default. */
   identity?: { id: string; role: User["role"]; access: AccessEntry[] };
+  /** A controlled API clock for cutoff and observation-metadata journeys. */
+  now?: number;
 };
 
 export type Workspace = {
@@ -135,7 +138,36 @@ export type Workspace = {
   display_name: string;
 };
 
+export type Monitoring = {
+  active_session_count: number;
+  mfa_verified_totp: boolean | null;
+  mfa_observed_at: string | null;
+  last_sign_in_at?: string | null;
+  last_active_at?: string | null;
+};
+export type Session = {
+  id: string;
+  created_at: string;
+  refreshed_at: string;
+  expires_at: string;
+  user_agent: string | null;
+  current: boolean;
+  ip_address: string | null;
+};
+const unknownMonitoring: Monitoring = {
+  active_session_count: 0,
+  mfa_verified_totp: null,
+  mfa_observed_at: null,
+  last_sign_in_at: null,
+  last_active_at: null,
+};
+
 export type Api = {
+  monitoring: Map<string, Monitoring>;
+  sessions: Session[];
+  listReads: URLSearchParams[];
+  summaryReads: number;
+  summaryQueries: URLSearchParams[];
   users: Map<string, User>;
   groups: Map<string, Group>;
   workspace: Workspace;
@@ -223,13 +255,14 @@ export async function mockAccessApi(
       ...catalogFields,
     },
   ];
-  const sessions = [
+  const sessions: Session[] = [
     {
       id: ids.laptop,
       created_at: created,
       refreshed_at: at(-DAY),
       expires_at: at(20 * DAY),
       user_agent: "Laptop browser",
+      ip_address: "198.51.100.101",
       current: false,
     },
     {
@@ -238,6 +271,7 @@ export async function mockAccessApi(
       refreshed_at: at(-2 * DAY),
       expires_at: at(20 * DAY),
       user_agent: "Phone browser",
+      ip_address: "2001:db8::102",
       current: false,
     },
   ];
@@ -279,9 +313,32 @@ export async function mockAccessApi(
       entries: [],
     },
   };
+  const monitoring = new Map<string, Monitoring>([
+    [
+      ids.rosa,
+      {
+        active_session_count: 1,
+        mfa_verified_totp: true,
+        mfa_observed_at: created,
+      },
+    ],
+    [
+      ids.ben,
+      {
+        active_session_count: 2,
+        mfa_verified_totp: false,
+        mfa_observed_at: created,
+      },
+    ],
+  ]);
   const calls: Call[] = [];
   const handlers = new Map<string, Handler>();
   const api: Api = {
+    monitoring,
+    sessions,
+    listReads: [],
+    summaryReads: 0,
+    summaryQueries: [],
     users,
     groups,
     workspace: {
@@ -309,6 +366,12 @@ export async function mockAccessApi(
     }
     const call = { method, path, body };
     calls.push(call);
+    if (method === "GET" && path === "/api/users")
+      api.listReads.push(new URLSearchParams(url.searchParams));
+    if (method === "GET" && path === "/api/users/summary") {
+      api.summaryReads += 1;
+      api.summaryQueries.push(new URLSearchParams(url.searchParams));
+    }
     const override = handlers.get(`${method} ${path}`);
     if (override && (await override(route, call)) !== "next") return;
 
@@ -320,8 +383,169 @@ export async function mockAccessApi(
       return route.fulfill({
         json: options.identity ?? { id: ids.rosa, role: "admin", access: [] },
       });
-    if (path === "/api/users" && method === "GET")
-      return route.fulfill({ json: listPage([...users.values()], url) });
+    const capturedAt = options.now ?? Date.now();
+    const established = (user: User) =>
+      !user.is_deleted &&
+      user.status === "active" &&
+      (!user.expires_at || Date.parse(user.expires_at) > capturedAt);
+    const eligible = (user: User) => established(user) && user.role === "admin";
+    const mfaMatches = (user: User, mode: string) =>
+      eligible(user) &&
+      (mode === "without"
+        ? monitoring.get(user.id)?.mfa_verified_totp === false
+        : monitoring.get(user.id)?.mfa_verified_totp == null);
+    const inactiveDays = Number(url.searchParams.get("inactive_days") ?? 30);
+    const historyMatches = (user: User, history: string) => {
+      if (!established(user)) return false;
+      const observation = monitoring.get(user.id) ?? unknownMonitoring;
+      return history === "no-recorded-sign-in"
+        ? observation.last_sign_in_at == null
+        : observation.last_active_at != null &&
+            Date.parse(observation.last_active_at) <
+              capturedAt - inactiveDays * DAY;
+    };
+    if (path === "/api/users/summary" && method === "GET") {
+      const all = [...users.values()];
+      return route.fulfill({
+        json: {
+          admins_without_mfa: all.filter((user) => mfaMatches(user, "without"))
+            .length,
+          admins_mfa_unknown: all.filter((user) => mfaMatches(user, "unknown"))
+            .length,
+          no_recorded_sign_in: all.filter((user) =>
+            historyMatches(user, "no-recorded-sign-in"),
+          ).length,
+          inactive_people: all.filter((user) =>
+            historyMatches(user, "inactive"),
+          ).length,
+          as_of: new Date(capturedAt).toISOString(),
+          inactive_days: inactiveDays,
+        },
+      });
+    }
+    if (path === "/api/users" && method === "GET") {
+      const query = url.searchParams;
+      const deleted = query.get("deleted") ?? "exclude";
+      const role = query.get("role");
+      const status = query.get("status");
+      const mfa = query.get("mfa");
+      const history = query.get("history");
+      const groupId = query.get("group_id");
+      const departmentId = query.get("department_id");
+      const search = (query.get("search") ?? "").toLowerCase();
+      const now = capturedAt;
+      const activeGroups = [...groups.values()].filter(
+        (group) => !group.is_deleted,
+      );
+      const matching = [...users.values()].filter((user) => {
+        if (
+          (deleted === "exclude" && user.is_deleted) ||
+          (deleted === "only" && !user.is_deleted) ||
+          (role && user.role !== role)
+        )
+          return false;
+        const expires = user.expires_at ? Date.parse(user.expires_at) : null;
+        const expired = expires !== null && expires <= now;
+        if (
+          status === "expired"
+            ? !expired
+            : status === "ending"
+              ? expires === null ||
+                expired ||
+                expires > now + 14 * DAY ||
+                !["active", "pending"].includes(user.status)
+              : status
+                ? expired || user.status !== status
+                : false
+        )
+          return false;
+        if (mfa && !mfaMatches(user, mfa)) return false;
+        if (history && !historyMatches(user, history)) return false;
+        const memberOf =
+          user.role === "admin"
+            ? []
+            : activeGroups.filter((group) =>
+                group.member_ids.includes(user.id),
+              );
+        if (
+          groupId === "none"
+            ? user.role === "admin" || memberOf.length !== 0
+            : groupId
+              ? !memberOf.some((group) => group.id === groupId)
+              : false
+        )
+          return false;
+        if (
+          departmentId &&
+          !memberOf.some((group) =>
+            group.access.some((entry) => entry.department_id === departmentId),
+          )
+        )
+          return false;
+        return (
+          !search ||
+          [
+            user.display_name ?? "",
+            user.username,
+            user.email,
+            user.job_title ?? "",
+          ].some((value) => value.toLowerCase().includes(search))
+        );
+      });
+      const sort = query.get("sort_by") ?? "username";
+      const direction = query.get("sort_order") === "desc" ? -1 : 1;
+      const name = (user: User) =>
+        (user.display_name?.trim() || user.username).toLowerCase();
+      matching.sort((left, right) => {
+        if (
+          sort === "expires_at" &&
+          (left.expires_at === null || right.expires_at === null)
+        )
+          return left.expires_at === right.expires_at
+            ? left.id.localeCompare(right.id)
+            : left.expires_at === null
+              ? 1
+              : -1;
+        const value = (user: User) =>
+          sort === "name"
+            ? name(user)
+            : sort === "expires_at"
+              ? (user.expires_at ?? "")
+              : sort === "created_at"
+                ? user.created_at
+                : sort === "updated_at"
+                  ? user.updated_at
+                  : sort === "email"
+                    ? user.email
+                    : user.username;
+        const primary = value(left).localeCompare(value(right));
+        const tie =
+          sort === "name" ? left.username.localeCompare(right.username) : 0;
+        return (primary || tie) * direction || left.id.localeCompare(right.id);
+      });
+      return route.fulfill({
+        json: listPage(
+          matching.map((user) => {
+            const observation = {
+              ...unknownMonitoring,
+              ...monitoring.get(user.id),
+            };
+            const active =
+              !user.is_deleted &&
+              user.status === "active" &&
+              (!user.expires_at || Date.parse(user.expires_at) > capturedAt);
+            return {
+              ...user,
+              ...observation,
+              active_session_count: active
+                ? observation.active_session_count
+                : 0,
+            };
+          }),
+          url,
+        ),
+      });
+    }
     if (path === "/api/access/groups" && method === "GET")
       return route.fulfill({
         json: listPage(
@@ -461,9 +685,26 @@ export async function mockAccessApi(
         return user.is_deleted
           ? route.fulfill({ status: 404, json: { detail: "User not found" } })
           : route.fulfill({ json: user });
+      if (rest === "/restore" && method === "POST") {
+        const restored = {
+          ...user,
+          is_deleted: false,
+          deleted_at: null,
+          updated_at: at(0),
+        };
+        users.set(user.id, restored);
+        return route.fulfill({ json: restored });
+      }
       if (rest === "" && method === "PATCH") {
         const next = { ...user, ...(body as Partial<User>) };
         users.set(user.id, next);
+        if (next.status === "disabled") {
+          monitoring.set(user.id, {
+            ...(monitoring.get(user.id) ?? unknownMonitoring),
+            active_session_count: 0,
+          });
+          if (user.id === ids.ben) sessions.splice(0);
+        }
         return route.fulfill({ json: next });
       }
       if (rest === "/access")
@@ -479,8 +720,22 @@ export async function mockAccessApi(
         return route.fulfill({
           json: listPage(user.id === ids.ben ? sessions : [], url),
         });
-      if (rest.startsWith("/sessions") && method === "DELETE")
+      if (rest.startsWith("/sessions") && method === "DELETE") {
+        const target = rest.split("/")[2];
+        if (user.id === ids.ben) {
+          for (let index = sessions.length - 1; index >= 0; index -= 1)
+            if (
+              !sessions[index].current &&
+              (!target || sessions[index].id === target)
+            )
+              sessions.splice(index, 1);
+          monitoring.set(user.id, {
+            ...(monitoring.get(user.id) ?? unknownMonitoring),
+            active_session_count: sessions.length,
+          });
+        }
         return route.fulfill({ status: 204, body: "" });
+      }
     }
     return route.fulfill({ status: 404, json: { detail: "Not found" } });
   });

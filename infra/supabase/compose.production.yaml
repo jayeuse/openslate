@@ -36,10 +36,17 @@ services:
       SMTP_PORT: ${SMTP_PORT:?Set an SMTP port}
       SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:?Set the invitation sender email}
       LOG_DIR: /var/log/openslate/api
+      BACKUP_EXPORT_ROOT: /var/lib/openslate/backup-exports
     volumes:
       - type: bind
         source: ${OPENSLATE_LOG_ROOT:?Set a private writable log directory}
         target: /var/log/openslate
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPENSLATE_BACKUP_EXPORT_ROOT:?Set the owned finished backup-export directory}
+        target: /var/lib/openslate/backup-exports
+        read_only: true
         bind:
           create_host_path: false
     read_only: true

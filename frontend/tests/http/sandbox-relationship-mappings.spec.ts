@@ -8,6 +8,10 @@ import {
 import { publicationFieldKey } from "../../src/components/systems/sandbox/components/publish-change-groups";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
+import {
   configuredSandboxDesign,
   sandboxDocumentFromDesign,
 } from "../helpers/sandbox-fixtures";
@@ -73,6 +77,16 @@ async function openAuthenticatedSandbox(
   designFixture: Design = configuredSandboxDesign,
   options: SandboxOptions = {},
 ) {
+  await installOpenViewEventSource(page);
+  const workspace = { purge_enabled: true as boolean | undefined };
+  let workspaceFailure = false;
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill(
+      workspaceFailure
+        ? { status: 503, json: { detail: "Workspace unavailable" } }
+        : { json: workspace },
+    ),
+  );
   let revision = options.revision ?? 1;
   let documentReads = 0;
   let documentWrites = 0;
@@ -257,6 +271,12 @@ async function openAuthenticatedSandbox(
     page.getByRole("heading", { name: "Sandbox", exact: true }),
   ).toBeVisible();
   return {
+    workspace,
+    failWorkspaceRead: (failed: boolean) => {
+      workspaceFailure = failed;
+    },
+    refreshWorkspace: () =>
+      sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" }),
     document: () => structuredClone(document),
     documentReads: () => documentReads,
     documentWrites: () => documentWrites,
@@ -315,6 +335,7 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
     is_deleted: false,
   };
   const requests: unknown[] = [];
+  let failPostMutationRead = false;
   await page.route(`**/api/modules/${liveId}/close/preview`, (route) =>
     route.fulfill({
       json: {
@@ -344,6 +365,33 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
   });
   const sandbox = await openAuthenticatedSandbox(page, design, {
     bindings: [binding],
+  });
+  await page.route("**/api/sandbox/document", (route) => {
+    if (route.request().method() === "GET" && failPostMutationRead) {
+      failPostMutationRead = false;
+      return route.fulfill({
+        status: 503,
+        json: { detail: "Owned live-state refresh unavailable" },
+      });
+    }
+    return route.fallback();
+  });
+  await page.route(`**/api/modules/${liveId}/reopen`, async (route) => {
+    const confirmed = sandbox.document();
+    const target = confirmed.design.modules.find(
+      (item) => item.id === targetModule.id,
+    );
+    if (!target) throw new Error("The owned module disappeared");
+    target.closed = false;
+    sandbox.confirmLiveDocument(confirmed);
+    sandbox.confirmBindings([binding]);
+    failPostMutationRead = true;
+    await route.fulfill({
+      json: {
+        impact: lifecycleImpactFixture("module", liveId, "reopen"),
+        operation_id: null,
+      },
+    });
   });
   await page.getByRole("button", { name: "View canvas" }).click();
   await page.getByRole("menuitem", { name: "Auto-arrange" }).click();
@@ -410,6 +458,42 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
       .design.modules.find((item) => item.id === targetModule.id)
       ?.fields.every((field) => !field.closed),
   ).toBe(true);
+  const confirmedStatus = page.getByRole("status").filter({
+    hasText: "Live change confirmed. The current design has been refreshed.",
+  });
+  await expect(confirmedStatus).toBeVisible();
+  async function confirmModuleChange(action: "Close module" | "Reopen module") {
+    await page.getByRole("button", { name: action, exact: true }).click();
+    const review = page.getByRole("dialog", { name: action, exact: true });
+    if (action === "Close module") {
+      await review
+        .getByLabel("Type the module name", { exact: true })
+        .fill("Requests");
+      await review
+        .getByLabel("Administrator password", { exact: true })
+        .fill("owned-test-password");
+    }
+    await review.getByRole("button", { name: action, exact: true }).click();
+    await expect(review).toBeHidden();
+  }
+  await confirmModuleChange("Reopen module");
+  const recoveryError = page.getByRole("alert").filter({
+    hasText:
+      "The live change was confirmed. Reload live state before making another change.",
+  });
+  await expect(recoveryError).toBeVisible();
+  await expect.soft(confirmedStatus).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Reload live state", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Close module", exact: true }),
+  ).toBeEnabled();
+  await expect.soft(recoveryError).toHaveCount(0);
+  await confirmModuleChange("Close module");
+  await expect(confirmedStatus).toBeVisible();
+  await expect.soft(recoveryError).toHaveCount(0);
+  expect(sandbox.documentWrites()).toBe(writes);
 });
 
 for (const status of [403, 503]) {
@@ -633,6 +717,12 @@ test("bound field lifecycle resolves its parent and preserves dirty settings", a
   await expect(
     settings.getByRole("button", { name: "Reopen field", exact: true }),
   ).toBeVisible();
+  await expect(
+    settings.getByRole("button", {
+      name: "Permanently delete field",
+      exact: true,
+    }),
+  ).toBeVisible();
   expect(requests).toEqual([
     {
       token: "owned-field-review",
@@ -706,6 +796,21 @@ test("bound module purge reviews stale challenges and refreshes removal without 
     name: "Permanently delete module",
     exact: true,
   });
+  await expect(
+    dialog.getByLabel("Administrator password", { exact: true }),
+  ).toBeVisible();
+  sandbox.workspace.purge_enabled = false;
+  await sandbox.refreshWorkspace();
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Reopen module", exact: true }),
+  ).toBeEnabled();
+  expect(attempts).toBe(0);
+  sandbox.workspace.purge_enabled = true;
+  await sandbox.refreshWorkspace();
+  await page
+    .getByRole("button", { name: "Permanently delete module", exact: true })
+    .click();
   await dialog
     .getByLabel("Type the module name", { exact: true })
     .fill("Requests");
@@ -762,6 +867,118 @@ test("bound module purge reviews stale challenges and refreshes removal without 
   expect(sandbox.documentWrites()).toBe(0);
   expect(attempts).toBe(2);
 });
+
+for (const state of ["disabled", "unknown", "unavailable"] as const) {
+  test(`closed Sandbox items remain reopenable while permanent deletion is ${state}`, async ({
+    page,
+  }) => {
+    const design = structuredClone(configuredSandboxDesign);
+    const targetModule = design.modules[0];
+    const department = design.departments[0];
+    const field = targetModule?.fields[0];
+    if (!targetModule || !department || !field)
+      throw new Error("A department, module and field are required");
+    targetModule.closed = true;
+    department.closed = true;
+    field.closed = true;
+    const sandbox = await openAuthenticatedSandbox(page, design, {
+      bindings: [
+        {
+          kind: "department",
+          sandbox_id: department.id,
+          parent_sandbox_id: null,
+          live_id: "00000000-0000-4000-8000-000000000551",
+          is_deleted: true,
+        },
+        {
+          kind: "module",
+          sandbox_id: targetModule.id,
+          parent_sandbox_id: null,
+          live_id: "00000000-0000-4000-8000-000000000552",
+          is_deleted: true,
+        },
+        {
+          kind: "field",
+          sandbox_id: field.id,
+          parent_sandbox_id: targetModule.id,
+          live_id: "00000000-0000-4000-8000-000000000553",
+          is_deleted: true,
+        },
+      ],
+    });
+    sandbox.workspace.purge_enabled = state === "unknown" ? undefined : false;
+    sandbox.failWorkspaceRead(state === "unavailable");
+    await sandbox.refreshWorkspace();
+    await expect(
+      page.getByRole("button", { name: "Reopen module", exact: true }),
+    ).toBeEnabled();
+    await expect(
+      page.getByRole("button", {
+        name: "Permanently delete module",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    const settings = page.getByLabel(`${field.name} field settings`, {
+      exact: true,
+    });
+    await settings
+      .getByRole("button", { name: `Show ${field.name} settings`, exact: true })
+      .click();
+    await expect(
+      settings.getByRole("button", { name: "Reopen field", exact: true }),
+    ).toBeEnabled();
+    await expect(
+      settings.getByRole("button", {
+        name: "Permanently delete field",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("tablist", { name: "Workbench view" })
+      .getByRole("tab", { name: "Structure" })
+      .click();
+    for (const [kind, item] of [
+      ["department", department],
+      ["module", targetModule],
+    ] as const) {
+      const row = page.getByRole("button", {
+        name: `Select ${kind} ${item.name}`,
+        exact: true,
+      });
+      await row.click({ button: "right" });
+      await expect(
+        page.getByRole("menuitem", { name: `Reopen ${kind}`, exact: true }),
+      ).toBeEnabled();
+      await expect(
+        page.getByRole("menuitem", {
+          name: `Permanently delete ${kind}`,
+          exact: true,
+        }),
+      ).toHaveCount(0);
+      await page.keyboard.press("Escape");
+    }
+    await page
+      .getByRole("button", {
+        name: `Select department ${department.name}`,
+        exact: true,
+      })
+      .click();
+    await page
+      .getByRole("tablist", { name: "Workbench view" })
+      .getByRole("tab", { name: "Properties" })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Reopen department", exact: true }),
+    ).toBeEnabled();
+    await expect(
+      page.getByRole("button", {
+        name: "Permanently delete department",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    expect(sandbox.documentWrites()).toBe(0);
+  });
+}
 
 test("the bound department outline reviews blockers and reopens with explicit confirmation", async ({
   page,
@@ -965,7 +1182,7 @@ test("a rejected template replacement stays open with its recoverable error", as
 
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("alert")).toContainText(
-    "The shared Sandbox changed. Reload it and try again.",
+    "This item changed. Refresh it and try again.",
   );
 });
 
@@ -2020,6 +2237,11 @@ test("a failed structural save remains visibly unsaved until the shared draft is
   await page.getByLabel("Department name").fill("Operations");
   await page.getByRole("button", { name: "Create department" }).click();
 
+  const saveFailure = page
+    .getByRole("alert")
+    .filter({ hasText: "Your change was not saved." });
+  await expect(saveFailure).toBeVisible();
+  await expect(saveFailure).toHaveAttribute("data-variant", "destructive");
   await expect(
     page.getByText(
       "Save did not complete: your proposed document is still local.",
@@ -2093,8 +2315,8 @@ test("discard refresh failure leaves the dialog open and allows a retry", async 
   const dialog = page.getByRole("dialog", { name: "Discard draft changes?" });
   const discard = dialog.getByRole("button", { name: "Discard draft" });
   await discard.click();
-  await expect(dialog.getByRole("status")).toContainText(
-    "The shared Sandbox could not be refreshed.",
+  await expect(dialog.getByRole("alert")).toContainText(
+    "This Sandbox change could not be saved. Try again.",
   );
   await expect(discard).toBeEnabled();
 
@@ -3374,6 +3596,10 @@ test("History deletion failure retains its target and successful deletion select
     .click();
   await expect.poll(() => deleteAttempts).toBe(1);
   await expect(dialog).toBeVisible();
+  const failure = dialog.getByRole("alert");
+  await expect(failure).toContainText("could not");
+  await expect(failure).toHaveAttribute("data-variant", "destructive");
+  await expect(page.getByText("Try deletion again.")).toHaveCount(0);
   await expect(
     dialog.getByRole("button", {
       name: "Delete Disposable checkpoint",
@@ -3384,6 +3610,20 @@ test("History deletion failure retains its target and successful deletion select
     .getByRole("button", { name: "Delete Disposable checkpoint", exact: true })
     .click();
   await expect(dialog).toBeHidden();
+  await expect(
+    page
+      .getByRole("region", { name: "Status messages", exact: true })
+      .getByText("Disposable checkpoint deleted from shared history.", {
+        exact: true,
+      }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Status messages", exact: true })
+      .getByText("Disposable checkpoint deleted from shared history.", {
+        exact: true,
+      }),
+  ).toHaveCount(1);
   await expect(
     page.getByRole("button", {
       name: "View Disposable checkpoint",
@@ -3592,4 +3832,215 @@ test("a Test run plays out on the canvas in three still steps", async ({
   await page.getByRole("button", { name: "Clear" }).click();
   await expect(row("Status")).not.toHaveAttribute("data-test-mark");
   await expect(page.getByText("Step 3 of 3: Result")).toBeHidden();
+});
+
+test("personal text scaling leaves canvas SVG key editor and geometry unchanged", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page);
+  const frame = page.getByLabel("Module design canvas");
+  await expect(frame.locator("[data-sandbox-body]").first()).toBeVisible();
+  await frame.getByText("Key", { exact: true }).click();
+  const node = frame.locator('.x6-cell[data-cell-id="sample-requests"]');
+  await node.locator("text").first().dblclick();
+  await expect(
+    page.getByRole("textbox", { name: "Canvas name editor" }),
+  ).toBeVisible();
+  const metrics = async () =>
+    page.evaluate(() => {
+      const frame = document.querySelector('[data-skin="canvas-frame"]')!;
+      const key = frame.querySelector("summary")!;
+      const editor = frame.querySelector(
+        'input[aria-label="Canvas name editor"]',
+      )!;
+      const body = frame.querySelector('[data-sandbox-kind="module"]')!;
+      const grid = frame.querySelector('[data-testid="sandbox-grid"]')!;
+      return {
+        keyFont: getComputedStyle(key).fontSize,
+        keyHeight: key.getBoundingClientRect().height,
+        editorFont: getComputedStyle(editor).fontSize,
+        editorHeight: editor.getBoundingClientRect().height,
+        editorRadius: getComputedStyle(editor).borderRadius,
+        nodeRadius: getComputedStyle(body).rx,
+        nodeWidth: body.getAttribute("width"),
+        grid: getComputedStyle(grid).backgroundSize,
+        svgFonts: [...frame.querySelectorAll("svg text")].map(
+          (text) => getComputedStyle(text).fontSize,
+        ),
+      };
+    });
+  const baseline = await metrics();
+  const zoom = await page
+    .getByRole("status", { name: "Canvas zoom" })
+    .innerText();
+  const title = page.getByRole("heading", { name: "Sandbox", exact: true });
+  const titleBefore = await title.evaluate((el) =>
+    parseFloat(getComputedStyle(el).fontSize),
+  );
+  // The browser CSS boundary is the real root font size that personal text controls set.
+  await page.evaluate(() => {
+    const root = document.documentElement;
+    root.dataset.textSize = "125";
+    root.dataset.density = "spacious";
+    root.style.fontSize = "125%";
+  });
+  await expect
+    .poll(() =>
+      title.evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
+    )
+    .toBeGreaterThan(titleBefore);
+  expect(await metrics()).toEqual(baseline);
+  // A real device-cache event also exercises the provider render boundary.
+  const resize = page.getByRole("separator", { name: "Resize sidebar" });
+  const priorUnits = Number(await resize.getAttribute("aria-valuenow"));
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "";
+    localStorage.setItem("openslate-text-size", "125");
+    localStorage.setItem("openslate-density", "spacious");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "openslate-text-size" }),
+    );
+  });
+  await expect
+    .poll(async () => Number(await resize.getAttribute("aria-valuenow")))
+    .toBeGreaterThan(priorUnits);
+  await expect(
+    page.getByRole("textbox", { name: "Canvas name editor" }),
+  ).toBeVisible();
+  expect(await metrics()).toEqual(baseline);
+  await expect(page.getByRole("status", { name: "Canvas zoom" })).toHaveText(
+    zoom,
+  );
+  await page
+    .getByRole("textbox", { name: "Canvas name editor" })
+    .press("Escape");
+  await expect(
+    page.getByRole("textbox", { name: "Canvas name editor" }),
+  ).toBeHidden();
+});
+
+test("empty canvas text and actions stay at their canvas baseline when page text grows", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, initialDesign);
+  const heading = page.getByRole("heading", {
+    name: "Design your organization",
+  });
+  await expect(heading).toBeVisible();
+  const start = page.getByRole("button", {
+    name: "Start from a template",
+    exact: true,
+  });
+  const before = await heading.evaluate((el) => getComputedStyle(el).fontSize);
+  const height = await start.evaluate(
+    (el) => el.getBoundingClientRect().height,
+  );
+  await page.evaluate(() => {
+    document.documentElement.dataset.textSize = "125";
+    document.documentElement.dataset.density = "compact";
+    document.documentElement.style.fontSize = "125%";
+  });
+  await expect(heading).toHaveCSS("font-size", before);
+  expect(await start.evaluate((el) => el.getBoundingClientRect().height)).toBe(
+    height,
+  );
+});
+
+test("disabled convenience shortcuts preserve canvas buttons and essential arrow editing", async ({
+  page,
+}) => {
+  await page.route("**/api/users/*/preferences", (route) =>
+    route.fulfill({
+      json: {
+        user_id: "00000000-0000-4000-8000-000000000001",
+        theme: "light",
+        appearance: { motion: "system", keyboard_shortcuts: false },
+      },
+    }),
+  );
+  await openAuthenticatedSandbox(page);
+  await page.keyboard.press("?");
+  await expect(
+    page.getByRole("heading", { name: "Canvas controls", exact: true }),
+  ).toBeHidden();
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  const zoom = await page
+    .getByRole("status", { name: "Canvas zoom" })
+    .innerText();
+  await page.keyboard.press("0");
+  await expect(page.getByRole("status", { name: "Canvas zoom" })).toHaveText(
+    zoom,
+  );
+  await page.getByRole("button", { name: "Fit canvas", exact: true }).click();
+  await expect(
+    page.getByRole("status", { name: "Canvas action" }),
+  ).toContainText("Canvas");
+  const node = page
+    .getByRole("region", { name: "Organization canvas" })
+    .locator('.x6-cell[data-cell-id="sample-requests"]');
+  await node.locator("text").first().click();
+  const before = await node.getAttribute("transform");
+  await page.keyboard.press("ArrowRight");
+  await expect(node).not.toHaveAttribute("transform", before ?? "");
+  await page.getByRole("button", { name: "View canvas", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Canvas help", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Canvas controls", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Canvas controls", exact: true }),
+  ).toContainText("Convenience shortcuts are off in Appearance");
+});
+
+test("Trigger Studio switch preserves geometry and its 44 pixel hit target with personal display choices", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => {
+    localStorage.setItem("openslate-text-size", "125");
+    localStorage.setItem("openslate-density", "spacious");
+  });
+  const sandbox = await openAuthenticatedSandbox(page);
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  const toggle = page.getByRole("switch", { name: "Enabled in draft" });
+  await expect(toggle).toBeVisible();
+  const track = await toggle.boundingBox();
+  const thumb = await toggle
+    .locator('[data-slot="switch-thumb"]')
+    .boundingBox();
+  if (!track || !thumb) throw new Error("Trigger switch geometry missing");
+  expect(thumb.height).toBeLessThanOrEqual(track.height);
+  const saved = sandbox.document().triggers;
+  await page.evaluate(() => {
+    localStorage.setItem("openslate-text-size", "100");
+    localStorage.setItem("openslate-density", "compact");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "openslate-text-size" }),
+    );
+  });
+  await expect
+    .poll(() =>
+      page.locator("html").evaluate((el) => getComputedStyle(el).fontSize),
+    )
+    .toBe("16px");
+  await expect
+    .poll(async () => {
+      const box = await toggle.boundingBox();
+      return box ? Math.round(box.height * 10) / 10 : null;
+    })
+    .toBe(18.4);
+  await toggle.scrollIntoViewIfNeeded();
+  await expect(toggle).toBeInViewport();
+  const checked = await toggle.getAttribute("aria-checked");
+  const box = await toggle.boundingBox();
+  if (!box) throw new Error("Trigger switch missing");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2 + 21);
+  await expect(toggle).toHaveAttribute(
+    "aria-checked",
+    checked === "true" ? "false" : "true",
+  );
+  expect(sandbox.document().triggers).toEqual(saved);
 });

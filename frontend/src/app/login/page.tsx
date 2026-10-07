@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { ArrowRight, LockKeyhole } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,15 @@ import {
 } from "@/components/ui/field";
 import { ApiError } from "@/lib/api";
 import { signIn } from "@/lib/auth-api";
+
+function PasswordSetNotice() {
+  const search = useSearchParams();
+  return search.get("completed") === "password" ? (
+    <Alert variant="success" className="mb-5">
+      Password set. Sign in.
+    </Alert>
+  ) : null;
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -87,6 +96,9 @@ export default function LoginPage() {
               Sign in to continue to your workspace.
             </p>
           </div>
+          <Suspense fallback={null}>
+            <PasswordSetNotice />
+          </Suspense>
           {error && (
             <Alert role="alert" variant="destructive" className="mb-5">
               {error}

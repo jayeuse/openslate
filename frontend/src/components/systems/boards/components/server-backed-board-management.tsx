@@ -11,9 +11,11 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { lifecycleErrorMessage } from "@/lib/lifecycle";
 import { cn } from "@/lib/utils";
+import { reportDone } from "@/lib/feedback";
 import { LifecyclePurgeReview } from "@/components/systems/shared/lifecycle-purge-review";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +39,10 @@ import {
   type BoardUpdateInput,
 } from "../adapters/board-management-api";
 import { getMyBoardAccess } from "../adapters/board-tools-api";
+import {
+  subscribeWorkspaceLifecycleSettings,
+  workspaceLifecycleQueryOptions,
+} from "../../manage/adapters/workspace-api";
 import { ServerBackedBoardGroups } from "./server-backed-board-groups";
 import { ConfirmAction } from "./ui";
 
@@ -199,6 +205,7 @@ export function revokeBoardManagementState(
 type DisplayProps = {
   view: BoardManagementView;
   isAdmin?: boolean;
+  purgeEnabled?: boolean;
   onChange?: (draft: BoardManagementDraft) => void;
   onSave?: () => void;
   onRefreshLatest?: () => void;
@@ -223,6 +230,7 @@ type DisplayProps = {
 export function ServerBoardManagementDisplay({
   view,
   isAdmin = false,
+  purgeEnabled = false,
   onChange = () => undefined,
   onSave = () => undefined,
   onRefreshLatest = () => undefined,
@@ -267,7 +275,12 @@ export function ServerBoardManagementDisplay({
       { "aria-label": "Board management", className: "space-y-3" },
       e(
         "p",
-        { role: loading ? "status" : "alert", className: "text-sm" },
+        {
+          role: loading ? "status" : "alert",
+          className: loading
+            ? "text-sm"
+            : "border-danger-rule bg-danger-tint rounded-md border p-4 text-sm",
+        },
         loading
           ? "Checking Board management access…"
           : failed
@@ -417,7 +430,11 @@ export function ServerBoardManagementDisplay({
     view.conflict
       ? e(
           "div",
-          { role: "status", className: warningClass },
+          {
+            role: "alert",
+            className:
+              "border-danger-rule bg-danger-tint rounded-md border p-4 text-sm",
+          },
           e(
             "div",
             { className: "space-y-3" },
@@ -502,7 +519,7 @@ export function ServerBoardManagementDisplay({
             },
             "Restore Board",
           ),
-          isAdmin
+          isAdmin && purgeEnabled
             ? e(
                 "div",
                 { className: "border-border space-y-3 border-t pt-4" },
@@ -708,6 +725,20 @@ function ManagementInstance(props: Props) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = props.open ?? internalOpen;
   const setOpen = props.onOpenChange ?? setInternalOpen;
+  const client = useQueryClient();
+  const readPurgeSetting =
+    open &&
+    mode === "manage" &&
+    props.isAdmin === true &&
+    incomingBoard?.status === "archived";
+  const workspace = useQuery({
+    ...workspaceLifecycleQueryOptions(),
+    enabled: readPurgeSetting,
+  });
+  const purgeEnabled = workspace.isSuccess && workspace.data.purge_enabled;
+  useEffect(() => {
+    if (readPurgeSetting) return subscribeWorkspaceLifecycleSettings(client);
+  }, [client, readPurgeSetting]);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [confirmation, setConfirmation] = useState<
     "archive" | "restore" | null
@@ -752,6 +783,9 @@ function ManagementInstance(props: Props) {
     setPurgeConfirmationName("");
     setPurgePassword("");
   }, []);
+  useEffect(() => {
+    if (!purgeEnabled) clearPurgeReview();
+  }, [purgeEnabled, clearPurgeReview]);
 
   const handleDenied = useCallback(
     (failure: unknown, revokeBoard = true): boolean => {
@@ -913,6 +947,7 @@ function ManagementInstance(props: Props) {
           request !== actionRequest.current
         )
           return;
+        reportDone("Board created.");
         props.onCreated(created);
         setDraft(blankDraft);
         setOpen(false);
@@ -1081,6 +1116,7 @@ function ManagementInstance(props: Props) {
       mode !== "manage" ||
       !board ||
       !props.isAdmin ||
+      !purgeEnabled ||
       board.status !== "archived" ||
       access !== "ready" ||
       pendingRef.current ||
@@ -1136,6 +1172,7 @@ function ManagementInstance(props: Props) {
       mode !== "manage" ||
       !board ||
       !props.isAdmin ||
+      !purgeEnabled ||
       board.status !== "archived" ||
       access !== "ready" ||
       !purgePreview ||
@@ -1169,6 +1206,7 @@ function ManagementInstance(props: Props) {
         return;
       clearPurgeReview();
       setOpen(false);
+      reportDone("Board permanently deleted.");
       if (props.mode === "manage") props.onPurged(boardId);
     } catch (failure) {
       if (
@@ -1236,6 +1274,7 @@ function ManagementInstance(props: Props) {
           <ServerBoardManagementDisplay
             view={view}
             isAdmin={props.isAdmin ?? false}
+            purgeEnabled={purgeEnabled}
             onChange={(next) => {
               if (!deniedRef.current) setDraft(next);
             }}

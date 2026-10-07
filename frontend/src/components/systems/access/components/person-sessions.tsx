@@ -66,6 +66,7 @@ export function PersonSessions({
       void client.invalidateQueries({
         queryKey: accessKeys.userSessions(person.id),
       });
+      void client.invalidateQueries({ queryKey: accessKeys.directory() });
     } catch (caught) {
       setError(
         peopleErrorMessage(
@@ -85,8 +86,10 @@ export function PersonSessions({
           <h3 id="person-sessions-title" className="font-semibold">
             Sessions
           </h3>
-          <p className="text-muted-foreground text-sm">
-            Devices where this person is signed in.
+          <p className="text-muted-foreground text-sm tabular-nums">
+            {sessions.data
+              ? `${items.length} active ${items.length === 1 ? "session" : "sessions"}`
+              : "Devices where this person is signed in."}
           </p>
         </div>
         {others.length > 0 ? (
@@ -122,7 +125,7 @@ export function PersonSessions({
         >
           {items.length === 0 ? (
             <p className="text-muted-foreground rounded-lg border p-4 text-sm">
-              Not signed in anywhere.
+              No active sessions.
             </p>
           ) : (
             <ul
@@ -142,6 +145,9 @@ export function PersonSessions({
                       {session.current ? (
                         <Badge variant="secondary">This session</Badge>
                       ) : null}
+                    </p>
+                    <p className="text-muted-foreground text-sm break-all">
+                      Sign-in IP: {session.ip_address ?? "Unknown"}
                     </p>
                     <p className="text-muted-foreground text-sm">
                       Last active {formatDateTime(session.refreshed_at)} ·

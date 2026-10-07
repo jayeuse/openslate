@@ -93,7 +93,7 @@ export default function AuthSetupPage() {
     try {
       await completeInvitation(invitationToken, password);
       if (submittedVersion !== invitationVersion.current) return;
-      router.replace("/login");
+      router.replace("/login?completed=password");
     } catch (error) {
       if (submittedVersion !== invitationVersion.current) return;
       const kind = classifySetupFailure(error);

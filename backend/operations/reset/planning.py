@@ -211,7 +211,7 @@ def _read_provider_subjects(
 
 def _read_workspace(connection: Any) -> WorkspaceSnapshot:
     rows = _fetchall(connection, _WORKSPACE_STATEMENT)
-    if len(rows) != 1 or len(rows[0]) != 17:
+    if len(rows) != 1 or len(rows[0]) != 22:
         raise ResetError("The workspace singleton is missing or ambiguous")
     row = rows[0]
     return WorkspaceSnapshot(
@@ -232,6 +232,11 @@ def _read_workspace(connection: Any) -> WorkspaceSnapshot:
         performed_by=row[14],
         invitation_expiry_days=row[15],
         guest_duration_days=row[16],
+        currency=row[17],
+        week_start=row[18],
+        business_hours=row[19],
+        mark=row[20],
+        theme=row[21],
     )
 
 

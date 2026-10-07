@@ -63,6 +63,7 @@ const workspaceNavigationDefinitions = [
       { id: "overview", label: "Overview" },
       { id: "people", label: "People" },
       { id: "groups", label: "Groups" },
+      { id: "security", label: "Security" },
     ],
   },
   {
@@ -88,7 +89,7 @@ const workspaceNavigationDefinitions = [
     defaultItem: "organization",
     items: [
       { id: "organization", label: "Organization" },
-      { id: "security", label: "Security & recovery" },
+      { id: "backup", label: "Backup" },
       { id: "audit", label: "Audit" },
       { id: "updates", label: "Updates & licensing" },
     ],
@@ -96,16 +97,16 @@ const workspaceNavigationDefinitions = [
   {
     id: "platform",
     label: "Platform",
-    description: "Account, files, and alerts",
+    description: "Files, search, and import & export",
     pathname: "/platform",
     queryKey: "section",
     defaultItem: "search",
     items: [
       { id: "search", label: "Search" },
+      { id: "files", label: "Files" },
       { id: "notifications", label: "Notifications" },
       { id: "import-export", label: "Import & export" },
-      { id: "account", label: "Account & presence" },
-      { id: "files", label: "File library" },
+      { id: "account", label: "Account" },
     ],
   },
 ] as const satisfies readonly WorkspaceNavigationDefinition[];
@@ -173,7 +174,7 @@ function sectionFor(
         requested.toLowerCase())
       : requested;
   if (definition.id === "manage" && requested?.toLowerCase() === "backup")
-    return "security";
+    return "backup";
   if (definition.id === "manage" && requested?.toLowerCase() === "licensing")
     return "updates";
   if (
@@ -191,7 +192,6 @@ function sectionFor(
   if (definition.id === "platform") {
     if (hash === "#account") return "account";
     if (hash === "#notifications") return "notifications";
-    if (params.has("file")) return "files";
   }
   return definition.defaultItem;
 }
@@ -215,6 +215,10 @@ function paramsFor(
       const board = searchParams.get("board");
       if (board) params.set("board", board);
     }
+    if (definition.id === "platform") {
+      const department = searchParams.get("department");
+      if (department) params.set("department", department);
+    }
     if (definition.id === "access") {
       if (itemId === "people") {
         const user = searchParams.get("user");
@@ -228,14 +232,16 @@ function paramsFor(
         const view = searchParams.get("view");
         if (view) params.set("view", view);
       }
+      if (itemId === "reports") {
+        for (const key of ["report", "run"]) {
+          const value = searchParams.get(key);
+          if (value) params.set(key, value);
+        }
+      }
       if (itemId === "dashboards") {
         const dashboard = searchParams.get("dashboard");
         if (dashboard) params.set("dashboard", dashboard);
       }
-    }
-    if (definition.id === "platform" && itemId === "files") {
-      const file = searchParams.get("file");
-      if (file) params.set("file", file);
     }
   }
 

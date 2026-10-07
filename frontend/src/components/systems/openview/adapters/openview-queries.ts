@@ -8,6 +8,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { getAuthMe } from "@/lib/auth-api";
 import { listOpenViewDepartments } from "./departments-api";
+import { listRecordFiles } from "./record-files-api";
 import {
   listOpenViewReports,
   listOpenViewSharedReportRuns,
@@ -58,6 +59,16 @@ export const openViewKeys = {
   /** The signed-in identity. It needs only a session, not records.read, so
    *  it sits outside the "openview" prefix and its access latch. */
   authMe: () => ["auth", "me"] as const,
+  recordFiles: ["openview", "record-files"] as const,
+  recordFileList: (recordId: string) =>
+    [
+      "openview",
+      "record-files",
+      "record_attachment",
+      recordId,
+      "exclude",
+      { limit: 25, offset: 0 },
+    ] as const,
 };
 
 export type ItemBatch<T> = { items: T[]; hasMore: boolean; nextOffset: number };
@@ -247,6 +258,32 @@ export const authMeOptions = () =>
     queryFn: ({ signal }) => getAuthMe(signal),
   });
 
+export const recordFilesOptions = (recordId: string) =>
+  queryOptions({
+    queryKey: openViewKeys.recordFileList(recordId),
+    queryFn: async ({ signal, client }) => {
+      try {
+        return await listRecordFiles(recordId, {
+          limit: 25,
+          offset: 0,
+          signal,
+        });
+      } catch (error) {
+        if (error instanceof ApiError && [401, 403, 404].includes(error.status))
+          recordPageDenial(
+            client,
+            [
+              error.status === 404
+                ? openViewKeys.recordFileList(recordId)
+                : openViewKeys.recordFiles,
+            ],
+            error,
+          );
+        throw error;
+      }
+    },
+  });
+
 const CATALOG_ENTITIES = new Set([
   "departments",
   "fields",
@@ -273,12 +310,20 @@ export function invalidatesRecords(entity: string): boolean {
 
 /** The cached reads that depend on one invalidated entity. */
 export function openViewKeysForEntity(entity: string): QueryKey[] {
+  const fileKeys =
+    entity === "files" ||
+    entity === "records" ||
+    CATALOG_ENTITIES.has(entity) ||
+    USER_DISPLAY_ENTITIES.has(entity)
+      ? [openViewKeys.recordFiles]
+      : [];
   if (CATALOG_ENTITIES.has(entity))
     return [
       openViewKeys.catalog,
       openViewKeys.fields,
       openViewKeys.moduleWorkspaces,
       openViewKeys.assignableUsers,
+      ...fileKeys,
     ];
   if (
     entity === "departments" ||
@@ -287,10 +332,10 @@ export function openViewKeysForEntity(entity: string): QueryKey[] {
     entity === "groups" ||
     entity === "users"
   )
-    return [openViewKeys.assignableUsers];
+    return [openViewKeys.assignableUsers, ...fileKeys];
   if (VIEW_METADATA_ENTITIES.has(entity))
     return [openViewKeys.moduleWorkspaces];
-  return [];
+  return fileKeys;
 }
 
 /** Starts the primary reads of an OpenView section before it opens. */

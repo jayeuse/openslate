@@ -18,6 +18,7 @@ from app.systems.access.identity import rate_limits
 from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import User, UserStatus
+from app.systems.manage.workspace.security_policy import load_workspace_policy
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleInvalidCredentials,
     LifecyclePasswordRateLimited,
@@ -48,21 +49,21 @@ class ProviderPasswordGrantClient:
         timestamp = utc_now()
         fingerprint = None
         bucket = None
+        policy = None
         try:
             if self._enforce_rate_limit:
+                policy = load_workspace_policy(self._db)
                 rate_limits.cleanup_expired_buckets(self._db, now_value=timestamp)
                 fingerprint = rate_limits.login_fingerprint(email, None)
                 bucket = rate_limits.lock_bucket(self._db, fingerprint)
-                if (
-                    bucket is not None
-                    and bucket.blocked_until is not None
-                    and bucket.blocked_until > timestamp
-                ):
+                if rate_limits.login_retry_after(self._db, bucket, timestamp, policy) is not None:
                     raise LifecyclePasswordRateLimited("Password verification is rate limited")
             tokens = self._client.password_grant(email, password)
         except InvalidProviderCredentials as error:
             if fingerprint is not None:
-                rate_limits.record_attempt(self._db, fingerprint, bucket, timestamp)
+                rate_limits.record_attempt(
+                    self._db, fingerprint, bucket, timestamp, policy=policy, login=True
+                )
                 self._db.commit()
             raise LifecycleInvalidCredentials("The supplied password is invalid") from error
         except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
@@ -91,12 +92,16 @@ class ProviderPasswordGrantClient:
             return local.id
         except InvalidProviderCredentials as error:
             if fingerprint is not None:
-                rate_limits.record_attempt(self._db, fingerprint, bucket, timestamp)
+                rate_limits.record_attempt(
+                    self._db, fingerprint, bucket, timestamp, policy=policy, login=True
+                )
                 self._db.commit()
             raise LifecycleInvalidCredentials("The supplied password is invalid") from error
         except LifecycleInvalidCredentials:
             if fingerprint is not None:
-                rate_limits.record_attempt(self._db, fingerprint, bucket, timestamp)
+                rate_limits.record_attempt(
+                    self._db, fingerprint, bucket, timestamp, policy=policy, login=True
+                )
                 self._db.commit()
             raise
         except (SupabaseAuthUnavailable, SQLAlchemyError) as error:

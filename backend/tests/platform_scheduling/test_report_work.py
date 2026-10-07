@@ -101,6 +101,11 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
     assert len(notifications) == 1
     assert notifications[0].work_id == work.id
     assert notifications[0].recipient_id == owner.id
+    assert (notifications[0].kind, notifications[0].subject_type, notifications[0].subject_id) == (
+        "report-run",
+        "report_run",
+        run.id,
+    )
     audit = db.scalar(
         select(AuditLog).where(
             AuditLog.entity_type == "in_app_notifications",
@@ -111,11 +116,22 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
     assert audit.performed_by is None
     assert audit.after == {
         "work_id": str(work.id),
+        "kind": "report-run",
+        "subject_type": "report_run",
+        "subject_id": str(run.id),
         "recipient_id": str(owner.id),
         "read_at": None,
     }
     with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(InAppNotification(work_id=work.id, recipient_id=owner.id))
+        db.add(
+            InAppNotification(
+                work_id=work.id,
+                recipient_id=owner.id,
+                kind="report-run",
+                subject_type="report_run",
+                subject_id=run.id,
+            )
+        )
         db.flush()
     with pytest.raises(IntegrityError), db.begin_nested():
         db.delete(work)
@@ -200,7 +216,7 @@ def test_report_occurrence_refuses_an_archived_report_or_a_closed_module(integra
 
 def test_failed_work_retries_with_backoff_then_stops_after_five_attempts(integration_owner_db):
     db = integration_owner_db
-    _owner, report, _grant, _module, _department = _subject(db)
+    owner, report, _grant, _module, _department = _subject(db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
     work = queue_report_occurrence(db, report.id, scheduled_for=now)
     for attempt in range(1, 6):
@@ -209,12 +225,71 @@ def test_failed_work_retries_with_backoff_then_stops_after_five_attempts(integra
         assert fail_report_work(db, claim[0], now=now)
         assert not fail_report_work(db, claim[0], now=now)
         if attempt < 5:
+            db.flush()
+            assert (
+                list(
+                    db.scalars(
+                        select(InAppNotification).where(InAppNotification.work_id == work.id)
+                    )
+                )
+                == []
+            )
             assert work.state == WorkState.PENDING
             assert claim_due_work(db, now=now) == []
             now += timedelta(seconds=2**attempt)
         else:
             assert work.state == WorkState.FAILED
             assert claim_due_work(db, now=now + timedelta(days=1)) == []
+    db.commit()
+    notices = list(
+        db.scalars(select(InAppNotification).where(InAppNotification.work_id == work.id))
+    )
+    assert len(notices) == 1
+    assert (
+        notices[0].kind,
+        notices[0].subject_type,
+        notices[0].subject_id,
+        notices[0].recipient_id,
+    ) == ("report-run-failed", "scheduled_work", work.id, owner.id)
+    assert list_current_user_notifications(db, owner.id) == notices
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+def test_expired_final_report_lease_notifies_once_or_rolls_back_with_state(
+    integration_owner_db, rollback
+):
+    db = integration_owner_db
+    owner, report, grant, _module, _department = _subject(db)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    work = queue_report_occurrence(db, report.id, scheduled_for=now)
+    work.state = WorkState.RUNNING
+    work.attempt_count = 5
+    work.lease_token = uuid7()
+    work.lease_expires_at = now - timedelta(seconds=1)
+    db.commit()
+    assert claim_due_work(db, now=now) == []
+    db.flush()
+    notices = list(
+        db.scalars(select(InAppNotification).where(InAppNotification.work_id == work.id))
+    )
+    assert len(notices) == 1
+    assert notices[0].recipient_id == owner.id
+    assert work.state == WorkState.FAILED
+    if rollback:
+        db.rollback()
+        db.expire_all()
+        assert work.state == WorkState.RUNNING
+        assert (
+            list(db.scalars(select(InAppNotification).where(InAppNotification.work_id == work.id)))
+            == []
+        )
+    else:
+        db.commit()
+        assert claim_due_work(db, now=now + timedelta(days=1)) == []
+        assert list_current_user_notifications(db, owner.id) == notices
+        grant.is_deleted = True
+        db.commit()
+        assert list_current_user_notifications(db, owner.id) == []
 
 
 def test_concurrent_claim_skips_locked_due_row_and_claims_next():
@@ -280,10 +355,13 @@ def test_scheduling_tables_grant_runtime_access_and_block_provider_roles(integra
     statement = text("SELECT has_table_privilege(:role, :table_name, :privilege)")
     for table_name in ("public.scheduled_work", "public.in_app_notifications"):
         for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-            assert connection.scalar(
-                statement,
-                {"role": "openslate_runtime", "table_name": table_name, "privilege": privilege},
-            ) is True
+            assert (
+                connection.scalar(
+                    statement,
+                    {"role": "openslate_runtime", "table_name": table_name, "privilege": privilege},
+                )
+                is True
+            )
             for role in ("anon", "authenticated", "service_role"):
                 assert (
                     connection.scalar(

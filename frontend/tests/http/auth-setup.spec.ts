@@ -50,7 +50,10 @@ test("invitation setup clears the fragment and waits for explicit submission", a
     .fill("a long invited password");
   await page.getByLabel("Confirm password").fill("a long invited password");
   await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?completed=password$/);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Password set. Sign in." }),
+  ).toBeVisible();
   expect(requests).toEqual([
     { token_hash: "invite-proof", password: "a long invited password" },
   ]);
@@ -88,7 +91,7 @@ test("a new invitation link clears an expired-link failure before retry", async 
     .fill("fresh password choice");
   await page.getByLabel("Confirm password").fill("fresh password choice");
   await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?completed=password$/);
   expect(submittedTokens).toEqual(["expired", "fresh"]);
 });
 
@@ -131,7 +134,7 @@ test("an old invitation response cannot replace a newer link", async ({
       .fill("second password choice");
     await page.getByLabel("Confirm password").fill("second password choice");
     await page.getByRole("button", { name: "Continue" }).click();
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(/\/login\?completed=password$/);
     expect(submittedTokens).toEqual(["old", "new"]);
   } finally {
     releaseOldResponse();
@@ -168,7 +171,10 @@ test("recovery requests email and confirms a fragment only on submission", async
     .getByLabel("Confirm new password")
     .fill("a long recovery password");
   await page.getByRole("button", { name: "Reset password" }).click();
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?completed=password$/);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Password set. Sign in." }),
+  ).toBeVisible();
   expect(completions).toEqual([
     { token_hash: "recovery-proof", password: "a long recovery password" },
   ]);

@@ -31,12 +31,17 @@ from app.core.config.instance import (
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.manage.backups import service
+from app.systems.manage.backups import exports, service
 from app.systems.manage.backups.models import BackupPolicy, UpdateStatus
 from app.systems.manage.backups.schemas import (
     AdoptCommand,
     ClaimCommand,
     ExpireCommand,
+    ExportClaimCommand,
+    ExportCleanedCommand,
+    ExportInspectCommand,
+    ExportMutationResponse,
+    ExportOutcomeCommand,
     HeartbeatCommand,
     InspectCommand,
     OutcomeCommand,
@@ -51,7 +56,11 @@ Command = Annotated[
     | OutcomeCommand
     | ReleaseCommand
     | ExpireCommand
-    | AdoptCommand,
+    | AdoptCommand
+    | ExportClaimCommand
+    | ExportInspectCommand
+    | ExportOutcomeCommand
+    | ExportCleanedCommand,
     Field(discriminator="op"),
 ]
 COMMAND_ADAPTER: TypeAdapter[Command] = TypeAdapter(Command)
@@ -122,6 +131,20 @@ def coordinated_session(engine: Engine, target: InstanceTarget) -> Iterator[Audi
 def execute(db: AuditSession, command: Command) -> dict[str, Any]:
     """Return validated safe projections; caller owns the coordinated commit."""
     instance = command.installation_id
+    if isinstance(command, ExportInspectCommand):
+        return exports.inspect_exports(db, instance, command).model_dump(mode="json")
+    if isinstance(command, ExportClaimCommand):
+        return exports.claim_export(db, instance, command.claim_id).model_dump(mode="json")
+    if isinstance(command, ExportOutcomeCommand):
+        row = exports.record_export_outcome(db, instance, command)
+        return ExportMutationResponse(
+            claim=exports.export_claim_response(db, row, instance)
+        ).model_dump(mode="json")
+    if isinstance(command, ExportCleanedCommand):
+        row = exports.record_export_cleaned(db, instance, command)
+        return ExportMutationResponse(
+            claim=exports.export_claim_response(db, row, instance)
+        ).model_dump(mode="json")
     if isinstance(command, InspectCommand):
         policy = db.scalar(select(BackupPolicy))
         release = db.scalar(select(UpdateStatus))

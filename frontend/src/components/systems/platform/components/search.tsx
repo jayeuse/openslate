@@ -19,8 +19,6 @@ import {
 type SearchProps = {
   query: string;
   onQueryChange: (query: string) => void;
-  navigationPending: boolean;
-  isNavigationPending: () => boolean;
 };
 const TITLES: Record<SearchKind, string> = {
   record: "Records",
@@ -28,12 +26,7 @@ const TITLES: Record<SearchKind, string> = {
   post: "Posts",
   event: "Events",
 };
-export default function Search({
-  query,
-  onQueryChange,
-  navigationPending,
-  isNavigationPending,
-}: SearchProps) {
+export default function Search({ query, onQueryChange }: SearchProps) {
   const search = query.trim();
   const [settled, setSettled] = useState(search);
   const [pages, setPages] = useState<{
@@ -74,7 +67,7 @@ export default function Search({
           placeholder="Search people, records, posts and events…"
         />
       </div>
-      <div className="grid items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid items-start gap-5 md:grid-cols-2">
         {SEARCH_KINDS.map((kind, index) => {
           const read = reads[index];
           const waiting = settled !== search;
@@ -142,12 +135,7 @@ export default function Search({
                             {href ? (
                               <GuardedWorkspaceLink
                                 href={href}
-                                aria-disabled={navigationPending || undefined}
                                 className="flex min-h-11 items-center justify-between gap-3 py-3 text-sm hover:underline"
-                                onClick={(event) => {
-                                  if (isNavigationPending())
-                                    event.preventDefault();
-                                }}
                               >
                                 {content}
                               </GuardedWorkspaceLink>
@@ -183,15 +171,6 @@ export default function Search({
             </section>
           );
         })}
-        {["Conversations", "Files"].map((title) => (
-          <section key={title} aria-label={`${title} search results`}>
-            <Panel title={title}>
-              <p className="text-muted-foreground text-sm">
-                Unavailable · {title} search is not available yet.
-              </p>
-            </Panel>
-          </section>
-        ))}
       </div>
       <p className="text-muted-foreground flex items-center gap-2 text-xs">
         <SearchIcon aria-hidden="true" className="size-4" />

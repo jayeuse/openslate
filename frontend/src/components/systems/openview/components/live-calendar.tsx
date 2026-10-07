@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  formatWorkspaceDate,
+  formatWorkspaceDateTime,
+  type WorkspaceRegion,
+} from "@/lib/date-time";
 import { ApiError } from "@/lib/api";
 import { queryOpenViewWindowRecords } from "../adapters/window-api";
 import type {
@@ -13,6 +18,7 @@ import type {
   OpenViewRecord,
 } from "../adapters/views-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
+import { formatOpenViewFieldValue } from "./live-record-cards";
 import type { RecordInspectionPage } from "./live-record-inspector";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -25,6 +31,9 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { LoadingRegion } from "@/components/ui/loading-region";
+import { Skeleton } from "@/components/ui/skeleton";
+import type { WorkspaceCalendarSettings } from "../../manage/adapters/workspace-api";
 
 const WINDOW_PAGE_SIZE = 25;
 const DAY_MILLISECONDS = 24 * 60 * 60 * 1000;
@@ -36,6 +45,7 @@ export type CalendarDateField = OpenViewDataSourceField & {
 export type CalendarWindowScope = "window" | "undated";
 
 export type LiveWindowBaseProps = {
+  region: WorkspaceRegion | undefined;
   moduleId: string;
   definition: OpenViewQueryDefinition;
   dateRange: "week" | "month" | "quarter" | "year";
@@ -92,7 +102,10 @@ function localToday(): string {
   return dateString(today.getFullYear(), today.getMonth() + 1, today.getDate());
 }
 
-export function initialDateWindow(range: LiveWindowBaseProps["dateRange"]): {
+export function initialDateWindow(
+  range: LiveWindowBaseProps["dateRange"],
+  weekStart: WorkspaceCalendarSettings["week_start"] = "monday",
+): {
   start: string;
   end: string;
 } {
@@ -101,8 +114,9 @@ export function initialDateWindow(range: LiveWindowBaseProps["dateRange"]): {
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth();
   if (range === "week") {
-    const mondayOffset = (date.getUTCDay() + 6) % 7;
-    const start = shiftDate(today, -mondayOffset);
+    const weekdayOffset =
+      (date.getUTCDay() + (weekStart === "monday" ? 6 : 0)) % 7;
+    const start = shiftDate(today, -weekdayOffset);
     return { start, end: shiftDate(start, 6) };
   }
   if (range === "quarter") {
@@ -164,23 +178,21 @@ export function formatWindowDate(
   value: unknown,
   expectedType: "date" | "datetime",
   timezone: string | null,
+  locale: string | undefined,
 ): string {
   if (typeof value !== "string") return "—";
+  if (!locale) return "Date unavailable";
   const day = dateInTimezone(value, expectedType, timezone);
   if (!day) return "Date unavailable";
-  const date = new Date(`${day}T00:00:00.000Z`);
-  const dayLabel = new Intl.DateTimeFormat("en", {
-    timeZone: "UTC",
-    dateStyle: "medium",
-  }).format(date);
+  const region = { locale, timezone: timezone ?? "UTC" };
+  const dayLabel = formatWorkspaceDate(day, region);
   if (expectedType === "date") return dayLabel;
   const instant = recordDateTimeInstant(value);
   if (Number.isNaN(instant.getTime())) return "Date unavailable";
-  return new Intl.DateTimeFormat("en", {
-    timeZone: timezone ?? "UTC",
+  return formatWorkspaceDateTime(instant.toISOString(), region, {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(instant);
+  });
 }
 
 function recordDateTimeInstant(value: string): Date {
@@ -283,6 +295,7 @@ export function WindowControls({
   onScopeChange,
   onShiftWindow,
   timezone,
+  locale,
 }: {
   startDate: string;
   endDate: string;
@@ -295,7 +308,20 @@ export function WindowControls({
   onScopeChange: (scope: "window" | "undated" | "unscheduled") => void;
   onShiftWindow: (direction: -1 | 1) => void;
   timezone: string | null;
+  /** Workspace locale; the chosen dates are repeated in its format. */
+  locale: string | undefined;
 }) {
+  const startHintId = useId();
+  const endHintId = useId();
+  const chosenDate = (value: string) =>
+    locale && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? formatWorkspaceDate(value, {
+          locale,
+          timezone: timezone ?? "UTC",
+        })
+      : "";
+  const startLabel = chosenDate(startDate);
+  const endLabel = chosenDate(endDate);
   const labels = [
     { value: "window" as const, label: windowLabel },
     {
@@ -329,21 +355,33 @@ export function WindowControls({
             <span>Window starts</span>
             <Input
               aria-label="Window starts"
+              aria-describedby={startLabel ? startHintId : undefined}
               className="min-h-11 w-44"
               type="date"
               value={startDate}
               onChange={(event) => onStartDateChange(event.target.value)}
             />
+            {startLabel ? (
+              <span id={startHintId} className="text-muted-foreground text-xs">
+                {startLabel}
+              </span>
+            ) : null}
           </label>
           <label className="grid gap-1 text-sm">
             <span>Window ends</span>
             <Input
               aria-label="Window ends"
+              aria-describedby={endLabel ? endHintId : undefined}
               className="min-h-11 w-44"
               type="date"
               value={endDate}
               onChange={(event) => onEndDateChange(event.target.value)}
             />
+            {endLabel ? (
+              <span id={endHintId} className="text-muted-foreground text-xs">
+                {endLabel}
+              </span>
+            ) : null}
           </label>
           <Button
             type="button"
@@ -418,14 +456,88 @@ export function WindowPageNavigation({
   );
 }
 
-function recordText(value: unknown): string {
-  if (typeof value === "string" && value.trim()) return value;
-  if (typeof value === "number" || typeof value === "boolean")
-    return String(value);
-  return "Untitled record";
+function recordText(
+  row: OpenViewRecord,
+  field: OpenViewDataSourceField,
+  region: WorkspaceRegion,
+  fallback = "—",
+): string {
+  return formatOpenViewFieldValue(
+    openViewRecordFieldValue(row, field),
+    field.type,
+    region,
+    fallback,
+  );
 }
 
-export function LiveCalendar({
+type LiveCalendarProps = LiveWindowBaseProps & {
+  workspaceCalendar: WorkspaceCalendarSettings | undefined;
+  settingsPending: boolean;
+  settingsError: boolean;
+  onRetrySettings: () => void;
+  scale?: "month" | "list" | null;
+  dateField: CalendarDateField;
+  titleField: OpenViewDataSourceField | undefined;
+  detailFields: readonly OpenViewDataSourceField[];
+};
+
+export function LiveCalendar(props: LiveCalendarProps) {
+  if (!props.workspaceCalendar)
+    return (
+      <Card
+        className="min-w-0 self-auto overflow-hidden"
+        aria-label={props.scale === "list" ? "Calendar list view" : "Calendar"}
+      >
+        <header data-slot="card-header" className="border-b px-4 py-3">
+          <h2 data-slot="section-title" className="font-medium">
+            Calendar · {props.dateField.name}
+          </h2>
+          <p className="text-muted-foreground text-sm">
+            Live records grouped by their selected schedule date.
+          </p>
+        </header>
+        <LoadingRegion
+          loading={props.settingsPending}
+          label="Loading calendar settings"
+          skeleton={
+            <div className="space-y-4 p-4">
+              <div className="flex flex-wrap gap-3">
+                <Skeleton className="h-11 w-44" />
+                <Skeleton className="h-11 w-44" />
+              </div>
+              <Skeleton className="h-72 w-full" />
+            </div>
+          }
+        >
+          <Alert
+            role="alert"
+            variant="destructive"
+            className="m-4 flex flex-wrap items-center justify-between gap-3"
+          >
+            <p>Organization calendar settings could not be loaded.</p>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={props.onRetrySettings}
+            >
+              Retry calendar settings
+            </Button>
+          </Alert>
+        </LoadingRegion>
+      </Card>
+    );
+  return (
+    <ResolvedLiveCalendar
+      {...props}
+      region={props.workspaceCalendar}
+      weekStart={props.workspaceCalendar.week_start}
+    />
+  );
+}
+
+function ResolvedLiveCalendar({
+  region,
   moduleId,
   definition,
   dateRange,
@@ -435,16 +547,21 @@ export function LiveCalendar({
   titleField,
   detailFields,
   onOpenRecord,
-}: LiveWindowBaseProps & {
-  scale?: "month" | "list" | null;
-  dateField: CalendarDateField;
-  titleField: OpenViewDataSourceField | undefined;
-  detailFields: readonly OpenViewDataSourceField[];
+  weekStart,
+  settingsError,
+  onRetrySettings,
+}: LiveCalendarProps & {
+  region: WorkspaceRegion;
+  weekStart: WorkspaceCalendarSettings["week_start"];
+  settingsError: boolean;
+  onRetrySettings: () => void;
 }) {
   const scale = savedScale ?? "month";
   const [windowDates, setWindowDates] = useState(() =>
-    initialDateWindow(dateRange),
+    initialDateWindow(dateRange, weekStart),
   );
+  const manualWindow = useRef(false);
+  const previousRange = useRef(dateRange);
   const [scope, setScope] = useState<CalendarWindowScope>("window");
   const [retry, setRetry] = useState(0);
   const [pagePosition, setPagePosition] = useState({ key: "", offset: 0 });
@@ -500,9 +617,13 @@ export function LiveCalendar({
   ]);
   const { result, loading, error } = useWindowPage(request, retry + refreshKey);
   useEffect(() => {
-    setWindowDates(initialDateWindow(dateRange));
-    setPagePosition({ key: "", offset: 0 });
-  }, [dateRange]);
+    if (previousRange.current !== dateRange) manualWindow.current = false;
+    previousRange.current = dateRange;
+    if (!manualWindow.current) {
+      setWindowDates(initialDateWindow(dateRange, weekStart));
+      setPagePosition({ key: "", offset: 0 });
+    }
+  }, [dateRange, weekStart]);
   const timezone = result?.timezone ?? null;
   const dateFieldTitle = dateField.name;
   const shownRows = result?.items ?? [];
@@ -544,6 +665,7 @@ export function LiveCalendar({
     setPagePosition({ key: "", offset: 0 });
   };
   const shiftWindow = (direction: -1 | 1) => {
+    manualWindow.current = true;
     const span = daysInWindow(windowDates.start, windowDates.end);
     setWindowDates((current) => ({
       start: shiftDate(current.start, direction * span),
@@ -566,6 +688,26 @@ export function LiveCalendar({
           Live records grouped by their selected schedule date.
         </p>
       </header>
+      {settingsError ? (
+        <Alert
+          role="alert"
+          variant="destructive"
+          className="m-4 flex flex-wrap items-center justify-between gap-3"
+        >
+          <p>
+            Organization calendar settings could not be refreshed. The last
+            loaded settings are still in use.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={onRetrySettings}
+          >
+            Retry calendar settings
+          </Button>
+        </Alert>
+      ) : null}
       <WindowControls
         startDate={windowDates.start}
         endDate={windowDates.end}
@@ -574,10 +716,12 @@ export function LiveCalendar({
         windowLabel="Scheduled window"
         undatedLabel="Undated records"
         onStartDateChange={(start) => {
+          manualWindow.current = true;
           setWindowDates((current) => ({ ...current, start }));
           setPagePosition({ key: "", offset: 0 });
         }}
         onEndDateChange={(end) => {
+          manualWindow.current = true;
           setWindowDates((current) => ({ ...current, end }));
           setPagePosition({ key: "", offset: 0 });
         }}
@@ -587,6 +731,7 @@ export function LiveCalendar({
         }}
         onShiftWindow={shiftWindow}
         timezone={timezone}
+        locale={region.locale}
       />
       {monthLayout ? (
         <div className="hidden min-w-0 flex-col gap-4 p-4 lg:flex">
@@ -601,12 +746,20 @@ export function LiveCalendar({
             const dayCount = new Date(
               Date.UTC(yearValue, monthValue, 0),
             ).getUTCDate();
-            const leadingDays = firstDay.getUTCDay();
-            const monthLabel = new Intl.DateTimeFormat("en", {
-              timeZone: "UTC",
+            const leadingDays =
+              (firstDay.getUTCDay() + (weekStart === "monday" ? 6 : 0)) % 7;
+            const firstWeekday = weekStart === "monday" ? 5 : 4;
+            const weekdays = Array.from({ length: 7 }, (_, index) =>
+              formatWorkspaceDate(
+                `2026-01-${String(firstWeekday + index).padStart(2, "0")}`,
+                region,
+                { weekday: "short" },
+              ),
+            );
+            const monthLabel = formatWorkspaceDate(`${monthKey}-01`, region, {
               month: "long",
               year: "numeric",
-            }).format(firstDay);
+            });
             const cells: (number | null)[] = [
               ...Array.from({ length: leadingDays }, () => null),
               ...Array.from({ length: dayCount }, (_, index) => index + 1),
@@ -627,16 +780,14 @@ export function LiveCalendar({
                 >
                   <div className="min-w-[46rem]">
                     <div className="bg-muted/25 grid grid-cols-7 border-b">
-                      {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
-                        (day) => (
-                          <div
-                            key={day}
-                            className="text-muted-foreground px-2 py-2 text-center text-xs font-medium"
-                          >
-                            {day}
-                          </div>
-                        ),
-                      )}
+                      {weekdays.map((day) => (
+                        <div
+                          key={day}
+                          className="text-muted-foreground px-2 py-2 text-center text-xs font-medium"
+                        >
+                          {day}
+                        </div>
+                      ))}
                     </div>
                     <div className="grid grid-cols-7">
                       {cells.map((day, index) => {
@@ -673,6 +824,7 @@ export function LiveCalendar({
                                   rows[0].data[dateField.id],
                                   dateField.type,
                                   timezone,
+                                  region.locale,
                                 )}
                               </h4>
                             ) : null}
@@ -680,7 +832,10 @@ export function LiveCalendar({
                               {rows.map((row) => {
                                 const title = titleField
                                   ? recordText(
-                                      openViewRecordFieldValue(row, titleField),
+                                      row,
+                                      titleField,
+                                      region,
+                                      "Untitled record",
                                     )
                                   : `Record ${row.id.slice(0, 8)}`;
                                 return (
@@ -716,12 +871,7 @@ export function LiveCalendar({
                                           {detailFields
                                             .slice(0, 2)
                                             .map((field) =>
-                                              recordText(
-                                                openViewRecordFieldValue(
-                                                  row,
-                                                  field,
-                                                ),
-                                              ),
+                                              recordText(row, field, region),
                                             )
                                             .join(" · ")}
                                         </span>
@@ -731,6 +881,7 @@ export function LiveCalendar({
                                           row.data[dateField.id],
                                           dateField.type,
                                           timezone,
+                                          region.locale,
                                         )}
                                       </span>
                                     </Button>
@@ -763,7 +914,7 @@ export function LiveCalendar({
       {error ? (
         <Alert
           role="alert"
-          variant="warning"
+          variant="destructive"
           className="m-4 flex flex-wrap items-center justify-between gap-3"
         >
           <p>{windowPageErrorMessage(error, result, offset)}</p>
@@ -827,15 +978,12 @@ export function LiveCalendar({
                   ? day
                   : day === "Date unavailable"
                     ? day
-                    : new Intl.DateTimeFormat("en", {
-                        timeZone: "UTC",
-                        dateStyle: "medium",
-                      }).format(new Date(`${day}T00:00:00.000Z`))}
+                    : formatWorkspaceDate(day, region)}
               </h3>
               <ul className="divide-y">
                 {rows.map((row) => {
                   const title = titleField
-                    ? recordText(openViewRecordFieldValue(row, titleField))
+                    ? recordText(row, titleField, region, "Untitled record")
                     : `Record ${row.id.slice(0, 8)}`;
                   return (
                     <li
@@ -872,8 +1020,7 @@ export function LiveCalendar({
                             key={field.id}
                             className="text-muted-foreground text-sm"
                           >
-                            {field.name}:{" "}
-                            {recordText(openViewRecordFieldValue(row, field))}
+                            {field.name}: {recordText(row, field, region)}
                           </p>
                         ))}
                       </div>
@@ -886,6 +1033,7 @@ export function LiveCalendar({
                             row.data[dateField.id],
                             dateField.type,
                             timezone,
+                            region.locale,
                           )}
                         </time>
                       ) : null}

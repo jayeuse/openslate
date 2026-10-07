@@ -23,3 +23,15 @@ test("Access groups opens a group with access in two departments @access", async
   await expect(group).toContainText("Finance");
   await expect(group).toContainText("Sales");
 });
+
+test("Access Security lists the seeded people's sessions @access", async ({
+  page,
+}) => {
+  await openWorkspace(page, "/access?view=security");
+  await page
+    .getByRole("searchbox", { name: "Search sessions" })
+    .fill("Ana Castillo");
+  await expect(
+    page.getByRole("button", { name: "End session for Ana Castillo" }).first(),
+  ).toBeVisible();
+});

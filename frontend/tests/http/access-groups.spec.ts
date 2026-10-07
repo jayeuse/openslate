@@ -5,6 +5,7 @@ import {
   ids,
   listPage,
   mockAccessApi,
+  person,
   type AccessEntry,
 } from "./helpers/access-api";
 
@@ -229,6 +230,15 @@ test("a department manager changes members only, from the candidates list", asyn
       ],
     },
   });
+  api.on("GET", "/api/auth/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user_id: ids.ben,
+        setup_required: false,
+      },
+    }),
+  );
   // The backend lists only the groups this manager may change.
   api.on("GET", "/api/access/groups", (route) =>
     route.fulfill({
@@ -422,7 +432,7 @@ test("the list offers a retry after a failed load and explains a refusal", async
   await page.goto("/access?view=groups");
   await expect(page.getByText("Groups could not be loaded")).toBeVisible();
   fail = false;
-  await page.getByRole("button", { name: "Retry" }).click();
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByText("2 groups")).toBeVisible();
 
   api.on("GET", "/api/access/groups", (route) =>
@@ -466,3 +476,52 @@ for (const width of [1440, 390])
     ).toBe(true);
     expect(await fits()).toBe(true);
   });
+
+test("13b: group members retain the complete later-page catalog and refresh paged membership after Save", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  for (let index = 0; index < 105; index += 1) {
+    const id = `00000000-0000-4000-8000-${String(700 + index).padStart(12, "0")}`;
+    api.users.set(
+      id,
+      person({ id, username: `later${String(index).padStart(3, "0")}` }),
+    );
+  }
+  const late = "00000000-0000-4000-8000-000000000999";
+  api.users.set(
+    late,
+    person({ id: late, username: "zzz_member", display_name: "Zzz Member" }),
+  );
+  await page.goto(`/access?view=people&group=${ids.readers}`);
+  await expect(
+    page.getByRole("table", { name: "People", exact: true }).getByRole("row"),
+  ).toHaveCount(2);
+  await page.getByRole("link", { name: "Groups", exact: true }).click();
+  await openGroup(page, "Finance readers");
+  const sheet = panel(page, "Finance readers");
+  await sheet.getByRole("tab", { name: "Members", exact: true }).click();
+  await sheet
+    .getByRole("searchbox", { name: "Search people to add", exact: true })
+    .fill("Zzz Member");
+  await sheet
+    .getByRole("button", { name: "Add Zzz Member", exact: true })
+    .click();
+  await sheet
+    .getByRole("button", { name: "Save members", exact: true })
+    .click();
+  await expect(
+    sheet.getByRole("button", { name: "Save members", exact: true }),
+  ).toBeDisabled();
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("link", { name: "People", exact: true }).click();
+  await expect(page).toHaveURL(/\/access\?view=people(?:&|$)/);
+  const people = page.getByRole("table", { name: "People", exact: true });
+  await expect(people).toBeVisible();
+  await page.getByRole("button", { name: "More filters", exact: true }).click();
+  await page.getByLabel("Group", { exact: true }).selectOption(ids.readers);
+  await expect(people.getByRole("row", { name: /Zzz Member/ })).toBeVisible();
+  expect(
+    api.sent("PUT", `/api/access/groups/${ids.readers}/members`)[0]?.body,
+  ).toMatchObject({ member_ids: [ids.ben, late] });
+});

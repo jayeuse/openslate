@@ -1,211 +1,53 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
-import { subscribeOpenViewInvalidations } from "../../openview/adapters/invalidation-events";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 import {
   afterManageBackupPolicyChange,
   afterManageBackupQueue,
   manageBackupListOptions,
+  manageBackupExportOptions,
   manageBackupStatusOptions,
   manageKeys,
   manageVersionOptions,
 } from "../adapters/manage-queries";
 import {
   backupNameError,
+  backupExportSourceAvailable,
+  exportPassphraseError,
   backupPolicyPatch,
+  admitManageBackupExportDownload,
   defaultManageBackupsRequest,
   getManageBackupStatus,
   queueManageBackup,
+  queueManageBackupExport,
   updateManageBackupPolicy,
   type BackupPolicyDraft,
   type ManageBackupStatus,
+  type ManageBackupRun,
 } from "../adapters/backup-api";
 import { isStaleWorkspaceRevision } from "../adapters/workspace-api";
-import {
-  useSampleState,
-  useSampleStorage,
-  useSampleRuntime,
-  type SampleTransactionDraft,
-} from "../../shared/runtime/sample-state";
-import { initialManageSessions } from "./sessions";
-import type { SampleRuntime } from "../../shared/runtime/sample-runtime";
-import { completeCollection } from "../../shared/helpers/sample-collections";
-import { initialPeople } from "../../shared/data/sample-people";
-import {
-  useSampleCommands,
-  useSampleResource,
-  sampleOperationMessage,
-} from "../../shared/runtime/sample-async";
-import { dirty, executeManageCommand, type ManageCommand } from "./commands";
-import {
-  decodeActivity,
-  decodeBackups,
-  decodeDrafts,
-  decodeHistory,
-  decodeManageSettings,
-  validateManageSection,
-} from "./decode";
-import {
-  initialManageState,
-  manageSectionKeys,
-  type ManageActionResult,
-  type ManageSection,
-  type ManageSettings,
-  type ManageState,
-} from "./model";
-
-const keys = {
-  settings: "manage-settings",
-  backups: "manage-backups",
-  sessions: "manage-sessions",
-  history: "manage-history",
-  activity: "manage-activity-v1",
-  drafts: "manage-drafts-v1",
-} as const;
-function readState(
-  transaction: Pick<SampleTransactionDraft, "read">,
-): ManageState {
-  const { read } = transaction;
-  return {
-    settings: decodeManageSettings(
-      read<Record<string, unknown>>(keys.settings, {}),
-    ),
-    backups: decodeBackups(read<unknown>(keys.backups, null)),
-    sessions: read(keys.sessions, initialManageSessions),
-    history: decodeHistory(
-      read<unknown>(keys.history, initialManageState.history),
-    ),
-    activity: decodeActivity(read<unknown>(keys.activity, null)),
-    drafts: decodeDrafts(read<Record<string, unknown>>(keys.drafts, {})),
-  };
-}
-
-function applyManageRuntimeCommand(
-  draft: SampleTransactionDraft,
-  command: ManageCommand,
-): ManageActionResult {
-  const current = readState(draft);
-  const outcome = executeManageCommand(current, command);
-  if (!outcome.result.ok) return draft.reject(outcome.result);
-  for (const key of Object.keys(keys) as (keyof ManageState)[])
-    if (outcome.state[key] !== current[key])
-      draft.update<unknown>(
-        keys[key],
-        initialManageState[key],
-        outcome.state[key],
-      );
-  return outcome.result;
-}
-
-export function executeManageRuntimeCommand(
-  runtime: SampleRuntime,
-  command: ManageCommand,
-  signal?: AbortSignal,
-): Promise<ManageActionResult> {
-  return runtime.execute((draft) => applyManageRuntimeCommand(draft, command), {
-    keys: Object.values(keys),
-    signal,
-  });
-}
-
-export function useManageController() {
-  const runtime = useSampleRuntime();
-  const commands = useSampleCommands();
-  const resource = useSampleResource({
-    keys: [
-      ...Object.values(keys).filter((key) => key !== keys.drafts),
-      "access-people",
-    ],
-    queryKey: "manage",
-    load: (signal) =>
-      runtime.load(
-        (source) => ({
-          ...readState(source),
-          people: source.read("access-people", initialPeople),
-        }),
-        { keys: [...Object.values(keys), "access-people"], signal },
-      ),
-  });
-  // Drafts stay synchronous and at route lifetime while confirmed data loads.
-  const [rawDrafts] = useSampleState<Record<string, unknown>>(keys.drafts, {});
-  const { storageUnavailable } = useSampleStorage();
-  const state: ManageState = {
-    ...(resource.data ?? initialManageState),
-    drafts: decodeDrafts(rawDrafts),
-  };
-  async function run(command: ManageCommand): Promise<ManageActionResult> {
-    try {
-      return await commands.run("manage", (signal) =>
-        executeManageRuntimeCommand(runtime, command, signal),
-      );
-    } catch (error) {
-      return {
-        ok: false,
-        message: sampleOperationMessage(
-          error,
-          "This change could not be saved. Try again.",
-        ),
-      };
-    }
-  }
-  function local(command: ManageCommand) {
-    if (commands.isPending()) return;
-    runtime.commit((draft) => applyManageRuntimeCommand(draft, command));
-  }
-  return {
-    ...state,
-    resource,
-    pending: commands.isPending(),
-    people: resource.data?.people ?? [],
-    collections: {
-      sessions: completeCollection(state.sessions, "manage:sessions"),
-      snapshots: completeCollection(state.backups, "manage:snapshots"),
-      activity: completeCollection(state.activity, "manage:activity"),
-    },
-    storageUnavailable,
-    hasDrafts: (Object.keys(manageSectionKeys) as ManageSection[]).some(
-      (section) => dirty(state, section),
-    ),
-    getDraft: (section: ManageSection): ManageSettings => ({
-      ...state.settings,
-      ...state.drafts[section],
-    }),
-    dirty: (section: ManageSection) => dirty(state, section),
-    isDirty: (section: ManageSection) => dirty(state, section),
-    errors: (section: ManageSection) =>
-      validateManageSection(section, {
-        ...state.settings,
-        ...state.drafts[section],
-      }),
-    change: (
-      section: ManageSection,
-      key: keyof ManageSettings,
-      value: string,
-    ) => {
-      local({ type: "change", section, key, value });
-    },
-    save: (section: ManageSection) => run({ type: "save", section }),
-    discard: (section: ManageSection) => {
-      local({ type: "discard", section });
-    },
-    reset: (options?: { discardDrafts?: boolean }) =>
-      run({ type: "reset", ...options }),
-    revokeSession: (id: string) => run({ type: "revoke-session", id }),
-    revokeAllSessions: () => run({ type: "revoke-all-sessions" }),
-  };
-}
-
-/** Owns live maintenance reads and commands; legacy Reset Manage stays above. */
+/** Owns live maintenance reads and commands. */
 export function useManageMaintenance({
   recoveryActive,
   historyActive,
   versionActive,
+  exportId,
+  invalidExportId,
+  exportAllowed,
+  exportActorId,
+  onExportChange,
 }: {
   recoveryActive: boolean;
   historyActive: boolean;
   versionActive: boolean;
+  exportId: string | null;
+  invalidExportId: boolean;
+  exportAllowed: boolean;
+  exportActorId: string;
+  onExportChange: (id: string) => void;
 }) {
   const client = useQueryClient();
   const [request, setRequest] = useState(defaultManageBackupsRequest);
@@ -222,6 +64,76 @@ export function useManageMaintenance({
   const [versionDenied, setVersionDenied] = useState(false);
   const command = useRef<AbortController | null>(null);
   const queueAttempt = useRef<{ name: string; key: string } | null>(null);
+  const [exportDenied, setExportDenied] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const [downloadAdmission, setDownloadAdmission] = useState<{
+    actorId: string;
+    exportId: string;
+    expiresAt: string;
+  } | null>(null);
+  const exportCommand = useRef<AbortController | null>(null);
+  const exportEpoch = useRef(0);
+  const exportOwner = useRef({
+    actorId: exportActorId,
+    allowed: exportAllowed,
+    active: recoveryActive,
+    id: exportId,
+  });
+  const exportMounted = useRef(true);
+  useLayoutEffect(() => {
+    const previous = exportOwner.current;
+    exportOwner.current = {
+      actorId: exportActorId,
+      allowed: exportAllowed,
+      active: recoveryActive,
+      id: exportId,
+    };
+    if (previous.actorId !== exportActorId) {
+      exportEpoch.current += 1;
+      const operation = exportCommand.current;
+      operation?.abort();
+      if (command.current === operation && operation) {
+        command.current = null;
+        setPending(false);
+      }
+      exportCommand.current = null;
+      setExportDenied(false);
+      setExportError("");
+      setDownloadAdmission(null);
+    }
+  }, [exportActorId, exportAllowed, recoveryActive, exportId]);
+  useEffect(() => {
+    exportMounted.current = true;
+    return () => {
+      exportMounted.current = false;
+      exportEpoch.current += 1;
+      exportCommand.current?.abort();
+    };
+  }, []);
+  useEffect(() => {
+    if (!downloadAdmission) return;
+    const clearAdmission = () => {
+      setDownloadAdmission((current) =>
+        current === downloadAdmission ? null : current,
+      );
+    };
+    const deadline = window.setTimeout(
+      clearAdmission,
+      Math.max(0, Date.parse(downloadAdmission.expiresAt) - Date.now()),
+    );
+    const expireOnVisible = () => {
+      if (
+        document.visibilityState === "visible" &&
+        Date.parse(downloadAdmission.expiresAt) <= Date.now()
+      )
+        clearAdmission();
+    };
+    document.addEventListener("visibilitychange", expireOnVisible);
+    return () => {
+      window.clearTimeout(deadline);
+      document.removeEventListener("visibilitychange", expireOnVisible);
+    };
+  }, [downloadAdmission]);
   const status = useQuery({
     ...manageBackupStatusOptions(),
     enabled: recoveryActive && !policyDenied,
@@ -234,6 +146,58 @@ export function useManageMaintenance({
     ...manageVersionOptions(),
     enabled: versionActive && !versionDenied,
   });
+  const exportQuery = useQuery({
+    ...manageBackupExportOptions(exportId ?? ""),
+    enabled:
+      recoveryActive && exportAllowed && Boolean(exportId) && !exportDenied,
+    refetchInterval: (query) =>
+      recoveryActive &&
+      exportAllowed &&
+      !exportDenied &&
+      !query.state.error &&
+      typeof document !== "undefined" &&
+      document.visibilityState === "visible" &&
+      (query.state.data?.state === "queued" ||
+        query.state.data?.state === "preparing")
+        ? 5_000
+        : false,
+    refetchIntervalInBackground: false,
+  });
+  const exportRefused =
+    exportDenied ||
+    (exportQuery.error instanceof ApiError && exportQuery.error.status === 403);
+  if (exportRefused && !exportDenied) setExportDenied(true);
+  const acceptedExport =
+    exportAllowed && !exportQuery.isError && !exportRefused && exportId
+      ? exportQuery.data
+      : undefined;
+  const acceptedDownloadAdmission =
+    recoveryActive &&
+    exportAllowed &&
+    !exportRefused &&
+    acceptedExport?.state === "ready" &&
+    downloadAdmission?.actorId === exportActorId &&
+    downloadAdmission.exportId === exportId
+      ? downloadAdmission
+      : null;
+  const exportSource = useQuery({
+    ...manageBackupListOptions({
+      ...defaultManageBackupsRequest,
+      limit: 1,
+      run_id: acceptedExport?.backup_run_id,
+    }),
+    enabled:
+      recoveryActive &&
+      exportAllowed &&
+      Boolean(acceptedExport) &&
+      !exportRefused,
+  });
+  const acceptedExportSource =
+    exportAllowed && !exportSource.isError && !exportRefused
+      ? exportSource.data?.items.find(
+          (run) => run.id === acceptedExport?.backup_run_id,
+        )
+      : undefined;
   const policyRefused =
     policyDenied ||
     (status.error instanceof ApiError && status.error.status === 403);
@@ -269,7 +233,7 @@ export function useManageMaintenance({
         cold.map((query) => query.cancel({ revert: true })),
       ).then(() => client.invalidateQueries({ queryKey }));
     };
-    const unsubscribe = subscribeOpenViewInvalidations(
+    const unsubscribe = subscribeWorkspaceInvalidations(
       (event) => {
         if (event.type === "resync") {
           refresh(manageKeys.maintenance());
@@ -285,6 +249,8 @@ export function useManageMaintenance({
           refresh(manageKeys.backups());
         }
         if (event.entity === "update_statuses") refresh(manageKeys.version());
+        if (event.entity === "backup_export_operations")
+          refresh(manageKeys.backupExports());
       },
       () => refresh(manageKeys.maintenance()),
     );
@@ -314,6 +280,14 @@ export function useManageMaintenance({
   async function refreshVersion() {
     const result = await version.refetch();
     if (!result.isError) setVersionDenied(false);
+  }
+  async function retryExport() {
+    if (!exportAllowed || !recoveryActive || !exportId) return;
+    const result = await exportQuery.refetch();
+    if (!result.isError) {
+      setExportDenied(false);
+      await exportSource.refetch();
+    }
   }
   async function savePolicy() {
     if (command.current || !acceptedStatus || !patch || stale) return false;
@@ -436,10 +410,149 @@ export function useManageMaintenance({
       }
     }
   }
+  async function queueExport(
+    source: ManageBackupRun,
+    passphrase: string,
+    key: string,
+  ): Promise<boolean> {
+    if (
+      command.current ||
+      !exportOwner.current.allowed ||
+      !exportOwner.current.active ||
+      !backupExportSourceAvailable(source)
+    )
+      return false;
+    const invalid = exportPassphraseError(passphrase);
+    if (invalid) {
+      setExportError(invalid);
+      return false;
+    }
+    const operation = new AbortController();
+    const epoch = exportEpoch.current;
+    const actorId = exportOwner.current.actorId;
+    const owns = () =>
+      exportMounted.current &&
+      !operation.signal.aborted &&
+      exportEpoch.current === epoch &&
+      exportOwner.current.actorId === actorId &&
+      exportOwner.current.allowed &&
+      exportOwner.current.active &&
+      exportCommand.current === operation;
+    command.current = operation;
+    exportCommand.current = operation;
+    setPending(true);
+    setExportError("");
+    try {
+      const queued = await queueManageBackupExport(
+        { backup_run_id: source.id, passphrase },
+        key,
+        operation.signal,
+      );
+      if (!owns()) return false;
+      client.setQueryData(manageKeys.backupExport(queued.id), queued);
+      setExportDenied(false);
+      onExportChange(queued.id);
+      return true;
+    } catch (caught) {
+      if (!owns()) return false;
+      setExportError(
+        caught instanceof ApiError && caught.status === 403
+          ? "Only an eligible administrator can request an export."
+          : "The export request could not be confirmed. Retry without changing the passphrase to check the same request.",
+      );
+      return false;
+    } finally {
+      if (exportCommand.current === operation) exportCommand.current = null;
+      if (command.current === operation) {
+        command.current = null;
+        setPending(false);
+      }
+    }
+  }
+  async function confirmExportDownload(password: string): Promise<boolean> {
+    if (
+      command.current ||
+      !exportOwner.current.allowed ||
+      !exportOwner.current.active ||
+      !acceptedExport ||
+      acceptedExport.state !== "ready" ||
+      acceptedExport.id !== exportOwner.current.id
+    )
+      return false;
+    const id = acceptedExport.id;
+    const operation = new AbortController();
+    const epoch = exportEpoch.current;
+    const actorId = exportOwner.current.actorId;
+    const owns = () =>
+      exportMounted.current &&
+      !operation.signal.aborted &&
+      exportEpoch.current === epoch &&
+      exportOwner.current.actorId === actorId &&
+      exportOwner.current.allowed &&
+      exportOwner.current.active &&
+      exportOwner.current.id === id &&
+      exportCommand.current === operation;
+    command.current = operation;
+    exportCommand.current = operation;
+    setPending(true);
+    setExportError("");
+    setDownloadAdmission(null);
+    try {
+      const admitted = await admitManageBackupExportDownload(
+        id,
+        password,
+        operation.signal,
+      );
+      if (!owns()) return false;
+      if (Date.parse(admitted.expires_at) <= Date.now()) {
+        setExportError("Password confirmation expired. Confirm again.");
+        return false;
+      }
+      setDownloadAdmission({
+        actorId,
+        exportId: id,
+        expiresAt: admitted.expires_at,
+      });
+      return true;
+    } catch (caught) {
+      if (!owns()) return false;
+      if (
+        caught instanceof ApiError &&
+        (caught.status === 401 ||
+          (caught.status === 403 && caught.code !== "export_password_invalid"))
+      )
+        setExportDenied(true);
+      setExportError(
+        caught instanceof ApiError && caught.code === "export_password_invalid"
+          ? "Your current password could not be verified. Try again."
+          : caught instanceof ApiError && caught.status === 429
+            ? "Too many password checks. Wait before trying again."
+            : "Password confirmation is unavailable. Try again.",
+      );
+      return false;
+    } finally {
+      if (exportCommand.current === operation) exportCommand.current = null;
+      if (command.current === operation) {
+        command.current = null;
+        setPending(false);
+      }
+    }
+  }
   return {
     status,
     history,
     version,
+    exportQuery,
+    exportSource,
+    exportId,
+    invalidExportId,
+    exportAllowed,
+    exportActorId,
+    exportRefused,
+    acceptedExport,
+    acceptedExportSource,
+    acceptedDownloadAdmission,
+    exportError,
     acceptedStatus,
     acceptedHistory:
       history.isError || historyRefused ? undefined : history.data,
@@ -454,6 +567,7 @@ export function useManageMaintenance({
     draftPolicy,
     dirty,
     stale,
+    staleRevision,
     pending,
     error,
     notice,
@@ -490,5 +604,12 @@ export function useManageMaintenance({
     reviewLatestPolicy,
     savePolicy,
     queueBackup,
+    queueExport,
+    confirmExportDownload,
+    clearExportDownloadAdmission: () => setDownloadAdmission(null),
+    retryExport,
+    clearExportError: () => {
+      if (!command.current) setExportError("");
+    },
   };
 }

@@ -19,6 +19,8 @@ from app.systems.platform.files.purge import purge_confirmed
 from app.systems.platform.files.quota import QUOTA_LOCK, lock_quota
 from app.systems.platform.files.schemas import FileCreate
 from app.systems.platform.files.validation import ValidatedContent
+from app.systems.sandbox.departments.models import Department
+from tests.files.conftest import library_department
 from tests.files.test_integration import Store, reserve
 
 pytestmark = pytest.mark.integration
@@ -26,9 +28,11 @@ MIB = 1024 * 1024
 
 
 def inventory(db, actor, *, count, size=1, state="awaiting_upload"):
+    department_id = library_department(db)
     rows = [
         File(
             purpose="library_document",
+            department_id=department_id,
             creator_id=actor.id,
             filename="file.pdf",
             expected_size=size,
@@ -48,7 +52,14 @@ def test_hundred_archived_pending_uploads_block_new_reservation(guarded_db, acto
     inventory(db, actor, count=100)
     with pytest.raises(HTTPException) as caught:
         service.reserve(
-            db, actor, FileCreate(purpose="library_document", filename="new.pdf", expected_size=1)
+            db,
+            actor,
+            FileCreate(
+                purpose="library_document",
+                department_id=library_department(db),
+                filename="new.pdf",
+                expected_size=1,
+            ),
         )
     assert caught.value.detail["code"] == "file_uploads_full"
 
@@ -58,12 +69,26 @@ def test_rejected_rows_do_not_use_pending_upload_capacity(guarded_db, actor):
     inventory(db, actor, count=100, state="rejected")
     inventory(db, actor, count=99)
     item = service.reserve(
-        db, actor, FileCreate(purpose="library_document", filename="new.pdf", expected_size=1)
+        db,
+        actor,
+        FileCreate(
+            purpose="library_document",
+            department_id=library_department(db),
+            filename="new.pdf",
+            expected_size=1,
+        ),
     )
     assert item.state == "awaiting_upload"
     with pytest.raises(HTTPException) as caught:
         service.reserve(
-            db, actor, FileCreate(purpose="library_document", filename="over.pdf", expected_size=1)
+            db,
+            actor,
+            FileCreate(
+                purpose="library_document",
+                department_id=library_department(db),
+                filename="over.pdf",
+                expected_size=1,
+            ),
         )
     assert caught.value.detail["code"] == "file_uploads_full"
 
@@ -74,7 +99,12 @@ def test_gibibyte_boundary_uses_declared_bytes_and_logo_canonical_charge(guarded
     service.reserve(
         db,
         actor,
-        FileCreate(purpose="library_document", filename="remaining.pdf", expected_size=23 * MIB),
+        FileCreate(
+            purpose="library_document",
+            department_id=library_department(db),
+            filename="remaining.pdf",
+            expected_size=23 * MIB,
+        ),
     )
     with pytest.raises(HTTPException):
         service.reserve(
@@ -82,13 +112,25 @@ def test_gibibyte_boundary_uses_declared_bytes_and_logo_canonical_charge(guarded
         )
     db.rollback()
     service.reserve(
-        db, actor, FileCreate(purpose="library_document", filename="last.pdf", expected_size=MIB)
+        db,
+        actor,
+        FileCreate(
+            purpose="library_document",
+            department_id=library_department(db),
+            filename="last.pdf",
+            expected_size=MIB,
+        ),
     )
     with pytest.raises(HTTPException) as caught:
         service.reserve(
             db,
             actor,
-            FileCreate(purpose="library_document", filename="excess.pdf", expected_size=1),
+            FileCreate(
+                purpose="library_document",
+                department_id=library_department(db),
+                filename="excess.pdf",
+                expected_size=1,
+            ),
         )
     assert caught.value.detail["code"] == "file_uploads_full"
 
@@ -143,6 +185,7 @@ def test_reserve_expires_stale_reservations_and_keeps_the_quota_lock(guarded_db,
     context = AuditContext(request_id=uuid4(), request_method="POST", request_path="/api/test")
     with AuditSession(engine) as db:
         db.info[AUDIT_CONTEXT_KEY] = context
+        department_id = library_department(db)
         db.add(
             User(
                 id=actor_id,
@@ -157,6 +200,7 @@ def test_reserve_expires_stale_reservations_and_keeps_the_quota_lock(guarded_db,
             File(
                 id=stale_id,
                 purpose="library_document",
+                department_id=department_id,
                 creator_id=actor_id,
                 filename="stale.pdf",
                 expected_size=1,
@@ -182,7 +226,12 @@ def test_reserve_expires_stale_reservations_and_keeps_the_quota_lock(guarded_db,
             created = service.reserve(
                 db,
                 db.get(User, actor_id),
-                FileCreate(purpose="library_document", filename="new.pdf", expected_size=1),
+                FileCreate(
+                    purpose="library_document",
+                    department_id=department_id,
+                    filename="new.pdf",
+                    expected_size=1,
+                ),
             ).id
             expired = db.get(File, stale_id)
             assert expired.state == "purged"
@@ -195,6 +244,10 @@ def test_reserve_expires_stale_reservations_and_keeps_the_quota_lock(guarded_db,
                 file = db.get(File, file_id) if file_id is not None else None
                 if file is not None:
                     db.delete(file)
+            db.flush()
+            department = db.get(Department, department_id)
+            if department is not None:
+                db.delete(department)
             db.flush()
             actor = db.get(User, actor_id)
             if actor is not None:
@@ -227,6 +280,7 @@ def test_full_pending_uploads_do_not_prevent_confirmed_cleanup(guarded_db, actor
     inventory(db, actor, count=100)
     ready = File(
         purpose="library_document",
+        department_id=library_department(db),
         creator_id=actor_id,
         filename="ready.pdf",
         expected_size=1,
@@ -254,6 +308,7 @@ def test_expiration_skips_a_locked_reservation_without_waiting(guarded_db):
     now = datetime.now(UTC)
     with AuditSession(engine) as db:
         db.info[AUDIT_CONTEXT_KEY] = context
+        department_id = library_department(db)
         db.add(
             User(
                 id=actor_id,
@@ -268,6 +323,7 @@ def test_expiration_skips_a_locked_reservation_without_waiting(guarded_db):
             File(
                 id=stale_id,
                 purpose="library_document",
+                department_id=department_id,
                 creator_id=actor_id,
                 filename="locked.pdf",
                 expected_size=1,
@@ -293,6 +349,10 @@ def test_expiration_skips_a_locked_reservation_without_waiting(guarded_db):
             file = db.get(File, stale_id)
             if file is not None:
                 db.delete(file)
+            db.flush()
+            department = db.get(Department, department_id)
+            if department is not None:
+                db.delete(department)
             db.flush()
             actor = db.get(User, actor_id)
             if actor is not None:
@@ -336,7 +396,14 @@ def test_expiry_during_a_reservation_is_attributed_to_the_system(guarded_db, act
     db.commit()
 
     created = service.reserve(
-        db, actor, FileCreate(purpose="library_document", filename="new.pdf", expected_size=1)
+        db,
+        actor,
+        FileCreate(
+            purpose="library_document",
+            department_id=library_department(db),
+            filename="new.pdf",
+            expected_size=1,
+        ),
     )
 
     assert db.get(File, stale.id).state == "purged"

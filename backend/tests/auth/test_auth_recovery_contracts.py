@@ -164,7 +164,11 @@ def test_recovery_request_has_identical_response_for_known_and_unknown_emails(mo
     db = Mock(spec=Session)
     client = Mock()
     monkeypatch.setattr(auth_router, "get_supabase_auth_client", lambda: client)
-    monkeypatch.setattr(auth_router, "recovery_request_permitted", lambda *_a, **_kw: True)
+    monkeypatch.setattr(
+        auth_router.provider_actions.rate_limits,
+        "recovery_request_permitted",
+        lambda *_a, **_kw: True,
+    )
     for email in ("known@example.test", "unknown@example.test"):
         assert (
             auth_router.request_recovery(RecoveryRequest(email=email), _request(), db).status_code

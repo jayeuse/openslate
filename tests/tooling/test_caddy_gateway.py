@@ -40,10 +40,14 @@ class CaddyGatewayTests(unittest.TestCase):
         rendered = self.render()
 
         self.assertLess(rendered.index("handle @events"), rendered.index("handle @api"))
+        self.assertLess(
+            rendered.index("handle @backup_export_content"), rendered.index("handle @api")
+        )
         self.assertLess(rendered.index("handle @api"), rendered.index("    handle {"))
         self.assertIn("@events path /api/events", rendered)
         self.assertIn("@api path /api /api/*", rendered)
-        self.assertEqual(rendered.count("reverse_proxy 127.0.0.1:8100"), 4)
+        # Health, events, backup export content, API and the static site.
+        self.assertEqual(rendered.count("reverse_proxy 127.0.0.1:8100"), 5)
         self.assertNotIn("FRONTEND_PORT", rendered)
         self.assertNotIn("frontend", rendered.lower())
         self.assertIn("bind 0.0.0.0", rendered)
@@ -68,10 +72,23 @@ class CaddyGatewayTests(unittest.TestCase):
         self.assertIn("compression off", events)
         self.assertIn("response_header_timeout 30s", events)
 
+    def test_backup_export_content_streams_with_its_own_long_response_window(self) -> None:
+        rendered = self.render()
+        start = rendered.index("handle @backup_export_content")
+        export = rendered[start : rendered.index("handle @api")]
+
+        self.assertIn(
+            'path_regexp backup_export_content "^/api/backups/exports/[^/]+/content$"', rendered
+        )
+        self.assertIn("flush_interval -1", export)
+        self.assertIn("header_up -Accept-Encoding", export)
+        self.assertIn("compression off", export)
+        self.assertIn("response_header_timeout 330s", export)
+
     def test_container_gateway_uses_the_explicit_host_upstream(self) -> None:
         rendered = self.render(upstream_host="host.docker.internal")
 
-        self.assertEqual(rendered.count("reverse_proxy host.docker.internal:8100"), 4)
+        self.assertEqual(rendered.count("reverse_proxy host.docker.internal:8100"), 5)
         self.assertNotIn("reverse_proxy 127.0.0.1", rendered)
 
     def test_local_compose_keeps_the_gateway_behind_an_opt_in_profile(self) -> None:
@@ -91,7 +108,8 @@ class CaddyGatewayTests(unittest.TestCase):
             "header_up X-Forwarded-Host {http.request.hostport}",
             "header_up X-Forwarded-Proto {http.request.scheme}",
         ):
-            self.assertEqual(rendered.count(header), 3)
+            # Events, backup export content and API upstreams.
+            self.assertEqual(rendered.count(header), 4)
 
     def test_both_https_modes_render_without_certificate_material(self) -> None:
         internal = self.render()
@@ -115,12 +133,11 @@ class CaddyGatewayTests(unittest.TestCase):
         rendered = self.render(
             tls_mode="custom",
             cert_file=Path('/srv/Open Slate/cert#1"issuer.pem'),
-            key_file=Path('/srv/Open Slate/private\\key.pem'),
+            key_file=Path("/srv/Open Slate/private\\key.pem"),
         )
 
         self.assertIn(
-            'tls "/srv/Open Slate/cert#1\\"issuer.pem" '
-            '"/srv/Open Slate/private\\\\key.pem"',
+            'tls "/srv/Open Slate/cert#1\\"issuer.pem" "/srv/Open Slate/private\\\\key.pem"',
             rendered,
         )
 

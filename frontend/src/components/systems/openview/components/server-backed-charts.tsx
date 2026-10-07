@@ -5,7 +5,8 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { subscribeOpenViewInvalidations } from "../adapters/invalidation-events";
+import { apiErrorMessage } from "@/lib/api-errors";
+import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 import {
   catalogFirstPageOptions,
   extendsRead,
@@ -48,10 +49,6 @@ import {
   type FilterLogic,
 } from "../domain/chart-query";
 
-function messageFor(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
 const AUTHORIZATION_ERROR =
   "Chart data is unavailable. Sign in or ask for access, then retry.";
 
@@ -60,7 +57,7 @@ function fieldReference(field: OpenViewDataSourceField) {
 }
 
 function formatError(error: unknown, fallback: string): string {
-  return messageFor(error, fallback);
+  return apiErrorMessage(error, fallback);
 }
 
 // Pages loaded with "Load more" extend the cached first page of one read
@@ -206,7 +203,7 @@ export default function ServerBackedCharts() {
   // Applied snapshots are not cached reads; they refresh through this
   // counter. The catalog and fields refresh through OpenViewQuerySync.
   useEffect(() => {
-    return subscribeOpenViewInvalidations((event) => {
+    return subscribeWorkspaceInvalidations((event) => {
       if (event.type === "resync" || invalidatesRecords(event.entity))
         setInvalidationRevision((value) => value + 1);
     });
@@ -612,7 +609,7 @@ export default function ServerBackedCharts() {
       {queryError && !(readDenied && queryError === AUTHORIZATION_ERROR) ? (
         <Alert
           role="alert"
-          variant="warning"
+          variant="destructive"
           className="flex flex-wrap items-center justify-between gap-3 print:hidden"
         >
           <span>

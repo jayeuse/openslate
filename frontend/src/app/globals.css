@@ -739,3 +739,91 @@ textarea {
 .base-ui-disable-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* Personal text scales the page UI; the graph retains its own zoom and baseline. */
+:root {
+  --device-text-scale: 1;
+  --canvas-base-radius: calc(var(--radius) / var(--device-text-scale));
+}
+html[data-text-size="100"] {
+  font-size: 100%;
+}
+html[data-text-size="112.5"] {
+  font-size: 112.5%;
+  --device-text-scale: 1.125;
+}
+html[data-text-size="125"] {
+  font-size: 125%;
+  --device-text-scale: 1.25;
+}
+
+html[data-density="spacious"]
+  #main-content[data-skin="page"]:not([data-page-spacing="excluded"]) {
+  --spacing: 0.3125rem;
+}
+@media (min-width: 1280px) and (pointer: fine) {
+  html[data-density="compact"]
+    #main-content[data-skin="page"]:not([data-page-spacing="excluded"]) {
+    --spacing: 0.21875rem;
+  }
+}
+#main-content :where([class~="min-h-11"]) {
+  min-height: max(44px, 2.75rem);
+}
+#main-content :where([class~="min-w-11"]) {
+  min-width: max(44px, 2.75rem);
+}
+#main-content :where([class~="size-11"]) {
+  width: max(44px, 2.75rem);
+  height: max(44px, 2.75rem);
+}
+
+/* Shared page switches retain a balanced track and thumb at every density. */
+#main-content [data-slot="switch"][data-size="default"] {
+  --spacing: 0.25rem;
+  height: 1.15rem;
+  width: 2rem;
+}
+#main-content [data-slot="switch"][data-size="default"]::after {
+  top: -13px;
+  bottom: -13px;
+}
+
+[data-skin="canvas-frame"] {
+  font-size: calc(1rem / var(--device-text-scale));
+  --spacing: calc(0.25rem / var(--device-text-scale));
+  --text-xs: calc(0.75rem / var(--device-text-scale));
+  --text-sm: calc(0.875rem / var(--device-text-scale));
+  --text-base: calc(1rem / var(--device-text-scale));
+  --container-md: calc(28rem / var(--device-text-scale));
+  --radius: var(--canvas-base-radius);
+}
+html {
+  scroll-padding-block-start: 4.5rem;
+}
+#main-content :where(button, a, input, select, textarea, [tabindex], [id]) {
+  scroll-margin-block: 4.5rem 1rem;
+}
+@media (prefers-contrast: more) {
+  #main-content[data-skin="page"] {
+    --border: var(--foreground);
+    --ring: var(--foreground);
+  }
+  #main-content:where([data-skin="page"])
+    :where(input, select, textarea, [role="combobox"]) {
+    border-color: var(--foreground);
+  }
+}
+@media (forced-colors: active) {
+  #main-content :where(input, select, textarea, [data-slot="card"]) {
+    border-color: CanvasText;
+  }
+  :focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
+[data-skin="canvas-frame"] .rounded {
+  border-radius: calc(0.25rem / var(--device-text-scale));
+}

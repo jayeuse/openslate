@@ -92,7 +92,13 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     )
     db.add(work)
     db.flush()
-    notification = InAppNotification(work_id=work.id, recipient_id=actor.id)
+    notification = InAppNotification(
+        work_id=work.id,
+        recipient_id=actor.id,
+        kind="post-publish",
+        subject_type="board_post",
+        subject_id=post.id,
+    )
     db.add(notification)
     event = BoardEvent(
         board_id=board.id,
@@ -118,7 +124,13 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     )
     db.add(reminder_work)
     db.flush()
-    reminder_notification = InAppNotification(work_id=reminder_work.id, recipient_id=actor.id)
+    reminder_notification = InAppNotification(
+        work_id=reminder_work.id,
+        recipient_id=actor.id,
+        kind="event-reminder",
+        subject_type="board_event",
+        subject_id=reminder.event_id,
+    )
     db.add(reminder_notification)
     db.commit()
 

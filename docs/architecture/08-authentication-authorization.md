@@ -12,7 +12,11 @@ After provider authentication, FastAPI records an application `identity_sessions
 
 Protected requests revalidate provider claims, provider account and session liveness, the unrevoked/unexpired application session, the local user binding and eligibility, and current application authorization. Provider session existence is checked through a narrowly scoped read of `auth.sessions.id` and `auth.sessions.user_id` under the operator-provisioned `openslate_session_liveness` policy. FastAPI does not write Auth tables or use row policies as its domain authorization system.
 
+Visible, trusted browser activity can trigger bounded [session renewal](../../frontend/src/components/app-page.tsx), which rechecks the same account and stops when that account or session ends. Successful sign-in advances both durable local sign-in and activity timestamps; accepted refresh and successful MFA advance activity only. Failed attempts, reads, and revocation alone advance neither. This history survives session retention and is not provider MFA evidence: [MFA observations](../../backend/app/systems/access/identity/mfa_observations.py) remain bound to the current provider identity, and unavailable or unproven status is not inferred from local activity.
+
 Session listing and revocation remain application-owned. Logout, self/admin revocation, account disablement, and recovery revoke the local session immediately; provider sign-out is attempted and retried through the durable provider sign-out worker if needed. A provider JWT alone is not enough to restore a locally revoked session. Password reauthentication for protected lifecycle operations delegates to Supabase Auth and must resolve back to the same eligible application actor.
+
+Access administrators manage the [workspace Security policy](../../backend/app/systems/manage/workspace/security_router.py) and inspect [People security](../../backend/app/systems/access/users/security.py). Recovery and MFA-reset actions recheck the administrator's session and target provider binding before effects; MFA reset preserves required provider-assurance checks. Local history alone cannot authorize these actions.
 
 ## Invitations and recovery
 

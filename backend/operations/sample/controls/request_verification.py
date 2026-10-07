@@ -10,6 +10,7 @@ from operations.sample.blueprint import SampleDataset
 from operations.sample.packs.phase_types import PhaseAction
 
 _REVIEW_READ_CHECKS = {
+    "review_workspace_appearance": 3,
     "review_view_fields": 4,
     "review_report_run": 2,
     "review_board_tools": 9,
@@ -184,6 +185,91 @@ def verify_request_evidence(
         issues.append("A sample control result has invalid request evidence")
         return
     operation = action.values.get("operation")
+    if operation == "physical_backup_export":
+        from operations.sample.controls.host_delivery import plan_host_controls
+        from operations.sample.controls.host_receipts import host_request_contract
+
+        try:
+            contract = host_request_contract(action, result)
+            optional = {
+                "restore_actor_role",
+                *("restore_group:" + g for g in result["original_actor_group_ids"]),
+            }
+            host_steps = [row["step"] for row in evidence_rows]
+            if (
+                action not in plan_host_controls(dataset)
+                or any(
+                    result.get(key) is not value for key, value in action.expected_end_state.items()
+                )
+                or len(set(host_steps)) != len(host_steps)
+                or not set(contract) - optional <= set(host_steps) <= set(contract)
+            ):
+                raise ValueError
+            identifiers: set[str] = set()
+            for row in evidence_rows:
+                actor, host_method, host_path, status = contract[row["step"]]
+                identifier = _canonical_uuid(row["request_id"])
+                if (
+                    set(row)
+                    != {
+                        "step",
+                        "actor_key",
+                        "actor_id",
+                        "method",
+                        "path",
+                        "expected_status",
+                        "status_code",
+                        "request_id",
+                    }
+                    or (row["actor_key"], row["method"], row["path"], row["status_code"])
+                    != (actor, host_method, host_path, status)
+                    or type(row["status_code"]) is not int
+                    or type(row["expected_status"]) is not int
+                    or row["expected_status"] != status
+                    or row["actor_id"] != (admin_id if actor == "admin" else actors.get(actor))
+                    or _canonical_uuid(row["actor_id"]) is None
+                    or (host_method, route_template(host_method, host_path)) not in SEEDER_ROUTES
+                    or identifier is None
+                    or identifier in identifiers | seen_request_ids
+                ):
+                    raise ValueError
+                identifiers.add(identifier)
+        except (KeyError, TypeError, ValueError):
+            issues.append(
+                "Host control evidence differs from its route or request identity contract"
+            )
+            return
+        seen_request_ids.update(identifiers)
+        observed["control_requests_verified"] += len(identifiers)
+        return
+    if operation == "real_mfa_reset":
+        from operations.sample.controls.mfa_verification import verify_mfa_request_evidence
+
+        verify_mfa_request_evidence(
+            dataset, manifest, action, result, actors, admin_id, seen_request_ids, observed, issues
+        )
+        return
+    from operations.sample.controls.files import FILE_OPERATIONS
+    from operations.sample.controls.files_verification import verify_file_evidence
+    from operations.sample.controls.notifications_verification import verify_notification_evidence
+    from operations.sample.controls.people_security_verification import (
+        verify_people_security_evidence,
+    )
+
+    evidence_verifier = (
+        verify_file_evidence
+        if operation in FILE_OPERATIONS
+        else verify_notification_evidence
+        if operation == "review_notifications"
+        else verify_people_security_evidence
+        if operation == "review_people_security"
+        else None
+    )
+    if evidence_verifier is not None:
+        evidence_verifier(
+            dataset, manifest, action, result, admin_id, seen_request_ids, observed, issues
+        )
+        return
     if action.kind == "platform_controls":
         from operations.sample.controls.platform_verification import verify_platform_evidence
 

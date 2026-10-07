@@ -19,6 +19,10 @@ from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, Gr
 from app.systems.access.policy.scope import allowed_module_ids, effective_levels, includes
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.models import User
+from app.systems.manage.workspace.security_policy import (
+    effective_session_expiry,
+    load_workspace_policy,
+)
 
 
 def module_hidden() -> HTTPException:
@@ -90,7 +94,7 @@ def require_live_session(db: Session, *, actor_id: UUID, session_id: UUID) -> No
         session is None
         or session.user_id != actor_id
         or session.revoked_at is not None
-        or session.expires_at <= utc_now()
+        or effective_session_expiry(session, load_workspace_policy(db)) <= utc_now()
     ):
         db.rollback()
         raise forbidden()

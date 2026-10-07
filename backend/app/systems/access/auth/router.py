@@ -15,7 +15,7 @@ from app.common.dependencies import (
 )
 from app.common.dependencies.auth import get_mfa_identity, require_allowed_source
 from app.core.config import get_settings
-from app.core.config.development import browser_origin_is_permitted, is_relaxed_development
+from app.core.config.development import browser_origin_is_permitted
 from app.core.database import get_db
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
@@ -48,16 +48,16 @@ from app.systems.access.identity.contracts import (
     IdentityRateLimited,
     InvalidCredentials,
 )
+from app.systems.access.identity.provider_actions import (
+    anonymous_rate_limits_enabled as _anonymous_rate_limits_enabled,
+)
 from app.systems.access.identity.provider_login import login_with_provider
 from app.systems.access.identity.provider_sessions import (
     refresh_provider_session,
     revoke_provider_refresh_session,
 )
 from app.systems.access.identity.provider_signout import attempt_provider_signout
-from app.systems.access.identity.rate_limits import (
-    invitation_completion_permitted,
-    recovery_request_permitted,
-)
+from app.systems.access.identity.rate_limits import invitation_completion_permitted
 from app.systems.access.identity.schemas import (
     ActionTokenCompleteRequest,
     LoginRequest,
@@ -87,6 +87,7 @@ from app.systems.access.users.service import (
     invite_user,
     resend_invitation,
 )
+from app.systems.manage.audit.service import SecurityEventPersistenceError
 from app.systems.manage.workspace.security_policy import PasswordPolicyViolation
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
@@ -96,12 +97,6 @@ router = APIRouter()
 def _require_browser_origin(request: Request) -> None:
     if not browser_origin_is_permitted(get_settings(), request.headers.get("origin")):
         raise HTTPException(status_code=403, detail="Invalid request origin")
-
-
-def _anonymous_rate_limits_enabled() -> bool:
-    settings = get_settings()
-    seeding = getattr(settings, "e2e_seeding_without_anonymous_limits", False)
-    return not (is_relaxed_development(settings) or seeding)
 
 
 def _require_refresh_csrf(request: Request) -> str:
@@ -137,10 +132,11 @@ def login(
         raise HTTPException(
             status_code=429,
             detail="Invalid authentication credentials",
-            headers={"Retry-After": "900"},
+            headers={"Retry-After": str(error.retry_after)},
         ) from error
     except InvalidCredentials as error:
-        db.commit()
+        if not provider_actions.try_commit_login_denial(db):
+            raise HTTPException(503, detail="Authentication service unavailable") from None
         raise HTTPException(status_code=401, detail="Invalid authentication credentials") from error
     except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
         db.rollback()
@@ -195,9 +191,14 @@ def issue_bearer_token(
         db.commit()
     except IdentityRateLimited as error:
         db.rollback()
-        raise HTTPException(status_code=401, detail="Invalid authentication credentials") from error
+        raise HTTPException(
+            status_code=429,
+            detail="Invalid authentication credentials",
+            headers={"Retry-After": str(error.retry_after)},
+        ) from error
     except InvalidCredentials as error:
-        db.commit()
+        if not provider_actions.try_commit_login_denial(db):
+            raise HTTPException(503, detail="Authentication service unavailable") from None
         raise HTTPException(status_code=401, detail="Invalid authentication credentials") from error
     except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
         db.rollback()
@@ -276,10 +277,7 @@ def invite(
         ) from error
     except InvitationError as error:
         raise HTTPException(status_code=409, detail="Unable to create invitation") from error
-    return InvitationResponse(
-        user=UserResponse.model_validate(user),
-        delivery="email",
-    )
+    return InvitationResponse(user=UserResponse.model_validate(user), delivery="email")
 
 
 @auth_router.post("/invitations/{user_id}/resend", response_model=InvitationResponse)
@@ -362,6 +360,7 @@ def change_password(
             payload.current_password,
             payload.password,
             get_supabase_auth_client(),
+            source=_source(request),
         )
     except PasswordPolicyViolation as error:
         db.rollback()
@@ -378,7 +377,7 @@ def change_password(
     except IdentityRateLimited as error:
         db.rollback()
         raise HTTPException(status_code=429, detail="Password cannot be changed") from error
-    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+    except (SupabaseAuthUnavailable, SQLAlchemyError, SecurityEventPersistenceError) as error:
         db.rollback()
         raise HTTPException(status_code=503, detail="Password service unavailable") from error
     return {"authenticated": True, "setup_required": False}
@@ -393,17 +392,14 @@ def request_recovery(
     _require_browser_origin(request)
     require_allowed_source(request, db)
     try:
-        permitted = (
-            recovery_request_permitted(db, payload.email, source=_source(request))
-            if _anonymous_rate_limits_enabled()
-            else True
+        provider_actions.request_recovery(
+            db,
+            payload.email,
+            get_supabase_auth_client(),
+            source=_source(request),
+            enforce_rate_limit=_anonymous_rate_limits_enabled(),
         )
-        db.commit()
-        if permitted:
-            # Provider recovery deliberately handles known and unknown emails alike.
-            # Local admission still requires an explicitly bound active user.
-            get_supabase_auth_client().request_recovery(payload.email)
-    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+    except (SupabaseAuthUnavailable, SQLAlchemyError, SecurityEventPersistenceError) as error:
         db.rollback()
         raise HTTPException(status_code=503, detail="Recovery service unavailable") from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -419,7 +415,11 @@ def complete_recovery(
     require_allowed_source(request, db)
     try:
         provider_actions.complete_recovery(
-            db, payload.token_hash, payload.password, get_supabase_auth_client()
+            db,
+            payload.token_hash,
+            payload.password,
+            get_supabase_auth_client(),
+            source=_source(request),
         )
     except PasswordPolicyViolation as error:
         db.rollback()
@@ -433,7 +433,7 @@ def complete_recovery(
     except (ActionTokenInvalid, InvalidProviderCredentials) as error:
         db.rollback()
         raise HTTPException(status_code=400, detail="Recovery token is invalid") from error
-    except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+    except (SupabaseAuthUnavailable, SQLAlchemyError, SecurityEventPersistenceError) as error:
         db.rollback()
         raise HTTPException(status_code=503, detail="Recovery service unavailable") from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)

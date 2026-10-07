@@ -195,7 +195,8 @@ def test_bearer_token_routes_reject_mixed_setup_replay_and_invalid_credentials(
     )
     with pytest.raises(HTTPException) as throttled:
         auth_router.issue_bearer_token(payload, _request(origin=None), db)
-    assert throttled.value.status_code == 401
+    assert throttled.value.status_code == 429
+    assert throttled.value.headers == {"Retry-After": "900"}
 
     monkeypatch.setattr(
         auth_router, "login_with_provider", Mock(side_effect=InvalidCredentials("bad"))

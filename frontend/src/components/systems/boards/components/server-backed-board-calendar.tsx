@@ -35,6 +35,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
+import { reportDone } from "@/lib/feedback";
+import { formatWorkspaceDate } from "@/lib/date-time";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import {
   archiveBoardEvent,
@@ -49,7 +52,7 @@ import {
 } from "../adapters/board-events-api";
 import type { BoardAttachmentVersions } from "../adapters/board-files-api";
 import { readBoard } from "../adapters/board-management-api";
-import { getBoardWorkspaceToday } from "../adapters/board-workspace-date-api";
+import type { WorkspaceCalendarSettings } from "../../manage/adapters/workspace-api";
 import {
   getMyBoardAccess,
   type BoardMyAccess,
@@ -143,6 +146,9 @@ export function canEditBoardEvent(
 export function ServerBackedBoardCalendar({
   boardId,
   refreshKey,
+  workspaceCalendar,
+  workspaceDateError,
+  onRetryWorkspaceDate,
   boardActive = false,
   onDraftStateChange,
   selectedEventId = null,
@@ -150,6 +156,9 @@ export function ServerBackedBoardCalendar({
 }: {
   boardId: string;
   refreshKey: number;
+  workspaceCalendar: WorkspaceCalendarSettings | undefined;
+  workspaceDateError: boolean;
+  onRetryWorkspaceDate: () => void;
   boardActive?: boolean;
   selectedEventId?: string | null;
   onCloseSelectedEvent?: () => void;
@@ -168,11 +177,7 @@ export function ServerBackedBoardCalendar({
     event: BoardEvent | null;
     error: string | null;
   } | null>(null);
-  const [workspaceToday, setWorkspaceToday] = useState<string | null>(null);
-  const [workspaceDateError, setWorkspaceDateError] = useState<string | null>(
-    null,
-  );
-  const [workspaceDateRetry, setWorkspaceDateRetry] = useState(0);
+  const workspaceToday = workspaceCalendar?.today ?? null;
   const [month, setMonth] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [view, setView] = useState<CalendarView>("month");
@@ -197,7 +202,7 @@ export function ServerBackedBoardCalendar({
   const [lifecyclePending, setLifecyclePending] = useState(false);
   const [lifecycleTarget, setLifecycleTarget] =
     useState<BoardEventLifecycleAction | null>(null);
-  const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [access, setAccess] = useState<{
     key: string;
     status: "loading" | "ready" | "denied" | "error";
@@ -213,7 +218,6 @@ export function ServerBackedBoardCalendar({
   const recordLinkPendingRef = useRef(false);
   const pendingRef = useRef(false);
   const [editorError, setEditorError] = useState<string | null>(null);
-  const [editorNotice, setEditorNotice] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{
     eventId: string | null;
     status: "needs-check" | "checking" | "ready";
@@ -221,7 +225,15 @@ export function ServerBackedBoardCalendar({
   } | null>(null);
   const calendarMonth = month ?? workspaceToday?.slice(0, 7) ?? null;
   const calendarWindow = calendarMonth
-    ? calendarWindowForMonth(calendarMonth)
+    ? {
+        ...calendarWindowForMonth(calendarMonth),
+        label: workspaceCalendar
+          ? formatWorkspaceDate(`${calendarMonth}-01`, workspaceCalendar, {
+              month: "long",
+              year: "numeric",
+            })
+          : "Date unavailable",
+      }
     : null;
   const selectedCalendarDate =
     selectedDate ?? workspaceToday ?? calendarWindow?.start ?? "";
@@ -283,29 +295,10 @@ export function ServerBackedBoardCalendar({
   }, [accessDenied, boardId, selectedEventId, selectedKey, viewerId]);
 
   useEffect(() => {
-    let active = true;
-    async function refreshWorkspaceDate() {
-      try {
-        const today = await getBoardWorkspaceToday();
-        if (!active) return;
-        setWorkspaceToday(today);
-        setWorkspaceDateError(null);
-        setMonth((current) => current ?? today.slice(0, 7));
-        setSelectedDate((current) => current ?? today);
-      } catch {
-        if (active) setWorkspaceDateError("Could not load the Workspace date.");
-      }
-    }
-    void refreshWorkspaceDate();
-    const timer = globalThis.window.setInterval(
-      () => void refreshWorkspaceDate(),
-      60_000,
-    );
-    return () => {
-      active = false;
-      globalThis.window.clearInterval(timer);
-    };
-  }, [refreshKey, workspaceDateRetry]);
+    if (!workspaceToday) return;
+    setMonth((current) => current ?? workspaceToday.slice(0, 7));
+    setSelectedDate((current) => current ?? workspaceToday);
+  }, [workspaceToday]);
 
   useEffect(() => {
     setView(
@@ -406,13 +399,13 @@ export function ServerBackedBoardCalendar({
     setAttachmentPending(false);
     setRecordLinkPending(false);
     setEditorError(null);
-    setEditorNotice(null);
+
     setConflict(null);
     setBlockedBoardId(null);
     setArchivedOffset(0);
     setArchivedState(null);
     setLifecycleTarget(null);
-    setLifecycleNotice(null);
+    setLifecycleError(null);
     lifecycleRequest.current += 1;
     lifecyclePendingRef.current = false;
     setLifecyclePending(false);
@@ -478,7 +471,7 @@ export function ServerBackedBoardCalendar({
           setConflict(null);
           setArchivedState(null);
           setLifecycleTarget(null);
-          setEditorNotice("Event editing is unavailable for this Board.");
+          setEditorError("Event editing is unavailable for this Board.");
           invalidateRef.current();
         }
       });
@@ -552,7 +545,7 @@ export function ServerBackedBoardCalendar({
       viewerId,
     );
     if (!action) return;
-    setLifecycleNotice(null);
+    setLifecycleError(null);
     setLifecycleTarget(action);
   }
 
@@ -593,7 +586,7 @@ export function ServerBackedBoardCalendar({
       !listed
     ) {
       setLifecycleTarget(null);
-      setLifecycleNotice("Event details changed. Refresh before trying again.");
+      setLifecycleError("Event details changed. Refresh before trying again.");
       return;
     }
     lifecyclePendingRef.current = true;
@@ -616,7 +609,8 @@ export function ServerBackedBoardCalendar({
         );
       if (request !== lifecycleRequest.current) return;
       setLifecycleTarget(null);
-      setLifecycleNotice(
+      setLifecycleError(null);
+      reportDone(
         action.kind === "archive" ? "Event archived." : "Event restored.",
       );
       invalidate();
@@ -625,24 +619,24 @@ export function ServerBackedBoardCalendar({
       setAccessVersion((value) => value + 1);
     } catch (error) {
       if (request !== lifecycleRequest.current) return;
-      setLifecycleTarget(null);
       setArchivedState(null);
       invalidate();
       setArchivedVersion((value) => value + 1);
-      setAccessVersion((value) => value + 1);
       if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
+        setLifecycleTarget(null);
+        setAccessVersion((value) => value + 1);
         setBlockedBoardId(boardId);
         setDraft(null);
         setConflict(null);
-        setLifecycleNotice(
+        setLifecycleError(
           "Your access changed. Event actions were closed and the calendar is refreshing.",
         );
       } else if (error instanceof ApiError && error.status === 409) {
-        setLifecycleNotice(
+        setLifecycleError(
           "The Board or event changed. Review refreshed events before trying again.",
         );
       } else {
-        setLifecycleNotice(
+        setLifecycleError(
           "Could not confirm the event action. Review refreshed events before trying again.",
         );
       }
@@ -685,7 +679,7 @@ export function ServerBackedBoardCalendar({
       else throw new Error("Event editor state is invalid.");
       setDraft(null);
       setConflict(null);
-      setEditorNotice(draftToSave.eventId ? "Event saved." : "Event created.");
+      reportDone(draftToSave.eventId ? "Event saved." : "Event created.");
       retry();
       setMyEventsRetry((value) => value + 1);
       setAccessVersion((value) => value + 1);
@@ -694,7 +688,7 @@ export function ServerBackedBoardCalendar({
         setBlockedBoardId(boardId);
         setDraft(null);
         setConflict(null);
-        setEditorNotice("Your access changed. The event editor was closed.");
+        setEditorError("Your access changed. The event editor was closed.");
         setAccess({ key: accessKey, status: "denied", value: null });
         setAccessVersion((value) => value + 1);
         invalidate();
@@ -707,9 +701,9 @@ export function ServerBackedBoardCalendar({
           });
         setEditorError(
           error instanceof ApiError && error.status === 409
-            ? `${error.message}. Your draft is retained. Check the latest version before choosing how to continue.`
+            ? `${apiErrorMessage(error, "Could not save the event.")} Your draft is retained. Check the latest version before choosing how to continue.`
             : error instanceof ApiError && error.status === 422
-              ? `${error.message}. Your draft is retained; check the fields and try again.`
+              ? `${apiErrorMessage(error, "Could not save the event.")} Your draft is retained; check the fields and try again.`
               : error instanceof BoardEventDraftError
                 ? error.message
                 : "Could not save the event. Your draft is still here; try again.",
@@ -780,7 +774,7 @@ export function ServerBackedBoardCalendar({
         setBlockedBoardId(boardId);
         setDraft(null);
         setConflict(null);
-        setEditorNotice("Your access changed. The event editor was closed.");
+        setEditorError("Your access changed. The event editor was closed.");
         setAccess({ key: accessKey, status: "denied", value: null });
         invalidate();
       }
@@ -834,7 +828,7 @@ export function ServerBackedBoardCalendar({
       if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
         setDraft(null);
         setConflict(null);
-        setEditorNotice(
+        setEditorError(
           "This event or Board is no longer available. The editor was closed.",
         );
         invalidate();
@@ -903,7 +897,7 @@ export function ServerBackedBoardCalendar({
   function editEvent(event: BoardEvent) {
     if (!mayEditEvent(event)) return;
     setEditorError(null);
-    setEditorNotice(null);
+
     setConflict(null);
     setDraft(boardEventDraftFromEvent(event));
   }
@@ -944,6 +938,7 @@ export function ServerBackedBoardCalendar({
     if (!calendarPage || !calendarWindow) return null;
     return (
       <ServerBoardCalendarDisplay
+        region={workspaceCalendar}
         page={calendarPage}
         window={calendarWindow}
         date={date}
@@ -982,7 +977,7 @@ export function ServerBackedBoardCalendar({
               </DialogTitle>
               <DialogDescription>
                 {selectedEvent
-                  ? boardEventTimeLabel(selectedEvent)
+                  ? boardEventTimeLabel(selectedEvent, workspaceCalendar)
                   : accessDenied
                     ? "This event is unavailable or you no longer have access."
                     : (currentSelectedDetail?.error ?? "Loading the event.")}
@@ -1079,7 +1074,7 @@ export function ServerBackedBoardCalendar({
                 className="min-h-11"
                 onClick={() => {
                   setEditorError(null);
-                  setEditorNotice(null);
+
                   setConflict(null);
                   setDraft(
                     newBoardEventDraft(
@@ -1096,18 +1091,18 @@ export function ServerBackedBoardCalendar({
           </div>
         </div>
         {workspaceDateError && (
-          <Alert variant="warning">
+          <Alert variant="destructive">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span>
                 {workspaceToday
                   ? "The Workspace date could not be refreshed. The last loaded date is still in use."
-                  : workspaceDateError}
+                  : "Could not load the Workspace date."}
               </span>
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-11"
-                onClick={() => setWorkspaceDateRetry((value) => value + 1)}
+                onClick={onRetryWorkspaceDate}
               >
                 Retry Workspace date
               </Button>
@@ -1206,10 +1201,14 @@ export function ServerBackedBoardCalendar({
           </Button>
         </div>
       </div>
-      {editorNotice && <Alert role="status">{editorNotice}</Alert>}
-      {lifecycleNotice && <Alert role="status">{lifecycleNotice}</Alert>}
+      {editorError && !activeDraft && (
+        <Alert variant="destructive">{editorError}</Alert>
+      )}
+      {lifecycleError && !lifecycleTarget && (
+        <Alert variant="destructive">{lifecycleError}</Alert>
+      )}
       {accessFailed && (
-        <Alert variant="warning">
+        <Alert variant="destructive">
           Could not check edit access. Your unsaved draft is retained.
           <Button
             type="button"
@@ -1244,7 +1243,7 @@ export function ServerBackedBoardCalendar({
         />
       )}
       {activeDraft && conflict && (
-        <Alert variant="warning">
+        <Alert variant="destructive">
           <div className="flex min-w-0 flex-col gap-3">
             <p className="font-medium">
               The saved version changed. Your draft is still here.
@@ -1395,7 +1394,7 @@ export function ServerBackedBoardCalendar({
         !activeDraft &&
         myEventsState?.key === myEventsKey &&
         myEventsState.error && (
-          <Alert variant="warning">
+          <Alert variant="destructive">
             {myEventsState.error}
             <Button
               type="button"
@@ -1413,11 +1412,12 @@ export function ServerBackedBoardCalendar({
         myEventsState?.key === myEventsKey &&
         myEventsState.page && (
           <MyEventsDisplay
+            region={workspaceCalendar}
             page={myEventsState.page}
             onEdit={(event) => {
               if (!mayEditEvent(event)) return;
               setEditorError(null);
-              setEditorNotice(null);
+
               setConflict(null);
               setDraft(boardEventDraftFromEvent(event));
             }}
@@ -1428,7 +1428,7 @@ export function ServerBackedBoardCalendar({
           />
         )}
       {view !== "archived" && view !== "mine" && state.error && (
-        <Alert variant={state.data ? "warning" : "destructive"}>
+        <Alert variant="destructive">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span>
               {state.data ? "Showing the last loaded month. " : ""}
@@ -1466,7 +1466,7 @@ export function ServerBackedBoardCalendar({
               </div>
             )}
             {loadMoreError && (
-              <Alert variant="warning">
+              <Alert variant="destructive">
                 {loadMoreError}{" "}
                 <Button
                   type="button"
@@ -1497,13 +1497,17 @@ export function ServerBackedBoardCalendar({
             >
               <div className="min-w-0">
                 {view === "month" ? (
-                  <MonthGrid
-                    window={calendarWindow}
-                    page={calendarPage}
-                    selectedDate={selectedCalendarDate}
-                    today={workspaceToday}
-                    onSelect={setSelectedDate}
-                  />
+                  workspaceCalendar ? (
+                    <MonthGrid
+                      region={workspaceCalendar}
+                      window={calendarWindow}
+                      page={calendarPage}
+                      selectedDate={selectedCalendarDate}
+                      today={workspaceToday}
+                      weekStart={workspaceCalendar.week_start}
+                      onSelect={setSelectedDate}
+                    />
+                  ) : null
                 ) : (
                   <div id="server-board-calendar-day">
                     {displayCalendarEvents()}
@@ -1577,7 +1581,7 @@ export function ServerBackedBoardCalendar({
         canManage &&
         archivedState?.key === archivedKey &&
         archivedState.error && (
-          <Alert variant="warning">
+          <Alert variant="destructive">
             {archivedState.error}
             <Button
               type="button"
@@ -1619,7 +1623,9 @@ export function ServerBackedBoardCalendar({
       <AlertDialog
         open={
           lifecycleTarget?.boardId === boardId &&
-          canConfirmLifecycle(lifecycleTarget)
+          !accessDenied &&
+          boardActive &&
+          (canConfirmLifecycle(lifecycleTarget) || Boolean(lifecycleError))
         }
         onOpenChange={(open) => {
           if (!open && !lifecyclePending) setLifecycleTarget(null);
@@ -1638,6 +1644,9 @@ export function ServerBackedBoardCalendar({
                 : `Restore “${lifecycleTarget?.title ?? "this event"}” and its occurrences to the active calendar?`}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {lifecycleError && (
+            <Alert variant="destructive">{lifecycleError}</Alert>
+          )}
           <AlertDialogFooter>
             <Button
               type="button"
@@ -1654,7 +1663,9 @@ export function ServerBackedBoardCalendar({
                 lifecycleTarget?.kind === "archive" ? "destructive" : "default"
               }
               className="min-h-11"
-              disabled={lifecyclePending}
+              disabled={
+                lifecyclePending || !canConfirmLifecycle(lifecycleTarget)
+              }
               onClick={() => void confirmLifecycle()}
             >
               {lifecyclePending

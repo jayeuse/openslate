@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.platform.scheduling.notification_creation import notify_sandbox_publication
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.designs.service import (
     _append_version,
@@ -213,6 +214,7 @@ def apply_publication(
     )
     publication.response_body = response.model_dump(by_alias=True, mode="json")
     try:
+        notify_sandbox_publication(db, version)
         db.commit()
     except IntegrityError as error:
         db.rollback()

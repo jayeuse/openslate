@@ -71,13 +71,12 @@ def test_record_attachment_for_a_missing_record_is_not_found() -> None:
     assert missing.value.status_code == 404
 
 
-def test_library_document_and_workspace_logo_are_administrator_only() -> None:
+def test_workspace_logo_is_administrator_only() -> None:
     admin = _actor(role="admin")
 
-    assert access.authorize(None, admin, "library_document") is admin  # type: ignore[arg-type]
     assert access.authorize(None, admin, "workspace_logo", write=True) is admin  # type: ignore[arg-type]
     with pytest.raises(HTTPException) as denied:
-        access.authorize(None, _actor(), "library_document")  # type: ignore[arg-type]
+        access.authorize(None, _actor(), "workspace_logo")  # type: ignore[arg-type]
     assert denied.value.status_code == 403
 
 

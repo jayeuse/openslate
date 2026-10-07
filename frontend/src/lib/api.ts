@@ -254,7 +254,11 @@ type BrowserLocks = {
   ): Promise<T>;
 };
 
-let refreshInFlight: Promise<RefreshResult> | null = null;
+type ActivityRenewal = { userId: string; signal: AbortSignal };
+let refreshInFlight: {
+  promise: Promise<RefreshResult>;
+  activity: ActivityRenewal | undefined;
+} | null = null;
 
 function isErrorDetail(
   value: unknown,
@@ -350,25 +354,45 @@ async function sendApiRequest(
   });
 }
 
-async function hasAuthenticatedSession(): Promise<boolean> {
+async function checkedSession(activity?: ActivityRenewal): Promise<unknown> {
   const response = await sendApiRequest("/auth/session", {
     cache: "no-store",
+    signal: activity?.signal,
   });
-  if (!response.ok) return false;
+  if (!response.ok) {
+    if (activity) throw new Error("Session verification unavailable");
+    return null;
+  }
   try {
-    const body: unknown = await response.json();
-    return isRecord(body) && body.authenticated === true;
+    return await response.json();
   } catch {
-    return false;
+    if (activity) throw new Error("Session verification unavailable");
+    return null;
   }
 }
 
-async function refreshAfterSessionRecheck(): Promise<RefreshResult> {
+async function refreshAfterSessionRecheck(
+  activity?: ActivityRenewal,
+): Promise<RefreshResult> {
   try {
-    if (await hasAuthenticatedSession()) return "current";
+    if (activity?.signal.aborted) return "rejected";
+    const current = await checkedSession(activity);
+    const authenticated = isRecord(current) && current.authenticated === true;
+    if (activity) {
+      // A returning tab must verify its new cookie identity through AppPage.
+      // Input from an older workspace never renews another account.
+      if (
+        !authenticated ||
+        current.user_id !== activity.userId ||
+        current.setup_required !== false ||
+        activity.signal.aborted
+      )
+        return "rejected";
+    } else if (authenticated) return "current";
     const refresh = await sendApiRequest("/auth/refresh", {
       method: "POST",
       cache: "no-store",
+      signal: activity?.signal,
     });
     if (refresh.ok) return "refreshed";
     return refresh.status === 401 ? "rejected" : "unavailable";
@@ -383,21 +407,37 @@ function browserLocks(): BrowserLocks | null {
   return locks ? (locks as unknown as BrowserLocks) : null;
 }
 
-export async function refreshBrowserSession(): Promise<RefreshResult> {
-  if (refreshInFlight) return refreshInFlight;
+export async function refreshBrowserSession(
+  activity?: ActivityRenewal,
+): Promise<RefreshResult> {
+  if (refreshInFlight) {
+    const previous = refreshInFlight;
+    const result = await previous.promise;
+    if (activity?.signal.aborted) return "rejected";
+    // Each mode keeps its own admission rules: a refused activity probe may
+    // still leave a live session that reactive work can refresh. Conversely,
+    // another account's work cannot replace this activity's identity check.
+    if (
+      (activity &&
+        (previous.activity?.userId !== activity.userId ||
+          previous.activity.signal.aborted)) ||
+      (!activity && previous.activity)
+    )
+      return refreshBrowserSession(activity);
+    return result;
+  }
   const locks = browserLocks();
   const refresh = locks
-    ? locks.request(
-        "openslate-auth-refresh",
-        { mode: "exclusive" },
-        refreshAfterSessionRecheck,
+    ? locks.request("openslate-auth-refresh", { mode: "exclusive" }, () =>
+        refreshAfterSessionRecheck(activity),
       )
-    : refreshAfterSessionRecheck();
-  refreshInFlight = refresh;
+    : refreshAfterSessionRecheck(activity);
+  const current = { promise: refresh, activity };
+  refreshInFlight = current;
   try {
     return await refresh;
   } finally {
-    if (refreshInFlight === refresh) refreshInFlight = null;
+    if (refreshInFlight === current) refreshInFlight = null;
   }
 }
 

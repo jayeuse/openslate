@@ -38,6 +38,16 @@ export const user = {
   performed_by: ids.admin,
 };
 
+/** Only GET /users list rows carry monitoring projections. */
+export const directoryUser = {
+  ...user,
+  active_session_count: 0,
+  mfa_verified_totp: null,
+  mfa_observed_at: null,
+  last_sign_in_at: null,
+  last_active_at: null,
+};
+
 export const group = {
   id: ids.group,
   name: "Inventory clerks",
@@ -71,6 +81,7 @@ export const session = {
   expires_at: "2026-10-28T00:00:00Z",
   user_agent: "Mozilla/5.0",
   current: false,
+  ip_address: null,
 };
 
 export const department = {

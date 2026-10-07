@@ -135,6 +135,11 @@ def _validate_postconditions(
         or workspace.logo_file_id is not None
         or workspace.timezone != "UTC"
         or workspace.locale != "en-US"
+        or workspace.currency != "PHP"
+        or workspace.week_start != "monday"
+        or workspace.business_hours != "09:00–18:00"
+        or workspace.mark != "RS"
+        or workspace.theme != "slate"
         or workspace.revision != 1
         or workspace.invitation_expiry_days != 7
         or workspace.guest_duration_days != 30
@@ -243,6 +248,8 @@ def apply_reset(
                legal_name = NULL, description = NULL, contact_email = NULL,
                contact_phone = NULL, postal_address = NULL,
                logo_file_id = NULL, timezone = 'UTC', locale = 'en-US',
+               currency = 'PHP', week_start = 'monday', business_hours = '09:00–18:00', mark = 'RS',
+               theme = 'slate',
                invitation_expiry_days = 7, guest_duration_days = 30, revision = 1,
                performed_by = NULL WHERE id = %s""",
             (locked_plan.workspace_snapshot.id,),
@@ -319,9 +326,7 @@ def apply_reset(
         if reset_lock_held:
             _rollback_safely(connection)
             try:
-                _execute(
-                    connection, "SELECT pg_advisory_unlock(%s)", (_RESET_ADVISORY_LOCK_KEY,)
-                )
+                _execute(connection, "SELECT pg_advisory_unlock(%s)", (_RESET_ADVISORY_LOCK_KEY,))
                 connection.commit()
             except Exception:
                 _rollback_safely(connection)

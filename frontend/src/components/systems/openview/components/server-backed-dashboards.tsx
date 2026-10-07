@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import { ApiError } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
 import { useQuery } from "@tanstack/react-query";
 import { useOpenViewAccessDenied } from "../adapters/openview-access";
 import {
@@ -101,10 +102,6 @@ type PendingNavigation = {
   resume: () => void;
 } | null;
 type DashboardDialogKind = "new" | "settings" | null;
-
-function safeMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
 
 function widgetTitle(
   widget: OpenViewDashboardWidget | DraftWidget,
@@ -346,7 +343,7 @@ export default function ServerBackedDashboards() {
       .catch((error: unknown) => {
         if (active && dashboardListRequestSequence.current === sequence)
           setDashboardListError(
-            safeMessage(error, "Dashboards could not be loaded."),
+            apiErrorMessage(error, "Dashboards could not be loaded."),
           );
       })
       .finally(() => {
@@ -371,7 +368,7 @@ export default function ServerBackedDashboards() {
       .catch((error: unknown) => {
         if (active)
           setCatalogError(
-            safeMessage(
+            apiErrorMessage(
               error,
               "The active data-source catalog could not be loaded.",
             ),
@@ -425,7 +422,7 @@ export default function ServerBackedDashboards() {
       .catch((error: unknown) => {
         if (active && fieldRequestSequence.current === sequence)
           setCatalogError(
-            safeMessage(error, "The field catalog could not be loaded."),
+            apiErrorMessage(error, "The field catalog could not be loaded."),
           );
       });
     return () => {
@@ -464,7 +461,7 @@ export default function ServerBackedDashboards() {
         if (active && routeLoadSequence.current === sequence) {
           setSelectedDashboard(null);
           setDashboardError(
-            safeMessage(error, "This Dashboard could not be loaded."),
+            apiErrorMessage(error, "This Dashboard could not be loaded."),
           );
         }
       })
@@ -744,7 +741,10 @@ export default function ServerBackedDashboards() {
           setLastGoodSnapshot(null);
         }
         setSnapshotError(
-          safeMessage(error, "This Dashboard widget could not be refreshed."),
+          apiErrorMessage(
+            error,
+            "This Dashboard widget could not be refreshed.",
+          ),
         );
       })
       .finally(() => {
@@ -930,7 +930,7 @@ export default function ServerBackedDashboards() {
     } catch (error) {
       if (dashboardListRequestSequence.current !== sequence) return;
       setDashboardListError(
-        safeMessage(error, "More Dashboards could not be loaded."),
+        apiErrorMessage(error, "More Dashboards could not be loaded."),
       );
     } finally {
       if (dashboardListRequestSequence.current === sequence)
@@ -951,7 +951,7 @@ export default function ServerBackedDashboards() {
       setCatalogSourcesHasMore(page.pagination.hasMore);
     } catch (error) {
       setCatalogError(
-        safeMessage(error, "More data sources could not be loaded."),
+        apiErrorMessage(error, "More data sources could not be loaded."),
       );
     } finally {
       setCatalogLoadingMore(false);
@@ -979,7 +979,9 @@ export default function ServerBackedDashboards() {
       setFieldsHasMore(page.pagination.hasMore);
     } catch (error) {
       if (fieldRequestSequence.current !== sequence) return;
-      setCatalogError(safeMessage(error, "More fields could not be loaded."));
+      setCatalogError(
+        apiErrorMessage(error, "More fields could not be loaded."),
+      );
     } finally {
       if (fieldRequestSequence.current === sequence)
         setFieldsLoadingMore(false);
@@ -1247,7 +1249,7 @@ export default function ServerBackedDashboards() {
         );
       } else {
         setDashboardError(
-          safeMessage(
+          apiErrorMessage(
             error,
             "The Dashboard could not be saved. Your draft is still here.",
           ),
@@ -1294,7 +1296,7 @@ export default function ServerBackedDashboards() {
       setNotice("Dashboard duplicated. The original is unchanged.");
     } catch (error) {
       setDashboardError(
-        safeMessage(error, "The Dashboard could not be duplicated."),
+        apiErrorMessage(error, "The Dashboard could not be duplicated."),
       );
     } finally {
       setDuplicatePending(false);
@@ -1311,7 +1313,7 @@ export default function ServerBackedDashboards() {
       setNotice("Dashboard reloaded.");
     } catch (error) {
       setDashboardError(
-        safeMessage(error, "The Dashboard could not be reloaded."),
+        apiErrorMessage(error, "The Dashboard could not be reloaded."),
       );
     } finally {
       setDashboardLoading(false);
@@ -1341,7 +1343,7 @@ export default function ServerBackedDashboards() {
       const conflict = getOpenViewDashboardConflict(error);
       setDashboardError(
         conflict?.message ??
-          safeMessage(error, "The Dashboard could not be archived."),
+          apiErrorMessage(error, "The Dashboard could not be archived."),
       );
     } finally {
       setArchivePending(false);
@@ -1386,7 +1388,7 @@ export default function ServerBackedDashboards() {
       const conflict = getOpenViewDashboardConflict(error);
       setDashboardError(
         conflict?.message ??
-          safeMessage(error, "The Dashboard could not be restored."),
+          apiErrorMessage(error, "The Dashboard could not be restored."),
       );
     } finally {
       restorePendingRef.current = "";
@@ -1443,7 +1445,10 @@ export default function ServerBackedDashboards() {
           setLastGoodSnapshot(null);
         }
         setSnapshotError(
-          safeMessage(error, "The Dashboard widget could not be refreshed."),
+          apiErrorMessage(
+            error,
+            "The Dashboard widget could not be refreshed.",
+          ),
         );
       })
       .finally(() => {

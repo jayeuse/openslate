@@ -88,6 +88,9 @@ def _notification(
     work.state = WorkState.SUCCEEDED
     notification = InAppNotification(
         work_id=work.id,
+        kind="report-run",
+        subject_type="report_run",
+        subject_id=run.id,
         recipient_id=recipient.id,
         created_at=when,
     )
@@ -137,6 +140,8 @@ def test_notification_list_is_actor_scoped_bounded_and_reference_only(
     assert set(response.json()["items"][0]) == {
         "id",
         "kind",
+        "subject_type",
+        "subject_id",
         "report_id",
         "run_id",
         "status",
@@ -144,6 +149,8 @@ def test_notification_list_is_actor_scoped_bounded_and_reference_only(
         "created_at",
         "read_at",
     }
+    assert response.json()["items"][0]["subject_type"] == "report_run"
+    assert response.json()["items"][0]["subject_id"] == response.json()["items"][0]["run_id"]
     assert response.json()["items"][0]["kind"] == "report-run"
     assert response.json()["items"][0]["status"] == "unread"
     assert "SECRET OUTPUT" not in response.text
@@ -215,6 +222,8 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
             )
             reference_fields = {
                 "kind": "post-publish",
+                "subject_type": "board_post",
+                "subject_id": str(post.id),
                 "board_id": str(board.id),
                 "post_id": str(post.id),
                 "publication_revision_id": str(revision.id),
@@ -222,6 +231,8 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
             expected_keys = {
                 "id",
                 "kind",
+                "subject_type",
+                "subject_id",
                 "board_id",
                 "post_id",
                 "publication_revision_id",
@@ -244,9 +255,7 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
             private_content.append(board_event.title)
             db.add(board_event)
             db.flush()
-            reminder = BoardEventReminder(
-                board_id=board.id, event_id=board_event.id, timing="1d"
-            )
+            reminder = BoardEventReminder(board_id=board.id, event_id=board_event.id, timing="1d")
             db.add(reminder)
             db.flush()
             work = ScheduledWork(
@@ -259,6 +268,8 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
             )
             reference_fields = {
                 "kind": "event-reminder",
+                "subject_type": "board_event",
+                "subject_id": str(board_event.id),
                 "board_id": str(board.id),
                 "event_id": str(board_event.id),
                 "occurrence_id": (
@@ -268,6 +279,8 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
             expected_keys = {
                 "id",
                 "kind",
+                "subject_type",
+                "subject_id",
                 "board_id",
                 "event_id",
                 "occurrence_id",
@@ -281,6 +294,11 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
         db.flush()
         notification = InAppNotification(
             work_id=work.id,
+            kind=reference_fields["kind"],
+            subject_type="board_post" if work.kind == WorkKind.POST_PUBLISH else "board_event",
+            subject_id=UUID(
+                reference_fields["post_id" if work.kind == WorkKind.POST_PUBLISH else "event_id"]
+            ),
             recipient_id=owner.id,
             created_at=scheduled_for,
         )

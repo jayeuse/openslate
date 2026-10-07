@@ -17,7 +17,13 @@ from app.core.integrations.supabase_auth import (
 )
 from app.systems.access.identity.admin_recovery import LocalRecoveryError
 from app.systems.access.identity.eligibility import is_identity_eligible
+from app.systems.access.identity.mfa_observations import (
+    commit_bound_observation,
+    observation_started_at,
+    record_observation,
+)
 from app.systems.access.identity.session_revocation import revoke_user_sessions
+from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -27,6 +33,7 @@ from app.systems.manage.audit.service import (
     append_security_event,
 )
 from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.security_policy import mfa_role_required
 
 
 class LocalSecurityRecoveryError(LocalRecoveryError):
@@ -75,8 +82,22 @@ def recover_workspace_security(
         user = _administrator(db, user_id, lock=True)
         _same_binding(user, provider_id, email)
         profile = _workspace(db)
-        if profile.mfa_policy != "optional" or profile.ip_allow_list:
-            profile.mfa_policy = "optional"
+        required = {role: mfa_role_required(profile, role) for role in ("admin", "member", "guest")}
+        if any(required.values()) or profile.ip_allow_list:
+            for affected in db.scalars(
+                select(User)
+                .where(
+                    established_user_clause(),
+                    User.role.in_([role for role, enabled in required.items() if enabled]),
+                )
+                .order_by(User.id)
+                .execution_options(populate_existing=True)
+                .with_for_update(of=User, nowait=True)
+            ):
+                affected.mfa_required_since = None
+            profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = (
+                False
+            )
             profile.ip_allow_list = []
             profile.revision += 1
         revoke_user_sessions(db, user_id, except_session_id=None)
@@ -84,6 +105,7 @@ def recover_workspace_security(
             db,
             _event(user_id, operation_id, SecurityEventOutcome.ATTEMPT, "local elevated recovery"),
         )
+        record_observation(db, user_id, provider_id, None, observation_started_at())
         commit_started = True
         db.commit()
     except LocalSecurityRecoveryError:
@@ -103,6 +125,7 @@ def recover_workspace_security(
     try:
         for factor_id in provider.admin_list_factors(provider_id):
             provider.admin_delete_factor(provider_id, factor_id)
+        started_at = observation_started_at()
         if provider.admin_list_factors(provider_id):
             factors_cleared = False
             raise LocalSecurityRecoveryError("Provider factors remain; rerun recovery")
@@ -110,10 +133,15 @@ def recover_workspace_security(
         user = _administrator(db, user_id, lock=True)
         _same_binding(user, provider_id, email)
         profile = _workspace(db)
-        if profile.mfa_policy != "optional" or profile.ip_allow_list:
+        if (
+            any(mfa_role_required(profile, role) for role in ("admin", "member", "guest"))
+            or profile.ip_allow_list
+        ):
             raise LocalSecurityRecoveryError("Workspace policy changed during recovery")
-        # Invalidate sessions admitted during the provider cleanup with stale assurance.
+        # Commit mandatory cleanup before fallible projection/terminal persistence.
         revoke_user_sessions(db, user_id, except_session_id=None)
+        db.commit()
+        record_observation(db, user_id, provider_id, False, started_at)
         append_security_event(
             db,
             _event(
@@ -128,6 +156,10 @@ def recover_workspace_security(
         SQLAlchemyError,
     ):
         db.rollback()
+        try:
+            commit_bound_observation(db, user_id, provider_id, None, observation_started_at())
+        except SupabaseAuthUnavailable:
+            pass
         _failure(
             user_id,
             operation_id,

@@ -1,10 +1,34 @@
 import { expect, test, type Page } from "./helpers/test";
 
-import { DAY, ids, mockAccessApi } from "./helpers/access-api";
+import {
+  DAY,
+  created,
+  ids,
+  listPage,
+  mockAccessApi,
+  person,
+} from "./helpers/access-api";
 
 // The People tab against the mocked Access API (see helpers/access-api.ts).
 
 const mockPeopleApi = (page: Page) => mockAccessApi(page);
+
+function addLaterPeople(
+  api: Awaited<ReturnType<typeof mockAccessApi>>,
+  count = 110,
+) {
+  for (let index = 0; index < count; index += 1) {
+    const id = `00000000-0000-4000-8000-${String(700 + index).padStart(12, "0")}`;
+    api.users.set(
+      id,
+      person({
+        id,
+        username: `later${String(index).padStart(3, "0")}`,
+        display_name: `Later ${String(index).padStart(3, "0")}`,
+      }),
+    );
+  }
+}
 
 function panel(page: Page, name: string) {
   return page.getByRole("dialog", { name });
@@ -16,6 +40,44 @@ async function openPerson(page: Page, name: string) {
     .getByRole("button", { name: new RegExp(`^${name}`) })
     .click();
   await expect(panel(page, name)).toBeVisible();
+}
+
+async function recordedTime(page: Page, value: string) {
+  return page.evaluate(
+    (instant) =>
+      new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(instant)),
+    value,
+  );
+}
+
+async function expectHistoryField(
+  page: Page,
+  name: string,
+  label: string,
+  expected: string,
+  width = 1440,
+) {
+  const people = page.getByRole(width === 390 ? "list" : "table", {
+    name: "People",
+    exact: true,
+  });
+  const row = people
+    .getByRole(width === 390 ? "listitem" : "row")
+    .filter({ hasText: name });
+  if (width === 390) {
+    // The designed mobile definition list associates each label with its value.
+    await expect(
+      row.getByText(label, { exact: true }).locator("+ dd"),
+    ).toHaveText(expected);
+  } else {
+    const column = await people
+      .getByRole("columnheader", { name: label, exact: true })
+      .evaluate((header) => (header as HTMLTableCellElement).cellIndex);
+    await expect(row.getByRole("cell").nth(column)).toHaveText(expected);
+  }
 }
 
 test("the directory shows role, status, groups and derived departments, and searches", async ({
@@ -510,3 +572,492 @@ for (const width of [1440, 390])
     else expect(box?.width).toBeLessThan(width / 2);
     expect(await fits()).toBe(true);
   });
+
+// These HTTP journeys exercise the adopted list boundary and rendered controls.
+// Eligibility, provider completeness, and persisted observations are backend proofs.
+test("13b: the closed directory requests server pages and searches before paging", async ({
+  page,
+}) => {
+  const api = await mockPeopleApi(page);
+  api.users.clear();
+  addLaterPeople(api);
+  api.users.set(
+    ids.ben,
+    person({
+      id: ids.ben,
+      username: "zzben",
+      display_name: "Zzz Ben",
+      job_title: "Unique clerk",
+    }),
+  );
+  await page.goto("/access?view=people");
+  const table = page.getByRole("table", { name: "People", exact: true });
+  await expect(table.getByRole("row")).toHaveCount(11);
+  await expect(
+    page.getByText("Showing 1–10 of 111", { exact: true }),
+  ).toBeVisible();
+  expect(
+    api.listReads.every(
+      (query) => query.get("limit") === "10" && query.get("offset") === "0",
+    ),
+  ).toBe(true);
+  expect(
+    api.listReads.some((query) => query.get("deleted") === "include"),
+  ).toBe(false);
+  await page
+    .getByRole("navigation", { name: "People pages", exact: true })
+    .getByRole("button", { name: "Go to next page", exact: true })
+    .click();
+  await expect(
+    page.getByText("Showing 11–20 of 111", { exact: true }),
+  ).toBeVisible();
+  await expect.poll(() => api.listReads.at(-1)?.get("offset")).toBe("10");
+  await page
+    .getByRole("searchbox", { name: "Search people", exact: true })
+    .fill("Unique clerk");
+  await expect(table.getByRole("row")).toHaveCount(2);
+  await expect(table.getByRole("row", { name: /Zzz Ben/ })).toBeVisible();
+  await expect(
+    page.getByText("Showing 1–1 of 1", { exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() => Object.fromEntries(api.listReads.at(-1) ?? []))
+    .toMatchObject({ search: "Unique clerk", offset: "0", limit: "10" });
+  await page.getByLabel("Rows per page", { exact: true }).selectOption("5");
+  await expect.poll(() => api.listReads.at(-1)?.get("limit")).toBe("5");
+});
+
+test("13b: combined directory filters and sort aliases reach the server with the matching total", async ({
+  page,
+}) => {
+  const api = await mockPeopleApi(page);
+  addLaterPeople(api);
+  for (const [sort, field, order] of [
+    ["expiry", "expires_at", "asc"],
+    ["newest", "created_at", "desc"],
+    ["name", "name", "asc"],
+    ["email", "email", "asc"],
+  ]) {
+    await page.goto(
+      `/access?view=people&role=member&status=active&group=${ids.clerks}&department=${ids.finance}&sort=${sort}`,
+    );
+    const table = page.getByRole("table", { name: "People", exact: true });
+    await expect(table.getByRole("row")).toHaveCount(2);
+    await expect(table.getByRole("row", { name: /Ben Cruz/ })).toBeVisible();
+    await expect
+      .poll(() => Object.fromEntries(api.listReads.at(-1) ?? []))
+      .toMatchObject({
+        role: "member",
+        status: "active",
+        deleted: "exclude",
+        group_id: ids.clerks,
+        department_id: ids.finance,
+        sort_by: field,
+        sort_order: order,
+        limit: "10",
+        offset: "0",
+      });
+  }
+});
+
+// From 2xl the table shows the count and both history columns; narrower
+// layouts merge history into "Last seen" and leave the count to the panel.
+for (const width of [1600, 1440, 390])
+  test(`13b: recorded history, two-step verification and active counts remain truthful at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    const api = await mockPeopleApi(page);
+    api.monitoring.set(ids.rosa, {
+      active_session_count: 1,
+      mfa_verified_totp: true,
+      mfa_observed_at: created,
+      last_sign_in_at: "2026-09-12T09:15:00Z",
+      last_active_at: "2026-10-01T07:45:00Z",
+    });
+    api.monitoring.set(ids.ben, {
+      active_session_count: 2,
+      mfa_verified_totp: false,
+      mfa_observed_at: created,
+      last_sign_in_at: null,
+      last_active_at: "2026-10-02T08:30:00Z",
+    });
+    api.monitoring.set(ids.ana, {
+      active_session_count: 0,
+      mfa_verified_totp: null,
+      mfa_observed_at: null,
+      last_sign_in_at: null,
+      last_active_at: null,
+    });
+    await page.goto("/access?view=people");
+    const people =
+      width === 390
+        ? page.getByRole("list", { name: "People", exact: true })
+        : page.getByRole("table", { name: "People", exact: true });
+    const row = (name: string) =>
+      people
+        .getByRole(width === 390 ? "listitem" : "row")
+        .filter({ hasText: name });
+    await expect(
+      row("Rosa Reyes").getByText("Verified", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      row("Ben Cruz").getByText("Not verified", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      row("Ana Santos").getByText("Unknown", { exact: true }),
+    ).toBeVisible();
+    await expect(people).toContainText(/Recorded/);
+    if (width === 1600) {
+      await expect(
+        row("Ben Cruz").getByText("2", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        row("Ana Santos").getByText("0", { exact: true }),
+      ).toBeVisible();
+      for (const [name, label, expected] of [
+        ["Rosa Reyes", "Last sign-in", "2026-09-12T09:15:00Z"],
+        ["Rosa Reyes", "Last activity", "2026-10-01T07:45:00Z"],
+        ["Ben Cruz", "Last sign-in", "No recorded sign-in"],
+        ["Ben Cruz", "Last activity", "2026-10-02T08:30:00Z"],
+        ["Ana Santos", "Last sign-in", "No recorded sign-in"],
+        ["Ana Santos", "Last activity", "No recorded activity"],
+      ] as const)
+        await expectHistoryField(
+          page,
+          name,
+          label,
+          expected.startsWith("2026")
+            ? await recordedTime(page, expected)
+            : expected,
+          width,
+        );
+    } else {
+      await expect(people).not.toContainText(/Active sessions|Last activity/);
+      // Last seen is the later of the recorded sign-in and activity.
+      for (const [name, expected] of [
+        ["Rosa Reyes", "2026-10-01T07:45:00Z"],
+        ["Ben Cruz", "2026-10-02T08:30:00Z"],
+        ["Ana Santos", "No recorded sign-in"],
+      ] as const)
+        await expectHistoryField(
+          page,
+          name,
+          "Last seen",
+          expected.startsWith("2026")
+            ? await recordedTime(page, expected)
+            : expected,
+          width,
+        );
+    }
+    await expect(people).not.toContainText(/never signed in|provider live/i);
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <=
+          document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+  });
+
+test("13b: offpage deleted deep link survives catalog loading and Restore", async ({
+  page,
+}) => {
+  const api = await mockPeopleApi(page);
+  addLaterPeople(api);
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  api.on("GET", "/api/users", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("deleted") === "include") await gate;
+    return "next" as const;
+  });
+  await page.goto(`/access?view=people&role=guest&user=${ids.eli}`);
+  await expect
+    .poll(() =>
+      api.listReads.some((query) => query.get("deleted") === "include"),
+    )
+    .toBe(true);
+  await expect(page).toHaveURL(new RegExp(`user=${ids.eli}`));
+  await expect(panel(page, "Eli Tan")).toBeHidden();
+  release?.();
+  const sheet = page.getByRole("dialog", { name: "Eli Tan", exact: true });
+  await expect(sheet).toBeVisible();
+  expect(api.sent("GET", `/api/users/${ids.eli}`)).toHaveLength(0);
+  await expect
+    .poll(() =>
+      api.listReads.some(
+        (query) =>
+          query.get("deleted") === "include" && query.get("offset") === "100",
+      ),
+    )
+    .toBe(true);
+  await sheet.getByRole("button", { name: "Restore", exact: true }).click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Restore Eli Tan?",
+    exact: true,
+  });
+  await confirmation
+    .getByRole("button", { name: "Restore", exact: true })
+    .click();
+  await expect(sheet).toContainText("Disabled");
+  await expect(
+    sheet.getByRole("button", { name: "Restore", exact: true }),
+  ).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`user=${ids.eli}`));
+  await page.reload();
+  await expect(
+    page.getByRole("dialog", { name: "Eli Tan", exact: true }),
+  ).toBeVisible();
+});
+
+test("13b: opening an invitation loads later-page sponsor choices without changing base invitation responses", async ({
+  page,
+}) => {
+  const api = await mockPeopleApi(page);
+  addLaterPeople(api);
+  const sponsor = "00000000-0000-4000-8000-000000000999";
+  api.users.set(
+    sponsor,
+    person({
+      id: sponsor,
+      username: "zzz_sponsor",
+      display_name: "Zzz Sponsor",
+      role: "admin",
+    }),
+  );
+  await page.goto("/access?view=people");
+  await expect(
+    page.getByRole("table", { name: "People", exact: true }),
+  ).toBeVisible();
+  expect(
+    api.listReads.some((query) => query.get("deleted") === "include"),
+  ).toBe(false);
+  await page
+    .getByRole("button", { name: "Invite person", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Invite a person",
+    exact: true,
+  });
+  await dialog
+    .getByLabel("Email", { exact: true })
+    .fill("newguest@example.com");
+  await dialog.getByLabel("Role", { exact: true }).selectOption("guest");
+  await expect(
+    dialog
+      .getByLabel("Sponsor", { exact: true })
+      .getByRole("option", { name: "Zzz Sponsor", exact: true }),
+  ).toHaveCount(1);
+  await dialog.getByLabel("Sponsor", { exact: true }).selectOption(sponsor);
+  await dialog
+    .getByRole("button", { name: "Send invitation", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  expect(api.sent("POST", "/api/auth/invitations")[0]?.body).toMatchObject({
+    role: "guest",
+    sponsor_user_id: sponsor,
+  });
+});
+
+for (const [contract, fields] of [
+  ["monitoring", { active_session_count: -1, last_sign_in_at: null }],
+  [
+    "history contract",
+    { active_session_count: 2, last_sign_in_at: "not-an-instant" },
+  ],
+] as const)
+  test(`13b: malformed ${contract} stays unavailable and a fresh Retry returns supported facts`, async ({
+    page,
+  }) => {
+    const api = await mockPeopleApi(page);
+    let malformed = true;
+    api.on("GET", "/api/users", (route) =>
+      malformed
+        ? route.fulfill({
+            json: listPage(
+              [
+                {
+                  ...api.users.get(ids.ben),
+                  mfa_verified_totp: false,
+                  mfa_observed_at: created,
+                  last_active_at: null,
+                  ...fields,
+                },
+              ],
+              new URL(route.request().url()),
+            ),
+          })
+        : "next",
+    );
+    await page.goto("/access?view=people");
+    await expect(
+      page.getByRole("alert").filter({ hasText: "People could not be loaded" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("table", { name: "People", exact: true }),
+    ).toHaveCount(0);
+    malformed = false;
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(
+      page
+        .getByRole("table", { name: "People", exact: true })
+        .getByRole("row", { name: /Ben Cruz/ }),
+    ).toContainText("Not verified");
+  });
+
+test("13b: person sessions show sign-in addresses and accepted revocation refreshes the directory count", async ({
+  page,
+}) => {
+  // The directory count column shows from the 2xl breakpoint.
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const api = await mockPeopleApi(page);
+  api.sessions.push({
+    id: "00000000-0000-4000-8000-0000000000f3",
+    created_at: created,
+    refreshed_at: created,
+    expires_at: "2099-01-01T00:00:00Z",
+    user_agent: "Unknown client",
+    current: false,
+    ip_address: null,
+  });
+  api.monitoring.set(ids.ben, {
+    active_session_count: 3,
+    mfa_verified_totp: false,
+    mfa_observed_at: created,
+    last_sign_in_at: "2026-09-12T09:15:00Z",
+    last_active_at: "2026-10-01T07:45:00Z",
+  });
+  await page.goto(`/access?view=people&user=${ids.ben}`);
+  let sheet = panel(page, "Ben Cruz");
+  await sheet.getByRole("tab", { name: "Sessions", exact: true }).click();
+  const sessions = sheet.getByRole("list", { name: "Sessions", exact: true });
+  await expect(sessions).toContainText("Sign-in IP: 198.51.100.101");
+  await expect(sessions).toContainText("Sign-in IP: 2001:db8::102");
+  await expect(sessions).toContainText("Sign-in IP: Unknown");
+  await sessions
+    .getByRole("button", { name: /^Sign out Laptop browser/ })
+    .click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Sign out", exact: true })
+    .click();
+  await expect(sessions).not.toContainText("198.51.100.101");
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+  const ben = page
+    .getByRole("table", { name: "People", exact: true })
+    .getByRole("row", { name: /Ben Cruz/ });
+  await expect(ben.getByText("2", { exact: true })).toBeVisible();
+  await expectHistoryField(
+    page,
+    "Ben Cruz",
+    "Last sign-in",
+    await recordedTime(page, "2026-09-12T09:15:00Z"),
+  );
+  await expectHistoryField(
+    page,
+    "Ben Cruz",
+    "Last activity",
+    await recordedTime(page, "2026-10-01T07:45:00Z"),
+  );
+  await openPerson(page, "Ben Cruz");
+  sheet = panel(page, "Ben Cruz");
+  await sheet.getByRole("tab", { name: "Sessions", exact: true }).click();
+  await sheet
+    .getByRole("button", { name: "Sign out everywhere", exact: true })
+    .click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Sign out", exact: true })
+    .click();
+  await expect(
+    sheet.getByRole("list", { name: "Sessions", exact: true }),
+  ).toHaveCount(0);
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(ben.getByText("0", { exact: true })).toBeVisible();
+  await expectHistoryField(
+    page,
+    "Ben Cruz",
+    "Last sign-in",
+    await recordedTime(page, "2026-09-12T09:15:00Z"),
+  );
+  await expectHistoryField(
+    page,
+    "Ben Cruz",
+    "Last activity",
+    await recordedTime(page, "2026-10-01T07:45:00Z"),
+  );
+});
+
+test("13b: an accepted person edit returns an out-of-range last page to current rows", async ({
+  page,
+}) => {
+  const api = await mockPeopleApi(page);
+  api.users.clear();
+  addLaterPeople(api, 11);
+  let holdLastPage = false;
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  api.on("GET", "/api/users", async (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    if (
+      holdLastPage &&
+      query.get("role") === "member" &&
+      query.get("offset") === "10"
+    )
+      await gate;
+    return "next" as const;
+  });
+  await page.goto("/access?view=people&role=member");
+  await expect(
+    page.getByText("Showing 1–10 of 11", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "People pages", exact: true })
+    .getByRole("button", { name: "Go to next page", exact: true })
+    .click();
+  await expect(
+    page.getByText("Showing 11–11 of 11", { exact: true }),
+  ).toBeVisible();
+  await openPerson(page, "Later 010");
+  const sheet = panel(page, "Later 010");
+  holdLastPage = true;
+  await sheet.getByLabel("Role", { exact: true }).selectOption("admin");
+  await sheet
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect(
+    sheet.getByRole("button", { name: "Save changes", exact: true }),
+  ).toBeDisabled();
+  await sheet
+    .getByLabel("Job title", { exact: true })
+    .fill("Kept while paging adjusts");
+  release?.();
+  await expect
+    .poll(() =>
+      api.listReads
+        .filter((query) => query.get("role") === "member")
+        .at(-1)
+        ?.get("offset"),
+    )
+    .toBe("0");
+  await expect(page).toHaveURL(/user=00000000-0000-4000-8000-000000000710/);
+  await expect(sheet.getByLabel("Job title", { exact: true })).toHaveValue(
+    "Kept while paging adjusts",
+  );
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(
+    page.getByText("Showing 1–10 of 10", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("table", { name: "People", exact: true }).getByRole("row"),
+  ).toHaveCount(11);
+});

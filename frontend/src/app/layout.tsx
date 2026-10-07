@@ -1,4 +1,5 @@
 import { CSPProvider } from "@base-ui/react/csp-provider";
+import { Toaster } from "@/components/ui/toast";
 import type { Metadata } from "next";
 import {
   Archivo,
@@ -10,6 +11,7 @@ import {
   Schibsted_Grotesk,
 } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
+import { OrganizationThemeProvider } from "@/components/organization-theme-provider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -93,7 +95,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body className="flex min-h-full flex-col">
         <ThemeProvider />
-        <CSPProvider disableStyleElements>{children}</CSPProvider>
+        <CSPProvider disableStyleElements>
+          <OrganizationThemeProvider>
+            {children}
+            <Toaster />
+          </OrganizationThemeProvider>
+        </CSPProvider>
       </body>
     </html>
   );

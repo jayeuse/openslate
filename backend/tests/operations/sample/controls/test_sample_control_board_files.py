@@ -79,7 +79,7 @@ def test_file_controls_use_the_anchor_boards_seeded_post_event_and_author(pack_k
     assert actions[4].values["filename"] == names[1]
 
     planned = plan_controls(dataset)
-    assert len(planned) == 95
+    assert len(planned) == 102
     assert [a.key for a in planned if a.key in {b.key for b in actions}] == [a.key for a in actions]
     assert CONTROL_ROUTES >= {
         ("PUT", "/api/boards/{board_id}/files/{file_id}/content"),
