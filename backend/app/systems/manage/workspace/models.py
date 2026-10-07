@@ -53,6 +53,14 @@ class WorkspaceProfile(BaseModel):
             name="ck_workspace_profiles_session_timeout_minutes",
         ),
         CheckConstraint(
+            "session_retention_days BETWEEN 1 AND 3650",
+            name="ck_workspace_profiles_session_retention_days_range",
+        ),
+        CheckConstraint(
+            "security_event_retention_days BETWEEN 1 AND 3650",
+            name="ck_workspace_profiles_security_event_retention_days_range",
+        ),
+        CheckConstraint(
             "password_min_length BETWEEN 12 AND 128",
             name="ck_workspace_profiles_password_min_length",
         ),
@@ -125,6 +133,12 @@ class WorkspaceProfile(BaseModel):
     )
     session_timeout_minutes: Mapped[int] = mapped_column(
         Integer, default=60, server_default=text("60"), nullable=False
+    )
+    session_retention_days: Mapped[int] = mapped_column(
+        Integer, default=365, server_default=text("365"), nullable=False
+    )
+    security_event_retention_days: Mapped[int] = mapped_column(
+        Integer, default=365, server_default=text("365"), nullable=False
     )
     password_min_length: Mapped[int] = mapped_column(
         Integer, default=12, server_default=text("12"), nullable=False

@@ -13,6 +13,7 @@ from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.core.observability import log_event
 from app.systems.access.identity.provider_signout import drain_provider_signouts
 from app.systems.access.identity.session_retention import retain_terminal_sessions
+from app.systems.manage.audit.retention import retain_security_events
 
 _POLL_SECONDS = 30
 _RETENTION_SECONDS = 3600
@@ -51,6 +52,17 @@ class ProviderSignoutWorker:
                 db.rollback()
             return retain_terminal_sessions(db)
 
+    def _run_event_retention_once(self) -> int:
+        values = environment_inputs(DOTENV_PATH)
+        url = self._settings.database_url
+        assert_provider_instance(values, database_url=url, expected_user="openslate_runtime")
+        target = instance_target_for_process(url, "openslate_runtime", process=values)
+        with AuditSession(bind=get_engine()) as db:
+            if target is not None:
+                assert_instance_target(db.connection(), target, expected_user="openslate_runtime")
+                db.rollback()
+            return retain_security_events(db)
+
     def start(self) -> None:
         if self._thread is not None:
             return
@@ -83,13 +95,18 @@ class ProviderSignoutWorker:
                 break
             if monotonic() >= retention_due:
                 try:
-                    self._run_retention_once()
-                except Exception:
-                    log_event(
-                        "operational_attention",
-                        reason_code="identity_session_retention_failed",
-                        upstream="database",
-                    )
+                    for maintenance, reason in (
+                        (self._run_retention_once, "identity_session_retention_failed"),
+                        (self._run_event_retention_once, "security_event_retention_failed"),
+                    ):
+                        if self._stop.is_set():
+                            break
+                        try:
+                            maintenance()
+                        except Exception:
+                            log_event(
+                                "operational_attention", reason_code=reason, upstream="database"
+                            )
                 finally:
                     retention_due = monotonic() + _RETENTION_SECONDS
             self._stop.wait(_POLL_SECONDS)

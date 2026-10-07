@@ -25,6 +25,8 @@ const securityFields = {
     .max(43200)
     .nullable(),
   session_concurrent_limit: z.number().int().min(1).max(100).nullable(),
+  session_retention_days: z.number().int().min(1).max(3650),
+  security_event_retention_days: z.number().int().min(1).max(3650),
   mfa_require_admin: z.boolean(),
   mfa_require_member: z.boolean(),
   mfa_require_guest: z.boolean(),
@@ -57,6 +59,8 @@ export type SecuritySettingsFormFields = {
   timeout: keyof typeof timeoutChoices;
   absoluteLifetime: string;
   concurrentLimit: string;
+  sessionRetention: string;
+  eventRetention: string;
   requireMfaAdmin: boolean;
   requireMfaMember: boolean;
   requireMfaGuest: boolean;
@@ -130,6 +134,8 @@ export function securitySettingsFormErrors(
   const bounds = {
     absoluteLifetime: [1, 43200, "Lifetime"],
     concurrentLimit: [1, 100, "Maximum sessions"],
+    sessionRetention: [1, 3650, "Session retention"],
+    eventRetention: [1, 3650, "Security event retention"],
     mfaGrace: [0, 30, "Enrollment grace"],
     loginThreshold: [1, 100, "Failed attempts"],
     loginWindow: [1, 1440, "Attempt window"],
@@ -183,6 +189,8 @@ export function securitySettingsFormFields(
       policy.session_concurrent_limit === null
         ? "Off"
         : String(policy.session_concurrent_limit),
+    sessionRetention: String(policy.session_retention_days),
+    eventRetention: String(policy.security_event_retention_days),
     requireMfaAdmin: policy.mfa_require_admin,
     requireMfaMember: policy.mfa_require_member,
     requireMfaGuest: policy.mfa_require_guest,
@@ -239,6 +247,8 @@ export function securitySettingsPatch(
     if (value !== undefined && value !== saved[field]) patch[key] = value;
   }
   for (const [field, key] of [
+    ["sessionRetention", "session_retention_days"],
+    ["eventRetention", "security_event_retention_days"],
     ["mfaGrace", "mfa_grace_days"],
     ["loginThreshold", "login_failed_attempt_threshold"],
     ["loginWindow", "login_window_minutes"],

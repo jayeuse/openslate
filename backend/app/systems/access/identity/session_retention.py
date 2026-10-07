@@ -12,8 +12,8 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
+from app.systems.manage.workspace.models import WorkspaceProfile
 
-_RETENTION_DAYS = 365
 _BATCH_LIMIT = 1000
 _LOCK_KEY = 0x4F535253455353
 
@@ -51,8 +51,17 @@ def retain_terminal_sessions(db: Session) -> int:
         if not db.scalar(select(func.pg_try_advisory_xact_lock(_LOCK_KEY))):
             db.rollback()
             return 0
+        profile = db.scalar(
+            select(WorkspaceProfile)
+            .where(WorkspaceProfile.singleton_key.is_(True))
+            .execution_options(populate_existing=True)
+            .with_for_update(read=True, of=WorkspaceProfile)
+        )
+        if profile is None:
+            raise SQLAlchemyError("Workspace retention policy is unavailable")
+        retention_days = profile.session_retention_days
         as_of = cast(datetime, db.scalar(select(func.now()))).astimezone(UTC)
-        cutoff = as_of - timedelta(days=_RETENTION_DAYS)
+        cutoff = as_of - timedelta(days=retention_days)
         rows = list(db.scalars(_retention_statement(cutoff)))
         if not rows:
             db.rollback()
@@ -69,7 +78,7 @@ def retain_terminal_sessions(db: Session) -> int:
                 occurred_at=as_of,
                 metadata={
                     "scope": "identity_sessions",
-                    "retention_days": _RETENTION_DAYS,
+                    "retention_days": retention_days,
                     "batch_limit": _BATCH_LIMIT,
                     "as_of": as_of.isoformat(),
                     "cutoff": cutoff.isoformat(),

@@ -36,10 +36,17 @@ def test_signout_worker_reports_inflight_work_until_it_finishes(
 
 
 @pytest.mark.parametrize(
-    "signout_failure,retention_failure", [(False, False), (True, False), (False, True)]
+    "signout_failure,retention_failure,event_failure",
+    [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (False, False, True),
+        (True, True, True),
+    ],
 )
 def test_retention_runs_initially_hourly_and_failures_do_not_couple_phases(
-    monkeypatch, signout_failure, retention_failure
+    monkeypatch, signout_failure, retention_failure, event_failure
 ):
     elapsed = [0.0]
     calls = []
@@ -68,10 +75,18 @@ def test_retention_runs_initially_hourly_and_failures_do_not_couple_phases(
             raise RuntimeError("Owned unavailable database")
         return 0
 
+    def event_retention():
+        calls.append(("event_retention", elapsed[0]))
+        if event_failure:
+            raise RuntimeError("Owned unavailable event retention")
+        return 0
+
     monkeypatch.setattr(worker, "run_once", signout)
     monkeypatch.setattr(worker, "_run_retention_once", retention, raising=False)
+    monkeypatch.setattr(worker, "_run_event_retention_once", event_retention, raising=False)
     worker._run()
     assert [time for phase, time in calls if phase == "retention"] == [0, 3600]
+    assert [time for phase, time in calls if phase == "event_retention"] == [0, 3600]
     assert len([phase for phase, _ in calls if phase == "signout"]) == 121
 
 

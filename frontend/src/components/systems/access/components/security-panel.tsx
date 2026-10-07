@@ -519,6 +519,8 @@ export function SecurityPolicyForm({
     key:
       | "absoluteLifetime"
       | "concurrentLimit"
+      | "sessionRetention"
+      | "eventRetention"
       | "mfaGrace"
       | "loginThreshold"
       | "loginWindow"
@@ -704,6 +706,36 @@ export function SecurityPolicyForm({
               </p>
             </div>
           </div>
+        </fieldset>
+        <fieldset
+          className="min-w-0 space-y-3 sm:col-span-2"
+          aria-describedby="security-retention-description"
+        >
+          <legend className="text-sm font-medium">Retention</legend>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+            {numberField(
+              "sessionRetention",
+              "session-retention-days",
+              "Session retention (days)",
+              1,
+              3650,
+            )}
+            {numberField(
+              "eventRetention",
+              "security-event-retention-days",
+              "Security event retention (days)",
+              1,
+              3650,
+            )}
+          </div>
+          <Alert
+            id="security-retention-description"
+            variant="warning"
+            role="note"
+          >
+            Shortening a period can make older sessions or security events
+            eligible for deletion at the next cleanup.
+          </Alert>
         </fieldset>
         <fieldset
           className="min-w-0 space-y-3 sm:col-span-2"

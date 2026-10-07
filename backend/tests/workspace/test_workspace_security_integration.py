@@ -22,6 +22,8 @@ pytestmark = pytest.mark.integration
 _FIELDS = (
     "revision",
     "session_timeout_minutes",
+    "session_retention_days",
+    "security_event_retention_days",
     "password_min_length",
     "password_require_mixed_case",
     "password_require_number",
@@ -50,6 +52,7 @@ def security_workspace(provider_account):
         assert profile is not None
         original = {field: getattr(profile, field) for field in _FIELDS}
         profile.session_timeout_minutes = 60
+        profile.session_retention_days = profile.security_event_retention_days = 365
         profile.password_min_length = 12
         profile.password_require_mixed_case = True
         profile.password_require_number = False
@@ -165,6 +168,11 @@ def test_workspace_security_rejects_invalid_policies_and_admin_lockout_without_w
         {"ip_allow_list": ["127.0.0.1/33"]},
         {"ip_allow_list": ["127.0.0.1/32"] * 101},
         {"unknown": True},
+    ]
+    invalid += [
+        {field: value}
+        for field in ("session_retention_days", "security_event_retention_days")
+        for value in (None, True, False, "365", 365.0, 0, 3651)
     ]
     for fields in invalid:
         response = client.patch("/api/workspace/security", json={"revision": revision, **fields})
@@ -440,3 +448,37 @@ def test_policy_and_event_rollback_together_when_commit_fails(security_workspace
             )
             == prior_ids
         )
+
+
+def test_retention_defaults_independent_updates_and_omissions_preserve_policy(security_workspace):
+    client, actor_id, owner = security_workspace
+    before = client.get("/api/workspace/security").json()
+    assert before.get("session_retention_days") == 365
+    assert before.get("security_event_retention_days") == 365
+    fields = ("session_retention_days", "security_event_retention_days")
+    try:
+        first = client.patch(
+            "/api/workspace/security",
+            json={"revision": before["revision"], "session_retention_days": 1},
+        )
+        assert first.status_code == 200
+        assert first.json()["session_retention_days"] == 1
+        assert first.json()["security_event_retention_days"] == 365
+        second = client.patch(
+            "/api/workspace/security",
+            json={"revision": first.json()["revision"], "security_event_retention_days": 3650},
+        )
+        assert second.status_code == 200
+        assert second.json()["session_retention_days"] == 1
+        assert second.json()["security_event_retention_days"] == 3650
+        assert client.get("/api/workspace/security").json() == second.json()
+        assert not set(fields) & client.get("/api/workspace").json().keys()
+        with Session(owner) as db:
+            profile = db.scalar(select(WorkspaceProfile))
+            assert profile.performed_by == actor_id
+    finally:
+        with Session(owner) as db:
+            profile = db.scalar(select(WorkspaceProfile))
+            for field in fields:
+                setattr(profile, field, before[field])
+            db.commit()

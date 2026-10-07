@@ -100,6 +100,8 @@ const policyLabels: Record<string, string> = {
   session_timeout_minutes: "Session timeout",
   session_absolute_lifetime_minutes: "Session lifetime",
   session_concurrent_limit: "Maximum sessions",
+  session_retention_days: "Session retention",
+  security_event_retention_days: "Security event retention",
   password_min_length: "Minimum password length",
   password_require_mixed_case: "Mixed-case password requirement",
   password_require_number: "Password number requirement",

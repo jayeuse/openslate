@@ -7,6 +7,8 @@ export async function mockManageSecurity(page: Page) {
       session_timeout_minutes: 60,
       session_absolute_lifetime_minutes: null as number | null,
       session_concurrent_limit: null as number | null,
+      session_retention_days: 365,
+      security_event_retention_days: 365,
       password_min_length: 12,
       password_require_mixed_case: true,
       password_require_number: false,

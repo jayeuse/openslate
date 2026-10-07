@@ -1,5 +1,6 @@
 import { expect, test } from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
+import { mockManageBackups } from "./helpers/manage-backups";
 import { mockAccessApi, person, created } from "./helpers/access-api";
 import {
   concealMfaTestCredentials,
@@ -599,7 +600,16 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
     exact: true,
   });
   await threshold.fill("4");
+  const sessionRetention = policy.getByLabel("Session retention (days)", {
+    exact: true,
+  });
+  const eventRetention = policy.getByLabel("Security event retention (days)", {
+    exact: true,
+  });
+  await sessionRetention.fill("90");
+  await eventRetention.fill("180");
   state.policy.revision = 2;
+  state.policy.security_event_retention_days = 730;
   state.workspace.revision = 2;
   const save = policy.getByRole("button", {
     name: "Save settings",
@@ -611,7 +621,11 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
     policy.getByLabel("Session timeout", { exact: true }),
   ).toHaveValue("30 minutes");
   await expect(threshold).toHaveValue("4");
+  await expect(sessionRetention).toHaveValue("90");
+  await expect(eventRetention).toHaveValue("180");
   expect(state.policy.session_timeout_minutes).toBe(60);
+  expect(state.policy.session_retention_days).toBe(365);
+  expect(state.policy.security_event_retention_days).toBe(730);
   state.policyWriteFailure = { status: 409, code: "ip_lockout" };
   const address = policy.getByLabel("IP address or CIDR", { exact: true });
   await address.fill("192.0.2.0/24");
@@ -651,6 +665,8 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
   await save.click();
   await expect(policy).toContainText("The policy could not be saved");
   await expect(threshold).toHaveValue("4");
+  await expect(sessionRetention).toHaveValue("90");
+  await expect(eventRetention).toHaveValue("180");
   await expect(save).toBeEnabled();
   state.policyWriteFailure = null;
   await save.click();
@@ -659,6 +675,12 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
   expect(state.writes.at(-1)?.body).toMatchObject({
     revision: 2,
     login_failed_attempt_threshold: 4,
+    session_retention_days: 90,
+    security_event_retention_days: 180,
+  });
+  expect(state.policy).toMatchObject({
+    session_retention_days: 90,
+    security_event_retention_days: 180,
   });
   await policy.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
@@ -806,6 +828,8 @@ test("12b: numeric bounds and whole numbers retain invalid drafts without a requ
     ["Failed attempts before lockout", "0", "100"],
     ["Attempt window (minutes)", "1441", "1"],
     ["Lockout duration (minutes)", "1.5", "1"],
+    ["Session retention (days)", "0", "1"],
+    ["Security event retention (days)", "3651", "3650"],
   ] as const;
   for (const [label, invalid] of cases)
     await policy.getByLabel(label, { exact: true }).fill(invalid);
@@ -830,6 +854,24 @@ test("12b: numeric bounds and whole numbers retain invalid drafts without a requ
   expect(pageErrors).toEqual([]);
   for (const [label, , valid] of cases)
     await policy.getByLabel(label, { exact: true }).fill(valid);
+  // Each retention field must reject its own draft while every sibling is valid.
+  for (const [label, valid] of [
+    ["Session retention (days)", "1"],
+    ["Security event retention (days)", "3650"],
+  ] as const) {
+    const field = policy.getByLabel(label, { exact: true });
+    for (const invalid of ["", "0", "-1", "1.5", "1e2", "3651"]) {
+      await field.fill(invalid);
+      await save.click();
+      await expect(field).toHaveAttribute("aria-invalid", "true");
+      await expect(field).toHaveAccessibleDescription(
+        /whole number from 1 to 3650/,
+      );
+      await expect(field).toHaveValue(invalid);
+      expect(state.writes).toEqual([]);
+    }
+    await field.fill(valid);
+  }
   await save.click();
   await expect(save).toBeDisabled();
   expect(state.writes.at(-1)?.body).toEqual({
@@ -839,8 +881,188 @@ test("12b: numeric bounds and whole numbers retain invalid drafts without a requ
     login_failed_attempt_threshold: 100,
     login_window_minutes: 1,
     login_cooldown_minutes: 1,
+    session_retention_days: 1,
+    security_event_retention_days: 3650,
   });
   expect(pageErrors).toEqual([]);
+});
+
+for (const width of [1440, 390])
+  test(`13c: separate retention days use Save and Discard without changing Backup at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    const state = await mockManageSecurity(page);
+    const backup = await mockManageBackups(page);
+    await page.goto("/access?view=security");
+    await page
+      .getByRole("button", { name: "Edit policy", exact: true })
+      .click();
+    const policy = page.getByRole("dialog", {
+      name: "Account policy",
+      exact: true,
+    });
+    const retention = policy.getByRole("group", {
+      name: "Retention",
+      exact: true,
+    });
+    const sessions = retention.getByLabel("Session retention (days)", {
+      exact: true,
+    });
+    const events = retention.getByLabel("Security event retention (days)", {
+      exact: true,
+    });
+    const save = policy.getByRole("button", {
+      name: "Save settings",
+      exact: true,
+    });
+    const discard = policy.getByRole("button", {
+      name: "Discard changes",
+      exact: true,
+    });
+    await expect(sessions).toHaveValue("365");
+    await expect(events).toHaveValue("365");
+    await expect(retention).toContainText(/shorten.*older.*next cleanup/i);
+    await expect(save).toBeDisabled();
+    await expect(discard).toBeDisabled();
+    expect(
+      await policy.evaluate(
+        (dialog) => dialog.scrollWidth <= dialog.clientWidth,
+      ),
+    ).toBe(true);
+
+    await sessions.fill("90");
+    await events.fill("180");
+    await policy.getByRole("button", { name: "Close", exact: true }).click();
+    expect(state.writes).toEqual([]);
+    await page
+      .getByRole("button", { name: "Edit policy", exact: true })
+      .click();
+    await expect(sessions).toHaveValue("90");
+    await expect(events).toHaveValue("180");
+    await discard.click();
+    await expect(sessions).toHaveValue("365");
+    await expect(events).toHaveValue("365");
+    await expect(save).toBeDisabled();
+    expect(state.writes).toEqual([]);
+
+    await sessions.fill("90");
+    await expect(save).toBeEnabled();
+    await save.click();
+    await expect(save).toBeDisabled();
+    await expect(events).toHaveValue("365");
+    expect(state.writes).toEqual([
+      {
+        path: "/workspace/security",
+        body: { revision: 1, session_retention_days: 90 },
+      },
+    ]);
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Edit policy", exact: true })
+      .click();
+    await expect(sessions).toHaveValue("90");
+    await expect(events).toHaveValue("365");
+    await events.fill("730");
+    await expect(save).toBeEnabled();
+    await save.click();
+    await expect(save).toBeDisabled();
+    expect(state.writes.at(-1)).toEqual({
+      path: "/workspace/security",
+      body: { revision: 2, security_event_retention_days: 730 },
+    });
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Edit policy", exact: true })
+      .click();
+    await expect(sessions).toHaveValue("90");
+    await expect(events).toHaveValue("730");
+    await expect(save).toBeDisabled();
+    await expect(discard).toBeDisabled();
+    expect(backup.patches).toEqual([]);
+
+    await page.goto("/manage?view=backup");
+    await page
+      .getByRole("button", { name: "Edit schedule", exact: true })
+      .click();
+    const backupPolicy = page.getByRole("dialog", {
+      name: "Backup schedule",
+      exact: true,
+    });
+    const backupRetention = backupPolicy.getByLabel("Retention period", {
+      exact: true,
+    });
+    await expect(backupRetention).toHaveValue("30");
+    await expect(backupRetention.getByRole("option")).toHaveText([
+      "7 days",
+      "30 days",
+      "90 days",
+    ]);
+    expect(backup.patches).toEqual([]);
+    expect(state.writes).toHaveLength(2);
+  });
+
+test("13c: malformed retention policy cannot manufacture defaults and explicit Retry recovers", async ({
+  page,
+}) => {
+  const state = await mockManageSecurity(page);
+  state.policy.session_retention_days = 57;
+  state.policy.security_event_retention_days = 823;
+  let responsePolicy: Record<string, unknown> | null = null;
+  await page.route("**/api/workspace/security", async (route) => {
+    if (route.request().method() === "GET" && responsePolicy) {
+      await route.fulfill({ json: responsePolicy });
+      return;
+    }
+    await route.fallback();
+  });
+  const policy = page.getByRole("dialog", {
+    name: "Account policy",
+    exact: true,
+  });
+  for (const field of [
+    "session_retention_days",
+    "security_event_retention_days",
+  ] as const) {
+    for (const invalid of [undefined, null, false, "365", 365.5, 0, 3651]) {
+      responsePolicy = { ...state.policy };
+      if (invalid === undefined) delete responsePolicy[field];
+      else responsePolicy[field] = invalid;
+      await page.goto("/access?view=security");
+      await page
+        .getByRole("button", { name: "Edit policy", exact: true })
+        .click();
+      await expect(
+        policy
+          .getByRole("alert")
+          .filter({ hasText: "Account policy could not be loaded." }),
+      ).toHaveAttribute("data-variant", "destructive");
+      await expect(
+        policy.getByLabel("Session retention (days)", { exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        policy.getByLabel("Security event retention (days)", { exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        policy.getByLabel("Session timeout", { exact: true }),
+      ).toHaveCount(0);
+      expect(state.writes).toEqual([]);
+    }
+  }
+  responsePolicy = null;
+  await policy
+    .getByRole("button", { name: "Retry account policy", exact: true })
+    .click();
+  await expect(
+    policy.getByLabel("Session retention (days)", { exact: true }),
+  ).toHaveValue("57");
+  await expect(
+    policy.getByLabel("Security event retention (days)", { exact: true }),
+  ).toHaveValue("823");
+  await expect(
+    policy.getByRole("button", { name: "Save settings", exact: true }),
+  ).toBeDisabled();
+  expect(state.writes).toEqual([]);
 });
 
 test("12b: a refused all-role MFA save retains the future draft and offers current Manage MFA before retry", async ({

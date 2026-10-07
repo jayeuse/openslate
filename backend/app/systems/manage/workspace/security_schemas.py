@@ -24,6 +24,8 @@ class WorkspaceSecurityUpdate(BaseModel):
 
     revision: StrictInt = Field(ge=1)
     session_timeout_minutes: SessionTimeout | None = None
+    session_retention_days: StrictInt | None = Field(default=None, ge=1, le=3650)
+    security_event_retention_days: StrictInt | None = Field(default=None, ge=1, le=3650)
     password_min_length: StrictInt | None = Field(default=None, ge=12, le=128)
     password_require_mixed_case: StrictBool | None = None
     password_require_number: StrictBool | None = None
@@ -71,6 +73,8 @@ class WorkspaceSecurityResponse(BaseModel):
 
     revision: int
     session_timeout_minutes: SessionTimeout
+    session_retention_days: int = Field(ge=1, le=3650)
+    security_event_retention_days: int = Field(ge=1, le=3650)
     password_min_length: int
     password_require_mixed_case: bool
     password_require_number: bool

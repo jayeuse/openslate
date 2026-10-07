@@ -228,7 +228,12 @@ test("Events prototype-like unknown strings remain plain facts and unknown metad
     securityEvent(7, {
       event_type: "workspace.security_policy_change",
       metadata: {
-        changed_fields: ["constructor", "session_timeout_minutes"],
+        changed_fields: [
+          "constructor",
+          "session_timeout_minutes",
+          "session_retention_days",
+          "security_event_retention_days",
+        ],
         revision: 2,
       },
     }),
@@ -245,6 +250,12 @@ test("Events prototype-like unknown strings remain plain facts and unknown metad
   const policy = await details(page, "Account policy change");
   await expect(
     policy.getByText("Session timeout", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    policy.getByText("Session retention", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    policy.getByText("Security event retention", { exact: true }),
   ).toBeVisible();
   await expect(policy.getByText("constructor", { exact: true })).toHaveCount(0);
   expect(consoleErrors).toEqual([]);

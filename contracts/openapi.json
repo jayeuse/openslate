@@ -14711,6 +14711,12 @@
             "title": "Revision",
             "type": "integer"
           },
+          "security_event_retention_days": {
+            "maximum": 3650.0,
+            "minimum": 1.0,
+            "title": "Security Event Retention Days",
+            "type": "integer"
+          },
           "session_absolute_lifetime_minutes": {
             "anyOf": [
               {
@@ -14733,6 +14739,12 @@
             ],
             "title": "Session Concurrent Limit"
           },
+          "session_retention_days": {
+            "maximum": 3650.0,
+            "minimum": 1.0,
+            "title": "Session Retention Days",
+            "type": "integer"
+          },
           "session_timeout_minutes": {
             "enum": [
               15,
@@ -14747,6 +14759,8 @@
         "required": [
           "revision",
           "session_timeout_minutes",
+          "session_retention_days",
+          "security_event_retention_days",
           "password_min_length",
           "password_require_mixed_case",
           "password_require_number",
@@ -14908,6 +14922,19 @@
             "title": "Revision",
             "type": "integer"
           },
+          "security_event_retention_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Event Retention Days"
+          },
           "session_absolute_lifetime_minutes": {
             "anyOf": [
               {
@@ -14933,6 +14960,19 @@
               }
             ],
             "title": "Session Concurrent Limit"
+          },
+          "session_retention_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Retention Days"
           },
           "session_timeout_minutes": {
             "anyOf": [
