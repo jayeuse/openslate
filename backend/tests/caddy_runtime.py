@@ -40,7 +40,7 @@ def render_gateway_config(
     }
     for placeholder, value in replacements.items():
         source = source.replace(placeholder, value)
-    if "{{" in source or source.count(f"reverse_proxy {upstream_host}:") != 4:
+    if "{{" in source or source.count(f"reverse_proxy {upstream_host}:") != 5:
         raise RuntimeError("gateway template no longer matches the disposable test contract")
     return source
 

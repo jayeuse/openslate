@@ -6,10 +6,13 @@ import {
   listManageAuditLogs,
 } from "../../../src/components/systems/manage/adapters/audit-api";
 import {
+  admitManageBackupExportDownload,
+  getManageBackupExport,
   getManageBackupStatus,
   getManageVersion,
   listManageBackups,
   queueManageBackup,
+  queueManageBackupExport,
   updateManageBackupPolicy,
 } from "../../../src/components/systems/manage/adapters/backup-api";
 import {
@@ -33,6 +36,14 @@ const auditFilters = {
 
 // Backups keep 7, 30 or 90 days; the screen offers only those.
 const backupRun = { retention_days: 30 };
+const queuedExport = {
+  state: "queued",
+  ready_at: null,
+  expires_at: null,
+  size_bytes: null,
+  sha256: null,
+  failure_code: null,
+};
 // Release links must point at a tagged OpenSlate release.
 const version = {
   release_url: "https://github.com/jayeuse/openslate/releases/tag/v1.2.3",
@@ -102,6 +113,26 @@ describeContracts("Manage", [
     name: "queueManageBackup",
     run: () => queueManageBackup("Before update", "backup-key-1"),
     responses: { "POST /api/backups": backupRun },
+  },
+  {
+    name: "queueManageBackupExport",
+    run: () =>
+      queueManageBackupExport(
+        { backup_run_id: auditId, passphrase: "synthetic-export-passphrase" },
+        "export-key-1",
+      ),
+    responses: { "POST /api/backups/exports": queuedExport },
+  },
+  {
+    name: "getManageBackupExport",
+    run: () => getManageBackupExport(auditId),
+    responses: { "GET /api/backups/exports/{export_id}": queuedExport },
+  },
+  {
+    name: "admitManageBackupExportDownload",
+    // Acting passwords use the existing 1–128-character verifier, not the
+    // policy for choosing a new password.
+    run: () => admitManageBackupExportDownload(auditId, "old"),
   },
   {
     name: "getManageVersion",

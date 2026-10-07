@@ -559,6 +559,18 @@
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "admitManageBackupExportDownload",
+    "method": "POST",
+    "path": "/api/backups/exports/{param}/download-admission"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "getManageBackupExport",
+    "method": "GET",
+    "path": "/api/backups/exports/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
     "function": "getManageBackupStatus",
     "method": "GET",
     "path": "/api/backups/status"
@@ -580,6 +592,12 @@
     "function": "queueManageBackup",
     "method": "POST",
     "path": "/api/backups"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",
+    "function": "queueManageBackupExport",
+    "method": "POST",
+    "path": "/api/backups/exports"
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",

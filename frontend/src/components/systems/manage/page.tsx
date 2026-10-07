@@ -1,6 +1,7 @@
 "use client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
+import type { Route } from "next";
 import { AlertTriangle, CheckCircle2, Database, X } from "lucide-react";
 import {
   Suspense,
@@ -83,7 +84,10 @@ import {
   SnapshotScheduleForm,
 } from "./components/backup-panel";
 import { useManageMaintenance } from "./state/controller";
-import { backupScheduleLabels } from "./adapters/backup-api";
+import {
+  backupScheduleLabels,
+  isManageBackupExportId,
+} from "./adapters/backup-api";
 import { UpdatesPanel } from "./components/updates-panel";
 import { LicensingPanel } from "./components/licensing-panel";
 
@@ -284,6 +288,24 @@ function ManageContent() {
     recoveryActive: requestedTab === "Backup",
     historyActive: requestedTab === "Backup",
     versionActive: requestedTab === "Updates & licensing",
+    exportId:
+      searchParams.get("export") !== null &&
+      isManageBackupExportId(searchParams.get("export")!)
+        ? searchParams.get("export")!.toLowerCase()
+        : null,
+    invalidExportId:
+      searchParams.get("export") !== null &&
+      !isManageBackupExportId(searchParams.get("export")!),
+    exportAllowed: canEditOrganization,
+    exportActorId: userId,
+    onExportChange: (id) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("view", "backup");
+      params.set("export", id);
+      router.replace(("/manage?" + params.toString()) as Route, {
+        scroll: false,
+      });
+    },
   });
   const tab = requestedTab;
   const [workspaceDraft, setWorkspaceDraft] =

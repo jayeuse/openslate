@@ -10,6 +10,7 @@ EXPECTED_DATABASE_USER = "openslate_owner"
 
 APPLICATION_TABLES = (
     "audit_logs",
+    "backup_export_operations",
     "backup_policies",
     "backup_runs",
     "board_attachments",
@@ -68,6 +69,7 @@ NON_PRESERVED_TABLES = tuple(
     for table in APPLICATION_TABLES
     if table
     not in {
+        "backup_export_operations",
         "backup_policies",
         "backup_runs",
         "boards",
@@ -168,7 +170,8 @@ FROM public.users AS profile
 """
 _LOCK_APPLICATION_STATEMENT = """
 LOCK TABLE public.alembic_version, public.audit_logs,
- public.backup_policies, public.backup_runs, public.update_statuses,
+ public.backup_export_operations, public.backup_policies, public.backup_runs,
+ public.update_statuses,
  public.board_attachments, public.board_event_reminders, public.board_events,
  public.board_groups, public.board_post_revision_attachments,
  public.board_post_revision_record_links,

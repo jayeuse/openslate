@@ -1153,6 +1153,142 @@
         "title": "BackupCreate",
         "type": "object"
       },
+      "BackupExportCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "backup_run_id": {
+            "format": "uuid",
+            "title": "Backup Run Id",
+            "type": "string"
+          },
+          "passphrase": {
+            "format": "password",
+            "maxLength": 128,
+            "minLength": 16,
+            "title": "Passphrase",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "backup_run_id",
+          "passphrase"
+        ],
+        "title": "BackupExportCreate",
+        "type": "object"
+      },
+      "BackupExportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "backup_run_id": {
+            "format": "uuid",
+            "title": "Backup Run Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "source_unavailable",
+                  "source_unproven",
+                  "copy_failed",
+                  "verification_failed",
+                  "export_interrupted",
+                  "result_unconfirmed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "ready_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ready At"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "preparing",
+              "ready",
+              "failed",
+              "interrupted",
+              "expired"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "backup_run_id",
+          "state",
+          "requested_at",
+          "ready_at",
+          "expires_at",
+          "size_bytes",
+          "sha256",
+          "failure_code"
+        ],
+        "title": "BackupExportResponse",
+        "type": "object"
+      },
       "BackupFailureNotificationResponse": {
         "properties": {
           "created_at": {
@@ -4293,6 +4429,39 @@
         ],
         "title": "EventSort",
         "type": "string"
+      },
+      "ExportDownloadAdmissionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "format": "password",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "title": "ExportDownloadAdmissionRequest",
+        "type": "object"
+      },
+      "ExportDownloadAdmissionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expires_at"
+        ],
+        "title": "ExportDownloadAdmissionResponse",
+        "type": "object"
       },
       "FactorResponse": {
         "properties": {
@@ -17721,6 +17890,228 @@
           }
         ],
         "summary": "Queue Backup",
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/api/backups/exports": {
+      "post": {
+        "operationId": "queue_backup_export",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupExportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupExportResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Queue Backup Export",
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/api/backups/exports/{export_id}": {
+      "get": {
+        "operationId": "get_backup_export",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupExportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Backup Export",
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/api/backups/exports/{export_id}/content": {
+      "get": {
+        "operationId": "download_backup_export_content",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Download Backup Export Content",
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/api/backups/exports/{export_id}/download-admission": {
+      "post": {
+        "operationId": "admit_backup_export_download",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportDownloadAdmissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportDownloadAdmissionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admit Backup Export Download",
         "tags": [
           "backups"
         ]

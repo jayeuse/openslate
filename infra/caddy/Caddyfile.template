@@ -37,6 +37,28 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
         }
     }
 
+    @backup_export_content {
+        method GET
+        path_regexp backup_export_content "^/api/backups/exports/[^/]+/content$"
+    }
+    handle @backup_export_content {
+        reverse_proxy {{UPSTREAM_HOST}}:{{BACKEND_PORT}} {
+            flush_interval -1
+            header_up -Accept-Encoding
+            header_up Host {http.request.hostport}
+            header_up Origin {http.request.header.Origin}
+            header_up X-Request-ID {http.request.header.X-Request-ID}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Host {http.request.hostport}
+            header_up X-Forwarded-Proto {http.request.scheme}
+            transport http {
+                compression off
+                dial_timeout 5s
+                response_header_timeout 330s
+            }
+        }
+    }
+
     @api path /api /api/*
     handle @api {
         reverse_proxy {{UPSTREAM_HOST}}:{{BACKEND_PORT}} {

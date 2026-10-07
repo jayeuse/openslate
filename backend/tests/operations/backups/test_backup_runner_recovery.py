@@ -10,11 +10,10 @@ from typing import Any
 
 import pytest
 
-from operations.backup_runner import run_once
 from operations.backups import archive as backup_runner_archive
+from operations.backups import export_files
 from operations.backups.host import Host, RunnerError, physical_archive
 from tests.operations.backups.backup_runner_fixtures import (
-    NOW,
     SNAPSHOT,
     SyntheticCommands,
     claim_document,
@@ -43,21 +42,18 @@ def test_failed_backup_stays_quiescent_until_explicit_recovery_without_new_backu
         raise RunnerError("backup_failed")
 
     with pytest.raises(RunnerError, match="backup_failed"):
-        run_once(
-            config, state, command_runner=commands, archive_runner=fail_archive, now=lambda: NOW
-        )
+        execute(config, state, commands, archive_runner=fail_archive)
     assert all(item["State"]["Status"] == "exited" for item in commands.containers)
     _, journal = active_journal(state)
     assert journal["outcome"]["state"] == "failed"
     assert journal["outcome"]["reconciled_at"] is None
     with pytest.raises(RunnerError, match="recovery_required"):
         execute(config, state, commands)
-    result = run_once(
+    result = execute(
         config,
         state,
-        command_runner=commands,
+        commands,
         archive_runner=fail_archive,
-        now=lambda: NOW,
         recover=True,
     )
     assert result["state"] == "failed"
@@ -127,9 +123,7 @@ def test_recovery_refuses_daemon_volume_reader_before_restart(tmp_path: Path) ->
         raise RunnerError("backup_interrupted")
 
     with pytest.raises(RunnerError):
-        run_once(
-            config, state, command_runner=commands, archive_runner=interruption, now=lambda: NOW
-        )
+        execute(config, state, commands, archive_runner=interruption)
     commands.orphan = True
     before = len(commands.calls)
     with pytest.raises(RunnerError, match="child_unresolved"):
@@ -149,9 +143,7 @@ def test_marker_for_another_installation_cannot_resume_writes(tmp_path: Path) ->
         path.write_text(json.dumps(marker))
 
     with pytest.raises(RunnerError, match="verification_failed"):
-        run_once(
-            config, state, command_runner=commands, archive_runner=wrong_marker, now=lambda: NOW
-        )
+        execute(config, state, commands, archive_runner=wrong_marker)
     assert all(item["State"]["Status"] == "exited" for item in commands.containers)
     with pytest.raises(RunnerError, match="verification_failed"):
         execute(config, state, commands, recover=True)
@@ -183,6 +175,8 @@ def test_child_registers_group_before_existing_physical_backup(
 ) -> None:
     config, state = runner_config(tmp_path)
     commands = SyntheticCommands(config)
+    assert export_files.EXPORT_GID == 10001
+    monkeypatch.setattr(export_files, "EXPORT_GID", os.getegid())
     host = Host(config, state, commands)
     host.admit()
     archive_called: list[Path] = []
@@ -210,6 +204,8 @@ def test_archive_launcher_inherits_lock_and_uses_dedicated_session(
 ) -> None:
     config, state = runner_config(tmp_path)
     commands = SyntheticCommands(config)
+    assert export_files.EXPORT_GID == 10001
+    monkeypatch.setattr(export_files, "EXPORT_GID", os.getegid())
     host = Host(config, state, commands)
     host.admit()
     launches: list[dict[str, Any]] = []
@@ -240,6 +236,8 @@ def test_archive_timeout_signals_only_owned_group_and_requires_recovery(
 
     config, state = runner_config(tmp_path)
     commands = SyntheticCommands(config)
+    assert export_files.EXPORT_GID == 10001
+    monkeypatch.setattr(export_files, "EXPORT_GID", os.getegid())
     host = Host(config, state, commands)
     host.admit()
     signals: list[tuple[int, int]] = []
@@ -352,7 +350,7 @@ def test_timeout_preserves_child_registration_in_failure_journal(
     monkeypatch.setattr(subprocess, "Popen", Child)
     monkeypatch.setattr(os, "killpg", lambda *args: None)
     with pytest.raises(RunnerError, match="backup_interrupted"):
-        run_once(config, state, command_runner=commands, now=lambda: NOW)
+        execute(config, state, commands, archive_runner=backup_runner_archive.run_archive)
     _, saved = active_journal(state)
     assert saved["child"] == {"pid": 771, "pgid": 771}
     assert saved["outcome"]["reconciled_at"] is None

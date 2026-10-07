@@ -190,7 +190,7 @@ def test_reset_rejects_urls_that_do_not_match_the_attested_instance() -> None:
 
 
 def test_reset_preserves_and_locks_backup_policy_history_and_version_tables() -> None:
-    for table in ("backup_policies", "backup_runs", "update_statuses"):
+    for table in ("backup_export_operations", "backup_policies", "backup_runs", "update_statuses"):
         assert table in reset_models.APPLICATION_TABLES
         assert table not in reset_models.NON_PRESERVED_TABLES
         assert table not in reset_models.DELETE_ORDER
@@ -311,6 +311,7 @@ def _backup_rows():
         admin,
         deleted,
         {
+            "backup_export_operations": [],
             "backup_policies": [dict(base, id=str(uuid4()), revision=2, schedule="weekly")],
             "update_statuses": [dict(base, id=str(uuid4()), latest_version="0.2.0")],
             "backup_runs": [

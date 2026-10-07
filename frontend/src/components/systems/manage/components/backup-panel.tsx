@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { FileSearch, HardDrive, X } from "lucide-react";
+import { Download, FileSearch, HardDrive, X } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,9 +32,12 @@ import { PaginationControls } from "@/components/ui/pagination-controls";
 import { AccessSearchToolbar } from "../../access/components/access-search-toolbar";
 import {
   backupNameError,
+  backupExportSourceAvailable,
   backupScheduleLabels,
   backupStateLabels,
+  exportPassphraseError,
   failureLabel,
+  manageBackupExportContentUrl,
   restoreProcedureUrl,
   type ManageBackupRun,
   type ManageBackupsRequest,
@@ -105,6 +108,21 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
   const [createName, setCreateName] = useState("Manual backup");
   const [nameError, setNameError] = useState<string | null>(null);
   const createOpener = useRef<HTMLButtonElement | null>(null);
+  const [exportDraft, setExportDraft] = useState<{
+    actorId: string;
+    source: ManageBackupRun;
+    passphrase: string;
+    key: string;
+  } | null>(null);
+  const [passphraseError, setPassphraseError] = useState<string | null>(null);
+  const exportOpener = useRef<HTMLButtonElement | null>(null);
+  const [passwordDraft, setPasswordDraft] = useState<{
+    actorId: string;
+    exportId: string;
+    password: string;
+  } | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const passwordOpener = useRef<HTMLButtonElement | null>(null);
   const { acceptedHistory: page, request, setRequest } = maintenance;
   useEffect(() => {
     if (
@@ -124,9 +142,23 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
     setRequest((value) => (value === request ? { ...value, offset } : value));
   }, [page, request, setRequest]);
   const runs = page?.items ?? [];
+  const routedExport = Boolean(
+    maintenance.exportId || maintenance.invalidExportId,
+  );
   const selected =
-    runs.find((run) => run.id === selectedId) ??
-    (selectedId === undefined ? runs[0] : undefined);
+    selectedId === undefined
+      ? routedExport
+        ? maintenance.acceptedExportSource
+        : runs[0]
+      : runs.find((run) => run.id === selectedId);
+  const operation = maintenance.acceptedExport;
+  const visibleExportDraft =
+    exportDraft?.actorId === maintenance.exportActorId ? exportDraft : null;
+  const visiblePasswordDraft =
+    passwordDraft?.actorId === maintenance.exportActorId &&
+    passwordDraft.exportId === operation?.id
+      ? passwordDraft
+      : null;
   const total = page?.pagination.total ?? 0;
   const first = runs.length ? request.offset + 1 : 0;
   const last = runs.length ? request.offset + runs.length : 0;
@@ -150,6 +182,42 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
       setSelectedId(null);
       setCreateName("Manual backup");
     }
+  }
+  async function submitExport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const draft = visibleExportDraft;
+    if (!draft || maintenance.pending) return;
+    const invalid = exportPassphraseError(draft.passphrase);
+    setPassphraseError(invalid);
+    if (invalid) return;
+    if (
+      await maintenance.queueExport(draft.source, draft.passphrase, draft.key)
+    )
+      setExportDraft((current) => (current === draft ? null : current));
+  }
+  function cancelExport() {
+    if (maintenance.pending) return;
+    setExportDraft(null);
+    setPassphraseError(null);
+    maintenance.clearExportError();
+  }
+  async function submitPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const draft = visiblePasswordDraft;
+    if (!draft || maintenance.pending) return;
+    const length = Array.from(draft.password).length;
+    const invalid =
+      length < 1 || length > 128 ? "Enter your current password." : null;
+    setPasswordError(invalid);
+    if (invalid) return;
+    if (await maintenance.confirmExportDownload(draft.password))
+      setPasswordDraft((current) => (current === draft ? null : current));
+  }
+  function cancelPassword() {
+    if (maintenance.pending) return;
+    setPasswordDraft(null);
+    setPasswordError(null);
+    maintenance.clearExportError();
   }
   const statusBadge = (run: ManageBackupRun) => (
     <Badge
@@ -219,7 +287,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
       className="flex min-w-0 flex-col gap-3"
     >
       <div
-        className={`grid min-w-0 gap-3 ${selected ? "lg:grid-cols-[minmax(0,1fr)_minmax(18rem,25rem)]" : "grid-cols-1"}`}
+        className={`grid min-w-0 gap-3 ${selected || routedExport ? "lg:grid-cols-[minmax(0,1fr)_minmax(18rem,25rem)]" : "grid-cols-1"}`}
       >
         <section
           aria-labelledby={`${id}-backups-heading`}
@@ -461,107 +529,508 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
             ) : null}
           </div>
         </section>
-        {selected ? (
-          <section
-            aria-label="Selected backup"
-            className="bg-card min-w-0 overflow-hidden rounded-lg border"
-          >
-            <header className="flex flex-col gap-3 border-b p-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-muted-foreground text-sm">Selected backup</p>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Close selected backup"
-                  className="size-11 shrink-0"
-                  onClick={() => setSelectedId(null)}
-                >
-                  <X aria-hidden="true" />
-                </Button>
-              </div>
-              <h2
-                data-slot="section-title"
-                className="min-w-0 text-lg font-semibold break-words"
+        {selected || routedExport ? (
+          <div className="min-w-0 space-y-3">
+            {selected ? (
+              <section
+                aria-label="Selected backup"
+                className="bg-card min-w-0 overflow-hidden rounded-lg border"
               >
-                {selected.name}
-              </h2>
-              {statusBadge(selected)}
-              <p className="text-muted-foreground text-sm">
-                {selected.installation === "previous"
-                  ? "Previous installation · Read-only history"
-                  : "Current installation"}
-              </p>
-            </header>
-            <div className="flex min-w-0 flex-col gap-4 p-4">
-              <h3 data-slot="section-title" className="font-semibold">
-                Backup details
-              </h3>
-              <dl className="min-w-0 divide-y rounded-lg border">
-                {[
-                  ["Requested", formatBackupTime(selected.requested_at)],
-                  [
-                    "Source",
-                    selected.provenance === "manual"
-                      ? "Manual request"
-                      : "Scheduled request",
-                  ],
-                  [
-                    "Schedule at request",
-                    backupScheduleLabels[selected.schedule],
-                  ],
-                  ["Retention at request", `${selected.retention_days} days`],
-                  ["Started", formatBackupTime(selected.started_at)],
-                  ["Finished", formatBackupTime(selected.finished_at)],
-                  ["Snapshot", selected.snapshot_id ?? "Not verified"],
-                  [
-                    "Verification",
-                    selected.verified_at
-                      ? `Verified · ${formatBackupTime(selected.verified_at)}`
-                      : "Not verified",
-                  ],
-                  [
-                    "Restart / reconciliation",
-                    selected.reconciled_at
-                      ? `Reconciled · ${formatBackupTime(selected.reconciled_at)}`
-                      : "Not reconciled",
-                  ],
-                  [
-                    "Failure",
-                    selected.failure_code
-                      ? failureLabel(selected.failure_code)
-                      : "None recorded",
-                  ],
-                  ["Confirmed expiry", formatBackupTime(selected.expired_at)],
-                ].map(([label, value]) => (
-                  <div
-                    key={label}
-                    className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-3 px-3 py-2.5 text-sm"
-                  >
-                    <dt className="text-muted-foreground min-w-0 break-words">
-                      {label}
-                    </dt>
-                    <dd className="min-w-0 text-right break-words">{value}</dd>
+                <header className="flex flex-col gap-3 border-b p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-muted-foreground text-sm">
+                      Selected backup
+                    </p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Close selected backup"
+                      className="size-11 shrink-0"
+                      onClick={() => setSelectedId(null)}
+                    >
+                      <X aria-hidden="true" />
+                    </Button>
                   </div>
-                ))}
-              </dl>
-              <p className="text-muted-foreground text-sm">
-                Snapshot verification and service restart are separate facts.
-                Restore is performed offline by a server operator.
-              </p>
-              <Button asChild variant="outline" className="min-h-11 min-w-0">
-                <a href={restoreProcedureUrl} target="_blank" rel="noreferrer">
-                  Restore procedure
-                </a>
-              </Button>
-              <p className="text-muted-foreground text-xs">
-                Use the procedure included with this release. Repository access
-                may be required.
-              </p>
-            </div>
-          </section>
+                  <h2
+                    data-slot="section-title"
+                    className="min-w-0 text-lg font-semibold break-words"
+                  >
+                    {selected.name}
+                  </h2>
+                  {statusBadge(selected)}
+                  <p className="text-muted-foreground text-sm">
+                    {selected.installation === "previous"
+                      ? "Previous installation · Read-only history"
+                      : "Current installation"}
+                  </p>
+                </header>
+                <div className="flex min-w-0 flex-col gap-4 p-4">
+                  <h3 data-slot="section-title" className="font-semibold">
+                    Backup details
+                  </h3>
+                  <dl className="min-w-0 divide-y rounded-lg border">
+                    {[
+                      ["Requested", formatBackupTime(selected.requested_at)],
+                      [
+                        "Source",
+                        selected.provenance === "manual"
+                          ? "Manual request"
+                          : "Scheduled request",
+                      ],
+                      [
+                        "Schedule at request",
+                        backupScheduleLabels[selected.schedule],
+                      ],
+                      [
+                        "Retention at request",
+                        `${selected.retention_days} days`,
+                      ],
+                      ["Started", formatBackupTime(selected.started_at)],
+                      ["Finished", formatBackupTime(selected.finished_at)],
+                      ["Snapshot", selected.snapshot_id ?? "Not verified"],
+                      [
+                        "Verification",
+                        selected.verified_at
+                          ? `Verified · ${formatBackupTime(selected.verified_at)}`
+                          : "Not verified",
+                      ],
+                      [
+                        "Restart / reconciliation",
+                        selected.reconciled_at
+                          ? `Reconciled · ${formatBackupTime(selected.reconciled_at)}`
+                          : "Not reconciled",
+                      ],
+                      [
+                        "Failure",
+                        selected.failure_code
+                          ? failureLabel(selected.failure_code)
+                          : "None recorded",
+                      ],
+                      [
+                        "Confirmed expiry",
+                        formatBackupTime(selected.expired_at),
+                      ],
+                    ].map(([label, value]) => (
+                      <div
+                        key={label}
+                        className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-3 px-3 py-2.5 text-sm"
+                      >
+                        <dt className="text-muted-foreground min-w-0 break-words">
+                          {label}
+                        </dt>
+                        <dd className="min-w-0 text-right break-words">
+                          {value}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <p className="text-muted-foreground text-sm">
+                    Snapshot verification and service restart are separate
+                    facts. Restore is performed offline by a server operator.
+                  </p>
+                  {maintenance.exportAllowed ? (
+                    <Button
+                      ref={exportOpener}
+                      type="button"
+                      className="min-h-11 min-w-0 gap-2"
+                      disabled={
+                        maintenance.pending ||
+                        !backupExportSourceAvailable(selected)
+                      }
+                      onClick={() => {
+                        setPassphraseError(null);
+                        maintenance.clearExportError();
+                        setExportDraft({
+                          actorId: maintenance.exportActorId,
+                          source: selected,
+                          passphrase: "",
+                          key: crypto.randomUUID(),
+                        });
+                      }}
+                    >
+                      <Download data-icon="inline-start" />
+                      Download backup
+                    </Button>
+                  ) : null}
+                  {maintenance.exportAllowed &&
+                  !backupExportSourceAvailable(selected) ? (
+                    <p className="text-muted-foreground text-sm">
+                      Downloads require a verified, reconciled recovery point
+                      from this installation that has not expired.
+                    </p>
+                  ) : null}
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="min-h-11 min-w-0"
+                  >
+                    <a
+                      href={restoreProcedureUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Restore procedure
+                    </a>
+                  </Button>
+                  <p className="text-muted-foreground text-xs">
+                    Use the procedure included with this release. Repository
+                    access may be required.
+                  </p>
+                </div>
+              </section>
+            ) : null}
+            {routedExport && maintenance.exportAllowed ? (
+              <section
+                aria-label="Encrypted export"
+                className="bg-card min-w-0 overflow-hidden rounded-lg border"
+              >
+                <header className="border-b p-4">
+                  <h2
+                    data-slot="section-title"
+                    className="text-lg font-semibold"
+                  >
+                    Encrypted export
+                  </h2>
+                  {maintenance.acceptedExportSource ? (
+                    <p className="text-muted-foreground mt-1 text-sm break-words">
+                      {maintenance.acceptedExportSource.name}
+                    </p>
+                  ) : null}
+                </header>
+                <div className="min-w-0 space-y-4 p-4">
+                  {maintenance.invalidExportId ? (
+                    <Alert role="alert" variant="destructive">
+                      The export address is invalid. Select a backup to request
+                      an export.
+                    </Alert>
+                  ) : maintenance.exportQuery.isError ||
+                    maintenance.exportRefused ? (
+                    <Alert role="alert" variant="destructive">
+                      <p>
+                        {maintenance.exportRefused
+                          ? "This export is unavailable to the current administrator."
+                          : "Export details could not be loaded."}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="mt-2 min-h-11"
+                        onClick={() => void maintenance.retryExport()}
+                      >
+                        Retry export
+                      </Button>
+                    </Alert>
+                  ) : operation ? (
+                    <>
+                      <Badge
+                        variant={
+                          operation.state === "ready"
+                            ? "success"
+                            : operation.state === "failed" ||
+                                operation.state === "interrupted"
+                              ? "warning"
+                              : "secondary"
+                        }
+                      >
+                        {operation.state[0]!.toUpperCase() +
+                          operation.state.slice(1)}
+                      </Badge>
+                      <p className="text-muted-foreground text-sm">
+                        {operation.state === "queued"
+                          ? "Queued for the host runner. The export has not been prepared."
+                          : operation.state === "preparing"
+                            ? "The host runner is preparing the encrypted export."
+                            : operation.state === "ready"
+                              ? maintenance.acceptedDownloadAdmission
+                                ? "The encrypted export is ready. Your password is confirmed. Use the download action below."
+                                : "The encrypted export is ready. Confirm your password before downloading."
+                              : operation.state === "expired"
+                                ? "This export has expired. Request a new export from an eligible backup."
+                                : "The export did not finish. Review the source backup before requesting another export."}
+                      </p>
+                      <dl className="min-w-0 divide-y rounded-lg border">
+                        {[
+                          [
+                            "Requested",
+                            formatBackupTime(operation.requested_at),
+                          ],
+                          ["Ready", formatBackupTime(operation.ready_at)],
+                          [
+                            "Available until",
+                            formatBackupTime(operation.expires_at),
+                          ],
+                          [
+                            "Size",
+                            operation.size_bytes === null
+                              ? "Not recorded"
+                              : operation.size_bytes.toLocaleString() +
+                                " bytes",
+                          ],
+                          ["SHA-256", operation.sha256 ?? "Not recorded"],
+                          [
+                            "Failure",
+                            operation.failure_code
+                              ? failureLabel(operation.failure_code)
+                              : "None recorded",
+                          ],
+                        ].map(([label, value]) => (
+                          <div
+                            key={label}
+                            className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] gap-3 px-3 py-2.5 text-sm"
+                          >
+                            <dt className="text-muted-foreground min-w-0 break-words">
+                              {label}
+                            </dt>
+                            <dd className="min-w-0 text-right break-all">
+                              {value}
+                            </dd>
+                            {label === "Available until" ? (
+                              <dd className="text-muted-foreground col-span-2 text-xs break-words">
+                                New downloads stop when the export expires. The
+                                server copy is cleaned up at the next successful
+                                host runner check.
+                              </dd>
+                            ) : null}
+                          </div>
+                        ))}
+                      </dl>
+                      {operation.state === "ready" ? (
+                        <div className="min-w-0 space-y-3">
+                          <Button
+                            ref={passwordOpener}
+                            type="button"
+                            variant={
+                              maintenance.acceptedDownloadAdmission
+                                ? "outline"
+                                : "default"
+                            }
+                            className="min-h-11 w-full"
+                            disabled={maintenance.pending}
+                            onClick={() => {
+                              maintenance.clearExportError();
+                              maintenance.clearExportDownloadAdmission();
+                              setPasswordError(null);
+                              setPasswordDraft({
+                                actorId: maintenance.exportActorId,
+                                exportId: operation.id,
+                                password: "",
+                              });
+                            }}
+                          >
+                            Confirm download
+                          </Button>
+                          {maintenance.acceptedDownloadAdmission ? (
+                            <>
+                              <Button asChild className="min-h-11 w-full">
+                                <a
+                                  href={manageBackupExportContentUrl(
+                                    operation.id,
+                                  )}
+                                  onClick={
+                                    maintenance.clearExportDownloadAdmission
+                                  }
+                                >
+                                  <Download data-icon="inline-start" />
+                                  Download encrypted backup
+                                </a>
+                              </Button>
+                              <p className="text-muted-foreground text-sm">
+                                Password confirmation expires{" "}
+                                {formatBackupTime(
+                                  maintenance.acceptedDownloadAdmission
+                                    .expiresAt,
+                                )}
+                                .
+                              </p>
+                            </>
+                          ) : null}
+                          <p className="text-muted-foreground text-sm">
+                            Your browser manages the download. If it fails,
+                            return here and confirm again. Each download starts
+                            from the beginning.
+                          </p>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p role="status" className="text-muted-foreground text-sm">
+                      Loading export details…
+                    </p>
+                  )}
+                </div>
+              </section>
+            ) : null}
+          </div>
         ) : null}
       </div>
+      <Dialog
+        open={Boolean(visibleExportDraft) && maintenance.exportAllowed}
+        dismissible={!maintenance.pending}
+        onOpenChange={(open) => {
+          if (!open) cancelExport();
+        }}
+      >
+        <DialogContent finalFocus={() => exportOpener.current}>
+          <DialogHeader>
+            <DialogTitle>Download backup</DialogTitle>
+            <DialogDescription>
+              Prepare an encrypted copy of{" "}
+              {visibleExportDraft?.source.name ?? "the selected backup"}. Export
+              preparation leaves the installation online. Keep this passphrase
+              with your offline recovery records.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="mt-4 flex min-w-0 flex-col gap-4"
+            onSubmit={submitExport}
+          >
+            <fieldset disabled={maintenance.pending} className="min-w-0">
+              <Field data-invalid={Boolean(passphraseError)}>
+                <FieldLabel htmlFor={id + "-export-passphrase"}>
+                  Export passphrase
+                </FieldLabel>
+                <Input
+                  id={id + "-export-passphrase"}
+                  type="password"
+                  autoComplete="new-password"
+                  value={visibleExportDraft?.passphrase ?? ""}
+                  aria-invalid={Boolean(passphraseError)}
+                  aria-describedby={
+                    passphraseError
+                      ? id + "-passphrase-error"
+                      : id + "-passphrase-help"
+                  }
+                  onChange={(event) => {
+                    const passphrase = event.currentTarget.value;
+                    setPassphraseError(null);
+                    maintenance.clearExportError();
+                    setExportDraft((current) =>
+                      current
+                        ? {
+                            ...current,
+                            passphrase,
+                            key:
+                              current.passphrase === passphrase
+                                ? current.key
+                                : crypto.randomUUID(),
+                          }
+                        : current,
+                    );
+                  }}
+                  className="min-h-11"
+                />
+                <p
+                  id={id + "-passphrase-help"}
+                  className="text-muted-foreground mt-1 text-sm"
+                >
+                  Use 16–128 printable characters, with no spaces at either end.
+                </p>
+                <FieldError id={id + "-passphrase-error"}>
+                  {passphraseError}
+                </FieldError>
+              </Field>
+            </fieldset>
+            {maintenance.exportError ? (
+              <Alert role="alert" variant="destructive">
+                {maintenance.exportError}
+              </Alert>
+            ) : null}
+            <DialogFooter className="mt-0">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={maintenance.pending}
+                onClick={cancelExport}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                className="min-h-11"
+                disabled={maintenance.pending}
+              >
+                {maintenance.pending ? "Preparing…" : "Prepare export"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={Boolean(visiblePasswordDraft) && maintenance.exportAllowed}
+        dismissible={!maintenance.pending}
+        onOpenChange={(open) => {
+          if (!open) cancelPassword();
+        }}
+      >
+        <DialogContent finalFocus={() => passwordOpener.current}>
+          <DialogHeader>
+            <DialogTitle>Confirm download</DialogTitle>
+            <DialogDescription>
+              Enter your current password to allow this encrypted export
+              download. You will choose the download action after confirmation.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="mt-4 flex min-w-0 flex-col gap-4"
+            onSubmit={submitPassword}
+          >
+            <fieldset disabled={maintenance.pending} className="min-w-0">
+              <Field data-invalid={Boolean(passwordError)}>
+                <FieldLabel htmlFor={id + "-export-password"}>
+                  Current password
+                </FieldLabel>
+                <Input
+                  id={id + "-export-password"}
+                  type="password"
+                  autoComplete="current-password"
+                  value={visiblePasswordDraft?.password ?? ""}
+                  aria-invalid={Boolean(passwordError)}
+                  aria-describedby={
+                    passwordError ? id + "-password-error" : undefined
+                  }
+                  onChange={(event) => {
+                    const password = event.currentTarget.value;
+                    setPasswordError(null);
+                    maintenance.clearExportError();
+                    setPasswordDraft((current) =>
+                      current ? { ...current, password } : current,
+                    );
+                  }}
+                  className="min-h-11"
+                />
+                <FieldError id={id + "-password-error"}>
+                  {passwordError}
+                </FieldError>
+              </Field>
+            </fieldset>
+            {maintenance.exportError ? (
+              <Alert role="alert" variant="destructive">
+                {maintenance.exportError}
+              </Alert>
+            ) : null}
+            <DialogFooter className="mt-0">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={maintenance.pending}
+                onClick={cancelPassword}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                className="min-h-11"
+                disabled={maintenance.pending}
+              >
+                {maintenance.pending ? "Confirming…" : "Confirm password"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={createOpen}
         dismissible={!maintenance.pending}
@@ -573,9 +1042,8 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
           <DialogHeader>
             <DialogTitle>Back up now</DialogTitle>
             <DialogDescription>
-              Queue a named backup request. This page does not stop services or
-              execute a backup; the configured host runner performs the offline
-              procedure.
+              Queue a named backup request. The installation goes offline while
+              this backup runs. The configured host runner performs the backup.
             </DialogDescription>
           </DialogHeader>
           <form className="mt-4 flex flex-col gap-4" onSubmit={submit}>

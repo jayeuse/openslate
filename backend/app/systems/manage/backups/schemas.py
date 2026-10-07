@@ -3,10 +3,19 @@
 import re
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from app.common.listing import SortOrder, StandardListRequest
 
@@ -255,3 +264,148 @@ class ClaimResponse(BaseModel):
     scheduled_for: datetime | None
     claimed_schedule: Schedule
     claimed_retention_days: RetentionDays
+
+
+ExportState = Literal["queued", "preparing", "ready", "failed", "interrupted", "expired"]
+ExportFailureCode = Literal[
+    "source_unavailable",
+    "source_unproven",
+    "copy_failed",
+    "verification_failed",
+    "export_interrupted",
+    "result_unconfirmed",
+]
+
+
+class BackupExportCreate(StrictRequest):
+    backup_run_id: UUID
+    passphrase: SecretStr = Field(min_length=16, max_length=128)
+
+    @field_validator("passphrase", mode="before")
+    @classmethod
+    def printable_secret(cls, value: Any) -> Any:
+        if (
+            type(value) is not str
+            or not value.isprintable()
+            or value != value.strip()
+            or len(value.encode("utf-8")) > 512
+        ):
+            raise ValueError("Passphrase must be bounded printable text without edge whitespace")
+        return value
+
+
+class BackupExportResponse(StrictRequest):
+    id: UUID
+    backup_run_id: UUID
+    state: ExportState
+    requested_at: AwareDatetime
+    ready_at: AwareDatetime | None
+    expires_at: AwareDatetime | None
+    size_bytes: int | None = Field(strict=True, gt=0)
+    sha256: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+    failure_code: ExportFailureCode | None
+
+
+class ExportDownloadAdmissionRequest(StrictRequest):
+    password: SecretStr = Field(min_length=1, max_length=128)
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def strict_password(cls, value: Any) -> Any:
+        if type(value) is not str:
+            raise ValueError("Password must be text")
+        return value
+
+
+class ExportDownloadAdmissionResponse(StrictRequest):
+    expires_at: AwareDatetime
+
+
+class ExportClaimCommand(BridgeCommand):
+    op: Literal["claim-export"]
+    claim_id: UUID
+
+
+class ExportInspectCommand(BridgeCommand):
+    op: Literal["inspect-export"]
+    export_id: UUID | None = None
+    claim_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def exact_execution(self) -> "ExportInspectCommand":
+        if self.export_id is not None and self.claim_id is None:
+            raise ValueError("An exact export lookup requires a claim identity")
+        return self
+
+
+class ExportOutcomeCommand(BridgeCommand):
+    op: Literal["export-outcome"]
+    export_id: UUID
+    claim_id: UUID
+    state: Literal["ready", "failed", "interrupted"]
+    finished_at: AwareDatetime
+    size_bytes: int | None = Field(strict=True, gt=0)
+    sha256: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+    failure_code: ExportFailureCode | None
+
+    @model_validator(mode="after")
+    def complete_artifact(self) -> "ExportOutcomeCommand":
+        if self.state == "ready":
+            if self.size_bytes is None or self.sha256 is None or self.failure_code is not None:
+                raise ValueError("Ready requires complete verified artifact facts")
+        elif self.failure_code is None or self.size_bytes is not None or self.sha256 is not None:
+            raise ValueError("Failed export requires only a safe failure code")
+        return self
+
+
+class ExportCleanedCommand(BridgeCommand):
+    op: Literal["export-cleaned"]
+    export_id: UUID
+    claim_id: UUID
+    deleted_at: AwareDatetime
+
+
+class ExportClaimResponse(StrictRequest):
+    export: BackupExportResponse
+    claim_id: UUID
+    installation_id: str
+    claimed_at: AwareDatetime
+    finished_at: AwareDatetime | None
+    artifact_deleted_at: AwareDatetime | None
+    source: ClaimResponse
+
+
+class ExportClaimFirst(StrictRequest):
+    status: Literal["first"]
+    claim: ExportClaimResponse
+    passphrase: SecretStr
+
+    @field_serializer("passphrase", when_used="json")
+    def first_private_handoff(self, value: SecretStr) -> str:
+        # Only this committed private bridge response intentionally carries plaintext.
+        return value.get_secret_value()
+
+
+class ExportClaimReplay(StrictRequest):
+    status: Literal["replay"]
+    claim: ExportClaimResponse
+
+
+class ExportClaimNone(StrictRequest):
+    status: Literal["none"]
+    claim: None
+
+
+ExportClaimReply = Annotated[
+    ExportClaimFirst | ExportClaimReplay | ExportClaimNone, Field(discriminator="status")
+]
+
+
+class ExportInspectResponse(StrictRequest):
+    unresolved: ExportClaimResponse | None
+    claim: ExportClaimResponse | None
+    cleanup_candidates: list[ExportClaimResponse] = Field(max_length=16)
+
+
+class ExportMutationResponse(StrictRequest):
+    claim: ExportClaimResponse

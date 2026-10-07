@@ -27,6 +27,7 @@ from app.core.database.session import dispose_database_resources, get_engine
 from app.core.middleware.file_transfers import (
     CapacityResponse,
     FileDispatchMiddleware,
+    backup_export_body_limit,
     file_transfer_policy,
 )
 from app.core.middleware.request_context import (
@@ -62,6 +63,7 @@ from app.systems.boards.router import router as boards_router
 from app.systems.boards.widget_router import router as board_widgets_router
 from app.systems.manage.audit.router import internal_security_events_router, security_events_router
 from app.systems.manage.audit.router import router as audit_router
+from app.systems.manage.backups.downloads import release_export_response, wrap_export_response
 from app.systems.manage.backups.router import router as backups_router
 from app.systems.manage.workspace.router import router as workspace_router
 from app.systems.manage.workspace.security_router import router as workspace_security_router
@@ -248,14 +250,22 @@ def create_app() -> FastAPI:
         transfer = file_transfer_policy(request.url.path, request.method)
         capacity = ExitStack()
         sandbox_document_limit = _sandbox_document_body_limit(request.url.path, request.method)
+        export_limit = backup_export_body_limit(request.url.path, request.method)
         body_limit = (
-            transfer.request_bytes
+            export_limit
+            if export_limit is not None
+            else transfer.request_bytes
             if transfer is not None
             else sandbox_document_limit
             if sandbox_document_limit is not None
             else None
             if relaxed_development
             else settings.request_body_max_bytes
+        )
+        body_refusal = (
+            {"code": "export_body_too_large", "message": "Export request body is too large"}
+            if export_limit is not None
+            else "Request body is too large"
         )
         deadline = None
         try:
@@ -273,7 +283,7 @@ def create_app() -> FastAPI:
             ):
                 response = JSONResponse(
                     status_code=413,
-                    content={"detail": "Request body is too large"},
+                    content={"detail": body_refusal},
                 )
             else:
                 async with asyncio.timeout(
@@ -282,7 +292,7 @@ def create_app() -> FastAPI:
                     if body_limit is not None and not await _read_bounded_body(request, body_limit):
                         response = JSONResponse(
                             status_code=413,
-                            content={"detail": "Request body is too large"},
+                            content={"detail": body_refusal},
                         )
                     else:
                         response = await call_next(request)
@@ -314,6 +324,7 @@ def create_app() -> FastAPI:
         except BaseException:
             # Client cancellation must close admission without dropping a running worker ref.
             capacity.close()
+            release_export_response(request)
             reset_request_context(token)
             raise
         try:
@@ -332,9 +343,10 @@ def create_app() -> FastAPI:
                 status=response.status_code,
                 duration_ms=int((time.perf_counter() - started) * 1000),
             )
-            return CapacityResponse(response, capacity.close)
+            return CapacityResponse(wrap_export_response(request, response), capacity.close)
         except BaseException:
             capacity.close()
+            release_export_response(request)
             raise
         finally:
             reset_request_context(token)

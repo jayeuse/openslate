@@ -26,6 +26,7 @@ import {
 } from "./audit-api";
 import {
   getManageBackupStatus,
+  getManageBackupExport,
   getManageVersion,
   listManageBackups,
   type ManageBackupsRequest,
@@ -80,6 +81,9 @@ export const manageKeys = {
   backups: () => ["manage", "maintenance", "backups"] as const,
   backupList: (request: ManageBackupsRequest) =>
     ["manage", "maintenance", "backups", request] as const,
+  backupExports: () => ["manage", "maintenance", "backup-exports"] as const,
+  backupExport: (id: string) =>
+    ["manage", "maintenance", "backup-exports", id] as const,
   version: () => ["manage", "maintenance", "version"] as const,
 };
 
@@ -97,6 +101,11 @@ export const manageVersionOptions = () =>
   queryOptions({
     queryKey: manageKeys.version(),
     queryFn: ({ signal }) => getManageVersion(signal),
+  });
+export const manageBackupExportOptions = (id: string) =>
+  queryOptions({
+    queryKey: manageKeys.backupExport(id),
+    queryFn: ({ signal }) => getManageBackupExport(id, signal),
   });
 export function afterManageBackupPolicyChange(
   client: QueryClient,

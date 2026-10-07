@@ -14,7 +14,12 @@ from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
 from app.core.config import get_instance_settings, get_settings
-from app.systems.manage.backups.models import BackupPolicy, BackupRun, UpdateStatus
+from app.systems.manage.backups.models import (
+    BackupExportOperation,
+    BackupPolicy,
+    BackupRun,
+    UpdateStatus,
+)
 from app.systems.manage.backups.schemas import (
     VERSION_PATTERN,
     BackupPolicyResponse,
@@ -251,7 +256,18 @@ def claim_run(
     prior = exact_claim(db, instance, claim_id)
     if prior is not None:
         return prior
-    if unresolved_run(db, instance) is not None:
+    if (
+        unresolved_run(db, instance) is not None
+        or db.scalar(
+            select(BackupExportOperation.id)
+            .where(
+                BackupExportOperation.installation_id == instance,
+                BackupExportOperation.state == "preparing",
+            )
+            .limit(1)
+        )
+        is not None
+    ):
         raise BackupStateError("backup_recovery_required")
     if policy.installation_id != instance:
         raise BackupStateError("backup_adoption_required")

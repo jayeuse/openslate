@@ -9,7 +9,7 @@ from uuid import UUID
 
 from operations.reset.models import BackupSnapshot, ResetError
 
-_TABLES = ("backup_policies", "backup_runs", "update_statuses")
+_TABLES = ("backup_policies", "backup_runs", "backup_export_operations", "update_statuses")
 _QUEUED_PREDICATE = (
     "installation_id = %s AND state = 'queued' AND started_at IS NULL AND claim_id IS NULL"
 )
@@ -45,6 +45,31 @@ def require_no_unresolved_backup(connection: Any, installation_id: str) -> None:
         raise ResetError("Unable to verify current backup claims")
     if count:
         raise ResetError("Current backup requires reconciliation before reset")
+    checks = (
+        (
+            "SELECT count(*) FROM public.backup_export_operations "
+            "WHERE installation_id = %s AND state = 'preparing'",
+            (installation_id,),
+            "Current export requires reconciliation before reset",
+        ),
+        (
+            "SELECT count(*) FROM public.backup_runs AS source "
+            "JOIN public.backup_export_operations AS export ON export.backup_run_id = source.id "
+            "WHERE source.installation_id = %s AND source.state = 'queued' "
+            "AND source.started_at IS NULL AND source.claim_id IS NULL "
+            "AND NOT (export.installation_id = %s AND export.state = 'queued' "
+            "AND export.claim_id IS NULL)",
+            (installation_id, installation_id),
+            "Retained export references a backup selected for reset deletion",
+        ),
+    )
+    for statement, params, refusal in checks:
+        rows = _rows(connection, statement, params)
+        count = rows[0][0] if len(rows) == 1 and len(rows[0]) == 1 else None
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ResetError("Unable to verify preserved export claims")
+        if count:
+            raise ResetError(refusal)
 
 
 def read_backup_snapshot(connection: Any) -> BackupSnapshot:
@@ -73,6 +98,16 @@ def delete_unclaimed_backup_queue(connection: Any, installation_id: str) -> None
     """Discard only this admitted dev/test installation's never-started requests."""
     with connection.cursor() as cursor:
         cursor.execute(
+            "DELETE FROM public.backup_export_operations "
+            "WHERE installation_id = %s AND state = 'queued' AND claim_id IS NULL",
+            (installation_id,),
+        )
+        cursor.execute(
+            "UPDATE public.backup_export_operations SET admission_digest = NULL, "
+            "admission_actor_id = NULL, admission_session_id = NULL, admission_expires_at = NULL "
+            "WHERE admission_digest IS NOT NULL"
+        )
+        cursor.execute(
             f"DELETE FROM public.backup_runs WHERE {_QUEUED_PREDICATE}", (installation_id,)
         )
 
@@ -95,6 +130,20 @@ def validate_backup_preservation(
                 and row["claim_id"] is None
             ):
                 continue
+            if table == "backup_export_operations":
+                if (
+                    row["installation_id"] == snapshot.installation_id
+                    and row["state"] == "queued"
+                    and row["claim_id"] is None
+                ):
+                    continue
+                for field in (
+                    "admission_digest",
+                    "admission_actor_id",
+                    "admission_session_id",
+                    "admission_expires_at",
+                ):
+                    row[field] = None
             for attribution in ("requester_id", "performed_by"):
                 if attribution in row and row[attribution] != str(preserved_admin_id):
                     row[attribution] = None

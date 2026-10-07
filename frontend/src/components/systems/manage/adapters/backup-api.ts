@@ -92,12 +92,94 @@ const backupNameSchema = z
   .max(120)
   .refine((name) => !/[\p{C}\p{Zl}\p{Zp}]/u.test(name));
 const backupCreateSchema = z.object({ name: backupNameSchema }).strict();
+const exportIdSchema = z.uuid();
+const exportPassphraseSchema = z
+  .string()
+  .refine(
+    (value) =>
+      Array.from(value).length >= 16 &&
+      Array.from(value).length <= 128 &&
+      new TextEncoder().encode(value).byteLength <= 512 &&
+      value.trim() === value &&
+      !/[\p{C}\p{Z}]/u.test(value.replaceAll(" ", "")),
+  );
+const exportCreateSchema = z
+  .object({
+    backup_run_id: z.uuid(),
+    passphrase: exportPassphraseSchema,
+  })
+  .strict();
+const exportTimeSchema = timeSchema.refine((value) =>
+  /(?:Z|\+00:00)$/.test(value),
+);
+const exportResponseSchema = z
+  .object({
+    id: exportIdSchema,
+    backup_run_id: z.uuid(),
+    state: z.enum([
+      "queued",
+      "preparing",
+      "ready",
+      "failed",
+      "interrupted",
+      "expired",
+    ]),
+    requested_at: exportTimeSchema,
+    ready_at: exportTimeSchema.nullable(),
+    expires_at: exportTimeSchema.nullable(),
+    size_bytes: z.number().int().positive().nullable(),
+    sha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .nullable(),
+    failure_code: z
+      .enum([
+        "source_unavailable",
+        "source_unproven",
+        "copy_failed",
+        "verification_failed",
+        "export_interrupted",
+        "result_unconfirmed",
+      ])
+      .nullable(),
+  })
+  .strict()
+  .refine((value) => {
+    const facts = [
+      value.ready_at,
+      value.expires_at,
+      value.size_bytes,
+      value.sha256,
+    ];
+    if (value.state === "ready" || value.state === "expired")
+      return (
+        facts.every((fact) => fact !== null) && value.failure_code === null
+      );
+    return (
+      facts.every((fact) => fact === null) &&
+      (value.state === "failed" || value.state === "interrupted"
+        ? value.failure_code !== null
+        : value.failure_code === null)
+    );
+  });
+const exportAdmissionRequestSchema = z
+  .object({
+    password: z.string().refine((value) => {
+      const length = Array.from(value).length;
+      return length >= 1 && length <= 128;
+    }),
+  })
+  .strict();
+const exportAdmissionSchema = z
+  .object({ expires_at: exportTimeSchema })
+  .strict();
 
 export type ManageBackupRun = z.output<typeof backupRunSchema>;
 export type ManageBackupStatus = z.output<typeof backupStatusSchema>;
 export type ManageBackupPatch = z.output<typeof backupPatchSchema>;
 export type ManageBackups = z.output<typeof backupsSchema>;
 export type ManageVersion = z.output<typeof versionSchema>;
+export type ManageBackupExport = z.output<typeof exportResponseSchema>;
 export type BackupPolicyDraft = Partial<
   Pick<ManageBackupStatus["policy"], "schedule" | "retention_days">
 >;
@@ -142,6 +224,26 @@ export function backupNameError(name: string): string | null {
   return backupNameSchema.safeParse(name).success
     ? null
     : "Enter a backup name using 1–120 printable characters.";
+}
+
+export function isManageBackupExportId(value: string): boolean {
+  return exportIdSchema.safeParse(value).success;
+}
+
+export function exportPassphraseError(value: string): string | null {
+  return exportPassphraseSchema.safeParse(value).success
+    ? null
+    : "Use 16–128 printable characters, without spaces at the start or end.";
+}
+
+export function backupExportSourceAvailable(run: ManageBackupRun): boolean {
+  return (
+    run.installation === "current" &&
+    run.snapshot_id !== null &&
+    run.verified_at !== null &&
+    run.reconciled_at !== null &&
+    run.expired_at === null
+  );
 }
 
 export function getManageBackupStatus(signal?: AbortSignal) {
@@ -189,6 +291,53 @@ export function queueManageBackup(
 }
 export function getManageVersion(signal?: AbortSignal) {
   return apiFetch("/version", versionSchema, { cache: "no-store", signal });
+}
+
+export function queueManageBackupExport(
+  payload: { backup_run_id: string; passphrase: string },
+  idempotencyKey: string,
+  signal?: AbortSignal,
+) {
+  z.string()
+    .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+    .parse(idempotencyKey);
+  return apiFetch("/backups/exports", exportResponseSchema, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(exportCreateSchema.parse(payload)),
+    signal,
+  });
+}
+
+export function getManageBackupExport(id: string, signal?: AbortSignal) {
+  exportIdSchema.parse(id);
+  return apiFetch(`/backups/exports/${id}`, exportResponseSchema, {
+    cache: "no-store",
+    signal,
+  });
+}
+
+export function admitManageBackupExportDownload(
+  id: string,
+  password: string,
+  signal?: AbortSignal,
+) {
+  exportIdSchema.parse(id);
+  return apiFetch(
+    `/backups/exports/${id}/download-admission`,
+    exportAdmissionSchema,
+    {
+      method: "POST",
+      body: JSON.stringify(exportAdmissionRequestSchema.parse({ password })),
+      refreshOnUnauthorized: false,
+      signal,
+    },
+  );
+}
+
+export function manageBackupExportContentUrl(id: string): string {
+  exportIdSchema.parse(id);
+  return "/api/backups/exports/" + id + "/content";
 }
 
 export const backupScheduleLabels = {

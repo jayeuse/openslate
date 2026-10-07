@@ -20,7 +20,12 @@ from app.systems.boards.record_link_models import (  # noqa: F401
 )
 from app.systems.boards.reminder_models import BoardEventReminder  # noqa: F401
 from app.systems.manage.audit.models import AuditLog, SecurityEvent  # noqa: F401
-from app.systems.manage.backups.models import BackupPolicy, BackupRun, UpdateStatus  # noqa: F401
+from app.systems.manage.backups.models import (  # noqa: F401
+    BackupExportOperation,
+    BackupPolicy,
+    BackupRun,
+    UpdateStatus,
+)
 from app.systems.manage.workspace.models import WorkspaceProfile  # noqa: F401
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget  # noqa: F401
 from app.systems.openview.reports.models import (  # noqa: F401

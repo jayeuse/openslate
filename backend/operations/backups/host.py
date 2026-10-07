@@ -106,7 +106,7 @@ class Host:
         args: list[str],
         *,
         failure: str,
-        timeout: int = 60,
+        timeout: float = 60,
         input: bytes | None = None,
         env: dict[str, str] | None = None,
     ) -> bytes:
@@ -219,8 +219,10 @@ class Host:
         except (KeyError, ValueError) as error:
             raise RunnerError("admission_failed") from error
         from operations.backups.docker import admit_docker
+        from operations.backups.export_files import admit_export
 
         admit_docker(self, values)
+        admit_export(self, values)
 
     @staticmethod
     def labels(item: Json) -> dict[str, str]:
@@ -338,7 +340,7 @@ class Host:
         directory.rmdir()
         fsync_directory(directory.parent)
 
-    def bridge(self, command: Json, journal: Json | None = None) -> Json:
+    def bridge(self, command: Json, journal: Json | None = None, *, timeout: float = 60) -> Json:
         payload = {
             "installation_id": self.config.installation_id,
             "project": self.config.project_name,
@@ -378,9 +380,15 @@ class Host:
             journal["bridge"] = {"name": name, "command": payload}
             self.save(journal)
         try:
-            result = json.loads(
-                self.command(args, failure="result_unconfirmed", input=json.dumps(payload).encode())
+            data = self.command(
+                args,
+                failure="result_unconfirmed",
+                input=json.dumps(payload).encode(),
+                timeout=timeout,
             )
+            if command.get("op") == "claim-export" and len(data) > 16384:
+                raise RunnerError("result_unconfirmed")
+            result = json.loads(data)
         except (ValueError, UnicodeDecodeError) as error:
             raise RunnerError("result_unconfirmed") from error
         if not isinstance(result, dict) or "code" in result:
