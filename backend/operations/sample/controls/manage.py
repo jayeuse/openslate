@@ -259,6 +259,10 @@ def execute_manage_control(
             )
         changes: dict[str, Any] = {
             "session_timeout_minutes": 30 if original["session_timeout_minutes"] != 30 else 60,
+            "session_retention_days": 367 if original["session_retention_days"] == 366 else 366,
+            "security_event_retention_days": 731
+            if original["security_event_retention_days"] == 730
+            else 730,
             "password_min_length": 20,
             "password_require_mixed_case": False,
             "password_require_number": False,

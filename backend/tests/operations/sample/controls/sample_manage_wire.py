@@ -20,6 +20,31 @@ def _id(key: str) -> str:
     return str(uuid5(NAMESPACE_URL, "read-review:" + key))
 
 
+def _workspace_profile(dataset):
+    return {
+        "id": _id("workspace"),
+        "display_name": dataset.organization.identity.workspace_name,
+        "legal_name": None,
+        "description": None,
+        "logo_file_id": None,
+        "timezone": dataset.organization.identity.timezone,
+        "locale": dataset.organization.identity.locale,
+        "mark": "TEST",
+        "currency": "GBP" if dataset.organization.identity.currency_symbol == "£" else "PHP",
+        "week_start": "monday",
+        "business_hours": "09:00–18:00",
+        "theme": "stockroom",
+        "invitation_expiry_days": 7,
+        "guest_duration_days": 30,
+        "revision": 3,
+        "created_at": "2026-10-01T00:00:00Z",
+        "updated_at": "2026-10-01T00:00:00Z",
+        "contact_email": None,
+        "contact_phone": None,
+        "postal_address": None,
+    }
+
+
 def _manage_run(tmp_path, pack_key, problem=None):
     dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
     actions = [a for a in plan_controls(dataset) if a.kind == "manage_controls"]
@@ -39,8 +64,8 @@ def _manage_run(tmp_path, pack_key, problem=None):
     policy = {
         "revision": 7,
         "session_timeout_minutes": 60,
-        "session_retention_days": 365,
-        "security_event_retention_days": 365,
+        "session_retention_days": 271,
+        "security_event_retention_days": 613,
         "password_min_length": 12,
         "password_require_mixed_case": True,
         "password_require_number": False,
@@ -52,7 +77,7 @@ def _manage_run(tmp_path, pack_key, problem=None):
         **dict.fromkeys(("login_window_minutes", "login_cooldown_minutes"), 15),
         "ip_allow_list": [],
     }
-    state = {"seen": [], "policy": policy, "logins": [], "revoked": False}
+    state = {"seen": [], "policy": policy, "patches": [], "logins": [], "revoked": False}
 
     def handler(request):
         path, method = request.url.path, request.method
@@ -117,6 +142,7 @@ def _manage_run(tmp_path, pack_key, problem=None):
         assert actor == "admin"
         if path == "/api/workspace/security":
             if method == "PATCH":
+                state["patches"].append(body)
                 payload = WorkspaceSecurityUpdate.model_validate(body)
                 assert payload.revision == policy["revision"]
                 assert (
@@ -128,7 +154,16 @@ def _manage_run(tmp_path, pack_key, problem=None):
                 assert body.get("ip_allow_list", policy["ip_allow_list"]) == []
                 merged = {**policy, **body, "revision": policy["revision"] + 1}
                 if problem != "policy_not_saved":
-                    policy.update(merged)
+                    persisted = dict(merged)
+                    ignored = {
+                        "session_retention_ignored": "session_retention_days",
+                        "event_retention_ignored": "security_event_retention_days",
+                    }.get(problem)
+                    if ignored is not None and len(state["patches"]) == 1:
+                        persisted[ignored] = policy[ignored]
+                    if problem == "retention_restore_lost" and len(state["patches"]) == 2:
+                        persisted["session_retention_days"] = policy["session_retention_days"]
+                    policy.update(persisted)
                 return httpx.Response(200, headers=headers, json=merged)
             return httpx.Response(200, headers=headers, json=policy)
         if path == "/api/auth/admin-sessions":

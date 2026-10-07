@@ -289,6 +289,9 @@ def test_bulk_session_control_fails_when_post_readback_is_not_empty(tmp_path: Pa
         "policy_not_saved",
         "pagination",
         "remaining_page",
+        "session_retention_ignored",
+        "event_retention_ignored",
+        "retention_restore_lost",
     ),
 )
 def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, problem):
@@ -310,7 +313,13 @@ def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, probl
         "review_mfa_status"
         if problem == "mfa_identity"
         else "update_workspace_security"
-        if problem == "policy_not_saved"
+        if problem
+        in {
+            "policy_not_saved",
+            "session_retention_ignored",
+            "event_retention_ignored",
+            "retention_restore_lost",
+        }
         else "review_admin_sessions"
         if problem == "pagination"
         else "revoke_admin_sessions"
@@ -325,6 +334,9 @@ def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, probl
         "policy_not_saved": "Workspace security update was not persisted",
         "pagination": "Administrator session pagination is incomplete or ambiguous",
         "remaining_page": "Administrator session pagination is incomplete or ambiguous",
+        "session_retention_ignored": "Workspace security update was not persisted",
+        "event_retention_ignored": "Workspace security update was not persisted",
+        "retention_restore_lost": "Workspace security policy was not restored",
     }
     expected_error = (
         SampleWriteOutcomeUnknown if problem == "bulk_unknown" else SamplePhaseActionError
@@ -346,6 +358,8 @@ def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, probl
         assert len(deletes) == (problem in {"bulk_unknown", "reauth_denied", "remaining_page"})
         if problem == "remaining_page":
             assert len(state["logins"]) == len(context.clients)
+        if "retention" in problem:
+            assert len(state["patches"]) == (2 if problem == "retention_restore_lost" else 1)
         if problem == "bulk_unknown":
             journal = [
                 json.loads(line) for line in (tmp_path / "manage.jsonl").read_text().splitlines()

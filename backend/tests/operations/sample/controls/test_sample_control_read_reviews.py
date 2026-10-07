@@ -21,7 +21,7 @@ from operations.sample.packs.registry import get_pack
 from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
 from operations.sample.population.boards import project_board_logical_id
 from operations.sample.scenario import build_dataset
-from tests.operations.sample.controls.sample_manage_wire import _id, _manage_run
+from tests.operations.sample.controls.sample_manage_wire import _id, _manage_run, _workspace_profile
 
 
 @pytest.mark.parametrize("key", ("harbor", "school"))
@@ -34,8 +34,9 @@ def test_authored_reviews_follow_server_ids_and_frontend_queries(tmp_path: Path,
         "review_board_tools",
         "review_my_events",
         "review_member_candidates",
+        "review_workspace_appearance",
     }
-    assert sum(action.expected_end_state["read_checks"] for action in actions) == 17
+    assert sum(action.expected_end_state["read_checks"] for action in actions) == 20
     assert (
         next(a for a in actions if a.values["operation"] == "review_board_tools").actor_key
         == "admin"
@@ -67,7 +68,13 @@ def test_authored_reviews_follow_server_ids_and_frontend_queries(tmp_path: Path,
         assert request.method == "GET" and not request.content
         requests[path] = dict(request.url.params)
         body: object = {"items": []}
-        if path == "/api/views/data-sources":
+        if path == "/api/workspace/appearance":
+            body = {"theme": "stockroom"}
+        elif path == "/api/workspace":
+            body = _workspace_profile(dataset)
+        elif path == "/api/workspace/security/caller-ip":
+            body = {"address": "127.0.0.1"}
+        elif path == "/api/views/data-sources":
             body = {"items": [{"id": module_id}]}
         elif path.endswith("/fields") and path.startswith("/api/views/"):
             body = {"items": [{"id": _id("field"), "module_id": module_id}]}
@@ -128,7 +135,7 @@ def test_authored_reviews_follow_server_ids_and_frontend_queries(tmp_path: Path,
             result = execute_read_review(action, dataset, context)
             assert result["read_checks"] == action.expected_end_state["read_checks"]
             assert result["request_evidence"] == []
-    assert len(requests) == 17
+    assert len(requests) == 20
     assert requests["/api/views/data-sources"] == {"limit": "100", "offset": "0"}
     assert requests[f"/api/views/data-sources/{module_id}/fields"] == {
         "limit": "100",
@@ -261,6 +268,14 @@ def test_manage_controls_persist_safe_policy_and_reauthenticate_every_revoked_ac
             key: value for key, value in baseline.items() if key != "revision"
         }
         assert state["policy"]["revision"] == baseline["revision"] + 2
+        update, restore = state["patches"]
+        retention = ("session_retention_days", "security_event_retention_days")
+        assert all(
+            type(update[key]) is int and 1 <= update[key] <= 3650 and update[key] != baseline[key]
+            for key in retention
+        )
+        assert update[retention[0]] != update[retention[1]]
+        assert all(restore[key] == baseline[key] for key in retention)
         assert state["revoked"] is True
         assert sorted(state["logins"][len(context.clients) :]) == sorted(
             set(context.clients) - {"admin"}
@@ -289,3 +304,121 @@ def test_manage_controls_persist_safe_policy_and_reauthenticate_every_revoked_ac
     finally:
         for client in context.clients.values():
             client.close()
+
+
+@pytest.mark.parametrize("address", ("127.0.0.1", "2001:db8::42"))
+def test_workspace_review_compares_public_theme_and_validates_current_caller_ip(tmp_path, address):
+    dataset = build_dataset("small", 83, date(2026, 10, 2))
+    action = PhaseAction(
+        "control:review-workspace-appearance",
+        "reorganization",
+        "read_controls",
+        "admin",
+        "control:workspace-appearance",
+        {"operation": "review_workspace_appearance"},
+        200,
+        None,
+        {"read_checks": 3},
+    )
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, request.url.path))
+        bodies = {
+            "/api/workspace/appearance": {"theme": "stockroom"},
+            "/api/workspace": _workspace_profile(dataset),
+            "/api/workspace/security/caller-ip": {"address": address},
+        }
+        return httpx.Response(
+            200 if request.url.path in bodies else 404,
+            json=bodies.get(request.url.path, {"detail": "Not Found"}),
+        )
+
+    with SampleClient(
+        "https://api.example.test",
+        "https://ui.example.test",
+        tmp_path / "workspace.jsonl",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        context = PhaseExecutionContext(
+            {"admin": client}, {"admin": _id("admin")}, {}, {}, {}, {}, {}, "private"
+        )
+        result = execute_read_review(action, dataset, context)
+    assert result["actor_id"] == _id("admin") and result["read_checks"] == 3
+    assert result["request_evidence"] == []
+    assert seen == [
+        ("GET", "/api/workspace/appearance"),
+        ("GET", "/api/workspace"),
+        ("GET", "/api/workspace/security/caller-ip"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "problem,step",
+    (
+        ("public_extra", "workspace_appearance"),
+        ("public_theme", "workspace_appearance"),
+        ("theme_mismatch", "workspace_theme"),
+        ("profile_identity", "workspace_theme"),
+        ("caller_ip", "caller_ip"),
+        ("caller_extra", "caller_ip"),
+        ("caller_type", "caller_ip"),
+        ("caller_denied", "read:3"),
+    ),
+)
+def test_workspace_review_stops_at_the_invalid_dto_or_identity_boundary(tmp_path, problem, step):
+    dataset = build_dataset("small", 83, date(2026, 10, 2))
+    action = PhaseAction(
+        "control:review-workspace-appearance",
+        "reorganization",
+        "read_controls",
+        "admin",
+        "control:workspace-appearance",
+        {"operation": "review_workspace_appearance"},
+        200,
+        None,
+        {"read_checks": 3},
+    )
+
+    def handler(request):
+        appearance, profile, address = (
+            {"theme": "stockroom"},
+            _workspace_profile(dataset),
+            {"address": "127.0.0.1"},
+        )
+        if problem == "public_extra":
+            appearance["display_name"] = "Private profile"
+        if problem == "public_theme":
+            appearance["theme"] = "unrecognized"
+        if problem == "theme_mismatch":
+            profile["theme"] = "triplicate"
+        if problem == "profile_identity":
+            profile["display_name"] = "Other workspace"
+        if problem == "caller_ip":
+            address["address"] = "invalid-address"
+        if problem == "caller_extra":
+            address["other"] = "not-the-current-dto"
+        if problem == "caller_type":
+            address["address"] = 1
+        bodies = {
+            "/api/workspace/appearance": appearance,
+            "/api/workspace": profile,
+            "/api/workspace/security/caller-ip": address,
+        }
+        return httpx.Response(
+            403 if problem == "caller_denied" and request.url.path.endswith("caller-ip") else 200,
+            json=bodies[request.url.path],
+        )
+
+    with SampleClient(
+        "https://api.example.test",
+        "https://ui.example.test",
+        tmp_path / "workspace.jsonl",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        context = PhaseExecutionContext(
+            {"admin": client}, {"admin": _id("admin")}, {}, {}, {}, {}, {}, "private"
+        )
+        with pytest.raises(SamplePhaseActionError) as failure:
+            execute_read_review(action, dataset, context)
+        assert failure.value.step == step
