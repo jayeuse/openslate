@@ -103,6 +103,27 @@ test("Logo draft stays local until settings save, then saved header and removal 
   expect(bounds.scroll).toBeLessThanOrEqual(bounds.width);
 });
 
+test("Logo a direct Comms visit loads the organization brand", async ({
+  page,
+}) => {
+  const api = await installLogoApi(page);
+  api.workspace.logo_file_id = oldLogoId;
+  api.files.set(oldLogoId, logoFile(oldLogoId));
+  await page.goto("/comms");
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeVisible();
+  await expect(
+    header(page).getByRole("img", {
+      name: "Harbor Services logo",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    header(page).getByRole("img", { name: "OpenSlate mark: OS", exact: true }),
+  ).toHaveCount(0);
+});
+
 test("Logo warm workspace cache shows the organization brand in Comms and on return", async ({
   page,
 }) => {

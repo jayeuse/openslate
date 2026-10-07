@@ -112,12 +112,12 @@ export function AppShell({
   const queryClient = useQueryClient();
   const brandQuery = useQuery({
     ...workspaceBrandOptions(),
-    enabled: !isComms && !suspended,
+    // The shell shows the organization's identity on every route, Comms too.
+    enabled: !suspended,
   });
   const savedLogoQuery = useQuery({
     ...workspaceLogoOptions(brandQuery.data?.logo_file_id ?? ""),
     enabled:
-      !isComms &&
       !suspended &&
       !brandQuery.isError &&
       Boolean(brandQuery.data?.logo_file_id),
@@ -141,9 +141,9 @@ export function AppShell({
     void queryClient.cancelQueries({ queryKey: manageKeys.logos() });
   }, [suspended, queryClient]);
   useEffect(() => {
-    if (isComms || suspended || brandDenied) return;
+    if (suspended || brandDenied) return;
     return subscribeWorkspaceBrand(queryClient);
-  }, [isComms, suspended, brandDenied, queryClient]);
+  }, [suspended, brandDenied, queryClient]);
   useEffect(() => {
     if (
       savedLogoQuery.error instanceof WorkspaceLogoBindingChanged &&
@@ -151,8 +151,6 @@ export function AppShell({
     )
       void queryClient.invalidateQueries({ queryKey: manageKeys.brand() });
   }, [savedLogoQuery.error, suspended, queryClient]);
-  // OpenComms does not fetch the brand, but a disabled query still returns
-  // the cached brand, so the header stays the organization's own.
   const brand = suspended || brandDenied ? undefined : brandQuery.data;
   const logoBlob =
     suspended || brandDenied || brandQuery.isError || savedLogoQuery.isError
@@ -164,7 +162,7 @@ export function AppShell({
     else void savedLogoQuery.refetch();
   };
   const logoFailed =
-    !isComms && !suspended && (brandQuery.isError || savedLogoQuery.isError);
+    !suspended && (brandQuery.isError || savedLogoQuery.isError);
   const [savedSidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [commsSidebarCollapsed, setCommsSidebarCollapsed] = useState(true);
   const sidebarCollapsed = isComms
