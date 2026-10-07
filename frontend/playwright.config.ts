@@ -77,12 +77,11 @@ export default defineConfig({
   testDir: "./tests",
   outputDir: "test-results/playwright",
   fullyParallel: true,
-  // On CI, one worker per CPU, at most five. Playwright's default (half the
-  // CPUs) gives 1 worker on the 2-CPU runners, and the suite outgrows the job.
-  // Five workers on those 2 CPUs starved the dev server's on-demand compile:
-  // post-detail waits passed 5 s and failed. Five workers pass locally (10 CPUs)
-  // since the dev server keeps compiled routes (next.config.ts onDemandEntries).
-  workers: isCI ? Math.min(5, availableParallelism()) : undefined,
+  // Keep CI bounded by its CPUs. Three local workers reduce measured memory
+  // pressure on the 16 GiB development machine; CLI --workers still overrides.
+  workers: isCI
+    ? Math.min(5, availableParallelism())
+    : Math.min(3, availableParallelism()),
   timeout: 30_000,
   expect: { timeout: 5_000 },
   forbidOnly: isCI,

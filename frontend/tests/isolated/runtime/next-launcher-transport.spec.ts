@@ -220,6 +220,10 @@ test("actual development ingress replaces spoofed headers and preserves HMR and 
     expect(upgradeHeaders["x-forwarded-proto"]).toBe("http");
     expect(upgradeHeaders.forwarded).toBeUndefined();
 
+    // Cold compilation belongs to fixture setup, before the bounded HMR wait.
+    const warmup = await fetch(origin);
+    expect(warmup.status).toBe(200);
+    await warmup.arrayBuffer();
     browser = await chromium.launch();
     const page = await browser.newPage();
     const hmr = page.waitForEvent("websocket", {
