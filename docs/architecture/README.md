@@ -75,7 +75,7 @@ Supabase Auth establishes provider identity. FastAPI verifies the provider token
 | [18 — Observability](18-observability.md) | Health, request IDs, audit/log signals, CI artifacts, and readiness boundaries. |
 | [19 — Architecture decisions](19-architecture-decisions.md) | Evidence-backed design choices and their technical effects. |
 | [20 — Architecture risks](20-architecture-risks.md) | Current problems, consequences, affected components, and recommendations. |
-| [21 — Glossary](21-glossary.md) | Canonical project terms used throughout this set. |
+| [21 — Glossary](21-glossary.md) | System dictionary: one meaning per term, its other names in code and plans, and the word to use. |
 
 ## Observed architectural principles
 
