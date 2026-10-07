@@ -29,6 +29,7 @@ def test_reauth_uses_live_provider_session_not_local_jwt(monkeypatch: pytest.Mon
     user = SimpleNamespace(id="local-user", role="admin")
     monkeypatch.setattr(events_router, "get_supabase_auth_client", lambda: client, raising=False)
     monkeypatch.setattr(events_router, "allowed_module_ids", lambda *_args: None)
+    monkeypatch.setattr(events_router, "readable_board_ids", lambda *_args: None, raising=False)
     monkeypatch.setattr(
         events_router, "load_workspace_policy", lambda _db: WorkspaceProfile(ip_allow_list=[])
     )
@@ -47,7 +48,9 @@ def test_reauth_uses_live_provider_session_not_local_jwt(monkeypatch: pytest.Mon
     monkeypatch.setattr(events_router, "AuditSession", session)
 
     viewer = events_router._reauthorize_in_database(events_router.EventPrincipal("access"))
-    assert viewer == events_router.EventViewer(user_id="local-user", role="admin", module_ids=None)
+    assert viewer == events_router.EventViewer(
+        user_id="local-user", role="admin", module_ids=None, board_ids=None
+    )
     client.verify_access_token.assert_called_once_with("access")
 
 
@@ -118,10 +121,13 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
         invalid_principal = events_router.EventPrincipal("invalid-token")
         valid_principal = events_router.EventPrincipal("valid-token")
 
-        module_id = uuid4()
+        module_id, board_id = uuid4(), uuid4()
         account = SimpleNamespace(id=uuid4(), role="member")
         expected = events_router.EventViewer(
-            user_id=account.id, role="member", module_ids=frozenset({module_id})
+            user_id=account.id,
+            role="member",
+            module_ids=frozenset({module_id}),
+            board_ids=frozenset({board_id}),
         )
         entered: list[object] = []
         exited: list[object] = []
@@ -163,7 +169,13 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
             assert user is account
             return frozenset({module_id})
 
+        def readable_boards(db: object, user: object) -> frozenset[object]:
+            assert db is database
+            assert user is account
+            return frozenset({board_id})
+
         monkeypatch.setattr(events_router, "allowed_module_ids", readable_modules)
+        monkeypatch.setattr(events_router, "readable_board_ids", readable_boards, raising=False)
         monkeypatch.setattr(events_router, "get_engine", lambda: "engine")
         monkeypatch.setattr(events_router, "AuditSession", Session)
         monkeypatch.setattr(events_router, "resolve_provider_session", resolve_provider_session)

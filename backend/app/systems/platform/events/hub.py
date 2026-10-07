@@ -15,6 +15,7 @@ from sqlalchemy.engine import make_url
 from app.core.config import get_settings
 from app.core.observability import log_event
 from app.systems.platform.events.models import (
+    BOARD_SCOPED_ENTITIES,
     PRIVATE_NOTIFICATION_ENTITY,
     RESYNC_ENTITY,
     InvalidationEvent,
@@ -45,7 +46,7 @@ def subscriber_capacity(server_max_concurrency: int) -> int:
 
 @dataclass(frozen=True, slots=True)
 class EventViewer:
-    """A subscriber's identity and readable modules from one fresh database check.
+    """A subscriber's identity and readable scopes from one fresh database check.
 
     ``module_ids`` is None for an administrator, who reads every module.
     """
@@ -53,6 +54,7 @@ class EventViewer:
     user_id: object
     role: str | None
     module_ids: frozenset[UUID] | None
+    board_ids: frozenset[UUID] | None = frozenset()
 
 
 @dataclass(slots=True)
@@ -194,6 +196,10 @@ def _can_receive(subscription: EventSubscription, event: InvalidationEvent) -> b
         return False
     if event.entity == PRIVATE_NOTIFICATION_ENTITY:
         return event.recipient_id is not None and subscription.user_id == event.recipient_id
+    if event.entity in BOARD_SCOPED_ENTITIES:
+        return viewer.role == "admin" or (
+            viewer.board_ids is not None and event.board_id in viewer.board_ids
+        )
     if event.all_authenticated:
         return True
     if viewer.module_ids is None:
@@ -206,9 +212,19 @@ def _can_receive(subscription: EventSubscription, event: InvalidationEvent) -> b
 def _access_signature(viewer: EventViewer) -> tuple[str, ...]:
     if viewer.role is None:
         return ()
-    if viewer.module_ids is None:
+    if viewer.role == "admin":
         return (viewer.role,)
-    return (viewer.role, *sorted(str(module_id) for module_id in viewer.module_ids))
+    modules = (
+        ("module:*",)
+        if viewer.module_ids is None
+        else tuple(f"module:{module_id}" for module_id in sorted(viewer.module_ids))
+    )
+    boards = (
+        ("board:*",)
+        if viewer.board_ids is None
+        else tuple(f"board:{board_id}" for board_id in sorted(viewer.board_ids))
+    )
+    return (viewer.role, *modules, *boards)
 
 
 class PostgresInvalidationListener:

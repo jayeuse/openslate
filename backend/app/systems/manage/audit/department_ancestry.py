@@ -26,6 +26,7 @@ from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 
 DepartmentRef = UUID | Department | None
+BoardRef = UUID | Board | None
 
 _MODULE_CHILDREN = (Field, Record, SavedView, Report)
 _BOARD_CHILDREN = (
@@ -224,6 +225,40 @@ class DepartmentAncestry:
                 return self._revision(cached)
             return self._post(self.revision_posts.get(revision))
         return self._post(revision.post_id) if revision is not None else None
+
+    def _board_ref(self, board_id: UUID | None) -> BoardRef:
+        if board_id is None:
+            return None
+        cached = self.boards.get(board_id)
+        if cached is not None:
+            return cached
+        return board_id if board_id in self.board_departments else None
+
+    def _post_board_ref(self, post_id: UUID | None) -> BoardRef:
+        if post_id is None:
+            return None
+        cached = self.posts.get(post_id)
+        return self._board_ref(
+            cached.board_id if cached is not None else self.post_boards.get(post_id)
+        )
+
+    def board_for_instance(self, instance: Any) -> BoardRef:
+        """Capture a Board before flush, including new and soon-deleted parents."""
+
+        if isinstance(instance, Board):
+            return instance
+        if isinstance(instance, _BOARD_CHILDREN):
+            return self._board_ref(instance.board_id)
+        if isinstance(instance, BoardPostRevision):
+            return self._post_board_ref(instance.post_id)
+        if isinstance(instance, _REVISION_CHILDREN):
+            revision = self.revisions.get(instance.revision_id)
+            return self._post_board_ref(
+                revision.post_id
+                if revision is not None
+                else self.revision_posts.get(instance.revision_id)
+            )
+        return None
 
     def for_instance(self, instance: Any) -> DepartmentRef:
         if isinstance(instance, File):

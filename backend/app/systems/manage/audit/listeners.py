@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database.session import AuditSession
 from app.core.observability import log_event
+from app.systems.boards.models import Board
 from app.systems.manage.audit.context import get_audit_context
 from app.systems.manage.audit.department_ancestry import DepartmentAncestry
 from app.systems.manage.audit.models import AuditAction, AuditLog, SecurityEvent
@@ -35,6 +36,7 @@ class PendingChange:
     action: AuditAction
     changes: dict[str, tuple[Any, Any]] | None = None
     department: UUID | Department | None = None
+    board: UUID | Board | None = None
 
 
 def _is_audited(instance: Any) -> bool:
@@ -111,6 +113,18 @@ def _event_module_id(instance: Any, edge_modules: dict[UUID, UUID]) -> UUID | No
     return module_id if isinstance(module_id, UUID) else None
 
 
+def _event_entity(instance: Any, entity: str) -> str:
+    if entity in {"board_attachments", "board_record_links"}:
+        return "board_posts" if instance.post_id is not None else "board_events"
+    return {
+        "board_groups": "boards",
+        "board_event_reminders": "board_events",
+        "board_post_revisions": "board_posts",
+        "board_post_revision_attachments": "board_posts",
+        "board_post_revision_record_links": "board_posts",
+    }.get(entity, entity)
+
+
 @event.listens_for(AuditSession, "before_flush")
 def capture_changes(session: AuditSession, flush_context: Any, instances: Any) -> None:
     pending = session.info.setdefault(PENDING_CHANGES_KEY, [])
@@ -159,6 +173,7 @@ def capture_changes(session: AuditSession, flush_context: Any, instances: Any) -
             ancestry = DepartmentAncestry(session, (change.instance for change in pending))
             for change in pending:
                 change.department = ancestry.for_instance(change.instance)
+                change.board = ancestry.board_for_instance(change.instance)
 
 
 @event.listens_for(AuditSession, "after_flush_postexec")
@@ -205,10 +220,11 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
 
         entity_type = inspect(change.instance).mapper.local_table.name
         invalidation = event_for_entity(
-            entity_type,
+            _event_entity(change.instance, entity_type),
             getattr(change.instance, "id", None),
             recipient_id=getattr(change.instance, "recipient_id", None),
             module_id=_event_module_id(change.instance, edge_modules),
+            board_id=change.board.id if isinstance(change.board, Board) else change.board,
         )
         if invalidation is not None:
             invalidations.append(invalidation)

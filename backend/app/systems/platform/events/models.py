@@ -14,17 +14,14 @@ _PRIVATE_INVALIDATION_ENTITIES = frozenset(
         "report_runs",
         "report_run_rows",
         "report_schedules",
-        "boards",
         "board_groups",
-        "board_widgets",
-        "board_events",
         "board_event_reminders",
-        "board_posts",
         "board_post_revisions",
         "board_post_revision_attachments",
         "board_post_revision_record_links",
         "board_attachments",
         "board_record_links",
+        "dashboard_widgets",
     }
 )
 _ADMINISTRATOR_ENTITIES = frozenset(
@@ -38,9 +35,10 @@ _ADMINISTRATOR_ENTITIES = frozenset(
         "update_statuses",
     }
 )
-_ALL_AUTHENTICATED_ENTITIES = frozenset({"departments", "workspace_profiles"})
+_ALL_AUTHENTICATED_ENTITIES = frozenset({"dashboards", "departments", "workspace_profiles"})
 _ENTITY_ONLY_ENTITIES = frozenset(
     {
+        "dashboards",
         "departments",
         "files",
         "group_access",
@@ -55,6 +53,7 @@ _ENTITY_ONLY_ENTITIES = frozenset(
 MODULE_SCOPED_ENTITIES = frozenset(
     {"fields", "modules", "records", "relationship_edges", "saved_views"}
 )
+BOARD_SCOPED_ENTITIES = frozenset({"boards", "board_posts", "board_events", "board_widgets"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,11 +66,28 @@ class InvalidationEvent:
     administrators_only: bool = False
     all_authenticated: bool = False
     recipient_id: UUID | None = None
+    board_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if (
             not _ENTITY_PATTERN.fullmatch(self.entity)
             or self.entity in _PRIVATE_INVALIDATION_ENTITIES
+        ):
+            raise ValueError("invalid invalidation payload")
+        if self.entity in BOARD_SCOPED_ENTITIES:
+            if (
+                not isinstance(self.board_id, UUID)
+                or self.entity_id is not None
+                or self.module_id is not None
+                or self.recipient_id is not None
+                or self.administrators_only
+                or self.all_authenticated
+            ):
+                raise ValueError("invalid invalidation payload")
+        elif self.board_id is not None:
+            raise ValueError("invalid invalidation payload")
+        if self.entity == "dashboards" and (
+            self.entity_id is not None or self.module_id is not None
         ):
             raise ValueError("invalid invalidation payload")
         if self.entity == PRIVATE_NOTIFICATION_ENTITY:
@@ -94,6 +110,8 @@ class InvalidationEvent:
             payload["entity_id"] = str(self.entity_id)
         if self.module_id is not None:
             payload["module_id"] = str(self.module_id)
+        if self.board_id is not None:
+            payload["board_id"] = str(self.board_id)
         return payload
 
     def to_json(self) -> str:
@@ -117,12 +135,17 @@ def event_for_entity(
     *,
     recipient_id: UUID | None = None,
     module_id: UUID | None = None,
+    board_id: UUID | None = None,
 ) -> InvalidationEvent | None:
     """Classify an audited table without exposing rows or audit snapshots.
 
     A module-scoped event without its module fails closed to administrators.
     """
 
+    if entity == "dashboard_widgets":
+        entity = "dashboards"
+    if entity in BOARD_SCOPED_ENTITIES:
+        return InvalidationEvent(entity=entity, board_id=board_id) if board_id is not None else None
     if entity in _PRIVATE_INVALIDATION_ENTITIES:
         return None
     if entity == PRIVATE_NOTIFICATION_ENTITY:
@@ -156,18 +179,27 @@ def parse_invalidation_payload(payload: object) -> InvalidationEvent:
         "entity_id",
         "module_id",
         "recipient_id",
+        "board_id",
     }:
         raise ValueError("invalid invalidation payload")
     entity = payload.get("entity")
     entity_id = payload.get("entity_id")
     module_id = payload.get("module_id")
     recipient_id = payload.get("recipient_id")
+    board_id = payload.get("board_id")
     if not isinstance(entity, str) or not _ENTITY_PATTERN.fullmatch(entity):
+        raise ValueError("invalid invalidation payload")
+    if entity in BOARD_SCOPED_ENTITIES and set(payload) != {"entity", "board_id"}:
+        raise ValueError("invalid invalidation payload")
+    if entity == "dashboards" and set(payload) != {"entity"}:
+        raise ValueError("invalid invalidation payload")
+    if "board_id" in payload and entity not in BOARD_SCOPED_ENTITIES:
         raise ValueError("invalid invalidation payload")
     try:
         parsed_id = UUID(entity_id) if isinstance(entity_id, str) else None
         parsed_module_id = UUID(module_id) if isinstance(module_id, str) else None
         parsed_recipient_id = UUID(recipient_id) if isinstance(recipient_id, str) else None
+        parsed_board_id = UUID(board_id) if isinstance(board_id, str) else None
     except ValueError as error:
         raise ValueError("invalid invalidation payload") from error
     if entity_id is not None and parsed_id is None:
@@ -175,6 +207,8 @@ def parse_invalidation_payload(payload: object) -> InvalidationEvent:
     if module_id is not None and parsed_module_id is None:
         raise ValueError("invalid invalidation payload")
     if recipient_id is not None and parsed_recipient_id is None:
+        raise ValueError("invalid invalidation payload")
+    if board_id is not None and parsed_board_id is None:
         raise ValueError("invalid invalidation payload")
     if entity in _ENTITY_ONLY_ENTITIES and parsed_id is not None:
         raise ValueError("invalid invalidation payload")
@@ -189,4 +223,5 @@ def parse_invalidation_payload(payload: object) -> InvalidationEvent:
         or (scoped and parsed_module_id is None),
         all_authenticated=entity in _ALL_AUTHENTICATED_ENTITIES,
         recipient_id=parsed_recipient_id,
+        board_id=parsed_board_id,
     )

@@ -305,3 +305,50 @@ def test_an_expired_guest_reads_nothing(integration_owner_db: Session) -> None:
     )
     assert board_level(db, visitor, company_board(db)) is None
     assert visitor.id not in board_reader_ids(db, company_board(db))
+
+
+def test_readable_board_ids_match_live_board_levels_and_account_eligibility(
+    integration_owner_db: Session,
+) -> None:
+    from app.systems.boards.access import readable_board_ids
+
+    db = integration_owner_db
+    company = company_board(db)
+    department = add_department(db)
+    module = add_module(db, department)
+    department_scope = department_board(db, department)
+    project = project_board(db)
+    archived = project_board(db)
+    archived.status = "archived"
+    deleted = project_board(db)
+    deleted.is_deleted = True
+    deleted.deleted_at = datetime.now(UTC)
+    reader, visitor, outsider, administrator = member(db), guest(db), member(db), admin(db)
+    make_group_access(db, [reader], department, module, level=AccessLevel.WRITE)
+    make_group_access(db, [visitor], department, level=AccessLevel.MANAGE)
+    board_group(db, project, [reader, visitor], AccessLevel.WRITE)
+    board_group(db, archived, [reader, visitor], AccessLevel.READ)
+    board_group(db, deleted, [reader, visitor], AccessLevel.MANAGE)
+    inactive = add_user(db, "inactive-admin", role=UserRole.ADMIN, status="disabled")
+    expired = add_user(
+        db, "expired-reader", role=UserRole.GUEST, expires_at=datetime.now(UTC) - timedelta(days=1)
+    )
+    pending = add_user(db, "pending-reader", status="pending")
+    removed = add_user(db, "deleted-reader")
+    removed.is_deleted = True
+    removed.deleted_at = datetime.now(UTC)
+    db.flush()
+    boards = (company, department_scope, project, archived, deleted)
+    for actor in (reader, visitor, outsider, inactive, expired, pending, removed):
+        actual = readable_board_ids(db, actor)
+        assert actual is not None
+        assert {board.id for board in boards if board.id in actual} == {
+            board.id for board in boards if board_level(db, actor, board) is not None
+        }
+    assert {company.id, department_scope.id, project.id, archived.id} <= readable_board_ids(
+        db, reader
+    )
+    assert deleted.id not in readable_board_ids(db, reader)
+    assert readable_board_ids(db, administrator) is None
+    for actor in (inactive, expired, pending, removed):
+        assert readable_board_ids(db, actor) == frozenset()

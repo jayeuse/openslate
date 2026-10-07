@@ -111,6 +111,24 @@ def visible_board_clause(user: User) -> ColumnElement[bool]:
     )
 
 
+def readable_board_ids(db: Session, user: User) -> frozenset[UUID] | None:
+    """Snapshot live readable Boards; None denotes an active administrator."""
+
+    if not is_active_account(user):
+        return frozenset()
+    if user.role == UserRole.ADMIN.value:
+        return None
+    return frozenset(
+        db.scalars(
+            select(Board.id).where(
+                Board.is_deleted.is_(False),
+                Board.deleted_at.is_(None),
+                visible_board_clause(user),
+            )
+        ).all()
+    )
+
+
 def managed_board_clause(db: Session, user: User) -> ColumnElement[bool]:
     """SQL form of ``board_level(...) == manage`` without one query per Board."""
 
