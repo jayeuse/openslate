@@ -209,8 +209,8 @@ def _merge_patch_data(
     module_id: UUID,
     existing: dict[str, Any],
     requested: dict[str, Any],
+    fields: list[Field],
 ) -> dict[str, Any]:
-    fields = _module_fields(db, module_id)
     normalized = validate_record_mutation(requested, existing, fields)
     validate_live_user_assignments(db, module_id, normalized, fields)
     return normalized
@@ -316,14 +316,13 @@ def update_record(
     _require_current_revision(record, if_match)
     if payload.data is not None:
         previous = dict(record.data)
+        fields = _module_fields(db, record.module_id)
         try:
-            record.data = _merge_patch_data(db, record.module_id, record.data, payload.data)
+            record.data = _merge_patch_data(db, record.module_id, record.data, payload.data, fields)
         except RecordValidationError as error:
             raise _record_validation_http_error(error) from error
         enqueue_record_event(db, record, previous=previous)
-        notify_record_assignments(
-            db, record, previous=previous, fields=_module_fields(db, record.module_id)
-        )
+        notify_record_assignments(db, record, previous=previous, fields=fields)
     _commit(db, "Unable to update record")
     return displayed_record(
         record, FieldDisplayResolver(db, record.module_id, _module_fields(db, record.module_id))

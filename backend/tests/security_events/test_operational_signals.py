@@ -5,12 +5,23 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from uuid6 import uuid7
 
+from app.core.observability import LOGGER_NAME
 from app.systems.manage.audit import listeners, service
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.platform.events.models import InvalidationEvent
 
 SQL_CANARY = token_urlsafe(32)
 PASSWORD_CANARY = token_urlsafe(32)
+
+
+@pytest.fixture(autouse=True)
+def capture_application_logs(caplog):
+    logger = logging.getLogger(LOGGER_NAME)
+    logger.addHandler(caplog.handler)
+    try:
+        yield
+    finally:
+        logger.removeHandler(caplog.handler)
 
 
 def test_persistence_failure_is_logged_without_payload(monkeypatch, caplog) -> None:

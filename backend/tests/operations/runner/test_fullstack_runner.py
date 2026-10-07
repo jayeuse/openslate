@@ -243,11 +243,11 @@ def test_disposable_caddy_removes_an_owned_image_when_container_start_failed(
 
 def test_gateway_config_preserves_single_origin_routes_with_container_host_upstreams() -> None:
     rendered = caddy_runtime.render_gateway_config()
-
     assert "https://localhost:3448" in rendered
     assert "bind 0.0.0.0" in rendered
-    assert rendered.count("host.docker.internal") == 4
+    assert rendered.count("host.docker.internal") == 5
     assert "@events path /api/events" in rendered
+    assert "handle @backup_export_content" in rendered
     assert "@api path /api /api/*" in rendered
     assert "{{" not in rendered
 

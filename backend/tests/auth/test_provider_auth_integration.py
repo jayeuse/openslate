@@ -24,6 +24,7 @@ from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.models import AuditLog, SecurityEvent
+from app.systems.platform.scheduling.models import InAppNotification
 from tests.conftest import guarded_create_engine
 
 pytestmark = pytest.mark.integration
@@ -73,6 +74,11 @@ def provider_account():
                         select(IdentitySession).where(IdentitySession.user_id == local_id)
                     ):
                         db.delete(session)
+                    for notice in db.scalars(
+                        select(InAppNotification).where(InAppNotification.recipient_id == local_id)
+                    ):
+                        db.delete(notice)
+                    db.flush()
                     user = db.get(User, local_id)
                     if user is not None:
                         db.delete(user)

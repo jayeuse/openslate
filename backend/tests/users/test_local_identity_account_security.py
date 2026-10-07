@@ -170,7 +170,7 @@ def test_disabled_user_is_locally_revoked_without_provider_call(
     events = Mock()
     monkeypatch.setattr(account_operations, "_record_security_event", events)
     db = Mock(spec=Session)
-    db.scalar.side_effect = [actor, member]
+    db.scalar.side_effect = [actor, member, member.id]
     db.scalars.return_value = []
 
     result = account_operations.update_user(
@@ -250,7 +250,7 @@ def test_local_disable_commit_failure_records_attempt_and_failure(
     actor = _user(UserRole.ADMIN)
     target = _user()
     db = Mock(spec=Session)
-    db.scalar.side_effect = [actor, target]
+    db.scalar.side_effect = [actor, target, target.id]
     db.scalars.return_value = []
     db.commit.side_effect = SQLAlchemyError("database unavailable")
     events = Mock()

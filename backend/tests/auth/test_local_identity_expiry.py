@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.integrations.supabase_auth import ProviderAccessIdentity, ProviderTokens, ProviderUser
 from app.systems.access.identity import provider_actions, provider_sessions
 from app.systems.access.identity.contracts import ActionTokenInvalid, InvalidCredentials
-from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.identity.provider_login import login_with_provider
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import User, UserRole, UserStatus
@@ -77,6 +77,37 @@ def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
     return now, user, session, claims, client
 
 
+def _identity_database(user, now, *, session=None):
+    observation = IdentityMfaObservation(
+        user_id=user.id,
+        observed_provider_user_id=user.supabase_user_id,
+        verified_totp=False,
+        observed_at=now - timedelta(seconds=1),
+    )
+    rows = {
+        User: user,
+        User.supabase_user_id: user.supabase_user_id,
+        IdentitySession: session,
+        IdentityMfaObservation: observation,
+    }
+    db = Mock(spec=Session)
+    db.scalar.side_effect = lambda query: rows[query.column_descriptions[0]["expr"]]
+
+    def get(model, identifier, **_kwargs):
+        row = rows[model]
+        key = "user_id" if model is IdentityMfaObservation else "id"
+        return row if row is not None and getattr(row, key) == identifier else None
+
+    def add(instance):
+        if isinstance(instance, IdentitySession):
+            rows[IdentitySession] = instance
+
+    db.get.side_effect = get
+    db.add.side_effect = add
+    db.execute.return_value.scalar_one.return_value = True
+    return db
+
+
 def test_expired_user_is_denied_password_login_with_the_generic_credential_error(monkeypatch):
     now, user, _session, _claims, client = _subject(monkeypatch, expired=True)
     db = Mock(spec=Session)
@@ -91,13 +122,13 @@ def test_expired_user_is_denied_password_login_with_the_generic_credential_error
 
 def test_null_account_expiry_remains_eligible_for_password_login(monkeypatch):
     now, user, _session, _claims, client = _subject(monkeypatch, expired=False)
-    db = Mock(spec=Session)
-    db.scalar.return_value = user
-    db.execute.return_value.scalar_one.return_value = True
+    db = _identity_database(user, now)
     issued = login_with_provider(
         db, user.email, "correct password", client, now=now, enforce_rate_limit=False
     )
-    persisted = db.add.call_args.args[0]
+    persisted = next(
+        call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], IdentitySession)
+    )
     assert persisted.user_id == user.id
     assert persisted.provider_user_id == user.supabase_user_id
     assert issued.access_token == "provider-access"
@@ -171,9 +202,7 @@ def test_successful_refresh_renews_workspace_timeout_on_both_paths(monkeypatch, 
     )
     session.refreshed_at = now - timedelta(minutes=5)
     session.expires_at = now + timedelta(minutes=1)
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [session, session, user]
-    db.execute.return_value.scalar_one.return_value = True
+    db = _identity_database(user, now, session=session)
     if not cached:
         from app.core.integrations.supabase_auth import InvalidProviderToken
 

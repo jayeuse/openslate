@@ -1,16 +1,18 @@
 """Signed HTTP and committed PostgreSQL export boundaries, never host backup work."""
 
+import json
+import subprocess
+import sys
 from datetime import timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
-from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
-from sqlalchemy import event, func, inspect, select, text
+from sqlalchemy import event, func, inspect, select, text, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -18,7 +20,10 @@ from app.core.database.session import AuditSession, get_engine
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog, SecurityEvent
-from app.systems.manage.backups.models import BackupRun
+from app.systems.manage.backups import exports, service
+from app.systems.manage.backups.models import BackupExportOperation, BackupPolicy, BackupRun
+from app.systems.manage.backups.schemas import ExportOutcomeCommand
+from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
 pytest_plugins = ("tests.auth.session_policy_support",)
 pytestmark = pytest.mark.integration
@@ -40,6 +45,7 @@ PUBLIC_FIELDS = {
 def export_world(policy_world):
     world = policy_world
     with Session(world.owner) as db:
+        saved_policy = db.execute(select(BackupPolicy.__table__)).mappings().one_or_none()
         instance = db.scalar(select(func.current_setting("cluster_name")))
         now = db.scalar(select(func.clock_timestamp()))
         source_id = uuid4()
@@ -91,8 +97,6 @@ def export_world(policy_world):
     )
     with Session(world.owner) as db:
         if ids:
-            from app.systems.manage.backups.models import BackupExportOperation
-
             for event in db.scalars(select(SecurityEvent).where(SecurityEvent.subject_id.in_(ids))):
                 db.delete(event)
             for audit in db.scalars(
@@ -108,6 +112,16 @@ def export_world(policy_world):
             db.flush()
         for source in db.scalars(select(BackupRun).where(BackupRun.id.in_(source_ids))):
             db.delete(source)
+        policy = db.scalar(select(BackupPolicy))
+        if saved_policy is None:
+            if policy is not None:
+                assert policy.installation_id == instance
+                db.delete(policy)
+        else:
+            assert policy is not None and policy.id == saved_policy["id"]
+            db.execute(
+                update(BackupPolicy).where(BackupPolicy.id == policy.id).values(**saved_policy)
+            )
         db.commit()
 
 
@@ -162,8 +176,6 @@ def test_export_database_rejects_incoherent_secret_claim_and_artifact_state(expo
     world = export_world
     created = world.create()
     assert created.status_code == 201
-    from app.systems.manage.backups.models import BackupExportOperation
-
     operation_id = UUID(created.json()["id"])
     with AuditSession(world.runtime) as db:
         row = db.get(BackupExportOperation, operation_id)
@@ -182,8 +194,6 @@ def test_export_runtime_privileges_source_restrict_and_secret_audit_redaction(ex
     world = export_world
     created = world.create()
     assert created.status_code == 201
-    from app.systems.manage.backups.models import BackupExportOperation
-
     with AuditSession(world.runtime) as db:
         allowed = db.scalar(
             select(
@@ -201,8 +211,6 @@ def test_export_runtime_privileges_source_restrict_and_secret_audit_redaction(ex
         ]
         logs = list(db.scalars(select(AuditLog).where(AuditLog.entity_id == row.id)))
         assert logs
-        import json
-
         hidden = all(value not in json.dumps(log.after) for log in logs for value in secret_values)
         assert hidden
         db.delete(db.get(BackupRun, world.source_id))
@@ -229,9 +237,6 @@ def test_claim_commit_erases_secret_and_replay_never_reissues_it(export_world, r
     world = export_world
     created = world.create()
     assert created.status_code == 201
-    from app.systems.manage.backups import exports
-    from app.systems.manage.backups.models import BackupExportOperation
-
     operation_id, claim_id = UUID(created.json()["id"]), uuid4()
     with AuditSession(world.runtime) as db:
         first = exports.claim_export(db, world.instance, claim_id)
@@ -272,9 +277,6 @@ def test_database_excludes_second_unresolved_export_even_without_service(export_
     world = export_world
     first, second = world.create(), world.create()
     assert first.status_code == second.status_code == 201
-    from app.systems.manage.backups import exports
-    from app.systems.manage.backups.models import BackupExportOperation
-
     with AuditSession(world.runtime) as db:
         exports.claim_export(db, world.instance, uuid4())
         db.commit()
@@ -311,9 +313,6 @@ def test_export_source_refusal_and_invalidated_claim_never_handoff_secret(export
     world = export_world
     queued = world.create()
     assert queued.status_code == 201
-    from app.systems.manage.backups import exports
-    from app.systems.manage.backups.models import BackupExportOperation
-
     with Session(world.auth.owner) as db:
         source = db.get(BackupRun, world.source_id)
         if reason in {"member", "guest"}:
@@ -363,9 +362,6 @@ def test_export_terminal_identity_replay_and_source_retention_preserve_ready_lif
     world = export_world
     created = world.create()
     assert created.status_code == 201
-    from app.systems.manage.backups import exports
-    from app.systems.manage.backups.schemas import ExportOutcomeCommand
-
     with AuditSession(world.runtime) as db:
         first = exports.claim_export(db, world.instance, uuid4())
         db.commit()
@@ -430,8 +426,6 @@ def test_backup_and_export_new_claims_exclude_each_other_but_backup_replay_survi
     world = export_world
     created = world.create()
     assert created.status_code == 201
-    from app.systems.manage.backups import exports, service
-
     with AuditSession(world.runtime) as db:
         backup = service.queue_manual(
             db, world.instance, world.auth.actor_id, "Owned exclusion", uuid4().hex
@@ -484,17 +478,22 @@ def test_export_secret_body_limit_works_without_trusting_declared_length(export_
 
 
 def test_empty_export_downgrade_upgrade_and_alembic_catalog_are_clean(integration_owner_db):
-    config = Config("alembic.ini")
+    environment = guarded_migration_environment()
     integration_owner_db.rollback()
     with get_engine().connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM backup_export_operations")) == 0
     try:
-        command.downgrade(config, "7d4538964ae2")
-        command.upgrade(config, "dc22b5c205a4")
+        run_alembic(environment, "downgrade", "7d4538964ae2")
+        run_alembic(environment, "upgrade", "dc22b5c205a4")
         with get_engine().connect() as connection:
-            assert (
-                connection.scalar(text("SELECT version_num FROM alembic_version")) == "dc22b5c205a4"
-            )
+            revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+            assert revision == "dc22b5c205a4"
     finally:
-        command.upgrade(config, "head")
-        command.check(config)
+        original_error = sys.exception()
+        try:
+            run_alembic(environment, "upgrade", "head")
+            subprocess.run([sys.executable, "-m", "alembic", "check"], env=environment, check=True)
+        except BaseException as restore_error:
+            if original_error is not None:
+                raise original_error from restore_error
+            raise

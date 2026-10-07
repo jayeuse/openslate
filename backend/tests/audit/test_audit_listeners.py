@@ -77,10 +77,12 @@ def test_create_listener_stages_and_writes_create_log() -> None:
         "display_name": None,
         "role": "member",
         "theme_preference": None,
+        "appearance": None,
         "job_title": None,
         "sponsor_user_id": None,
         "expires_at": None,
         "status": "active",
+        "mfa_required_since": None,
     }
     assert session.info[REALTIME_INVALIDATION_KEY] == [
         InvalidationEvent(entity="users", entity_id=user.id, administrators_only=True)

@@ -3,6 +3,7 @@
 from hashlib import sha256
 from io import BytesIO
 from threading import Event, Thread
+from types import SimpleNamespace
 from typing import Annotated
 from uuid import uuid4
 
@@ -101,6 +102,8 @@ def committed_logo(guarded_db):
 
 def client_for(engine, actor_id, storage):
     app = create_app()
+    # Only the readers and mutation callback participate in this concurrency fixture.
+    app.state.provider_signout_worker = SimpleNamespace(start=lambda: None, stop=lambda: True)
 
     def database(request: Request):
         with AuditSession(engine) as db:

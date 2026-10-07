@@ -28,9 +28,9 @@ def test_test_mode_keeps_anonymous_limits_unless_the_runner_is_seeding(
     strict = Settings(**settings_values(), _env_file=None)
     seeding = Settings(**settings_values(), **{SWITCH: True}, _env_file=None)
 
-    monkeypatch.setattr(auth_router, "get_settings", lambda: strict)
+    monkeypatch.setattr(auth_router.provider_actions, "get_settings", lambda: strict)
     assert auth_router._anonymous_rate_limits_enabled() is True
-    monkeypatch.setattr(auth_router, "get_settings", lambda: seeding)
+    monkeypatch.setattr(auth_router.provider_actions, "get_settings", lambda: seeding)
     assert auth_router._anonymous_rate_limits_enabled() is False
 
 

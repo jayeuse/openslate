@@ -18,6 +18,7 @@ import app.systems.access.users.router as users_router
 import app.systems.manage.audit.router as audit_router
 import app.systems.sandbox.lifecycle.router as lifecycle_router
 from app.systems.access.users.models import UserRole
+from app.systems.access.users.schemas import UserListResponse
 from app.systems.sandbox.lifecycle.schemas import (
     LifecycleImpactResponse,
     LifecycleMutationResponse,
@@ -185,8 +186,8 @@ def test_users_invitations_and_audit_are_administrator_only(
     if route_group == "users":
         monkeypatch.setattr(
             users_router,
-            "execute_standard_list",
-            lambda *_args: _empty_list_result(),
+            "directory_list",
+            lambda *_args: UserListResponse(items=[], pagination=_empty_list_result().pagination),
         )
     elif route_group == "invitations":
         monkeypatch.setattr(
