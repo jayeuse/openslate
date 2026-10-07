@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/native-select";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
-import type { PageResult } from "../../shared/helpers/sample-collections";
+import type { PageResult } from "../../shared/helpers/page-collections";
 import {
   defaultAccessSessionsRequest,
   sessionDeviceSchema,

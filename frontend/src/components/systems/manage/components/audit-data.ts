@@ -3,7 +3,7 @@ import {
   completeCollection,
   pageCollection,
   type CompleteCollection,
-} from "../../shared/helpers/sample-collections";
+} from "../../shared/helpers/page-collections";
 import type { ManageActivityEntry } from "../state/model";
 
 export const MANAGE_ACTIVITY_PAGE_SIZE = 5;

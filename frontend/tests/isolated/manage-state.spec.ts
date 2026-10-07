@@ -4,7 +4,7 @@ import {
   initialActivityFilters,
   queryManageActivity,
 } from "../../src/components/systems/manage/components/audit";
-import { completeCollection } from "../../src/components/systems/shared/helpers/sample-collections";
+import { completeCollection } from "../../src/components/systems/shared/helpers/page-collections";
 
 test("audit filtering reaches later source rows and export covers every filtered page", () => {
   const entries = Array.from({ length: 30 }, (_, index) => ({

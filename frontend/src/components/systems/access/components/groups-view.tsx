@@ -27,7 +27,7 @@ import { ApiError } from "@/lib/api";
 import {
   completeCollection,
   pageCollection,
-} from "@/components/systems/shared/helpers/sample-collections";
+} from "@/components/systems/shared/helpers/page-collections";
 
 import {
   departmentListOptions,
