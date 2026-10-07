@@ -147,11 +147,15 @@ def _create_reset_fixture(
                 request_method="POST",
                 request_path="/api/test/provider-reset-acceptance",
             )
-            database.add(Department(department_name=f"Reset {uuid4().hex}"))
+            # Library documents belong to a department since files gained department_id.
+            department = Department(department_name=f"Reset {uuid4().hex}")
+            database.add(department)
+            database.flush()
             database.add_all(
                 (
                     File(
                         purpose="library_document",
+                        department_id=department.id,
                         creator_id=admin_id,
                         filename="uploading-fixture.bin",
                         media_type="application/octet-stream",
@@ -161,6 +165,7 @@ def _create_reset_fixture(
                     ),
                     File(
                         purpose="library_document",
+                        department_id=department.id,
                         creator_id=admin_id,
                         filename="ready-fixture.bin",
                         media_type="application/octet-stream",
