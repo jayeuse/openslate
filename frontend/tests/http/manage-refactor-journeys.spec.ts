@@ -416,6 +416,8 @@ test.describe("Organization regional choices", () => {
       "English (US)",
     ]);
     await page.keyboard.press("Escape");
+    // The closing popup's search box shares the field name until it unmounts.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     await chooseRegionalOption(
       page,
       "Regional format",

@@ -37,6 +37,8 @@ export async function mockManageSecurity(page: Page) {
       week_start: "monday",
       business_hours: "09:00–18:00",
       theme: "slate",
+      // GET /workspace always returns today; without it the region read fails.
+      today: "2026-10-06",
       revision: 1,
     },
     sessions: [

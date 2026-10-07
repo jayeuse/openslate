@@ -87,7 +87,9 @@ export default defineConfig({
   forbidOnly: isCI,
   retries: 0,
   reporter: "line",
-  use: { baseURL },
+  // CI runs in UTC; pin the browser zone so a local run cannot pass only
+  // because this machine's zone matches a test fixture.
+  use: { baseURL, timezoneId: "UTC" },
   projects: [
     ...(testLayer === "all" || testLayer === "isolated"
       ? [{ name: "isolated", testDir: "./tests/isolated" }]
