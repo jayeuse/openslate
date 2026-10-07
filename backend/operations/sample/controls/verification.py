@@ -4,25 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from typing import Any
-from uuid import UUID
 
 from app.systems.access.users.schemas import UserPreferencesResponse
 from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleClient, SampleClientError
-from operations.sample.controls.request_verification import verify_request_evidence
+from operations.sample.controls.request_verification import _canonical_uuid, verify_request_evidence
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.verification.core import SampleVerificationError
-
-
-def _canonical_uuid(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        canonical = str(UUID(value))
-    except ValueError:
-        return None
-    return canonical if canonical == value else None
-
 
 _CONTROL_KINDS = frozenset(
     {
@@ -182,6 +170,10 @@ def _run_final_verifiers(
         if isinstance(plan, list)
         else set()
     )
+    if "physical_backup_export" in operations:
+        from operations.sample.controls.host_receipts import verify_host_controls
+
+        verifiers += (("Host", lambda: verify_host_controls(client, dataset, manifest, admin_id)),)
     if "real_mfa_reset" in operations:
         verifiers += (("MFA", lambda: verify_mfa_controls(client, dataset, manifest, admin_id)),)
     if "generic_record_file" in operations:

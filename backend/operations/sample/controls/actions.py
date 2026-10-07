@@ -56,6 +56,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample.controls.backups import plan_backup_controls
     from operations.sample.controls.boards import plan_board_controls
     from operations.sample.controls.files import plan_file_controls
+    from operations.sample.controls.host_delivery import plan_host_controls
     from operations.sample.controls.manage import plan_manage_controls
     from operations.sample.controls.mfa import plan_mfa_controls
     from operations.sample.controls.notifications import plan_notification_controls
@@ -91,6 +92,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         *_audit_actions(dataset),
         *plan_read_reviews(dataset),
         *plan_file_controls(dataset),
+        *plan_host_controls(dataset),
         *plan_backup_controls(dataset),
         *plan_manage_controls(dataset),
         *plan_notification_controls(dataset),
@@ -310,6 +312,11 @@ def execute_control_action(
     from operations.sample.controls.sandbox import execute_sandbox_control
 
     operation = action.values.get("operation")
+    if operation == "physical_backup_export":
+        callback = context.private_values.get("host_control")
+        if not callable(callback):
+            raise SamplePhaseActionError("Trusted host callback is required", step="host_setup")
+        return cast(dict[str, object], callback(action, dataset, context, on_substep=on_substep))
     if operation == "real_mfa_reset":
         return execute_mfa_control(action, dataset, context, on_substep=on_substep)
     if operation == "review_people_security":

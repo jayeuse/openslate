@@ -79,6 +79,12 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("GET", "/api/auth/sessions"),
         ("GET", "/api/backups"),
         ("GET", "/api/backups/status"),
+        ("GET", "/api/health"),
+        ("GET", "/api/ready"),
+        ("POST", "/api/backups/exports"),
+        ("GET", "/api/backups/exports/{export_id}"),
+        ("POST", "/api/backups/exports/{export_id}/download-admission"),
+        ("GET", "/api/backups/exports/{export_id}/content"),
         ("GET", "/api/boards"),
         ("GET", "/api/boards/{board_id}"),
         ("GET", "/api/boards/{board_id}/access-preview"),
@@ -247,7 +253,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
     }
 )
 
-# Every current frontend operation has an executable sample journey.
+# Each frontend operation requires an executor and actual successful request evidence.
 INTERACTIVE_ACCEPTANCE_ROUTES: dict[Route, str] = {}
 DEFERRED_ROUTES: dict[Route, str] = {}
 

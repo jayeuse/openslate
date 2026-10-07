@@ -89,6 +89,7 @@ def test_small_control_planning_uses_supplied_data_even_with_an_unknown_pack_key
     )
     required = {
         "real_mfa_reset",
+        "physical_backup_export",
         "generic_record_file",
         "generic_library_file",
         "workspace_logo_files",
@@ -110,6 +111,8 @@ def test_small_control_planning_uses_supplied_data_even_with_an_unknown_pack_key
             "workspace_logo_files",
         )
     ), "Mail-dependent and file controls must finish before host backup work"
+    assert operations.index("workspace_logo_files") < operations.index("physical_backup_export")
+    assert operations.index("physical_backup_export") < operations.index("queue_backup")
     assert actions[-3] == bulk
     assert actions[-2].values["operation"] == "review_notifications"
     assert actions[-1].values["operation"] == "revoke_user_sessions"

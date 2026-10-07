@@ -185,6 +185,63 @@ def verify_request_evidence(
         issues.append("A sample control result has invalid request evidence")
         return
     operation = action.values.get("operation")
+    if operation == "physical_backup_export":
+        from operations.sample.controls.host_delivery import plan_host_controls
+        from operations.sample.controls.host_receipts import host_request_contract
+
+        try:
+            contract = host_request_contract(action, result)
+            optional = {
+                "restore_actor_role",
+                *("restore_group:" + g for g in result["original_actor_group_ids"]),
+            }
+            host_steps = [row["step"] for row in evidence_rows]
+            if (
+                action not in plan_host_controls(dataset)
+                or any(
+                    result.get(key) is not value for key, value in action.expected_end_state.items()
+                )
+                or len(set(host_steps)) != len(host_steps)
+                or not set(contract) - optional <= set(host_steps) <= set(contract)
+            ):
+                raise ValueError
+            identifiers: set[str] = set()
+            for row in evidence_rows:
+                actor, host_method, host_path, status = contract[row["step"]]
+                identifier = _canonical_uuid(row["request_id"])
+                if (
+                    set(row)
+                    != {
+                        "step",
+                        "actor_key",
+                        "actor_id",
+                        "method",
+                        "path",
+                        "expected_status",
+                        "status_code",
+                        "request_id",
+                    }
+                    or (row["actor_key"], row["method"], row["path"], row["status_code"])
+                    != (actor, host_method, host_path, status)
+                    or type(row["status_code"]) is not int
+                    or type(row["expected_status"]) is not int
+                    or row["expected_status"] != status
+                    or row["actor_id"] != (admin_id if actor == "admin" else actors.get(actor))
+                    or _canonical_uuid(row["actor_id"]) is None
+                    or (host_method, route_template(host_method, host_path)) not in SEEDER_ROUTES
+                    or identifier is None
+                    or identifier in identifiers | seen_request_ids
+                ):
+                    raise ValueError
+                identifiers.add(identifier)
+        except (KeyError, TypeError, ValueError):
+            issues.append(
+                "Host control evidence differs from its route or request identity contract"
+            )
+            return
+        seen_request_ids.update(identifiers)
+        observed["control_requests_verified"] += len(identifiers)
+        return
     if operation == "real_mfa_reset":
         from operations.sample.controls.mfa_verification import verify_mfa_request_evidence
 

@@ -1,4 +1,4 @@
-"""Sample backup controls exercise admitted metadata, never host execution."""
+"""Sample backup planning and the isolated metadata control boundary."""
 
 import copy
 from datetime import date
@@ -14,6 +14,15 @@ from operations.sample.packs.registry import get_pack
 from operations.sample.phases.actions import SamplePhaseActionError
 from operations.sample.phases.plan import phase_action_to_manifest
 from operations.sample.scenario import build_dataset
+from tests.operations.sample.controls.test_sample_control_host_delivery import (
+    host_dataset as host_dataset,
+)
+from tests.operations.sample.controls.test_sample_control_host_delivery import (
+    host_journey as host_journey,
+)
+from tests.operations.sample.controls.test_sample_control_host_delivery import (
+    topology_runtime as topology_runtime,
+)
 from tests.operations.sample.controls.test_sample_control_sandbox import _context, _login_response
 
 
@@ -23,15 +32,17 @@ def test_backup_plan_adds_one_action_per_public_operation_with_authored_name(pac
     actions = plan_controls(dataset)
     backups = [row for row in actions if row.kind == "backup_controls"]
     assert [row.values["operation"] for row in backups] == [
+        "physical_backup_export",
         "review_backup_status",
         "update_restore_backup_policy",
         "queue_backup",
         "review_backup_history",
         "review_version",
     ]
-    assert len(actions) == 102
-    assert all(row.actor_key == "admin" and row.phase == "reorganization" for row in backups)
-    queue = backups[2]
+    assert len(actions) == 103
+    assert backups[0].actor_key != "admin"
+    assert all(row.actor_key == "admin" and row.phase == "reorganization" for row in backups[1:])
+    queue = backups[3]
     assert queue.expected_status == 201
     assert (
         queue.values["name"] == f"{dataset.organization.identity.workspace_name} workspace backup"
@@ -197,7 +208,9 @@ def _backup_journey(tmp_path, fault=None, version_status="unknown", pack_key="ha
     dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
     wire = BackupWire(fault, version_status)
     context = _context(tmp_path, wire.handle)
-    actions = tuple(row for row in plan_controls(dataset) if row.kind == "backup_controls")
+    from operations.sample.controls.backups import plan_backup_controls
+
+    actions = plan_backup_controls(dataset)
     return dataset, wire, context, actions
 
 
@@ -379,3 +392,65 @@ def test_backup_reconciliation_requires_exact_descriptors_and_current_owned_read
             assert sum(request.method == "POST" for request in wire.requests) == 1
     finally:
         context.clients["admin"].close()
+
+
+@pytest.mark.parametrize("callback", [None, "untrusted-input"])
+def test_host_control_requires_operator_callback_before_any_request(tmp_path, callback):
+    from operations.sample.controls.host_delivery import plan_host_controls
+
+    dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack("harbor"))
+    wire = BackupWire()
+    context = _context(tmp_path, wire.handle)
+    context.private_values["host_control"] = callback
+    try:
+        with pytest.raises(SamplePhaseActionError) as failure:
+            execute_control_action(plan_host_controls(dataset)[0], dataset, context)
+        assert failure.value.step == "host_setup"
+        assert not wire.requests
+    finally:
+        for client in context.clients.values():
+            client.close()
+
+
+def test_host_callback_and_public_receipts_reconcile_through_common_verifier(
+    host_journey, monkeypatch
+):
+    from operations.sample.controls import verification
+    from operations.sample.controls.host_delivery import execute_host_control
+    from operations.sample.controls.request_verification import verify_request_evidence
+    from tests.operations.sample.controls.test_sample_control_mfa import OWNER_ID
+    from tests.operations.sample.controls.test_sample_control_verification import (
+        _patch_plan_and_final_verifiers,
+    )
+
+    dataset, action, context, runtime, host, wire = host_journey
+    context.private_values["host_control"] = lambda *a, **kw: execute_host_control(
+        *a, **kw, runtime=runtime
+    )
+    result = execute_control_action(action, dataset, context)
+    assert result["outcome"] == "completed" and host.phase == "development"
+    assert wire.run_calls == 2
+    manifest = {
+        "control_plan": [phase_action_to_manifest(action)],
+        "control_results": [result],
+        "actor_ids": context.user_ids,
+        "mappings": {"user": context.user_ids, "group": context.group_ids},
+    }
+    _patch_plan_and_final_verifiers(monkeypatch, action)
+    # Only the host action is under this harness; the legacy queued control has
+    # its own unstarted-request fixture above.
+    monkeypatch.setattr(verification, "_verify_backup_final", lambda *a: None)
+    counts, issues = verification.verify_controls(
+        context.clients["admin"], dataset, manifest, OWNER_ID
+    )
+    assert issues == []
+    assert counts["host_control_actions"] == 1
+    assert counts["host_control_security_events"] == 1
+    assert counts["control_requests_verified"] == len(result["request_evidence"])
+    repeated = {result["native_content_request_id"]}
+    observed, issues = {"control_requests_verified": 0}, []
+    verify_request_evidence(
+        dataset, manifest, action, result, context.user_ids, OWNER_ID, repeated, observed, issues
+    )
+    assert issues, "A request reused by an earlier action must fail global reconciliation"
+    assert observed["control_requests_verified"] < len(result["request_evidence"])

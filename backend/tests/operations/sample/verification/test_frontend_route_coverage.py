@@ -137,6 +137,14 @@ def test_route_coverage_reconciles_the_cookie_free_invitation_journal(tmp_path: 
             "/api/auth/mfa/factors/" + str(uuid4()) + "/verification",
         ),
         (("POST", "/api/notifications/read-all"), "/api/notifications/read-all"),
+        (
+            ("POST", "/api/backups/exports/{export_id}/download-admission"),
+            "/api/backups/exports/" + str(uuid4()) + "/download-admission",
+        ),
+        (
+            ("GET", "/api/backups/exports/{export_id}/content"),
+            "/api/backups/exports/" + str(uuid4()) + "/content",
+        ),
     ],
 )
 def test_new_control_routes_require_actual_success_after_denial(tmp_path, route, path):
@@ -156,11 +164,11 @@ def test_new_control_routes_require_actual_success_after_denial(tmp_path, route,
         transport=httpx.MockTransport(handler),
     ) as client:
         client.login("operator@example.test", "fixture-password")
-        assert client.request("POST", path, json_body={}).status_code == 403
+        assert client.request(route[0], path).status_code == 403
         denied = coverage.read_route_evidence(journal)
         assert not any((row["method"], row["path"]) == route for row in denied["covered"])
         status = 200
-        assert client.request("POST", path, json_body={}).status_code == 200
+        assert client.request(route[0], path).status_code == 200
     accepted = coverage.read_route_evidence(journal)
     assert [
         row["requests"] for row in accepted["covered"] if (row["method"], row["path"]) == route
