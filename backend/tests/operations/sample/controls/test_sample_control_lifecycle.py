@@ -86,6 +86,7 @@ def test_platform_plan_uses_disposable_structure_and_preserves_lifecycle_order(p
                 "theme_owner",
                 "theme_unsaved",
                 "theme_restore",
+                "appearance_lost",
             )
         ],
     ],
@@ -101,7 +102,8 @@ def test_platform_wire_imports_searches_exports_disposes_and_restores(
 
     monkeypatch.setattr(frozen_helpers, "_PURGE_POLL_SECONDS", 0)
     dataset = _dataset(pack_key)
-    wire = PlatformWire(dataset, fault)
+    original_theme = "system" if pack_key == "school" else "dark"
+    wire = PlatformWire(dataset, fault, original_theme=original_theme)
     context = _context(tmp_path, wire.handle)
     wire.bind(context)
     selected = [
@@ -116,6 +118,14 @@ def test_platform_wire_imports_searches_exports_disposes_and_restores(
                 for action in selected:
                     results.append(execute_control_action(action, dataset, context))
             assert getattr(caught.value, "step", None) != selected[1].key
+            preference_steps = {
+                "theme_owner": "read_original_theme",
+                "theme_unsaved": "theme_changed_readback",
+                "theme_restore": "theme_restore_readback",
+                "appearance_lost": "toggle_theme",
+            }
+            if fault in preference_steps:
+                assert caught.value.step == preference_steps[fault]
             assert wire.commits <= 1
             if fault in {"preview_created", "bad_digest"}:
                 assert wire.commits == 0
@@ -134,7 +144,8 @@ def test_platform_wire_imports_searches_exports_disposes_and_restores(
         assert len(platform) == len(OPERATIONS) == 5
         assert wire.previews == wire.commits == 1 and wire.purges == 2
         assert len(wire.created) == len(set(wire.created)) == 2 and wire.records == {}
-        assert wire.theme == wire.original_theme == "dark"
+        assert wire.theme == wire.original_theme == original_theme
+        assert wire.appearance == {"motion": "reduce", "keyboard_shortcuts": False}
         assert wire.lifecycle.document == dataset.document
         first_close = next(
             i for i, r in enumerate(wire.requests) if r.url.path.endswith("/close/preview")

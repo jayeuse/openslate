@@ -9,6 +9,7 @@ from typing import Any, NoReturn, cast
 
 import httpx
 
+from app.systems.access.users.schemas import UserPreferencesResponse
 from app.systems.sandbox.records.import_router import RecordImportResponse
 from operations.sample.blueprint import SampleDataset
 from operations.sample.controls.openview_mutations import _delete_record, _purge_control_record
@@ -212,15 +213,20 @@ class _Run:
         response = self.request(
             "PATCH" if write else "GET", path, step, body={"theme": expected} if write else None
         )
-        body = _read_json(response, step=step)
-        if (
-            set(body) != {"user_id", "theme"}
-            or body.get("user_id") != self.actor
-            or body.get("theme") not in ("light", "dark")
-            or (expected is not None and body["theme"] != expected)
+        try:
+            preferences = UserPreferencesResponse.model_validate_json(response.content, strict=True)
+        except ValueError:
+            _fail("Self preferences response is invalid", step)
+        if str(preferences.user_id) != self.actor or (
+            expected is not None and preferences.theme != expected
         ):
             _fail("Self theme identity or confirmed value differs", step)
-        return cast(str, body["theme"])
+        appearance = preferences.appearance.model_dump(mode="json")
+        if step == "read_original_theme":
+            self.context.private_values["platform_original_appearance"] = appearance
+        elif appearance != self.context.private_values.get("platform_original_appearance"):
+            _fail("Self appearance settings changed during theme control", step)
+        return preferences.theme
 
     def import_rows(self) -> None:
         fields = [self.ids["title_field"], self.ids["field"]]
@@ -463,7 +469,7 @@ def execute_platform_control(
         extra["original_theme"] = original
     else:
         original = cast(str, context.private_values.get("platform_original_theme"))
-        if original not in ("light", "dark"):
+        if original not in ("light", "dark", "system"):
             _fail("Original self theme is unavailable", action.key)
         run.theme("theme_before_toggle", original)
         changed = "dark" if original == "light" else "light"
@@ -472,6 +478,8 @@ def execute_platform_control(
         run.theme("restore_theme", original, write=True)
         run.theme("theme_restore_readback", original)
         extra["original_theme"] = original
+    if "original_theme" in extra:
+        extra["original_appearance"] = context.private_values["platform_original_appearance"]
     extra["read_checks"] = run.reads
     evidence = [{key: row[key] for key in EVIDENCE_KEYS} for row in run.evidence]
     return _result(action, context, evidence, run.mappings, extra=extra)

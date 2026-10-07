@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from uuid import UUID
 
+from app.systems.access.users.schemas import UserPreferencesResponse
 from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleClient, SampleClientError
 from operations.sample.controls.request_verification import verify_request_evidence
@@ -300,9 +301,9 @@ def _verify_platform_final(
 
     mappings, results = manifest.get("mappings"), manifest.get("control_results")
     records = mappings.get("platform_records") if isinstance(mappings, Mapping) else None
-    themes = (
+    preferences = (
         [
-            row.get("original_theme")
+            (row.get("original_theme"), row.get("original_appearance"))
             for row in results
             if isinstance(row, Mapping)
             and row.get("action_key")
@@ -317,9 +318,9 @@ def _verify_platform_final(
         or set(records) != set(RECORD_KEYS)
         or any(_canonical_uuid(value) is None for value in records.values())
         or len(set(records.values())) != 2
-        or len(themes) != 2
-        or themes[0] not in ("light", "dark")
-        or themes[0] != themes[1]
+        or len(preferences) != 2
+        or preferences[0][0] not in ("light", "dark", "system")
+        or preferences[0] != preferences[1]
     ):
         issues.append("Platform final mappings or original theme differ")
         return
@@ -347,9 +348,11 @@ def _verify_platform_final(
         else:
             observed["platform_records_purged"] = 2
         response = client.request("GET", f"/api/users/{admin_id}/preferences")
-        if response.status_code != 200 or response.json() != {
+        restored = UserPreferencesResponse.model_validate_json(response.content, strict=True)
+        if response.status_code != 200 or restored.model_dump(mode="json") != {
             "user_id": admin_id,
-            "theme": themes[0],
+            "theme": preferences[0][0],
+            "appearance": preferences[0][1],
         }:
             issues.append("Platform original self theme was not restored")
         else:
