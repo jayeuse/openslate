@@ -1563,6 +1563,12 @@ test("a failed background session reread retains rows while disabling session-en
   const table = page.getByRole("table", { name: "Sessions", exact: true });
   await expect(table).toBeVisible();
   await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Access overview", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Security workspace", exact: true }),
+  ).toHaveCount(0);
   await page.clock.fastForward(31_000);
   let releaseRead = () => {};
   let signalRead = () => {};

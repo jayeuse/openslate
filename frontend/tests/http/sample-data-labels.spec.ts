@@ -106,15 +106,42 @@ test("Platform notifications contains the connected inbox without sample control
     );
 });
 
-test("retired File library links return to Search without a fake file tab", async ({
+test("Platform Files opens the department library without a fake file tab or example data", async ({
   page,
 }) => {
+  await page.route(
+    (url) => url.pathname === "/api/departments",
+    (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({
+            json: {
+              items: [],
+              pagination: {
+                limit: 100,
+                offset: 0,
+                count: 0,
+                total: 0,
+                has_more: false,
+              },
+            },
+          })
+        : route.fallback(),
+  );
   await openSignedIn(
     page,
     "/platform?section=files&file=sample-file-checklist",
   );
+  await expect(page).toHaveURL(
+    /\/platform\?section=files&file=sample-file-checklist$/,
+  );
   await expect(
-    page.getByRole("searchbox", { name: "Search workspace", exact: true }),
+    page.getByRole("heading", { name: "Department file library", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("combobox", { name: "Department", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText("No departments are available to you.", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "File library", exact: true }),

@@ -369,10 +369,15 @@ test("Report notification refresh retains last good on transient failure and cle
         const streams = (
           window as Window & { reportEventSources?: Array<{ closed: boolean }> }
         ).reportEventSources;
-        return streams?.every((stream) => stream.closed) ?? false;
+        return streams?.filter((stream) => !stream.closed).length ?? 0;
       }),
     )
-    .toBe(true);
+    .toBe(1);
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "in_app_notifications",
+  });
+  await expect(connected.getByText("Scheduled report run")).toHaveCount(0);
+  await expect(connected).not.toContainText("Internal detail must not render");
 });
 
 test("a revoked notification 404 clears old references before a failed first-page refetch", async ({
@@ -1122,15 +1127,47 @@ test("the shell keeps one active stream and only unavailable-stream focus refres
       ),
     )
     .toBe(1);
+  const errorCountRead = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/notifications/unread-count" &&
+      response.status() === 200,
+  );
   await page.evaluate(() =>
     (
       window as Window & { __failOpenViewStream?: () => void }
     ).__failOpenViewStream?.(),
   );
+  await (await errorCountRead).finished();
   await expect.poll(() => state.countReads).toBeGreaterThan(2);
   const oldListReads = state.listReads.length;
+  const oldCountReads = state.countReads;
+  let releaseSession = () => {};
+  let signalSession = () => {};
+  const heldSession = new Promise<void>((resolve) => {
+    releaseSession = resolve;
+  });
+  const sessionStarted = new Promise<void>((resolve) => {
+    signalSession = resolve;
+  });
+  await page.route("**/api/auth/session", async (route) => {
+    signalSession();
+    await heldSession;
+    await route.fulfill({
+      json: { authenticated: true, user_id: userId, setup_required: false },
+    });
+  });
   state.count = 12;
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await sessionStarted;
+  try {
+    await expect(
+      page.getByRole("dialog", { name: "Session verification" }),
+    ).toBeVisible();
+    expect(state.countReads).toBe(oldCountReads);
+    expect(state.listReads).toHaveLength(oldListReads);
+  } finally {
+    releaseSession();
+  }
   await expect(
     page.getByRole("button", { name: "Notifications, 12 unread" }),
   ).toBeVisible();

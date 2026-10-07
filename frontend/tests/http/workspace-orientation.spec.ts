@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "./helpers/test";
+import { sandboxDocumentFromDesign } from "../helpers/sandbox-fixtures";
+import { initialDesign } from "../../src/components/systems/sandbox/domain/model";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 
 async function signIn(page: Page) {
@@ -79,6 +81,40 @@ test("Comms snapshot recovery stays within Comms while live routes and returning
       },
     }),
   );
+  const document = sandboxDocumentFromDesign(initialDesign);
+  await page.route("**/api/sandbox/document", (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({
+          json: {
+            document,
+            revision: 1,
+            contentHash: "a".repeat(64),
+            byteCount: JSON.stringify(document).length,
+            issues: [],
+            latestPublishedVersion: null,
+            publishedHash: null,
+            hasUnpublishedChanges: true,
+          },
+        })
+      : route.fallback(),
+  );
+  for (const resource of ["versions", "tests"])
+    await page.route(
+      (url) => url.pathname === `/api/sandbox/${resource}`,
+      (route) =>
+        route.request().method() === "GET"
+          ? route.fulfill({
+              json: {
+                items: [],
+                limit: 50,
+                offset: 0,
+                count: 0,
+                total: 0,
+                hasMore: false,
+              },
+            })
+          : route.fallback(),
+    );
   const snapshotKey = workspaceSessionSnapshotStorageKey(
     "00000000-0000-4000-8000-000000000101",
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { Bell } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
@@ -33,10 +33,9 @@ import {
 export function NotificationBell({ accountId }: { accountId: string | null }) {
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [focusAccount, setFocusAccount] = useState<string | null>(null);
   const suspended = useWorkspaceInteractionSuspended();
-  const allowed = useRef(!suspended);
   useLayoutEffect(() => {
-    allowed.current = !suspended;
     setNotificationAccountAvailable(client, Boolean(accountId) && !suspended);
     return () => setNotificationAccountAvailable(client, false);
   }, [accountId, client, suspended]);
@@ -80,14 +79,26 @@ export function NotificationBell({ accountId }: { accountId: string | null }) {
     );
   }, [accountId, client, refused, suspended]);
   useEffect(() => {
-    if (!accountId) return;
+    if (!focusAccount) return;
+    if (focusAccount !== accountId || refused) {
+      setFocusAccount(null);
+      return;
+    }
+    if (suspended) return;
+    setFocusAccount(null);
+    if (!isWorkspaceStreamAvailable())
+      void refreshNotificationReads(client, notificationKeys.count);
+  }, [accountId, client, focusAccount, refused, suspended]);
+  useEffect(() => {
+    if (!accountId || refused) return;
     const focus = () => {
-      if (allowed.current && !isWorkspaceStreamAvailable())
-        void refreshNotificationReads(client, notificationKeys.count);
+      if (!isWorkspaceStreamAvailable()) setFocusAccount(accountId);
     };
-    window.addEventListener("focus", focus);
-    return () => window.removeEventListener("focus", focus);
-  }, [accountId, client]);
+    // Capture stream availability before the shell conceals the workspace;
+    // the pending read waits for this same account to be admitted again.
+    window.addEventListener("focus", focus, true);
+    return () => window.removeEventListener("focus", focus, true);
+  }, [accountId, refused]);
   const visiblePage = refused ? undefined : page.data;
   return (
     <Popover
