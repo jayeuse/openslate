@@ -8,6 +8,8 @@ Amended 2026-10-08 after the first run stopped with 5 of 33 slices done. The ame
 
 Final acceptance ownership: the owner performs S32, S33, and fixes found during that acceptance. The implementation agent completes every code slice and S31, including D21 executors and per-slice checks, then hands off under section 11.10. The substantive S32/S33 requirements remain unchanged.
 
+Per-slice testing amendment: the implementation agent may run substantially larger tests for an individual item or slice whenever needed to implement and verify its intended feature. Earlier references to focused checks are a starting point, not a ceiling on relevant regression, integration, or end-to-end testing. Final testing, fixes discovered during final acceptance, and the acceptance gate remain owner-owned.
+
 The evidence comes from static reads of the source at the base revision. Nothing was executed. Section 9 lists the claims that are not tested yet.
 
 ## 1. Intent
@@ -852,7 +854,7 @@ The order stays: Tier 2, then OpenComms, then the work after OpenComms. The work
 - Write one migration for each slice that changes the schema. Run `uv run alembic upgrade head` and `uv run alembic check`.
 - After a route change, regenerate `contracts/openapi.json` and update `frontend/api-route-manifest.json`.
 - Use the skills named in root `AGENTS.md`: `sdd-workflow` at each slice start, `tdd-workflow` before behavior changes, `verification-loop` for checks, `fastapi-api-design` for each new route, `postgres-patterns` for each migration, `query-cache-patterns` for TanStack Query work, `react-frontend-patterns` for UI, and `webapp-security-review` for S03, S10, S15, S17, S20, and S24.
-- Record the run in `.agent-runtime/system-completion-tier-2.md` (template: `.agents/orchestration/RUN.md`). Update it after each slice. Keep per-slice tests and focused checks; moving S32/S33 ownership does not skip those checks. Record out-of-slice failures under "Known issues for acceptance" instead of fixing them.
+- Record the run in `.agent-runtime/system-completion-tier-2.md` (template: `.agents/orchestration/RUN.md`). Update it after each slice. Keep per-slice verification and expand it when needed under section 11.2; moving S32/S33 ownership does not skip those checks. Record out-of-slice failures under "Known issues for acceptance" instead of fixing them.
 
 ### 11.2 Definition of done for one slice
 
@@ -860,11 +862,13 @@ A slice is done when all of these are true:
 
 1. The behavior in the slice's row and in its workstream section exists.
 2. New behavior has tests: pytest for the backend, and a Playwright `isolated` or `http` test for the frontend.
-3. The focused tests for the changed files and their direct callers pass.
+3. The tests needed to verify the intended slice behavior and its affected boundaries pass. The agent may run broader relevant regression, integration, and end-to-end batches, including a larger relevant suite when needed; verification is not limited to the changed files and their direct callers.
 4. The backend changes pass `uv run ruff check .` and `uv run mypy app operations`. The frontend changes pass `npm run check`.
 5. A slice that changes UI has screenshots at 1440×900 and 390×844, in light and dark mode. The screenshots match the request and `DESIGN.md`.
 6. A `review` worker found no unresolved defect in the diff.
 7. The slice is committed, and the run record shows the evidence.
+
+Choose test breadth to give sufficient control over implementing the feature, and record why a broader run is needed. Batch by coherent work unit, use sustainable concurrency, and reuse passing evidence while its inputs remain valid. This permission expands per-slice verification; it does not transfer S32/S33, final testing, or fixes found during final acceptance to the implementation agent.
 
 ### 11.3 Slices
 
@@ -973,7 +977,7 @@ Keep credentials and passphrases private. Do not fabricate request journals or a
 
 ### 11.7 Final verification (owner-owned S33)
 
-The owner performs this full-branch review and final gate, and owns fixes found during final acceptance. The implementation agent must not run `scripts/prepush.py`, the full coverage gate, fullstack or smoke suites, or the full-branch review. Per-slice focused tests, static checks, and independent slice reviews remain required.
+The owner performs final testing, this full-branch review and final gate, and owns fixes found during final acceptance. The implementation agent must not run `scripts/prepush.py`, the final full coverage gate, or the full-branch acceptance review. Larger relevant tests, including fullstack or smoke scenarios when needed to verify an active slice, are permitted under section 11.2; they do not count as performing or completing S33. Per-slice tests, static checks, and independent slice reviews remain required.
 
 Use the hardware-appropriate rules from Tier 1 section 11.7:
 
@@ -1027,7 +1031,7 @@ Do not reuse evidence from parked work. Rerun the checks on the reconciled code.
 
 ### 11.10 Handoff to acceptance
 
-The owner performs S32, S33, and fixes found at that stage. The implementation agent completes every code slice and S31, including D21 sample executors, the route-coverage guard, and each slice's focused tests, static checks, screenshots and independent review. Do not weaken or delete S32/S33 requirements.
+The owner performs S32, S33, and fixes found at that stage. The implementation agent completes every code slice and S31, including D21 sample executors, the route-coverage guard, and each slice's tests at the breadth needed under section 11.2, static checks, screenshots and independent review. Do not weaken or delete S32/S33 requirements.
 
 Do not repair a failure outside the active slice. Add it to "Known issues for acceptance" in `.agent-runtime/system-completion-tier-2.md`, with the failing command, file:line and evidence. Preserve an honest distinction between completed slice checks and deferred final acceptance.
 
@@ -1041,4 +1045,4 @@ When no code slice or S31 remains to do, write a "Handoff to acceptance" checkpo
 - parked work that was never reconciled;
 - checks deferred to S32 and S33.
 
-Stop every Next and test server the agent started. Leave the development Supabase stack and API running. Commit only the assigned slice work and leave the working tree clean; preserve any unresolved task work with its evidence rather than discarding it. The final message is the handoff summary, not a release-readiness claim. Do not execute the Small profiles, guarded reset, pre-push/full coverage/fullstack/smoke gates, or full-branch review on the owner's behalf.
+Stop every Next and test server the agent started. Leave the development Supabase stack and API running. Commit only the assigned slice work and leave the working tree clean; preserve any unresolved task work with its evidence rather than discarding it. The final message is the handoff summary, not a release-readiness claim. Do not execute the Small profiles, guarded reset, pre-push or final full coverage gate, or full-branch acceptance review on the owner's behalf. Any broader per-slice fullstack or smoke evidence remains distinct from the owner's final acceptance runs.
