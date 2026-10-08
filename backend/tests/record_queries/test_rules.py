@@ -167,9 +167,7 @@ def test_query_filter_rejects_incompatible_phase_one_operators(
     ("offset", "valid"),
     [(10_000, True), (10_001, True), (100_001, True), (-1, False)],
 )
-def test_record_query_accepts_nonnegative_interactive_and_export_offset(
-    offset: int, valid: bool
-):
+def test_record_query_accepts_nonnegative_interactive_and_export_offset(offset: int, valid: bool):
     payload = {"module_id": uuid7(), "definition": {}, "offset": offset}
 
     if valid:
@@ -222,9 +220,7 @@ def test_export_treats_designer_local_datetime_as_the_same_utc_instant() -> None
 
     assert format_cell(
         "2026-09-09T00:00", instant_field, "America/Los_Angeles", "en-US"
-    ) == format_cell(
-        "2026-09-09T00:00:00Z", instant_field, "America/Los_Angeles", "en-US"
-    )
+    ) == format_cell("2026-09-09T00:00:00Z", instant_field, "America/Los_Angeles", "en-US")
 
 
 def test_csv_exact_byte_limit_includes_header_and_utf8():
@@ -246,6 +242,7 @@ def test_export_event_failure_rolls_back_and_fails_closed(monkeypatch):
     from sqlalchemy.exc import OperationalError
 
     from app.systems.sandbox.records.export import commit_export_event
+    from app.systems.sandbox.records.query_schemas import ExportRequest
 
     class UnavailableSession:
         rolled_back = False
@@ -261,6 +258,6 @@ def test_export_event_failure_rolls_back_and_fails_closed(monkeypatch):
 
     session = UnavailableSession()
     with pytest.raises(HTTPException) as error:
-        commit_export_event(session, uuid7(), uuid7(), 1)
+        commit_export_event(session, uuid7(), ExportRequest(module_id=uuid7(), definition={}), 1)
     assert error.value.status_code == 503
     assert session.rolled_back

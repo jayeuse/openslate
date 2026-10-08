@@ -4489,6 +4489,101 @@
         "title": "ExportDownloadAdmissionResponse",
         "type": "object"
       },
+      "ExportRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "accent": {
+            "default": "theme",
+            "enum": [
+              "theme",
+              "gray",
+              "none"
+            ],
+            "title": "Accent",
+            "type": "string"
+          },
+          "banded": {
+            "default": false,
+            "title": "Banded",
+            "type": "boolean"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/QueryDefinition"
+          },
+          "format": {
+            "default": "csv",
+            "enum": [
+              "csv",
+              "xlsx"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "include_details": {
+            "default": true,
+            "title": "Include Details",
+            "type": "boolean"
+          },
+          "include_record_id": {
+            "default": false,
+            "title": "Include Record Id",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 25,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "module_id": {
+            "format": "uuid",
+            "title": "Module Id",
+            "type": "string"
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "totals": {
+            "default": false,
+            "title": "Totals",
+            "type": "boolean"
+          },
+          "view_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View Id"
+          }
+        },
+        "required": [
+          "module_id",
+          "definition"
+        ],
+        "title": "ExportRequest",
+        "type": "object"
+      },
       "FactorResponse": {
         "properties": {
           "factor_type": {
@@ -26999,7 +27094,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RecordQuery"
+                "$ref": "#/components/schemas/ExportRequest"
               }
             }
           },
@@ -27008,11 +27103,26 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
               }
             },
             "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current module access or session ended"
+          },
+          "404": {
+            "description": "Module or saved view is absent or hidden"
           },
           "422": {
             "content": {
@@ -27023,6 +27133,9 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "description": "Export generation or authorization persistence is unavailable"
           }
         },
         "security": [

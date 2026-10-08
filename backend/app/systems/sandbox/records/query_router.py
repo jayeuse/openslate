@@ -10,8 +10,6 @@ from app.common.dependencies import (
     CurrentIdentity,
     get_current_identity,
     get_current_user,
-    require_admin,
-    require_fresh_exact_admin,
 )
 from app.common.listing.schemas import StandardListResponse
 from app.core.database import get_db
@@ -30,6 +28,7 @@ from app.systems.sandbox.records.query_schemas import (
     AggregateResponse,
     AggregateSnapshotQuery,
     AggregateSnapshotResponse,
+    ExportRequest,
     GroupedRecordQuery,
     GroupedRecordResponse,
     RecordQuery,
@@ -44,8 +43,6 @@ Database = Annotated[Session, Depends(get_db)]
 # Each query checks the module in the payload through validate_definition.
 Reader = Annotated[User, Depends(get_current_user)]
 Identity = Annotated[CurrentIdentity, Depends(get_current_identity)]
-# CSV export is administrator-only.
-Admin = Annotated[User, Depends(require_admin)]
 
 
 @router.post("/query", response_model=StandardListResponse[RecordResponse])
@@ -125,22 +122,51 @@ def aggregate_snapshot_route(
     )
 
 
-@router.post("/export")
-def export(payload: RecordQuery, actor: Admin, db: Database) -> Response:
+@router.post(
+    "/export",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {
+                "text/csv": {"schema": {"type": "string", "format": "binary"}},
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                    "schema": {"type": "string", "format": "binary"}
+                },
+            }
+        },
+        403: {"description": "Current module access or session ended"},
+        404: {"description": "Module or saved view is absent or hidden"},
+        503: {"description": "Export generation or authorization persistence is unavailable"},
+    },
+)
+def export(payload: ExportRequest, actor: Reader, identity: Identity, db: Database) -> Response:
     actor_id = actor.id
     # Release the authentication read transaction before opening the independent snapshot.
     bind = db.get_bind()
     engine = bind if isinstance(bind, Engine) else bind.engine
     db.rollback()
-    content, count = export_snapshot(engine, payload, reader_id=actor_id)
-    # Recheck current exact-admin membership after generation and fence its event commit.
-    require_fresh_exact_admin(db, actor_id)
-    commit_export_event(db, actor_id, payload.module_id, count)
+    try:
+        content, count, filename = export_snapshot(engine, payload, reader_id=actor_id)
+    except (SQLAlchemyError, OSError) as error:
+        db.rollback()
+        raise HTTPException(503, detail="Unable to create export") from error
+    require_fresh_module_access(
+        db,
+        actor_id=actor_id,
+        session_id=identity.session_id,
+        module_id=payload.module_id,
+        level=AccessLevel.READ,
+    )
+    commit_export_event(db, actor_id, payload, count)
     return Response(
         content,
-        media_type="text/csv",
+        media_type=(
+            "text/csv"
+            if payload.format == "csv"
+            else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
         headers={
-            "Content-Disposition": 'attachment; filename="records.csv"',
+            "Content-Disposition": f'attachment; filename="{filename}"',
             "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff",
         },

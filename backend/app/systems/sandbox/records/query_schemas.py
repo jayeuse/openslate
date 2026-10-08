@@ -120,6 +120,17 @@ class RecordQuery(BaseModel):
     offset: int = Field(default=0, ge=0)
 
 
+class ExportRequest(RecordQuery):
+    format: Literal["csv", "xlsx"] = "csv"
+    view_id: UUID | None = None
+    title: str | None = Field(default=None, max_length=120)
+    include_details: StrictBool = True
+    include_record_id: StrictBool = False
+    accent: Literal["theme", "gray", "none"] = "theme"
+    banded: StrictBool = False
+    totals: StrictBool = False
+
+
 class WindowRecordQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

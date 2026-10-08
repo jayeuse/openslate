@@ -168,11 +168,10 @@ def test_query_endpoints_hide_the_module_from_a_member_in_no_group(world: _World
     assert [item["id"] for item in result.json()["items"]] == [str(world.record.id)]
 
 
-def test_a_guest_queries_but_cannot_export(world: _World) -> None:
+def test_a_guest_queries_readable_records(world: _World) -> None:
     client = world.client(world.guest)
     assert client.post("/api/records/query", json=_query(world)).status_code == 200
-    # CSV export is an administrator operation (D9).
-    assert client.post("/api/records/export", json=_query(world)).status_code == 403
+    # D12 export success/denial uses committed data and real Auth in test_export_http.py.
 
 
 # Department, module and field reads

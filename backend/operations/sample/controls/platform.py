@@ -1,7 +1,5 @@
 """Bounded Platform sample controls through authenticated UI contracts."""
 
-import csv
-import io
 import json
 import re
 from collections.abc import Mapping
@@ -11,9 +9,11 @@ import httpx
 
 from app.systems.access.users.schemas import UserPreferencesResponse
 from app.systems.sandbox.records.import_router import RecordImportResponse
+from app.systems.sandbox.records.query_schemas import ExportRequest
 from operations.sample.blueprint import SampleDataset
 from operations.sample.controls.openview_mutations import _delete_record
 from operations.sample.controls.openview_purge import _purge_control_record
+from operations.sample.controls.platform_export import verify_export_response, workspace_date
 from operations.sample.controls.platform_verification import search_page_contains_target
 from operations.sample.controls.platform_verification import validate_platform_page as _page
 from operations.sample.controls.sandbox import fixture_values
@@ -306,36 +306,37 @@ class _Run:
         for key in RECORD_KEYS:
             self.record(key, f"read_import_{key}")
 
-    def export_cleanup(self) -> None:
-        response = self.request("POST", "/api/records/export", "export_csv", body=self.definition())
-        if (
-            response.headers.get("Content-Type", "").lower().replace(" ", "")
-            != "text/csv;charset=utf-8"
-            or response.headers.get("Content-Disposition") != 'attachment; filename="records.csv"'
-            or "no-store" not in response.headers.get("Cache-Control", "").lower()
-            or len(response.content) > 8 * 1024 * 1024
-        ):
-            _fail("Record CSV headers differ", "export_csv")
-        try:
-            cells = list(
-                csv.reader(io.StringIO(response.content.decode("utf-8"), newline=""), strict=True)
-            )
-        except (csv.Error, UnicodeError):
-            _fail("Record CSV is malformed", "export_csv")
+    def export_cleanup(self, timezone: str) -> None:
         expected = {
             _mapped_id(self.context, "platform_records", key, step="export_csv"): self.facts[
                 "cells"
             ][i]
             for i, key in enumerate(RECORD_KEYS)
         }
-        if (
-            not cells
-            or cells[0] != ["Record ID", *self.facts["headers"]]
-            or len(cells) != 3
-            or any(len(row) != 3 for row in cells[1:])
-            or {row[0]: row[1:] for row in cells[1:]} != expected
-        ):
-            _fail("Record CSV IDs, count or content differ", "export_csv")
+        for format in ("csv", "xlsx"):
+            payload = ExportRequest.model_validate(
+                {
+                    **self.definition(),
+                    "format": format,
+                    "include_record_id": True,
+                    "include_details": False,
+                }
+            )
+            before = workspace_date(timezone)
+            response = self.request(
+                "POST",
+                "/api/records/export",
+                f"export_{format}",
+                body=payload.model_dump(mode="json", exclude_unset=True),
+            )
+            verify_export_response(
+                response,
+                format=format,
+                module_name=self.facts["module_name"],
+                dates={before, workspace_date(timezone)},
+                headers=self.facts["headers"],
+                expected=expected,
+            )
         for key in RECORD_KEYS:
             self.record(key, f"before_delete_{key}")
         for key in RECORD_KEYS:
@@ -463,7 +464,7 @@ def execute_platform_control(
         run.search()
         extra["search_pages"] = run.search_pages
     elif operation == OPERATIONS[2]:
-        run.export_cleanup()
+        run.export_cleanup(dataset.organization.identity.timezone)
     elif operation == OPERATIONS[3]:
         original = run.theme("read_original_theme")
         context.private_values["platform_original_theme"] = original

@@ -11,12 +11,11 @@ from app.systems.boards.event_schemas import EventResponse
 from app.systems.boards.post_schemas import PostResponse
 from app.systems.boards.schemas import BoardResponse
 from app.systems.sandbox.fields.models import Field
-from app.systems.sandbox.records.export import encode_csv
 from app.systems.sandbox.records.import_router import RecordImportRequest
 from app.systems.sandbox.records.importing import creation_schema_digest
-from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_schemas import RecordQuery
 from tests.operations.sample.controls.sample_lifecycle_wire import _LifecycleWire
+from tests.operations.sample.controls.sample_platform_export import export_response
 from tests.operations.sample.controls.test_sample_control_sandbox import ADMIN_ID, _login_response
 
 
@@ -171,7 +170,9 @@ class PlatformWire:
             if self.fault == "wrong_data" and parsed.mode == "import":
                 rows[0]["data"] = {}
             return httpx.Response(200, json=result)
-        if path in ("/api/records/query", "/api/records/export"):
+        if path == "/api/records/export":
+            return export_response(self, request)
+        if path == "/api/records/query":
             parsed = RecordQuery.model_validate(body)
             fields = self.fields()
             assert list(body) == ["module_id", "definition"]
@@ -181,29 +182,7 @@ class PlatformWire:
             active = [
                 self.record(key) for key, row in self.records.items() if not row["is_deleted"]
             ]
-            if path.endswith("query"):
-                return httpx.Response(200, json=self.page(active, 25))
-            content, count = encode_csv(
-                [Record(id=UUID(row["id"]), data=row["data"]) for row in active],
-                fields,
-                self.dataset.organization.identity.timezone,
-                self.dataset.organization.identity.locale,
-            )
-            assert count == 2
-            if self.fault == "csv_count":
-                content += b"extra,wrong,wrong\r\n"
-            if self.fault == "csv_content":
-                content = content.replace(b"opening review", b"wrong review")
-            return httpx.Response(
-                200,
-                content=content,
-                headers={
-                    "Content-Type": "application/json"
-                    if self.fault == "csv_mime"
-                    else "text/csv; charset=utf-8",
-                    "Content-Disposition": 'attachment; filename="records.csv"',
-                },
-            )
+            return httpx.Response(200, json=self.page(active, 25))
         if path.startswith("/api/records/"):
             key = path.split("/")[3]
             row = self.records.get(key)

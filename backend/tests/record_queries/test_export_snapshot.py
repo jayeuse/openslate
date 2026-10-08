@@ -1,18 +1,20 @@
 import csv
 import io
+from datetime import UTC, datetime, timedelta
 
 from record_queries.test_database import request_for, setup_rows
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
+from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records import export as exporter
 from app.systems.sandbox.records.models import Record
-from app.systems.sandbox.records.query_schemas import RecordQuery
+from app.systems.sandbox.records.query_schemas import ExportRequest
 from tests.rbac.support import add_department, add_module, add_user
 
 
@@ -53,8 +55,9 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
         module_id, department_id = module.id, department.id
         actor_id, assignee_id = actor.id, assignee.id
 
-    payload = RecordQuery(
+    payload = ExportRequest(
         module_id=module_id,
+        include_record_id=True,
         definition={
             "columns": [
                 {"field_id": select_id, "expected_type": "select"},
@@ -63,7 +66,7 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
         },
     )
     try:
-        first, count = exporter.export_snapshot(engine, payload, reader_id=actor_id)
+        first, count, _ = exporter.export_snapshot(engine, payload, reader_id=actor_id)
         assert count == 1
         assert list(csv.reader(io.StringIO(first.decode()))) == [
             ["Record ID", "Status", "Assignee"],
@@ -74,7 +77,7 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
             assert field is not None
             field.config = {"options": [{"id": option_id, "label": "Awaiting review"}]}
             writer.commit()
-        renamed, count = exporter.export_snapshot(engine, payload, reader_id=actor_id)
+        renamed, count, _ = exporter.export_snapshot(engine, payload, reader_id=actor_id)
         assert count == 1
         assert list(csv.reader(io.StringIO(renamed.decode())))[1] == [
             str(record_id),
@@ -110,18 +113,19 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
         payload = request_for(module, field)
         payload.limit = 1
         payload.offset = 1
+        payload = ExportRequest(**payload.model_dump(), include_record_id=True)
     original_encoder = exporter.encode_csv
 
-    def update_after_snapshot_started(rows, fields, timezone, locale, resolver):
+    def update_after_snapshot_started(rows, fields, timezone, locale, resolver, **options):
         with AuditSession(engine) as writer:
             record = writer.get(Record, row_ids[0])
             record.data = {str(field_id): "changed"}
             writer.commit()
-        return original_encoder(rows, fields, timezone, locale, resolver)
+        return original_encoder(rows, fields, timezone, locale, resolver, **options)
 
     monkeypatch.setattr(exporter, "encode_csv", update_after_snapshot_started)
     try:
-        content, count = exporter.export_snapshot(engine, payload, reader_id=reader_id)
+        content, count, _ = exporter.export_snapshot(engine, payload, reader_id=reader_id)
         parsed = list(csv.reader(io.StringIO(content.decode())))
         assert count == 2
         assert [row[1] for row in parsed[1:]] == ["original", "second"]
@@ -147,7 +151,7 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
     from sqlalchemy import select
     from uuid6 import uuid7
 
-    from app.common.dependencies import get_current_user
+    from app.common.dependencies import CurrentIdentity, get_current_identity
     from app.core.database import get_db
     from app.main import app
     from app.systems.access.users.models import User
@@ -166,9 +170,18 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
             status="active",
         )
         setup.add(actor)
+        setup.flush()
+        identity_session = IdentitySession(
+            user_id=actor_id,
+            refresh_token_digest=uuid7().hex * 2,
+            csrf_token_digest=uuid7().hex * 2,
+            expires_at=datetime.now(UTC) + timedelta(days=1),
+        )
+        setup.add(identity_session)
         module, field, records = setup_rows(setup, "decimal", ["2", "10"])
         setup.commit()
         module_id, field_id, department_id = module.id, field.id, module.department_id
+        session_id = identity_session.id
         row_ids = [record.id for record in records]
         payload = request_for(
             module,
@@ -184,12 +197,17 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
         with AuditSession(engine) as db:
             yield db
 
-    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_current_identity] = lambda: CurrentIdentity(
+        actor, session_id, False, False
+    )
     app.dependency_overrides[get_db] = database
     try:
         with TestClient(app) as client:
             interactive = client.post("/api/records/query", json=payload.model_dump(mode="json"))
-            exported = client.post("/api/records/export", json=payload.model_dump(mode="json"))
+            exported = client.post(
+                "/api/records/export",
+                json={**payload.model_dump(mode="json"), "include_record_id": True},
+            )
         assert interactive.status_code == exported.status_code == 200
         data = list(csv.reader(io.StringIO(exported.text)))
         assert [item["id"] for item in interactive.json()["items"]] == [row[0] for row in data[1:]]
@@ -197,9 +215,10 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
         with Session(engine) as observer:
             event = observer.scalar(select(SecurityEvent).where(SecurityEvent.actor_id == actor_id))
             assert event is not None and event.event_type == "records.export.authorized"
-            assert event.event_metadata == {"row_count": 1}
+            assert event.event_metadata["row_count"] == 1
+            assert event.event_metadata["format"] == "csv"
     finally:
-        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_current_identity, None)
         app.dependency_overrides.pop(get_db, None)
         with AuditSession(engine) as cleanup:
             for model, ids in (
@@ -211,6 +230,8 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
                 for identifier in ids:
                     cleanup.delete(cleanup.get(model, identifier))
                 cleanup.flush()
+            cleanup.delete(cleanup.get(IdentitySession, session_id))
+            cleanup.flush()
             cleanup.delete(cleanup.get(User, actor_id))
             cleanup.flush()
             cleanup.commit()

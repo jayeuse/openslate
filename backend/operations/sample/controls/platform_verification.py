@@ -132,6 +132,7 @@ def verify_platform_evidence(
                 add(step, "GET", "/api/search")
     elif operation == OPERATIONS[2]:
         add("export_csv", "POST", "/api/records/export")
+        add("export_xlsx", "POST", "/api/records/export")
         for key in RECORD_KEYS:
             add(f"before_delete_{key}", "GET", f"/api/records/{records[key]}")
         for key in RECORD_KEYS:
