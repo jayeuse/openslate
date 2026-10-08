@@ -4,6 +4,8 @@ Base revision: `main` at `9e732b84`. Alembic head: `dfa5340b47ba`. OpenComms is 
 
 Status: approved for delegation. The owner answered the Tier 2 questions on 2026-10-08. Section 7 holds the decisions. Each default in section 7 stands unless the owner edits the table before the affected slice starts. Section 11 is the execution order.
 
+Amended 2026-10-08 after the first run stopped with 5 of 33 slices done. The amendment adds decisions D21–D26, section 11.8 (implementer decisions), and section 11.9 (resume order), and changes section 11.6. Two plan defects caused most blocks: sample executors were scheduled last although an existing guard requires them with each route, and the block rule did not let the implementer settle routine contract details.
+
 The evidence comes from static reads of the source at the base revision. Nothing was executed. Section 9 lists the claims that are not tested yet.
 
 ## 1. Intent
@@ -663,12 +665,12 @@ Pain point: aggregating JSONB gets slower as a module grows, because only `ix_re
 
 1. **Metrics.** Widen `aggregation` (`query_schemas.py:228`) to `count | sum | average | min | max | distinct`. Validate the measure by metric:
    - `sum` and `average`: numeric.
-   - `min` and `max`: numeric, `date`, or `datetime`.
+   - `min` and `max`: numeric only (D26). Temporal min and max are deferred to section 10.
    - `distinct`: any field type except relationship.
 2. **SQL** (`aggregation.py:53-61`). Use `min`, `max`, and `count(distinct …)`. Do not wrap `min` and `max` in `coalesce(…, 0)`. Order with `NULLS LAST`.
 3. **Buckets.** Add `bucket: day | week | month | quarter | year` (default `day`) to `DateSeriesAggregateQuery`. Use `date_trunc` on the timezone-converted date. Week buckets follow the workspace `week_start`. `date_trunc` starts weeks on Monday, so Sunday needs a one-day offset.
 4. **Caps.** Replace the 366-day window rule with a rule of at most 366 buckets. Keep the 10,000-bucket and 8 MiB snapshot caps. Remove `le=366` from `AggregatePaginationMetadata.limit` where the bucket rule replaces it.
-5. **Empty buckets.** Make `AggregateDatum.value` nullable. Fill empty buckets with 0 for `count`, `sum`, and `distinct`, and with null for `average`, `min`, and `max`.
+5. **Empty buckets.** Make `AggregateDatum.value` nullable. Fill empty buckets with 0 for `count`, `sum`, and `distinct`, and with null for `average`, `min`, and `max`. Show null as "—" in tables and summary cards, as a gap in line charts, and as no bar in bar charts. An export cell for null is empty. Renderers must not convert null to 0 (D26).
 6. **Batch snapshot.** Add `POST /records/aggregate-snapshots` with up to 12 queries. It uses one connection, checks access per query, and writes one security event. The dashboard grid uses it. Without it, a grid of 12 widgets writes 12 events and opens 12 connections on every refresh.
 7. **Compatibility.** Every new field has a default, so stored widget configurations still validate with `extra="forbid"`.
 8. **Frontend enums.** Update `analytics-api.ts:179,378`, `dashboards-api.ts:150,196,293,611,735,761`, `chart-query.ts:7,86`, and the 366-day checks in `server-backed-dashboards.tsx:170,231`.
@@ -750,7 +752,8 @@ Tier 2 adds these Alembic revisions on the head `dfa5340b47ba`. Add one revision
 | Slice | Change |
 |---|---|
 | S06 | None (version prune uses existing tables) |
-| S13 | Optional `scheduled_work.failure_detail` |
+| S08 | None (list filters and lookups use existing columns) |
+| S13 | `scheduled_work.last_attempt_started_at` and `scheduled_work.finished_at` (D24); optional `scheduled_work.failure_detail` |
 | S20 | `users.phone`, `users.bio`, `users.avatar_file_id`; widen `ck_users_appearance`; `user_avatar` in `ck_files_purpose_parent` |
 | S24 | Email-change state, only if the provider flow needs a local pending column |
 | S26 | `charts` table; `dashboard_widgets.chart_id` and `size`; `board_widgets.chart_id`; Board widget size `half/full` → `M/L`; inline-or-chart CHECK constraints |
@@ -789,6 +792,12 @@ The owner answered the Tier 2 questions on 2026-10-08. Rows marked "Owner" are t
 | D18 | Version cap | Banner at 45. Prune deletes the oldest checkpoint and imported versions down to 40, never published versions. | Owner + Default | S06 |
 | D19 | Stale documents vs `docs/AGENTS.md:5` | Rewrite each document as current state and remaining gaps. Collapse the seven reviews into `docs/reviews/known-gaps.md` and delete the originals. | Default. This departs from the owner's answer ("update them all"), because `docs/AGENTS.md:5` forbids dated review findings in documents. | S31 |
 | D20 | Sample run coverage | Extend the Harbor Small and School Small runs to call the new routes through the same APIs as the UI | Default | S32 |
+| D21 | When sample executors are written | In the same slice that adds a frontend-called route. `test_frontend_route_coverage.py:38-48` requires an executor and a `SEEDER_ROUTES` entry for every frontend operation, and `DEFERRED_ROUTES` must stay empty. S32 only runs the live Small profiles. | Default (amendment) | every route slice |
+| D22 | Backend extensions for S08 paging | `GET /access/groups`: filters `without_access` and `without_members`, sort `member_count`, search also matches department and module names. `GET /users` (admin) and `GET /member-candidates` (manager): an `ids` filter with at most 100 IDs. Admin `GET /users?ids=` also returns deleted people with their `deleted` state. `MemberCandidateResponse` adds `access_ends_at`. `GET /sandbox/versions`: `search` (label and note) and `kind` filters. Overview counts read the filtered `total` with `limit=1`. A manager whose selected member is not returned sees "Former member". | Default (amendment) | S08 |
+| D23 | Dashboard refresh cadence | The interval counts from the end of the previous fetch. It pauses while the page is hidden and while the draft is dirty. On return, it refreshes once at once if a full interval passed. Use TanStack Query `refetchInterval` with `refetchIntervalInBackground: false`, not a custom timer. Change the read-count expectations in the cadence test to match this definition; this defines the behavior and does not weaken the test. S12 gets a new budget of three fixes. | Default (amendment) | S12 |
+| D24 | Job timestamps | Add nullable `scheduled_work.last_attempt_started_at` (set when a worker claims the row) and `scheduled_work.finished_at` (set on success, failure, or cancel). Existing rows stay null and show "Not recorded". A manual retry clears `finished_at` and keeps `last_attempt_started_at`. Backups use `backup_runs.started_at` and `finished_at`. `last_run.finished_at` on a schedule reads `finished_at`. | Default (amendment) | S13 |
+| D25 | Export with no columns | Return 422 `export_no_columns` when no column remains after `include_record_id`. The export dialog requires at least one column. | Default (amendment) | S15, S16 |
+| D26 | Temporal min and max | Deferred to after Tier 2. In Tier 2, `min` and `max` take numeric fields only. Null display is defined in W12a step 5. | Default (amendment); reduces D5 | S25 |
 
 ## 8. Possible bugs found during the traces
 
@@ -824,6 +833,7 @@ The order stays: Tier 2, then OpenComms, then the work after OpenComms. The work
 - Conversation search.
 - Email delivery of reports.
 - Pivot tables and aggregation across relationships.
+- Min and max over date and datetime fields (D26).
 - In-place backup restore, if the installer is not ready earlier.
 
 ## 11. Execution
@@ -834,7 +844,7 @@ The order stays: Tier 2, then OpenComms, then the work after OpenComms. The work
 - Make one commit for each slice. Use a Conventional Commit message, for example `feat(records): add batch update route`.
 - Do not push, open a pull request, or rewrite history. Run the canonical pre-push gate once at the final checkpoint, without pushing. A push needs the owner's approval.
 - Keep the scope to this plan. The plan approves the listed migrations, endpoints, dependencies (XlsxWriter, `@dnd-kit/core`), and schema changes. Anything else needs the owner's approval.
-- Section 7 is binding. A slice that needs a decision outside section 7 is blocked.
+- Section 7 is binding. For a detail that section 7 does not settle, apply section 11.8. A slice is blocked only when section 11.8 does not let you decide.
 - Keep Comms working. Do not edit `frontend/src/components/systems/comms/**`, except where a slice names a Comms file.
 - Keep the designed UI. Extend the current components and tokens. Do not replace a designed page with a plain form.
 - Write one migration for each slice that changes the schema. Run `uv run alembic upgrade head` and `uv run alembic check`.
@@ -867,12 +877,12 @@ Do the slices in this order. A slice starts only when the slices it depends on a
 | S05 | Route bundle: pin and expiry with pinned-first order, unpublish, invitation reconcile, Sandbox export with history, widget `refresh` (D3, D4) | W5d | S03 |
 | S06 | Relationship lifecycle UI, version prune and banner, version-limit message, delete text (D18) | W6 | S03 |
 | S07 | Paging backend: `post-authors`, `audit-logs/options`, group rows | W3 backend | – |
-| S08 | Paging frontend: lists, search pickers with by-ID lookup, Board groups, loops; delete `loadAllAccessPages` | W3 frontend | S01, S07 |
+| S08 | Paging backend extensions (D22), then paging frontend: lists, search pickers with by-ID lookup, Board groups, post authors, loops; delete `loadAllAccessPages` | W3, D22 | S01, S07 |
 | S09 | Security events in Manage › Audit, sentences for every type (D17) | W8 | S08 |
 | S10 | Backend event delivery for Boards and Dashboards (D8) | W4a | – |
-| S11 | Boards live updates and editor notices (D9) | W4b | S10 |
+| S11 | Boards live updates and editor notices (D9) | W4b | S08, S10 |
 | S12 | Dashboards on TanStack Query, live updates, draft notice | W4c | S10 |
-| S13 | Jobs backend: registry, list, retry, schedule last run (D16) | W11a | – |
+| S13 | Jobs backend: registry, list, retry, schedule last run, job timestamps (D16, D24) | W11a | – |
 | S14 | Jobs UI, schedule last run in report controls | W11b | S13 |
 | S15 | Export backend: XlsxWriter, reader access, options, cell types, accent map, record (D12) | W9a | – |
 | S16 | Export dialog in OpenView; Platform export update | W9b | S09, S15 |
@@ -891,7 +901,7 @@ Do the slices in this order. A slice starts only when the slices it depends on a
 | S29 | Dashboard grid, widget edit, saved-chart widgets | W12f | S12, S26, S27 |
 | S30 | Board widget editor and one chart renderer | W12g | S26, S27 |
 | S31 | Documentation update (D19) | W1b | all code slices |
-| S32 | Sample run coverage for the new routes (D20) | 11.6 | all code slices |
+| S32 | Run the Harbor Small and School Small profiles with the executors that earlier slices added (D20, D21) | 11.6 | all code slices |
 | S33 | Review the full branch diff, run the pre-push gate without pushing, and write the final report | 11.7 | all |
 
 Out of scope for this run: OpenComms and everything in section 10.
@@ -911,7 +921,7 @@ Diagnose the cause, then fix it. Try at least three different fixes. Record each
 
 **Block one slice.** A slice is blocked when one of these occurs:
 
-- The slice needs a decision that section 7 does not cover.
+- The slice needs a decision that section 7 does not cover, and section 11.8 does not let you make it.
 - The slice needs a change outside this plan.
 - The same check still fails after three different fixes.
 
@@ -942,7 +952,9 @@ Wrong: `next dev on 3000 still running; started Playwright; lock error; stopped 
 
 ### 11.6 Sample run coverage
 
-Extend the Harbor Small and School Small runs to call the routes that Tier 2 adds, through the same APIs as the UI:
+Each slice that adds a frontend-called route also adds its sample executor and its `SEEDER_ROUTES` entry, in the same commit (D21). The route-coverage guard then passes at every slice. S32 runs the two live Small profiles with all of these executors.
+
+The executors cover the routes that Tier 2 adds, through the same APIs as the UI:
 
 - export (CSV and Excel),
 - batch update,
@@ -972,3 +984,40 @@ The final report lists:
 - the blocked slices with evidence,
 - the checks that were deferred or not run, which count as unverified,
 - the follow-ups.
+
+### 11.8 Implementer decisions
+
+Section 7 cannot list every contract detail. For a detail that section 7 does not settle, make the decision yourself when it is one of these:
+
+- validation of degenerate or empty input,
+- the display of null, empty, or missing values,
+- field, parameter, and error-code names,
+- the test technique, fixtures, and clock control,
+- the source of a derived value from existing columns.
+
+Pick the most conservative option that matches an existing pattern in this repository. Record it in the run record under "Implementation decisions", with the pattern you followed. Then continue.
+
+Block the slice only when the decision needs one of these:
+
+- a new permission, or a change to who can see or change data,
+- deletion of data,
+- a change to an existing public request or response shape that this plan does not list,
+- work outside the slice's workstream.
+
+Correct: `S15: zero columns → 422 export_no_columns, following the 422 style of query_schemas.py validators; recorded; continued.`
+Wrong: `S15: zero-column behavior is not in section 7; slice blocked.`
+
+### 11.9 Resume order (after the first run)
+
+The first run stopped at `0aac35b`. The branch is not mergeable at that commit: S07 changed `GET /boards/{id}/post-authors` to a paged envelope, and the frontend adapter still expects an array, so the Boards posts feed does not load (`.agent-runtime/system-completion-tier-2/S11/blocker.md`).
+
+Resume in this order:
+
+1. Commit this amendment.
+2. S08 first. It repairs the posts feed.
+3. S03. Apply `.agent-runtime/system-completion-tier-2/S03/parked-work/full.patch` with `git apply --3way`. Regenerate `contracts/openapi.json` and `frontend/api-route-manifest.json` from the current code; do not keep the parked copies of these generated files. Add the purge executors (D21). Rerun the S03 focused tests and the route-coverage guard before you claim them green.
+4. S12, S13, S15, S25, and S18 are independent of each other. Do them next, in any order. For S12, apply its parked work the same way and use the D23 budget.
+5. Then follow the dependencies in section 11.3.
+
+Do not reuse evidence from parked work. Rerun the checks on the reconciled code.
+
