@@ -6,6 +6,10 @@ import {
   type Route,
 } from "@playwright/test";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 // The data sources and Dashboards of these tests belong to one department.
@@ -345,6 +349,7 @@ async function installDashboardApi(
     access: { department_id: string; module_id: null; level: string }[];
   } = { role: "admin", access: [] },
 ) {
+  await installOpenViewEventSource(page);
   await page.route("**/api/**", (route) =>
     route.fulfill({
       status: 404,
@@ -909,6 +914,9 @@ async function installDashboardApi(
     recordQueries,
     dashboardReads,
     fieldReads,
+    changeDashboard(value: DashboardWire) {
+      current = value;
+    },
     setConflict() {
       forceConflict = true;
     },
@@ -1080,9 +1088,144 @@ async function addWidgetFromDialog(dialog: Locator) {
   await expect(dialog).toBeHidden();
 }
 
+// TanStack schedules observer notifications; a paused browser clock must
+// advance pending notifications without moving an already settled boundary.
+async function settleDashboardClock<T>(
+  page: Page,
+  read: () => Promise<T>,
+  expected: T,
+) {
+  await expect
+    .poll(async () => {
+      const current = await read();
+      if (current === expected) return current;
+      await page.clock.runFor(1);
+      return read();
+    })
+    .toBe(expected);
+}
+
 async function selectDashboard(page: Page, id: string) {
   await page.getByLabel("Dashboard", { exact: true }).selectOption(id);
 }
+
+test("Dashboard invalidation updates its saved name and widget without reloading", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page, dashboard());
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  await expect(
+    page.getByRole("heading", { name: "Operations", exact: true }),
+  ).toBeVisible();
+  await sendOpenViewEvent(page, "resync");
+  api.changeDashboard(
+    dashboard({
+      name: "Dispatch overview",
+      revision: 2,
+      widgets: [savedWidget(dashboardWidgetId, 0, regionFieldId)],
+    }),
+  );
+  await sendOpenViewEvent(page, "invalidate", { entity: "dashboards" });
+  await expect(
+    page.getByRole("heading", { name: "Dispatch overview", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByLabel("Dashboard", { exact: true })
+      .getByRole("option", { name: "Dispatch overview" }),
+  ).toBeAttached();
+  await expect(
+    page.getByRole("table", { name: "Complete data for Count by Region" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
+  expect(api.writes).toHaveLength(0);
+});
+
+test("Dashboard invalidation retains a dirty name cadence and widgets until discard", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page, dashboard());
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  await expect(
+    page.getByRole("heading", { name: "Operations", exact: true }),
+  ).toBeVisible();
+  const settings = await openDashboardSettingsDialog(page);
+  await settings.getByLabel("Dashboard name").fill("My local draft");
+  await settings.getByLabel("Refresh cadence").selectOption("five-minutes");
+  await finishDashboardDialog(settings);
+  const add = await openAddWidgetDialog(page);
+  await add.getByLabel("Group records by").selectOption(regionFieldId);
+  await addWidgetFromDialog(add);
+  await expect(
+    page.getByText("2 of 12 widgets", { exact: true }),
+  ).toBeVisible();
+  api.changeDashboard(dashboard({ name: "Remote saved name", revision: 2 }));
+  await sendOpenViewEvent(page, "invalidate", { entity: "dashboards" });
+  await expect(
+    page.getByText("Changed by someone else — review latest", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "My local draft", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("2 of 12 widgets", { exact: true }),
+  ).toBeVisible();
+  const retained = await openDashboardSettingsDialog(page);
+  await expect(retained.getByLabel("Dashboard name")).toHaveValue(
+    "My local draft",
+  );
+  await expect(retained.getByLabel("Refresh cadence")).toHaveValue(
+    "five-minutes",
+  );
+  await finishDashboardDialog(retained);
+  await page.getByRole("button", { name: "Dashboard options" }).click();
+  await page
+    .getByRole("menuitem", { name: "Discard draft and reload" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Remote saved name", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("1 of 12 widgets", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Changed by someone else — review latest", { exact: true }),
+  ).toBeHidden();
+  expect(api.writes).toHaveLength(0);
+});
+
+test("Dashboard record invalidations refresh visible module results once per burst", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const api = await installDashboardApi(page, dashboard());
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  const table = page.getByRole("table", {
+    name: "Complete data for Count by Category",
+  });
+  await expect(table.locator("tbody tr")).toHaveCount(25);
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  const before = api.snapshots.length;
+  api.setSnapshotLength(2);
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "records",
+    module_id: secondModuleId,
+  });
+  await page.clock.runFor(301);
+  expect(api.snapshots).toHaveLength(before);
+  await expect(table.locator("tbody tr")).toHaveCount(25);
+  for (let count = 0; count < 3; count += 1)
+    await sendOpenViewEvent(page, "invalidate", {
+      entity: "records",
+      module_id: moduleId,
+    });
+  await page.clock.runFor(299);
+  expect(api.snapshots).toHaveLength(before);
+  await page.clock.runFor(2);
+  await settleDashboardClock(page, () => table.locator("tbody tr").count(), 2);
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  expect(api.snapshots).toHaveLength(before + 1);
+});
 
 test("department Dashboard supports mobile keyboard-only controls and survives reload", async ({
   page,
@@ -1930,7 +2073,9 @@ test("restoring at the current URL does not suppress a later Dashboard re-select
   const readsBeforeReselection = api.dashboardReads.length;
   await selectDashboard(page, dashboardId);
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
-  expect(api.dashboardReads).toHaveLength(readsBeforeReselection + 1);
+  await expect
+    .poll(() => api.dashboardReads.length)
+    .toBe(readsBeforeReselection + 1);
 });
 
 test("a pending Dashboard deep link is cleared when switching to archived list", async ({
@@ -2528,7 +2673,7 @@ test("clears cached Dashboard record rows after a 401 refresh denial", async ({
   await expect(table).toHaveCount(0);
 });
 
-test("Dashboard cadence polls only while visible and ignores a hidden in-flight result", async ({
+test("Dashboard cadence counts from fetch completion and resumes overdue reads once", async ({
   page,
 }) => {
   await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
@@ -2544,6 +2689,18 @@ test("Dashboard cadence polls only while visible and ignores a hidden in-flight 
         document.dispatchEvent(new Event("visibilitychange"));
       },
     });
+    // Observe the API response body finishing, independently of Query timers.
+    // Notification stepping may advance the fake clock after that boundary.
+    const responseJson = Response.prototype.json;
+    Response.prototype.json = async function () {
+      const value: unknown = await responseJson.call(this);
+      if (new URL(this.url).pathname === "/api/records/aggregate-snapshot")
+        Object.defineProperty(window, "dashboardSnapshotFinishedAt", {
+          configurable: true,
+          value: Date.now(),
+        });
+      return value;
+    };
   });
   const api = await installDashboardApi(
     page,
@@ -2553,12 +2710,40 @@ test("Dashboard cadence polls only while visible and ignores a hidden in-flight 
   const table = page.getByRole("table", {
     name: "Complete data for Count by Category",
   });
+  const refresh = page.getByRole("button", { name: "Refresh now" });
+  const settle = async () => {
+    await settleDashboardClock(page, () => refresh.isEnabled(), true);
+    await expect(refresh).toBeEnabled();
+  };
+  const setVisibility = async (state: DocumentVisibilityState) => {
+    await page.evaluate((next) => {
+      const browserWindow = window as unknown as Window & {
+        setTestVisibility: (value: DocumentVisibilityState) => void;
+      };
+      browserWindow.setTestVisibility(next);
+    }, state);
+    await page.clock.runFor(1);
+  };
+  const stepToCadence = async (interval: number) => {
+    const before = api.snapshots.length;
+    const remaining = await page.evaluate((cadence) => {
+      const finished = (
+        window as unknown as Window & { dashboardSnapshotFinishedAt: number }
+      ).dashboardSnapshotFinishedAt;
+      return finished + cadence - Date.now();
+    }, interval);
+    expect(remaining).toBeGreaterThan(1);
+    await page.clock.runFor(remaining - 1);
+    expect(api.snapshots).toHaveLength(before);
+    await page.clock.runFor(1);
+    await expect.poll(() => api.snapshots.length).toBe(before + 1);
+  };
+  await settleDashboardClock(page, () => table.isVisible(), true);
   await expect(table).toBeVisible();
-  await expect(page.getByRole("button", { name: "Refresh now" })).toBeEnabled();
-  const stableClockTime = await page.evaluate(() => Date.now() + 60_000);
-  await page.clock.pauseAt(stableClockTime);
+  await settle();
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000));
   const manualSnapshotCount = api.snapshots.length;
-  await page.clock.fastForward(300_000);
+  await page.clock.runFor(300_000);
   expect(api.snapshots).toHaveLength(manualSnapshotCount);
 
   const minuteSettings = await openDashboardSettingsDialog(page, true);
@@ -2567,81 +2752,110 @@ test("Dashboard cadence polls only while visible and ignores a hidden in-flight 
   await expect(
     page.getByText("Unsaved changes", { exact: true }),
   ).toBeVisible();
-  const unsavedSnapshotCount = api.snapshots.length;
-  await page.clock.fastForward(60_000);
-  expect(api.snapshots).toHaveLength(unsavedSnapshotCount);
+  await page.clock.runFor(60_000);
+  expect(api.snapshots).toHaveLength(manualSnapshotCount);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
-  await expect(table).toBeVisible();
+  await settleDashboardClock(
+    page,
+    async () => api.snapshots.length,
+    manualSnapshotCount + 1,
+  );
+  await settle();
   await expect(
     page.getByText(/Every minute while this page is open/),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Refresh now" })).toBeEnabled();
-  await expect
-    .poll(() => api.snapshots.length)
-    .toBeGreaterThan(manualSnapshotCount);
-  const initialSnapshotCount = api.snapshots.length;
-  expect(initialSnapshotCount).toBeGreaterThanOrEqual(1);
 
-  await page.clock.fastForward(59_999);
-  expect(api.snapshots).toHaveLength(initialSnapshotCount);
-  await page.clock.fastForward(1);
-  await expect.poll(() => api.snapshots.length).toBe(initialSnapshotCount + 1);
-  await expect(page.getByRole("button", { name: "Refresh now" })).toBeEnabled();
+  // A slow request must finish before the next minute starts counting.
+  const slow = api.holdNextSnapshot();
+  await stepToCadence(60_000);
+  await slow.started;
+  const pendingCount = api.snapshots.length;
+  await page.clock.runFor(90_000);
+  expect(api.snapshots).toHaveLength(pendingCount);
   api.setSnapshotLength(2);
-  await page.clock.fastForward(59_999);
-  await page.clock.fastForward(1);
-  await expect.poll(() => api.snapshots.length).toBe(initialSnapshotCount + 2);
-  await expect(table.locator("tbody tr")).toHaveCount(2);
+  slow.release();
+  await settleDashboardClock(page, () => table.locator("tbody tr").count(), 2);
+  await settle();
+  await stepToCadence(60_000);
+  await settle();
 
+  // A hidden answer cannot replace last-good rows. An overdue return reads now.
   api.setSnapshotLength(4);
-  const pending = api.holdNextSnapshot();
-  await page.clock.fastForward(60_000);
-  await pending.started;
-  await page.evaluate(() => {
-    const browserWindow = window as unknown as Window & {
-      setTestVisibility: (state: DocumentVisibilityState) => void;
-    };
-    browserWindow.setTestVisibility("hidden");
-  });
-  pending.release();
-  await page.clock.runFor(0);
-  await page.clock.fastForward(120_000);
-  expect(api.snapshots).toHaveLength(initialSnapshotCount + 3);
-
-  await page.evaluate(() => {
-    const browserWindow = window as unknown as Window & {
-      setTestVisibility: (state: DocumentVisibilityState) => void;
-    };
-    browserWindow.setTestVisibility("visible");
-  });
+  const hidden = api.holdNextSnapshot();
+  await stepToCadence(60_000);
+  await hidden.started;
+  const hiddenCount = api.snapshots.length;
+  await setVisibility("hidden");
+  hidden.release();
+  await page.clock.runFor(1);
+  await page.clock.runFor(120_000);
+  expect(api.snapshots).toHaveLength(hiddenCount);
+  await expect(
+    page
+      .getByRole("table", {
+        name: "Complete data for Count by Category",
+        includeHidden: true,
+      })
+      .locator("tbody tr"),
+  ).toHaveCount(2);
+  api.setSnapshotLength(6);
+  await setVisibility("visible");
+  await settleDashboardClock(
+    page,
+    async () => api.snapshots.length,
+    hiddenCount + 1,
+  );
+  await settleDashboardClock(page, () => table.locator("tbody tr").count(), 6);
+  await settle();
   await expect(
     page.getByRole("dialog", { name: "Session verification" }),
   ).toHaveCount(0);
-  await expect(table.locator("tbody tr")).toHaveCount(2);
-  await page.clock.fastForward(59_999);
-  expect(api.snapshots).toHaveLength(initialSnapshotCount + 3);
-  await page.clock.fastForward(1);
-  await expect.poll(() => api.snapshots.length).toBe(initialSnapshotCount + 4);
-  await expect(table.locator("tbody tr")).toHaveCount(4);
+
+  // A short hidden pause keeps the same completion-based deadline.
+  await page.clock.runFor(20_000);
+  await setVisibility("hidden");
+  const shortPauseCount = api.snapshots.length;
+  await page.clock.runFor(10_000);
+  await setVisibility("visible");
+  expect(api.snapshots).toHaveLength(shortPauseCount);
+  await stepToCadence(60_000);
+  await settle();
+
+  // Dirty saved widgets pause their saved cadence as well as a new cadence.
+  const dirtySettings = await openDashboardSettingsDialog(page, true);
+  await dirtySettings.getByLabel("Dashboard name").fill("My cadence draft");
+  await finishDashboardDialog(dirtySettings, page);
+  const dirtyCount = api.snapshots.length;
+  await page.clock.runFor(120_000);
+  expect(api.snapshots).toHaveLength(dirtyCount);
+  await page.getByRole("button", { name: "Save Dashboard" }).click();
+  await settleDashboardClock(
+    page,
+    async () => api.snapshots.length,
+    dirtyCount + 1,
+  );
+  await settle();
 
   const fiveMinuteSettings = await openDashboardSettingsDialog(page, true);
   await fiveMinuteSettings
     .getByLabel("Refresh cadence")
     .selectOption("five-minutes");
   await finishDashboardDialog(fiveMinuteSettings, page);
+  const fiveMinuteDraftCount = api.snapshots.length;
+  await page.clock.runFor(300_000);
+  expect(api.snapshots).toHaveLength(fiveMinuteDraftCount);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
-  await expect(table).toBeVisible();
+  await settleDashboardClock(
+    page,
+    async () => api.snapshots.length,
+    fiveMinuteDraftCount + 1,
+  );
+  await settle();
   await expect(
     page.getByText(/Every five minutes while this page is open/),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Refresh now" })).toBeEnabled();
-  const fiveMinuteSnapshotCount = api.snapshots.length;
-  await page.clock.fastForward(299_999);
-  expect(api.snapshots).toHaveLength(fiveMinuteSnapshotCount);
-  await page.clock.fastForward(1);
-  await expect
-    .poll(() => api.snapshots.length)
-    .toBe(fiveMinuteSnapshotCount + 1);
+  await stepToCadence(300_000);
+  await settle();
 });
 
 test("a hidden pending Dashboard refresh cannot block a new visible refresh", async ({

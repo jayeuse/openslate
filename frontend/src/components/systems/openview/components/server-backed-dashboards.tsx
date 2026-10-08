@@ -39,7 +39,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
-import { ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { useQuery } from "@tanstack/react-query";
 import { useOpenViewAccessDenied } from "../adapters/openview-access";
@@ -51,9 +50,7 @@ import {
 import {
   archiveOpenViewDashboard,
   createOpenViewDashboard,
-  getOpenViewDashboard,
   getOpenViewDashboardConflict,
-  listOpenViewDashboards,
   restoreOpenViewDashboard,
   updateOpenViewDashboard,
   type OpenViewDashboard,
@@ -64,11 +61,9 @@ import {
   type OpenViewDashboardWidgetType,
   type OpenViewDashboardWidget,
 } from "../adapters/dashboards-api";
-import { queryOpenViewAggregateSnapshot } from "../adapters/analytics-api";
 import {
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
-  queryOpenViewRecords,
   type OpenViewDataSource,
   type OpenViewDataSourceField,
   type OpenViewQueryDefinition,
@@ -76,14 +71,13 @@ import {
 import { parseOpenViewUrl, serializeOpenViewUrl } from "../domain/model";
 import {
   DASHBOARD_PAGE_SIZE,
-  configSignature,
   draftWidgetsFrom,
   inputWidgets,
-  type DashboardWidgetData,
   type DraftWidget,
-  type SnapshotState,
 } from "../domain/dashboard-draft";
 import { DashboardWidgetResults } from "./dashboard-widget-results";
+import { useDashboardResource } from "../hooks/use-dashboard-resource";
+import { useDashboardSnapshot } from "../hooks/use-dashboard-snapshot";
 
 const CATEGORICAL_FIELD_TYPES = new Set([
   "text",
@@ -190,36 +184,6 @@ function inclusiveDateRangeDays(
   return Math.floor((to - from) / DATE_RANGE_DAY_MS) + 1;
 }
 
-function loadDashboardWidgetData(
-  widget: DraftWidget,
-  recordOffset: number,
-  pageSize: number,
-): Promise<DashboardWidgetData> {
-  if (widget.widgetType === "records") {
-    return queryOpenViewRecords({
-      moduleId: widget.config.query.moduleId,
-      definition: widget.config.query.definition,
-      limit: pageSize,
-      offset: recordOffset,
-    }).then((result) => ({ kind: "records", result }));
-  }
-  return queryOpenViewAggregateSnapshot(widget.config.query).then((result) => ({
-    kind: "aggregate",
-    result,
-  }));
-}
-
-function dashboardSnapshotSignature(
-  widget: DraftWidget | undefined,
-  page: number,
-  pageSize: number,
-): string {
-  const signature = configSignature(widget, page);
-  return widget?.widgetType === "records"
-    ? JSON.stringify({ signature, pageSize })
-    : signature;
-}
-
 function lastValidDashboardPage(
   currentPage: number,
   itemCount: number,
@@ -229,10 +193,6 @@ function lastValidDashboardPage(
     currentPage,
     Math.max(0, Math.ceil(itemCount / pageSize) - 1),
   );
-}
-
-function isAccessDenied(error: unknown): boolean {
-  return error instanceof ApiError && [401, 403].includes(error.status);
 }
 
 export default function ServerBackedDashboards() {
@@ -245,14 +205,7 @@ export default function ServerBackedDashboards() {
   const urlState = parseOpenViewUrl(`${pathname}?${searchParams.toString()}`);
   const routeDashboardId =
     urlState.section === "dashboards" ? urlState.dashboard : undefined;
-  const [dashboards, setDashboards] = useState<OpenViewDashboard[]>([]);
   const [showArchived, setShowArchived] = useState(false);
-  const [dashboardListLoading, setDashboardListLoading] = useState(true);
-  const [dashboardListError, setDashboardListError] = useState("");
-  const [dashboardListHasMore, setDashboardListHasMore] = useState(false);
-  const [dashboardListLoadingMore, setDashboardListLoadingMore] =
-    useState(false);
-  const [dashboardListRefresh, setDashboardListRefresh] = useState(0);
   const [pendingNavigation, setPendingNavigation] =
     useState<PendingNavigation>(null);
   const [selectedDashboard, setSelectedDashboard] =
@@ -261,7 +214,7 @@ export default function ServerBackedDashboards() {
     useState<DashboardDialogKind>(null);
   const dashboardBeforeNew = useRef<OpenViewDashboard | null>(null);
   const [widgetDialogOpen, setWidgetDialogOpen] = useState(false);
-  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardReloading, setDashboardReloading] = useState(false);
   const [routeClearPending, setRouteClearPending] = useState(false);
   const [dashboardError, setDashboardError] = useState("");
   const [notice, setNotice] = useState("");
@@ -303,59 +256,33 @@ export default function ServerBackedDashboards() {
   const [builderDateFieldId, setBuilderDateFieldId] = useState("");
   const [builderFromDate, setBuilderFromDate] = useState("");
   const [builderToDate, setBuilderToDate] = useState("");
-  const [snapshotLoading, setSnapshotLoading] = useState(false);
-  const [snapshotError, setSnapshotError] = useState("");
-  const [lastGoodSnapshot, setLastGoodSnapshot] =
-    useState<SnapshotState | null>(null);
   const [tablePage, setTablePage] = useState(0);
   const [tablePageSize, setTablePageSize] = useState(DASHBOARD_PAGE_SIZE);
-  const [pageVisible, setPageVisible] = useState(false);
-  const requestSequence = useRef(0);
-  const routeLoadSequence = useRef(0);
-  const dashboardListRequestSequence = useRef(0);
   const fieldRequestSequence = useRef(0);
-  const draftDirtyRef = useRef(false);
-  const lastGoodSnapshotRef = useRef<SnapshotState | null>(null);
-  const snapshotInFlightRef = useRef<number | null>(null);
-  const refreshActiveSnapshotRef = useRef<() => void>(() => {});
   const restorePendingRef = useRef("");
   const skipRouteLoadForId = useRef("");
   // Arriving with no Dashboard chosen opens the first one by position, once.
   const firstDashboardSettled = useRef(false);
 
-  useEffect(() => {
-    let active = true;
-    const sequence = ++dashboardListRequestSequence.current;
-    setDashboardListLoading(true);
-    setDashboardListLoadingMore(false);
-    setDashboardListError("");
-    void listOpenViewDashboards({
-      limit: DASHBOARD_PAGE_SIZE,
-      offset: 0,
-      sortBy: "position",
-      sortOrder: "asc",
-      deleted: showArchived ? "only" : "exclude",
-    })
-      .then((page) => {
-        if (!active || dashboardListRequestSequence.current !== sequence)
-          return;
-        setDashboards(page.items);
-        setDashboardListHasMore(page.pagination.hasMore);
-      })
-      .catch((error: unknown) => {
-        if (active && dashboardListRequestSequence.current === sequence)
-          setDashboardListError(
-            apiErrorMessage(error, "Dashboards could not be loaded."),
-          );
-      })
-      .finally(() => {
-        if (active && dashboardListRequestSequence.current === sequence)
-          setDashboardListLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [dashboardListRefresh, showArchived]);
+  const resource = useDashboardResource(
+    showArchived,
+    routeDashboardId,
+    routeClearPending,
+  );
+  const {
+    dashboards,
+    hasMore: dashboardListHasMore,
+    loading: dashboardListLoading,
+    loadingMore: dashboardListLoadingMore,
+    error: dashboardListError,
+    refreshList: refreshDashboardList,
+    loadMore: loadMoreDashboards,
+  } = resource;
+  const dashboardLoading =
+    dashboardReloading ||
+    Boolean(
+      routeDashboardId && !routeClearPending && resource.detail.isPending,
+    );
 
   useEffect(() => {
     let active = true;
@@ -433,11 +360,8 @@ export default function ServerBackedDashboards() {
   }, [builderModuleId, catalogRetry]);
 
   useEffect(() => {
-    let active = true;
-    const sequence = ++routeLoadSequence.current;
     if (!routeDashboardId) {
       setRouteClearPending(false);
-      setDashboardLoading(false);
       return;
     }
     if (skipRouteLoadForId.current === routeDashboardId) {
@@ -448,32 +372,8 @@ export default function ServerBackedDashboards() {
     setDashboardName("");
     setDraftWidgets([]);
     setActiveWidgetKey("");
-    setLastGoodSnapshot(null);
-    lastGoodSnapshotRef.current = null;
-    setSnapshotError("");
-    setDashboardLoading(true);
     setDashboardError("");
     setNotice("");
-    void getOpenViewDashboard(routeDashboardId)
-      .then((dashboard) => {
-        if (!active || routeLoadSequence.current !== sequence) return;
-        applyDashboard(dashboard);
-      })
-      .catch((error: unknown) => {
-        if (active && routeLoadSequence.current === sequence) {
-          setSelectedDashboard(null);
-          setDashboardError(
-            apiErrorMessage(error, "This Dashboard could not be loaded."),
-          );
-        }
-      })
-      .finally(() => {
-        if (active && routeLoadSequence.current === sequence)
-          setDashboardLoading(false);
-      });
-    return () => {
-      active = false;
-    };
   }, [routeDashboardId]);
 
   const activeWidget = draftWidgets.find(
@@ -482,17 +382,6 @@ export default function ServerBackedDashboards() {
   const activePersistedWidget = selectedDashboard?.widgets.find(
     (widget) => widget.id === activeWidgetKey,
   );
-  const activeSignature = dashboardSnapshotSignature(
-    activeWidget,
-    tablePage,
-    tablePageSize,
-  );
-  const visibleSnapshot =
-    activeWidget &&
-    lastGoodSnapshot?.widgetKey === activeWidget.key &&
-    lastGoodSnapshot.configSignature === activeSignature
-      ? lastGoodSnapshot
-      : null;
   const widgetsChanged = selectedDashboard
     ? JSON.stringify(
         selectedDashboard.widgets.map(({ widgetType, config }) => ({
@@ -511,7 +400,77 @@ export default function ServerBackedDashboards() {
     : Boolean(dashboardName.trim()) ||
       refreshCadence !== "manual" ||
       draftWidgets.length > 0;
-  draftDirtyRef.current = draftDirty;
+  const incomingDashboard = resource.detail.data;
+  const changedElsewhere = Boolean(
+    incomingDashboard &&
+    selectedDashboard &&
+    incomingDashboard.id === selectedDashboard.id &&
+    incomingDashboard.revision !== selectedDashboard.revision,
+  );
+  useEffect(() => {
+    if (
+      routeClearPending ||
+      !routeDashboardId ||
+      !incomingDashboard ||
+      incomingDashboard.id !== routeDashboardId ||
+      savePending ||
+      duplicatePending ||
+      archivePending ||
+      restorePendingId
+    )
+      return;
+    if (
+      selectedDashboard?.id === incomingDashboard.id &&
+      (draftDirty || selectedDashboard === incomingDashboard)
+    )
+      return;
+    applyDashboard(incomingDashboard);
+  }, [
+    incomingDashboard,
+    routeDashboardId,
+    routeClearPending,
+    selectedDashboard,
+    draftDirty,
+    savePending,
+    duplicatePending,
+    archivePending,
+    restorePendingId,
+  ]);
+  useEffect(() => {
+    if (resource.detail.error && !resource.detail.isFetching)
+      setDashboardError(
+        apiErrorMessage(
+          resource.detail.error,
+          "This Dashboard could not be loaded.",
+        ),
+      );
+  }, [resource.detail.error, resource.detail.isFetching]);
+  const {
+    snapshot: visibleSnapshot,
+    loading: snapshotLoading,
+    error: snapshotError,
+    refresh: refreshActiveSnapshot,
+  } = useDashboardSnapshot(
+    selectedDashboard,
+    routeDashboardId,
+    activeWidget,
+    Boolean(activePersistedWidget),
+    draftDirty,
+    tablePage,
+    tablePageSize,
+  );
+  useEffect(() => {
+    if (visibleSnapshot?.data.kind === "aggregate")
+      setTablePage((current) =>
+        lastValidDashboardPage(
+          current,
+          visibleSnapshot.data.kind === "aggregate"
+            ? visibleSnapshot.data.result.items.length
+            : 0,
+          tablePageSize,
+        ),
+      );
+  }, [visibleSnapshot?.data, tablePageSize]);
   const firstDashboardId = dashboards[0]?.id;
   useEffect(() => {
     if (firstDashboardSettled.current || dashboardListLoading || showArchived)
@@ -609,23 +568,6 @@ export default function ServerBackedDashboards() {
     ],
   );
   useWorkspaceNavigationGuard(navigationGuard);
-  useEffect(() => {
-    const updateVisibility = () => {
-      const visible = document.visibilityState === "visible";
-      if (!visible) {
-        requestSequence.current += 1;
-        snapshotInFlightRef.current = null;
-        setSnapshotLoading(false);
-      }
-      setPageVisible(visible);
-    };
-    updateVisibility();
-    document.addEventListener("visibilitychange", updateVisibility);
-    return () => {
-      document.removeEventListener("visibilitychange", updateVisibility);
-      requestSequence.current += 1;
-    };
-  }, []);
   const activeTitle = activeWidget
     ? widgetTitle(activeWidget, fieldsByModule)
     : "";
@@ -695,87 +637,6 @@ export default function ServerBackedDashboards() {
 
   useEffect(() => {
     let active = true;
-    if (!activeWidget || !activePersistedWidget) {
-      requestSequence.current += 1;
-      setSnapshotLoading(false);
-      setSnapshotError("");
-      return;
-    }
-    const signature = dashboardSnapshotSignature(
-      activeWidget,
-      tablePage,
-      tablePageSize,
-    );
-    const previous = lastGoodSnapshotRef.current;
-    if (
-      previous?.widgetKey === activeWidget.key &&
-      previous.configSignature === signature
-    ) {
-      requestSequence.current += 1;
-      setLastGoodSnapshot(previous);
-      setSnapshotLoading(false);
-      setSnapshotError("");
-      return;
-    }
-    const sequence = ++requestSequence.current;
-    snapshotInFlightRef.current = sequence;
-    setSnapshotLoading(true);
-    setSnapshotError("");
-    void loadDashboardWidgetData(
-      activeWidget,
-      tablePage * tablePageSize,
-      tablePageSize,
-    )
-      .then((data) => {
-        if (!active || requestSequence.current !== sequence) return;
-        const next = {
-          widgetKey: activeWidget.key,
-          configSignature: signature,
-          data,
-        };
-        lastGoodSnapshotRef.current = next;
-        setLastGoodSnapshot(next);
-        if (data.kind === "aggregate")
-          setTablePage((current) =>
-            lastValidDashboardPage(
-              current,
-              data.result.items.length,
-              tablePageSize,
-            ),
-          );
-      })
-      .catch((error: unknown) => {
-        if (!active || requestSequence.current !== sequence) return;
-        if (
-          isAccessDenied(error) &&
-          lastGoodSnapshotRef.current?.widgetKey === activeWidget.key
-        ) {
-          lastGoodSnapshotRef.current = null;
-          setLastGoodSnapshot(null);
-        }
-        setSnapshotError(
-          apiErrorMessage(
-            error,
-            "This Dashboard widget could not be refreshed.",
-          ),
-        );
-      })
-      .finally(() => {
-        if (snapshotInFlightRef.current === sequence)
-          snapshotInFlightRef.current = null;
-        if (active && requestSequence.current === sequence)
-          setSnapshotLoading(false);
-      });
-    return () => {
-      active = false;
-      if (requestSequence.current === sequence) requestSequence.current += 1;
-      if (snapshotInFlightRef.current === sequence)
-        snapshotInFlightRef.current = null;
-    };
-  }, [activePersistedWidget, activeWidget, tablePage, tablePageSize]);
-
-  useEffect(() => {
-    let active = true;
     const moduleId = activeWidget?.config.query.moduleId;
     if (!moduleId || fieldsByModule[moduleId]) return;
     void listOpenViewDataSourceFields(moduleId, { limit: 100, offset: 0 })
@@ -802,12 +663,6 @@ export default function ServerBackedDashboards() {
     );
   }
 
-  function refreshDashboardList() {
-    dashboardListRequestSequence.current += 1;
-    setDashboardListLoadingMore(false);
-    setDashboardListRefresh((current) => current + 1);
-  }
-
   function selectBuilderModule(moduleId: string) {
     if (moduleId === builderModuleId) return;
     fieldRequestSequence.current += 1;
@@ -831,9 +686,6 @@ export default function ServerBackedDashboards() {
     setDraftWidgets(widgets);
     setActiveWidgetKey(widgets[0]?.key ?? "");
     selectBuilderModule(widgets[0]?.config.query.moduleId ?? "");
-    lastGoodSnapshotRef.current = null;
-    setLastGoodSnapshot(null);
-    setSnapshotError("");
   }
 
   function beginNewDashboard() {
@@ -844,15 +696,11 @@ export default function ServerBackedDashboards() {
     }
     dashboardBeforeNew.current = selectedDashboard;
     if (selectedDashboard || routeDashboardId) {
-      routeLoadSequence.current += 1;
       setSelectedDashboard(null);
       setDashboardName("");
       setRefreshCadence("manual");
       setDraftWidgets([]);
       setActiveWidgetKey("");
-      lastGoodSnapshotRef.current = null;
-      setLastGoodSnapshot(null);
-      setSnapshotError("");
       updateDashboardUrl();
     }
     setNotice("");
@@ -903,12 +751,6 @@ export default function ServerBackedDashboards() {
       return;
     }
     firstDashboardSettled.current = true;
-    dashboardListRequestSequence.current += 1;
-    setDashboards([]);
-    setDashboardListHasMore(false);
-    setDashboardListLoading(true);
-    setDashboardListLoadingMore(false);
-    routeLoadSequence.current += 1;
     setShowArchived((value) => !value);
     if (selectedDashboard || routeDashboardId) {
       setSelectedDashboard(null);
@@ -916,38 +758,7 @@ export default function ServerBackedDashboards() {
       setRefreshCadence("manual");
       setDraftWidgets([]);
       setActiveWidgetKey("");
-      lastGoodSnapshotRef.current = null;
-      setLastGoodSnapshot(null);
-      setSnapshotError("");
       updateDashboardUrl();
-    }
-  }
-
-  async function loadMoreDashboards() {
-    const sequence = dashboardListRequestSequence.current;
-    const offset = dashboards.length;
-    if (dashboardListLoadingMore || !dashboardListHasMore) return;
-    setDashboardListLoadingMore(true);
-    setDashboardListError("");
-    try {
-      const page = await listOpenViewDashboards({
-        limit: DASHBOARD_PAGE_SIZE,
-        offset,
-        sortBy: "position",
-        sortOrder: "asc",
-        deleted: showArchived ? "only" : "exclude",
-      });
-      if (dashboardListRequestSequence.current !== sequence) return;
-      setDashboards((current) => [...current, ...page.items]);
-      setDashboardListHasMore(page.pagination.hasMore);
-    } catch (error) {
-      if (dashboardListRequestSequence.current !== sequence) return;
-      setDashboardListError(
-        apiErrorMessage(error, "More Dashboards could not be loaded."),
-      );
-    } finally {
-      if (dashboardListRequestSequence.current === sequence)
-        setDashboardListLoadingMore(false);
     }
   }
 
@@ -1240,6 +1051,7 @@ export default function ServerBackedDashboards() {
             refreshCadence,
             widgets,
           });
+      resource.remember(saved);
       applyDashboard(saved);
       refreshDashboardList();
       if (saved.id !== routeDashboardId) {
@@ -1296,6 +1108,7 @@ export default function ServerBackedDashboards() {
         refreshCadence: selectedDashboard.refreshCadence,
         widgets: inputWidgets(draftWidgetsFrom(selectedDashboard)),
       });
+      resource.remember(duplicate);
       applyDashboard(duplicate);
       refreshDashboardList();
       skipRouteLoadForId.current = duplicate.id;
@@ -1319,17 +1132,17 @@ export default function ServerBackedDashboards() {
   async function reloadSelectedDashboard(discardDraft = false) {
     if (!selectedDashboard || (draftDirty && !discardDraft) || dashboardLoading)
       return;
-    setDashboardLoading(true);
+    setDashboardReloading(true);
     setDashboardError("");
     try {
-      applyDashboard(await getOpenViewDashboard(selectedDashboard.id));
+      applyDashboard(await resource.reload(selectedDashboard.id));
       setNotice("Dashboard reloaded.");
     } catch (error) {
       setDashboardError(
         apiErrorMessage(error, "The Dashboard could not be reloaded."),
       );
     } finally {
-      setDashboardLoading(false);
+      setDashboardReloading(false);
     }
   }
 
@@ -1347,8 +1160,6 @@ export default function ServerBackedDashboards() {
       setRefreshCadence("manual");
       setDraftWidgets([]);
       setActiveWidgetKey("");
-      lastGoodSnapshotRef.current = null;
-      setLastGoodSnapshot(null);
       refreshDashboardList();
       setNotice("Dashboard archived.");
       updateDashboardUrl();
@@ -1384,6 +1195,7 @@ export default function ServerBackedDashboards() {
         revision: dashboard.revision,
       });
       setShowArchived(false);
+      resource.remember(restored);
       applyDashboard(restored);
       refreshDashboardList();
       if (routeDashboardId !== restored.id) {
@@ -1408,105 +1220,6 @@ export default function ServerBackedDashboards() {
       setRestorePendingId("");
     }
   }
-
-  function refreshActiveSnapshot() {
-    if (
-      !activeWidget ||
-      !activePersistedWidget ||
-      snapshotInFlightRef.current !== null
-    )
-      return;
-    const signature = dashboardSnapshotSignature(
-      activeWidget,
-      tablePage,
-      tablePageSize,
-    );
-    const sequence = ++requestSequence.current;
-    snapshotInFlightRef.current = sequence;
-    setSnapshotLoading(true);
-    setSnapshotError("");
-    void loadDashboardWidgetData(
-      activeWidget,
-      tablePage * tablePageSize,
-      tablePageSize,
-    )
-      .then((data) => {
-        if (requestSequence.current !== sequence) return;
-        const next = {
-          widgetKey: activeWidget.key,
-          configSignature: signature,
-          data,
-        };
-        lastGoodSnapshotRef.current = next;
-        setLastGoodSnapshot(next);
-        if (data.kind === "aggregate")
-          setTablePage((current) =>
-            lastValidDashboardPage(
-              current,
-              data.result.items.length,
-              tablePageSize,
-            ),
-          );
-      })
-      .catch((error: unknown) => {
-        if (requestSequence.current !== sequence) return;
-        if (
-          isAccessDenied(error) &&
-          lastGoodSnapshotRef.current?.widgetKey === activeWidget.key
-        ) {
-          lastGoodSnapshotRef.current = null;
-          setLastGoodSnapshot(null);
-        }
-        setSnapshotError(
-          apiErrorMessage(
-            error,
-            "The Dashboard widget could not be refreshed.",
-          ),
-        );
-      })
-      .finally(() => {
-        if (snapshotInFlightRef.current === sequence)
-          snapshotInFlightRef.current = null;
-        if (requestSequence.current === sequence) setSnapshotLoading(false);
-      });
-  }
-
-  refreshActiveSnapshotRef.current = refreshActiveSnapshot;
-
-  useEffect(() => {
-    const cadence = selectedDashboard?.refreshCadence;
-    if (
-      !selectedDashboard ||
-      selectedDashboard.isDeleted ||
-      !activePersistedWidget ||
-      !activeWidget ||
-      draftDirty ||
-      snapshotLoading ||
-      !pageVisible ||
-      routeDashboardId !== selectedDashboard.id ||
-      cadence === undefined ||
-      cadence === "manual"
-    )
-      return;
-    const intervalMs = cadence === "one-minute" ? 60_000 : 300_000;
-    const timer = window.setInterval(() => {
-      if (
-        document.visibilityState === "visible" &&
-        !draftDirtyRef.current &&
-        snapshotInFlightRef.current === null
-      )
-        refreshActiveSnapshotRef.current();
-    }, intervalMs);
-    return () => window.clearInterval(timer);
-  }, [
-    activePersistedWidget,
-    activeWidget,
-    draftDirty,
-    pageVisible,
-    routeDashboardId,
-    selectedDashboard,
-    snapshotLoading,
-  ]);
 
   const dashboardChoices =
     selectedDashboard &&
@@ -1569,6 +1282,9 @@ export default function ServerBackedDashboards() {
       </header>
 
       {notice ? <Alert role="status">{notice}</Alert> : null}
+      {draftDirty && changedElsewhere && !accessDenied ? (
+        <Alert role="status">Changed by someone else — review latest</Alert>
+      ) : null}
       {dashboardError ? (
         <Alert role="alert" variant="destructive">
           {dashboardError}
@@ -2649,9 +2365,6 @@ export default function ServerBackedDashboards() {
                 setRefreshCadence("manual");
                 setDraftWidgets([]);
                 setActiveWidgetKey("");
-                lastGoodSnapshotRef.current = null;
-                setLastGoodSnapshot(null);
-                setSnapshotError("");
                 navigation.resume();
               }}
             >
