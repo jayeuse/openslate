@@ -64,6 +64,9 @@ export type RecordControls = {
   departmentId: string;
   /** Every active field of the data source, for editing and history. */
   editableFields: readonly OpenViewDataSourceField[];
+  fieldsHasMore?: boolean;
+  fieldsLoadingMore?: boolean;
+  onLoadMoreFields?: () => void;
   dataSources: readonly OpenViewDataSource[];
   canWrite: boolean;
   canReadHistory: boolean;
@@ -201,6 +204,9 @@ export function LiveRecordInspector({
                   record={record}
                   moduleId={controls.moduleId}
                   fields={controls.editableFields}
+                  fieldsHasMore={controls.fieldsHasMore}
+                  fieldsLoadingMore={controls.fieldsLoadingMore}
+                  onLoadMoreFields={controls.onLoadMoreFields}
                   canWrite={controls.canWrite}
                   onChanged={controls.onChanged}
                   onEditingChange={controls.onEditingChange}

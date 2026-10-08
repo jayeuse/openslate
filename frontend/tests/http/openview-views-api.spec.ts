@@ -1429,7 +1429,7 @@ async function installViewsApi(
       const offset = Number(url.searchParams.get("offset") ?? 0);
       const limit = Number(url.searchParams.get("limit") ?? 100);
       if (options.deepViewBeyondBound) {
-        const total = 1001;
+        const total = 101;
         const items = Array.from(
           { length: Math.min(limit, Math.max(0, total - offset)) },
           (_, index) => {
@@ -4894,7 +4894,7 @@ test("stale conflict can reload the authoritative saved version without losing i
   expect(api.saved().definition.search).toBe("external edit");
 });
 
-test("a saved view beyond the bounded list loads through its UUID deep link", async ({
+test("S08 a saved view beyond the first page loads through its UUID deep link", async ({
   page,
 }) => {
   const api = await installViewsApi(page, { deepViewBeyondBound: true });

@@ -170,6 +170,17 @@ export async function mockSecurityEvents(page: Page) {
     state.userQueries.push(new URLSearchParams(url.searchParams));
     const users = state.directory
       .slice()
+      .filter((user) => {
+        const selected = url.searchParams.getAll("ids");
+        const search = (url.searchParams.get("search") ?? "").toLowerCase();
+        return (
+          (!selected.length || selected.includes(user.id)) &&
+          (!search ||
+            `${user.username}\n${user.display_name ?? ""}\n${user.email}`
+              .toLowerCase()
+              .includes(search))
+        );
+      })
       .sort(
         (left, right) =>
           left.username.localeCompare(right.username) ||

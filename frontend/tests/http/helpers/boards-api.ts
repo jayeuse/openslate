@@ -102,7 +102,8 @@ export async function installBoardApi(
     }),
   );
   await page.route("**/api/boards**", (route) => {
-    const path = new URL(route.request().url()).pathname;
+    const url = new URL(route.request().url());
+    const path = url.pathname;
     const reply = (status: number, body: unknown) =>
       route.fulfill({
         status,
@@ -133,8 +134,23 @@ export async function installBoardApi(
         },
         board_revision: 1,
       });
-    if (path === `/api/boards/${boardId}/post-authors`)
-      return reply(200, [{ id: userId, label: "Current user" }]);
+    if (path === `/api/boards/${boardId}/post-authors`) {
+      const ids = url.searchParams.getAll("ids");
+      const items =
+        ids.length === 0 || ids.includes(userId)
+          ? [{ id: userId, label: "Current user" }]
+          : [];
+      return reply(200, {
+        items,
+        pagination: {
+          limit: Number(url.searchParams.get("limit") ?? 25),
+          offset: Number(url.searchParams.get("offset") ?? 0),
+          count: items.length,
+          total: items.length,
+          has_more: false,
+        },
+      });
+    }
     if (path === `/api/boards/${boardId}/posts`)
       return reply(200, {
         items: [],

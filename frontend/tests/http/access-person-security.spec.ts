@@ -307,8 +307,23 @@ test("partial revocation is truthful and performs session read-back without repl
   page,
 }) => {
   const api = await setup(page);
-  api.on("POST", `/api/users/${ids.ben}/recovery`, (route) =>
-    route.fulfill({
+  const template = api.sessions[0]!;
+  const devices = (start: number, label: string) =>
+    Array.from({ length: 13 }, (_, index) => ({
+      ...template,
+      id: `00000000-0000-4000-8000-${String(start + index).padStart(12, "0")}`,
+      user_agent: `${label} ${index}`,
+    }));
+  api.sessions.splice(0, api.sessions.length, ...devices(9000, "Old device"));
+  api.on("POST", `/api/users/${ids.ben}/recovery`, (route) => {
+    // The old sessions were committed as revoked. New concurrent logins can
+    // exist by read-back, and must replace every cached page of old devices.
+    api.sessions.splice(
+      0,
+      api.sessions.length,
+      ...devices(10000, "New device"),
+    );
+    return route.fulfill({
       status: 503,
       json: {
         detail: {
@@ -320,9 +335,22 @@ test("partial revocation is truthful and performs session read-back without repl
           factors_cleared: null,
         },
       },
-    }),
-  );
+    });
+  });
   const sheet = await open(page);
+  await sheet.getByRole("tab", { name: "Sessions", exact: true }).click();
+  await sheet
+    .getByRole("navigation", { name: "Session pages", exact: true })
+    .getByRole("button", { name: "Go to next page", exact: true })
+    .click();
+  await expect(
+    sheet.getByRole("list", { name: "Sessions", exact: true }),
+  ).toContainText("Old device 12");
+  await sheet.getByRole("tab", { name: "Security", exact: true }).click();
+  const readsBeforeRecovery = api.sent(
+    "GET",
+    `/api/users/${ids.ben}/sessions`,
+  ).length;
   await confirmRecovery(page, true);
   await expect(sheet.getByRole("alert")).toContainText(
     "Signed out everywhere. We could not confirm the recovery email was sent.",
@@ -330,7 +358,21 @@ test("partial revocation is truthful and performs session read-back without repl
   await expect(sheet).not.toContainText("Private diagnostic");
   await expect
     .poll(() => api.sent("GET", `/api/users/${ids.ben}/sessions`).length)
-    .toBeGreaterThan(0);
+    .toBeGreaterThan(readsBeforeRecovery);
+  await sheet.getByRole("tab", { name: "Sessions", exact: true }).click();
+  await expect(
+    sheet.getByRole("list", { name: "Sessions", exact: true }),
+  ).toContainText("New device 0");
+  await sheet
+    .getByRole("navigation", { name: "Session pages", exact: true })
+    .getByRole("button", { name: "Go to next page", exact: true })
+    .click();
+  await expect(
+    sheet.getByRole("list", { name: "Sessions", exact: true }),
+  ).toContainText("New device 12");
+  await expect(
+    sheet.getByRole("list", { name: "Sessions", exact: true }),
+  ).not.toContainText("Old device");
   expect(api.sent("POST", `/api/users/${ids.ben}/recovery`)).toHaveLength(1);
 });
 

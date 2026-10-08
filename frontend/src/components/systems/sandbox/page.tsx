@@ -52,7 +52,6 @@ import {
   deleteSandboxVersion,
   getSandboxVersion,
   importSandboxBundle,
-  listAllSandboxVersions,
   listSandboxTriggerRuns,
   loadSandboxDocument,
   replaceSandboxDocument,
@@ -287,7 +286,7 @@ export default function SandboxPage() {
       setLifecycleRecovery(false);
     }
   }, [purgeEnabled, lifecycleRequest]);
-  const [versions, setVersions] = useState<SandboxVersion[]>([]);
+  const [versionsRefreshKey, setVersionsRefreshKey] = useState(0);
   const [testRuns, setTestRuns] = useState<SandboxTestRun[]>([]);
   const [triggerRuns, setTriggerRuns] = useState<SandboxTriggerRun[]>([]);
   const [triggerActivity, setTriggerActivity] = useState({
@@ -365,7 +364,7 @@ export default function SandboxPage() {
   const status = publishStatus(session, design, Boolean(conflict));
 
   const refreshVersions = useCallback(async () => {
-    setVersions(await listAllSandboxVersions());
+    setVersionsRefreshKey((value) => value + 1);
   }, []);
   const refreshTriggerActivity = useCallback(async () => {
     setTriggerActivity({ loading: true, error: "" });
@@ -395,13 +394,12 @@ export default function SandboxPage() {
     setLoadError("");
     void queryClient.invalidateQueries({ queryKey: sandboxKeys.bindings });
     try {
-      const [document, versionItems, testPage] = await Promise.all([
+      const [document, testPage] = await Promise.all([
         loadSandboxDocument(),
-        listAllSandboxVersions(),
         listSandboxTests({ limit: 50 }),
       ]);
       setSession(openSandboxDocumentSession(document));
-      setVersions(versionItems);
+      setVersionsRefreshKey((value) => value + 1);
       setTestRuns(testPage.items);
     } catch (error) {
       setLoadError(commandFailure(error).error);
@@ -1224,7 +1222,7 @@ export default function SandboxPage() {
         ) : null}
         {section === "History" ? (
           <VersionsWorkspace
-            versions={versions}
+            refreshKey={versionsRefreshKey}
             getVersion={async (id) => {
               try {
                 return {

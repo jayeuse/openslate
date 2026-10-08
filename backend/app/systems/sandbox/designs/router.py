@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -81,8 +81,10 @@ def get_versions(
     db: Database,
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
     offset: Annotated[int, Query(ge=0)] = 0,
+    search: Annotated[str | None, Query(max_length=100)] = None,
+    kind: Literal["checkpoint", "published", "imported"] | None = None,
 ) -> VersionListResponse:
-    return _run(db, lambda: list_versions(db, limit=limit, offset=offset))
+    return _run(db, lambda: list_versions(db, limit=limit, offset=offset, search=search, kind=kind))
 
 
 @router.post(

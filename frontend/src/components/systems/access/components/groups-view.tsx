@@ -5,7 +5,6 @@ import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, Search, UsersRound } from "lucide-react";
 
-import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
@@ -24,25 +23,13 @@ import {
   TablePagination,
 } from "@/components/ui/table-pagination";
 import { ApiError } from "@/lib/api";
-import {
-  completeCollection,
-  pageCollection,
-} from "@/components/systems/shared/helpers/page-collections";
 
-import {
-  departmentListOptions,
-  groupListOptions,
-  memberCandidateListOptions,
-  moduleListOptions,
-  userListOptions,
-} from "../adapters/access-queries";
+import { groupListOptions } from "../adapters/access-queries";
+import { getAccessGroup } from "../state/api";
 import {
   defaultGroupFilters,
-  filterGroups,
   groupFiltersFromParams,
   groupRows,
-  memberOptionsFromCandidates,
-  memberOptionsFromUsers,
   summaryLabel,
   type GroupFilters,
   type GroupGapFilter,
@@ -141,16 +128,6 @@ function GroupsSkeleton() {
 export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
   const admin = mode === "admin";
   const searchParams = useSearchParams();
-  const groups = useQuery(groupListOptions("exclude"));
-  const departments = useQuery(departmentListOptions("exclude"));
-  const modules = useQuery(moduleListOptions("exclude"));
-  // Administrators pick members from the directory (it also knows when a
-  // guest's access ended); managers from the candidates route.
-  const users = useQuery({ ...userListOptions("include"), enabled: admin });
-  const candidates = useQuery({
-    ...memberCandidateListOptions(),
-    enabled: !admin,
-  });
   const [filters, setFilters] = useState<GroupFilters>(() =>
     groupFiltersFromParams(searchParams),
   );
@@ -158,38 +135,63 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
   const [pageSize, setPageSize] = useState<number>(DEFAULT_TABLE_PAGE_SIZE);
   const [createOpen, setCreateOpen] = useState(false);
   const [openTab, setOpenTab] = useState<GroupEditorTab | null>(null);
-  const [now] = useState(() => Date.now());
-
+  const [appliedSearch, setAppliedSearch] = useState(filters.query.trim());
+  useEffect(() => {
+    const timer = setTimeout(() => setAppliedSearch(filters.query.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [filters.query]);
+  const request = {
+    limit: pageSize,
+    offset: pageIndex * pageSize,
+    search: appliedSearch,
+    sort_by:
+      filters.sort === "members"
+        ? ("member_count" as const)
+        : filters.sort === "newest"
+          ? ("created_at" as const)
+          : ("name" as const),
+    sort_order: filters.sort === "name" ? ("asc" as const) : ("desc" as const),
+    ...(filters.filter === "no-access" ? { without_access: true } : {}),
+    ...(filters.filter === "no-members" ? { without_members: true } : {}),
+  };
+  const groups = useQuery(groupListOptions("exclude", request));
   const rows = useMemo(
-    () =>
-      groups.data && departments.data && modules.data
-        ? groupRows(groups.data, departments.data, modules.data)
-        : null,
-    [departments.data, groups.data, modules.data],
+    () => (groups.data ? groupRows(groups.data.items) : null),
+    [groups.data],
   );
-  const memberOptions = useMemo(
-    () =>
-      admin
-        ? memberOptionsFromUsers(users.data ?? [], now)
-        : memberOptionsFromCandidates(candidates.data ?? []),
-    [admin, candidates.data, now, users.data],
-  );
-  const members = admin ? users : candidates;
   const selectedId = searchParams.get("group");
   const linkedTab = editorTabFrom(searchParams.get("tab"));
-  const selected = rows?.find((row) => row.group.id === selectedId) ?? null;
-
-  // A link to a group that is not in the list opens the list instead.
-  useEffect(() => {
-    if (rows && selectedId && !rows.some((row) => row.group.id === selectedId))
-      replaceGroupParam(null);
-  }, [rows, selectedId]);
-
-  const denied = [groups.error, departments.error, modules.error].some(
-    (error) => error instanceof ApiError && error.status === 403,
+  const selectedRead = useQuery({
+    queryKey: ["access", "groups", "detail", selectedId],
+    queryFn: ({ signal }) => getAccessGroup(selectedId ?? "", { signal }),
+    enabled:
+      Boolean(selectedId) && !rows?.some((row) => row.group.id === selectedId),
+  });
+  const selected =
+    rows?.find((row) => row.group.id === selectedId) ??
+    (selectedRead.data
+      ? (groupRows([selectedRead.data.data])[0] ?? null)
+      : null);
+  const denied = [groups.error, selectedRead.error].some(
+    (error) => error instanceof ApiError && [401, 403].includes(error.status),
   );
-  const failed = groups.isError || departments.isError || modules.isError;
+  const failed = groups.isError;
   const loading = !failed && rows === null;
+  useEffect(() => {
+    if (
+      selectedRead.error instanceof ApiError &&
+      selectedRead.error.status === 404
+    )
+      replaceGroupParam(null);
+  }, [selectedRead.error]);
+  useEffect(() => {
+    if (!groups.data) return;
+    const lastPage = Math.max(
+      0,
+      Math.ceil(groups.data.pagination.total / pageSize) - 1,
+    );
+    setPageIndex((current) => Math.min(current, lastPage));
+  }, [groups.data, pageSize]);
 
   function changeFilters(patch: Partial<GroupFilters>) {
     setFilters((current) => ({ ...current, ...patch }));
@@ -201,12 +203,12 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
     replaceGroupParam(groupId);
   }
 
-  const filtered = rows ? filterGroups(rows, filters) : [];
-  const page = pageCollection(
-    completeCollection(filtered, "access-groups"),
-    pageIndex * pageSize,
-    pageSize,
-  );
+  const filtered = rows ?? [];
+  const page = {
+    items: filtered,
+    total: groups.data?.pagination.total ?? 0,
+    offset: groups.data?.pagination.offset ?? request.offset,
+  };
   const narrowed = filters.filter !== "all" || filters.query.trim() !== "";
 
   const columns: DataTableColumn<GroupRow>[] = [
@@ -279,8 +281,6 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
           className="min-h-11"
           onClick={() => {
             if (groups.isError) void groups.refetch();
-            if (departments.isError) void departments.refetch();
-            if (modules.isError) void modules.refetch();
           }}
         >
           Retry
@@ -294,7 +294,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
         <h2 className="sr-only">Group list</h2>
         <p className="text-muted-foreground text-sm" aria-live="polite">
           {rows
-            ? `${rows.length} ${rows.length === 1 ? "group" : "groups"}`
+            ? `${page.total} ${page.total === 1 ? "group" : "groups"}`
             : " "}
         </p>
         {admin ? (
@@ -308,24 +308,6 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
           </Button>
         ) : null}
       </div>
-
-      {members.isError ? (
-        <Alert variant="destructive">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              The people who can join groups could not be loaded, so members
-              show without names.
-            </span>
-            <Button
-              variant="outline"
-              className="min-h-11 shrink-0"
-              onClick={() => void members.refetch()}
-            >
-              Retry
-            </Button>
-          </div>
-        </Alert>
-      ) : null}
 
       <AccessSearchToolbar
         searchLabel="Search groups"
@@ -460,9 +442,6 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
       <GroupPanel
         row={selected}
         mode={mode}
-        departments={departments.data ?? []}
-        modules={modules.data ?? []}
-        memberOptions={memberOptions}
         listFresh={!groups.isFetching && !groups.isError}
         initialTab={openTab ?? linkedTab}
         onClose={() => {
@@ -474,7 +453,6 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
         <CreateGroupDialog
           open={createOpen}
           onOpenChange={setCreateOpen}
-          memberOptions={memberOptions}
           onCreated={(group) => openGroup(group.id, "access")}
         />
       ) : null}

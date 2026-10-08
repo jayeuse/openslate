@@ -1,7 +1,10 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, test, type Locator, type Page } from "./helpers/test";
+import { writeFile } from "node:fs/promises";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../../src/lib/api";
+import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
+import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import type { BoardPostPage } from "../../src/components/systems/boards/adapters/board-posts-api";
 import { ServerBoardPostReaderContent } from "../../src/components/systems/boards/components/server-board-post-feed-display";
 import {
@@ -120,7 +123,11 @@ function installFetch(responder: (path: string) => Response) {
 
 async function installPostBrowserApi(page: Page) {
   let authorChoices = [{ id: authorId, label: "Avery" }];
+  let currentViewerId = viewerId;
+  const authorRequests: string[] = [];
+  let authorFailure = 0;
   let publishedItems: Record<string, unknown>[] = [browserPost];
+  let detailPost: Record<string, unknown> = browserPost;
   const revisionIds = [
     "00000000-0000-4000-8000-000000000011",
     "00000000-0000-4000-8000-000000000012",
@@ -146,9 +153,14 @@ async function installPostBrowserApi(page: Page) {
       contentType: "application/json",
       body: JSON.stringify({
         authenticated: true,
-        user_id: viewerId,
+        user_id: currentViewerId,
         setup_required: false,
       }),
+    }),
+  );
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: { id: currentViewerId, role: "member", access: [] },
     }),
   );
   await page.route("**/api/workspace", (route) =>
@@ -193,15 +205,64 @@ async function installPostBrowserApi(page: Page) {
       });
     if (path === "/api/boards")
       return reply(200, {
-        items: [browserBoard],
+        items: [
+          browserBoard,
+          {
+            ...browserBoard,
+            id: otherBoardId,
+            name: "Second operations board",
+          },
+        ],
         pagination: {
           limit: 25,
           offset: 0,
-          count: 1,
-          total: 1,
+          count: 2,
+          total: 2,
           has_more: false,
         },
       });
+    const secondPrefix = `/api/boards/${otherBoardId}`;
+    if (path === secondPrefix)
+      return reply(200, {
+        ...browserBoard,
+        id: otherBoardId,
+        name: "Second operations board",
+      });
+    if (path === `${secondPrefix}/my-access`)
+      return reply(200, {
+        level: "write",
+        read: true,
+        write: true,
+        manage: false,
+      });
+    if (path === `${secondPrefix}/posts`)
+      return reply(
+        200,
+        wirePage([
+          {
+            ...browserPost,
+            board_id: otherBoardId,
+            title: "Second published update",
+          },
+        ]),
+      );
+    if (path === `${secondPrefix}/post-authors`) {
+      const ids = url.searchParams.getAll("ids");
+      const items =
+        ids.length === 0 || ids.includes(authorId)
+          ? [{ id: authorId, label: "Morgan second board" }]
+          : [];
+      return reply(200, {
+        items,
+        pagination: {
+          limit: Number(url.searchParams.get("limit") ?? 25),
+          offset: 0,
+          count: items.length,
+          total: items.length,
+          has_more: false,
+        },
+      });
+    }
     if (path === `${prefix}/my-access`)
       return reply(200, {
         level: "write",
@@ -209,16 +270,58 @@ async function installPostBrowserApi(page: Page) {
         write: true,
         manage: false,
       });
-    if (path === `${prefix}/post-authors`) return reply(200, authorChoices);
+    if (path === `${prefix}/post-authors`) {
+      authorRequests.push(url.search);
+      if (authorFailure) return reply(authorFailure, { detail: "Unavailable" });
+      const limit = Number(url.searchParams.get("limit") ?? 25);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const search = (url.searchParams.get("search") ?? "").toLocaleLowerCase();
+      const ids = url.searchParams.getAll("ids");
+      const filtered = authorChoices.filter(
+        (choice) =>
+          choice.label.toLocaleLowerCase().includes(search) &&
+          (ids.length === 0 || ids.includes(choice.id)),
+      );
+      const items = filtered.slice(offset, offset + limit);
+      return reply(200, {
+        items,
+        pagination: {
+          limit,
+          offset,
+          count: items.length,
+          total: filtered.length,
+          has_more: offset + items.length < filtered.length,
+        },
+      });
+    }
     if (path === `${prefix}/posts`) {
       const view = url.searchParams.get("view");
-      return reply(200, wirePage(view === "published" ? publishedItems : []));
+      const author = url.searchParams.get("author_id");
+      const items =
+        view === "published"
+          ? publishedItems.filter(
+              (post) => !author || post.author_id === author,
+            )
+          : [];
+      const limit = Number(url.searchParams.get("limit") ?? 25);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const visible = items.slice(offset, offset + limit);
+      return reply(200, {
+        ...wirePage(visible),
+        pagination: {
+          limit,
+          offset,
+          count: visible.length,
+          total: items.length,
+          has_more: offset + visible.length < items.length,
+        },
+      });
     }
     if (
       path === `${prefix}/posts/${postId}` &&
       url.searchParams.get("view") === "published"
     )
-      return reply(200, browserPost);
+      return reply(200, detailPost);
     if (path === `${prefix}/posts/${postId}/revisions`)
       return reply(200, { post_id: postId, items: [revision(2), revision(1)] });
     for (const number of [1, 2] as const)
@@ -238,11 +341,21 @@ async function installPostBrowserApi(page: Page) {
   });
 
   return {
+    authorRequests,
+    setAuthorFailure(status: number) {
+      authorFailure = status;
+    },
     setAuthorChoices(choices: typeof authorChoices) {
       authorChoices = choices;
     },
     setPublishedItems(items: typeof publishedItems) {
       publishedItems = items;
+    },
+    setDetailPost(post: typeof detailPost) {
+      detailPost = post;
+    },
+    setViewerId(id: string) {
+      currentViewerId = id;
     },
   };
 }
@@ -892,4 +1005,776 @@ test("post feed retains same-board last-good only for transient failure", () => 
     ...postFeedFailure(new Error("Invalid response")),
   });
   expect(contractFailure.data).toBeNull();
+});
+
+test("author picker searches beyond the first page and retains a selected author across searches", async ({
+  page,
+}) => {
+  const api = await installPostBrowserApi(page);
+  const laterId = "00000000-0000-4000-8000-000000000099";
+  api.setAuthorChoices([
+    { id: authorId, label: "Avery" },
+    ...Array.from({ length: 25 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`,
+      label: `First author ${index}`,
+    })),
+    { id: laterId, label: "Zora later-page author" },
+  ]);
+  api.setPublishedItems([
+    browserPost,
+    ...Array.from({ length: 25 }, (_, index) => ({
+      ...browserPost,
+      id: `00000000-0000-4000-8000-${String(index + 200).padStart(12, "0")}`,
+      author_id: `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`,
+      title: `First author ${index} update`,
+    })),
+    {
+      ...browserPost,
+      id: laterId,
+      author_id: laterId,
+      title: "Zora safety update",
+    },
+  ]);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await expect(
+    page.getByRole("heading", { name: "Published safety update" }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Published posts" })
+      .getByText("Avery", { exact: true }),
+  ).toBeVisible();
+  expect(api.authorRequests.length).toBeGreaterThan(0);
+  expect(
+    api.authorRequests.every(
+      (query) => new URLSearchParams(query).get("offset") === "0",
+    ),
+  ).toBe(true);
+  await page.getByRole("button", { name: "More filters" }).click();
+  await page
+    .getByRole("combobox", { name: "Post author", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Load more", exact: true }).click();
+  await expect(
+    page.getByRole("option", { name: "Zora later-page author" }),
+  ).toBeVisible();
+  await page.getByRole("option", { name: "Zora later-page author" }).click();
+  const selectedAuthorControl = page
+    .getByRole("combobox", { name: "Post author", exact: true })
+    .filter({ hasText: "Zora later-page author" });
+  await expect(selectedAuthorControl).toContainText("Zora later-page author");
+  await selectedAuthorControl.click();
+  await page
+    .getByRole("combobox", { name: "Post author", exact: true })
+    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .fill("First author 0");
+  await expect
+    .poll(() =>
+      api.authorRequests.some(
+        (query) =>
+          new URLSearchParams(query).get("search") === "First author 0",
+      ),
+    )
+    .toBe(true);
+  await expect(
+    page.getByRole("option", { name: "Zora later-page author" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(selectedAuthorControl).toContainText("Zora later-page author");
+  await expect(
+    page
+      .getByRole("region", { name: "Published posts" })
+      .getByText("Zora later-page author", { exact: true }),
+  ).toBeVisible();
+  if (process.env.OPENVIEW_CAPTURE_DIR) {
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate((value) => {
+        document.documentElement.classList.toggle("dark", value === "dark");
+      }, mode);
+      await captureOpenViewReview(page, `s08-post-author-${mode}`);
+    }
+  }
+  await page.reload();
+  await page.getByRole("button", { name: "More filters" }).click();
+  await expect(
+    page.getByRole("combobox", { name: "Post author", exact: true }),
+  ).toContainText("All authors");
+});
+
+test("off-page post authors keep their labels through picker search, reader, and history", async ({
+  page,
+}) => {
+  const api = await installPostBrowserApi(page);
+  const label = "Zora published author";
+  const captureLabels = async (name: string, visibleLabel: Locator) => {
+    if (!process.env.OPENVIEW_CAPTURE_DIR) return;
+    const previous = await page.evaluate(() => ({
+      mode: document.documentElement.classList.contains("dark")
+        ? ("dark" as const)
+        : ("light" as const),
+      reduceMotion: document.documentElement.dataset.motion === "reduced",
+    }));
+    try {
+      for (const mode of ["light", "dark"] as const) {
+        await page.evaluate(applyAppearancePreferences, {
+          mode,
+          reduceMotion: true,
+        });
+        await captureOpenViewReview(page, `${name}-${mode}`, {
+          beforeScreenshot: async () => {
+            await expect(visibleLabel).toBeVisible();
+          },
+        });
+      }
+    } finally {
+      await page.evaluate(applyAppearancePreferences, previous);
+    }
+  };
+  api.setAuthorChoices([
+    ...Array.from({ length: 26 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`,
+      label: `First author ${index}`,
+    })),
+    { id: authorId, label },
+  ]);
+  const editedPost = { ...browserPost, publication_number: 2, edited: true };
+  api.setPublishedItems([
+    editedPost,
+    ...Array.from({ length: 26 }, (_, index) => ({
+      ...browserPost,
+      id: `00000000-0000-4000-8000-${String(index + 200).padStart(12, "0")}`,
+      author_id: `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`,
+      title: `First author ${index} update`,
+    })),
+  ]);
+  api.setDetailPost(editedPost);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const feed = page.getByRole("region", { name: "Published posts" });
+  await expect(feed.getByText(label, { exact: true })).toBeVisible();
+
+  const lookupQueries = () =>
+    api.authorRequests
+      .map((query) => new URLSearchParams(query))
+      .filter((query) => query.has("ids"));
+  expect(lookupQueries().length).toBeGreaterThan(0);
+  for (const query of lookupQueries()) {
+    expect(query.getAll("ids")).toContain(authorId);
+    expect(query.getAll("ids")).toHaveLength(25);
+    expect(Number(query.get("limit"))).toBeLessThanOrEqual(100);
+    expect(query.get("offset")).toBe("0");
+    expect(query.has("search")).toBe(false);
+  }
+  expect(
+    api.authorRequests.every(
+      (query) => new URLSearchParams(query).get("offset") === "0",
+    ),
+  ).toBe(true);
+
+  await page.getByRole("button", { name: "More filters" }).click();
+  await page
+    .getByRole("combobox", { name: "Post author", exact: true })
+    .click();
+  await page
+    .getByRole("combobox", { name: "Post author", exact: true })
+    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .fill("First author 0");
+  await expect(
+    page.getByRole("option", { name: "First author 0", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(feed.getByText(label, { exact: true })).toBeVisible();
+  await captureLabels(
+    "s08-post-author-label-feed",
+    feed.getByText(label, { exact: true }),
+  );
+  await feed
+    .getByRole("article")
+    .filter({
+      has: page.getByRole("heading", { name: browserPost.title, exact: true }),
+    })
+    .getByRole("button", { name: "Open post", exact: true })
+    .click();
+  const reader = page.getByRole("dialog", {
+    name: browserPost.title,
+    exact: true,
+  });
+  await expect(reader.getByText(label, { exact: true })).toBeVisible();
+  await captureLabels(
+    "s08-post-author-label-reader",
+    reader.getByText(label, { exact: true }),
+  );
+  await reader.getByRole("button", { name: "Edited", exact: true }).click();
+  const history = page.getByRole("dialog", {
+    name: "Edit history",
+    exact: true,
+  });
+  await expect(
+    history.getByRole("button", { name: /Version 2/ }),
+  ).toContainText(label);
+  await expect(
+    history.getByRole("button", { name: /Version 1/ }),
+  ).toContainText(label);
+  await page.keyboard.press("Escape");
+
+  api.setPublishedItems([]);
+  await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
+  await expect(reader.getByText(label, { exact: true })).toBeVisible();
+  await reader.getByRole("button", { name: "Close post", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "No published posts" }),
+  ).toBeVisible();
+});
+
+test("local card history keeps its eligible author after a held feed refresh replaces the card", async ({
+  page,
+}, testInfo) => {
+  const api = await installPostBrowserApi(page);
+  const replacementAuthorId = "00000000-0000-4000-8000-000000000008";
+  const editedPost = { ...browserPost, publication_number: 2, edited: true };
+  const olderPost = {
+    ...browserPost,
+    id: "00000000-0000-4000-8000-000000000299",
+    author_id: replacementAuthorId,
+    title: "Earlier Bailey update",
+  };
+  const otherPosts = Array.from({ length: 25 }, (_, index) => ({
+    ...browserPost,
+    id: `00000000-0000-4000-8000-${String(index + 300).padStart(12, "0")}`,
+    author_id: replacementAuthorId,
+    title: `Replacement author update ${index + 1}`,
+    publish_at: "2026-09-23T01:00:00Z",
+    published_at: "2026-09-23T01:00:00Z",
+    created_at: "2026-09-23T01:00:00Z",
+    updated_at: "2026-09-23T01:00:00Z",
+  }));
+  api.setAuthorChoices([
+    { id: authorId, label: "Avery" },
+    { id: replacementAuthorId, label: "Bailey" },
+  ]);
+  api.setPublishedItems([editedPost, olderPost]);
+  let holdFeed = false;
+  let releaseFeed: () => void = () => {};
+  const heldFeed = new Promise<void>((resolve) => {
+    releaseFeed = resolve;
+  });
+  let feedStarted: () => void = () => {};
+  const feedEntered = new Promise<void>((resolve) => {
+    feedStarted = resolve;
+  });
+  let feedEnded: () => void = () => {};
+  const feedCompleted = new Promise<void>((resolve) => {
+    feedEnded = resolve;
+  });
+  const phases: { event: string; reads?: number; authors?: string[][] }[] = [];
+  let feedReads = 0;
+  await page.route(
+    (url) =>
+      url.pathname === `/api/boards/${boardId}/posts` &&
+      url.searchParams.get("view") === "published",
+    async (route) => {
+      feedReads += 1;
+      if (!holdFeed) return route.fallback();
+      phases.push({ event: "replacement-feed-start", reads: feedReads });
+      feedStarted();
+      await heldFeed;
+      try {
+        await route.fallback();
+        phases.push({ event: "replacement-feed-complete", reads: feedReads });
+      } finally {
+        feedEnded();
+      }
+    },
+  );
+  try {
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    const feed = page.getByRole("region", { name: "Published posts" });
+    await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
+    holdFeed = true;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await feedEntered;
+    await page
+      .getByRole("button", {
+        name: `Edit history of ${browserPost.title}`,
+        exact: true,
+      })
+      .click();
+    const history = page.getByRole("dialog", {
+      name: "Edit history",
+      exact: true,
+    });
+    await expect(
+      history.getByRole("button", { name: /Version 2/ }),
+    ).toContainText("Avery");
+    await expect(
+      history.getByRole("button", { name: /Version 1/ }),
+    ).toContainText("Avery");
+    await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
+    phases.push({
+      event: "local-history-author-visible-before-replacement",
+      reads: feedReads,
+    });
+    api.setPublishedItems([...otherPosts, editedPost, olderPost]);
+    const replaced = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname === `/api/boards/${boardId}/posts` &&
+        url.searchParams.get("view") === "published"
+      );
+    });
+    releaseFeed();
+    expect((await replaced).status()).toBe(200);
+    await feedCompleted;
+    const replacedFeed = page.getByRole("region", {
+      name: "Published posts",
+      exact: true,
+      includeHidden: true,
+    });
+    await expect(
+      replacedFeed.getByRole("heading", {
+        name: "Replacement author update 1",
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toHaveCount(1);
+    await expect(
+      replacedFeed.getByRole("heading", {
+        name: browserPost.title,
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toHaveCount(0);
+    phases.push({
+      event: "replacement-rendered-local-history-still-open",
+      reads: feedReads,
+    });
+    await expect(history).toBeVisible();
+    await expect(
+      history.getByRole("button", { name: /Version 2/ }),
+    ).toContainText("Avery");
+    await expect(
+      history.getByRole("button", { name: /Version 1/ }),
+    ).toContainText("Avery");
+    await expect(history).not.toContainText("Author unavailable");
+    expect(feedReads).toBe(2);
+    if (process.env.OPENVIEW_CAPTURE_DIR) {
+      const previous = await page.evaluate(() => ({
+        mode: document.documentElement.classList.contains("dark")
+          ? ("dark" as const)
+          : ("light" as const),
+        reduceMotion: document.documentElement.dataset.motion === "reduced",
+      }));
+      try {
+        for (const mode of ["light", "dark"] as const) {
+          await page.evaluate(applyAppearancePreferences, {
+            mode,
+            reduceMotion: true,
+          });
+          await captureOpenViewReview(
+            page,
+            `s08-post-author-local-history-${mode}`,
+            {
+              beforeScreenshot: async () => {
+                const version = history.getByRole("button", {
+                  name: /Version 2/,
+                });
+                await version.scrollIntoViewIfNeeded();
+                await expect(version).toContainText("Avery");
+                await expect(version.getByText("Avery")).toBeInViewport();
+                await expect(history).not.toContainText("Author unavailable");
+              },
+            },
+          );
+        }
+      } finally {
+        await page.evaluate(applyAppearancePreferences, previous);
+      }
+    }
+  } finally {
+    releaseFeed();
+    phases.push({
+      event: "final-known-author-requests",
+      reads: feedReads,
+      authors: api.authorRequests.map((query) =>
+        new URLSearchParams(query).getAll("ids"),
+      ),
+    });
+    await writeFile(
+      testInfo.outputPath("local-card-history-feed-phases.json"),
+      JSON.stringify(phases, null, 2),
+    );
+  }
+});
+
+test("an author refusal clears names and an older label response cannot restore them", async ({
+  page,
+}) => {
+  await installPostBrowserApi(page);
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started: () => void = () => {};
+  const labelStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let settled: () => void = () => {};
+  const labelSettled = new Promise<void>((resolve) => {
+    settled = resolve;
+  });
+  await page.route(`**/api/boards/${boardId}/post-authors**`, async (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    if (query.has("ids")) {
+      started();
+      await held;
+      try {
+        await route.fulfill({
+          json: {
+            items: [{ id: authorId, label: "Private author" }],
+            pagination: {
+              limit: Number(query.get("limit")),
+              offset: 0,
+              count: 1,
+              total: 1,
+              has_more: false,
+            },
+          },
+        });
+      } finally {
+        settled();
+      }
+      return;
+    }
+    if (query.has("search"))
+      return route.fulfill({
+        status: 403,
+        json: { detail: "Private denial detail" },
+      });
+    return route.fallback();
+  });
+  try {
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    await labelStarted;
+    await page.getByRole("button", { name: "More filters" }).click();
+    await page
+      .getByRole("combobox", { name: "Post author", exact: true })
+      .click();
+    await page
+      .getByRole("combobox", { name: "Post author", exact: true })
+      .and(page.getByPlaceholder("Search…", { exact: true }))
+      .fill("Private author");
+    await expect(
+      page
+        .getByText("Author choices unavailable. Check your access or retry.")
+        .first(),
+    ).toBeVisible();
+    release();
+    await labelSettled;
+    await expect(page.getByText("Private author", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(page.getByText("Avery", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByText("Private denial detail", { exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    release();
+  }
+});
+
+test("switching Boards ignores the previous Board's late author label read", async ({
+  page,
+}) => {
+  await installPostBrowserApi(page);
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started: () => void = () => {};
+  const labelStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let settled: () => void = () => {};
+  const labelSettled = new Promise<void>((resolve) => {
+    settled = resolve;
+  });
+  await page.route(`**/api/boards/${boardId}/post-authors**`, async (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    if (!query.has("ids")) return route.fallback();
+    started();
+    await held;
+    try {
+      await route.fulfill({
+        json: {
+          items: [{ id: authorId, label: "Old Board private author" }],
+          pagination: {
+            limit: Number(query.get("limit")),
+            offset: 0,
+            count: 1,
+            total: 1,
+            has_more: false,
+          },
+        },
+      });
+    } finally {
+      settled();
+    }
+  });
+  try {
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    await labelStarted;
+    await page
+      .getByRole("button", { name: "Switch board", exact: true })
+      .click();
+    await page.getByRole("combobox", { name: "Board", exact: true }).click();
+    await page
+      .getByRole("option", { name: /^Second operations board\b/ })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Second operations board", level: 1 }),
+    ).toBeVisible();
+    await page
+      .getByRole("navigation", { name: "Main navigation", exact: true })
+      .getByRole("link", { name: "Posts", exact: true })
+      .click();
+    const feed = page.getByRole("region", { name: "Published posts" });
+    await expect(
+      feed.getByRole("heading", { name: "Second published update" }),
+    ).toBeVisible();
+    await expect(
+      feed.getByText("Morgan second board", { exact: true }),
+    ).toBeVisible();
+    release();
+    await labelSettled;
+    await expect(
+      page.getByText("Old Board private author", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      feed.getByText("Morgan second board", { exact: true }),
+    ).toBeVisible();
+  } finally {
+    release();
+  }
+});
+
+test("switching verified accounts hides previous author names while new labels load", async ({
+  page,
+}) => {
+  const api = await installPostBrowserApi(page);
+  let hold = false;
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started: () => void = () => {};
+  const labelStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  await page.route(`**/api/boards/${boardId}/post-authors**`, async (route) => {
+    if (hold && new URL(route.request().url()).searchParams.has("ids")) {
+      started();
+      await held;
+    }
+    await route.fallback();
+  });
+  try {
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    const feed = page.getByRole("region", { name: "Published posts" });
+    await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
+    hold = true;
+    api.setViewerId("00000000-0000-4000-8000-000000000008");
+    api.setAuthorChoices([{ id: authorId, label: "Morgan new account" }]);
+    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+    await labelStarted;
+    await expect(page.getByText("Avery", { exact: true })).toHaveCount(0);
+    release();
+    await expect(
+      feed.getByText("Morgan new account", { exact: true }),
+    ).toBeVisible();
+  } finally {
+    release();
+  }
+});
+
+for (const status of [403, 404]) {
+  test(`known-author label refusal ${status} hides stored names until an authorized retry`, async ({
+    page,
+  }, testInfo) => {
+    await installPostBrowserApi(page);
+    const phases: {
+      event: string;
+      read?: number;
+      status?: number;
+      ids?: string[];
+    }[] = [];
+    let refused = false;
+    let recoveryArmed = false;
+    let activeReads = 0;
+    let readNumber = 0;
+    let deniedEnded: () => void = () => {};
+    const deniedComplete = new Promise<void>((resolve) => {
+      deniedEnded = resolve;
+    });
+    let recoveryStarted: () => void = () => {};
+    const recoveryObserved = new Promise<void>((resolve) => {
+      recoveryStarted = resolve;
+    });
+    let recoveryEnded: () => void = () => {};
+    const recoveryComplete = new Promise<void>((resolve) => {
+      recoveryEnded = resolve;
+    });
+    let releaseRecovery: () => void = () => {};
+    const heldRecovery = new Promise<void>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    await page.route(
+      `**/api/boards/${boardId}/post-authors**`,
+      async (route) => {
+        const query = new URL(route.request().url()).searchParams;
+        if (!query.has("ids")) return route.fallback();
+        const read = ++readNumber;
+        const phase = recoveryArmed
+          ? "recovery"
+          : refused
+            ? "denied"
+            : "authorized";
+        activeReads += 1;
+        phases.push({
+          event: `${phase}-start`,
+          read,
+          ids: query.getAll("ids"),
+        });
+        let completed = false;
+        try {
+          if (phase === "recovery") {
+            recoveryStarted();
+            await heldRecovery;
+            await route.fallback();
+          } else if (phase === "denied") {
+            await route.fulfill({
+              status,
+              json: { detail: "Private refusal detail" },
+            });
+          } else {
+            await route.fallback();
+          }
+          completed = true;
+        } finally {
+          activeReads -= 1;
+          phases.push({
+            event: `${phase}-end`,
+            read,
+            status: completed ? (phase === "denied" ? status : 200) : undefined,
+          });
+          if (phase === "denied") deniedEnded();
+          if (phase === "recovery") recoveryEnded();
+        }
+      },
+    );
+    try {
+      await page.goto(`/boards?board=${boardId}&section=posts`);
+      const feed = page.getByRole("region", { name: "Published posts" });
+      await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
+      await page
+        .getByRole("button", { name: "More filters", exact: true })
+        .click();
+      const picker = page
+        .getByRole("region", { name: "Post filters", exact: true })
+        .getByRole("combobox", { name: "Post author", exact: true });
+      await picker.click();
+      const selectedFeed = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === `/api/boards/${boardId}/posts` &&
+          url.searchParams.get("author_id") === authorId
+        );
+      });
+      const selectedLabel = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === `/api/boards/${boardId}/post-authors` &&
+          url.searchParams.has("ids")
+        );
+      });
+      await page.getByRole("option", { name: "Avery", exact: true }).click();
+      await selectedFeed;
+      await selectedLabel;
+      await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
+      await expect(picker).toContainText("Avery");
+      await expect.poll(() => activeReads).toBe(0);
+      phases.push({ event: "selected-feed-and-label-settled" });
+      refused = true;
+      await page.getByRole("button", { name: "Refresh", exact: true }).click();
+      await deniedComplete;
+      await expect(
+        page.getByText(
+          "Author labels unavailable. Check your access or retry.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await expect(page.getByText("Avery", { exact: true })).toHaveCount(0);
+      await expect(picker).toBeDisabled();
+      await expect(
+        page.getByText("Private refusal detail", { exact: true }),
+      ).toHaveCount(0);
+      await expect.poll(() => activeReads).toBe(0);
+      phases.push({ event: "denied-read-and-privacy-settled" });
+      recoveryArmed = true;
+      await Promise.all([
+        recoveryObserved,
+        page
+          .getByRole("button", { name: "Retry authors", exact: true })
+          .click(),
+      ]);
+      phases.push({ event: "retry-click-complete-with-recovery-held" });
+      await expect(page.getByText("Avery", { exact: true })).toHaveCount(0);
+      releaseRecovery();
+      await recoveryComplete;
+      await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
+      await expect(picker).toContainText("Avery");
+      phases.push({ event: "authorized-recovery-visible" });
+    } finally {
+      releaseRecovery();
+      await writeFile(
+        testInfo.outputPath(`author-${status}-read-phases.json`),
+        JSON.stringify(phases, null, 2),
+      );
+    }
+  });
+}
+
+test("a transient label refresh retains the current byline and retries its bounded lookup", async ({
+  page,
+}) => {
+  const api = await installPostBrowserApi(page);
+  let failed = false;
+  await page.route(`**/api/boards/${boardId}/post-authors**`, (route) =>
+    failed && new URL(route.request().url()).searchParams.has("ids")
+      ? route.fulfill({
+          status: 503,
+          json: { detail: "Internal failure detail" },
+        })
+      : route.fallback(),
+  );
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const feed = page.getByRole("region", { name: "Published posts" });
+  await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
+  failed = true;
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(
+    page.getByText(
+      "Could not refresh author labels. Showing the last loaded labels.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Internal failure detail", { exact: true }),
+  ).toHaveCount(0);
+  failed = false;
+  api.setAuthorChoices([{ id: authorId, label: "Avery renamed" }]);
+  await page
+    .getByRole("button", { name: "Retry authors", exact: true })
+    .click();
+  await expect(feed.getByText("Avery renamed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Avery", { exact: true })).toHaveCount(0);
 });

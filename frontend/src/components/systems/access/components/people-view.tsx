@@ -26,9 +26,7 @@ import {
 import { ApiError } from "@/lib/api";
 
 import {
-  departmentListOptions,
   directoryPageOptions,
-  groupListOptions,
   userListOptions,
 } from "../adapters/access-queries";
 import {
@@ -48,6 +46,17 @@ import type { AccessDirectoryUser } from "../state/api";
 import { AccessSearchToolbar } from "./access-search-toolbar";
 import { InvitePersonDialog } from "./invite-person-dialog";
 import { SelectField } from "./people-fields";
+import { usePeopleSearch } from "../hooks/use-people-search";
+import {
+  usePeopleMemberships,
+  type PersonMemberships,
+} from "../hooks/use-people-memberships";
+import {
+  useAccessCatalog,
+  catalogDepartments,
+  catalogGroups,
+} from "../hooks/use-access-catalog";
+import { Input } from "@/components/ui/input";
 import { PersonPanel } from "./person-panel";
 import { openRowClassName, RowOpenButton } from "./row-open-button";
 
@@ -163,9 +172,77 @@ function NameList({
   );
 }
 
-function DepartmentList({ row }: { row: DirectoryRow }) {
+type PeopleRow = DirectoryRow<AccessDirectoryUser> & {
+  membership?: PersonMemberships;
+};
+
+function MembershipList({
+  membership,
+  departments = false,
+}: {
+  membership?: PersonMemberships;
+  departments?: boolean;
+}) {
+  if (!membership || membership.loading)
+    return (
+      <span role="status" className="text-muted-foreground">
+        Loading {departments ? "departments" : "groups"}…
+      </span>
+    );
+  const partial = membership.hasMore || membership.loaded < membership.total;
+  return (
+    <div className="space-y-1">
+      {!membership.denied && !(membership.error && !membership.loaded) ? (
+        <>
+          {departments && partial && !membership.departments.length ? null : (
+            <NameList
+              items={departments ? membership.departments : membership.groups}
+              empty="None"
+            />
+          )}
+          {partial ? (
+            <p className="text-muted-foreground text-xs">
+              {departments
+                ? "Departments not fully loaded"
+                : `${membership.loaded} of ${membership.total} groups`}
+            </p>
+          ) : null}
+        </>
+      ) : null}
+      {membership.error ? (
+        <p role="alert" className="text-muted-foreground text-sm">
+          {membership.error}
+        </p>
+      ) : null}
+      {!departments && membership.retryFirstPage ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="relative z-10 min-h-11"
+          disabled={membership.recovering}
+          onClick={() => void membership.retry()}
+        >
+          Retry groups
+        </Button>
+      ) : null}
+      {!departments && membership.hasMore ? (
+        <Button
+          type="button"
+          variant="ghost"
+          className="relative z-10 min-h-11 px-0"
+          disabled={membership.loadingMore}
+          onClick={() => void membership.loadMore()}
+        >
+          {membership.loadingMore ? "Loading more groups…" : "Load more groups"}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function DepartmentList({ row }: { row: PeopleRow }) {
   if (row.allDepartments) return <span>All departments</span>;
-  return <NameList items={row.departments} empty="None" />;
+  return <MembershipList membership={row.membership} departments />;
 }
 
 function OpenPersonButton({
@@ -202,8 +279,6 @@ function DirectorySkeleton() {
 
 export function PeopleView() {
   const searchParams = useSearchParams();
-  const groups = useQuery(groupListOptions("exclude"));
-  const departments = useQuery(departmentListOptions("exclude"));
   // An Overview link can open the directory already filtered.
   const [filters, setFilters] = useState<DirectoryFilters>(() =>
     directoryFiltersFromParams(searchParams),
@@ -222,10 +297,14 @@ export function PeopleView() {
   const users = useQuery(directoryPageOptions(request));
   // Existing person/invitation editors need the complete sponsor catalog.
   // The closed directory never loads this collection to mask server paging.
-  const catalogRequested = Boolean(selectedId) || inviteOpen;
+  const catalogRequested = Boolean(selectedId);
   const catalog = useQuery({
-    ...userListOptions("include"),
-    enabled: catalogRequested,
+    ...userListOptions("include", {
+      ids: selectedId ? [selectedId] : [],
+      limit: 1,
+      offset: 0,
+    }),
+    enabled: Boolean(selectedId),
   });
 
   useEffect(() => {
@@ -237,36 +316,54 @@ export function PeopleView() {
     setPageIndex((current) => Math.min(current, lastPage));
   }, [pageSize, users.data?.pagination]);
 
-  const rows = useMemo(
-    () =>
-      users.data && groups.data && departments.data
-        ? directoryRows(users.data.items, groups.data, departments.data, now)
-        : null,
-    [departments.data, groups.data, now, users.data],
-  );
-  const catalogRows = useMemo(
-    () =>
-      catalog.data && groups.data && departments.data
-        ? directoryRows(catalog.data, groups.data, departments.data, now)
-        : null,
-    [catalog.data, groups.data, departments.data, now],
-  );
+  const memberships = usePeopleMemberships([
+    ...(users.data?.items ?? []),
+    ...(catalog.data?.items ?? []),
+  ]);
+  const prepareRows = (items: readonly AccessDirectoryUser[]): PeopleRow[] =>
+    directoryRows(items, [], [], now).map((row) => {
+      const membership = memberships.get(row.user.id);
+      return {
+        ...row,
+        groups: membership?.groups ?? [],
+        departments: membership?.departments ?? [],
+        membership,
+      };
+    });
+  const rows = users.data ? prepareRows(users.data.items) : null;
+  const catalogRows = catalog.data ? prepareRows(catalog.data.items) : null;
   // The include-deleted catalog also preserves offpage Restore: singular
   // detail GET intentionally returns 404 for deleted users. Loading never removes the URL.
   const selected =
     catalogRows?.find((row) => row.user.id === selectedId) ?? null;
 
-  const denied = [
-    users.error,
-    groups.error,
-    departments.error,
-    catalogRequested ? catalog.error : null,
-  ].some((error) => error instanceof ApiError && error.status === 403);
-  const failed =
-    users.isError ||
-    groups.isError ||
-    departments.isError ||
-    (catalogRequested && catalog.isError);
+  const sponsorNames = usePeopleSearch({
+    selectedIds: selected?.user.sponsor_user_id
+      ? [selected.user.sponsor_user_id]
+      : [],
+    enabled: Boolean(selected),
+  });
+  const groupFilter = useAccessCatalog({
+    kind: "groups",
+    selectedIds: !["all", "none"].includes(filters.groupId)
+      ? [filters.groupId]
+      : [],
+  });
+  const departmentFilter = useAccessCatalog({
+    kind: "departments",
+    selectedIds: filters.departmentId === "all" ? [] : [filters.departmentId],
+  });
+  const people = [
+    ...(catalog.data?.items ?? []),
+    ...sponsorNames.selectedItems.filter(
+      (item): item is AccessDirectoryUser => "is_deleted" in item,
+    ),
+  ];
+
+  const denied = [users.error, catalogRequested ? catalog.error : null].some(
+    (error) => error instanceof ApiError && error.status === 403,
+  );
+  const failed = users.isError || (catalogRequested && catalog.isError);
   const loading = !failed && rows === null;
 
   function changeFilters(patch: Partial<DirectoryFilters>) {
@@ -282,7 +379,7 @@ export function PeopleView() {
   const filterCount = activeFilterCount(filters);
   const narrowed = filterCount > 0 || filters.query.trim() !== "";
 
-  const columns = useMemo<DataTableColumn<DirectoryRow<AccessDirectoryUser>>[]>(
+  const columns = useMemo<DataTableColumn<PeopleRow>[]>(
     () => [
       {
         id: "name",
@@ -315,7 +412,7 @@ export function PeopleView() {
           row.original.user.role === "admin" ? (
             <span className="text-muted-foreground">Not needed</span>
           ) : (
-            <NameList items={row.original.groups} empty="None" />
+            <MembershipList membership={row.original.membership} />
           ),
       },
       {
@@ -359,7 +456,7 @@ export function PeopleView() {
                 />
               ),
             },
-          ] satisfies DataTableColumn<DirectoryRow<AccessDirectoryUser>>[])
+          ] satisfies DataTableColumn<PeopleRow>[])
         : ([
             {
               id: "last-seen",
@@ -371,7 +468,7 @@ export function PeopleView() {
                 />
               ),
             },
-          ] satisfies DataTableColumn<DirectoryRow<AccessDirectoryUser>>[])),
+          ] satisfies DataTableColumn<PeopleRow>[])),
     ],
     [wide],
   );
@@ -403,8 +500,6 @@ export function PeopleView() {
           className="min-h-11"
           onClick={() => {
             if (users.isError) void users.refetch();
-            if (groups.isError) void groups.refetch();
-            if (departments.isError) void departments.refetch();
             if (catalogRequested && catalog.isError) void catalog.refetch();
           }}
         >
@@ -492,33 +587,103 @@ export function PeopleView() {
             if (option) changeFilters({ status: option.value });
           }}
         />
-        <SelectField
-          id="people-group-filter"
-          label="Group"
-          value={filters.groupId}
-          options={[
-            { value: "all", label: "All groups" },
-            { value: "none", label: "In no group" },
-            ...(groups.data ?? []).map((group) => ({
-              value: group.id,
-              label: group.name,
-            })),
-          ]}
-          onChange={(groupId) => changeFilters({ groupId })}
-        />
-        <SelectField
-          id="people-department-filter"
-          label="Department"
-          value={filters.departmentId}
-          options={[
-            { value: "all", label: "All departments" },
-            ...(departments.data ?? []).map((department) => ({
-              value: department.id,
-              label: department.department_name,
-            })),
-          ]}
-          onChange={(departmentId) => changeFilters({ departmentId })}
-        />
+        <div className="space-y-2">
+          <Input
+            type="search"
+            aria-label="Search group filters"
+            className="min-h-11"
+            value={groupFilter.search}
+            onChange={(event) => groupFilter.onSearchChange(event.target.value)}
+          />
+          <SelectField
+            id="people-group-filter"
+            label="Group"
+            value={filters.groupId}
+            options={[
+              { value: "all", label: "All groups" },
+              { value: "none", label: "In no group" },
+              ...catalogGroups(groupFilter.combined).map((group) => ({
+                value: group.id,
+                label: group.name,
+              })),
+            ]}
+            onChange={(groupId) => changeFilters({ groupId })}
+          />
+          {groupFilter.error ? (
+            <div role="alert">
+              <p>{groupFilter.error}</p>
+              <Button
+                type="button"
+                className="min-h-11"
+                variant="outline"
+                onClick={() => void groupFilter.retry()}
+              >
+                Retry groups
+              </Button>
+            </div>
+          ) : null}
+          {groupFilter.hasMore ? (
+            <Button
+              type="button"
+              className="min-h-11"
+              variant="outline"
+              disabled={groupFilter.loadingMore}
+              onClick={() => void groupFilter.loadMore()}
+            >
+              Load more groups
+            </Button>
+          ) : null}
+        </div>
+        <div className="space-y-2">
+          <Input
+            type="search"
+            aria-label="Search department filters"
+            className="min-h-11"
+            value={departmentFilter.search}
+            onChange={(event) =>
+              departmentFilter.onSearchChange(event.target.value)
+            }
+          />
+          <SelectField
+            id="people-department-filter"
+            label="Department"
+            value={filters.departmentId}
+            options={[
+              { value: "all", label: "All departments" },
+              ...catalogDepartments(departmentFilter.combined).map(
+                (department) => ({
+                  value: department.id,
+                  label: department.department_name,
+                }),
+              ),
+            ]}
+            onChange={(departmentId) => changeFilters({ departmentId })}
+          />
+          {departmentFilter.error ? (
+            <div role="alert">
+              <p>{departmentFilter.error}</p>
+              <Button
+                type="button"
+                className="min-h-11"
+                variant="outline"
+                onClick={() => void departmentFilter.retry()}
+              >
+                Retry departments
+              </Button>
+            </div>
+          ) : null}
+          {departmentFilter.hasMore ? (
+            <Button
+              type="button"
+              className="min-h-11"
+              variant="outline"
+              disabled={departmentFilter.loadingMore}
+              onClick={() => void departmentFilter.loadMore()}
+            >
+              Load more departments
+            </Button>
+          ) : null}
+        </div>
         <SelectField
           id="people-mfa-filter"
           label="Administrator two-step verification"
@@ -614,7 +779,7 @@ export function PeopleView() {
                               Not needed
                             </span>
                           ) : (
-                            <NameList items={row.groups} empty="None" />
+                            <MembershipList membership={row.membership} />
                           )}
                         </dd>
                         <dt className="text-muted-foreground">Departments</dt>
@@ -666,18 +831,14 @@ export function PeopleView() {
 
       <PersonPanel
         row={selected}
-        people={catalog.data ?? []}
+        membership={selected?.membership}
+        people={people}
         listFresh={
           !catalog.isFetching && !catalog.isError && !catalog.isPending
         }
         onClose={() => replaceUserParam(null)}
       />
-      <InvitePersonDialog
-        open={inviteOpen}
-        onOpenChange={setInviteOpen}
-        people={catalog.data ?? []}
-        groups={groups.data ?? []}
-      />
+      <InvitePersonDialog open={inviteOpen} onOpenChange={setInviteOpen} />
     </div>
   );
 }

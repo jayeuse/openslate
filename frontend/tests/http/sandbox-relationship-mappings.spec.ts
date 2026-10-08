@@ -187,19 +187,45 @@ async function openAuthenticatedSandbox(
     });
   });
   await page.route("**/api/sandbox/versions?*", async (route) => {
+    const url = new URL(route.request().url());
+    const limit = Number(url.searchParams.get("limit"));
+    const offset = Number(url.searchParams.get("offset"));
+    const search = (url.searchParams.get("search") ?? "").toLocaleLowerCase();
+    const kind = url.searchParams.get("kind");
+    const filtered = versions
+      .filter(
+        (version) =>
+          !version.isDeleted &&
+          (!kind || version.kind === kind) &&
+          `${version.label} ${version.note ?? ""}`
+            .toLocaleLowerCase()
+            .includes(search),
+      )
+      .sort((a, b) => Number(b.sequence) - Number(a.sequence));
+    const items = filtered.slice(offset, offset + limit);
     await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        items: versions,
-        limit: 50,
-        offset: 0,
-        count: versions.length,
-        total: versions.length,
-        hasMore: false,
-      }),
+      json: {
+        items,
+        limit,
+        offset,
+        count: items.length,
+        total: filtered.length,
+        hasMore: offset + items.length < filtered.length,
+      },
     });
   });
   await page.route("**/api/sandbox/versions/*", async (route) => {
+    if (route.request().method() === "GET") {
+      const id = new URL(route.request().url()).pathname.split("/").at(-1);
+      const version = versions.find(
+        (item) => item.id === id && !item.isDeleted,
+      );
+      return route.fulfill(
+        version
+          ? { json: { ...version, document } }
+          : { status: 404, json: { detail: "Unavailable" } },
+      );
+    }
     if (route.request().method() !== "PATCH") return route.fallback();
     await options.versionMutationDelay;
     const body = route.request().postDataJSON() as { label?: string };
@@ -3553,19 +3579,23 @@ test("History deletion failure retains its target and successful deletion select
   let versions = [published, checkpoint];
   let deleteAttempts = 0;
   await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
-  await page.route("**/api/sandbox/versions?*", async (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        items: versions,
-        limit: 50,
-        offset: 0,
-        count: versions.length,
-        total: versions.length,
-        hasMore: false,
-      }),
-    }),
-  );
+  await page.route("**/api/sandbox/versions?*", async (route) => {
+    const url = new URL(route.request().url());
+    const limit = Number(url.searchParams.get("limit"));
+    const offset = Number(url.searchParams.get("offset"));
+    const sorted = [...versions].sort((a, b) => b.sequence - a.sequence);
+    const items = sorted.slice(offset, offset + limit);
+    await route.fulfill({
+      json: {
+        items,
+        limit,
+        offset,
+        count: items.length,
+        total: sorted.length,
+        hasMore: offset + items.length < sorted.length,
+      },
+    });
+  });
   await page.route("**/api/sandbox/versions/*", async (route) => {
     if (route.request().method() !== "DELETE") return route.fallback();
     expect(new URL(route.request().url()).pathname).toContain(checkpoint.id);
@@ -4043,4 +4073,943 @@ test("Trigger Studio switch preserves geometry and its 44 pixel hit target with 
     checked === "true" ? "false" : "true",
   );
   expect(sandbox.document().triggers).toEqual(saved);
+});
+
+test("History pages and server-searches later versions while retaining inspection and comparison targets", async ({
+  page,
+}) => {
+  const versions = Array.from({ length: 28 }, (_, index) => ({
+    ...historyVersionFixture(index + 1, `Saved checkpoint ${index + 1}`),
+    createdAt: "2026-09-23T10:00:00Z",
+  }));
+  versions[0] = {
+    ...versions[0],
+    label: "Older imported migration",
+    note: "Migration recovery",
+    kind: "imported",
+  };
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/sandbox/versions") requests.push(url.search);
+  });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  let selectedReadUnavailable = true;
+  await page.route(`**/api/sandbox/versions/${versions[26].id}`, (route) =>
+    selectedReadUnavailable
+      ? route.fulfill({
+          status: 503,
+          json: { detail: "Private history canary" },
+        })
+      : route.fallback(),
+  );
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const timeline = page.getByRole("region", {
+    name: "Version timeline",
+    exact: true,
+  });
+  const inspector = page.getByRole("region", {
+    name: "Selected version",
+    exact: true,
+  });
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 28",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(requests.length).toBeGreaterThan(0);
+  expect(
+    requests.every(
+      (query) =>
+        new URLSearchParams(query).get("limit") === "25" &&
+        new URLSearchParams(query).get("offset") === "0",
+    ),
+  ).toBe(true);
+  await timeline
+    .getByRole("button", { name: "View Saved checkpoint 27", exact: true })
+    .click();
+  await page.getByLabel("Compare first version").selectOption(versions[26].id);
+  await timeline.getByRole("button", { name: "Next page" }).click();
+  await expect(
+    timeline.getByRole("button", { name: "Retry versions", exact: true }),
+  ).toBeVisible();
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Older imported migration",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    inspector.getByRole("heading", {
+      name: "Saved checkpoint 27",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Compare first version")).toHaveValue(
+    versions[26].id,
+  );
+  await expect(timeline).not.toContainText("Private history canary");
+  selectedReadUnavailable = false;
+  await timeline
+    .getByRole("button", { name: "Retry versions", exact: true })
+    .click();
+  await expect(
+    timeline.getByRole("button", { name: "Retry versions", exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel("Compare second version").selectOption(versions[0].id);
+  await page
+    .getByRole("button", { name: "Compare versions", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Version comparison", exact: true }),
+  ).toContainText("Older imported migration");
+  await timeline.getByLabel("Find a version").fill("Migration recovery");
+  await expect
+    .poll(() =>
+      requests.some(
+        (query) =>
+          new URLSearchParams(query).get("search") === "Migration recovery" &&
+          new URLSearchParams(query).get("offset") === "0",
+      ),
+    )
+    .toBe(true);
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Older imported migration",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await timeline
+    .getByRole("button", { name: "Imported versions", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      requests.some(
+        (query) => new URLSearchParams(query).get("kind") === "imported",
+      ),
+    )
+    .toBe(true);
+  await expect(
+    inspector.getByRole("heading", {
+      name: "Saved checkpoint 27",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Compare first version")).toHaveValue(
+    versions[26].id,
+  );
+  if (process.env.OPENVIEW_CAPTURE_DIR) {
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate((value) => {
+        document.documentElement.classList.toggle("dark", value === "dark");
+      }, mode);
+      await captureOpenViewReview(page, `s08-sandbox-history-${mode}`, {
+        beforeScreenshot: async () => {
+          await page.evaluate(async () => {
+            await document.fonts.ready;
+          });
+          for (const label of [
+            "All versions",
+            "Checkpoints",
+            "Published versions",
+            "Imported versions",
+          ]) {
+            await expect
+              .poll(() =>
+                timeline
+                  .getByRole("button", { name: label, exact: true })
+                  .evaluate(
+                    (element) => element.scrollWidth <= element.clientWidth,
+                  ),
+              )
+              .toBe(true);
+          }
+        },
+      });
+    }
+  }
+});
+
+test("History clears a missing compared version after a transient lookup and never redisplays its old snapshot", async ({
+  page,
+}) => {
+  const versions = Array.from({ length: 28 }, (_, index) => ({
+    ...historyVersionFixture(28 - index, `Saved checkpoint ${28 - index}`),
+    createdAt: "2026-09-23T10:00:00Z",
+  }));
+  const unavailableVersion = versions[1];
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  let detailUnavailable = false;
+  await page.route(
+    `**/api/sandbox/versions/${unavailableVersion.id}`,
+    (route) =>
+      detailUnavailable
+        ? route.fulfill({
+            status: 503,
+            json: { detail: "Private history canary" },
+          })
+        : route.fallback(),
+  );
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const timeline = page.getByRole("region", {
+    name: "Version timeline",
+    exact: true,
+  });
+  const comparison = page.getByRole("region", {
+    name: "Version comparison",
+    exact: true,
+  });
+  const savedComparison = comparison.getByRole("table");
+  const unavailableHeading = comparison.getByRole("heading", {
+    name: "Saved checkpoint 27",
+    exact: true,
+  });
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 28",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Compare first version")
+    .selectOption(unavailableVersion.id);
+  await page.getByLabel("Compare second version").selectOption(versions[0].id);
+  await page
+    .getByRole("button", { name: "Compare versions", exact: true })
+    .click();
+  await expect(savedComparison).toBeVisible();
+  await expect(unavailableHeading).toBeVisible();
+
+  detailUnavailable = true;
+  await timeline.getByRole("button", { name: "Next page" }).click();
+  await expect(
+    timeline.getByRole("button", { name: "Retry versions", exact: true }),
+  ).toBeVisible();
+  await expect(savedComparison).toBeVisible();
+  await expect(unavailableHeading).toBeVisible();
+  await expect(page.getByLabel("Compare first version")).toHaveValue(
+    unavailableVersion.id,
+  );
+
+  // Another actor removed the version. The next authorized read returns404;
+  // no real deletion or product mutation is performed by this journey.
+  unavailableVersion.isDeleted = true;
+  detailUnavailable = false;
+  const [missing] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/sandbox/versions/${unavailableVersion.id}` &&
+        response.status() === 404,
+    ),
+    timeline
+      .getByRole("button", { name: "Retry versions", exact: true })
+      .click(),
+  ]);
+  expect(missing.status()).toBe(404);
+  await expect(savedComparison).toHaveCount(0);
+  await expect(unavailableHeading).toHaveCount(0);
+  await expect(page.getByLabel("Compare first version")).not.toHaveValue(
+    unavailableVersion.id,
+  );
+
+  await page.getByLabel("Compare first version").selectOption(versions[26].id);
+  await expect(savedComparison).toHaveCount(0);
+  await expect(unavailableHeading).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Compare versions", exact: true })
+    .click();
+  await expect(savedComparison).toBeVisible();
+  await expect(
+    comparison.getByRole("heading", {
+      name: "Saved checkpoint 2",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(unavailableHeading).toHaveCount(0);
+});
+
+function historyPagingVersions(count = 28) {
+  return Array.from({ length: count }, (_, index) => ({
+    ...historyVersionFixture(
+      count - index,
+      `Saved checkpoint ${count - index}`,
+    ),
+    createdAt: "2026-09-23T10:00:00Z",
+  }));
+}
+
+for (const status of [401, 403, 404]) {
+  test(`History list ${status} remains refused across cached filters until a later authoritative Retry`, async ({
+    page,
+  }) => {
+    const versions = historyPagingVersions();
+    await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+    let refusal: number | null = null;
+    let authorizedLists = 0;
+    if (status === 401) {
+      await page.route("**/api/auth/session", (route) =>
+        route.fulfill({
+          json:
+            refusal === 401
+              ? { authenticated: false }
+              : {
+                  authenticated: true,
+                  user_id: "00000000-0000-4000-8000-000000000001",
+                  setup_required: false,
+                },
+        }),
+      );
+      await page.route("**/api/auth/refresh", (route) =>
+        route.fulfill({ status: 401, json: { detail: "Unauthenticated" } }),
+      );
+    }
+    await page.route("**/api/sandbox/versions?*", (route) => {
+      if (refusal !== null)
+        return route.fulfill({
+          status: refusal,
+          json: { detail: "Private refusal canary" },
+        });
+      authorizedLists += 1;
+      return route.fallback();
+    });
+    await page.route("**/api/sandbox/versions/*", (route) =>
+      refusal !== null && route.request().method() === "GET"
+        ? route.fulfill({
+            status: refusal,
+            json: { detail: "Private refusal canary" },
+          })
+        : route.fallback(),
+    );
+    await page.getByRole("link", { name: "History", exact: true }).click();
+    const timeline = page.getByRole("region", {
+      name: "Version timeline",
+      exact: true,
+    });
+    const inspector = page.getByRole("region", {
+      name: "Selected version",
+      exact: true,
+    });
+    const comparison = page.getByRole("region", {
+      name: "Version comparison",
+      exact: true,
+    });
+    await expect(
+      timeline.getByRole("button", {
+        name: "View Saved checkpoint 28",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.getByLabel("Compare first version").selectOption(versions[1].id);
+    await page
+      .getByLabel("Compare second version")
+      .selectOption(versions[0].id);
+    await page
+      .getByRole("button", { name: "Compare versions", exact: true })
+      .click();
+    await expect(comparison.getByRole("table")).toBeVisible();
+    const authorizedBeforeRefusal = authorizedLists;
+    refusal = status;
+    const [refused] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/api/sandbox/versions" &&
+          response.status() === status,
+      ),
+      timeline.getByRole("button", { name: "Next page" }).click(),
+    ]);
+    expect(refused.status()).toBe(status);
+    if (status === 401) {
+      await expect(page).toHaveURL(/\/login(?:\?|$)/);
+      await expect(
+        page.getByRole("heading", { name: "Saved checkpoint 28", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("region", { name: "Version timeline", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("region", { name: "Version comparison", exact: true }),
+      ).toHaveCount(0);
+      await expect(page.getByText("Private refusal canary")).toHaveCount(0);
+      return;
+    }
+    await expect(
+      timeline.getByRole("button", { name: "Retry versions", exact: true }),
+    ).toBeVisible();
+    await timeline.getByLabel("Find a version").fill("Saved checkpoint");
+    await timeline.getByLabel("Find a version").fill("");
+    await expect(
+      timeline.getByRole("button", {
+        name: "View Saved checkpoint 28",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await expect(
+      inspector.getByRole("heading", {
+        name: "Saved checkpoint 28",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await expect(comparison.getByRole("table")).toHaveCount(0);
+    expect(authorizedLists).toBe(authorizedBeforeRefusal);
+    await expect(page.getByText("Private refusal canary")).toHaveCount(0);
+    refusal = null;
+    const [allowed] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/api/sandbox/versions" &&
+          response.status() === 200,
+      ),
+      timeline
+        .getByRole("button", { name: "Retry versions", exact: true })
+        .click(),
+    ]);
+    expect(allowed.status()).toBe(200);
+    await expect(
+      timeline.getByRole("button", {
+        name: "View Saved checkpoint 28",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.getByLabel("Compare first version")).toHaveValue(
+      versions[1].id,
+    );
+    await expect(page.getByLabel("Compare second version")).toHaveValue(
+      versions[0].id,
+    );
+    await expect(comparison.getByRole("table")).toHaveCount(0);
+  });
+}
+
+test("History detail 403 cannot be removed by a cached-page transition", async ({
+  page,
+}) => {
+  const versions = historyPagingVersions();
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  let refuseDetail = false;
+  let refused = false;
+  await page.route("**/api/sandbox/versions?*", (route) =>
+    refused
+      ? route.fulfill({
+          status: 403,
+          json: { detail: "Private refusal canary" },
+        })
+      : route.fallback(),
+  );
+  await page.route("**/api/sandbox/versions/*", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const id = new URL(route.request().url()).pathname.split("/").at(-1);
+    if (refused || (refuseDetail && id === versions[1].id)) {
+      refused = true;
+      return route.fulfill({
+        status: 403,
+        json: { detail: "Private refusal canary" },
+      });
+    }
+    return route.fallback();
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const timeline = page.getByRole("region", {
+    name: "Version timeline",
+    exact: true,
+  });
+  const inspector = page.getByRole("region", {
+    name: "Selected version",
+    exact: true,
+  });
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 28",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByLabel("Compare first version").selectOption(versions[1].id);
+  await page.getByLabel("Compare second version").selectOption(versions[0].id);
+  refuseDetail = true;
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname.endsWith(
+          `/versions/${versions[1].id}`,
+        ) && response.status() === 403,
+    ),
+    timeline.getByRole("button", { name: "Next page" }).click(),
+  ]);
+  expect(response.status()).toBe(403);
+  await expect(
+    timeline.getByRole("button", { name: "Retry versions", exact: true }),
+  ).toBeVisible();
+  await timeline.getByLabel("Find a version").fill("Saved checkpoint");
+  await timeline.getByLabel("Find a version").fill("");
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 28",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    inspector.getByRole("heading", {
+      name: "Saved checkpoint 28",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  refused = false;
+  refuseDetail = false;
+  await timeline
+    .getByRole("button", { name: "Retry versions", exact: true })
+    .click();
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 28",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Compare first version")).toHaveValue(
+    versions[1].id,
+  );
+});
+
+test("History keeps the authorized page and range on new-page 503 but never borrows rows for a new filter", async ({
+  page,
+}) => {
+  const versions = historyPagingVersions();
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  let pageUnavailable = true;
+  let releaseFilter: () => void = () => {};
+  const filterReply = new Promise<void>((resolve) => {
+    releaseFilter = resolve;
+  });
+  await page.route("**/api/sandbox/versions?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("search") === "No matching version") {
+      await filterReply;
+      return route.fulfill({
+        status: 503,
+        json: { detail: "Private page canary" },
+      });
+    }
+    if (pageUnavailable && url.searchParams.get("offset") === "25")
+      return route.fulfill({
+        status: 503,
+        json: { detail: "Private page canary" },
+      });
+    return route.fallback();
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const timeline = page.getByRole("region", {
+    name: "Version timeline",
+    exact: true,
+  });
+  const inspector = page.getByRole("region", {
+    name: "Selected version",
+    exact: true,
+  });
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 28",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await timeline.getByRole("button", { name: "Next page" }).click();
+  await expect(
+    timeline.getByRole("button", { name: "Retry versions", exact: true }),
+  ).toBeVisible();
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 28",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    timeline
+      .getByRole("navigation", { name: "History pages", exact: true })
+      .getByRole("button", { name: "previous page" }),
+  ).toBeDisabled();
+  await expect(
+    inspector.getByRole("heading", {
+      name: "Saved checkpoint 28",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    timeline.getByText("No saved versions yet", { exact: true }),
+  ).toHaveCount(0);
+  pageUnavailable = false;
+  await timeline
+    .getByRole("button", { name: "Retry versions", exact: true })
+    .click();
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 3",
+      exact: true,
+    }),
+  ).toBeVisible();
+  const filterResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).searchParams.get("search") ===
+        "No matching version" && response.status() === 503,
+  );
+  await timeline.getByLabel("Find a version").fill("No matching version");
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 3",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  releaseFilter();
+  await filterResponse;
+  await expect(
+    timeline.getByRole("button", { name: "Retry versions", exact: true }),
+  ).toBeVisible();
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 3",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Private page canary")).toHaveCount(0);
+});
+
+test("History deletion of the sole last-page row selects an available version and resets the displayed range", async ({
+  page,
+}) => {
+  const versions = historyPagingVersions(26);
+  const last = versions[25];
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  await page.route(`**/api/sandbox/versions/${last.id}`, (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    versions.splice(
+      versions.findIndex((version) => version.id === last.id),
+      1,
+    );
+    return route.fulfill({ status: 204 });
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const timeline = page.getByRole("region", {
+    name: "Version timeline",
+    exact: true,
+  });
+  const inspector = page.getByRole("region", {
+    name: "Selected version",
+    exact: true,
+  });
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 26",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await timeline.getByRole("button", { name: "Next page" }).click();
+  await timeline
+    .getByRole("button", { name: "View Saved checkpoint 1", exact: true })
+    .click();
+  await inspector
+    .getByRole("button", { name: "Delete version", exact: true })
+    .click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete Saved checkpoint 1", exact: true })
+    .click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(
+    inspector.getByRole("heading", {
+      name: "Saved checkpoint 26",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 26",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    timeline
+      .getByRole("navigation", { name: "History pages", exact: true })
+      .getByRole("button", { name: "previous page" }),
+  ).toBeDisabled();
+  await expect(
+    timeline.getByText("No saved versions yet", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 1",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+});
+
+test("History success from an imperative read started before refusal cannot restore protected cached content", async ({
+  page,
+}) => {
+  const versions = historyPagingVersions();
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  let refusing = false;
+  let refuseNext = true;
+  let releaseList: () => void = () => {};
+  let releaseDetails: () => void = () => {};
+  let holdDetails = true;
+  let startedDetails = 0;
+  const listReply = new Promise<void>((resolve) => {
+    releaseList = resolve;
+  });
+  const detailReply = new Promise<void>((resolve) => {
+    releaseDetails = resolve;
+  });
+  await page.route("**/api/sandbox/versions?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (refuseNext && url.searchParams.get("offset") === "25") {
+      await listReply;
+      refusing = true;
+      return route.fulfill({
+        status: 403,
+        json: { detail: "Private ordered refusal" },
+      });
+    }
+    if (refusing)
+      return route.fulfill({
+        status: 403,
+        json: { detail: "Private ordered refusal" },
+      });
+    return route.fallback();
+  });
+  await page.route("**/api/sandbox/versions/*", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const id = new URL(route.request().url()).pathname.split("/").at(-1);
+    if (holdDetails && (id === versions[0].id || id === versions[1].id)) {
+      startedDetails += 1;
+      await detailReply;
+      const version = versions.find((item) => item.id === id);
+      return route.fulfill({
+        json: {
+          ...version,
+          document: sandboxDocumentFromDesign(configuredSandboxDesign),
+        },
+      });
+    }
+    if (refusing)
+      return route.fulfill({
+        status: 403,
+        json: { detail: "Private ordered refusal" },
+      });
+    return route.fallback();
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const timeline = page.getByRole("region", {
+    name: "Version timeline",
+    exact: true,
+  });
+  const comparison = page.getByRole("region", {
+    name: "Version comparison",
+    exact: true,
+  });
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 28",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByLabel("Compare first version").selectOption(versions[1].id);
+  await page.getByLabel("Compare second version").selectOption(versions[0].id);
+  const pendingList = page.waitForRequest(
+    (request) =>
+      new URL(request.url()).pathname === "/api/sandbox/versions" &&
+      new URL(request.url()).searchParams.get("offset") === "25",
+  );
+  await timeline.getByRole("button", { name: "Next page" }).click();
+  await pendingList;
+  await comparison
+    .getByRole("button", { name: "Compare versions", exact: true })
+    .click();
+  await expect.poll(() => startedDetails).toBe(2);
+  const refusal = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/sandbox/versions" &&
+      response.status() === 403,
+  );
+  releaseList();
+  await refusal;
+  await expect(
+    timeline.getByRole("button", { name: "Retry versions", exact: true }),
+  ).toBeVisible();
+  const completed = [versions[0].id, versions[1].id].map((id) =>
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname.endsWith(`/versions/${id}`) &&
+        response.status() === 200,
+    ),
+  );
+  releaseDetails();
+  const responses = await Promise.all(completed);
+  await Promise.all(responses.map((response) => response.finished()));
+  holdDetails = false;
+  // Let the completed promise handlers commit before making another request;
+  // a fresh refusal must not conceal an older read's incorrect reauthorization.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(
+    timeline.getByText("History unavailable. Check your access or retry.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(comparison.getByRole("table")).toHaveCount(0);
+  await timeline.getByLabel("Find a version").fill("Saved checkpoint");
+  await timeline.getByLabel("Find a version").fill("");
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 28",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(comparison.getByRole("table")).toHaveCount(0);
+  refusing = false;
+  refuseNext = false;
+  await timeline
+    .getByRole("button", { name: "Retry versions", exact: true })
+    .click();
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 28",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(comparison.getByRole("table")).toHaveCount(0);
+});
+
+test("History older off-page metadata cannot restore a target marked missing by a later Compare read", async ({
+  page,
+}) => {
+  const versions = historyPagingVersions();
+  const unavailableVersion = versions[1];
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  let holdMetadata = false;
+  let targetReads = 0;
+  let releaseMetadata: () => void = () => {};
+  const metadataReply = new Promise<void>((resolve) => {
+    releaseMetadata = resolve;
+  });
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.startsWith("/api/sandbox/versions")) requests.push(pathname);
+  });
+  await page.route(
+    `**/api/sandbox/versions/${unavailableVersion.id}`,
+    async (route) => {
+      if (route.request().method() !== "GET" || !holdMetadata)
+        return route.fallback();
+      targetReads += 1;
+      if (targetReads === 1) {
+        const savedVersion = structuredClone(unavailableVersion);
+        await metadataReply;
+        return route.fulfill({
+          json: {
+            ...savedVersion,
+            document: sandboxDocumentFromDesign(configuredSandboxDesign),
+          },
+        });
+      }
+      unavailableVersion.isDeleted = true;
+      return route.fulfill({
+        status: 404,
+        json: { detail: "Private missing-version canary" },
+      });
+    },
+  );
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const timeline = page.getByRole("region", {
+    name: "Version timeline",
+    exact: true,
+  });
+  const inspector = page.getByRole("region", {
+    name: "Selected version",
+    exact: true,
+  });
+  const comparison = page.getByRole("region", {
+    name: "Version comparison",
+    exact: true,
+  });
+  const firstChoice = page.getByLabel("Compare first version");
+  const secondChoice = page.getByLabel("Compare second version");
+  const missingHeading = inspector.getByRole("heading", {
+    name: "Saved checkpoint 27",
+    exact: true,
+  });
+  const missingOption = { name: /Saved checkpoint 27/ };
+  await timeline
+    .getByRole("button", { name: "View Saved checkpoint 27", exact: true })
+    .click();
+  await firstChoice.selectOption(unavailableVersion.id);
+  await secondChoice.selectOption(versions[0].id);
+  await comparison
+    .getByRole("button", { name: "Compare versions", exact: true })
+    .click();
+  await expect(comparison.getByRole("table")).toBeVisible();
+  await expect(missingHeading).toBeVisible();
+
+  holdMetadata = true;
+  await timeline.getByRole("button", { name: "Next page" }).click();
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 3",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect.poll(() => targetReads).toBe(1);
+  const [missing] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          `/api/sandbox/versions/${unavailableVersion.id}` &&
+        response.status() === 404,
+    ),
+    comparison
+      .getByRole("button", { name: "Compare versions", exact: true })
+      .click(),
+  ]);
+  await missing.finished();
+  await expect(comparison.getByRole("table")).toHaveCount(0);
+  await expect(missingHeading).toHaveCount(0);
+  await expect(firstChoice.getByRole("option", missingOption)).toHaveCount(0);
+  const requestCountAtRefusal = requests.length;
+
+  const completedMetadata = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/sandbox/versions/${unavailableVersion.id}` &&
+      response.status() === 200,
+  );
+  releaseMetadata();
+  await (await completedMetadata).finished();
+  // Observe the settled older success before any new read can repair or mask it.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  expect(requests).toHaveLength(requestCountAtRefusal);
+  await expect(
+    timeline.getByRole("button", {
+      name: "View Saved checkpoint 3",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    firstChoice.getByRole("option", { name: /Saved checkpoint 28/ }),
+  ).toHaveCount(1);
+  await expect(comparison.getByRole("table")).toHaveCount(0);
+  await expect.soft(missingHeading).toHaveCount(0);
+  await expect
+    .soft(firstChoice.getByRole("option", missingOption))
+    .toHaveCount(0);
+  await expect
+    .soft(secondChoice.getByRole("option", missingOption))
+    .toHaveCount(0);
+  await expect(page.getByText("Private missing-version canary")).toHaveCount(0);
 });

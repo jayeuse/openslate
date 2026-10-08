@@ -55,8 +55,20 @@ export const group = {
   revision: 3,
   member_ids: [ids.guest],
   access: [
-    { department_id: ids.department, module_id: null, level: "read" },
-    { department_id: ids.department, module_id: ids.module, level: "write" },
+    {
+      department_id: ids.department,
+      module_id: null,
+      level: "read",
+      department_name: "Inventory",
+      module_name: null,
+    },
+    {
+      department_id: ids.department,
+      module_id: ids.module,
+      level: "write",
+      department_name: "Inventory",
+      module_name: "Prices",
+    },
   ],
   created_at: timestamp,
   updated_at: timestamp,
@@ -72,6 +84,7 @@ export const memberCandidate = {
   email: "ana@example.com",
   role: "guest",
   status: "pending",
+  access_ends_at: null,
 };
 
 export const session = {

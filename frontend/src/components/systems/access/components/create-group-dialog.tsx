@@ -16,12 +16,8 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 
-import { accessKeys, afterAccessGroupChange } from "../adapters/access-queries";
-import {
-  groupErrorMessage,
-  groupNameError,
-  type MemberOption,
-} from "../helpers/groups";
+import { afterAccessGroupChange } from "../adapters/access-queries";
+import { groupErrorMessage, groupNameError } from "../helpers/groups";
 import { createAccessGroup, type AccessGroup } from "../state/api";
 import { useAccessDraftRegistration } from "../state/draft-navigation";
 import { ActionError } from "./editor-conflicts";
@@ -38,12 +34,10 @@ const emptyForm: CreateForm = { name: "", description: "", member_ids: [] };
 export function CreateGroupDialog({
   open,
   onOpenChange,
-  memberOptions,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  memberOptions: readonly MemberOption[];
   onCreated: (group: AccessGroup) => void;
 }) {
   const id = useId();
@@ -92,11 +86,6 @@ export function CreateGroupDialog({
           : {}),
         ...(form.member_ids.length ? { member_ids: form.member_ids } : {}),
       });
-      // The panel opens before the list is read again.
-      client.setQueryData<AccessGroup[]>(
-        accessKeys.groupList("exclude"),
-        (groups) => (groups ? [...groups, created.data] : groups),
-      );
       toast.add({ title: `${created.data.name} is created`, type: "success" });
       setForm(emptyForm);
       onOpenChange(false);
@@ -157,7 +146,6 @@ export function CreateGroupDialog({
             </Field>
             <div className="max-h-[50vh] overflow-y-auto rounded-lg">
               <GroupMemberPicker
-                options={memberOptions}
                 selected={form.member_ids}
                 disabled={pending}
                 onChange={(member_ids) => update({ member_ids })}

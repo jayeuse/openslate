@@ -50,6 +50,7 @@ import {
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { SearchFilterToolbar } from "@/components/ui/search-filter-toolbar";
 import { SearchSelect } from "@/components/ui/search-select";
+import { usePeopleSearch } from "../hooks/use-people-search";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
 import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
@@ -60,7 +61,6 @@ import {
   isAccessSecurityDenied,
   readAccessSecurityEvent,
   setAccessSecurityDenied,
-  userListOptions,
 } from "../adapters/access-queries";
 import {
   defaultSecurityEventsRequest,
@@ -310,20 +310,23 @@ export function SecurityEventsView({
     ...accessSecurityEventsOptions(client, request),
     enabled: active && admitted && !denied && !invalid,
   });
-  // The directory names the people in events; IDs stay in the detail view.
-  const people = useQuery({
-    ...userListOptions("include"),
+  const labelIds = (events.data?.items ?? [])
+    .flatMap((event) => [event.actor_id, event.subject_id])
+    .filter((value): value is string => Boolean(value));
+  if (filters.person && !uuidError) labelIds.push(filters.person);
+  const people = usePeopleSearch({
+    selectedIds: labelIds,
     enabled: active && admitted && !denied,
   });
   const names: PersonNames = useMemo(
     () =>
       new Map(
-        (people.data ?? []).map((person) => [
+        [...people.items, ...people.selectedItems].map((person) => [
           person.id,
           person.display_name || person.username,
         ]),
       ),
-    [people.data],
+    [people.items, people.selectedItems],
   );
   const page = denied || invalid ? undefined : events.data;
   const narrowed = Boolean(
@@ -343,16 +346,25 @@ export function SecurityEventsView({
   ].filter(Boolean).length;
   const personOptions = [
     { value: "", label: "All people" },
-    ...(people.data?.map((person) => ({
+    ...people.items.map((person) => ({
       value: person.id,
       label: person.display_name || person.username,
-    })) ?? []),
-    ...(filters.person &&
-    !people.data?.some((person) => person.id === filters.person) &&
-    !uuidError
-      ? [{ value: filters.person, label: "Unknown person" }]
-      : []),
+    })),
   ];
+  const selectedPerson = people.selectedItems.find(
+    (person) => person.id === filters.person,
+  );
+  const selectedPersonOption =
+    filters.person && !uuidError
+      ? {
+          value: filters.person,
+          label: selectedPerson
+            ? selectedPerson.display_name || selectedPerson.username
+            : people.selectedLoading
+              ? "Loading person…"
+              : "Unknown person",
+        }
+      : undefined;
 
   useLayoutEffect(() => {
     mounted.current = true;
@@ -639,10 +651,19 @@ export function SecurityEventsView({
                     value={filters.person}
                     options={personOptions}
                     onValueChange={(person) => changeFilters({ person })}
+                    search={people.search}
+                    onSearchChange={people.onSearchChange}
+                    selectedOption={selectedPersonOption}
+                    loading={people.loading}
+                    error={people.error}
+                    onRetry={people.retry}
+                    hasMore={people.hasMore}
+                    onLoadMore={() => void people.loadMore()}
+                    loadingMore={people.loadingMore}
                     disabled={pending || denied}
                     placeholder="All people"
                     emptyMessage={
-                      people.isPending ? "Loading people…" : "No one matches."
+                      people.loading ? "Loading people…" : "No one matches."
                     }
                   />
                 ) : (
@@ -689,7 +710,7 @@ export function SecurityEventsView({
                     ? "Enter a person ID"
                     : "Choose from directory"}
                 </Button>
-                {people.isError && directoryRequested ? (
+                {people.error && directoryRequested ? (
                   <Alert
                     role="alert"
                     variant="destructive"
@@ -702,7 +723,7 @@ export function SecurityEventsView({
                     <Button
                       variant="ghost"
                       className="min-h-11 px-0"
-                      onClick={() => void people.refetch()}
+                      onClick={people.retry}
                     >
                       Retry person list
                     </Button>

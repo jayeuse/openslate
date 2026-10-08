@@ -68,7 +68,17 @@ async function installServerBoards(page: Page) {
         write: false,
         manage: false,
       });
-    if (path === `/api/boards/${boardId}/post-authors`) return reply(200, []);
+    if (path === `/api/boards/${boardId}/post-authors`)
+      return reply(200, {
+        items: [],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 0,
+          total: 0,
+          has_more: false,
+        },
+      });
     return reply(404, { detail: "Content route unavailable" });
   });
 }

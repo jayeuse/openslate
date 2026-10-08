@@ -354,6 +354,10 @@ describeContracts("Boards: events, posts, files and record links", [
   {
     name: "listBoardPostAuthors",
     run: () => listBoardPostAuthors(boardId),
+    responses: {
+      // Echo the requested page and keep counts consistent with its generated item.
+      "GET /api/boards/{board_id}/post-authors": { pagination: page },
+    },
   },
   {
     name: "getBoardPostManageState",

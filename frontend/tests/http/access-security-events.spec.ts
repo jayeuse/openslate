@@ -50,6 +50,50 @@ async function details(page: Page, event: string) {
   });
 }
 
+test("Events person picker uses server search and keeps its selected label outside results", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  const remoteId = "00000000-0000-4000-8000-000000000998";
+  state.directory.push(
+    person({
+      id: remoteId,
+      email: "lookup-target@example.invalid",
+      username: "lookup-target",
+      display_name: "Server-selected person",
+    }),
+  );
+  await openFeed(page);
+  const controls = await filters(page);
+  const picker = controls.getByLabel("Person", { exact: true });
+  await picker.click();
+  await page
+    .getByRole("dialog")
+    .getByRole("combobox", { name: "Person", exact: true })
+    .fill("lookup-target");
+  await expect
+    .poll(() => state.userQueries.at(-1)?.get("search"))
+    .toBe("lookup-target");
+  await page
+    .getByRole("option", { name: "Server-selected person", exact: true })
+    .click();
+  await expect(picker).toHaveText("Server-selected person");
+  await picker.click();
+  await page
+    .getByRole("dialog")
+    .getByRole("combobox", { name: "Person", exact: true })
+    .fill("mara");
+  await expect(
+    page.getByRole("option", { name: "Mara", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(picker).toHaveText("Server-selected person");
+  expect(state.commands).toEqual([]);
+  expect(
+    state.userQueries.some((query) => Number(query.get("offset") ?? 0) > 0),
+  ).toBe(false);
+});
+
 test("Events mixed nullable feed and details explain representative and partial outcomes without raw metadata", async ({
   page,
 }) => {
@@ -1009,7 +1053,7 @@ for (const mode of ["light", "dark"] as const) {
   });
 }
 
-test("13b: unchanged Events person picker consumes the complete extended later-page catalog", async ({
+test("13b: Events names offpage actors with bounded ID lookup without eager pages", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -1035,14 +1079,12 @@ test("13b: unchanged Events person picker consumes the complete extended later-p
     }),
   ];
   await openFeed(page);
-  const controls = await filters(page);
-  await controls.getByLabel("Person", { exact: true }).click();
-  await page
-    .getByRole("option", { name: "Zzz Event Person", exact: true })
-    .click();
-  await expect.poll(() => state.reads.at(-1)?.get("person_id")).toBe(late);
+  await expect(eventRows(page)).toContainText("Zzz Event Person");
+  expect(
+    state.userQueries.some((query) => query.getAll("ids").includes(late)),
+  ).toBe(true);
   await expect(feed(page)).toContainText("1 event");
-  expect(state.userQueries.some((query) => query.get("offset") === "100")).toBe(
+  expect(state.userQueries.every((query) => query.get("offset") === "0")).toBe(
     true,
   );
   expect(state.commands).toEqual([]);

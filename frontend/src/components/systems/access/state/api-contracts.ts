@@ -153,6 +153,12 @@ export const groupAccessEntrySchema = z.strictObject({
   level: accessLevelSchema,
 });
 
+/** Read-only names supplied by GroupAccessResponse; commands use IDs only. */
+export const groupAccessResponseSchema = groupAccessEntrySchema.extend({
+  department_name: z.string().min(1),
+  module_name: z.string().nullable(),
+});
+
 /** `policy/schemas.py` GroupResponse. */
 export const groupSchema = z.strictObject({
   id: uuid,
@@ -160,7 +166,7 @@ export const groupSchema = z.strictObject({
   description: z.string().max(2000),
   revision: z.number().int().nonnegative(),
   member_ids: z.array(uuid),
-  access: z.array(groupAccessEntrySchema),
+  access: z.array(groupAccessResponseSchema),
   created_at: dateTime,
   updated_at: dateTime,
   deleted_at: dateTime.nullable(),
@@ -202,6 +208,7 @@ export const memberCandidateSchema = z.strictObject({
   email: z.string().min(1),
   role: z.enum(["member", "guest"]),
   status: userStatusSchema,
+  access_ends_at: dateTime.nullable(),
 });
 
 /** `sandbox/departments/schemas.py` DepartmentResponse. */
@@ -313,10 +320,11 @@ export type AccessUserListOptions = StandardListOptions<
   mfa?: "without" | "unknown";
   history?: "no-recorded-sign-in" | "inactive";
   inactive_days?: number;
+  ids?: readonly string[];
 };
 export type AccessGroupListOptions = StandardListOptions<
-  "name" | "created_at" | "updated_at"
->;
+  "name" | "created_at" | "updated_at" | "member_count"
+> & { without_access?: boolean; without_members?: boolean };
 export type AccessDepartmentListOptions = StandardListOptions<
   "department_name" | "created_at" | "updated_at"
 >;
@@ -327,7 +335,7 @@ export type AccessModuleListOptions = StandardListOptions<
 export type AccessMemberCandidateListOptions = Omit<
   StandardListOptions<"username" | "email" | "display_name">,
   "deleted"
->;
+> & { ids?: readonly string[] };
 export type AccessSessionListOptions = RequestOptions & {
   limit?: number;
   offset?: number;

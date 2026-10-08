@@ -132,14 +132,10 @@ function referencesKnownFields(
   return presentationIds.every((id) => id == null || types.has(id));
 }
 
-/**
- * The draft an address describes, merged onto its base View, or null when
- * the value is malformed, too long, or names fields the module lacks.
- */
-export function decodeTemporaryView(
+/** Schema-validated settings for discovering required metadata, not restoration. */
+export function parseTemporaryView(
   value: string,
   base: SavedDraft,
-  fields: readonly OpenViewDataSourceField[],
 ): SavedDraft | null {
   if (!value || value.length > MAX_ENCODED_LENGTH) return null;
   const text = fromBase64Url(value);
@@ -163,11 +159,25 @@ export function decodeTemporaryView(
     ...p,
   });
   if (!definition.success || !presentation.success) return null;
-  if (!referencesKnownFields(definition.data, presentation.data, fields))
-    return null;
   return {
     name: base.name,
     definition: definition.data,
     presentation: presentation.data,
   };
+}
+
+/**
+ * The draft an address describes, merged onto its base View, or null when
+ * the value is malformed, too long, or names fields the module lacks.
+ */
+export function decodeTemporaryView(
+  value: string,
+  base: SavedDraft,
+  fields: readonly OpenViewDataSourceField[],
+): SavedDraft | null {
+  const parsed = parseTemporaryView(value, base);
+  return parsed &&
+    referencesKnownFields(parsed.definition, parsed.presentation, fields)
+    ? parsed
+    : null;
 }

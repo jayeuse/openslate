@@ -28,9 +28,13 @@ import {
   listAccessUsers,
   type AccessDeletedFilter,
   type AccessInvitationSettings,
+  type AccessGroupListOptions,
+  type AccessDepartmentListOptions,
+  type AccessModuleListOptions,
+  type AccessMemberCandidateListOptions,
+  type AccessSessionListOptions,
   type AccessUserListOptions,
 } from "../state/api";
-import { loadAllAccessPages } from "../state/pagination";
 import {
   getAccessSecurityEvent,
   listAccessSecurityEvents,
@@ -39,8 +43,8 @@ import {
 
 // Section-level Access reads share the per-account client cache. Every key
 // starts with "access", so one prefix marks the area stale. Access lists are
-// complete collections where pickers and existing health counts need every
-// row. The directory uses a separate server page. A person's
+// bounded pages; pickers search the server and counts use filtered totals.
+// A person's
 // effective access and sessions are cached under the users key, so a change
 // to that person (a disable revokes sessions) marks them stale. Single-row
 // detail reads stay in their components.
@@ -58,8 +62,10 @@ export const accessKeys = {
   adminSessionList: (request: AccessSessionsRequest) =>
     ["access", "admin-sessions", request] as const,
   users: ["access", "users"] as const,
-  userList: (deleted: AccessDeletedFilter) =>
-    ["access", "users", "list", deleted] as const,
+  userList: (
+    deleted: AccessDeletedFilter,
+    request: AccessUserListOptions = {},
+  ) => ["access", "users", "list", deleted, request] as const,
   directory: () => ["access", "users", "directory"] as const,
   directoryPage: (request: AccessUserListOptions) =>
     ["access", "users", "directory", request] as const,
@@ -73,27 +79,44 @@ export const accessKeys = {
     ["access", "users", "security", userId] as const,
   userSessions: (userId: string) =>
     ["access", "users", "sessions", userId] as const,
+  userSessionPage: (userId: string, request: AccessSessionListOptions) =>
+    ["access", "users", "sessions", userId, request] as const,
   groups: ["access", "groups"] as const,
-  groupList: (deleted: AccessDeletedFilter) =>
-    ["access", "groups", "list", deleted] as const,
+  groupList: (
+    deleted: AccessDeletedFilter,
+    request: AccessGroupListOptions = {},
+  ) => ["access", "groups", "list", deleted, request] as const,
   memberCandidates: () => ["access", "member-candidates"] as const,
+  memberCandidatePage: (request: AccessMemberCandidateListOptions) =>
+    ["access", "member-candidates", request] as const,
   catalog: ["access", "catalog"] as const,
-  departments: (deleted: AccessDeletedFilter) =>
-    ["access", "catalog", "departments", deleted] as const,
-  modules: (deleted: AccessDeletedFilter) =>
-    ["access", "catalog", "modules", deleted] as const,
+  departments: (
+    deleted: AccessDeletedFilter,
+    request: AccessDepartmentListOptions = {},
+  ) => ["access", "catalog", "departments", deleted, request] as const,
+  modules: (
+    deleted: AccessDeletedFilter,
+    request: AccessModuleListOptions = {},
+  ) => ["access", "catalog", "modules", deleted, request] as const,
   invitationSettings: () => ["access", "invitation-settings"] as const,
 };
 
-/** Every person, administrators included. Administrator only. */
-export const userListOptions = (deleted: AccessDeletedFilter) =>
+/** One bounded directory page, administrators included. Administrator only. */
+export const userListOptions = (
+  deleted: AccessDeletedFilter,
+  request: AccessUserListOptions = {},
+) =>
   queryOptions({
-    queryKey: accessKeys.userList(deleted),
+    queryKey: accessKeys.userList(deleted, request),
     queryFn: ({ signal }) =>
-      loadAllAccessPages(
-        (page) => listAccessUsers({ ...page, deleted, sort_by: "username" }),
-        { signal },
-      ),
+      listAccessUsers({
+        limit: 25,
+        offset: 0,
+        sort_by: "username",
+        ...request,
+        deleted,
+        signal,
+      }),
   });
 
 export const directoryPageOptions = (request: AccessUserListOptions) =>
@@ -125,61 +148,77 @@ export const userAccessOptions = (userId: string) =>
     queryFn: ({ signal }) => getAccessUserAccess(userId, { signal }),
   });
 
-/** One person's sign-in sessions. */
-export const userSessionsOptions = (userId: string) =>
+/** One page of a person's sign-in sessions. */
+export const userSessionsOptions = (
+  userId: string,
+  request: AccessSessionListOptions = { limit: 10, offset: 0 },
+) =>
   queryOptions({
-    queryKey: accessKeys.userSessions(userId),
+    queryKey: accessKeys.userSessionPage(userId, request),
     queryFn: ({ signal }) =>
-      loadAllAccessPages((page) => listAccessUserSessions(userId, page), {
+      listAccessUserSessions(userId, { ...request, signal }),
+  });
+
+/** One page of groups the caller may change. */
+export const groupListOptions = (
+  deleted: AccessDeletedFilter,
+  request: AccessGroupListOptions = {},
+) =>
+  queryOptions({
+    queryKey: accessKeys.groupList(deleted, request),
+    queryFn: ({ signal }) =>
+      listAccessGroups({
+        limit: 25,
+        offset: 0,
+        sort_by: "name",
+        ...request,
+        deleted,
         signal,
       }),
   });
 
-/** Every group the caller may change: all for administrators (D14). */
-export const groupListOptions = (deleted: AccessDeletedFilter) =>
+/** A bounded search or selected-ID lookup within the manager boundary. */
+export const memberCandidateListOptions = (
+  request: AccessMemberCandidateListOptions = {},
+) =>
   queryOptions({
-    queryKey: accessKeys.groupList(deleted),
+    queryKey: accessKeys.memberCandidatePage(request),
     queryFn: ({ signal }) =>
-      loadAllAccessPages(
-        (page) => listAccessGroups({ ...page, deleted, sort_by: "name" }),
-        { signal },
-      ),
+      listAccessMemberCandidates({ limit: 25, offset: 0, ...request, signal }),
   });
 
-/** People a manager may add to a group (D14). */
-export const memberCandidateListOptions = () =>
+export const departmentListOptions = (
+  deleted: AccessDeletedFilter,
+  request: AccessDepartmentListOptions = {},
+) =>
   queryOptions({
-    queryKey: accessKeys.memberCandidates(),
+    queryKey: accessKeys.departments(deleted, request),
     queryFn: ({ signal }) =>
-      loadAllAccessPages((page) => listAccessMemberCandidates(page), {
+      listAccessDepartments({
+        limit: 25,
+        offset: 0,
+        sort_by: "department_name",
+        ...request,
+        deleted,
         signal,
       }),
   });
 
-export const departmentListOptions = (deleted: AccessDeletedFilter) =>
+export const moduleListOptions = (
+  deleted: AccessDeletedFilter,
+  request: AccessModuleListOptions = {},
+) =>
   queryOptions({
-    queryKey: accessKeys.departments(deleted),
+    queryKey: accessKeys.modules(deleted, request),
     queryFn: ({ signal }) =>
-      loadAllAccessPages(
-        (page) =>
-          listAccessDepartments({
-            ...page,
-            deleted,
-            sort_by: "department_name",
-          }),
-        { signal },
-      ),
-  });
-
-export const moduleListOptions = (deleted: AccessDeletedFilter) =>
-  queryOptions({
-    queryKey: accessKeys.modules(deleted),
-    queryFn: ({ signal }) =>
-      loadAllAccessPages(
-        (page) =>
-          listAccessModules({ ...page, deleted, sort_by: "module_name" }),
-        { signal },
-      ),
+      listAccessModules({
+        limit: 25,
+        offset: 0,
+        sort_by: "module_name",
+        ...request,
+        deleted,
+        signal,
+      }),
   });
 
 export const invitationSettingsOptions = () =>
@@ -365,7 +404,16 @@ export const personSecurityOptions = (userId: string, actorId: string) =>
       return { status, assurance: actor.assurance_level };
     },
   });
-export function afterPersonSecurityChange(client: QueryClient, userId: string) {
+export async function afterPersonSecurityChange(
+  client: QueryClient,
+  userId: string,
+) {
+  // Every cached session page is now stale. Read back only the bounded first
+  // page; later pages are fetched again when the person explicitly opens them.
+  await client.invalidateQueries({
+    queryKey: accessKeys.userSessions(userId),
+    refetchType: "none",
+  });
   return Promise.all([
     client.fetchQuery({ ...userSessionsOptions(userId), staleTime: 0 }),
     client.invalidateQueries({ queryKey: accessKeys.adminSessions() }),

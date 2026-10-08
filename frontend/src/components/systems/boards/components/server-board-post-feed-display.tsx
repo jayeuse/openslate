@@ -242,12 +242,14 @@ export function ServerBoardPostFeedDisplay({
   appliedSearch = "",
   authorLabels = null,
   onReadPost,
+  onHistoryAuthorChange,
 }: {
   page: BoardPostPage;
   region: WorkspaceRegion | undefined;
   appliedSearch?: string;
   authorLabels?: Record<string, string> | null;
   onReadPost?: (postId: string) => void;
+  onHistoryAuthorChange?: (authorId: string | null) => void;
 }) {
   const [readerPostId, setReaderPostId] = useState<string | null>(null);
   const readerPost =
@@ -255,7 +257,17 @@ export function ServerBoardPostFeedDisplay({
       (item) => item.id === readerPostId && item.publicationNumber !== null,
     ) ?? null;
   const [history, setHistory] = useState<BoardPost | null>(null);
+  const openHistory = (post: BoardPost) => {
+    onHistoryAuthorChange?.(post.authorId);
+    setHistory(post);
+  };
+  const closeHistory = () => {
+    setHistory(null);
+    onHistoryAuthorChange?.(null);
+  };
   const { offset, count, total } = page.pagination;
+
+  useEffect(() => () => onHistoryAuthorChange?.(null), [onHistoryAuthorChange]);
 
   useEffect(() => {
     if (
@@ -383,7 +395,7 @@ export function ServerBoardPostFeedDisplay({
                                 type: "button",
                                 className: `${editedLinkClass} text-sm`,
                                 "aria-label": `Edit history of ${item.title}`,
-                                onClick: () => setHistory(item),
+                                onClick: () => openHistory(item),
                               },
                               createElement(History, {
                                 "aria-hidden": "true",
@@ -448,7 +460,7 @@ export function ServerBoardPostFeedDisplay({
         : "Author unavailable",
       onHistory: (post: BoardPost) => {
         setReaderPostId(null);
-        setHistory(post);
+        openHistory(post);
       },
       onClose: () => setReaderPostId(null),
     }),
@@ -459,7 +471,7 @@ export function ServerBoardPostFeedDisplay({
           postId: history.id,
           title: history.title,
           authorLabels,
-          onClose: () => setHistory(null),
+          onClose: closeHistory,
         })
       : null,
   );

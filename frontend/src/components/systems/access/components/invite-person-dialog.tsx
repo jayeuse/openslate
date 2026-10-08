@@ -32,7 +32,6 @@ import {
   guestExpiryFromDays,
   peopleErrorMessage,
   roleLabels,
-  sponsorOptions,
   usernameError,
   usernameFromEmail,
   usernameHint,
@@ -40,12 +39,13 @@ import {
 import { ApiError } from "@/lib/api";
 import {
   inviteAccessUser,
-  type AccessGroup,
   type AccessInvitationCreate,
-  type AccessUser,
   type AccessUserRole,
 } from "../state/api";
 import { useAccessDraftRegistration } from "../state/draft-navigation";
+import { SponsorSearchSelect } from "./person-search-select";
+import { useAccessCatalog, catalogGroups } from "../hooks/use-access-catalog";
+import { Input } from "@/components/ui/input";
 import { ActionError } from "./editor-conflicts";
 import { DiscardChangesDialog, SelectField, TextField } from "./people-fields";
 
@@ -86,13 +86,9 @@ const roleDescriptions: Record<AccessUserRole, string> = {
 export function InvitePersonDialog({
   open,
   onOpenChange,
-  people,
-  groups,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  people: readonly AccessUser[];
-  groups: readonly AccessGroup[];
 }) {
   const id = useId();
   const client = useQueryClient();
@@ -115,7 +111,12 @@ export function InvitePersonDialog({
     form.group_ids.length > 0 ||
     form.sponsor_user_id !== "" ||
     form.days !== null;
-  const sponsors = sponsorOptions(people, now);
+  const groupSearch = useAccessCatalog({
+    kind: "groups",
+    selectedIds: form.group_ids,
+    enabled: open && form.role !== "admin",
+  });
+  const groups = catalogGroups(groupSearch.combined);
   const guestEnds = guestExpiryFromDays(days, new Date(now));
 
   const reset = useCallback(() => {
@@ -284,15 +285,9 @@ export function InvitePersonDialog({
 
             {form.role === "guest" ? (
               <div className="grid gap-4 sm:grid-cols-2">
-                <SelectField
+                <SponsorSearchSelect
                   id={`${id}-sponsor`}
-                  label="Sponsor"
                   value={form.sponsor_user_id}
-                  options={[
-                    { value: "", label: "Choose a sponsor" },
-                    ...sponsors,
-                  ]}
-                  description="An active member or administrator who answers for this guest."
                   error={errors.sponsor}
                   onChange={(sponsor_user_id) => update({ sponsor_user_id })}
                 />
@@ -325,7 +320,7 @@ export function InvitePersonDialog({
                   Administrators have full access everywhere, so they are not
                   added to groups.
                 </p>
-              ) : groups.length === 0 ? (
+              ) : groups.length === 0 && !groupSearch.search ? (
                 <p className="text-muted-foreground text-sm">
                   There are no groups yet. Create groups on the Groups tab, then
                   add this person to them.
@@ -336,6 +331,15 @@ export function InvitePersonDialog({
                     Groups give access to departments and modules.
                     {form.role === "guest" ? " Guests can only read." : ""}
                   </p>
+                  <Input
+                    type="search"
+                    aria-label="Search invitation groups"
+                    className="min-h-11"
+                    value={groupSearch.search}
+                    onChange={(event) =>
+                      groupSearch.onSearchChange(event.target.value)
+                    }
+                  />
                   <ul className="grid gap-1 rounded-lg border p-2 sm:max-h-56 sm:grid-cols-2 sm:overflow-y-auto">
                     {groups.map((group) => {
                       const checked = form.group_ids.includes(group.id);
@@ -364,6 +368,33 @@ export function InvitePersonDialog({
                   </ul>
                 </>
               )}
+              {groupSearch.loading ? (
+                <p role="status">Loading groups…</p>
+              ) : null}
+              {groupSearch.error ? (
+                <div role="alert">
+                  <p>{groupSearch.error}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => void groupSearch.retry()}
+                  >
+                    Retry groups
+                  </Button>
+                </div>
+              ) : null}
+              {groupSearch.hasMore ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={groupSearch.loadingMore}
+                  onClick={() => void groupSearch.loadMore()}
+                >
+                  Load more groups
+                </Button>
+              ) : null}
             </FieldSet>
 
             {settings.isError && form.role === "guest" && form.days === null ? (

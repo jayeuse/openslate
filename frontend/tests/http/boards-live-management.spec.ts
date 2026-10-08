@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../../src/lib/api";
+import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -19,6 +20,8 @@ import {
   type BoardManagementDraft,
   type BoardManagementView,
 } from "../../src/components/systems/boards/components/server-backed-board-management";
+
+import { group as accessGroupFixture } from "../isolated/access/fixtures";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";
@@ -693,4 +696,123 @@ test("Board permanent deletion closes its review and confirms completion", async
       .getByRole("region", { name: "Status messages", exact: true })
       .getByText("Board permanently deleted.", { exact: true }),
   ).toHaveCount(1);
+});
+
+test("Board group picker finds groups beyond one hundred and preserves the selected label and draft", async ({
+  page,
+}) => {
+  await installArchivedBoard(page);
+  const activeBoard = {
+    id: boardId,
+    scope: "project",
+    department_id: null,
+    name: board.name,
+    description: board.description,
+    status: "active",
+    revision: board.revision,
+    level: "manage",
+    created_at: board.createdAt,
+    updated_at: board.updatedAt,
+  };
+  await page.route("**/api/boards", (route) =>
+    route.fulfill({
+      json: {
+        items: [activeBoard],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    }),
+  );
+  await page.route(`**/api/boards/${boardId}`, (route) =>
+    route.fulfill({ json: activeBoard }),
+  );
+  const choices = Array.from({ length: 125 }, (_, index) => ({
+    ...accessGroupFixture,
+    id: `00000000-0000-4000-8000-${String(index + 500).padStart(12, "0")}`,
+    name:
+      index === 124
+        ? "Zora group beyond one hundred"
+        : `Group ${String(index).padStart(3, "0")}`,
+  }));
+  const requests: string[] = [];
+  await page.route("**/api/access/groups?*", (route) => {
+    const url = new URL(route.request().url());
+    requests.push(url.search);
+    const search = (url.searchParams.get("search") ?? "").toLocaleLowerCase();
+    const limit = Number(url.searchParams.get("limit"));
+    const offset = Number(url.searchParams.get("offset"));
+    const filtered = choices.filter((choice) =>
+      choice.name.toLocaleLowerCase().includes(search),
+    );
+    const items = filtered.slice(offset, offset + limit);
+    return route.fulfill({
+      json: {
+        items,
+        pagination: {
+          limit,
+          offset,
+          count: items.length,
+          total: filtered.length,
+          has_more: offset + items.length < filtered.length,
+        },
+      },
+    });
+  });
+  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+    .click();
+  const manage = page.getByRole("dialog", { name: "Manage Board" });
+  await manage
+    .getByRole("combobox", { name: "Add a group", exact: true })
+    .click();
+  const groupSearch = page
+    .getByRole("combobox", { name: "Add a group", exact: true })
+    .and(page.getByPlaceholder("Search…", { exact: true }));
+  await groupSearch.fill("Zora");
+  await expect(
+    page.getByRole("option", { name: "Zora group beyond one hundred" }),
+  ).toBeVisible();
+  await page
+    .getByRole("option", { name: "Zora group beyond one hundred" })
+    .click();
+  await manage
+    .getByRole("combobox", { name: "Add a group", exact: true })
+    .filter({ hasText: "Zora group beyond one hundred" })
+    .click();
+  await groupSearch.fill("Group 001");
+  await expect
+    .poll(() =>
+      requests.some(
+        (query) => new URLSearchParams(query).get("search") === "Group 001",
+      ),
+    )
+    .toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(
+    manage
+      .getByRole("combobox", { name: "Add a group", exact: true })
+      .filter({ hasText: "Zora group beyond one hundred" }),
+  ).toContainText("Zora group beyond one hundred");
+  await manage.getByRole("button", { name: "Add group", exact: true }).click();
+  await expect(
+    manage.getByRole("list", { name: "Board groups", exact: true }),
+  ).toContainText("Zora group beyond one hundred");
+  await expect(
+    manage.getByRole("button", { name: "Save groups", exact: true }),
+  ).toBeEnabled();
+  if (process.env.OPENVIEW_CAPTURE_DIR) {
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate((value) => {
+        document.documentElement.classList.toggle("dark", value === "dark");
+      }, mode);
+      await captureOpenViewReview(page, `s08-board-groups-${mode}`);
+    }
+  }
 });

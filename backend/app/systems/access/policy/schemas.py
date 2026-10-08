@@ -14,6 +14,7 @@ from app.systems.access.users.models import UserRole, UserStatus
 
 class GroupSortField(StrEnum):
     NAME = "name"
+    MEMBER_COUNT = "member_count"
     CREATED_AT = "created_at"
     UPDATED_AT = "updated_at"
 
@@ -83,7 +84,9 @@ class GroupResponse(BaseModel):
 
 
 class GroupListRequest(StandardListRequest[GroupSortField]):
-    pass
+    without_access: bool = False
+    without_members: bool = False
+    member_id: UUID | None = None
 
 
 class MemberCandidateSortField(StrEnum):
@@ -96,6 +99,7 @@ class MemberCandidateListRequest(StandardListRequest[MemberCandidateSortField]):
     """Deleted accounts are never candidates."""
 
     deleted: Literal[DeletedFilter.EXCLUDE] = DeletedFilter.EXCLUDE
+    ids: list[UUID] | None = Field(default=None, max_length=100)
 
 
 class MemberCandidateResponse(BaseModel):
@@ -109,3 +113,4 @@ class MemberCandidateResponse(BaseModel):
     email: str
     role: UserRole
     status: UserStatus
+    access_ends_at: datetime | None = Field(validation_alias="expires_at")

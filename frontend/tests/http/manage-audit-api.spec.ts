@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { expect, test, type Route } from "./helpers/test";
+import { expect, test, type Route, type Page } from "./helpers/test";
 import { mockMfa } from "./helpers/mfa";
 
 const ACTOR_ID = "00000000-0000-4000-8000-000000000201";
@@ -174,7 +174,9 @@ function createAuditRoute(logs: AuditLogFixture[]) {
           )
             latestActorUse.set(log.performed_by, log);
         }
+        const needle = (url.searchParams.get("search") ?? "").toLowerCase();
         const entityTypes = [...latestEntityUse.entries()]
+          .filter(([type]) => !needle || type.toLowerCase().includes(needle))
           .sort(
             ([leftType, leftDate], [rightType, rightDate]) =>
               rightDate.localeCompare(leftDate) ||
@@ -183,6 +185,13 @@ function createAuditRoute(logs: AuditLogFixture[]) {
           .slice(0, 200)
           .map(([entityType]) => entityType);
         const actors = [...latestActorUse.entries()]
+          .filter(
+            ([, log]) =>
+              !needle ||
+              [log.actor_name ?? "", log.actor_label ?? ""].some((label) =>
+                label.toLowerCase().includes(needle),
+              ),
+          )
           .sort(
             ([leftId, leftLog], [rightId, rightLog]) =>
               rightLog.created_at.localeCompare(leftLog.created_at) ||
@@ -373,9 +382,13 @@ test("Audit uses server filters, sort and page requests, with server-named actor
   await expect(
     table.getByText("Mara Santos", { exact: true }).first(),
   ).toBeVisible();
+  await page.getByRole("button", { name: "More filters", exact: true }).click();
+  await page.getByRole("combobox", { name: "Person", exact: true }).click();
   await expect(
-    page.locator(`#audit-user option[value="${NULL_LABEL_ACTOR_ID}"]`),
-  ).toHaveText("Tara Reyes");
+    page.getByRole("option", { name: "Tara Reyes", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "More filters", exact: true }).click();
   await expect(
     table.getByText("Unknown person", { exact: true }).first(),
   ).toBeVisible();
@@ -408,16 +421,14 @@ test("Audit uses server filters, sort and page requests, with server-named actor
   await expect(table.getByText("Delete", { exact: true })).toHaveCount(4);
 
   await page.getByRole("button", { name: "More filters" }).click();
-  await page
-    .getByLabel("Person", { exact: true })
-    .selectOption(NULL_LABEL_ACTOR_ID);
+  await chooseAuditFilter(page, "Person", "Tara Reyes");
   await expect(
     page.getByText("Person: Tara Reyes", { exact: true }),
   ).toBeVisible();
   await expect
     .poll(() => api.requests.at(-1)?.searchParams.get("performed_by"))
     .toBe(NULL_LABEL_ACTOR_ID);
-  await page.getByLabel("Entity", { exact: true }).selectOption("user");
+  await chooseAuditFilter(page, "Entity", "User");
   await expect
     .poll(() => api.requests.at(-1)?.searchParams.get("entity_type"))
     .toBe("user");
@@ -444,9 +455,9 @@ test("Audit uses server filters, sort and page requests, with server-named actor
   await page
     .getByRole("button", { name: "Clear filters", exact: true })
     .click();
-  await expect(page.getByLabel("Person", { exact: true })).toHaveValue(
-    "All users",
-  );
+  await expect(
+    page.getByRole("combobox", { name: "Person", exact: true }),
+  ).toContainText("All people");
   await page
     .getByRole("searchbox", { name: "Search activity", exact: true })
     .fill("active");
@@ -522,7 +533,7 @@ test("Audit paging is server-backed and detail reads the selected audit ID", asy
   ).toBe(true);
   await details.getByRole("button", { name: "Close detail" }).click();
   await page.getByRole("button", { name: "More filters" }).click();
-  await page.getByLabel("Entity", { exact: true }).selectOption("record");
+  await chooseAuditFilter(page, "Entity", "Record");
   await expect
     .poll(() => ({
       entity: api.requests.at(-1)?.searchParams.get("entity_type"),
@@ -1186,15 +1197,14 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
   ).toBeVisible();
   await expect(table).not.toContainText(logs[2]!.entity_id!);
   await page.getByRole("button", { name: "More filters" }).click();
-  await expect(
-    page.locator(`#audit-user option[value="${ACTOR_ID}"]`),
-  ).toHaveText("Server display name");
-  await expect(
-    page.locator(`#audit-user option[value="${NULL_LABEL_ACTOR_ID}"]`),
-  ).toHaveText("Historical person label");
-  await expect(
-    page.locator(`#audit-user option[value="${UNKNOWN_ACTOR_ID}"]`),
-  ).toHaveText("Unknown person");
+  await page.getByRole("combobox", { name: "Person", exact: true }).click();
+  for (const name of [
+    "Server display name",
+    "Historical person label",
+    "Unknown person",
+  ])
+    await expect(page.getByRole("option", { name, exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "More filters" }).click();
   await namedRow
     .getByRole("button", { name: "View audit New record title", exact: true })
@@ -1495,3 +1505,73 @@ test("Audit export refuses more than 10000 rows and exports the header after fil
     page.getByText("Downloaded 0 filtered audit entries.", { exact: true }),
   ).toBeVisible();
 });
+
+test("S08 Audit option search finds actors outside the capped first result and preserves selection", async ({
+  page,
+}) => {
+  const api = createAuditRoute(makeAuditLogs());
+  const reads: URL[] = [];
+  await page.route("**/api/audit-logs**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname !== "/api/audit-logs/options") return api.handle(route);
+    reads.push(url);
+    await route.fulfill({
+      json:
+        url.searchParams.get("search") === "Remote actor"
+          ? {
+              actors: [
+                {
+                  performed_by: ACTOR_ID,
+                  actor_name: "Remote actor",
+                  actor_label: null,
+                },
+              ],
+              entity_types: [],
+            }
+          : {
+              actors: [
+                {
+                  performed_by: NULL_LABEL_ACTOR_ID,
+                  actor_name: "Tara Reyes",
+                  actor_label: null,
+                },
+              ],
+              entity_types: ["record"],
+            },
+    });
+  });
+  await page.goto("/manage?view=audit");
+  await expect(
+    page.getByRole("table", { name: "Activity history table", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "More filters", exact: true }).click();
+  const person = page.getByRole("combobox", { name: "Person", exact: true });
+  await person.click();
+  await page
+    .getByRole("dialog")
+    .getByRole("combobox", { name: "Person", exact: true })
+    .fill("Remote actor");
+  await page.getByRole("option", { name: "Remote actor", exact: true }).click();
+  await expect(
+    page.getByText("Person: Remote actor", { exact: true }),
+  ).toBeVisible();
+  await person.click();
+  await page
+    .getByRole("dialog")
+    .getByRole("combobox", { name: "Person", exact: true })
+    .fill("Tara");
+  await expect(
+    page.getByRole("option", { name: "Tara Reyes", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(person).toContainText("Remote actor");
+  expect(
+    reads.some((url) => url.searchParams.get("search") === "Remote actor"),
+  ).toBe(true);
+  expect(api.requests.at(-1)?.searchParams.get("performed_by")).toBe(ACTOR_ID);
+});
+
+async function chooseAuditFilter(page: Page, label: string, option: string) {
+  await page.getByRole("combobox", { name: label, exact: true }).click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+}

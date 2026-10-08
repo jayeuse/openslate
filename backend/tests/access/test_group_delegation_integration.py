@@ -353,8 +353,10 @@ def test_member_candidates_are_the_non_administrator_accounts(world: _World) -> 
         "email",
         "role",
         "status",
+        "access_ends_at",
     }
     assert items[str(world.pending.id)]["status"] == "pending"
+    assert items[str(world.pending.id)]["access_ends_at"] is None
     assert world.client(world.admin).get("/api/access/member-candidates").status_code == 200
 
 

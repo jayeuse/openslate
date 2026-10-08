@@ -707,6 +707,7 @@ async function installDashboardApi(
           current || alternate || createdDashboards.length
             ? `00000000-0000-4000-8000-${String(1000 + createdDashboards.length).padStart(12, "0")}`
             : dashboardId,
+        department_id: body.department_id ?? departmentId,
         name: body.name ?? "",
         refresh_cadence: body.refresh_cadence ?? "manual",
         revision: 1,
@@ -2906,7 +2907,7 @@ test("a new Dashboard is created in a managed department", async ({ page }) => {
   await page.goto("/openview?section=dashboards");
   await page.getByRole("button", { name: "New Dashboard" }).click();
   const dialog = page.getByRole("dialog", { name: "New Dashboard" });
-  await expect(dialog.getByLabel("Department")).toHaveValue(departmentId);
+  await expect(dialog.getByLabel("Department")).toContainText("Field service");
   await dialog.getByLabel("Dashboard name").fill("Weekly review");
   await dialog.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Save Dashboard" }).click();
@@ -2932,4 +2933,111 @@ test("Cancel discards a new Dashboard draft and returns to the selected Dashboar
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   expect(api.writes).toHaveLength(0);
+});
+
+test("S08 a Dashboard department picker searches beyond its first page and resolves the saved label", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page);
+  const laterDepartmentId = "50000000-0000-4000-8000-000000000001";
+  const queries: string[] = [];
+  const department = (id: string, name: string) => ({
+    id,
+    department_name: name,
+    created_at: timestamp,
+    updated_at: timestamp,
+    deleted_at: null,
+    is_deleted: false,
+    performed_by: null,
+  });
+  await page.route("**/api/departments**", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === `/api/departments/${laterDepartmentId}`)
+      return route.fulfill({ json: department(laterDepartmentId, "Dispatch") });
+    const search = url.searchParams.get("search") ?? "";
+    queries.push(search);
+    const items =
+      search === "Dispatch"
+        ? [department(laterDepartmentId, "Dispatch")]
+        : Array.from({ length: 100 }, (_, index) =>
+            department(
+              `60000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+              `Early department ${index + 1}`,
+            ),
+          );
+    return route.fulfill({
+      json: {
+        items,
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: items.length,
+          total: search ? 1 : 101,
+          has_more: !search,
+        },
+      },
+    });
+  });
+  await page.goto("/openview?section=dashboards");
+  await page
+    .getByRole("button", { name: "New Dashboard", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "New Dashboard",
+    exact: true,
+  });
+  await dialog.getByLabel("Department", { exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "Department", exact: true })
+    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .fill("Dispatch");
+  await page.getByRole("option", { name: "Dispatch", exact: true }).click();
+  await expect(dialog.getByLabel("Department", { exact: true })).toContainText(
+    "Dispatch",
+  );
+  await dialog
+    .getByLabel("Dashboard name", { exact: true })
+    .fill("Dispatch dashboard");
+  if (process.env.OPENVIEW_CAPTURE_DIR) {
+    const departmentTrigger = dialog.getByLabel("Department", { exact: true });
+    await departmentTrigger.focus();
+    await departmentTrigger.press("Enter");
+    const searchInput = page
+      .getByRole("combobox", { name: "Department", exact: true })
+      .and(page.getByPlaceholder("Search…", { exact: true }));
+    await expect(searchInput).toBeFocused();
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate((theme) => {
+        document.documentElement.classList.toggle("dark", theme === "dark");
+      }, mode);
+      await captureOpenViewReview(page, `s08-dashboard-department-${mode}`, {
+        beforeScreenshot: async () => {
+          await expect(searchInput).toBeVisible();
+          await expect
+            .poll(() =>
+              page.evaluate(
+                () => document.documentElement.scrollWidth <= window.innerWidth,
+              ),
+            )
+            .toBe(true);
+        },
+      });
+    }
+    await searchInput.press("Escape");
+    await expect(departmentTrigger).toBeFocused();
+  }
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Save Dashboard", exact: true })
+    .click();
+  await expect.poll(() => api.writes.length).toBe(1);
+  expect(api.writes[0]?.body?.department_id).toBe(laterDepartmentId);
+  expect(queries).toContain("Dispatch");
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Dispatch dashboard", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Dispatch", { exact: true }).first(),
+  ).toBeVisible();
 });

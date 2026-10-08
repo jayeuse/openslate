@@ -4,6 +4,10 @@ import { MoreHorizontal, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import {
+  useOpenViewDepartmentNames,
+  useOpenViewSource,
+} from "../hooks/use-openview-catalog";
+import {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -82,7 +86,6 @@ import {
   authMeOptions,
   CATALOG_PAGE_SIZE,
   catalogFirstPageOptions,
-  departmentsOptions,
   fieldsFirstPageOptions,
   isAuthorizationDenied,
   moduleFieldKeys,
@@ -469,14 +472,21 @@ export default function ServerBackedReports({
   const sourcesMore = marksRead(sourcesExtension, "", sourcesReadAt)
     ? sourcesExtension
     : null;
-  const sources = [
+  const loadedSources = [
     ...(sourcesBase?.items ?? []),
     ...(sourcesMore?.items ?? []),
   ];
+  const selectedSource = useOpenViewSource(loadedSources, draft.moduleId);
+  const sources = [
+    ...loadedSources,
+    ...(selectedSource &&
+    !loadedSources.some((source) => source.id === selectedSource.id)
+      ? [selectedSource]
+      : []),
+  ];
   // A Report belongs to the department of its module.
-  const departmentsQuery = useQuery(departmentsOptions());
-  const departmentNames = new Map(
-    (departmentsQuery.data ?? []).map((item) => [item.id, item.name]),
+  const departmentNames = useOpenViewDepartmentNames(
+    sources.map((source) => source.departmentId),
   );
   const reportDepartmentNames = new Map<string, string>();
   for (const source of sources) {

@@ -9,9 +9,11 @@ import {
   recordPageDenial,
 } from "../../openview/adapters/openview-queries";
 import { openViewLevel } from "../../openview/domain/manage-access";
-import { listAccessDepartments } from "../../access/state/api";
-import type { AccessDepartment } from "../../access/state/api-contracts";
-import { loadAllAccessPages } from "../../access/state/pagination";
+import { accessCatalogOptions } from "../../access/hooks/use-access-catalog";
+import type {
+  AccessDepartment,
+  AccessPage,
+} from "../../access/state/api-contracts";
 
 import { listAccountSessions } from "./account-api";
 import {
@@ -36,7 +38,7 @@ export const platformKeys = {
   all: ["platform"] as const,
   accountSessions: (accountId: string) =>
     ["platform", "account-sessions", accountId] as const,
-  libraryDepartments: () => ["platform", "library-departments"] as const,
+  libraryDepartments: () => ["access", "catalog"] as const,
   libraryFiles: ["platform", "library-files"] as const,
   departmentFiles: (departmentId: string) =>
     ["platform", "library-files", departmentId] as const,
@@ -50,19 +52,11 @@ export const platformKeys = {
 };
 
 export const libraryDepartmentsOptions = () =>
-  queryOptions({
-    queryKey: platformKeys.libraryDepartments(),
-    queryFn: ({ signal }) =>
-      loadAllAccessPages(
-        (page) =>
-          listAccessDepartments({
-            ...page,
-            deleted: "include",
-            sort_by: "department_name",
-            sort_order: "asc",
-          }),
-        { signal },
-      ),
+  accessCatalogOptions("departments", {
+    search: "",
+    limit: 25,
+    offset: 0,
+    deleted: "include",
   });
 
 // A refusal belongs to one department and this account's client. Keeping it
@@ -183,11 +177,11 @@ export function prefetchPlatformSection(
   if (url.searchParams.get("section") !== "files") return;
   void client.prefetchQuery(libraryDepartmentsOptions());
   const identity = client.getQueryData(authMeOptions().queryKey);
-  const catalog = client.getQueryData<AccessDepartment[]>(
-    platformKeys.libraryDepartments(),
+  const catalog = client.getQueryData<AccessPage<AccessDepartment>>(
+    libraryDepartmentsOptions().queryKey,
   );
   const requested = url.searchParams.get("department");
-  const department = catalog?.find(
+  const department = catalog?.items.find(
     (item) =>
       (requested === null || item.id === requested) &&
       openViewLevel(identity, item.id) !== null,

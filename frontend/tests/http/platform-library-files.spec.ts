@@ -278,6 +278,7 @@ async function installLibrary(
     state.catalogReads.push(parameters);
     if (state.departmentStatus !== 200)
       return failure(route, state.departmentStatus);
+    const needle = (parameters.get("search") ?? "").toLowerCase();
     const limit = Number(parameters.get("limit"));
     const offset = Number(parameters.get("offset"));
     const visible = state.departments
@@ -287,7 +288,9 @@ async function installLibrary(
             state.access.some(
               (access) => access.department_id === department.id,
             )) &&
-          (parameters.get("deleted") === "include" || !department.is_deleted),
+          (parameters.get("deleted") === "include" || !department.is_deleted) &&
+          (!needle ||
+            department.department_name.toLowerCase().includes(needle)),
       )
       .sort((a, b) => a.department_name.localeCompare(b.department_name));
     return route.fulfill({
@@ -298,6 +301,20 @@ async function installLibrary(
         visible.length,
       ),
     });
+  });
+  await page.route(/\/api\/departments\/[0-9a-z-]+$/, (route) => {
+    const id = new URL(route.request().url()).pathname.split("/").at(-1);
+    const department = state.departments.find(
+      (item) =>
+        item.id === id &&
+        (state.role === "admin" ||
+          state.access.some((access) => access.department_id === id)),
+    );
+    if (state.departmentStatus !== 200)
+      return failure(route, state.departmentStatus);
+    return department
+      ? route.fulfill({ json: department })
+      : failure(route, 404);
   });
   await page.route("**/api/files**", async (route) => {
     const request = route.request();
@@ -572,14 +589,14 @@ test("Library files: direct department picker excludes module-only grants and pr
     name: "Department",
     exact: true,
   });
-  await expect(picker).toHaveValue(LIBRARY_DEPARTMENT);
+  await expect(picker).toContainText("Maintenance");
   await expect(
     picker.getByRole("option", { name: "Module only", exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByRole("list", { name: "Library files", exact: true }),
   ).toBeVisible();
-  await picker.selectOption(LIBRARY_SECOND_DEPARTMENT);
+  await chooseLibraryDepartment(page, "Operations");
   await expect(page).toHaveURL(
     new RegExp(`department=${LIBRARY_SECOND_DEPARTMENT}`),
   );
@@ -594,7 +611,7 @@ test("Library files: direct department picker excludes module-only grants and pr
     page.getByRole("searchbox", { name: "Search workspace" }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Files", exact: true }).click();
-  await expect(picker).toHaveValue(LIBRARY_SECOND_DEPARTMENT);
+  await expect(picker).toContainText("Operations");
   await expect(
     page.getByRole("button", {
       name: "Download Operations guide.pdf",
@@ -602,7 +619,7 @@ test("Library files: direct department picker excludes module-only grants and pr
     }),
   ).toBeVisible();
   await page.reload();
-  await expect(picker).toHaveValue(LIBRARY_SECOND_DEPARTMENT);
+  await expect(picker).toContainText("Operations");
   expect(
     fixture.listReads.every(
       (read) => read.department !== LIBRARY_MODULE_DEPARTMENT,
@@ -786,11 +803,7 @@ test("Library files: unknown reservation outcome survives department and section
   const check = page.getByRole("button", { name: "Check status", exact: true });
   await expect(check).toBeEnabled();
   await expect(page.getByLabel("Upload file", { exact: true })).toBeDisabled();
-  const picker = page.getByRole("combobox", {
-    name: "Department",
-    exact: true,
-  });
-  await picker.selectOption(LIBRARY_SECOND_DEPARTMENT);
+  await chooseLibraryDepartment(page, "Operations");
   await expect(
     page.getByRole("button", {
       name: "Download Operations guide.pdf",
@@ -799,7 +812,7 @@ test("Library files: unknown reservation outcome survives department and section
   ).toBeVisible();
   await expect(check).toHaveCount(0);
   fixture.readbackStatus = 200;
-  await picker.selectOption(LIBRARY_DEPARTMENT);
+  await chooseLibraryDepartment(page, "Maintenance");
   await expect(page.getByLabel("Upload file", { exact: true })).toBeEnabled();
   await expect(
     page.getByText("Choose the same file to retry this upload.", {
@@ -842,10 +855,12 @@ test("Library files: closed departments remain readable and archivable but canno
     name: "Department",
     exact: true,
   });
-  await expect(picker).toHaveValue(LIBRARY_CLOSED_DEPARTMENT);
+  await expect(picker).toContainText("Records (Closed)");
+  await picker.click();
   await expect(
-    picker.getByRole("option", { name: "Records (Closed)", exact: true }),
-  ).toHaveCount(1);
+    page.getByRole("option", { name: "Records (Closed)", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect(page.getByLabel("Upload file", { exact: true })).toHaveCount(0);
   const archive = page.getByRole("button", {
     name: "Archive Closed department guide.pdf",
@@ -905,15 +920,13 @@ test("Library files: invalid and module-only department links never fall back to
     ).toHaveCount(0);
   }
   expect(fixture.listReads).toEqual([]);
-  await page
-    .getByRole("combobox", { name: "Department", exact: true })
-    .selectOption(LIBRARY_DEPARTMENT);
+  await chooseLibraryDepartment(page, "Maintenance");
   await expect(
     page.getByRole("list", { name: "Library files", exact: true }),
   ).toBeVisible();
 });
 
-test("Library files: default department selection waits for a complete catalog beyond the first page", async ({
+test("S08 Library default department resolves permitted IDs without crawling the catalog", async ({
   page,
 }) => {
   const sourceDepartments = Array.from({ length: 100 }, (_, index) =>
@@ -937,18 +950,19 @@ test("Library files: default department selection waits for a complete catalog b
   await page.goto("/platform?section=files");
   await expect(
     page.getByRole("combobox", { name: "Department", exact: true }),
-  ).toHaveValue(LIBRARY_DEPARTMENT);
+  ).toContainText("Z maintenance");
   await expect(page).toHaveURL(new RegExp(`department=${LIBRARY_DEPARTMENT}`));
   await expect(
     page.getByRole("list", { name: "Library files", exact: true }),
   ).toBeVisible();
   expect(
-    fixture.catalogReads.map((parameters) => parameters.get("offset")),
-  ).toContain("100");
-  await expect(page.getByRole("option", { name: /^A source/ })).toHaveCount(0);
+    fixture.catalogReads.every(
+      (parameters) => parameters.get("offset") === "0",
+    ),
+  ).toBe(true);
 });
 
-test("Library files: bounded department overflow fails visibly and never exposes a partial picker", async ({
+test("S08 Library searches a large department catalog and reloads the selected label", async ({
   page,
 }) => {
   const fixture = await installLibrary(page);
@@ -958,24 +972,39 @@ test("Library files: bounded department overflow fails visibly and never exposes
       `Department ${String(index).padStart(4, "0")}`,
     ),
   );
+  fixture.departments.push(
+    libraryDepartment(LIBRARY_DEPARTMENT, "Z maintenance"),
+  );
   await openLibrary(page);
-  await expect(
-    page
-      .getByRole("alert")
-      .filter({ hasText: /departments.*could not|could not.*departments/i }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("combobox", { name: "Department", exact: true }),
-  ).toBeDisabled();
-  expect(fixture.catalogReads).toHaveLength(20);
-  expect(fixture.listReads).toEqual([]);
-  fixture.departments = [libraryDepartment(LIBRARY_DEPARTMENT, "Maintenance")];
+  const picker = page.getByRole("combobox", {
+    name: "Department",
+    exact: true,
+  });
+  await expect(picker).toContainText("Z maintenance");
+  await picker.click();
   await page
-    .getByRole("button", { name: "Retry departments", exact: true })
-    .click();
+    .getByRole("dialog")
+    .getByRole("combobox", { name: "Department", exact: true })
+    .fill("Department 2000");
   await expect(
-    page.getByRole("list", { name: "Library files", exact: true }),
+    page.getByRole("option", { name: "Department 2000", exact: true }),
   ).toBeVisible();
+  await page
+    .getByRole("option", { name: "Department 2000", exact: true })
+    .click();
+  await expect(picker).toContainText("Department 2000");
+  await page.reload();
+  await expect(picker).toContainText("Department 2000");
+  expect(
+    fixture.catalogReads.some(
+      (parameters) => parameters.get("search") === "Department 2000",
+    ),
+  ).toBe(true);
+  expect(
+    fixture.catalogReads.every(
+      (parameters) => parameters.get("offset") === "0",
+    ),
+  ).toBe(true);
 });
 
 test("Library files: unavailable identity and department catalogs make no library request and recover", async ({
@@ -1231,9 +1260,7 @@ test("Library files: a stale later page cannot follow search or department chang
   ).toHaveCount(1);
   held.release();
   await expect(page.getByText("Guide 26.pdf", { exact: true })).toHaveCount(0);
-  await page
-    .getByRole("combobox", { name: "Department", exact: true })
-    .selectOption(LIBRARY_SECOND_DEPARTMENT);
+  await chooseLibraryDepartment(page, "Operations");
   await expect(
     page.getByRole("button", {
       name: "Download Operations guide.pdf",
@@ -1619,18 +1646,14 @@ test("Library files: cached department revisits and shared invalidations preserv
   const before = fixture.listReads.filter(
     (read) => read.department === LIBRARY_DEPARTMENT,
   ).length;
-  const picker = page.getByRole("combobox", {
-    name: "Department",
-    exact: true,
-  });
-  await picker.selectOption(LIBRARY_SECOND_DEPARTMENT);
+  await chooseLibraryDepartment(page, "Operations");
   await expect(
     page.getByRole("button", {
       name: "Download Operations guide.pdf",
       exact: true,
     }),
   ).toBeVisible();
-  await picker.selectOption(LIBRARY_DEPARTMENT);
+  await chooseLibraryDepartment(page, "Maintenance");
   await expect(
     page.getByRole("list", { name: "Library files", exact: true }),
   ).toBeVisible();
@@ -1790,11 +1813,7 @@ test("Library files: old department downloads and upload producers cannot follow
     .first()
     .click();
   await heldDownload.entered;
-  const picker = page.getByRole("combobox", {
-    name: "Department",
-    exact: true,
-  });
-  await picker.selectOption(LIBRARY_SECOND_DEPARTMENT);
+  await chooseLibraryDepartment(page, "Operations");
   await expect(
     page.getByRole("button", {
       name: "Download Operations guide.pdf",
@@ -1804,7 +1823,7 @@ test("Library files: old department downloads and upload producers cannot follow
   heldDownload.release();
   await heldDownload.completed;
   expect(downloads).toEqual([]);
-  await picker.selectOption(LIBRARY_DEPARTMENT);
+  await chooseLibraryDepartment(page, "Maintenance");
   await expect(
     page
       .getByRole("button", { name: "Download Safety guide.pdf", exact: true })
@@ -1814,7 +1833,7 @@ test("Library files: old department downloads and upload producers cannot follow
   fixture.uploadHold = heldUpload;
   await chooseLibraryFile(page);
   await heldUpload.entered;
-  await picker.selectOption(LIBRARY_SECOND_DEPARTMENT);
+  await chooseLibraryDepartment(page, "Operations");
   await expect(
     page.getByRole("button", {
       name: "Download Operations guide.pdf",
@@ -1826,7 +1845,7 @@ test("Library files: old department downloads and upload producers cannot follow
   await expect(
     page.getByText("Upload guide.pdf uploaded.", { exact: true }),
   ).toHaveCount(0);
-  await picker.selectOption(LIBRARY_DEPARTMENT);
+  await chooseLibraryDepartment(page, "Maintenance");
   await expect(
     page.getByRole("button", {
       name: "Download Upload guide.pdf",
@@ -2008,4 +2027,165 @@ test("Library files: losing direct eligibility during a held upload hides the pr
   await expect(
     page.getByRole("button", { name: "Check status", exact: true }),
   ).toHaveCount(0);
+});
+
+async function chooseLibraryDepartment(page: Page, name: string) {
+  await page.getByRole("combobox", { name: "Department", exact: true }).click();
+  await page.getByRole("option", { name, exact: true }).click();
+}
+
+test("S08 correction a selected department refusal survives cached browser navigation", async ({
+  page,
+}) => {
+  const fixture = await installLibrary(page);
+  await openLibrary(page);
+  await expect(
+    page
+      .getByRole("button", { name: "Download Safety guide.pdf", exact: true })
+      .first(),
+  ).toBeVisible();
+  let denied = true;
+  await page.route(
+    `**/api/departments/${LIBRARY_SECOND_DEPARTMENT}`,
+    (route) =>
+      denied
+        ? route.fulfill({ status: 403, json: { detail: "Forbidden" } })
+        : route.fulfill({
+            json: fixture.departments.find(
+              (item) => item.id === LIBRARY_SECOND_DEPARTMENT,
+            ),
+          }),
+  );
+  await chooseLibraryDepartment(page, "Operations");
+  await expect(
+    page.getByRole("button", { name: "Retry departments", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Library files", exact: true }),
+  ).toBeHidden();
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`department=${LIBRARY_DEPARTMENT}`));
+  await expect(
+    page.getByRole("list", { name: "Library files", exact: true }),
+  ).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Retry departments", exact: true }),
+  ).toBeVisible();
+  denied = false;
+  await page
+    .getByRole("button", { name: "Retry departments", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("button", { name: "Download Safety guide.pdf", exact: true })
+      .first(),
+  ).toBeVisible();
+  expect(fixture.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+});
+
+test("S08 correction department option search preserves file filters pages and a held download", async ({
+  page,
+}) => {
+  const fixture = await installLibrary(page);
+  fixture.files = Array.from({ length: 35 }, (_, index) =>
+    libraryFile({
+      id: libraryUuid(300 + index),
+      filename: `Guide ${String(index + 1).padStart(2, "0")}.pdf`,
+    }),
+  );
+  await openLibrary(page);
+  const search = page.getByRole("searchbox", {
+    name: "Search files by name",
+    exact: true,
+  });
+  await search.fill("Guide");
+  const sort = page.getByRole("combobox", { name: "Sort files", exact: true });
+  await sort.selectOption({ label: "Name (Z–A)" });
+  const files = page.getByRole("list", { name: "Library files", exact: true });
+  await expect(files.getByRole("listitem").first()).toContainText(
+    "Guide 35.pdf",
+  );
+  await page
+    .getByRole("button", { name: "Load more files", exact: true })
+    .click();
+  await expect(files.getByRole("listitem")).toHaveCount(35);
+  const gate = libraryGate();
+  fixture.downloadHold = gate;
+  const downloads: string[] = [];
+  page.on("download", (download) =>
+    downloads.push(download.suggestedFilename()),
+  );
+  try {
+    await page
+      .getByRole("button", { name: "Download Guide 01.pdf", exact: true })
+      .click();
+    await gate.entered;
+    await page
+      .getByRole("combobox", { name: "Department", exact: true })
+      .click();
+    await page
+      .getByRole("dialog")
+      .getByRole("combobox", { name: "Department", exact: true })
+      .fill("Operations");
+    await expect
+      .poll(() => fixture.catalogReads.at(-1)?.get("search"))
+      .toBe("Operations");
+    await expect(
+      page.getByRole("option", { name: "Operations", exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(search).toHaveValue("Guide");
+    await expect(sort).toHaveValue("name-desc");
+    await expect(files.getByRole("listitem")).toHaveCount(35);
+    gate.release();
+    await gate.completed;
+    await expect.poll(() => downloads).toEqual(["Guide 01.pdf"]);
+    expect(fixture.calls.filter((call) => call.method !== "GET")).toHaveLength(
+      0,
+    );
+  } finally {
+    gate.release();
+  }
+});
+
+test("S08 correction department option search preserves an active upload producer", async ({
+  page,
+}) => {
+  const fixture = await installLibrary(page);
+  await openLibrary(page);
+  const gate = libraryGate();
+  fixture.uploadHold = gate;
+  try {
+    await chooseLibraryFile(page);
+    await gate.entered;
+    await page
+      .getByRole("combobox", { name: "Department", exact: true })
+      .click();
+    await page
+      .getByRole("dialog")
+      .getByRole("combobox", { name: "Department", exact: true })
+      .fill("Operations");
+    await expect
+      .poll(() => fixture.catalogReads.at(-1)?.get("search"))
+      .toBe("Operations");
+    await expect(
+      page.getByRole("option", { name: "Operations", exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    gate.release();
+    await gate.completed;
+    await expect(
+      page.getByText("Upload guide.pdf uploaded.", { exact: true }),
+    ).toBeVisible();
+    expect(fixture.calls.filter((call) => call.method === "PUT")).toHaveLength(
+      1,
+    );
+    expect(
+      fixture.calls.filter(
+        (call) => call.method === "POST" && call.path === "/api/files",
+      ),
+    ).toHaveLength(1);
+  } finally {
+    gate.release();
+  }
 });

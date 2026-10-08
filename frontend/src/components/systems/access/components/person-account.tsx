@@ -17,6 +17,7 @@ import { toast } from "@/components/ui/toast";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 
 import { afterAccessUserChange } from "../adapters/access-queries";
+import type { PersonMemberships } from "../hooks/use-people-memberships";
 import {
   peopleErrorMessage,
   personName,
@@ -138,10 +139,12 @@ function availableActions(person: AccessUser, self: boolean): AccountAction[] {
 export function PersonAccount({
   person,
   groups,
+  membership,
   self,
 }: {
   person: AccessUser;
   groups: readonly NamedItem[];
+  membership?: PersonMemberships;
   self: boolean;
 }) {
   const client = useQueryClient();
@@ -183,7 +186,12 @@ export function PersonAccount({
             Administrators have full access everywhere, so they are not members
             of groups.
           </p>
-        ) : groups.length ? (
+        ) : !membership || membership.loading ? (
+          <p role="status" className="text-muted-foreground text-sm">
+            Loading groups…
+          </p>
+        ) : membership.denied ||
+          (membership.error && !groups.length) ? null : groups.length ? (
           <>
             <ul aria-label="Groups" className="flex flex-wrap gap-2">
               {groups.map((group) => (
@@ -209,6 +217,45 @@ export function PersonAccount({
             group on the Groups tab.
           </p>
         )}
+        {person.role !== "admin" && membership ? (
+          <>
+            {!membership.denied &&
+            (membership.hasMore || membership.loaded < membership.total) ? (
+              <p className="text-muted-foreground text-sm">
+                {membership.loaded} of {membership.total} groups
+              </p>
+            ) : null}
+            {membership.error ? (
+              <p role="alert" className="text-muted-foreground text-sm">
+                {membership.error}
+              </p>
+            ) : null}
+            {membership.retryFirstPage ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={membership.recovering}
+                onClick={() => void membership.retry()}
+              >
+                Retry groups
+              </Button>
+            ) : null}
+            {membership.hasMore ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={membership.loadingMore}
+                onClick={() => void membership.loadMore()}
+              >
+                {membership.loadingMore
+                  ? "Loading more groups…"
+                  : "Load more groups"}
+              </Button>
+            ) : null}
+          </>
+        ) : null}
       </section>
 
       <section aria-labelledby="person-account-title" className="space-y-2">

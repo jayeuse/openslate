@@ -42,6 +42,7 @@ import {
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { LoadingRegion } from "@/components/ui/loading-region";
+import { SearchSelect } from "@/components/ui/search-select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -303,6 +304,14 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
   );
   const [pageIndex, setPageIndex] = useState(0);
   const [appliedSearch, setAppliedSearch] = useState("");
+  const [actorSearch, setActorSearch] = useState("");
+  const [entitySearch, setEntitySearch] = useState("");
+  const [appliedActorSearch, setAppliedActorSearch] = useState("");
+  const [appliedEntitySearch, setAppliedEntitySearch] = useState("");
+  const [chosenActor, setChosenActor] = useState<{
+    id: string;
+    label: string;
+  } | null>(null);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_TABLE_PAGE_SIZE);
   const [selected, setSelected] = useState<ManageAuditEntry | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -325,7 +334,11 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
     enabled: !auditDenied && !workspaceSuspended,
   });
   const optionsQuery = useQuery({
-    ...manageAuditOptionsOptions(),
+    ...manageAuditOptionsOptions(appliedActorSearch),
+    enabled: !auditDenied && !workspaceSuspended,
+  });
+  const entityOptionsQuery = useQuery({
+    ...manageAuditOptionsOptions(appliedEntitySearch),
     enabled: !auditDenied && !workspaceSuspended,
   });
   const activityDateFormatter = workspaceQuery.data
@@ -355,6 +368,7 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
   const auditErrors = [
     listQuery.error,
     optionsQuery.error,
+    entityOptionsQuery.error,
     exportQuery.error,
     detailQuery.error,
     downloadError,
@@ -372,13 +386,23 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
   const logs = auditConcealed ? [] : (listQuery.data?.items ?? []);
   const entries = logs.map(auditEntryFromLog);
   const actors = auditConcealed ? [] : (optionsQuery.data?.actors ?? []);
-  const actorOptions = actors.map((actor) => ({
-    id: actor.performed_by,
-    label: actor.actor_name ?? actor.actor_label ?? "Unknown person",
-  }));
+  const actorOptions = [
+    ...new Map(
+      [
+        ...(auditConcealed || !chosenActor ? [] : [chosenActor]),
+        ...actors.map((actor) => ({
+          id: actor.performed_by,
+          label:
+            actor.actor_name?.trim() ||
+            actor.actor_label?.trim() ||
+            "Unknown person",
+        })),
+      ].map((actor) => [actor.id, actor]),
+    ).values(),
+  ];
   const entityTypes = auditConcealed
     ? []
-    : (optionsQuery.data?.entity_types ?? []);
+    : (entityOptionsQuery.data?.entity_types ?? []);
   const total = auditConcealed ? 0 : (listQuery.data?.pagination.total ?? 0);
   const serverOffset =
     listQuery.data?.pagination.offset ?? pageIndex * pageSize;
@@ -454,6 +478,20 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
       setDownloadError(null);
     }
   }, [auditRefused, admissionRefused, queryClient]);
+  useEffect(() => {
+    const timer = setTimeout(
+      () => setAppliedActorSearch(actorSearch.trim()),
+      300,
+    );
+    return () => clearTimeout(timer);
+  }, [actorSearch]);
+  useEffect(() => {
+    const timer = setTimeout(
+      () => setAppliedEntitySearch(entitySearch.trim()),
+      300,
+    );
+    return () => clearTimeout(timer);
+  }, [entitySearch]);
   useEffect(() => {
     if (filters.query === appliedSearch) return;
     const timer = setTimeout(() => {
@@ -718,60 +756,82 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
         onSortChange={(value) => updateFilter("order", value)}
         activeFilterCount={activeFilterLabels.length}
         filtersClassName="xl:grid-cols-5"
-        filtersDisabled={
-          optionsQuery.isPending || optionsQuery.isError || auditConcealed
-        }
+        filtersDisabled={auditConcealed}
       >
-        <Field>
-          <FieldLabel htmlFor="audit-user">Person</FieldLabel>
-          <LoadingRegion
-            loading={optionsQuery.isPending}
-            label="Loading people filter options…"
-            skeleton={<Skeleton className="h-11 w-full" />}
-          >
-            <NativeSelect
-              id="audit-user"
-              value={filters.user}
-              className="w-full [&_select]:min-h-11"
-              disabled={optionsQuery.isError}
-              onChange={(event) => updateFilter("user", event.target.value)}
-            >
-              <NativeSelectOption value="All users">
-                All people
-              </NativeSelectOption>
-              {actorOptions.map((actor) => (
-                <NativeSelectOption key={actor.id} value={actor.id}>
-                  {actor.label}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </LoadingRegion>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="audit-entity">Entity</FieldLabel>
-          <LoadingRegion
-            loading={optionsQuery.isPending}
-            label="Loading entity filter options…"
-            skeleton={<Skeleton className="h-11 w-full" />}
-          >
-            <NativeSelect
-              id="audit-entity"
-              value={filters.entity}
-              className="w-full [&_select]:min-h-11"
-              disabled={optionsQuery.isError}
-              onChange={(event) => updateFilter("entity", event.target.value)}
-            >
-              <NativeSelectOption value="All entities">
-                All entities
-              </NativeSelectOption>
-              {entityTypes.map((value) => (
-                <NativeSelectOption key={value} value={value}>
-                  {entityTypeLabel(value)}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </LoadingRegion>
-        </Field>
+        <SearchSelect
+          id="audit-user"
+          label="Person"
+          value={filters.user}
+          options={[
+            { value: "All users", label: "All people" },
+            ...actorOptions.map((actor) => ({
+              value: actor.id,
+              label: actor.label,
+            })),
+          ]}
+          selectedOption={
+            !auditConcealed && filters.user !== "All users"
+              ? {
+                  value: filters.user,
+                  label:
+                    actorOptions.find((actor) => actor.id === filters.user)
+                      ?.label ?? "Unknown person",
+                }
+              : undefined
+          }
+          search={actorSearch}
+          onSearchChange={setActorSearch}
+          loading={
+            optionsQuery.isPending || actorSearch.trim() !== appliedActorSearch
+          }
+          error={
+            optionsQuery.isError
+              ? "People filters could not be loaded. Try again."
+              : undefined
+          }
+          onRetry={() => void optionsQuery.refetch()}
+          disabled={auditConcealed}
+          onValueChange={(value) => {
+            setChosenActor(
+              actorOptions.find((actor) => actor.id === value) ?? null,
+            );
+            updateFilter("user", value);
+          }}
+        />
+        <SearchSelect
+          id="audit-entity"
+          label="Entity"
+          value={filters.entity}
+          options={[
+            { value: "All entities", label: "All entities" },
+            ...entityTypes.map((value) => ({
+              value,
+              label: entityTypeLabel(value),
+            })),
+          ]}
+          selectedOption={
+            filters.entity !== "All entities" && !auditConcealed
+              ? {
+                  value: filters.entity,
+                  label: entityTypeLabel(filters.entity),
+                }
+              : undefined
+          }
+          search={entitySearch}
+          onSearchChange={setEntitySearch}
+          loading={
+            entityOptionsQuery.isPending ||
+            entitySearch.trim() !== appliedEntitySearch
+          }
+          error={
+            entityOptionsQuery.isError
+              ? "Entity filters could not be loaded. Try again."
+              : undefined
+          }
+          onRetry={() => void entityOptionsQuery.refetch()}
+          disabled={auditConcealed}
+          onValueChange={(value) => updateFilter("entity", value)}
+        />
         <Field>
           <FieldLabel htmlFor="audit-action">Action</FieldLabel>
           <NativeSelect
@@ -833,7 +893,8 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
         </div>
       </AccessSearchToolbar>
 
-      {optionsQuery.isError && !auditConcealed ? (
+      {(optionsQuery.isError || entityOptionsQuery.isError) &&
+      !auditConcealed ? (
         <Alert role="alert" variant="destructive">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p>
@@ -844,7 +905,10 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
             </p>
             <Button
               variant="outline"
-              onClick={() => void optionsQuery.refetch()}
+              onClick={() => {
+                void optionsQuery.refetch();
+                void entityOptionsQuery.refetch();
+              }}
             >
               Retry
             </Button>

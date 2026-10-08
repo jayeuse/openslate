@@ -70,6 +70,8 @@ export type AccessEntry = {
   department_id: string;
   module_id: string | null;
   level: "read" | "write" | "manage";
+  department_name?: string;
+  module_name?: string | null;
 };
 export type Group = ReturnType<typeof group>;
 
@@ -85,7 +87,18 @@ export function group(
     description: "",
     revision: 1,
     member_ids: members,
-    access,
+    access: access.map((entry) => ({
+      ...entry,
+      department_name:
+        entry.department_name ??
+        (entry.department_id === ids.inventory
+          ? "Inventory"
+          : entry.department_id === ids.finance
+            ? "Finance"
+            : "Unavailable department"),
+      module_name:
+        entry.module_name ?? (entry.module_id === ids.prices ? "Prices" : null),
+    })),
     created_at: created,
     updated_at: created,
     deleted_at: null as string | null,
@@ -432,12 +445,15 @@ export async function mockAccessApi(
       const history = query.get("history");
       const groupId = query.get("group_id");
       const departmentId = query.get("department_id");
+      const requestedIds = query.getAll("ids");
       const search = (query.get("search") ?? "").toLowerCase();
       const now = capturedAt;
       const activeGroups = [...groups.values()].filter(
         (group) => !group.is_deleted,
       );
       const matching = [...users.values()].filter((user) => {
+        if (requestedIds.length && !requestedIds.includes(user.id))
+          return false;
         if (
           (deleted === "exclude" && user.is_deleted) ||
           (deleted === "only" && !user.is_deleted) ||
@@ -546,13 +562,40 @@ export async function mockAccessApi(
         ),
       });
     }
-    if (path === "/api/access/groups" && method === "GET")
-      return route.fulfill({
-        json: listPage(
-          [...groups.values()].filter((item) => !item.is_deleted),
-          url,
-        ),
-      });
+    if (path === "/api/access/groups" && method === "GET") {
+      const query = url.searchParams;
+      const memberId = query.get("member_id");
+      const needle = (query.get("search") ?? "").toLowerCase();
+      const matching = [...groups.values()].filter(
+        (item) =>
+          !item.is_deleted &&
+          (!memberId || item.member_ids.includes(memberId)) &&
+          (query.get("without_access") !== "true" || !item.access.length) &&
+          (query.get("without_members") !== "true" ||
+            !item.member_ids.length) &&
+          (!needle ||
+            [
+              item.name,
+              item.description,
+              ...item.access.flatMap((entry) => [
+                entry.department_name ?? "",
+                entry.module_name ?? "",
+              ]),
+            ].some((name) => name.toLowerCase().includes(needle))),
+      );
+      const direction = query.get("sort_order") === "desc" ? -1 : 1;
+      matching.sort(
+        (left, right) =>
+          direction *
+            (query.get("sort_by") === "member_count"
+              ? left.member_ids.length - right.member_ids.length
+              : query.get("sort_by") === "created_at"
+                ? left.created_at.localeCompare(right.created_at)
+                : left.name.localeCompare(right.name)) ||
+          left.id.localeCompare(right.id),
+      );
+      return route.fulfill({ json: listPage(matching, url) });
+    }
     if (path === "/api/access/groups" && method === "POST") {
       const input = body as {
         name: string;
@@ -579,7 +622,22 @@ export async function mockAccessApi(
       return route.fulfill({
         json: listPage(
           [...users.values()]
-            .filter((user) => user.role !== "admin" && !user.is_deleted)
+            .filter(
+              (user) =>
+                user.role !== "admin" &&
+                !user.is_deleted &&
+                (!url.searchParams.getAll("ids").length ||
+                  url.searchParams.getAll("ids").includes(user.id)) &&
+                (!(url.searchParams.get("search") ?? "") ||
+                  [user.display_name ?? "", user.username, user.email].some(
+                    (value) =>
+                      value
+                        .toLowerCase()
+                        .includes(
+                          (url.searchParams.get("search") ?? "").toLowerCase(),
+                        ),
+                  )),
+            )
             .map((user) => ({
               id: user.id,
               display_name: user.display_name,
@@ -587,6 +645,7 @@ export async function mockAccessApi(
               email: user.email,
               role: user.role,
               status: user.status,
+              access_ends_at: user.expires_at,
             })),
           url,
         ),
@@ -627,7 +686,14 @@ export async function mockAccessApi(
           : rest === "/members" && method === "PUT"
             ? { member_ids: (body as { member_ids: string[] }).member_ids }
             : rest === "/access" && method === "PUT"
-              ? { access: (body as { access: AccessEntry[] }).access }
+              ? {
+                  access: group(
+                    found.id,
+                    found.name,
+                    found.member_ids,
+                    (body as { access: AccessEntry[] }).access,
+                  ).access,
+                }
               : null;
       if (changes) {
         const next = { ...found, ...changes, revision: found.revision + 1 };
@@ -635,10 +701,43 @@ export async function mockAccessApi(
         return route.fulfill({ headers: { ETag: etag(next) }, json: next });
       }
     }
+    if (path.startsWith("/api/departments/")) {
+      const found = departments.find((item) => item.id === path.split("/")[3]);
+      return found
+        ? route.fulfill({ json: found })
+        : route.fulfill({ status: 404, json: { detail: "Not found" } });
+    }
     if (path === "/api/departments")
-      return route.fulfill({ json: listPage(departments, url) });
+      return route.fulfill({
+        json: listPage(
+          departments.filter((item) =>
+            item.department_name
+              .toLowerCase()
+              .includes((url.searchParams.get("search") ?? "").toLowerCase()),
+          ),
+          url,
+        ),
+      });
+    if (path.startsWith("/api/modules/")) {
+      const found = modules.find((item) => item.id === path.split("/")[3]);
+      return found
+        ? route.fulfill({ json: found })
+        : route.fulfill({ status: 404, json: { detail: "Not found" } });
+    }
     if (path === "/api/modules")
-      return route.fulfill({ json: listPage(modules, url) });
+      return route.fulfill({
+        json: listPage(
+          modules.filter(
+            (item) =>
+              (!url.searchParams.get("department_id") ||
+                item.department_id === url.searchParams.get("department_id")) &&
+              item.module_name
+                .toLowerCase()
+                .includes((url.searchParams.get("search") ?? "").toLowerCase()),
+          ),
+          url,
+        ),
+      });
     if (path === "/api/workspace" && method === "GET")
       return route.fulfill({ json: api.workspace });
     if (path === "/api/workspace" && method === "PATCH") {

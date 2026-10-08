@@ -126,6 +126,11 @@ def test_managers_also_see_the_authors_of_expired_posts(
     response = _client(db, manager).get(f"/api/boards/{board.id}/post-authors")
     assert response.status_code == 200
     assert response.json()["items"] == [{"id": str(expired.id), "label": expired.username}]
+    lookup = _client(db, manager).get(
+        f"/api/boards/{board.id}/post-authors", params={"ids": str(expired.id)}
+    )
+    assert lookup.status_code == 200
+    assert lookup.json() == response.json()
 
 
 def test_inactive_deleted_or_unestablished_authors_are_not_choices(
@@ -165,6 +170,7 @@ def test_missing_board_access_does_not_reveal_authors(
     endpoint = f"/api/boards/{board.id}/post-authors"
 
     assert _client(db, outsider).get(endpoint).status_code == 404
+    assert _client(db, outsider).get(endpoint, params={"ids": str(owner.id)}).status_code == 404
 
 
 def test_author_choices_page_every_visible_author_without_a_global_cap(
@@ -275,3 +281,123 @@ def test_author_list_rejects_invalid_or_unsupported_parameters(
     response = _client(db, owner).get(f"/api/boards/{board.id}/post-authors", params=params)
 
     assert response.status_code == 422
+
+
+def test_author_ids_intersect_visible_eligible_authors_before_search_and_paging(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    owner = _actor(db, "authors-lookup-owner")
+    viewer = _actor(db, "authors-lookup-reader", write=False)
+    board = _board(db, owner)
+    _grant(db, board, viewer, "read")
+    requested = [_actor(db, "authors-lookup-choice") for _ in range(2)]
+    for author in requested:
+        author.display_name = "Lookup same label"
+        _published(db, board, author)
+    _published(db, board, requested[0])
+    decoy = _actor(db, "authors-lookup-decoy")
+    decoy.display_name = "Lookup same label"
+    _published(db, board, decoy)
+    unavailable = {
+        state: _actor(db, f"authors-lookup-{state}")
+        for state in (
+            "archived",
+            "expired-post",
+            "expired-user",
+            "disabled",
+            "deleted",
+            "unestablished",
+            "other-board",
+            "no-post",
+        )
+    }
+    past = datetime.now(UTC) - timedelta(days=1)
+    for state, author in unavailable.items():
+        if state == "no-post":
+            continue
+        _published(
+            db,
+            _board(db, owner) if state == "other-board" else board,
+            author,
+            status="archived" if state == "archived" else "published",
+            expires_at=past if state == "expired-post" else None,
+        )
+    unavailable["expired-user"].expires_at = past
+    unavailable["disabled"].status = UserStatus.DISABLED.value
+    unavailable["deleted"].is_deleted = True
+    unavailable["deleted"].deleted_at = datetime.now(UTC)
+    unavailable["unestablished"].invitation_sent_at = datetime.now(UTC)
+    db.commit()
+    client = _client(db, viewer)
+    endpoint = f"/api/boards/{board.id}/post-authors"
+    ids = [author.id for author in [*requested, *unavailable.values(), requested[0]]]
+    ids += [uuid7() for _ in range(100 - len(ids))]
+    params = [("ids", str(value)) for value in ids]
+
+    pages = [
+        client.get(endpoint, params=[*params, ("limit", "1"), ("offset", str(offset))])
+        for offset in (0, 1)
+    ]
+
+    assert all(response.status_code == 200 for response in pages)
+    assert [response.json()["items"][0]["id"] for response in pages] == [
+        str(author.id) for author in sorted(requested, key=lambda author: author.id)
+    ]
+    for offset, response in enumerate(pages):
+        assert response.headers["cache-control"] == "private, no-store"
+        assert response.json()["pagination"] == {
+            "limit": 1,
+            "offset": offset,
+            "count": 1,
+            "total": 2,
+            "has_more": offset == 0,
+        }
+        assert response.json()["items"][0]["label"] == "Lookup same label"
+    searched = client.get(endpoint, params=[*params, ("search", requested[1].username)]).json()
+    assert searched["items"] == [{"id": str(requested[1].id), "label": "Lookup same label"}]
+    assert searched["pagination"]["total"] == 1
+    absent_search = client.get(endpoint, params=[*params, ("search", decoy.username)]).json()
+    assert absent_search["items"] == []
+    assert absent_search["pagination"]["total"] == 0
+    descending = client.get(
+        endpoint, params=[*params, ("sort_by", "username"), ("sort_order", "desc")]
+    ).json()
+    assert [row["id"] for row in descending["items"]] == [
+        str(author.id)
+        for author in sorted(
+            requested, key=lambda author: (author.username, author.id), reverse=True
+        )
+    ]
+    unknown = client.get(endpoint, params={"ids": str(uuid7())}).json()
+    assert unknown["items"] == []
+    assert unknown["pagination"]["total"] == 0
+    assert unknown["pagination"]["has_more"] is False
+    default = client.get(endpoint).json()
+    assert {row["id"] for row in default["items"]} == {
+        str(author.id) for author in [*requested, decoy]
+    }
+    assert default["pagination"]["total"] == 3
+    unsupported = client.get(endpoint, params=[*params, ("deleted", "include")])
+    assert unsupported.status_code == 422
+
+
+@pytest.mark.parametrize("kind", ["over_limit", "malformed", "empty"])
+def test_author_ids_reject_unbounded_or_invalid_lookup(
+    integration_owner_db: Session, kind: str
+) -> None:
+    db = integration_owner_db
+    owner = _actor(db, "authors-lookup-validation-owner")
+    board = _board(db, owner)
+    db.commit()
+    values = (
+        [str(owner.id)] * 101
+        if kind == "over_limit"
+        else ["invalid" if kind == "malformed" else ""]
+    )
+
+    response = _client(db, owner).get(
+        f"/api/boards/{board.id}/post-authors", params=[("ids", value) for value in values]
+    )
+
+    assert response.status_code == 422, response.text

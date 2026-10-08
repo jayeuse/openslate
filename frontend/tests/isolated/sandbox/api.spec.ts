@@ -11,7 +11,6 @@ import {
   exportSandboxBundle,
   getSandboxVersion,
   importSandboxBundle,
-  listAllSandboxVersions,
   listSandboxTriggerRuns,
   listSandboxTests,
   listSandboxVersions,
@@ -397,30 +396,49 @@ test("uses documented version and import endpoints with revision payloads", asyn
   }
 });
 
-test("loads every durable Sandbox version page as one complete collection", async () => {
-  const older = {
-    ...version,
-    id: "00000000-0000-4000-8000-000000000002",
-    sequence: 1,
-  };
-  const mock = installFetch((input) => {
-    const url = new URL(String(input), "http://openslate.test");
-    const offset = Number(url.searchParams.get("offset"));
-    return Response.json({
-      items: [offset === 0 ? version : older],
-      limit: 100,
-      offset,
+test("Sandbox history requests only a bounded server-search page", async () => {
+  const mock = installFetch(() =>
+    Response.json({
+      items: [version],
+      limit: 20,
+      offset: 20,
       count: 1,
-      total: 2,
-      hasMore: offset === 0,
-    });
-  });
+      total: 60,
+      hasMore: true,
+    }),
+  );
   try {
-    await expect(listAllSandboxVersions()).resolves.toEqual([version, older]);
+    await expect(
+      listSandboxVersions({
+        limit: 20,
+        offset: 20,
+        search: " migration ",
+        kind: "imported",
+      }),
+    ).resolves.toMatchObject({ items: [version], total: 60, hasMore: true });
     expect(mock.requests.map(({ input }) => String(input))).toEqual([
-      "/api/sandbox/versions?limit=100&offset=0",
-      "/api/sandbox/versions?limit=100&offset=1",
+      "/api/sandbox/versions?limit=20&offset=20&search=migration&kind=imported",
     ]);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("Sandbox history rejects invalid search and kind before transport", async () => {
+  const mock = installFetch(() => Response.json(null));
+  try {
+    for (const options of [
+      { search: "x".repeat(101) },
+      { kind: "invalid" },
+      { limit: 101 },
+      { offset: -1 },
+    ])
+      await expect(async () =>
+        listSandboxVersions(
+          options as Parameters<typeof listSandboxVersions>[0],
+        ),
+      ).rejects.toThrow();
+    expect(mock.requests).toHaveLength(0);
   } finally {
     mock.restore();
   }

@@ -186,66 +186,62 @@ export function isStaleRecordSave(error: unknown): boolean {
   return error instanceof ApiError && error.status === 412;
 }
 
-export async function listOpenViewRelationshipFields(
+export function listOpenViewRelationshipFields(
   moduleId: string,
-): Promise<OpenViewRelationshipField[]> {
+  options: { limit?: number; offset?: number } = {},
+): Promise<OpenViewPage<OpenViewRelationshipField>> {
   const query = new URLSearchParams({
     module_id: uuidSchema.parse(moduleId),
     type: "relationship",
-    limit: "100",
+    deleted: "exclude",
+    limit: String(options.limit ?? 100),
+    offset: String(options.offset ?? 0),
   });
-  const page = await apiFetch(
-    `/fields?${query.toString()}`,
-    listSchema(relationshipFieldSchema),
-    { cache: "no-store" },
-  );
-  return page.items
-    .filter((field) => !field.isDeleted)
-    .sort((left, right) => left.position - right.position);
+  return apiFetch(`/fields?${query}`, listSchema(relationshipFieldSchema), {
+    cache: "no-store",
+  });
 }
 
-const RECORD_LINK_PAGE_SIZE = 100;
-// A record with more links than this is refused rather than shown incomplete.
-const RECORD_LINK_MAX_PAGES = 50;
-
-/** Every visible link that starts or ends at the record (the panel treats it as complete). */
-export async function listOpenViewRecordLinks(
+/** One visible incident-link page; the caller exposes the continuation. */
+export function listOpenViewRecordLinks(
   recordId: string,
-): Promise<OpenViewRelationship[]> {
-  const incident = uuidSchema.parse(recordId);
-  const links: OpenViewRelationship[] = [];
-  for (let pageIndex = 0; pageIndex < RECORD_LINK_MAX_PAGES; pageIndex += 1) {
-    const query = new URLSearchParams({
-      incident_record_id: incident,
-      limit: String(RECORD_LINK_PAGE_SIZE),
-      offset: String(pageIndex * RECORD_LINK_PAGE_SIZE),
-    });
-    const page = await apiFetch(
-      `/relationships?${query.toString()}`,
-      listSchema(relationshipSchema),
-      { cache: "no-store" },
-    );
-    links.push(...page.items);
-    if (!page.pagination.hasMore) return links;
-  }
-  throw new ApiContractError();
+  options: { limit?: number; offset?: number } = {},
+): Promise<OpenViewPage<OpenViewRelationship>> {
+  return listOpenViewLinks({ incidentRecordId: recordId, ...options });
 }
 
-/** One page of a link field's visible links. */
+/** One bounded, server-filtered relationship page. Exact filters support write reconciliation and candidate occupancy. */
+export function listOpenViewLinks(options: {
+  incidentRecordId?: string;
+  fieldId?: string;
+  sourceRecordId?: string;
+  targetRecordId?: string;
+  limit?: number;
+  offset?: number;
+  signal?: AbortSignal;
+}): Promise<OpenViewPage<OpenViewRelationship>> {
+  const query = new URLSearchParams({
+    limit: String(options.limit ?? 100),
+    offset: String(options.offset ?? 0),
+  });
+  for (const [key, value] of Object.entries({
+    incident_record_id: options.incidentRecordId,
+    field_id: options.fieldId,
+    source_record_id: options.sourceRecordId,
+    target_record_id: options.targetRecordId,
+  }))
+    if (value) query.set(key, uuidSchema.parse(value));
+  return apiFetch(`/relationships?${query}`, listSchema(relationshipSchema), {
+    cache: "no-store",
+    signal: options.signal,
+  });
+}
+
 export function listOpenViewFieldLinks(
   fieldId: string,
   options: { limit: number; offset: number },
 ): Promise<OpenViewPage<OpenViewRelationship>> {
-  const query = new URLSearchParams({
-    field_id: uuidSchema.parse(fieldId),
-    limit: String(options.limit),
-    offset: String(options.offset),
-  });
-  return apiFetch(
-    `/relationships?${query.toString()}`,
-    listSchema(relationshipSchema),
-    { cache: "no-store" },
-  );
+  return listOpenViewLinks({ fieldId, ...options });
 }
 
 export function linkOpenViewRecords(input: {
@@ -295,14 +291,16 @@ export async function unlinkOpenViewRecords(
 export function searchOpenViewLinkTargets(input: {
   moduleId: string;
   definition: OpenViewQueryDefinition;
+  limit?: number;
+  offset?: number;
 }): Promise<OpenViewPage<OpenViewRecord>> {
   return openViewReadFetch("/records/query", recordListSchema, {
     method: "POST",
     body: JSON.stringify({
       module_id: uuidSchema.parse(input.moduleId),
       definition: serializeOpenViewQueryDefinition(input.definition),
-      limit: 50,
-      offset: 0,
+      limit: input.limit ?? 50,
+      offset: input.offset ?? 0,
     }),
   });
 }

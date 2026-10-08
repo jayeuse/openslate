@@ -22,10 +22,11 @@ import {
   postFeedQueryForSort,
   normalizePublishedPostSearch,
   useServerBoardPostAuthors,
+  useServerBoardPostAuthorLabels,
   useServerBoardPosts,
-  visiblePostAuthorId,
   type PublishedPostSort,
 } from "../hooks/use-server-board-posts";
+import type { BoardPostAuthorChoice } from "../adapters/board-post-author-api";
 import { BoardEmpty } from "./ui";
 import {
   ServerBoardPostFeedDisplay,
@@ -93,6 +94,9 @@ function ScopedServerBackedBoardPosts({
     error: string | null;
   } | null>(null);
   const [historyPost, setHistoryPost] = useState<BoardPost | null>(null);
+  const [cardHistoryAuthorId, setCardHistoryAuthorId] = useState<string | null>(
+    null,
+  );
   const selectedDetail = detail?.key === detailKey ? detail : null;
   const selectedPost = selectedDetail?.post ?? null;
   const historyOpen =
@@ -130,13 +134,15 @@ function ScopedServerBackedBoardPosts({
   const [sort, setSort] = useState<PublishedPostSort>("newest");
   const [searchDraft, setSearchDraft] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
-  const [selectedAuthorId, setSelectedAuthorId] = useState<string | null>(null);
+  const [selectedAuthor, setSelectedAuthor] =
+    useState<BoardPostAuthorChoice | null>(null);
+  const [authorSearch, setAuthorSearch] = useState("");
   const [filtersExpanded, setFiltersExpanded] = useState(false);
-  const authors = useServerBoardPostAuthors(boardId, refreshKey);
-  const choices = authors.state.data;
-  const visibleAuthorId = visiblePostAuthorId(selectedAuthorId, choices);
-  const authorSelectionGone =
-    selectedAuthorId !== null && visibleAuthorId === null;
+  const authors = useServerBoardPostAuthors(boardId, refreshKey, authorSearch);
+  const authorSelectionGone = authors.state.status === "denied";
+  const visibleAuthorId = authorSelectionGone
+    ? null
+    : (selectedAuthor?.id ?? null);
   const effectiveOffset = authorSelectionGone ? 0 : offset;
   const queryOptions = {
     limit: pageSize,
@@ -148,12 +154,41 @@ function ScopedServerBackedBoardPosts({
     refreshKey,
     appliedSearch,
     visibleAuthorId,
-    choices !== null && authors.state.status !== "denied",
+    authors.readyToRead,
     queryOptions,
   );
-  const page = state.data;
+  const knownAuthorIds = [
+    ...(state.data?.items.map((post) => post.authorId) ?? []),
+    ...(selectedPost ? [selectedPost.authorId] : []),
+    ...(cardHistoryAuthorId ? [cardHistoryAuthorId] : []),
+  ];
+  const labels = useServerBoardPostAuthorLabels(
+    boardId,
+    refreshKey,
+    knownAuthorIds,
+    authors.readyToRead,
+  );
+  const authorsDenied = authorSelectionGone || labels.denied;
+  const choices = authorsDenied ? null : authors.state.data;
+  const page = authorsDenied ? null : state.data;
+  const authorError = authors.state.error ?? labels.state.error;
+  const retryAuthors = () => {
+    authors.retry();
+    labels.retry();
+  };
+  const knownLabels = new Map(
+    (labels.state.data ?? []).map((choice) => [choice.id, choice.label]),
+  );
   const authorLabels = Object.fromEntries(
-    (choices ?? []).map((choice) => [choice.id, choice.label]),
+    authorsDenied
+      ? []
+      : knownAuthorIds.map((authorId) => [
+          authorId,
+          knownLabels.get(authorId) ??
+            (labels.state.status === "loading"
+              ? "Loading author…"
+              : "Author unavailable"),
+        ]),
   );
   const activeFilterCount = visibleAuthorId === null ? 0 : 1;
   const filtersId = `${id}-filters`;
@@ -161,7 +196,7 @@ function ScopedServerBackedBoardPosts({
 
   useEffect(() => {
     if (!authorSelectionGone) return;
-    setSelectedAuthorId(null);
+    setSelectedAuthor(null);
     setOffset(0);
   }, [authorSelectionGone]);
 
@@ -290,7 +325,7 @@ function ScopedServerBackedBoardPosts({
           <div className="max-w-sm">
             <SearchSelect
               label="Post author"
-              value={visibleAuthorId ?? ""}
+              value={authorsDenied ? "" : (visibleAuthorId ?? "")}
               options={[
                 { value: "", label: "All authors" },
                 ...(choices ?? []).map((choice) => ({
@@ -298,29 +333,43 @@ function ScopedServerBackedBoardPosts({
                   label: choice.label,
                 })),
               ]}
-              disabled={choices === null || authors.state.status === "loading"}
+              selectedOption={
+                selectedAuthor && !authorsDenied
+                  ? { value: selectedAuthor.id, label: selectedAuthor.label }
+                  : undefined
+              }
+              search={authorSearch}
+              onSearchChange={(value) => setAuthorSearch(value.slice(0, 100))}
+              loading={
+                authors.state.status === "loading" && !authors.loadingMore
+              }
+              loadingMore={authors.loadingMore}
+              error={authorError ?? undefined}
+              onRetry={retryAuthors}
+              hasMore={authors.state.pagination?.hasMore}
+              onLoadMore={authors.loadMore}
+              disabled={authorsDenied}
               onValueChange={(value) => {
-                if (
-                  value !== "" &&
-                  !choices?.some((choice) => choice.id === value)
-                )
-                  return;
-                setSelectedAuthorId(value || null);
+                const choice =
+                  choices?.find((item) => item.id === value) ??
+                  (selectedAuthor?.id === value ? selectedAuthor : null);
+                if (value && !choice) return;
+                setSelectedAuthor(value ? choice : null);
                 setOffset(0);
               }}
             />
           </div>
         </div>
       </Card>
-      {authors.state.error && (
+      {authorError && (
         <Alert variant="destructive">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>{authors.state.error}</span>
+            <span>{authorError}</span>
             <Button
               type="button"
               variant="outline"
               className="min-h-11"
-              onClick={authors.retry}
+              onClick={retryAuthors}
             >
               Retry authors
             </Button>
@@ -352,6 +401,7 @@ function ScopedServerBackedBoardPosts({
           appliedSearch={appliedSearch}
           authorLabels={authorLabels}
           onReadPost={onSelectPost}
+          onHistoryAuthorChange={setCardHistoryAuthorId}
         />
       )}
       {!page && state.status === "loading" && (
@@ -420,24 +470,29 @@ function ScopedServerBackedBoardPosts({
           </div>
         </div>
       )}
-      {actorId && selectedPostId !== null && !historyOpen && (
-        <ServerBoardPostReader
-          region={region}
-          post={selectedPost}
-          authorLabel={
-            selectedPost
-              ? (authorLabels[selectedPost.authorId] ?? "Author unavailable")
-              : "Author unavailable"
-          }
-          loading={selectedDetail === null}
-          error={selectedDetail?.error}
-          onRetry={() => setDetailRetry((current) => current + 1)}
-          onHistory={setHistoryPost}
-          onClose={() => onSelectPost?.(null)}
-          finalFocus={() => document.getElementById(`${id}-search`)}
-        />
-      )}
-      {historyOpen && selectedPost && (
+      {actorId &&
+        selectedPostId !== null &&
+        (!historyOpen || authorsDenied) && (
+          <ServerBoardPostReader
+            region={region}
+            post={authorsDenied ? null : selectedPost}
+            authorLabel={
+              selectedPost
+                ? (authorLabels[selectedPost.authorId] ?? "Author unavailable")
+                : "Author unavailable"
+            }
+            loading={!authorsDenied && selectedDetail === null}
+            error={authorsDenied ? authorError : selectedDetail?.error}
+            onRetry={() => {
+              if (authorsDenied) retryAuthors();
+              else setDetailRetry((current) => current + 1);
+            }}
+            onHistory={setHistoryPost}
+            onClose={() => onSelectPost?.(null)}
+            finalFocus={() => document.getElementById(`${id}-search`)}
+          />
+        )}
+      {historyOpen && selectedPost && !authorsDenied && (
         <ServerBoardPostHistory
           region={region}
           boardId={boardId}

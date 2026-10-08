@@ -7,11 +7,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-import { GROUP_MEMBER_LIMIT, type MemberOption } from "../helpers/groups";
-import { roleLabels } from "../helpers/people";
+import {
+  GROUP_MEMBER_LIMIT,
+  memberOptionsFromUsers,
+  memberOptionsFromCandidates,
+  type MemberOption,
+} from "../helpers/groups";
+import { personName, roleLabels } from "../helpers/people";
 
-/** Only the first matches show; a search narrows the rest. */
-const VISIBLE_MATCHES = 25;
+import { usePeopleSearch } from "../hooks/use-people-search";
+import type { AccessPeopleSource } from "../adapters/people-picker-queries";
+import type { AccessDirectoryUser, AccessMemberCandidate } from "../state/api";
 
 function PersonLine({ option }: { option: MemberOption }) {
   return (
@@ -38,18 +44,57 @@ function PersonLine({ option }: { option: MemberOption }) {
  * access ended cannot be added, and must be removed before a save.
  */
 export function GroupMemberPicker({
-  options,
+  source = "users",
+  peopleSearch,
   selected,
   disabled,
   onChange,
 }: {
-  options: readonly MemberOption[];
+  source?: AccessPeopleSource;
+  peopleSearch?: ReturnType<typeof usePeopleSearch>;
   selected: readonly string[];
   disabled: boolean;
   onChange: (memberIds: string[]) => void;
 }) {
   const id = useId();
-  const [query, setQuery] = useState("");
+  const [now] = useState(() => Date.now());
+  const localSearch = usePeopleSearch({
+    source,
+    selectedIds: selected,
+    enabled: peopleSearch === undefined,
+  });
+  const remote = peopleSearch ?? localSearch;
+  const known = [
+    ...new Map(
+      [...remote.items, ...remote.selectedItems].map((item) => [item.id, item]),
+    ).values(),
+  ];
+  const options =
+    source === "users"
+      ? memberOptionsFromUsers(
+          known.filter(
+            (item): item is AccessDirectoryUser => "is_deleted" in item,
+          ),
+          now,
+        )
+      : memberOptionsFromCandidates(
+          known.filter(
+            (item): item is AccessMemberCandidate => "access_ends_at" in item,
+          ),
+          now,
+        );
+  for (const item of remote.selectedItems) {
+    if ("is_deleted" in item && item.is_deleted && item.role !== "admin")
+      options.push({
+        id: item.id,
+        name: personName(item),
+        email: item.email,
+        role: item.role,
+        blocked: "Deleted",
+        statusLabel: "Deleted",
+      });
+  }
+  const query = remote.search;
   const [announcement, setAnnouncement] = useState("");
   const searchRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -62,7 +107,8 @@ export function GroupMemberPicker({
       (memberId): MemberOption =>
         byId.get(memberId) ?? {
           id: memberId,
-          name: "Unavailable person",
+          name:
+            source === "candidates" ? "Former member" : "Unavailable person",
           email: "No longer in the directory",
           role: "member",
           blocked: "Unavailable",
@@ -74,11 +120,9 @@ export function GroupMemberPicker({
     );
   const chosen = new Set(selected);
   const needle = query.trim().toLocaleLowerCase();
+  const visibleIds = new Set(remote.items.map((item) => item.id));
   const matches = options.filter(
-    (option) =>
-      !chosen.has(option.id) &&
-      (!needle ||
-        `${option.name}\n${option.email}`.toLocaleLowerCase().includes(needle)),
+    (option) => visibleIds.has(option.id) && !chosen.has(option.id),
   );
   const full = selected.length >= GROUP_MEMBER_LIMIT;
   const blockedMembers = members.filter((member) => member.blocked).length;
@@ -145,7 +189,7 @@ export function GroupMemberPicker({
                   className="size-11 shrink-0"
                   aria-label={`Remove ${member.name}`}
                   data-member-id={member.id}
-                  disabled={disabled}
+                  disabled={disabled || remote.error !== ""}
                   onClick={() => remove(member)}
                 >
                   <UserRoundMinus aria-hidden="true" />
@@ -175,7 +219,7 @@ export function GroupMemberPicker({
             placeholder="Name or email"
             className="min-h-11 pl-9"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => remote.onSearchChange(event.target.value)}
           />
         </div>
         {full ? (
@@ -185,7 +229,7 @@ export function GroupMemberPicker({
         ) : null}
         {matches.length ? (
           <ul aria-label="People to add" className="divide-y rounded-lg border">
-            {matches.slice(0, VISIBLE_MATCHES).map((option) => (
+            {matches.map((option) => (
               <li
                 key={option.id}
                 className="flex min-w-0 items-center gap-3 px-3 py-2"
@@ -197,7 +241,12 @@ export function GroupMemberPicker({
                   size="icon"
                   className="size-11 shrink-0"
                   aria-label={`Add ${option.name}`}
-                  disabled={disabled || full || option.blocked !== null}
+                  disabled={
+                    disabled ||
+                    full ||
+                    option.blocked !== null ||
+                    remote.error !== ""
+                  }
                   onClick={() => add(option)}
                 >
                   <UserRoundPlus aria-hidden="true" />
@@ -212,10 +261,34 @@ export function GroupMemberPicker({
               : "Everyone who can join is already in this group."}
           </p>
         )}
-        {matches.length > VISIBLE_MATCHES ? (
-          <p className="text-muted-foreground text-sm">
-            {matches.length - VISIBLE_MATCHES} more. Search to find them.
+        {remote.loading ? (
+          <p role="status" className="text-muted-foreground text-sm">
+            Loading people…
           </p>
+        ) : null}
+        {remote.error ? (
+          <div role="alert" className="space-y-2 text-sm">
+            <p>{remote.error}</p>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={remote.retry}
+            >
+              Retry people
+            </Button>
+          </div>
+        ) : null}
+        {remote.hasMore ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            disabled={remote.loadingMore || remote.loading}
+            onClick={() => void remote.loadMore()}
+          >
+            {remote.loadingMore ? "Loading more…" : "Load more people"}
+          </Button>
         ) : null}
       </section>
     </div>

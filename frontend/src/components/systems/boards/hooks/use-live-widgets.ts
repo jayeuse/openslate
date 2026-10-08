@@ -11,7 +11,8 @@ import {
   type BoardWidgetQueryPlan,
 } from "../domain/live-widget-query";
 import {
-  listOpenViewDataSourceFields,
+  getOpenViewDataSourceField,
+  type OpenViewDataSourceField,
   queryOpenViewRecords,
   type OpenViewPage,
   type OpenViewRecord,
@@ -217,7 +218,7 @@ export async function loadLiveWidgetMetadata(
 
 export async function loadLiveWidgetData(
   plan: Exclude<BoardWidgetQueryPlan, { kind: "unavailable" }>,
-  catalogs: Map<string, Promise<Map<string, string>>> = new Map(),
+  fields: Map<string, Promise<OpenViewDataSourceField>> = new Map(),
 ): Promise<LiveWidgetData> {
   if (plan.kind === "records") {
     const fieldNames: Record<string, string> = {};
@@ -225,16 +226,21 @@ export async function loadLiveWidgetData(
       plan.widgetType === "records" &&
       plan.request.definition.columns.length > 0
     ) {
-      let catalog = catalogs.get(plan.request.moduleId);
-      if (!catalog) {
-        catalog = loadOpenViewFieldCatalog(plan.request.moduleId);
-        catalogs.set(plan.request.moduleId, catalog);
-      }
-      const names = await catalog;
-      for (const field of plan.request.definition.columns) {
-        const name = names.get(field.fieldId)?.trim();
-        if (!name) throw new ApiContractError();
-        fieldNames[field.fieldId] = name;
+      for (const column of plan.request.definition.columns) {
+        const key = `${plan.request.moduleId}:${column.fieldId}`;
+        let request = fields.get(key);
+        if (!request) {
+          request = getOpenViewDataSourceField(
+            plan.request.moduleId,
+            column.fieldId,
+          );
+          fields.set(key, request);
+        }
+        const field = await request;
+        const name = field.name.trim();
+        if (!name || field.type !== column.expectedType)
+          throw new ApiContractError();
+        fieldNames[column.fieldId] = name;
       }
     }
     return {
@@ -253,37 +259,6 @@ export async function loadLiveWidgetData(
     kind: "snapshot",
     result: await queryOpenViewAggregateSnapshot(plan.request),
   };
-}
-
-const FIELD_CATALOG_PAGE_SIZE = 100;
-const MAX_FIELD_CATALOG_PAGES = 3;
-
-async function loadOpenViewFieldCatalog(
-  moduleId: string,
-): Promise<Map<string, string>> {
-  const names = new Map<string, string>();
-  let offset = 0;
-  for (
-    let pageNumber = 0;
-    pageNumber < MAX_FIELD_CATALOG_PAGES;
-    pageNumber += 1
-  ) {
-    const page = await listOpenViewDataSourceFields(moduleId, {
-      limit: FIELD_CATALOG_PAGE_SIZE,
-      offset,
-    });
-    if (
-      page.pagination.offset !== offset ||
-      page.pagination.count !== page.items.length ||
-      page.pagination.total < offset + page.items.length
-    )
-      throw new ApiContractError();
-    for (const field of page.items) names.set(field.id, field.name);
-    if (!page.pagination.hasMore) break;
-    if (page.items.length === 0) throw new ApiContractError();
-    offset += page.items.length;
-  }
-  return names;
 }
 
 export function classifyLiveWidgetFailure(
@@ -369,13 +344,13 @@ export function useLiveBoardWidgets(
             ? []
             : [{ id: widget.id, signature: widgetSignature(widget), plan }];
         });
-        const catalogs = new Map<string, Promise<Map<string, string>>>();
+        const fields = new Map<string, Promise<OpenViewDataSourceField>>();
         let next = 0;
         async function work(): Promise<void> {
           while (request === sequence.current && next < tasks.length) {
             const task = tasks[next++];
             try {
-              const data = await loadLiveWidgetData(task.plan, catalogs);
+              const data = await loadLiveWidgetData(task.plan, fields);
               if (request !== sequence.current) return;
               setState((current) =>
                 transitionLiveWidgetsState(current, {

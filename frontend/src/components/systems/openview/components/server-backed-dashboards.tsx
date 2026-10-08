@@ -18,6 +18,11 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { SearchSelect } from "@/components/ui/search-select";
+import {
+  useOpenViewDepartmentNames,
+  useOpenViewDepartmentPicker,
+} from "../hooks/use-openview-catalog";
 import {
   Dialog,
   DialogContent,
@@ -38,10 +43,7 @@ import { ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { useQuery } from "@tanstack/react-query";
 import { useOpenViewAccessDenied } from "../adapters/openview-access";
-import {
-  authMeOptions,
-  departmentsOptions,
-} from "../adapters/openview-queries";
+import { authMeOptions } from "../adapters/openview-queries";
 import {
   canManageOpenView,
   managedDepartmentIds,
@@ -545,22 +547,33 @@ export default function ServerBackedDashboards() {
   // Dashboards belong to departments. Readers of a department see its
   // Dashboards; only its managers create, change, archive or restore them.
   const identity = useQuery(authMeOptions());
-  const departmentsQuery = useQuery(departmentsOptions());
-  const departments = departmentsQuery.data ?? [];
-  const departmentNames = new Map(
-    departments.map((department) => [department.id, department.name]),
-  );
   const managed = managedDepartmentIds(identity.data);
-  const manageableDepartments =
-    managed === "all"
-      ? departments
-      : departments.filter((department) => managed.has(department.id));
-  const draftDepartmentId =
+  const [departmentSearch, setDepartmentSearch] = useState("");
+  const departmentNames = useOpenViewDepartmentNames([
+    ...dashboards.map((dashboard) => dashboard.departmentId),
+    ...(selectedDashboard ? [selectedDashboard.departmentId] : []),
+    ...(newDepartmentId ? [newDepartmentId] : []),
+  ]);
+  const initialDepartmentId = [...departmentNames.keys()].find(
+    (id) => managed === "all" || managed.has(id),
+  );
+  const selectedDepartmentId =
     selectedDashboard?.departmentId ??
-    (manageableDepartments.some((item) => item.id === newDepartmentId)
-      ? newDepartmentId
-      : (manageableDepartments[0]?.id ?? ""));
-  const canCreateDashboards = manageableDepartments.length > 0;
+    (newDepartmentId || initialDepartmentId || "");
+  const departmentPicker = useOpenViewDepartmentPicker(
+    departmentSearch,
+    selectedDepartmentId,
+  );
+  const manageableDepartments = departmentPicker.items.filter(
+    (department) => managed === "all" || managed.has(department.id),
+  );
+  const draftDepartmentId =
+    selectedDepartmentId ||
+    manageableDepartments[0]?.id ||
+    (managed !== "all" ? [...managed][0] : "") ||
+    "";
+  const canCreateDashboards =
+    managed === "all" ? departmentPicker.items.length > 0 : managed.size > 0;
   const canManageDashboard = selectedDashboard
     ? canManageOpenView(identity.data, selectedDashboard.departmentId)
     : canCreateDashboards;
@@ -2101,36 +2114,45 @@ export default function ServerBackedDashboards() {
               </DialogHeader>
               <div className="mt-2 grid gap-4 sm:grid-cols-2">
                 <Field className="min-w-0 sm:col-span-2">
-                  <FieldLabel htmlFor="dashboard-department">
-                    Department
-                  </FieldLabel>
-                  <Select
+                  <SearchSelect
                     id="dashboard-department"
-                    className="min-h-11 w-full"
+                    label="Department"
                     value={draftDepartmentId}
+                    options={manageableDepartments.map((department) => ({
+                      value: department.id,
+                      label: department.name,
+                    }))}
+                    selectedOption={
+                      departmentPicker.selected
+                        ? {
+                            value: departmentPicker.selected.id,
+                            label: departmentPicker.selected.name,
+                          }
+                        : departmentNames.has(draftDepartmentId)
+                          ? {
+                              value: draftDepartmentId,
+                              label: departmentNames.get(draftDepartmentId)!,
+                            }
+                          : undefined
+                    }
                     disabled={
                       Boolean(selectedDashboard) ||
                       draftWidgets.length > 0 ||
                       savePending
                     }
+                    search={departmentSearch}
+                    onSearchChange={setDepartmentSearch}
+                    loading={departmentPicker.loading}
+                    error={departmentPicker.error}
+                    onRetry={departmentPicker.retry}
+                    hasMore={departmentPicker.hasMore}
+                    onLoadMore={() => void departmentPicker.loadMore()}
+                    loadingMore={departmentPicker.loadingMore}
                     onValueChange={(value) => {
                       setNewDepartmentId(value);
                       selectBuilderModule("");
                     }}
-                  >
-                    {selectedDashboard ? (
-                      <option value={selectedDashboard.departmentId}>
-                        {departmentNames.get(selectedDashboard.departmentId) ??
-                          "Department"}
-                      </option>
-                    ) : (
-                      manageableDepartments.map((department) => (
-                        <option key={department.id} value={department.id}>
-                          {department.name}
-                        </option>
-                      ))
-                    )}
-                  </Select>
+                  />
                   <FieldDescription>
                     {selectedDashboard
                       ? "A Dashboard stays in its department."

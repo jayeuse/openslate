@@ -9,9 +9,10 @@ from hashlib import sha256
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.common.listing.query import _escape_like
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.models import SandboxVersion
 from app.systems.sandbox.designs.schemas import (
@@ -105,12 +106,24 @@ def create_version(
     return _version_detail(version)
 
 
-def list_versions(db: Session, *, limit: int, offset: int) -> VersionListResponse:
+def list_versions(
+    db: Session, *, limit: int, offset: int, search: str | None = None, kind: str | None = None
+) -> VersionListResponse:
     statement = (
         select(SandboxVersion)
         .where(SandboxVersion.is_deleted.is_(False))
         .order_by(SandboxVersion.sequence.desc())
     )
+    if kind is not None:
+        statement = statement.where(SandboxVersion.kind == kind)
+    if search and (term := search.strip()):
+        pattern = f"%{_escape_like(term)}%"
+        statement = statement.where(
+            or_(
+                SandboxVersion.label.ilike(pattern, escape="\\"),
+                SandboxVersion.note.ilike(pattern, escape="\\"),
+            )
+        )
     total = int(db.scalar(select(func.count()).select_from(statement.subquery())) or 0)
     items = list(db.scalars(statement.limit(limit).offset(offset)).all())
     return VersionListResponse(

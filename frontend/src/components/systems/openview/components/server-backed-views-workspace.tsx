@@ -11,7 +11,7 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Route } from "next";
-import { ApiError } from "@/lib/api";
+import { ApiContractError, ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { Columns3, MoreHorizontal, Plus, Settings2, X } from "lucide-react";
 import {
@@ -33,10 +33,7 @@ import {
   type OpenViewSavedView,
 } from "../adapters/views-api";
 import { queryOpenViewWindowRecords } from "../adapters/window-api";
-import {
-  authMeOptions,
-  departmentsOptions,
-} from "../adapters/openview-queries";
+import { authMeOptions } from "../adapters/openview-queries";
 import { isCalendarDateField } from "./live-calendar";
 import { LiveKanban } from "./live-kanban";
 import { LiveCalendar } from "./live-calendar";
@@ -107,6 +104,7 @@ import type { SavedDraft } from "../domain/server-view-draft";
 import {
   decodeTemporaryView,
   encodeTemporaryView,
+  parseTemporaryView,
   TEMPORARY_VIEW_PARAM,
 } from "../domain/temporary-view";
 import { useServerViewsResource } from "../hooks/use-server-views-resource";
@@ -292,6 +290,12 @@ function replaceTemporaryChanges(value: string | null) {
   );
 }
 
+import {
+  selectedFieldIds,
+  useOpenViewDepartmentNames,
+  useOpenViewSelectedFields,
+} from "../hooks/use-openview-catalog";
+
 function DepartmentName({
   departmentId,
   fallback,
@@ -299,10 +303,8 @@ function DepartmentName({
   departmentId: string | undefined;
   fallback: string;
 }) {
-  const departments = useQuery(departmentsOptions());
-  return (
-    departments.data?.find((item) => item.id === departmentId)?.name ?? fallback
-  );
+  const names = useOpenViewDepartmentNames(departmentId ? [departmentId] : []);
+  return names.get(departmentId ?? "") ?? fallback;
 }
 
 export default function ServerBackedViewsWorkspace({
@@ -429,7 +431,49 @@ export default function ServerBackedViewsWorkspace({
       return views;
     return [...views, deepLinkView];
   }, [currentWorkspace, deepLinkView, moduleId]);
-  const fields = currentWorkspace?.fields ?? [];
+  const metadataView =
+    moduleViews.find((view) => view.id === requestedView && !view.isDeleted) ??
+    moduleViews.find((view) => view.isDefault && !view.isDeleted);
+  const temporaryMetadata =
+    requestedChanges && currentWorkspace
+      ? parseTemporaryView(
+          requestedChanges,
+          metadataView
+            ? draftForView(metadataView)
+            : {
+                name: "",
+                definition: emptyDefinition(currentWorkspace.fields),
+                presentation: emptyPresentation(currentWorkspace.fields),
+              },
+        )
+      : null;
+  const selectedFields = useOpenViewSelectedFields(
+    moduleId,
+    currentWorkspace?.fields,
+    [
+      ...selectedFieldIds(metadataView),
+      ...selectedFieldIds(temporaryMetadata),
+      ...(draftState?.key.startsWith(`${moduleId}:`)
+        ? selectedFieldIds(draftState.value)
+        : []),
+    ],
+  );
+  const fields = selectedFields.items;
+  // A missing or mismatched field is refused by normal URL validation.
+  // Dependency failures must keep a valid arriving address available to Retry.
+  const selectedMetadataFailure =
+    selectedFields.error &&
+    !(selectedFields.error instanceof ApiContractError) &&
+    !(
+      selectedFields.error instanceof ApiError &&
+      selectedFields.error.status === 404
+    );
+  const fieldMetadataError = selectedMetadataFailure
+    ? apiErrorMessage(
+        selectedFields.error,
+        "Field metadata could not be loaded. Retry.",
+      )
+    : "";
   const source = catalog?.find((item) => item.id === moduleId);
   const moduleName = source?.name;
   // The module's shared default view opens when the address names no view.
@@ -566,7 +610,11 @@ export default function ServerBackedViewsWorkspace({
   // value the page wrote itself is never restored onto another View.
   const temporaryChanges = dirty ? encodeTemporaryView(baseDraft, draft) : null;
   const draftBaseReady = Boolean(
-    moduleId && currentWorkspace && (!routedView || activeSaved),
+    moduleId &&
+    currentWorkspace &&
+    (!routedView || activeSaved) &&
+    !selectedFields.pending &&
+    !selectedMetadataFailure,
   );
   const restoredDraftKey = useRef<string | null>(null);
   const mirroredChanges = useRef<string | null>(null);
@@ -2336,18 +2384,20 @@ export default function ServerBackedViewsWorkspace({
               </Button>
             </Alert>
           ) : null}
-          {metadataError ? (
+          {metadataError || fieldMetadataError ? (
             <Alert
               role="alert"
               variant="destructive"
               className="flex flex-wrap items-center justify-between gap-3"
             >
-              <span>{metadataError}</span>
+              <span>{metadataError || fieldMetadataError}</span>
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-11"
-                onClick={retryMetadata}
+                onClick={
+                  fieldMetadataError ? selectedFields.retry : retryMetadata
+                }
               >
                 Retry loading metadata
               </Button>
@@ -2791,7 +2841,16 @@ export default function ServerBackedViewsWorkspace({
                           type="button"
                           variant="outline"
                           className="min-h-11"
-                          disabled={Boolean(pendingAction)}
+                          disabled={
+                            Boolean(pendingAction) ||
+                            Boolean(currentWorkspace?.fieldsHasMore) ||
+                            metadataLoadingMore
+                          }
+                          title={
+                            currentWorkspace?.fieldsHasMore
+                              ? "Load all fields before creating a record."
+                              : undefined
+                          }
                           onClick={() => setCreateRecordOpen(true)}
                         >
                           <Plus aria-hidden="true" />
@@ -3253,6 +3312,12 @@ export default function ServerBackedViewsWorkspace({
                                 moduleId,
                                 departmentId: source.departmentId,
                                 editableFields: fields,
+                                fieldsHasMore: Boolean(
+                                  currentWorkspace?.fieldsHasMore,
+                                ),
+                                fieldsLoadingMore: metadataLoadingMore,
+                                onLoadMoreFields: () =>
+                                  void loadMoreModuleMetadata(),
                                 dataSources: catalog ?? [],
                                 canWrite: canWriteRecords,
                                 canReadHistory: canReadRecordHistory,

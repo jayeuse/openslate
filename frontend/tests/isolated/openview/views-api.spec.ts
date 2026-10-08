@@ -725,3 +725,37 @@ test("keeps durable API commands independent of sample-provider values", async (
     mock.restore();
   }
 });
+
+test("resolves an active primitive field by ID and rejects a mismatched module", async () => {
+  const { getOpenViewDataSourceField } =
+    await import("../../../src/components/systems/openview/adapters/views-api");
+  let responseModule = moduleId;
+  const fake = installFetch(() =>
+    Response.json({
+      id: fieldId,
+      module_id: responseModule,
+      name: "Off-page title",
+      type: "text",
+      required: false,
+      position: 120,
+      config: {},
+      is_deleted: false,
+      created_at: "2026-10-01T00:00:00Z",
+      updated_at: "2026-10-01T00:00:00Z",
+      deleted_at: null,
+      performed_by: null,
+    }),
+  );
+  try {
+    await expect(
+      getOpenViewDataSourceField(moduleId, fieldId),
+    ).resolves.toMatchObject({ id: fieldId, moduleId, name: "Off-page title" });
+    expect(String(fake.requests[0]?.input)).toBe(`/api/fields/${fieldId}`);
+    responseModule = departmentId;
+    await expect(
+      getOpenViewDataSourceField(moduleId, fieldId),
+    ).rejects.toBeInstanceOf(ApiContractError);
+  } finally {
+    fake.restore();
+  }
+});

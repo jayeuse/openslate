@@ -211,7 +211,8 @@ test("a guest invitation needs a sponsor and starts from the workspace guest len
   expect(api.sent("POST", "/api/auth/invitations")).toHaveLength(0);
 
   await days.fill("400");
-  await dialog.getByLabel("Sponsor").selectOption({ label: "Ben Cruz" });
+  await dialog.getByRole("combobox", { name: "Sponsor", exact: true }).click();
+  await page.getByRole("option", { name: "Ben Cruz", exact: true }).click();
   await dialog.getByRole("button", { name: "Send invitation" }).click();
   await expect(
     dialog.getByText("Enter a whole number from 1 to 365."),
@@ -760,7 +761,7 @@ for (const width of [1600, 1440, 390])
     ).toBe(true);
   });
 
-test("13b: offpage deleted deep link survives catalog loading and Restore", async ({
+test("13b: offpage deleted deep link survives bounded ID loading and Restore", async ({
   page,
 }) => {
   const api = await mockPeopleApi(page);
@@ -790,7 +791,9 @@ test("13b: offpage deleted deep link survives catalog loading and Restore", asyn
     .poll(() =>
       api.listReads.some(
         (query) =>
-          query.get("deleted") === "include" && query.get("offset") === "100",
+          query.get("deleted") === "include" &&
+          query.getAll("ids").includes(ids.eli) &&
+          query.get("offset") === "0",
       ),
     )
     .toBe(true);
@@ -813,7 +816,7 @@ test("13b: offpage deleted deep link survives catalog loading and Restore", asyn
   ).toBeVisible();
 });
 
-test("13b: opening an invitation loads later-page sponsor choices without changing base invitation responses", async ({
+test("13b: an invitation searches later-page sponsor choices without changing base invitation responses", async ({
   page,
 }) => {
   const api = await mockPeopleApi(page);
@@ -846,12 +849,12 @@ test("13b: opening an invitation loads later-page sponsor choices without changi
     .getByLabel("Email", { exact: true })
     .fill("newguest@example.com");
   await dialog.getByLabel("Role", { exact: true }).selectOption("guest");
-  await expect(
-    dialog
-      .getByLabel("Sponsor", { exact: true })
-      .getByRole("option", { name: "Zzz Sponsor", exact: true }),
-  ).toHaveCount(1);
-  await dialog.getByLabel("Sponsor", { exact: true }).selectOption(sponsor);
+  await dialog.getByRole("combobox", { name: "Sponsor", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "Sponsor", exact: true })
+    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .fill("Zzz Sponsor");
+  await page.getByRole("option", { name: "Zzz Sponsor", exact: true }).click();
   await dialog
     .getByRole("button", { name: "Send invitation", exact: true })
     .click();

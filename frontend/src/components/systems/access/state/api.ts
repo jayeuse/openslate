@@ -59,13 +59,23 @@ export type * from "./api-contracts";
 
 type ConditionalRequestOptions = RequestOptions & { etag: string };
 
+function lookupIds(ids: readonly string[] | undefined): string[] | undefined {
+  return ids === undefined
+    ? undefined
+    : z.array(z.uuid()).min(1).max(100).parse(ids);
+}
+
 function queryPath(
   path: string,
-  values: Record<string, string | number | boolean | undefined>,
+  values: Record<
+    string,
+    string | number | boolean | readonly string[] | undefined
+  >,
 ): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(values)) {
-    if (value !== undefined) query.set(key, String(value));
+    if (Array.isArray(value)) value.forEach((item) => query.append(key, item));
+    else if (value !== undefined) query.set(key, String(value));
   }
   const serialized = query.toString();
   return serialized ? `${path}?${serialized}` : path;
@@ -114,7 +124,7 @@ function groupPath(groupId: string): string {
 
 // Users and invitations
 
-export function listAccessUsers(
+export async function listAccessUsers(
   options: AccessUserListOptions = {},
 ): Promise<AccessPage<AccessDirectoryUser>> {
   return apiFetch(
@@ -127,6 +137,7 @@ export function listAccessUsers(
       mfa: options.mfa,
       history: options.history,
       inactive_days: options.inactive_days,
+      ids: lookupIds(options.ids),
     }),
     pageSchema(directoryUserSchema),
     { cache: "no-store", signal: options.signal },
@@ -274,10 +285,18 @@ export function revokeAccessUserSessions(
 // Groups
 
 export function listAccessGroups(
-  options: AccessGroupListOptions = {},
+  options: AccessGroupListOptions & { member_id?: string } = {},
 ): Promise<AccessPage<AccessGroup>> {
   return apiFetch(
-    queryPath("/access/groups", listValues(options)),
+    queryPath("/access/groups", {
+      ...listValues(options),
+      without_access: options.without_access,
+      without_members: options.without_members,
+      member_id:
+        options.member_id === undefined
+          ? undefined
+          : z.uuid().parse(options.member_id),
+    }),
     pageSchema(groupSchema),
     { cache: "no-store", signal: options.signal },
   );
@@ -358,17 +377,31 @@ export async function deleteAccessGroup(
 }
 
 /** People a manager may add to a group: never administrators. */
-export function listAccessMemberCandidates(
+export async function listAccessMemberCandidates(
   options: AccessMemberCandidateListOptions = {},
 ): Promise<AccessPage<AccessMemberCandidate>> {
   return apiFetch(
-    queryPath("/access/member-candidates", listValues(options)),
+    queryPath("/access/member-candidates", {
+      ...listValues(options),
+      ids: lookupIds(options.ids),
+    }),
     pageSchema(memberCandidateSchema),
     { cache: "no-store", signal: options.signal },
   );
 }
 
 // Departments and modules for the access pickers
+
+export function getAccessDepartment(
+  departmentId: string,
+  options: RequestOptions = {},
+): Promise<AccessDepartment> {
+  return apiFetch(
+    `/departments/${encodeURIComponent(departmentId)}`,
+    departmentSchema.refine((item) => item.id === departmentId),
+    { signal: options.signal },
+  );
+}
 
 export function listAccessDepartments(
   options: AccessDepartmentListOptions = {},
@@ -377,6 +410,17 @@ export function listAccessDepartments(
     queryPath("/departments", listValues(options)),
     pageSchema(departmentSchema),
     { cache: "no-store", signal: options.signal },
+  );
+}
+
+export function getAccessModule(
+  moduleId: string,
+  options: RequestOptions = {},
+): Promise<AccessModule> {
+  return apiFetch(
+    `/modules/${encodeURIComponent(moduleId)}`,
+    moduleSchema.refine((item) => item.id === moduleId),
+    { signal: options.signal },
   );
 }
 

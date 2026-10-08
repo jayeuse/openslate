@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiContractError, ApiError, apiFetch } from "@/lib/api";
 import { openViewReadFetch } from "./openview-access";
 import {
   archiveSchema,
@@ -100,6 +100,67 @@ export async function listOpenViewDataSourceFields(
     }),
   );
   return result;
+}
+
+/** Resolve a selected primitive field without crawling its catalog. */
+export async function getOpenViewDataSourceField(
+  moduleId: string,
+  fieldId: string,
+  signal?: AbortSignal,
+): Promise<OpenViewDataSourceField> {
+  const requestedModuleId = uuidSchema.parse(moduleId);
+  const id = uuidSchema.parse(fieldId);
+  const raw = await openViewReadFetch(
+    `/fields/${encodeURIComponent(id)}`,
+    z.object({
+      id: uuidSchema,
+      module_id: uuidSchema,
+      name: z.string().min(1),
+      type: z.string(),
+      required: z.boolean(),
+      position: z.number().int().min(0),
+      config: z.record(z.string(), z.unknown()),
+      is_deleted: z.boolean(),
+    }),
+    { cache: "no-store", signal },
+  );
+  if (raw.id !== id || raw.module_id !== requestedModuleId || raw.is_deleted)
+    throw new ApiContractError();
+  return fieldSchema.parse({
+    id: raw.id,
+    module_id: raw.module_id,
+    name: raw.name,
+    type: raw.type,
+    required: raw.required,
+    position: raw.position,
+    config: raw.config,
+  });
+}
+
+/** Resolve a selected active source through the existing module detail route. */
+export async function getOpenViewDataSource(
+  moduleId: string,
+  signal?: AbortSignal,
+): Promise<OpenViewDataSource> {
+  const id = uuidSchema.parse(moduleId);
+  const raw = await openViewReadFetch(
+    `/modules/${encodeURIComponent(id)}`,
+    z.object({
+      id: uuidSchema,
+      department_id: uuidSchema,
+      module_name: z.string().min(1),
+      title_field_id: uuidSchema.nullable(),
+      is_deleted: z.boolean(),
+    }),
+    { cache: "no-store", signal },
+  );
+  if (raw.id !== id || raw.is_deleted) throw new ApiContractError();
+  return {
+    id,
+    name: raw.module_name,
+    departmentId: raw.department_id,
+    titleFieldId: raw.title_field_id,
+  };
 }
 
 export async function listOpenViewAssignableUsers(

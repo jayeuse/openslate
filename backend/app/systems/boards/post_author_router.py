@@ -6,7 +6,7 @@ from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -49,7 +49,7 @@ class PostAuthorSortField(StrEnum):
 
 
 class PostAuthorListRequest(StandardListRequest[PostAuthorSortField]):
-    pass
+    ids: list[UUID] | None = Field(default=None, min_length=1, max_length=100)
 
 
 class PostAuthorListResponse(StandardListResponse[PostAuthorChoice]):
@@ -94,8 +94,7 @@ def list_post_authors(
         .distinct()
         .subquery()
     )
-    result = execute_standard_list(
-        db,
+    statement = (
         select(User)
         .join(visible_author_ids, visible_author_ids.c.author_id == User.id)
         .where(
@@ -103,7 +102,13 @@ def list_post_authors(
             User.deleted_at.is_(None),
             identity_eligible_clause(),
             established_user_clause(),
-        ),
+        )
+    )
+    if params.ids is not None:
+        statement = statement.where(User.id.in_(params.ids))
+    result = execute_standard_list(
+        db,
+        statement,
         params,
         POST_AUTHOR_LIST_SPEC,
     )

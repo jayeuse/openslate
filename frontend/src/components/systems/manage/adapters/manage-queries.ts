@@ -234,10 +234,10 @@ export const manageAuditListOptions = (request: ManageAuditListRequest) =>
     queryFn: ({ signal }) => listManageAuditLogs(request, signal),
   });
 
-export const manageAuditOptionsOptions = () =>
+export const manageAuditOptionsOptions = (search = "") =>
   queryOptions({
-    queryKey: manageKeys.auditOptions(),
-    queryFn: ({ signal }) => getManageAuditOptions(signal),
+    queryKey: [...manageKeys.auditOptions(), search.trim()],
+    queryFn: ({ signal }) => getManageAuditOptions(signal, search),
   });
 
 export const manageAuditDetailOptions = (id: string) =>

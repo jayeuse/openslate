@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, apiFetch } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 const uuid = z.string().uuid();
 const timestamp = z.iso.datetime({ offset: true });
@@ -38,21 +38,39 @@ export type OpenViewDepartment = z.output<typeof departmentSchema>;
  * Lists the departments the user can read, which own Dashboards, and name the
  * department of each data source. The server returns only readable ones.
  */
-export async function listOpenViewDepartments(
+export function listOpenViewDepartments(
+  options: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    signal?: AbortSignal;
+  } = {},
+) {
+  const query = new URLSearchParams({
+    limit: String(options.limit ?? 100),
+    offset: String(options.offset ?? 0),
+    sort_by: "department_name",
+    sort_order: "asc",
+    deleted: "exclude",
+  });
+  if (options.search?.trim()) query.set("search", options.search.trim());
+  return apiFetch(
+    `/departments?${query}`,
+    pageSchema.transform(({ items, pagination }) => ({
+      items,
+      pagination: { ...pagination, hasMore: pagination.has_more },
+    })),
+    { cache: "no-store", signal: options.signal },
+  );
+}
+
+export function getOpenViewDepartment(
+  id: string,
   signal?: AbortSignal,
-): Promise<OpenViewDepartment[]> {
-  const departments: OpenViewDepartment[] = [];
-  let offset = 0;
-  for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
-    const page = await apiFetch(
-      `/departments?limit=100&offset=${offset}&sort_by=department_name&sort_order=asc&deleted=exclude`,
-      pageSchema,
-      { cache: "no-store", signal },
-    );
-    if (page.pagination.offset !== offset) throw new ApiContractError();
-    departments.push(...page.items);
-    if (!page.pagination.has_more || page.items.length === 0) break;
-    offset += page.items.length;
-  }
-  return departments;
+): Promise<OpenViewDepartment> {
+  return apiFetch(
+    `/departments/${encodeURIComponent(uuid.parse(id))}`,
+    departmentSchema.refine((item) => item.id === id),
+    { cache: "no-store", signal },
+  );
 }

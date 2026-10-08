@@ -5361,6 +5361,7 @@
       "GroupSortField": {
         "enum": [
           "name",
+          "member_count",
           "created_at",
           "updated_at"
         ],
@@ -6600,6 +6601,18 @@
       "MemberCandidateResponse": {
         "description": "The minimum a manager needs to choose a group member.",
         "properties": {
+          "access_ends_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Ends At"
+          },
           "display_name": {
             "anyOf": [
               {
@@ -6637,7 +6650,8 @@
           "username",
           "email",
           "role",
-          "status"
+          "status",
+          "access_ends_at"
         ],
         "title": "MemberCandidateResponse",
         "type": "object"
@@ -15863,6 +15877,43 @@
               "$ref": "#/components/schemas/DeletedFilter",
               "default": "exclude"
             }
+          },
+          {
+            "in": "query",
+            "name": "without_access",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Without Access",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "without_members",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Without Members",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "member_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Member Id"
+            }
           }
         ],
         "responses": {
@@ -16422,6 +16473,27 @@
               "default": "exclude",
               "title": "Deleted",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "maxItems": 100,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ids"
             }
           }
         ],
@@ -21375,6 +21447,28 @@
             "schema": {
               "$ref": "#/components/schemas/DeletedFilter",
               "default": "exclude"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "maxItems": 100,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ids"
             }
           }
         ],
@@ -29359,6 +29453,44 @@
               "title": "Offset",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "checkpoint",
+                    "published",
+                    "imported"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
           }
         ],
         "responses": {
@@ -30180,6 +30312,27 @@
             "schema": {
               "$ref": "#/components/schemas/DeletedFilter",
               "default": "exclude"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "maxItems": 100,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ids"
             }
           },
           {

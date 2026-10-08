@@ -124,30 +124,18 @@ test("summary data uses the OpenView boundary and a records.read denial cannot b
   }
 });
 
-test("records widget resolves selected field names before querying rows", async () => {
+test("records widget resolves only configured fields by ID before querying rows", async () => {
   const mock = mockFetch((path) => {
-    if (
-      path === `/api/views/data-sources/${moduleId}/fields?limit=100&offset=0`
-    )
+    if (path === `/api/fields/${fieldId}`)
       return Response.json({
-        items: [
-          {
-            id: fieldId,
-            module_id: moduleId,
-            name: "Request title",
-            type: "text",
-            required: false,
-            position: 0,
-            config: {},
-          },
-        ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        id: fieldId,
+        module_id: moduleId,
+        name: "Request title",
+        type: "text",
+        required: false,
+        position: 350,
+        config: {},
+        is_deleted: false,
       });
     if (path === "/api/records/query")
       return Response.json({
@@ -170,7 +158,7 @@ test("records widget resolves selected field names before querying rows", async 
       fieldNames: { [fieldId]: "Request title" },
     });
     expect(mock.paths).toEqual([
-      `/api/views/data-sources/${moduleId}/fields?limit=100&offset=0`,
+      `/api/fields/${fieldId}`,
       "/api/records/query",
     ]);
   } finally {
@@ -178,56 +166,42 @@ test("records widget resolves selected field names before querying rows", async 
   }
 });
 
-test("catalog denial and unresolved names never request record rows", async () => {
+test("field denial and wrong-module or deleted fields never request record rows", async () => {
   const plan = buildBoardWidgetQueryPlan(widget);
   if (plan.kind !== "records") throw new Error("Unexpected plan");
-  const denied = mockFetch((path) => {
-    if (path.startsWith(`/api/views/data-sources/${moduleId}/fields?`))
-      return Response.json({ detail: "Forbidden" }, { status: 403 });
-    throw new Error(`Record query must not run: ${path}`);
-  });
-  try {
-    await expect(loadLiveWidgetData(plan)).rejects.toMatchObject({
-      status: 403,
-    });
-    expect(denied.paths).toEqual([
-      `/api/views/data-sources/${moduleId}/fields?limit=100&offset=0`,
-    ]);
-  } finally {
-    denied.restore();
-  }
-
-  const missing = mockFetch((path) => {
-    if (!path.startsWith(`/api/views/data-sources/${moduleId}/fields?`))
+  for (const response of [
+    Response.json({ detail: "Forbidden" }, { status: 403 }),
+    Response.json({
+      id: fieldId,
+      module_id: otherBoardId,
+      name: "Wrong module",
+      type: "text",
+      required: false,
+      position: 0,
+      config: {},
+      is_deleted: false,
+    }),
+    Response.json({
+      id: fieldId,
+      module_id: moduleId,
+      name: "Deleted",
+      type: "text",
+      required: false,
+      position: 0,
+      config: {},
+      is_deleted: true,
+    }),
+  ]) {
+    const mock = mockFetch((path) => {
+      if (path === `/api/fields/${fieldId}`) return response;
       throw new Error(`Record query must not run: ${path}`);
-    const offset = Number(
-      new URL(path, "http://local").searchParams.get("offset"),
-    );
-    return Response.json({
-      items: Array.from({ length: 100 }, (_, index) => ({
-        id: `00000000-0000-4000-8000-${String(offset + index + 10).padStart(12, "0")}`,
-        module_id: moduleId,
-        name: `Field ${offset + index + 10}`,
-        type: "text",
-        required: false,
-        position: offset + index,
-        config: {},
-      })),
-      pagination: {
-        limit: 100,
-        offset,
-        count: 100,
-        total: 400,
-        has_more: true,
-      },
     });
-  });
-  try {
-    await expect(loadLiveWidgetData(plan)).rejects.toThrow();
-    expect(missing.paths).toHaveLength(3);
-    expect(missing.paths.every((path) => path.includes("/fields?"))).toBe(true);
-  } finally {
-    missing.restore();
+    try {
+      await expect(loadLiveWidgetData(plan)).rejects.toThrow();
+      expect(mock.paths).toEqual([`/api/fields/${fieldId}`]);
+    } finally {
+      mock.restore();
+    }
   }
 });
 
@@ -491,37 +465,27 @@ test("record widgets show authorized select and person labels instead of stored 
     },
   };
   const mock = mockFetch((path) => {
-    if (
-      path === `/api/views/data-sources/${moduleId}/fields?limit=100&offset=0`
-    )
+    if (path === `/api/fields/${statusFieldId}`)
       return Response.json({
-        items: [
-          {
-            id: statusFieldId,
-            module_id: moduleId,
-            name: "Status",
-            type: "select",
-            required: false,
-            position: 0,
-            config: { options: [{ id: choiceId, label: "In progress" }] },
-          },
-          {
-            id: assigneeFieldId,
-            module_id: moduleId,
-            name: "Assignee",
-            type: "user",
-            required: false,
-            position: 1,
-            config: {},
-          },
-        ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 2,
-          total: 2,
-          has_more: false,
-        },
+        id: statusFieldId,
+        module_id: moduleId,
+        name: "Status",
+        type: "select",
+        required: false,
+        position: 0,
+        config: { options: [{ id: choiceId, label: "In progress" }] },
+        is_deleted: false,
+      });
+    if (path === `/api/fields/${assigneeFieldId}`)
+      return Response.json({
+        id: assigneeFieldId,
+        module_id: moduleId,
+        name: "Assignee",
+        type: "user",
+        required: false,
+        position: 1,
+        config: {},
+        is_deleted: false,
       });
     if (path === "/api/records/query")
       return Response.json({

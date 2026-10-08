@@ -1,10 +1,11 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from sqlalchemy import select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -167,8 +168,7 @@ def _validate_presentation(
     definition: QueryDefinition,
 ) -> None:
     if presentation.layout == "timeline" and (
-        presentation.timeline_start_field_id is None
-        or presentation.timeline_end_field_id is None
+        presentation.timeline_start_field_id is None or presentation.timeline_end_field_id is None
     ):
         raise invalid_view("Timeline presentation requires start and end fields")
 
@@ -256,11 +256,21 @@ def list_views(
     user: Reader,
     db: Database,
     params: Annotated[ViewList, Query()],
+    request: Request,
 ) -> StandardListResponse[ViewResponse]:
     statement = select(SavedView).where(visible_to(db, user))
     if params.module_id is not None:
         statement = statement.where(SavedView.module_id == params.module_id)
-    result = execute_standard_list(db, statement, params, VIEW_SPEC)
+    spec = VIEW_SPEC
+    if "sort_by" not in request.query_params and "sort_order" not in request.query_params:
+        spec = replace(
+            VIEW_SPEC,
+            sort_fields={
+                **VIEW_SPEC.sort_fields,
+                ViewSort.NAME: tuple_(SavedView.is_default.is_(False), SavedView.name),
+            },
+        )
+    result = execute_standard_list(db, statement, params, spec)
     access = effective_levels(db, user)
     return StandardListResponse(
         items=[_view_response(item, _can_edit(access, item)) for item in result.items],

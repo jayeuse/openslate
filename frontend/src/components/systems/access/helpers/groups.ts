@@ -151,8 +151,8 @@ const compareNames = (left: { name: string }, right: { name: string }) =>
 /** One line per department a group reaches, by department name. */
 export function accessSummary(
   entries: readonly AccessGroupAccessEntry[],
-  departments: readonly AccessDepartment[],
-  modules: readonly AccessModule[],
+  departments: readonly AccessDepartment[] = [],
+  modules: readonly AccessModule[] = [],
 ): DepartmentSummary[] {
   const departmentNames = new Map(
     departments.map((item) => [item.id, item.department_name]),
@@ -160,6 +160,17 @@ export function accessSummary(
   const moduleNames = new Map(
     modules.map((item) => [item.id, item.module_name]),
   );
+  // Group reads carry authorized names independently of the current catalog page.
+  for (const entry of entries) {
+    if ("department_name" in entry && typeof entry.department_name === "string")
+      departmentNames.set(entry.department_id, entry.department_name);
+    if (
+      entry.module_id &&
+      "module_name" in entry &&
+      typeof entry.module_name === "string"
+    )
+      moduleNames.set(entry.module_id, entry.module_name);
+  }
   return Object.entries(accessDraftFromEntries(entries))
     .map(([departmentId, department]) => ({
       departmentId,
@@ -211,8 +222,8 @@ export const defaultGroupFilters: GroupFilters = {
 
 export function groupRows(
   groups: readonly AccessGroup[],
-  departments: readonly AccessDepartment[],
-  modules: readonly AccessModule[],
+  departments: readonly AccessDepartment[] = [],
+  modules: readonly AccessModule[] = [],
 ): GroupRow[] {
   return groups.map((group) => ({
     group,
@@ -312,13 +323,20 @@ export function memberOptionsFromUsers(
     .sort(compareNames);
 }
 
-/** Managers see the candidates route, which has no expiry. */
+/** Managers see the candidates route, including the access expiry. */
 export function memberOptionsFromCandidates(
   candidates: readonly AccessMemberCandidate[],
+  now = Date.now(),
 ): MemberOption[] {
   return candidates
     .map((candidate) => {
-      const blocked = candidate.status === "disabled" ? "Disabled" : null;
+      const blocked =
+        candidate.status === "disabled"
+          ? "Disabled"
+          : candidate.access_ends_at &&
+              Date.parse(candidate.access_ends_at) <= now
+            ? "Access ended"
+            : null;
       return {
         id: candidate.id,
         name: personName(candidate),
