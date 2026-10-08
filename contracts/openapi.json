@@ -398,6 +398,9 @@
               {
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
                 "type": "string"
+              },
+              {
+                "type": "null"
               }
             ],
             "title": "Value"
@@ -424,7 +427,6 @@
             "type": "boolean"
           },
           "limit": {
-            "maximum": 366.0,
             "minimum": 1.0,
             "title": "Limit",
             "type": "integer"
@@ -526,6 +528,55 @@
           "pagination"
         ],
         "title": "AggregateSnapshotResponse",
+        "type": "object"
+      },
+      "AggregateSnapshotsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "queries": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "date_series": "#/components/schemas/DateSeriesAggregateQuery",
+                  "groups": "#/components/schemas/GroupedAggregateSnapshotQuery"
+                },
+                "propertyName": "mode"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/GroupedAggregateSnapshotQuery"
+                },
+                {
+                  "$ref": "#/components/schemas/DateSeriesAggregateQuery"
+                }
+              ]
+            },
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Queries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "queries"
+        ],
+        "title": "AggregateSnapshotsRequest",
+        "type": "object"
+      },
+      "AggregateSnapshotsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AggregateSnapshotResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "AggregateSnapshotsResponse",
         "type": "object"
       },
       "AppearancePreferences": {
@@ -3144,9 +3195,24 @@
             "enum": [
               "count",
               "sum",
-              "average"
+              "average",
+              "min",
+              "max",
+              "distinct"
             ],
             "title": "Aggregation",
+            "type": "string"
+          },
+          "bucket": {
+            "default": "day",
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "quarter",
+              "year"
+            ],
+            "title": "Bucket",
             "type": "string"
           },
           "date_field": {
@@ -5510,7 +5576,10 @@
             "enum": [
               "count",
               "sum",
-              "average"
+              "average",
+              "min",
+              "max",
+              "distinct"
             ],
             "title": "Aggregation",
             "type": "string"
@@ -5572,7 +5641,10 @@
             "enum": [
               "count",
               "sum",
-              "average"
+              "average",
+              "min",
+              "max",
+              "distinct"
             ],
             "title": "Aggregation",
             "type": "string"
@@ -27520,6 +27592,52 @@
           }
         ],
         "summary": "Aggregate Snapshot Route",
+        "tags": [
+          "records"
+        ]
+      }
+    },
+    "/api/records/aggregate-snapshots": {
+      "post": {
+        "operationId": "aggregate_snapshots_route_api_records_aggregate_snapshots_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AggregateSnapshotsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregateSnapshotsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Aggregate Snapshots Route",
         "tags": [
           "records"
         ]

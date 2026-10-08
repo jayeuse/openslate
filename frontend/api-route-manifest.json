@@ -775,6 +775,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
+    "function": "queryOpenViewAggregateSnapshots",
+    "method": "POST",
+    "path": "/api/records/aggregate-snapshots"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/analytics-api.ts",
     "function": "queryOpenViewGroupedRecords",
     "method": "POST",
     "path": "/api/records/grouped-query"
@@ -871,12 +877,6 @@
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
-    "function": "updateOpenViewRecordMoves",
-    "method": "POST",
-    "path": "/api/records/batch-update"
-  },
-  {
-    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
     "function": "createOpenViewRecord",
     "method": "POST",
     "path": "/api/records"
@@ -964,6 +964,12 @@
     "function": "updateOpenViewRecord",
     "method": "PATCH",
     "path": "/api/records/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "updateOpenViewRecordMoves",
+    "method": "POST",
+    "path": "/api/records/batch-update"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/report-schedule-api.ts",

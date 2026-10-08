@@ -366,6 +366,7 @@ def execute_openview_control(
         "aggregate_date_series",
         "aggregate_snapshot_groups",
         "aggregate_snapshot_date_series",
+        "aggregate_snapshots",
     }:
         return execute_openview_query_control(action, context, on_substep=on_substep)
     if operation in {"view_patch", "dashboard_patch", "report_patch", "schedule_patch"}:

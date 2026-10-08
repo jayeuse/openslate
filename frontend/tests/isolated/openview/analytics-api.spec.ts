@@ -590,6 +590,7 @@ test("sends a full explicit 366-day date-series aggregate snapshot", async () =>
       date_field: { field_id: groupFieldId, expected_type: "datetime" },
       from_date: fromDate,
       to_date: toDate,
+      bucket: "day",
     });
   } finally {
     mock.restore();

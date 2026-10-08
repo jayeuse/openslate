@@ -40,6 +40,7 @@ def test_openview_control_plan_is_pack_derived_and_covers_query_and_edit_control
         "aggregate_date_series",
         "aggregate_snapshot_groups",
         "aggregate_snapshot_date_series",
+        "aggregate_snapshots",
         "view_patch",
         "dashboard_patch",
         "report_patch",
@@ -49,6 +50,17 @@ def test_openview_control_plan_is_pack_derived_and_covers_query_and_edit_control
         "report_purge",
     }
     assert len(operations) == len(set(operations))
+    batch = next(
+        action for action in actions if action.values["operation"] == "aggregate_snapshots"
+    )
+    singles = [
+        action
+        for action in actions
+        if action.values["operation"]
+        in {"aggregate_snapshot_groups", "aggregate_snapshot_date_series"}
+    ]
+    assert batch.actor_key == singles[0].actor_key == singles[1].actor_key
+    assert batch.values["queries"] == [action.values["query"] for action in singles]
     purge = next(action for action in actions if action.values["operation"] == "report_purge")
     source = next(action for action in actions if action.values["operation"] == "report_patch")
     assert purge.actor_key == "admin" and purge.expected_status == 200
@@ -160,7 +172,11 @@ def test_openview_verifier_checks_actual_authored_dashboard_title(tmp_path: Path
 
     manifest = {
         "control_results": [
-            {"action_key": f"control:{operation}", "query_total": 0}
+            {
+                "action_key": f"control:{operation}",
+                "query_total": 0,
+                **({"query_totals": [0, 0]} if operation == "aggregate_snapshots" else {}),
+            }
             for operation in (
                 "record_query",
                 "grouped_query",
@@ -170,6 +186,7 @@ def test_openview_verifier_checks_actual_authored_dashboard_title(tmp_path: Path
                 "aggregate_date_series",
                 "aggregate_snapshot_groups",
                 "aggregate_snapshot_date_series",
+                "aggregate_snapshots",
             )
         ]
     }

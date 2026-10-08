@@ -1,5 +1,7 @@
 "use client";
 
+import { aggregationLabel } from "../domain/chart-query";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
@@ -123,12 +125,7 @@ function widgetTitle(
   }
   const { query } = widget.config;
   const { aggregation } = query;
-  const operation =
-    aggregation === "average"
-      ? "Average"
-      : aggregation === "sum"
-        ? "Sum"
-        : "Count";
+  const operation = aggregationLabel(aggregation);
   const measureFieldId = query.measure?.fieldId;
   const measure = measureFieldId
     ? fieldsByModule[query.moduleId]?.find(
@@ -578,7 +575,8 @@ export default function ServerBackedDashboards() {
   );
   const builderRecordFields = fieldsByModule[builderModuleId] ?? [];
   const builderNumericFields = (fieldsByModule[builderModuleId] ?? []).filter(
-    (field) => NUMERIC_FIELD_TYPES.has(field.type),
+    (field) =>
+      builderAggregation === "distinct" || NUMERIC_FIELD_TYPES.has(field.type),
   );
   const builderMeasure = builderNumericFields.find(
     (field) => field.id === builderMeasureId,
@@ -2058,6 +2056,9 @@ export default function ServerBackedDashboards() {
                       <option value="count">Count</option>
                       <option value="sum">Sum</option>
                       <option value="average">Average</option>
+                      <option value="min">Minimum</option>
+                      <option value="max">Maximum</option>
+                      <option value="distinct">Distinct</option>
                     </Select>
                   </Field>
                 ) : null}
@@ -2067,7 +2068,9 @@ export default function ServerBackedDashboards() {
                 builderAggregation !== "count" ? (
                   <Field className="min-w-0">
                     <FieldLabel htmlFor="dashboard-measure">
-                      Numeric measure
+                      {builderAggregation === "distinct"
+                        ? "Measure field"
+                        : "Numeric measure"}
                     </FieldLabel>
                     <Select
                       id="dashboard-measure"
@@ -2082,7 +2085,11 @@ export default function ServerBackedDashboards() {
                         setBuilderMeasureId(value);
                       }}
                     >
-                      <option value="">Choose a numeric field</option>
+                      <option value="">
+                        {builderAggregation === "distinct"
+                          ? "Choose a field"
+                          : "Choose a numeric field"}
+                      </option>
                       {builderNumericFields.map((field) => (
                         <option key={field.id} value={field.id}>
                           {field.name}

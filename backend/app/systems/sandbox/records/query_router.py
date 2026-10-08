@@ -19,7 +19,11 @@ from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
-from app.systems.sandbox.records.aggregation import aggregate_records, aggregate_snapshot
+from app.systems.sandbox.records.aggregation import (
+    aggregate_records,
+    aggregate_snapshot,
+    aggregate_snapshots,
+)
 from app.systems.sandbox.records.export import commit_export_event, export_snapshot
 from app.systems.sandbox.records.grouping import query_grouped_records
 from app.systems.sandbox.records.query import query_records
@@ -28,6 +32,8 @@ from app.systems.sandbox.records.query_schemas import (
     AggregateResponse,
     AggregateSnapshotQuery,
     AggregateSnapshotResponse,
+    AggregateSnapshotsRequest,
+    AggregateSnapshotsResponse,
     ExportRequest,
     GroupedRecordQuery,
     GroupedRecordResponse,
@@ -115,6 +121,62 @@ def aggregate_snapshot_route(
             503, detail="Unable to record aggregate snapshot authorization"
         ) from error
 
+    return Response(
+        content,
+        media_type="application/json",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.post("/aggregate-snapshots", response_model=AggregateSnapshotsResponse)
+def aggregate_snapshots_route(
+    payload: AggregateSnapshotsRequest,
+    actor: Reader,
+    identity: Identity,
+    db: Database,
+) -> Response:
+    actor_id = actor.id
+    bind = db.get_bind()
+    engine = bind if isinstance(bind, Engine) else bind.engine
+    db.rollback()
+    try:
+        content, bucket_count = aggregate_snapshots(engine, payload, reader_id=actor_id)
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(503, detail="Unable to create aggregate snapshots") from error
+
+    module_ids = sorted({query.module_id for query in payload.queries})
+    for module_id in module_ids:
+        require_fresh_module_access(
+            db,
+            actor_id=actor_id,
+            session_id=identity.session_id,
+            module_id=module_id,
+            level=AccessLevel.READ,
+        )
+    try:
+        append_security_event(
+            db,
+            SecurityEventIngestRequest(
+                event_type="records.aggregate_snapshots.authorized",
+                source="records",
+                operation_id=uuid7(),
+                actor_id=actor_id,
+                subject_id=module_ids[0] if len(module_ids) == 1 else None,
+                outcome=SecurityEventOutcome.SUCCESS,
+                metadata={
+                    "query_count": len(payload.queries),
+                    "bucket_count": bucket_count,
+                    "module_ids": [str(module_id) for module_id in module_ids],
+                },
+            ),
+        )
+        db.commit()
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(
+            503, detail="Unable to record aggregate snapshots authorization"
+        ) from error
     return Response(
         content,
         media_type="application/json",

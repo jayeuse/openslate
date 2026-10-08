@@ -198,6 +198,7 @@ export function collapseBoardWidgetPie(
   }
   const points: BoardWidgetPiePoint[] = [];
   for (const item of result.items) {
+    if (item.value === null) continue;
     const value = Number(item.value);
     if (!Number.isFinite(value) || value < 0) {
       return { kind: "unavailable", reason: "unrepresentable-value" };

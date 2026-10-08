@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  aggregateBucketSchema,
+  validAggregateBucketWindow,
+} from "../domain/aggregate-buckets";
+import type { Aggregation } from "../domain/chart-query";
 import { ApiError, apiFetch } from "@/lib/api";
 import { openViewReadFetch } from "./openview-access";
 import type { OpenViewAggregateSnapshotRequest } from "./analytics-api";
@@ -147,22 +152,23 @@ const wireDateSeriesQuerySchema = z
     mode: z.literal("date_series"),
     module_id: uuidSchema,
     definition: wireQueryDefinitionSchema,
-    aggregation: z.enum(["count", "sum", "average"]),
+    aggregation: z.enum(["count", "sum", "average", "min", "max", "distinct"]),
     measure: wireQueryFieldReferenceSchema.nullable(),
     date_field: wireQueryFieldReferenceSchema,
     from_date: z.iso.date(),
     to_date: z.iso.date(),
+    bucket: aggregateBucketSchema.default("day"),
   })
   .strict()
   .superRefine((query, context) => {
     if (
-      query.to_date < query.from_date ||
-      inclusiveDays(query.from_date, query.to_date) > 366
+      !validAggregateBucketWindow(query.from_date, query.to_date, query.bucket)
     ) {
       context.addIssue({
         code: "custom",
         path: ["to_date"],
-        message: "Dashboard date series must contain between 1 and 366 days",
+        message:
+          "Dashboard date series must contain between 1 and 366 calendar buckets",
       });
     }
     validateMeasure(query.aggregation, query.measure, context);
@@ -186,6 +192,7 @@ const wireDateSeriesQuerySchema = z
     dateField: query.date_field,
     fromDate: query.from_date,
     toDate: query.to_date,
+    bucket: query.bucket,
   }));
 
 const wireGroupQuerySchema = z
@@ -193,7 +200,7 @@ const wireGroupQuerySchema = z
     mode: z.literal("groups"),
     module_id: uuidSchema,
     definition: wireQueryDefinitionSchema,
-    aggregation: z.enum(["count", "sum", "average"]),
+    aggregation: z.enum(["count", "sum", "average", "min", "max", "distinct"]),
     measure: wireQueryFieldReferenceSchema.nullable(),
     dimension: wireQueryFieldReferenceSchema,
     date_field: wireQueryFieldReferenceSchema.nullish(),
@@ -290,7 +297,7 @@ const wireRecordsConfigSchema = z
 const queryBaseInputShape = {
   moduleId: uuidSchema,
   definition: z.unknown(),
-  aggregation: z.enum(["count", "sum", "average"]),
+  aggregation: z.enum(["count", "sum", "average", "min", "max", "distinct"]),
   measure: queryFieldReferenceSchema.optional(),
 };
 const groupQueryInputSchema = z
@@ -336,17 +343,18 @@ const dateSeriesQueryInputSchema = z
       .strict(),
     fromDate: z.iso.date(),
     toDate: z.iso.date(),
+    bucket: aggregateBucketSchema.default("day"),
   })
   .strict()
   .superRefine((query, context) => {
     if (
-      query.toDate < query.fromDate ||
-      inclusiveDays(query.fromDate, query.toDate) > 366
+      !validAggregateBucketWindow(query.fromDate, query.toDate, query.bucket)
     ) {
       context.addIssue({
         code: "custom",
         path: ["toDate"],
-        message: "Dashboard date series must contain between 1 and 366 days",
+        message:
+          "Dashboard date series must contain between 1 and 366 calendar buckets",
       });
     }
     validateMeasure(query.aggregation, query.measure, context);
@@ -608,7 +616,7 @@ export type OpenViewDashboardGroupQuery = {
   mode: "groups";
   moduleId: string;
   definition: OpenViewQueryDefinition;
-  aggregation: "count" | "sum" | "average";
+  aggregation: Aggregation;
   measure?: OpenViewQueryFieldReference;
   dimension: OpenViewQueryFieldReference;
   dateField?: OpenViewQueryFieldReference;
@@ -732,7 +740,7 @@ function inclusiveDays(fromDate: string, toDate: string): number {
 }
 
 function validateMeasure(
-  aggregation: "count" | "sum" | "average",
+  aggregation: Aggregation,
   measure: OpenViewQueryFieldReference | null | undefined,
   context: z.RefinementCtx,
 ) {
@@ -744,11 +752,15 @@ function validateMeasure(
         message: "Count does not accept a measure field",
       });
     }
-  } else if (measure == null || !numericFieldTypes.has(measure.expectedType)) {
+  } else if (
+    measure == null ||
+    (aggregation !== "distinct" && !numericFieldTypes.has(measure.expectedType))
+  ) {
     context.addIssue({
       code: "custom",
       path: ["measure"],
-      message: "Sum and average require a numeric measure field",
+      message:
+        "A measure is required; sum, average, min and max require a numeric field",
     });
   }
 }
@@ -758,7 +770,7 @@ function serializeSnapshotQuery(
     mode: "groups" | "date_series";
     moduleId: string;
     definition: unknown;
-    aggregation: "count" | "sum" | "average";
+    aggregation: Aggregation;
     measure?: OpenViewQueryFieldReference;
   } & Record<string, unknown>,
 ) {
@@ -816,6 +828,7 @@ function serializeSnapshotQuery(
     },
     from_date: date.fromDate,
     to_date: date.toDate,
+    bucket: date.bucket,
   };
 }
 

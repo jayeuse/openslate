@@ -225,6 +225,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("POST", "/api/records/export"),
         ("POST", "/api/records/aggregate-query"),
         ("POST", "/api/records/aggregate-snapshot"),
+        ("POST", "/api/records/aggregate-snapshots"),
         ("POST", "/api/records/grouped-query"),
         ("POST", "/api/records/query"),
         ("POST", "/api/records/window-query"),

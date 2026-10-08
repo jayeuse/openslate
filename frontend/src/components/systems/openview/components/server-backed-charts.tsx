@@ -36,6 +36,7 @@ import { ChartFormSkeleton } from "./openview-skeletons";
 import { ChartSnapshotResults } from "./chart-snapshot-results";
 import {
   EMPTY_OPERATORS,
+  aggregationLabel,
   canonicalDecimal,
   dateWindowDays,
   isCategoricalField,
@@ -217,6 +218,8 @@ export default function ServerBackedCharts() {
     ["date", "datetime"].includes(field.type),
   );
   const numericFields = moduleFields.filter(isNumericField);
+  const measureFields =
+    aggregation === "distinct" ? moduleFields : numericFields;
   const filterFields = moduleFields;
   const dateSeries = chartType === "line";
   const selectedDimension =
@@ -226,7 +229,7 @@ export default function ServerBackedCharts() {
     dateFields.find((field) => field.id === dateFieldId) ??
     (dateSeries ? dateFields[0] : undefined);
   const selectedMeasure =
-    numericFields.find((field) => field.id === measureId) ?? numericFields[0];
+    measureFields.find((field) => field.id === measureId) ?? measureFields[0];
   const requestedDays = dateWindowDays(fromDate, toDate);
   const dateWindowValid = requestedDays >= 1 && requestedDays <= 366;
   const categoricalDateWindowSelected = Boolean(
@@ -421,8 +424,7 @@ export default function ServerBackedCharts() {
         chartType: appliedChartType,
         labelName,
         valueName,
-        aggregationName:
-          aggregation === "average" ? "Average" : titleCase(aggregation),
+        aggregationName: aggregationLabel(aggregation),
         signature: draftSignature,
       });
       setTablePage(0);
@@ -547,7 +549,7 @@ export default function ServerBackedCharts() {
             sourceName,
             categoryFields,
             dateFields,
-            numericFields,
+            measureFields,
             filterFields,
           }}
           draft={{
@@ -643,8 +645,4 @@ export default function ServerBackedCharts() {
       />
     </div>
   );
-}
-
-function titleCase(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
 }

@@ -7,6 +7,11 @@ from datetime import timedelta
 from typing import Any
 
 from operations.sample.blueprint import SampleDataset, SampleEdge, SampleRecord
+from operations.sample.controls.openview_snapshots import (
+    _wire_references,
+    batch_snapshot_action,
+    execute_snapshot_control,
+)
 from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.phase_types import PhaseAction, PhaseJsonValue
 from operations.sample.packs.types import FieldSpec, ModuleSpec
@@ -14,7 +19,6 @@ from operations.sample.phases.actions import (
     PhaseExecutionContext,
     PhaseSubstep,
     SamplePhaseActionError,
-    _mapped_id,
     _read_json,
     _request,
     _request_id,
@@ -29,6 +33,7 @@ QUERY_ROUTES = frozenset(
         ("POST", "/api/records/window-query"),
         ("POST", "/api/records/aggregate-query"),
         ("POST", "/api/records/aggregate-snapshot"),
+        ("POST", "/api/records/aggregate-snapshots"),
     }
 )
 
@@ -400,33 +405,8 @@ def plan_openview_query_controls(dataset: SampleDataset) -> tuple[PhaseAction, .
             },
         ),
     )
-    return tuple(_query_action(operation, actor, values) for operation, actor, values in queries)
-
-
-def _wire_references(value: Any, context: PhaseExecutionContext, *, step: str) -> Any:
-    if isinstance(value, Mapping):
-        if isinstance(value.get("field_key"), str):
-            field_key = str(value["field_key"])
-            result = {
-                "field_id": _mapped_id(context, "fields", field_key, step=step),
-                "expected_type": value.get("expected_type"),
-            }
-            result.update(
-                {
-                    key: _wire_references(item, context, step=step)
-                    for key, item in value.items()
-                    if key not in {"field_key", "expected_type"}
-                }
-            )
-            return result
-        result = {key: _wire_references(item, context, step=step) for key, item in value.items()}
-        module_key = result.pop("module_key", None)
-        if isinstance(module_key, str):
-            result["module_id"] = _mapped_id(context, "modules", module_key, step=step)
-        return result
-    if isinstance(value, list):
-        return [_wire_references(item, context, step=step) for item in value]
-    return value
+    actions = tuple(_query_action(operation, actor, values) for operation, actor, values in queries)
+    return (*actions, batch_snapshot_action(actions[-2], actions[-1]))
 
 
 def _query_response_count(operation: str, body: Mapping[str, Any], *, step: str) -> int:
@@ -457,6 +437,12 @@ def execute_openview_query_control(
     on_substep: PhaseSubstep | None,
 ) -> dict[str, object]:
     operation = action.values.get("operation")
+    if operation in {
+        "aggregate_snapshot_groups",
+        "aggregate_snapshot_date_series",
+        "aggregate_snapshots",
+    }:
+        return execute_snapshot_control(action, context, on_substep=on_substep)
     path = _QUERY_PATHS.get(str(operation))
     raw_query = action.values.get("query")
     if path is None or not isinstance(raw_query, Mapping):

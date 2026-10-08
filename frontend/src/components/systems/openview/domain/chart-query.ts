@@ -4,7 +4,20 @@ import type {
 } from "../adapters/views-api";
 
 export type ChartType = "bar" | "line" | "pie";
-export type Aggregation = "count" | "sum" | "average";
+export type Aggregation =
+  "count" | "sum" | "average" | "min" | "max" | "distinct";
+export function aggregationLabel(aggregation: Aggregation): string {
+  const labels: Record<Aggregation, string> = {
+    count: "Count",
+    sum: "Sum",
+    average: "Average",
+    min: "Minimum",
+    max: "Maximum",
+    distinct: "Distinct",
+  };
+  return labels[aggregation];
+}
+
 export type FilterLogic = OpenViewQueryDefinition["logic"];
 export type FilterOperator =
   OpenViewQueryDefinition["filters"][number]["operator"];

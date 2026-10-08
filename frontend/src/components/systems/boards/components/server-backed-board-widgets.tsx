@@ -142,7 +142,8 @@ function recordsContent(item: LiveWidgetItem): ReactNode {
   );
 }
 
-function numericValue(value: number | string): number | null {
+function numericValue(value: number | string | null): number | null {
+  if (value === null) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -172,7 +173,7 @@ function groupContent(item: LiveWidgetItem): ReactNode {
         ? "Negative values cannot be shown as bars. Exact values are listed below."
         : "Exact values are listed below; bar lengths are approximate.",
     ),
-    values.some((value) => value === null)
+    items.some((entry, index) => entry.value !== null && values[index] === null)
       ? createElement(
           "p",
           { className: "text-muted-foreground text-sm" },
@@ -199,7 +200,7 @@ function groupContent(item: LiveWidgetItem): ReactNode {
             createElement(
               "span",
               { className: "font-medium tabular-nums" },
-              String(entry.value),
+              entry.value === null ? "—" : String(entry.value),
             ),
           ),
           values[index] === null || hasNegative
@@ -266,7 +267,7 @@ function pieContent(item: LiveWidgetItem): ReactNode {
             createElement(
               "span",
               { className: "font-medium tabular-nums" },
-              String(entry.value),
+              entry.value === null ? "—" : String(entry.value),
             ),
           ),
         ),
@@ -350,12 +351,29 @@ function lineContent(item: LiveWidgetItem): ReactNode {
   const min = Math.min(...finite);
   const max = Math.max(...finite);
   const range = max - min || 1;
+  const hasUnchartableValue = items.some(
+    (entry, index) => entry.value !== null && values[index] === null,
+  );
   const canDraw =
-    values.every((value) => value !== null) && Number.isFinite(range);
-  const points = values.map((value, index) => ({
-    x: items.length === 1 ? 160 : 8 + (index / (items.length - 1)) * 304,
-    y: 152 - (((value ?? min) - min) / range) * 144,
-  }));
+    finite.length > 0 && !hasUnchartableValue && Number.isFinite(range);
+  const points = values.map((value, index) =>
+    value === null
+      ? null
+      : {
+          key: items[index].key ?? String(index),
+          x: items.length === 1 ? 160 : 8 + (index / (items.length - 1)) * 304,
+          y: 152 - ((value - min) / range) * 144,
+        },
+  );
+  const segments: NonNullable<(typeof points)[number]>[][] = [];
+  let segment: NonNullable<(typeof points)[number]>[] = [];
+  for (const point of points) {
+    if (point === null) segment = [];
+    else {
+      if (segment.length === 0) segments.push(segment);
+      segment.push(point);
+    }
+  }
   return createElement(
     "div",
     { className: "min-w-0 space-y-3" },
@@ -373,26 +391,33 @@ function lineContent(item: LiveWidgetItem): ReactNode {
             viewBox: "0 0 320 160",
             preserveAspectRatio: "none",
           },
-          createElement("polyline", {
-            fill: "none",
-            stroke: "var(--chart-1)",
-            strokeWidth: 3,
-            points: points.map(({ x, y }) => `${x},${y}`).join(" "),
-          }),
-          ...points.map(({ x, y }, index) =>
-            createElement("circle", {
-              key: items[index].key ?? String(index),
-              cx: x,
-              cy: y,
-              r: 3,
-              fill: "var(--chart-1)",
+          ...segments.map((segment) =>
+            createElement("polyline", {
+              key: "segment:" + segment[0].key,
+              fill: "none",
+              stroke: "var(--chart-1)",
+              strokeWidth: 3,
+              points: segment.map(({ x, y }) => `${x},${y}`).join(" "),
             }),
           ),
+          ...points
+            .filter((point) => point !== null)
+            .map(({ x, y, key }) =>
+              createElement("circle", {
+                key,
+                cx: x,
+                cy: y,
+                r: 3,
+                fill: "var(--chart-1)",
+              }),
+            ),
         )
       : createElement(
           "p",
           { className: "text-muted-foreground text-sm" },
-          "Values too large to chart. Exact values remain below.",
+          hasUnchartableValue || finite.length > 0
+            ? "Values too large to chart. Exact values remain below."
+            : "No chartable values are available. Exact values remain below.",
         ),
     createElement(
       "ol",
@@ -412,7 +437,7 @@ function lineContent(item: LiveWidgetItem): ReactNode {
           createElement(
             "span",
             { className: "font-medium tabular-nums" },
-            String(entry.value),
+            entry.value === null ? "—" : String(entry.value),
           ),
         ),
       ),

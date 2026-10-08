@@ -56,6 +56,7 @@ type ChartSnapshotResultsProps = {
 };
 
 function chartNumber(value: OpenViewAggregateDatum["value"]): number | null {
+  if (value === null) return null;
   const converted = Number(value);
   return Number.isFinite(converted) ? converted : null;
 }
@@ -69,6 +70,7 @@ function chartDataFor(
     chartType === "line"
       ? result.items
       : result.items
+          .filter((item) => item.value !== null)
           .map((item, index) => ({ item, index }))
           .sort((left, right) => {
             const difference =
@@ -89,10 +91,10 @@ function chartDataFor(
   }));
   const data = displayItems.map((item) => ({
     ...item,
-    value: chartNumber(item.value) ?? 0,
+    value: chartNumber(item.value),
   }));
   const hasUnchartableValue = displayItems.some(
-    (item) => chartNumber(item.value) === null,
+    (item) => item.value !== null && chartNumber(item.value) === null,
   );
   return {
     data,
@@ -259,7 +261,7 @@ export function ChartSnapshotResults({
                 >
                   <span className="min-w-0 break-words">{item.label}</span>
                   <span className="min-w-0 text-right break-all tabular-nums">
-                    {String(item.value)}
+                    {item.value === null ? "—" : String(item.value)}
                   </span>
                 </li>
               ))}
@@ -331,7 +333,9 @@ export function ChartSnapshotResults({
                     key={`${item.key ?? item.label}-${tablePage * tablePageSize + index}`}
                   >
                     <TableCell>{item.label}</TableCell>
-                    <TableCell>{String(item.value)}</TableCell>
+                    <TableCell>
+                      {item.value === null ? "—" : String(item.value)}
+                    </TableCell>
                     <TableCell>{item.recordCount}</TableCell>
                   </TableRow>
                 ))}
@@ -388,7 +392,9 @@ export function ChartSnapshotResults({
                 data-testid="charts-print-row"
               >
                 <TableCell>{item.label}</TableCell>
-                <TableCell>{String(item.value)}</TableCell>
+                <TableCell>
+                  {item.value === null ? "—" : String(item.value)}
+                </TableCell>
                 <TableCell>{item.recordCount}</TableCell>
               </TableRow>
             ))}

@@ -26,7 +26,7 @@ import {
 export type OpenViewChartDatum = {
   key: string;
   label: string;
-  value: number;
+  value: number | null;
 };
 
 export function OpenViewChartPreview({
@@ -54,10 +54,12 @@ export function OpenViewChartPreview({
   pieInnerRadius?: number;
   pieOuterRadius?: number;
 }) {
+  const points =
+    type === "line" ? data : data.filter((item) => item.value !== null);
   const config: ChartConfig = {
     value: { label: valueLabel, color: "var(--chart-1)" },
     ...Object.fromEntries(
-      data.map((item, index) => [
+      points.map((item, index) => [
         item.key,
         {
           label: item.label,
@@ -76,7 +78,7 @@ export function OpenViewChartPreview({
   return (
     <ChartContainer config={config} className={className}>
       {type === "bar" ? (
-        <BarChart accessibilityLayer data={data} margin={margin}>
+        <BarChart accessibilityLayer data={points} margin={margin}>
           <CartesianGrid vertical={false} strokeDasharray="3 3" />
           <XAxis
             dataKey="label"
@@ -96,14 +98,14 @@ export function OpenViewChartPreview({
             radius={[barRadius, barRadius, 0, 0]}
             maxBarSize={maxBarSize}
           >
-            {data.map((item) => (
+            {points.map((item) => (
               <Cell key={item.key} fill={`var(--color-${item.key})`} />
             ))}
             {showLabels ? <LabelList dataKey="value" position="top" /> : null}
           </Bar>
         </BarChart>
       ) : type === "line" ? (
-        <LineChart accessibilityLayer data={data} margin={margin}>
+        <LineChart accessibilityLayer data={points} margin={margin}>
           <CartesianGrid vertical={false} strokeDasharray="3 3" />
           <XAxis
             dataKey="label"
@@ -120,6 +122,7 @@ export function OpenViewChartPreview({
           {showLegend ? <Legend content={<ChartLegendContent />} /> : null}
           <Line
             dataKey="value"
+            connectNulls={false}
             type="monotone"
             stroke="var(--color-value)"
             strokeWidth={3}
@@ -145,7 +148,7 @@ export function OpenViewChartPreview({
             <Legend content={<ChartLegendContent nameKey="label" />} />
           ) : null}
           <Pie
-            data={data}
+            data={points}
             dataKey="value"
             nameKey="label"
             innerRadius={pieInnerRadius}
@@ -159,7 +162,7 @@ export function OpenViewChartPreview({
                 : false
             }
           >
-            {data.map((item) => (
+            {points.map((item) => (
               <Cell key={item.key} fill={`var(--color-${item.key})`} />
             ))}
           </Pie>

@@ -46,11 +46,18 @@ function chartValues(
 ) {
   const items = completeSeries
     ? result.items
-    : result.items.slice(0, PREVIEW_POINTS);
+    : result.items
+        .filter((item) => item.value !== null)
+        .slice(0, PREVIEW_POINTS);
   return items.map((item, index) => ({
     key: `dashboard-point-${index}`,
     label: item.label,
-    value: Number.isFinite(Number(item.value)) ? Number(item.value) : 0,
+    value:
+      item.value === null
+        ? null
+        : Number.isFinite(Number(item.value))
+          ? Number(item.value)
+          : null,
   }));
 }
 
@@ -87,8 +94,22 @@ export function DashboardWidgetResults({
     aggregateSnapshot && widget.widgetType === "chart"
       ? chartValues(aggregateSnapshot, activeIsDateSeries)
       : [];
+  const bucket =
+    widget.widgetType === "chart" && widget.config.query.mode === "date_series"
+      ? (widget.config.query.bucket ?? "day")
+      : "day";
+  const periods =
+    bucket === "day"
+      ? "days"
+      : bucket === "week"
+        ? "weeks"
+        : bucket === "month"
+          ? "months"
+          : bucket === "quarter"
+            ? "quarters"
+            : "years";
   const chartPointDescription = activeIsDateSeries
-    ? `${chartPreview.length} daily points; point labels and dots are suppressed`
+    ? `${chartPreview.length} ${bucket === "day" ? "daily" : bucket} points; point labels and dots are suppressed`
     : `${chartPreview.length} categories`;
   const snapshotRows = aggregateSnapshot?.items ?? [];
   const tablePageCount = Math.max(
@@ -208,7 +229,9 @@ export function DashboardWidgetResults({
                     key={`${item.key ?? item.label}-${firstRowIndex + index}`}
                   >
                     <TableCell>{item.label}</TableCell>
-                    <TableCell>{String(item.value)}</TableCell>
+                    <TableCell>
+                      {item.value === null ? "—" : String(item.value)}
+                    </TableCell>
                     <TableCell>{item.recordCount}</TableCell>
                   </TableRow>
                 ))}
@@ -273,7 +296,7 @@ export function DashboardWidgetResults({
         <>
           <p role="status" className="text-muted-foreground text-sm">
             {activeIsDateSeries
-              ? `Showing all ${snapshotRows.length} days in chronological order.`
+              ? `Showing all ${snapshotRows.length} ${periods} in chronological order.`
               : `Preview shows up to ${Math.min(PREVIEW_POINTS, snapshotRows.length)} of ${snapshotRows.length} chart buckets. The complete values remain in the table.`}
           </p>
           <div
@@ -320,7 +343,9 @@ export function DashboardWidgetResults({
                       key={`${item.key ?? item.label}-${firstRowIndex + index}`}
                     >
                       <TableCell>{item.label}</TableCell>
-                      <TableCell>{String(item.value)}</TableCell>
+                      <TableCell>
+                        {item.value === null ? "—" : String(item.value)}
+                      </TableCell>
                       <TableCell>{item.recordCount}</TableCell>
                     </TableRow>
                   ))}

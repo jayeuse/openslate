@@ -1937,6 +1937,7 @@ test("Dashboard line builder requires and saves a typed numeric measure for Aver
             date_field: { field_id: dateFieldId, expected_type: "date" },
             from_date: "2024-03-01",
             to_date: "2024-03-02",
+            bucket: "day",
           },
         },
       },

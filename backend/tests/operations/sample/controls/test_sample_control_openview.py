@@ -16,7 +16,6 @@ from app.systems.openview.reports.schemas import ReportUpdate
 from app.systems.openview.views.schemas import ViewUpdate
 from app.systems.sandbox.records.query_schemas import (
     AggregateQuery,
-    AggregateSnapshotQuery,
     GroupedRecordQuery,
     RecordQuery,
     WindowRecordQuery,
@@ -27,6 +26,7 @@ from operations.sample.client import SampleClient
 from operations.sample.packs.registry import get_pack, pack_keys
 from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
 from operations.sample.scenario import build_dataset
+from tests.operations.sample.controls.sample_openview_snapshots import snapshot_response
 from tests.operations.sample.controls.sample_purge_wire import SamplePurgeWire, report_fixture
 
 
@@ -202,6 +202,8 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
             )
         seen.append((request.method, request.url.path))
         path, method = request.url.path, request.method
+        if path.endswith(("/aggregate-snapshot", "/aggregate-snapshots")):
+            return snapshot_response(request)
         purge_response = purge_wire.route(request)
         if purge_response is not None:
             return purge_response
@@ -233,15 +235,6 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
                 )
             if path.endswith("/aggregate-query"):
                 TypeAdapter(AggregateQuery).validate_python(body)
-            elif path.endswith("/aggregate-snapshot"):
-                TypeAdapter(AggregateSnapshotQuery).validate_python(body)
-                return response(
-                    200,
-                    {
-                        "items": [],
-                        "pagination": pagination(12),
-                    },
-                )
             else:
                 query = RecordQuery.model_validate(body)
                 return response(

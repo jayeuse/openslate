@@ -1,5 +1,15 @@
 import { z } from "zod";
-import { openViewReadFetch } from "./openview-access";
+import { apiFetch } from "@/lib/api";
+import { getWorkspaceCalendarSettings } from "../../manage/adapters/workspace-api";
+import { openViewReadFetch, trackOpenViewRead } from "./openview-access";
+import {
+  aggregateBucketKeys,
+  aggregateBucketSchema,
+  validAggregateBucketWindow,
+  type AggregateBucket,
+  type AggregateWeekStart,
+} from "../domain/aggregate-buckets";
+import type { Aggregation } from "../domain/chart-query";
 import {
   serializeOpenViewQueryDefinition,
   type OpenViewQueryDefinition,
@@ -125,7 +135,7 @@ const aggregateDatumSchema = z
   .object({
     key: z.string().nullable(),
     label: z.string(),
-    value: numericDecimalSchema,
+    value: numericDecimalSchema.nullable(),
     record_count: z.number().int().min(0),
   })
   .strict()
@@ -176,7 +186,7 @@ const groupedRequestSchema = z
 const aggregateBaseSchema = z.object({
   moduleId: uuidSchema,
   definition: z.unknown(),
-  aggregation: z.enum(["count", "sum", "average"]),
+  aggregation: z.enum(["count", "sum", "average", "min", "max", "distinct"]),
   measure: fieldReferenceSchema.optional(),
 });
 const groupedAggregateRequestSchema = aggregateBaseSchema
@@ -193,6 +203,7 @@ const dateSeriesAggregateRequestSchema = aggregateBaseSchema
     dateField: fieldReferenceSchema,
     fromDate: z.iso.date(),
     toDate: z.iso.date(),
+    bucket: aggregateBucketSchema.default("day"),
   })
   .strict();
 const groupedAggregateSnapshotRequestSchema = aggregateBaseSchema
@@ -210,6 +221,7 @@ const dateSeriesAggregateSnapshotRequestSchema = aggregateBaseSchema
     dateField: fieldReferenceSchema,
     fromDate: z.iso.date(),
     toDate: z.iso.date(),
+    bucket: aggregateBucketSchema.default("day"),
   })
   .strict();
 const aggregateRequestSchema = z
@@ -232,11 +244,13 @@ const aggregateRequestSchema = z
       }
     } else if (
       request.measure === undefined ||
-      !numericTypes.has(request.measure.expectedType)
+      (request.aggregation !== "distinct" &&
+        !numericTypes.has(request.measure.expectedType))
     ) {
       context.addIssue({
         code: "custom",
-        message: "Sum and average require a numeric measure field",
+        message:
+          "A measure is required; sum, average, min and max require a numeric field",
       });
     }
 
@@ -250,11 +264,17 @@ const aggregateRequestSchema = z
           message: "Date series require a date or datetime field",
         });
       }
-      const days = inclusiveDays(request.fromDate, request.toDate);
-      if (days < 1 || days > 366) {
+      if (
+        !validAggregateBucketWindow(
+          request.fromDate,
+          request.toDate,
+          request.bucket,
+        )
+      ) {
         context.addIssue({
           code: "custom",
-          message: "Date series windows must contain between 1 and 366 days",
+          message:
+            "Date series must contain between 1 and 366 calendar buckets",
         });
       }
     }
@@ -279,11 +299,13 @@ const aggregateSnapshotRequestSchema = z
       }
     } else if (
       request.measure === undefined ||
-      !numericTypes.has(request.measure.expectedType)
+      (request.aggregation !== "distinct" &&
+        !numericTypes.has(request.measure.expectedType))
     ) {
       context.addIssue({
         code: "custom",
-        message: "Sum and average require a numeric measure field",
+        message:
+          "A measure is required; sum, average, min and max require a numeric field",
       });
     }
 
@@ -329,11 +351,17 @@ const aggregateSnapshotRequestSchema = z
           message: "Date series require a date or datetime field",
         });
       }
-      const days = inclusiveDays(request.fromDate, request.toDate);
-      if (days < 1 || days > 366) {
+      if (
+        !validAggregateBucketWindow(
+          request.fromDate,
+          request.toDate,
+          request.bucket,
+        )
+      ) {
         context.addIssue({
           code: "custom",
-          message: "Date series windows must contain between 1 and 366 days",
+          message:
+            "Date series must contain between 1 and 366 calendar buckets",
         });
       }
     }
@@ -375,7 +403,7 @@ export type OpenViewGroupedRecordsRequest = {
 type OpenViewAggregateRequestBase = {
   moduleId: string;
   definition: OpenViewQueryDefinition;
-  aggregation: "count" | "sum" | "average";
+  aggregation: Aggregation;
   measure?: OpenViewQueryFieldReference;
 };
 export type OpenViewAggregateRequest =
@@ -390,6 +418,7 @@ export type OpenViewAggregateRequest =
       dateField: OpenViewQueryFieldReference;
       fromDate: string;
       toDate: string;
+      bucket?: AggregateBucket;
     });
 export type OpenViewAggregateSnapshotRequest = OpenViewAggregateRequestBase &
   (
@@ -405,6 +434,7 @@ export type OpenViewAggregateSnapshotRequest = OpenViewAggregateRequestBase &
         dateField: OpenViewQueryFieldReference;
         fromDate: string;
         toDate: string;
+        bucket?: AggregateBucket;
       }
   );
 
@@ -412,13 +442,6 @@ function inclusiveDays(from: string, to: string): number {
   const start = Date.parse(`${from}T00:00:00Z`);
   const end = Date.parse(`${to}T00:00:00Z`);
   return Math.floor((end - start) / 86_400_000) + 1;
-}
-
-function dailyKeys(from: string, length: number): string[] {
-  const start = Date.parse(`${from}T00:00:00Z`);
-  return Array.from({ length }, (_, index) =>
-    new Date(start + index * 86_400_000).toISOString().slice(0, 10),
-  );
 }
 
 function wireFieldReference(reference: OpenViewQueryFieldReference) {
@@ -508,6 +531,7 @@ function groupedResponseSchema(
 
 function aggregateResponseSchema(
   request: z.output<typeof aggregateRequestSchema>,
+  weekStart: AggregateWeekStart,
 ) {
   return wireAggregateResponseSchema
     .superRefine((response, context) => {
@@ -534,8 +558,13 @@ function aggregateResponseSchema(
         return;
       }
 
-      const expectedDays = inclusiveDays(request.fromDate, request.toDate);
-      const keys = dailyKeys(request.fromDate, expectedDays);
+      const keys = aggregateBucketKeys(
+        request.fromDate,
+        request.toDate,
+        request.bucket,
+        weekStart,
+      );
+      const expectedDays = keys.length;
       if (
         items.length !== expectedDays ||
         items.some(
@@ -550,7 +579,7 @@ function aggregateResponseSchema(
       ) {
         context.addIssue({
           code: "custom",
-          message: "Date series must include every requested local day",
+          message: "Date series must include every requested calendar bucket",
         });
       }
     })
@@ -565,6 +594,7 @@ function aggregateResponseSchema(
 
 function aggregateSnapshotResponseSchema(
   request: z.output<typeof aggregateSnapshotRequestSchema>,
+  weekStart: AggregateWeekStart,
 ) {
   return wireAggregateSnapshotResponseSchema
     .superRefine((response, context) => {
@@ -583,8 +613,13 @@ function aggregateSnapshotResponseSchema(
       }
 
       if (request.mode === "date_series") {
-        const expectedDays = inclusiveDays(request.fromDate, request.toDate);
-        const keys = dailyKeys(request.fromDate, expectedDays);
+        const keys = aggregateBucketKeys(
+          request.fromDate,
+          request.toDate,
+          request.bucket,
+          weekStart,
+        );
+        const expectedDays = keys.length;
         if (
           items.length !== expectedDays ||
           items.some(
@@ -595,7 +630,8 @@ function aggregateSnapshotResponseSchema(
         ) {
           context.addIssue({
             code: "custom",
-            message: "Date-series snapshots must include every requested day",
+            message:
+              "Date-series snapshots must include every requested calendar bucket",
           });
         }
       }
@@ -657,30 +693,32 @@ export async function queryOpenViewAggregates(
     body.date_field = wireFieldReference(request.dateField);
     body.from_date = request.fromDate;
     body.to_date = request.toDate;
+    body.bucket = request.bucket;
   }
-  return openViewReadFetch(
-    "/records/aggregate-query",
-    aggregateResponseSchema(request),
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    },
-  );
+  return trackOpenViewRead(async () => {
+    const weekStart = await workspaceWeekStart([request]);
+    return apiFetch(
+      "/records/aggregate-query",
+      aggregateResponseSchema(request, weekStart),
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
+  });
 }
 
-export async function queryOpenViewAggregateSnapshot(
-  raw: OpenViewAggregateSnapshotRequest,
-): Promise<OpenViewAggregateSnapshotResult> {
-  const request = aggregateSnapshotRequestSchema.parse(raw);
+function snapshotRequestBody(
+  request: z.output<typeof aggregateSnapshotRequestSchema>,
+) {
   const body: Record<string, unknown> = {
     mode: request.mode,
     module_id: request.moduleId,
     definition: serializeOpenViewQueryDefinition(request.definition),
     aggregation: request.aggregation,
   };
-  if (request.measure !== undefined) {
+  if (request.measure !== undefined)
     body.measure = wireFieldReference(request.measure);
-  }
   if (request.mode === "groups") {
     body.dimension = wireFieldReference(request.dimension);
     if (request.dateField !== undefined) {
@@ -692,14 +730,114 @@ export async function queryOpenViewAggregateSnapshot(
     body.date_field = wireFieldReference(request.dateField);
     body.from_date = request.fromDate;
     body.to_date = request.toDate;
+    body.bucket = request.bucket;
   }
-  return openViewReadFetch(
-    "/records/aggregate-snapshot",
-    aggregateSnapshotResponseSchema(request),
-    {
+  return body;
+}
+
+async function workspaceWeekStart(
+  requests: readonly (
+    | z.output<typeof aggregateSnapshotRequestSchema>
+    | z.output<typeof aggregateRequestSchema>
+  )[],
+): Promise<AggregateWeekStart> {
+  if (
+    !requests.some(
+      (request) => request.mode === "date_series" && request.bucket === "week",
+    )
+  )
+    return "monday";
+  const settings = await getWorkspaceCalendarSettings();
+  // Reject an unrepresentable or over-limit actual anchor before sending any snapshot.
+  for (const request of requests)
+    if (request.mode === "date_series" && request.bucket === "week")
+      aggregateBucketKeys(
+        request.fromDate,
+        request.toDate,
+        request.bucket,
+        settings.week_start,
+      );
+  return settings.week_start;
+}
+
+export async function queryOpenViewAggregateSnapshot(
+  raw: OpenViewAggregateSnapshotRequest,
+): Promise<OpenViewAggregateSnapshotResult> {
+  const request = aggregateSnapshotRequestSchema.parse(raw);
+  const body = snapshotRequestBody(request);
+  return trackOpenViewRead(async () => {
+    const weekStart = await workspaceWeekStart([request]);
+    return apiFetch(
+      "/records/aggregate-snapshot",
+      aggregateSnapshotResponseSchema(request, weekStart),
+      {
+        method: "POST",
+        cache: "no-store",
+        body: JSON.stringify(body),
+      },
+    );
+  });
+}
+
+export type OpenViewAggregateSnapshotsResult = {
+  items: OpenViewAggregateSnapshotResult[];
+};
+
+/** Strict complete batch; validation and calendar failure release no partial items. */
+export async function queryOpenViewAggregateSnapshots(
+  raw: readonly OpenViewAggregateSnapshotRequest[],
+): Promise<OpenViewAggregateSnapshotsResult> {
+  const requests = z
+    .array(aggregateSnapshotRequestSchema)
+    .min(1)
+    .max(12)
+    .parse(raw);
+  const body = { queries: requests.map(snapshotRequestBody) };
+  return trackOpenViewRead(async () => {
+    const weekStart = await workspaceWeekStart(requests);
+    const schemas = requests.map((request) =>
+      aggregateSnapshotResponseSchema(request, weekStart),
+    );
+    const schema = z
+      .object({ items: z.array(z.unknown()).max(12) })
+      .strict()
+      .superRefine((response, context) => {
+        if (response.items.length !== requests.length) {
+          context.addIssue({
+            code: "custom",
+            message: "Batch snapshots must match every query in order",
+          });
+          return;
+        }
+        let buckets = 0;
+        for (const [index, item] of response.items.entries()) {
+          const parsed = schemas[index].safeParse(item);
+          if (!parsed.success)
+            context.addIssue({
+              code: "custom",
+              path: ["items", index],
+              message: "Every batch snapshot must be complete and valid",
+            });
+          else buckets += parsed.data.items.length;
+        }
+        // Count bytes before nested DTO transforms, including the entire wire wrapper.
+        if (
+          buckets > 10000 ||
+          new TextEncoder().encode(JSON.stringify(response)).byteLength >
+            8 * 1024 * 1024
+        )
+          context.addIssue({
+            code: "custom",
+            message: "Aggregate batch exceeds 10,000 buckets or 8 MiB",
+          });
+      })
+      .transform((response) => ({
+        items: response.items.map((item, index) => schemas[index].parse(item)),
+      }));
+    return apiFetch("/records/aggregate-snapshots", schema, {
       method: "POST",
       cache: "no-store",
       body: JSON.stringify(body),
-    },
-  );
+    });
+  });
 }

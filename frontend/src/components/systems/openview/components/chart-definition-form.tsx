@@ -49,7 +49,7 @@ type ChartDefinitionCatalog = {
   sourceName: string;
   categoryFields: OpenViewDataSourceField[];
   dateFields: OpenViewDataSourceField[];
-  numericFields: OpenViewDataSourceField[];
+  measureFields: OpenViewDataSourceField[];
   filterFields: OpenViewDataSourceField[];
 };
 
@@ -122,7 +122,7 @@ export function ChartDefinitionForm({
     sourceName,
     categoryFields,
     dateFields,
-    numericFields,
+    measureFields,
     filterFields,
   } = catalog;
   const {
@@ -383,34 +383,43 @@ export function ChartDefinitionForm({
                   <option value="count">Count</option>
                   <option value="sum">Sum</option>
                   <option value="average">Average</option>
+                  <option value="min">Minimum</option>
+                  <option value="max">Maximum</option>
+                  <option value="distinct">Distinct</option>
                 </Select>
               </Field>
               {aggregation !== "count" ? (
                 <Field className="sm:col-start-2 xl:col-start-4">
                   <FieldLabel htmlFor="chart-measure">
-                    Numeric measure
+                    {aggregation === "distinct"
+                      ? "Measure field"
+                      : "Numeric measure"}
                   </FieldLabel>
                   <Select
                     id="chart-measure"
                     className="min-h-11"
                     value={selectedMeasure?.id ?? ""}
                     disabled={
-                      fieldsLoading || !numericFields.length || queryLoading
+                      fieldsLoading || !measureFields.length || queryLoading
                     }
                     onValueChange={setMeasureId}
                   >
                     <option value="" disabled>
-                      Select a numeric field
+                      {aggregation === "distinct"
+                        ? "Select a field"
+                        : "Select a numeric field"}
                     </option>
-                    {numericFields.map((field) => (
+                    {measureFields.map((field) => (
                       <option key={field.id} value={field.id}>
                         {field.name}
                       </option>
                     ))}
                   </Select>
-                  {!numericFields.length ? (
+                  {!measureFields.length ? (
                     <FieldDescription>
-                      Sum and average require an available numeric field.
+                      {aggregation === "distinct"
+                        ? "Distinct requires an available field."
+                        : "Sum, average, minimum and maximum require an available numeric field."}
                     </FieldDescription>
                   ) : null}
                 </Field>
