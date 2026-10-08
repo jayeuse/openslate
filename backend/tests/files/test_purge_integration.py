@@ -34,6 +34,9 @@ def test_library_purge_fingerprint_tracks_direct_department_ownership(
     db.commit()
     second = purge_impact(db, actor.id, file.id).rows[0].state_fingerprint
     assert first != second
+    file.filename = "Renamed library document.txt"
+    renamed = purge_impact(db, actor.id, file.id).rows[0].state_fingerprint
+    assert renamed != second
 
 
 def test_purge_rejects_active_or_current_logo_and_deletes_only_archived_inventory(
@@ -120,7 +123,9 @@ def test_changed_file_after_password_verification_rejects_purge(
         lifecycle_router.execute(
             file_request,
             file_id,
-            LifecyclePurgeRequest(token="test", password="test", confirmation_name=str(file_id)),
+            LifecyclePurgeRequest(
+                token="test", password="test", confirmation_name=db.get(File, file_id).filename
+            ),
             db.get(User, actor_id),
             db,
             Store(db),
@@ -203,12 +208,14 @@ def test_purge_preview_issues_actor_bound_token_and_missing_token_does_not_delet
         lifecycle_router, "get_settings", lambda: SimpleNamespace(lifecycle_purge_enabled=True)
     )
     preview = lifecycle_router.preview(file_id, db.get(User, actor_id), db, Response())
-    assert preview.confirmation_name == str(file_id) and preview.token
+    assert preview.confirmation_name == db.get(File, file_id).filename and preview.token
     with pytest.raises(HTTPException) as caught:
         lifecycle_router.execute(
             file_request,
             file_id,
-            LifecyclePurgeRequest(token="missing", password="test", confirmation_name=str(file_id)),
+            LifecyclePurgeRequest(
+                token="missing", password="test", confirmation_name=db.get(File, file_id).filename
+            ),
             db.get(User, actor_id),
             db,
             Store(db),

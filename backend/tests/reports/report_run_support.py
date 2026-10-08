@@ -16,6 +16,7 @@ from sqlalchemy import Engine, bindparam, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.common.dependencies.auth import get_current_user
 from app.core.config import get_settings
 from app.core.config.provider_instance import assert_provider_instance
 from app.core.database import get_db
@@ -34,6 +35,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_router import router as record_query_router
 from tests.conftest import _guard_integration_database, guarded_create_engine
+from tests.rbac.support import add_user, make_group_access
 
 pytestmark = pytest.mark.integration
 
@@ -282,6 +284,17 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
         if client is not None:
             client.close()
         with owner_engine.begin() as cleanup:
+            for table in (
+                "lifecycle_confirmation_challenges",
+                "lifecycle_rate_limit_failures",
+                "lifecycle_rate_limit_buckets",
+            ):
+                cleanup.execute(
+                    text(f"DELETE FROM public.{table} WHERE actor_id IN :ids").bindparams(
+                        bindparam("ids", expanding=True)
+                    ),
+                    {"ids": list(actor_ids)},
+                )
             cleanup.execute(
                 text(
                     "DELETE FROM public.audit_logs "
@@ -333,3 +346,65 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
             cleanup.execute(text("DELETE FROM public.users WHERE id = :id"), {"id": owner_id})
         owner_engine.dispose()
         runtime_engine.dispose()
+
+
+_ACTORS_KEY = "report_test_actors"
+
+
+def report_route_actor(
+    db: Session, *, level: str | None = AccessLevel.MANAGE, role: str = "member"
+) -> User:
+    """A user who gets ``level`` on every module that :func:`report_route_module` creates later."""
+
+    user = add_user(db, "report", role=role)
+    if level is not None:
+        db.info.setdefault(_ACTORS_KEY, []).append((user, level))
+    return user
+
+
+def report_route_client(db: Session, user: User) -> TestClient:
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    return TestClient(app)
+
+
+def report_route_module(db: Session, *, active: bool = True) -> tuple[Module, Field]:
+    department = Department(department_name=f"Report source {uuid7()}")
+    db.add(department)
+    db.flush()
+    module = Module(
+        department_id=department.id,
+        module_name=f"Report source {uuid7()}",
+        is_deleted=not active,
+        deleted_at=None if active else datetime.now(UTC),
+    )
+    db.add(module)
+    db.flush()
+    field = Field(
+        module_id=module.id,
+        name="Category",
+        type=FieldType.TEXT,
+        required=False,
+        position=0,
+        config={},
+    )
+    db.add(field)
+    db.flush()
+    for actor, level in db.info.get(_ACTORS_KEY, []):
+        make_group_access(db, [actor], department, module, level=level)
+    return module, field
+
+
+def report_route_recipe(field: Field) -> dict[str, object]:
+    reference = {"field_id": str(field.id), "expected_type": str(field.type)}
+    return {
+        "version": 1,
+        "fields": [reference],
+        "filters": [],
+        "logic": "and",
+        "sorts": [{**reference, "direction": "asc"}],
+        "group_by": reference,
+        "include_row_count": True,
+    }

@@ -6389,6 +6389,18 @@
           "impact": {
             "$ref": "#/components/schemas/LifecycleImpactResponse"
           },
+          "last_successful_backup_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Successful Backup At"
+          },
           "token": {
             "title": "Token",
             "type": "string"
@@ -6398,7 +6410,8 @@
           "impact",
           "token",
           "expires_at",
-          "confirmation_name"
+          "confirmation_name",
+          "last_successful_backup_at"
         ],
         "title": "LifecyclePurgePreviewResponse",
         "type": "object"
@@ -6407,7 +6420,6 @@
         "additionalProperties": false,
         "properties": {
           "confirmation_name": {
-            "maxLength": 150,
             "minLength": 1,
             "title": "Confirmation Name",
             "type": "string"
@@ -6514,7 +6526,9 @@
           "field",
           "record",
           "file",
-          "board"
+          "board",
+          "report",
+          "board_event"
         ],
         "title": "LifecycleTargetType",
         "type": "string"
@@ -19780,65 +19794,6 @@
       }
     },
     "/api/boards/{board_id}/events/{event_id}": {
-      "delete": {
-        "operationId": "delete_board_event_api_boards__board_id__events__event_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "board_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Board Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "event_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Event Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EventRevisionWrite"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Delete Board Event",
-        "tags": [
-          "boards"
-        ]
-      },
       "get": {
         "operationId": "read_board_event_api_boards__board_id__events__event_id__get",
         "parameters": [
@@ -20311,6 +20266,134 @@
         "summary": "Download Event File",
         "tags": [
           "board attachments"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/events/{event_id}/purge": {
+      "post": {
+        "operationId": "purge_event_api_boards__board_id__events__event_id__purge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LifecyclePurgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleMutationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Purge Event",
+        "tags": [
+          "boards",
+          "boards"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/events/{event_id}/purge/preview": {
+      "post": {
+        "operationId": "preview_event_purge_api_boards__board_id__events__event_id__purge_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecyclePurgePreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Preview Event Purge",
+        "tags": [
+          "boards",
+          "boards"
         ]
       }
     },
@@ -28334,10 +28417,9 @@
         ]
       }
     },
-    "/api/reports/{report_id}/permanent": {
-      "delete": {
-        "description": "Remove an archived recipe and every frozen snapshot in one audited transaction.",
-        "operationId": "permanently_delete_report_api_reports__report_id__permanent_delete",
+    "/api/reports/{report_id}/purge": {
+      "post": {
+        "operationId": "purge_report_api_reports__report_id__purge_post",
         "parameters": [
           {
             "in": "path",
@@ -28348,20 +28430,27 @@
               "title": "Report Id",
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "revision",
-            "required": true,
-            "schema": {
-              "minimum": 1,
-              "title": "Revision",
-              "type": "integer"
-            }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LifecyclePurgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "204": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleMutationResponse"
+                }
+              }
+            },
             "description": "Successful Response"
           },
           "422": {
@@ -28380,8 +28469,58 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Permanently Delete Report",
+        "summary": "Purge Report",
         "tags": [
+          "reports",
+          "reports"
+        ]
+      }
+    },
+    "/api/reports/{report_id}/purge/preview": {
+      "post": {
+        "operationId": "preview_report_purge_api_reports__report_id__purge_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecyclePurgePreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Preview Report Purge",
+        "tags": [
+          "reports",
           "reports"
         ]
       }

@@ -16,6 +16,10 @@ import {
   updateOpenViewRecord,
 } from "../../../src/components/systems/openview/adapters/records-api";
 import type { OpenViewQueryDefinition } from "../../../src/components/systems/openview/adapters/views-schemas";
+import {
+  previewReportPurge,
+  purgeReport,
+} from "../../../src/components/systems/openview/adapters/reports-api";
 import { describeContracts } from "./openapi-contract";
 
 const recordId = "00000000-0000-4000-8000-000000000001";
@@ -69,10 +73,10 @@ describeContracts("Records and relationships", [
     name: "previewRecordPurge",
     run: () => previewRecordPurge(recordId),
     responses: {
-      // The adapter requires the confirmation name to be the record id.
       "POST /api/records/{record_id}/purge/preview": {
         ...recordPurgeImpact,
-        confirmation_name: recordId,
+        confirmation_name: "Pump",
+        last_successful_backup_at: null,
       },
     },
   },
@@ -81,10 +85,45 @@ describeContracts("Records and relationships", [
     run: () =>
       purgeRecord(recordId, {
         token: "token",
-        confirmationName: recordId,
+        confirmationName: "Pump",
         password: "password",
       }),
     responses: { "POST /api/records/{record_id}/purge": recordPurgeImpact },
+  },
+  {
+    name: "previewReportPurge",
+    run: () => previewReportPurge(recordId),
+    responses: {
+      "POST /api/reports/{report_id}/purge/preview": {
+        impact: {
+          target_type: "report",
+          target_id: recordId,
+          operation: "purge",
+          impact_digest: "a".repeat(64),
+        },
+        confirmation_name: "Pump report",
+        last_successful_backup_at: null,
+      },
+    },
+  },
+  {
+    name: "purgeReport",
+    run: () =>
+      purgeReport(recordId, {
+        token: "token",
+        confirmationName: "Pump report",
+        password: "password",
+      }),
+    responses: {
+      "POST /api/reports/{report_id}/purge": {
+        impact: {
+          target_type: "report",
+          target_id: recordId,
+          operation: "purge",
+          impact_digest: "a".repeat(64),
+        },
+      },
+    },
   },
   {
     name: "listOpenViewRelationshipFields",

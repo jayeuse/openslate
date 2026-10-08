@@ -397,45 +397,66 @@ async function exerciseLiveCharts(page: Page, supplier: SeededSupplier) {
 }
 
 async function permanentlyDeleteReport(page: Page, reportId: string) {
-  const status = await page.evaluate(async (id) => {
-    const csrfCookie = document.cookie
-      .split(";")
-      .map((segment) => segment.trim())
-      .find((segment) => segment.startsWith("openslate_csrf="));
-    if (!csrfCookie) throw new Error("CSRF cookie is unavailable");
-    const csrfToken = decodeURIComponent(
-      csrfCookie.slice("openslate_csrf=".length),
-    );
-    const path = `/api/reports/${encodeURIComponent(id)}`;
-    const current = await fetch(path, { credentials: "same-origin" });
-    if (current.status === 404) return 204;
-    if (current.status !== 200)
-      throw new Error(`Report cleanup read returned ${current.status}`);
-    const report = (await current.json()) as {
-      revision: number;
-      is_deleted: boolean;
-    };
-    if (!report.is_deleted) {
-      const archived = await fetch(`${path}?revision=${report.revision}`, {
-        method: "DELETE",
+  const status = await page.evaluate(
+    async ({ id, password }) => {
+      const csrfCookie = document.cookie
+        .split(";")
+        .map((segment) => segment.trim())
+        .find((segment) => segment.startsWith("openslate_csrf="));
+      if (!csrfCookie) throw new Error("CSRF cookie is unavailable");
+      const csrfToken = decodeURIComponent(
+        csrfCookie.slice("openslate_csrf=".length),
+      );
+      const path = `/api/reports/${encodeURIComponent(id)}`;
+      const current = await fetch(path, { credentials: "same-origin" });
+      if (current.status === 404) return 200;
+      if (current.status !== 200)
+        throw new Error(`Report cleanup read returned ${current.status}`);
+      const report = (await current.json()) as {
+        revision: number;
+        is_deleted: boolean;
+      };
+      if (!report.is_deleted) {
+        const archived = await fetch(`${path}?revision=${report.revision}`, {
+          method: "DELETE",
+          credentials: "same-origin",
+          headers: { "X-CSRF-Token": csrfToken },
+        });
+        if (archived.status !== 204)
+          throw new Error(`Report cleanup archive returned ${archived.status}`);
+        report.revision += 1;
+      }
+      const previewResponse = await fetch(`${path}/purge/preview`, {
+        method: "POST",
         credentials: "same-origin",
         headers: { "X-CSRF-Token": csrfToken },
       });
-      if (archived.status !== 204)
-        throw new Error(`Report cleanup archive returned ${archived.status}`);
-      report.revision += 1;
-    }
-    const deleted = await fetch(
-      `${path}/permanent?revision=${report.revision}`,
-      {
-        method: "DELETE",
+      if (previewResponse.status !== 200)
+        throw new Error(
+          `Report cleanup preview returned ${previewResponse.status}`,
+        );
+      const preview = (await previewResponse.json()) as {
+        token: string;
+        confirmation_name: string;
+      };
+      const deleted = await fetch(`${path}/purge`, {
+        method: "POST",
         credentials: "same-origin",
-        headers: { "X-CSRF-Token": csrfToken },
-      },
-    );
-    return deleted.status;
-  }, reportId);
-  expect(status).toBe(204);
+        headers: {
+          "X-CSRF-Token": csrfToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          token: preview.token,
+          confirmation_name: preview.confirmation_name,
+          password,
+        }),
+      });
+      return deleted.status;
+    },
+    { id: reportId, password: fixture().admin.password },
+  );
+  expect(status).toBe(200);
 }
 
 async function exerciseConnectedReports(

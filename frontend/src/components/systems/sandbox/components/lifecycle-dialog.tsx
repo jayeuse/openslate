@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import type { LifecyclePreviewResponse } from "@/lib/api";
+import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,7 +37,9 @@ export function SandboxLifecycleDialog({
   onCancel,
   onConfirm,
 }: Props) {
-  const [preview, setPreview] = useState<LifecyclePurgePreview | null>(null);
+  const [preview, setPreview] = useState<
+    LifecyclePreviewResponse | LifecyclePurgePreview | null
+  >(null);
   const [confirmation, setConfirmation] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -42,6 +47,10 @@ export function SandboxLifecycleDialog({
   const generation = useRef(0);
   const confirming = useRef(false);
   const id = useId();
+  const region = useQuery({
+    ...workspaceCalendarQueryOptions(),
+    enabled: request?.operation === "purge",
+  });
 
   function clear() {
     setPreview(null);
@@ -147,8 +156,10 @@ export function SandboxLifecycleDialog({
             </Alert>
           ) : null}
           {busy === "review" ? <p role="status">Preparing review…</p> : null}
-          {preview && operation === "purge" ? (
-            <LifecyclePurgeReview impact={preview.impact} />
+          {preview &&
+          operation === "purge" &&
+          "last_successful_backup_at" in preview ? (
+            <LifecyclePurgeReview preview={preview} region={region.data} />
           ) : null}
           {preview && operation === "close" ? (
             <div className="space-y-3 text-sm">

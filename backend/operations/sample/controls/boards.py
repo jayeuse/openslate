@@ -340,7 +340,7 @@ def plan_board_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         common,
         {"archived": True},
     )
-    add("event_delete", "delete-event", manager, event_key, common, {"deleted": True}, 204)
+    add("event_purge", "purge-event", "admin", event_key, common, {"deleted": True})
     add(
         "widget_patch",
         "patch-widget",

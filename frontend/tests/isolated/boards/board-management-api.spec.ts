@@ -250,12 +250,12 @@ test("Board purge maps lifecycle denial and confirmation errors to their actual 
     {
       code: "purge_disabled",
       status: 403,
-      message: "Permanent Board deletion is disabled",
+      message: "Permanent delete is turned off for this installation.",
     },
     {
       code: "confirmation_name_mismatch",
       status: 422,
-      message: "The Board ID confirmation did not match",
+      message: "The Board name confirmation did not match",
     },
     {
       code: "challenge_not_found",

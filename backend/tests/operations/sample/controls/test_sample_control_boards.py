@@ -91,7 +91,7 @@ def test_board_control_plan_covers_ui_controls_from_pack_data(pack_key: str) -> 
         "event_patch",
         "event_archive",
         "event_restore",
-        "event_delete",
+        "event_purge",
         "post_record_link_create",
         "post_record_link_delete",
         "event_record_link_create",
@@ -104,6 +104,11 @@ def test_board_control_plan_covers_ui_controls_from_pack_data(pack_key: str) -> 
         "purge_import",
     }
     assert required <= set(operations)
+    assert "event_delete" not in operations
+    purge = next(action for action in actions if action.values["operation"] == "event_purge")
+    assert purge.actor_key == "admin" and purge.expected_status == 200
+    assert purge.values["board_key"] == "control:duplicate"
+    assert purge.target_key == "control:event" and purge.expected_end_state == {"deleted": True}
     assert all(action.kind == "board_controls" for action in actions)
     assert all(action.phase == "reorganization" for action in actions)
     assert len({action.key for action in actions}) == len(actions)

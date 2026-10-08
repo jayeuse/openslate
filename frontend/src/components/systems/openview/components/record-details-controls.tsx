@@ -17,6 +17,7 @@ import { authMeOptions } from "../adapters/openview-queries";
 import {
   subscribeWorkspaceLifecycleSettings,
   workspaceLifecycleQueryOptions,
+  workspaceCalendarQueryOptions,
 } from "../../manage/adapters/workspace-api";
 import type {
   OpenViewDataSourceField,
@@ -119,6 +120,10 @@ export function RecordDetailsControls({
   const client = useQueryClient();
   const workspace = useQuery({
     ...workspaceLifecycleQueryOptions(),
+    enabled: isAdmin && record.isDeleted,
+  });
+  const region = useQuery({
+    ...workspaceCalendarQueryOptions(),
     enabled: isAdmin && record.isDeleted,
   });
   const canPurge =
@@ -504,7 +509,10 @@ export function RecordDetailsControls({
           ) : null}
           {canPurge && purgePreview ? (
             <div className="border-border space-y-4 rounded-lg border p-4">
-              <LifecyclePurgeReview impact={purgePreview.impact} />
+              <LifecyclePurgeReview
+                preview={purgePreview}
+                region={region.data}
+              />
               {purgePreview.impact.blockers.length > 0 ? null : (
                 <form
                   className="space-y-4"
@@ -514,18 +522,21 @@ export function RecordDetailsControls({
                   }}
                 >
                   <p className="text-sm" role="status">
-                    Type the exact record ID and enter your administrator
+                    Type the exact record name and enter your administrator
                     password to continue.
                   </p>
                   <p className="text-sm">
-                    Record ID: <code className="break-all">{record.id}</code>
+                    Record name:{" "}
+                    <code className="break-all">
+                      {purgePreview.confirmation_name}
+                    </code>
                   </p>
                   <div className="space-y-2">
                     <label
                       htmlFor={`${id}-purge-confirmation`}
                       className="text-sm font-medium"
                     >
-                      Type the record ID
+                      Type the record name
                     </label>
                     <input
                       id={`${id}-purge-confirmation`}

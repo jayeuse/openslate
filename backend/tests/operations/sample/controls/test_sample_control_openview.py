@@ -27,6 +27,7 @@ from operations.sample.client import SampleClient
 from operations.sample.packs.registry import get_pack, pack_keys
 from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
 from operations.sample.scenario import build_dataset
+from tests.operations.sample.controls.sample_purge_wire import SamplePurgeWire, report_fixture
 
 
 def _uuid(value: str) -> str:
@@ -122,6 +123,9 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
         "reports": {report_target: report_id},
     }
     name_id = live_fields[f"{source_module}:name"]
+    title_fields = {
+        live_id: live_fields[f"{module_key}:name"] for module_key, live_id in live_modules.items()
+    }
     resource_state: dict[str, dict[str, object]] = {
         "view": {
             "id": view_id,
@@ -137,23 +141,9 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
             "revision": 5,
             "is_deleted": False,
         },
-        "report": {
-            "id": report_id,
-            "module_id": live_modules[source_module],
-            "name": "Existing report",
-            "subtitle": None,
-            "revision": 7,
-            "is_deleted": False,
-            "recipe": {
-                "version": 1,
-                "fields": [{"field_id": name_id, "expected_type": "text"}],
-                "filters": [],
-                "logic": "and",
-                "sorts": [],
-                "group_by": None,
-                "include_row_count": False,
-            },
-        },
+        "report": report_fixture(
+            report_id, live_modules[source_module], name_id, name="Existing report"
+        ),
         "schedule": {
             "id": schedule_id,
             "report_id": report_id,
@@ -169,6 +159,10 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
             "updated_at": "2026-10-01T00:00:00Z",
         },
     }
+
+    purge_wire = SamplePurgeWire(
+        "report", source=resource_state["report"], actor_id=_uuid("user:admin")
+    )
 
     def response(status: int, body: object | None = None) -> httpx.Response:
         nonlocal counter
@@ -208,6 +202,9 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
             )
         seen.append((request.method, request.url.path))
         path, method = request.url.path, request.method
+        purge_response = purge_wire.route(request)
+        if purge_response is not None:
+            return purge_response
         if path.endswith(
             ("/query", "/grouped-query", "/window-query", "/aggregate-query", "/aggregate-snapshot")
         ):
@@ -311,7 +308,7 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
                     200,
                     {
                         "token": f"token-{counter}",
-                        "confirmation_name": record_id,
+                        "confirmation_name": row["data"][title_fields[row["module_id"]]],
                         "impact": {
                             "target_type": "record",
                             "target_id": record_id,
@@ -322,7 +319,8 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
                 )
             if method == "POST" and path.endswith("/purge"):
                 body = json.loads(request.content)
-                assert row["is_deleted"] is True and body["confirmation_name"] == record_id
+                assert row["is_deleted"] is True
+                assert body["confirmation_name"] == row["data"][title_fields[row["module_id"]]]
                 assert body["password"] == "fixture-admin-password"
                 del records[record_id]
                 for relationship_id, edge in list(records.items()):

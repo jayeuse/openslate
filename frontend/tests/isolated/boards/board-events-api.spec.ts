@@ -3,7 +3,8 @@ import { ApiContractError, ApiError } from "../../../src/lib/api";
 import {
   archiveBoardEvent,
   createBoardEvent,
-  deleteBoardEvent,
+  previewBoardEventPurge,
+  purgeBoardEvent,
   listBoardEventOccurrences,
   listBoardEvents,
   readBoardEvent,
@@ -196,12 +197,11 @@ test("Board event create and patch send reminder timings and UTC timed instants 
   }
 });
 
-test("Board event detail, archive, restore, and DELETE 204 use explicit revisions", async () => {
+test("Board event detail, archive, and restore use explicit revisions", async () => {
   const responses = [
     jsonResponse(allDayEvent),
     jsonResponse(mutation),
     jsonResponse(mutation),
-    new Response(null, { status: 204 }),
   ];
   const mock = installFetch(() => responses.shift()!);
   try {
@@ -220,21 +220,13 @@ test("Board event detail, archive, restore, and DELETE 204 use explicit revision
       eventRevision: 2,
       boardRevision: 4,
     });
-    await expect(
-      deleteBoardEvent(boardId, eventId, 5, 3),
-    ).resolves.toBeUndefined();
     expect(
       mock.requests.map(({ input, init }) => [String(input), init?.method]),
     ).toEqual([
       [`/api/boards/${boardId}/events/${eventId}`, undefined],
       [`/api/boards/${boardId}/events/${eventId}/archive`, "POST"],
       [`/api/boards/${boardId}/events/${eventId}/restore`, "POST"],
-      [`/api/boards/${boardId}/events/${eventId}`, "DELETE"],
     ]);
-    expect(JSON.parse(String(mock.requests[3]?.init?.body))).toEqual({
-      board_revision: 5,
-      event_revision: 3,
-    });
   } finally {
     mock.restore();
   }
@@ -564,5 +556,66 @@ test("Board event adapter redacts server detail while retaining safe status and 
     });
   } finally {
     denied.restore();
+  }
+});
+
+const purgeImpact = {
+  target_type: "board_event",
+  target_id: eventId,
+  operation: "purge",
+  actor_id: authorId,
+  rows: [],
+  external_impacts: [],
+  key_strips: [],
+  blockers: [],
+  impact_digest: "a".repeat(64),
+};
+const purgePreview = {
+  impact: purgeImpact,
+  token: "synthetic-event-challenge",
+  expires_at: timestamp,
+  confirmation_name: "Planning ".repeat(25).trim(),
+  last_successful_backup_at: null,
+};
+
+test("Board event purge carries a guarded exact-name challenge and refuses mismatched impact", async () => {
+  const responses = [
+    jsonResponse(purgePreview),
+    jsonResponse({ impact: purgeImpact, operation_id: null }),
+    jsonResponse({
+      ...purgePreview,
+      impact: { ...purgeImpact, target_id: authorId },
+    }),
+  ];
+  const mock = installFetch(() => responses.shift()!);
+  try {
+    await expect(previewBoardEventPurge(boardId, eventId)).resolves.toEqual(
+      purgePreview,
+    );
+    await expect(
+      purgeBoardEvent(boardId, eventId, {
+        token: purgePreview.token,
+        confirmationName: purgePreview.confirmation_name,
+        password: "synthetic-passphrase",
+      }),
+    ).resolves.toEqual({ impact: purgeImpact, operation_id: null });
+    expect(
+      mock.requests
+        .slice(0, 2)
+        .map(({ input, init }) => [String(input), init?.method]),
+    ).toEqual([
+      [`/api/boards/${boardId}/events/${eventId}/purge/preview`, "POST"],
+      [`/api/boards/${boardId}/events/${eventId}/purge`, "POST"],
+    ]);
+    expect(JSON.parse(String(mock.requests[1]?.init?.body))).toEqual({
+      token: purgePreview.token,
+      confirmation_name: purgePreview.confirmation_name,
+      password: "synthetic-passphrase",
+    });
+    await expect(
+      previewBoardEventPurge(boardId, eventId),
+    ).rejects.toBeInstanceOf(ApiContractError);
+  } finally {
+    mock.restore();
   }
 });

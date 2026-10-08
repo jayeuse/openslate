@@ -21,6 +21,10 @@ from app.systems.platform.files.schemas import FileResponse
 from app.systems.platform.files.storage import get_storage
 from app.systems.sandbox.lifecycle.exceptions import LifecycleError
 from app.systems.sandbox.lifecycle.planner import canonical_lifecycle_digest
+from app.systems.sandbox.lifecycle.purge_support import (
+    PURGE_DISABLED_MESSAGE,
+    last_successful_backup_at,
+)
 from app.systems.sandbox.lifecycle.schemas import (
     LifecycleImpactResponse,
     LifecycleOperation,
@@ -44,7 +48,7 @@ def purge_impact(
     db: Session, actor_id: UUID, file_id: UUID, *, board_id: UUID | None = None
 ) -> LifecycleImpactResponse:
     if not get_settings().lifecycle_purge_enabled:
-        raise error("purge_disabled", "Permanent purge is disabled", 403)
+        raise error("purge_disabled", PURGE_DISABLED_MESSAGE, 403)
     # Workspace mutations lock profile before file; use that same order.
     profile = db.scalar(
         select(WorkspaceProfile)
@@ -69,6 +73,7 @@ def purge_impact(
     fingerprint = hashlib.sha256(
         json.dumps(
             {
+                "filename": file.filename,
                 "key": file.object_key,
                 "digest": file.digest,
                 "state": file.state,
@@ -123,7 +128,8 @@ def preview(
         impact=impact,
         token=issued.token,
         expires_at=issued.expires_at,
-        confirmation_name=str(file_id),
+        confirmation_name=load(db, file_id).filename,
+        last_successful_backup_at=last_successful_backup_at(db),
     )
 
 
@@ -140,10 +146,10 @@ def execute(
     with hold_file_worker(request):
         response.headers["Cache-Control"] = "no-store"
         actor_id, email = user.id, user.email
-        if payload.confirmation_name != str(file_id):
-            raise error("confirmation_name_mismatch", "Confirmation must match the file ID", 422)
+        if payload.confirmation_name != load(db, file_id).filename:
+            raise error("confirmation_name_mismatch", "Confirmation must match the file name", 422)
         if not get_settings().lifecycle_purge_enabled:
-            raise error("purge_disabled", "Permanent purge is disabled", 403)
+            raise error("purge_disabled", PURGE_DISABLED_MESSAGE, 403)
         try:
             digest = challenge_impact_digest(db, payload.token, actor_id, "purge", "file", file_id)
             challenge = verify_challenge(
@@ -164,6 +170,10 @@ def execute(
         # purge_confirmed invokes this under the same locks as its state transition.
         def validate_locked() -> None:
             impact = purge_impact(db, actor_id, file_id)
+            if payload.confirmation_name != load(db, file_id).filename:
+                raise error(
+                    "confirmation_name_mismatch", "Confirmation must match the file name", 422
+                )
             if impact.impact_digest != expected:
                 db.rollback()
                 raise error("plan_drift", "File changed after preview; obtain a new preview")

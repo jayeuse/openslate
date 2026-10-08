@@ -12,6 +12,8 @@ class LifecycleTargetType(StrEnum):
     RECORD = "record"
     FILE = "file"
     BOARD = "board"
+    REPORT = "report"
+    BOARD_EVENT = "board_event"
 
 
 class LifecycleOperation(StrEnum):
@@ -135,7 +137,8 @@ class LifecycleClosePreviewResponse(BaseModel):
 
 
 class LifecyclePurgePreviewResponse(LifecycleClosePreviewResponse):
-    pass
+    confirmation_name: str
+    last_successful_backup_at: datetime | None
 
 
 class LifecycleCloseRequest(BaseModel):
@@ -147,7 +150,7 @@ class LifecycleCloseRequest(BaseModel):
 
 
 class LifecyclePurgeRequest(LifecycleCloseRequest):
-    pass
+    confirmation_name: str = Field(min_length=1)
 
 
 class LifecycleReopenRequest(BaseModel):

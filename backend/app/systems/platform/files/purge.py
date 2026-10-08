@@ -16,6 +16,7 @@ from app.systems.platform.files.providers import ProviderUnavailable, StorageBac
 from app.systems.platform.files.quota import lock_quota
 from app.systems.platform.files.schemas import FileResponse
 from app.systems.platform.files.service import _claim, _current
+from app.systems.sandbox.lifecycle.purge_support import PURGE_DISABLED_MESSAGE
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,7 @@ def purge_confirmed(
 ) -> FileResponse:
     """Parent must validate its signed/digest confirmation and current-logo exclusion."""
     if not get_settings().lifecycle_purge_enabled:
-        raise error("purge_disabled", "Permanent purge is disabled", 403)
+        raise error("purge_disabled", PURGE_DISABLED_MESSAGE, 403)
     lock_quota(db)
     require_fresh_exact_admin(db, actor_id)
     if validate_locked is not None:

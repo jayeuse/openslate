@@ -86,6 +86,7 @@ def test_purge_binds_confirmation_to_purge_operation_and_target() -> None:
             "app.systems.sandbox.lifecycle.router.get_settings",
             return_value=SimpleNamespace(lifecycle_purge_enabled=True),
         ),
+        patch("app.systems.sandbox.lifecycle.router.require_fresh_exact_admin", return_value=user),
         patch(
             "app.systems.sandbox.lifecycle.router.challenge_impact_digest", return_value="digest"
         ) as digest,
@@ -124,5 +125,11 @@ def test_lifecycle_confirmation_requests_bound_all_secret_and_confirmation_field
     for field_name in valid:
         oversized = dict(valid)
         oversized[field_name] = "x" * 1001
+        if field_name == "confirmation_name" and request_model is LifecyclePurgeRequest:
+            # Purge accepts the exact stored display name; the global body limit still applies.
+            assert (
+                request_model.model_validate(oversized).confirmation_name == oversized[field_name]
+            )
+            continue
         with pytest.raises(ValueError):
             request_model(**oversized)

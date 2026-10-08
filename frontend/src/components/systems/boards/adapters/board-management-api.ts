@@ -153,7 +153,6 @@ export async function previewBoardPurge(
     { method: "POST" },
   );
   assertLifecyclePurgePreviewFor(preview, "board", boardId);
-  if (preview.confirmation_name !== boardId) throw new ApiContractError();
   return preview;
 }
 
@@ -163,7 +162,6 @@ export async function purgeBoard(
 ): Promise<BoardPurgeResult> {
   const boardId = uuidSchema.parse(rawBoardId);
   const input = lifecyclePurgeInputSchema.parse(rawInput);
-  if (input.confirmationName !== boardId) throw new ApiContractError();
   const result = await safeBoardJson(
     `/boards/${encodeURIComponent(boardId)}/purge`,
     lifecyclePurgeResultSchema,

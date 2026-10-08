@@ -41,7 +41,7 @@ def test_platform_plan_uses_disposable_structure_and_preserves_lifecycle_order(p
     from operations.sample.controls.platform import OPERATIONS
 
     platform = [action for action in actions if action.values["operation"] in OPERATIONS]
-    assert len(actions) == 102
+    assert len(actions) == 103
     assert [action.values["operation"] for action in platform] == [
         "import_csv_rows",
         "search_workspace",
@@ -96,7 +96,7 @@ def test_platform_plan_uses_disposable_structure_and_preserves_lifecycle_order(p
 def test_platform_wire_imports_searches_exports_disposes_and_restores(
     tmp_path, monkeypatch, pack_key, fault
 ):
-    import operations.sample.controls.openview_mutations as frozen_helpers
+    import operations.sample.controls.openview_purge as frozen_helpers
     from operations.sample.controls.actions import execute_control_action
     from operations.sample.controls.platform import OPERATIONS
     from operations.sample.controls.sandbox import OPERATIONS as lifecycle_operations

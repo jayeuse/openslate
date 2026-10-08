@@ -252,11 +252,14 @@ def test_group_access_replacement_uses_planned_baseline_and_current_revision(tmp
     assert result["request_evidence"][0]["related_entity_types"] == ["group_access"]
 
 
+@pytest.mark.parametrize("fault", ("none", "empty_name", "malformed_name", "target", "operation"))
 def test_board_purge_preview_and_purge_keep_challenge_and_password_out_of_evidence(
     tmp_path,
+    fault: str,
 ) -> None:
     request_ids = iter(str(uuid4()) for _ in range(3))
     seen: list[httpx.Request] = []
+    confirmation_name = "Phase purge Board / Résumé"
 
     def handler(request: httpx.Request) -> httpx.Response:
         login = _login_response(request)
@@ -273,10 +276,14 @@ def test_board_purge_preview_and_purge_keep_challenge_and_password_out_of_eviden
                 headers={"X-Request-ID": request_id},
                 json={
                     "token": "do-not-report-preview-token",
-                    "confirmation_name": BOARD_ID,
+                    "confirmation_name": ""
+                    if fault == "empty_name"
+                    else 42
+                    if fault == "malformed_name"
+                    else confirmation_name,
                     "impact": {
-                        "target_id": BOARD_ID,
-                        "operation": "purge",
+                        "target_id": TARGET_ID if fault == "target" else BOARD_ID,
+                        "operation": "close" if fault == "operation" else "purge",
                         "impact_digest": "digest",
                     },
                 },
@@ -298,13 +305,20 @@ def test_board_purge_preview_and_purge_keep_challenge_and_password_out_of_eviden
     preview = _action("board_purge_preview", target="phase-purge-board")
     purge = _action("board_purge", target="phase-purge-board")
 
+    if fault != "none":
+        with pytest.raises(SamplePhaseActionError, match="preview did not match its target"):
+            execute_phase_action(preview, None, context)  # type: ignore[arg-type]
+        assert "board_purge_previews" not in context.private_values
+        assert not any(request.url.path.endswith("/purge") for request in seen)
+        return
+
     preview_result = execute_phase_action(preview, None, context)  # type: ignore[arg-type]
     purge_result = execute_phase_action(purge, None, context)  # type: ignore[arg-type]
 
     assert seen[-1].url.path == f"/api/boards/{BOARD_ID}/purge"
     assert json.loads(seen[-1].content) == {
         "token": "do-not-report-preview-token",
-        "confirmation_name": BOARD_ID,
+        "confirmation_name": confirmation_name,
         "password": "fixture-admin-password",
     }
     evidence = preview_result["request_evidence"] + purge_result["request_evidence"]

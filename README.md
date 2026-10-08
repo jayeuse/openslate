@@ -129,6 +129,11 @@ uv run python operations/provision_storage.py
 
 ### Update a development checkout from before 2026-10-05
 
+Tier 2 enables permanent delete in `.env.example` for new installations.
+`LIFECYCLE_PURGE_ENABLED` remains required. An upgrade keeps the existing
+installation's value; changing the example does not enable it in an existing
+private `.env`.
+
 Releases before 2026-10-05 had antivirus file scanning. If your `.env` and
 local stack come from such a release, do these steps once after you update the
 checkout:

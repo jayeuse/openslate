@@ -181,7 +181,7 @@ def test_control_verifier_checks_request_and_all_final_families(
 def test_platform_verification_requires_exact_requests_and_restored_state(
     tmp_path, monkeypatch, fault
 ):
-    import operations.sample.controls.openview_mutations as frozen_helpers
+    import operations.sample.controls.openview_purge as frozen_helpers
     from operations.sample.controls.actions import execute_control_action
     from tests.operations.sample.controls.sample_platform_wire import PlatformWire
     from tests.operations.sample.controls.test_sample_control_sandbox import _context

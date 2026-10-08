@@ -51,7 +51,7 @@ const safeCodes: Record<string, { status: number; message: string }> = {
   },
   purge_disabled: {
     status: 403,
-    message: "Permanent Board deletion is disabled",
+    message: "Permanent delete is turned off for this installation.",
   },
   purge_requires_closed: {
     status: 409,
@@ -59,7 +59,7 @@ const safeCodes: Record<string, { status: number; message: string }> = {
   },
   confirmation_name_mismatch: {
     status: 422,
-    message: "The Board ID confirmation did not match",
+    message: "The Board name confirmation did not match",
   },
   challenge_expired: {
     status: 409,

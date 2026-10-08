@@ -1,7 +1,8 @@
 import {
   archiveBoardEvent,
   createBoardEvent,
-  deleteBoardEvent,
+  previewBoardEventPurge,
+  purgeBoardEvent,
   listBoardEventOccurrences,
   listBoardEvents,
   listMyBoardEvents,
@@ -198,8 +199,39 @@ describeContracts("Boards: events, posts, files and record links", [
     },
   },
   {
-    name: "deleteBoardEvent",
-    run: () => deleteBoardEvent(boardId, eventId, 2, 3),
+    name: "previewBoardEventPurge",
+    run: () => previewBoardEventPurge(boardId, eventId),
+    responses: {
+      "POST /api/boards/{board_id}/events/{event_id}/purge/preview": {
+        impact: {
+          target_type: "board_event",
+          target_id: eventId,
+          operation: "purge",
+          impact_digest: "a".repeat(64),
+        },
+        confirmation_name: "Planning",
+        last_successful_backup_at: null,
+      },
+    },
+  },
+  {
+    name: "purgeBoardEvent",
+    run: () =>
+      purgeBoardEvent(boardId, eventId, {
+        token: "token",
+        confirmationName: "Planning",
+        password: "password",
+      }),
+    responses: {
+      "POST /api/boards/{board_id}/events/{event_id}/purge": {
+        impact: {
+          target_type: "board_event",
+          target_id: eventId,
+          operation: "purge",
+          impact_digest: "a".repeat(64),
+        },
+      },
+    },
   },
   {
     name: "listBoardEventOccurrences",

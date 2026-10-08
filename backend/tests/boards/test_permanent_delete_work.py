@@ -165,7 +165,7 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
         path,
         json={
             "token": preview.json()["token"],
-            "confirmation_name": str(board.id),
+            "confirmation_name": board.name,
             "password": password,
         },
     )
@@ -180,7 +180,7 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
         path,
         json={
             "token": current.json()["token"],
-            "confirmation_name": str(board.id),
+            "confirmation_name": board.name,
             "password": password,
         },
     )

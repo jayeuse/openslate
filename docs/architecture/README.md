@@ -85,7 +85,7 @@ Supabase Auth establishes provider identity. FastAPI verifies the provider token
 - Application roles and group access, Board groups, and report-run eligibility remain OpenSlate data; Auth metadata is never an authorization source. The Workspace profile stores shared settings, not an access policy. Server-backed Views and Reports are shared with module readers; each retained Report run records its eligible readers and still checks current module access when read.
 - Normal domain mutations use audited ORM sessions and explicit commits. Provider Auth and Storage operations are separate service boundaries.
 - Private file bytes live in the Supabase Storage `openslate-ready` bucket; FastAPI authorizes each operation and validates each upload's file type. There is no antivirus scan.
-- Close/reopen is the default hierarchical lifecycle; purge is explicit and disabled by default.
+- Close/reopen is the default hierarchical lifecycle; purge is explicit and enabled in new-installation examples. Existing installations retain their required `LIFECYCLE_PURGE_ENABLED` value.
 - Authenticated SSE carries private invalidation events, never row snapshots. Supabase Realtime is not yet the application event transport.
 - Supabase Studio is an operator-only database console that replaces pgweb in the Compose topology; it is more privileged than the former read-only inspector.
 - The selected production overlay uses one FastAPI application upstream behind Caddy. Next.js is a static-export build tool and a local development server.

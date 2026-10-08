@@ -99,7 +99,7 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
             path,
             json={
                 "token": preview.json()["token"],
-                "confirmation_name": str(board.id),
+                "confirmation_name": board.name,
                 "password": password,
             },
         )

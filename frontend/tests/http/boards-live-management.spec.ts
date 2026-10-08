@@ -80,7 +80,8 @@ const purgePreview: BoardPurgePreview = {
   },
   token: "server-issued-challenge",
   expires_at: "2026-09-25T00:00:00Z",
-  confirmation_name: boardId,
+  confirmation_name: board.name,
+  last_successful_backup_at: "2026-09-23T18:30:00Z",
 };
 
 function purgeRow(entityType: string, entityId: string) {
@@ -440,24 +441,24 @@ test("Board purge preserves safe lifecycle messages when the server returns thei
     management.boardPurgeFailureMessage(
       new ApiError(
         403,
-        "Permanent Board deletion is disabled",
+        "Permanent delete is turned off for this installation.",
         undefined,
         "purge_disabled",
       ),
       "preview",
     ),
-  ).toBe("Permanent Board deletion is disabled");
+  ).toBe("Permanent delete is turned off for this installation.");
   expect(
     management.boardPurgeFailureMessage(
       new ApiError(
         422,
-        "The Board ID confirmation did not match",
+        "The Board name confirmation did not match",
         undefined,
         "confirmation_name_mismatch",
       ),
       "execute",
     ),
-  ).toBe("The Board ID confirmation did not match");
+  ).toBe("The Board name confirmation did not match");
 });
 
 test("Board purge explains its impact and keeps stale challenges recoverable without losing access", async ({
@@ -465,6 +466,8 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
 }) => {
   const api = await installArchivedBoard(page);
   let previews = 0;
+  api.workspace.locale = "en-GB";
+  api.workspace.timezone = "Asia/Manila";
   let deletions = 0;
   const preview: BoardPurgePreview = {
     ...purgePreview,
@@ -549,7 +552,10 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
   await expect(
     manage.getByText("This permanently removes 1 Board and 2 posts."),
   ).toBeVisible();
-  await expect(manage.getByText(boardId, { exact: true })).toBeVisible();
+  await expect(manage.getByText(board.name, { exact: true })).toBeVisible();
+  await expect(manage.getByText(/Last successful backup/)).toHaveText(
+    "Last successful backup: 24 Sept 2026, 02:30 · Asia/Manila",
+  );
   await expect(manage.getByLabel("Administrator password")).toBeVisible();
   api.failWorkspaceRead(true);
   await sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" });
@@ -580,7 +586,7 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
   });
   expect(destructiveColor.actual).toBe(destructiveColor.expected);
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    await manage.getByLabel("Type the Board ID").fill(boardId);
+    await manage.getByLabel("Type the Board name").fill(board.name);
     await manage
       .getByLabel("Administrator password")
       .fill("synthetic-test-passphrase");
@@ -678,7 +684,7 @@ test("Board permanent deletion closes its review and confirms completion", async
   await form
     .getByRole("button", { name: "Permanently delete Board", exact: true })
     .click();
-  await form.getByLabel("Type the Board ID").fill(boardId);
+  await form.getByLabel("Type the Board name").fill(board.name);
   await form
     .getByLabel("Administrator password")
     .fill("synthetic-owned-passphrase");

@@ -3,6 +3,8 @@ import { ApiContractError, apiFetch } from "@/lib/api";
 import {
   assertLifecyclePreviewFor,
   assertLifecycleResultFor,
+  lifecycleCloseInputSchema,
+  lifecycleClosePreviewSchema,
   lifecyclePurgeInputSchema,
   lifecyclePurgePreviewSchema,
   lifecyclePurgeResultSchema,
@@ -66,10 +68,16 @@ export async function previewSandboxLifecycle(
     request.operation === "close"
       ? `${targetPath(request.binding)}/close/preview`
       : `${targetPath(request.binding)}/purge/preview`;
-  const result = await apiFetch(path, lifecyclePurgePreviewSchema, {
-    method: "POST",
-    cache: "no-store",
-  });
+  const result = await apiFetch(
+    path,
+    request.operation === "close"
+      ? lifecycleClosePreviewSchema
+      : lifecyclePurgePreviewSchema,
+    {
+      method: "POST",
+      cache: "no-store",
+    },
+  );
   assertLifecyclePreviewFor(
     result,
     request.binding.kind,
@@ -87,7 +95,11 @@ export async function confirmSandboxLifecycle(
     request.operation === "reopen"
       ? { confirmed: true }
       : (() => {
-          const validated = lifecyclePurgeInputSchema.parse(input);
+          const validated = (
+            request.operation === "close"
+              ? lifecycleCloseInputSchema
+              : lifecyclePurgeInputSchema
+          ).parse(input);
           return {
             token: validated.token,
             confirmation_name: validated.confirmationName,

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from operations.sample.blueprint import SampleDataset
+from operations.sample.controls.board_event_purge import execute_event_purge
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import (
     PhaseExecutionContext,
@@ -38,7 +39,8 @@ BOARD_CONTENT_ROUTES = frozenset(
         ("PATCH", "/api/boards/{board_id}/events/{event_id}"),
         ("POST", "/api/boards/{board_id}/events/{event_id}/archive"),
         ("POST", "/api/boards/{board_id}/events/{event_id}/restore"),
-        ("DELETE", "/api/boards/{board_id}/events/{event_id}"),
+        ("POST", "/api/boards/{board_id}/events/{event_id}/purge/preview"),
+        ("POST", "/api/boards/{board_id}/events/{event_id}/purge"),
     }
 )
 
@@ -346,13 +348,7 @@ def _write_event(
             )
             entity, primary = "board_events", "update"
         else:
-            path, method, expected, step = (
-                f"{path}/{event_id}",
-                "DELETE",
-                204,
-                "delete_control_event",
-            )
-            entity, primary = "board_events", "delete"
+            raise SamplePhaseActionError("Unsupported Board event action", step=action.key)
     response = _request(
         action,
         context,
@@ -363,15 +359,13 @@ def _write_event(
         step=step,
         expected=expected,
         on_substep=on_substep,
-        json_body=body if method != "DELETE" or operation == "event_delete" else None,
+        json_body=body,
         primary_entity_type=entity,
         primary_entity_id=event_id,
         primary_action=primary,
         expected_audit_rows=1,
         related_entity_types=("boards",),
     )
-    if not is_create and operation == "event_delete":
-        return _result(action, context, evidence, mappings, extra={"operation": operation})
     result_body = _read_json(response, step=step, request_id=_request_id(response))
     if is_create:
         event_id = _id({"event": result_body.get("id")}, "event", label="event", step=step)
@@ -437,7 +431,8 @@ def execute_board_content_action(
         "event_patch",
         "event_archive",
         "event_restore",
-        "event_delete",
     }:
         return _write_event(action, context, evidence, mappings, on_substep=on_substep)
+    if operation == "event_purge":
+        return execute_event_purge(action, context, on_substep=on_substep)
     raise SamplePhaseActionError("Unsupported Board content action", step=action.key)

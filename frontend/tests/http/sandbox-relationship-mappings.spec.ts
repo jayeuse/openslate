@@ -783,6 +783,7 @@ test("bound module purge reviews stale challenges and refreshes removal without 
         token: "owned-purge-review",
         expires_at: "2027-10-01T00:00:00Z",
         confirmation_name: "Requests",
+        last_successful_backup_at: null,
       },
     }),
   );
@@ -822,6 +823,9 @@ test("bound module purge reviews stale challenges and refreshes removal without 
     name: "Permanently delete module",
     exact: true,
   });
+  await expect(dialog.getByText(/Last successful backup/)).toHaveText(
+    "Last successful backup: No successful backup recorded.",
+  );
   await expect(
     dialog.getByLabel("Administrator password", { exact: true }),
   ).toBeVisible();
@@ -1050,6 +1054,7 @@ test("the bound department outline reviews blockers and reopens with explicit co
         token: "blocked-department-review",
         expires_at: "2027-10-01T00:00:00Z",
         confirmation_name: department.name,
+        last_successful_backup_at: null,
       },
     }),
   );

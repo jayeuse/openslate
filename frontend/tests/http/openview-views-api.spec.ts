@@ -5638,7 +5638,8 @@ test("an administrator can preview and confirm deleted-record purging with a fre
     impact,
     token: "synthetic-record-challenge",
     expires_at: "2026-09-25T00:00:00Z",
-    confirmation_name: recordOneId,
+    confirmation_name: "Server-supplied record title",
+    last_successful_backup_at: null,
   };
   let rejectNextPurge = true;
   await page.route("**/api/records/**", async (route) => {
@@ -5691,6 +5692,9 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await expect(impactSummary).toContainText("1 record");
   await expect(impactSummary).toContainText("2 links");
   await expect(impactSummary).toContainText("3 automation history entries");
+  await expect(details.getByText(/Last successful backup/)).toHaveText(
+    "Last successful backup: No successful backup recorded.",
+  );
   await expect(details.getByText(/Work orders.*Maintenance/)).toBeVisible();
   await expect(
     details.getByText(/Pump seal replacement.*Work orders.*Maintenance/),
@@ -5712,7 +5716,9 @@ test("an administrator can preview and confirm deleted-record purging with a fre
     .getByRole("button", { name: "Permanently delete", exact: true })
     .click();
   await expect(details.getByLabel("Administrator password")).toBeVisible();
-  await details.getByLabel("Type the record ID").fill(recordOneId);
+  await details
+    .getByLabel("Type the record name")
+    .fill(preview.confirmation_name);
   await details
     .getByLabel("Administrator password")
     .fill("synthetic-test-passphrase");
@@ -5726,9 +5732,11 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await expect(
     details.getByText(/Pump seal replacement.*Work orders.*Maintenance/),
   ).toBeVisible();
-  await expect(details.getByLabel("Type the record ID")).toHaveValue("");
+  await expect(details.getByLabel("Type the record name")).toHaveValue("");
   await expect(details.getByLabel("Administrator password")).toHaveValue("");
-  await details.getByLabel("Type the record ID").fill(recordOneId);
+  await details
+    .getByLabel("Type the record name")
+    .fill(preview.confirmation_name);
   await details
     .getByLabel("Administrator password")
     .fill("synthetic-test-passphrase");
@@ -5743,7 +5751,9 @@ test("an administrator can preview and confirm deleted-record purging with a fre
     .getByRole("button", { name: "Review again", exact: true })
     .click();
   await expect(details.getByLabel("Administrator password")).toHaveValue("");
-  await details.getByLabel("Type the record ID").fill(recordOneId);
+  await details
+    .getByLabel("Type the record name")
+    .fill(preview.confirmation_name);
   await details
     .getByLabel("Administrator password")
     .fill("synthetic-test-passphrase");
@@ -5761,12 +5771,12 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   ]);
   expect(recordPurgeCalls[3]?.body).toEqual({
     token: preview.token,
-    confirmation_name: recordOneId,
+    confirmation_name: preview.confirmation_name,
     password: "synthetic-test-passphrase",
   });
   expect(recordPurgeCalls[5]?.body).toEqual({
     token: preview.token,
-    confirmation_name: recordOneId,
+    confirmation_name: preview.confirmation_name,
     password: "synthetic-test-passphrase",
   });
 });
@@ -5789,7 +5799,8 @@ test("a blocked record purge lists the dependency and hides password confirmatio
       json: {
         token: "blocked-record-challenge",
         expires_at: "2026-09-25T00:00:00Z",
-        confirmation_name: recordOneId,
+        confirmation_name: "Centrifugal pump 04",
+        last_successful_backup_at: null,
         impact: {
           target_type: "record",
           target_id: recordOneId,

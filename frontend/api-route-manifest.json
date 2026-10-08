@@ -253,12 +253,6 @@
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
-    "function": "deleteBoardEvent",
-    "method": "DELETE",
-    "path": "/api/boards/{param}/events/{param}"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
     "function": "listBoardEventOccurrences",
     "method": "GET",
     "path": "/api/boards/{param}/events/occurrences"
@@ -274,6 +268,18 @@
     "function": "listMyBoardEvents",
     "method": "GET",
     "path": "/api/boards/{param}/events/mine"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
+    "function": "previewBoardEventPurge",
+    "method": "POST",
+    "path": "/api/boards/{param}/events/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
+    "function": "purgeBoardEvent",
+    "method": "POST",
+    "path": "/api/boards/{param}/events/{param}/purge"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
@@ -1024,6 +1030,18 @@
     "function": "listOpenViewSharedReportRuns",
     "method": "GET",
     "path": "/api/reports/shared-runs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "previewReportPurge",
+    "method": "POST",
+    "path": "/api/reports/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",
+    "function": "purgeReport",
+    "method": "POST",
+    "path": "/api/reports/{param}/purge"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/reports-api.ts",

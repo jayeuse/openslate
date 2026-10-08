@@ -2,7 +2,7 @@
 
 > **Scope:** Domain close/reopen/purge state and file upload state.
 
-Departments, modules, fields, records, and relationships have explicit lifecycle behavior. Ordinary deletion requests a controlled close flow where required. Services compute impact, require confirmations, acquire locks, revalidate scope, make individual ORM changes, and record audit entries. Purge is disabled by default through `LIFECYCLE_PURGE_ENABLED=false`.
+Departments, modules, fields, records, and relationships have explicit lifecycle behavior. Ordinary deletion requests a controlled close flow where required. Services compute impact, require confirmations, acquire locks, revalidate scope, make individual ORM changes, and record audit entries. New installations enable purge through `.env.example` (`LIFECYCLE_PURGE_ENABLED=true`). The setting remains required; upgrading an existing installation keeps its configured value. An installation with purge turned off returns "Permanent delete is turned off for this installation."
 
 Password challenges for destructive lifecycle work ask Supabase Auth to verify the current email/password through [`ProviderPasswordGrantClient`](../../backend/app/systems/sandbox/lifecycle/password.py). The verified provider subject must resolve to the same eligible OpenSlate actor that opened the challenge; its temporary provider session is signed out rather than admitted as an application session. [`verify_challenge`](../../backend/app/systems/sandbox/lifecycle/challenge_verification.py) locks and validates the challenge before consuming it, rejects expired or already-used challenges, and does not treat a browser cookie as proof of the requested password action.
 

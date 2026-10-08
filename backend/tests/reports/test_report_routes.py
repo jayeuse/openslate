@@ -4,17 +4,12 @@ from datetime import UTC, datetime, time
 from uuid import UUID
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
-from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.models import User
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.openview.reports.models import (
@@ -23,77 +18,24 @@ from app.systems.openview.reports.models import (
     ReportRunEligibleUser,
     ReportRunRow,
 )
-from app.systems.openview.reports.router import router
 from app.systems.openview.reports.schedule_models import ReportSchedule
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
-from app.systems.sandbox.departments.models import Department
-from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.report_dependencies import load_report_purge_dependencies
-from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
-from tests.rbac.support import add_user, make_group_access
+from tests.reports.report_run_support import (
+    report_route_actor as _actor,
+)
+from tests.reports.report_run_support import (
+    report_route_client as _client,
+)
+from tests.reports.report_run_support import (
+    report_route_module as _module,
+)
+from tests.reports.report_run_support import (
+    report_route_recipe as _recipe,
+)
 
 pytestmark = pytest.mark.integration
-
-
-_ACTORS_KEY = "report_test_actors"
-
-
-def _actor(db: Session, *, level: str | None = AccessLevel.MANAGE, role: str = "member") -> User:
-    """A user who gets ``level`` on every module that :func:`_module` creates later."""
-
-    user = add_user(db, "report", role=role)
-    if level is not None:
-        db.info.setdefault(_ACTORS_KEY, []).append((user, level))
-    return user
-
-
-def _client(db: Session, user: User) -> TestClient:
-    app = FastAPI()
-    app.include_router(router, prefix="/api")
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: user
-    return TestClient(app)
-
-
-def _module(db: Session, *, active: bool = True) -> tuple[Module, Field]:
-    department = Department(department_name=f"Report source {uuid7()}")
-    db.add(department)
-    db.flush()
-    module = Module(
-        department_id=department.id,
-        module_name=f"Report source {uuid7()}",
-        is_deleted=not active,
-        deleted_at=None if active else datetime.now(UTC),
-    )
-    db.add(module)
-    db.flush()
-    field = Field(
-        module_id=module.id,
-        name="Category",
-        type=FieldType.TEXT,
-        required=False,
-        position=0,
-        config={},
-    )
-    db.add(field)
-    db.flush()
-    for actor, level in db.info.get(_ACTORS_KEY, []):
-        make_group_access(db, [actor], department, module, level=level)
-    return module, field
-
-
-def _recipe(field: Field) -> dict[str, object]:
-    reference = {"field_id": str(field.id), "expected_type": str(field.type)}
-    return {
-        "version": 1,
-        "fields": [reference],
-        "filters": [],
-        "logic": "and",
-        "sorts": [{**reference, "direction": "asc"}],
-        "group_by": reference,
-        "include_row_count": True,
-    }
 
 
 def test_manager_creates_lists_reads_and_updates_a_report_with_stale_revision(
@@ -227,12 +169,21 @@ def test_report_module_access_and_active_source_are_enforced(integration_owner_d
 
 def test_report_archive_restore_and_permanent_delete_preserve_then_release_runs(
     integration_owner_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db)
+    owner = _actor(db, role="admin")
     outsider = _actor(db, level=None)
     read_only = _actor(db, level=AccessLevel.WRITE)
     module, field = _module(db)
+    monkeypatch.setattr(
+        "app.systems.openview.reports.purge_router.get_settings",
+        lambda: type("Settings", (), {"lifecycle_purge_enabled": True})(),
+    )
+    monkeypatch.setattr(
+        "app.systems.sandbox.lifecycle.password.ProviderPasswordGrantClient.verify_password",
+        lambda *args: owner.id,
+    )
     set_audit_actor(db, owner.id)
     with _client(db, owner) as client:
         created = client.post(
@@ -242,7 +193,7 @@ def test_report_archive_restore_and_permanent_delete_preserve_then_release_runs(
         assert created.status_code == 201
         report_id = UUID(created.json()["id"])
         path = f"/api/reports/{report_id}"
-        assert client.delete(f"{path}/permanent?revision=1").status_code == 409
+        assert client.post(f"{path}/purge/preview").status_code == 409
         assert client.delete(f"{path}?revision=2").json()["detail"]["code"] == "stale_revision"
 
     record = Record(module_id=module.id, data={})
@@ -296,18 +247,17 @@ def test_report_archive_restore_and_permanent_delete_preserve_then_release_runs(
     with _client(db, outsider) as client:
         assert client.delete(f"{path}?revision=1").status_code == 404
         assert client.post(f"{path}/restore", json={"revision": 1}).status_code == 404
-        assert client.delete(f"{path}/permanent?revision=1").status_code == 404
+        assert client.post(f"{path}/purge/preview").status_code == 403
     with _client(db, read_only) as client:
         assert client.delete(f"{path}?revision=1").status_code == 403
-        assert client.delete(f"{path}/permanent?revision=1").status_code == 403
+        assert client.post(f"{path}/purge/preview").status_code == 403
 
     with _client(db, owner) as client:
         archived = client.delete(f"{path}?revision=1")
         assert archived.status_code == 204
         assert client.get(path).json()["is_deleted"] is True
         assert client.get(f"{path}/runs/{run.id}").status_code == 409
-        stale_delete = client.delete(f"{path}/permanent?revision=1")
-        assert stale_delete.json()["detail"]["code"] == "stale_revision"
+        assert client.delete(f"{path}/permanent?revision=1").status_code == 404
         assert client.delete(f"{path}?revision=2").json()["detail"]["code"] == "report_archived"
         assert db.get(ReportRun, run.id) is not None
         assert db.get(ReportRunRow, row.id) is not None
@@ -326,8 +276,27 @@ def test_report_archive_restore_and_permanent_delete_preserve_then_release_runs(
         assert restored.json()["is_deleted"] is False
         assert client.get(f"{path}/runs/{run.id}").status_code == 200
         assert client.delete(f"{path}?revision=3").status_code == 204
-        deleted = client.delete(f"{path}/permanent?revision=4")
-        assert deleted.status_code == 204, deleted.text
+        preview = client.post(f"{path}/purge/preview")
+        assert preview.status_code == 200, preview.text
+        expected = {
+            "reports",
+            "report_runs",
+            "report_run_rows",
+            "report_run_eligible_users",
+            "scheduled_work",
+            "in_app_notifications",
+            "report_schedules",
+        }
+        assert {row["entity_type"] for row in preview.json()["impact"]["rows"]} == expected
+        deleted = client.post(
+            f"{path}/purge",
+            json={
+                "token": preview.json()["token"],
+                "confirmation_name": "Retained",
+                "password": "synthetic-step-up",
+            },
+        )
+        assert deleted.status_code == 200, deleted.text
         assert client.get(path).status_code == 404
 
     assert db.get(Report, report_id) is None
@@ -369,8 +338,16 @@ def test_report_permanent_delete_rolls_back_flushed_child_deletions_on_conflict(
     integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db)
+    owner = _actor(db, role="admin")
     module, field = _module(db)
+    monkeypatch.setattr(
+        "app.systems.openview.reports.purge_router.get_settings",
+        lambda: type("Settings", (), {"lifecycle_purge_enabled": True})(),
+    )
+    monkeypatch.setattr(
+        "app.systems.sandbox.lifecycle.password.ProviderPasswordGrantClient.verify_password",
+        lambda *args: owner.id,
+    )
     report = Report(
         module_id=module.id,
         name="Rollback snapshot",
@@ -419,7 +396,17 @@ def test_report_permanent_delete_rolls_back_flushed_child_deletions_on_conflict(
     with monkeypatch.context() as patch:
         patch.setattr(db, "flush", conflict_after_flush)
         with _client(db, owner) as client:
-            result = client.delete(f"/api/reports/{report_id}/permanent?revision=1")
+            path = f"/api/reports/{report_id}/purge"
+            preview = client.post(f"{path}/preview")
+            assert preview.status_code == 200, preview.text
+            result = client.post(
+                path,
+                json={
+                    "token": preview.json()["token"],
+                    "confirmation_name": "Rollback snapshot",
+                    "password": "synthetic-step-up",
+                },
+            )
     assert result.status_code == 409
     assert result.json()["detail"]["code"] == "report_delete_conflict"
     assert db.get(Report, report.id) is not None

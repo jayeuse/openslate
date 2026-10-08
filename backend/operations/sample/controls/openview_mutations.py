@@ -9,6 +9,7 @@ from typing import Any
 
 from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleWriteOutcomeUnknown
+from operations.sample.controls.openview_purge import _purge_control_record
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import (
     PhaseExecutionContext,
@@ -27,19 +28,6 @@ from operations.sample.phases.actions import (
 from operations.sample.population.activity import build_record_payload
 
 _ADMIN = "admin"
-_PURGE_WAIT_SECONDS, _PURGE_POLL_SECONDS = 15.0, 0.5
-
-
-def _automation_pending(impact: object) -> bool:
-    blockers = impact.get("blockers") if isinstance(impact, Mapping) else None
-    return (
-        isinstance(blockers, list)
-        and bool(blockers)
-        and all(
-            isinstance(blocker, Mapping) and blocker.get("code") == "purge_trigger_dependency"
-            for blocker in blockers
-        )
-    )
 
 
 def _create_control_record(
@@ -124,84 +112,6 @@ def _delete_record(
         expected=204,
         on_substep=on_substep,
     )
-
-
-def _purge_control_record(
-    action: PhaseAction,
-    context: PhaseExecutionContext,
-    evidence: list[dict[str, object]],
-    *,
-    record_id: str,
-    preview_step: str,
-    purge_step: str,
-    on_substep: PhaseSubstep | None,
-) -> int:
-    # Automation work queued by the delete blocks the purge until it finishes, so
-    # review again for a short while, as a person would after "Review again".
-    deadline = time.monotonic() + _PURGE_WAIT_SECONDS
-    while True:
-        preview_response = _request(
-            action,
-            context,
-            evidence,
-            actor_key=_ADMIN,
-            method="POST",
-            path=f"/api/records/{record_id}/purge/preview",
-            step=preview_step,
-            expected=200,
-            on_substep=on_substep,
-        )
-        preview = _read_json(
-            preview_response, step=preview_step, request_id=_request_id(preview_response)
-        )
-        impact = preview.get("impact")
-        if not _automation_pending(impact) or time.monotonic() >= deadline:
-            break
-        time.sleep(_PURGE_POLL_SECONDS)
-    if (
-        not isinstance(preview.get("token"), str)
-        or preview.get("confirmation_name") != record_id
-        or not isinstance(impact, Mapping)
-        or impact.get("target_id") != record_id
-        or impact.get("operation") != "purge"
-        or impact.get("blockers") != []
-    ):
-        raise SamplePhaseActionError("Temporary record purge preview is blocked", step=preview_step)
-    rows = impact.get("rows", [])
-    history_count = (
-        sum(
-            row.get("entity_type") in {"record_trigger_events", "record_trigger_runs"}
-            for row in rows
-            if isinstance(row, Mapping)
-        )
-        if isinstance(rows, list)
-        else 0
-    )
-    response = _request(
-        action,
-        context,
-        evidence,
-        actor_key=_ADMIN,
-        method="POST",
-        path=f"/api/records/{record_id}/purge",
-        step=purge_step,
-        expected=200,
-        on_substep=on_substep,
-        json_body={
-            "token": preview["token"],
-            "confirmation_name": record_id,
-            "password": context.admin_password,
-        },
-    )
-    body = _read_json(response, step=purge_step, request_id=_request_id(response))
-    result_impact = body.get("impact")
-    if (
-        not isinstance(result_impact, Mapping)
-        or result_impact.get("target_id") != record_id
-        or result_impact.get("operation") != "purge"
-    ):
-        raise SamplePhaseActionError("Record purge response mismatch", step=purge_step)
-    return history_count
 
 
 def _record_lifecycle_control(

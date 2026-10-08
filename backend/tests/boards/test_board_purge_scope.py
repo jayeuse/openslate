@@ -52,7 +52,7 @@ def test_company_and_department_boards_cannot_be_purged_on_their_own(
     token = issue_challenge(db, actor.id, "purge", "board", board.id, "impact").token
     purge = api.post(
         path,
-        json={"token": token, "confirmation_name": str(board.id), "password": uuid7().hex},
+        json={"token": token, "confirmation_name": board.name, "password": uuid7().hex},
     )
     assert purge.status_code == 409
     assert purge.json()["detail"]["code"] == "board_scope_fixed"

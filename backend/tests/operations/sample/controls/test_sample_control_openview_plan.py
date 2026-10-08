@@ -46,8 +46,17 @@ def test_openview_control_plan_is_pack_derived_and_covers_query_and_edit_control
         "schedule_patch",
         "record_lifecycle",
         "relationship_delete",
+        "report_purge",
     }
     assert len(operations) == len(set(operations))
+    purge = next(action for action in actions if action.values["operation"] == "report_purge")
+    source = next(action for action in actions if action.values["operation"] == "report_patch")
+    assert purge.actor_key == "admin" and purge.expected_status == 200
+    assert purge.target_key != source.target_key
+    assert purge.values["source_report_key"] == source.target_key
+    assert purge.values["module_key"] == source.values["module_key"]
+    assert 0 < len(purge.values["temporary_name"]) <= 80
+    assert purge.values["temporary_name"] != source.values["report_name"]
     assert all(action.kind == "openview_controls" for action in actions)
     assert all(action.phase == "reorganization" for action in actions)
     assert all(action.key.startswith("control:") for action in actions)

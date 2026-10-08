@@ -44,7 +44,12 @@ const metricFieldId = "00000000-0000-4000-8000-000000000008";
 
 // Overrides below keep the frontend's cross-field rules true: echoed ids, a
 // department Board has a department, page counts match the items sent.
-const board = { id: boardId, scope: "department", department_id: departmentId };
+const board = {
+  id: boardId,
+  name: "Operations",
+  scope: "department",
+  department_id: departmentId,
+};
 const page = { limit: 25, offset: 0, count: 1, total: 1, has_more: false };
 const purgeImpact = {
   target_type: "board",
@@ -155,7 +160,8 @@ describeContracts("Boards: management, tools and widgets", [
     responses: {
       "POST /api/boards/{board_id}/purge/preview": {
         impact: purgeImpact,
-        confirmation_name: boardId,
+        confirmation_name: board.name,
+        last_successful_backup_at: null,
       },
     },
   },
@@ -164,7 +170,7 @@ describeContracts("Boards: management, tools and widgets", [
     run: () =>
       purgeBoard(boardId, {
         token: "token",
-        confirmationName: boardId,
+        confirmationName: board.name,
         password: "password",
       }),
     responses: {

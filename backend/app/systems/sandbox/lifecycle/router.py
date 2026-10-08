@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_admin
+from app.common.dependencies import require_admin, require_fresh_exact_admin
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.systems.access.users.models import User
@@ -24,6 +24,10 @@ from app.systems.sandbox.lifecycle.exceptions import (
     LifecyclePurgePreconditionError,
 )
 from app.systems.sandbox.lifecycle.planner import plan_lifecycle
+from app.systems.sandbox.lifecycle.purge_support import (
+    PURGE_DISABLED_MESSAGE,
+    last_successful_backup_at,
+)
 from app.systems.sandbox.lifecycle.schemas import (
     LifecycleClosePreviewResponse,
     LifecycleCloseRequest,
@@ -43,6 +47,7 @@ from app.systems.sandbox.lifecycle.service import (
     verify_challenge,
 )
 from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records.display import record_title
 from app.systems.sandbox.records.models import Record
 
 router = APIRouter(tags=["lifecycle"])
@@ -84,18 +89,25 @@ def _confirmation_name(
     supplied: str,
 ) -> None:
     target = _target(db, target_type, target_id)
-    expected = str(getattr(target, _CONFIRMATION_FIELDS[target_type]))
+    expected = _target_name(db, target_type, target)
     if supplied != expected:
         raise _error_response(
             LifecycleConfirmationNameMismatch("Confirmation name does not match target")
         )
 
 
+def _target_name(db: Session, target_type: LifecycleTargetType, target: Any) -> str:
+    if target_type is LifecycleTargetType.RECORD:
+        module = db.get(Module, target.module_id)
+        if module is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Target not found")
+        return record_title(db, target, module)
+    return str(getattr(target, _CONFIRMATION_FIELDS[target_type]))
+
+
 def _require_purge_enabled() -> None:
     if not get_settings().lifecycle_purge_enabled:
-        raise _error_response(
-            LifecyclePurgeDisabled("Purge is not enabled pending retention approval")
-        )
+        raise _error_response(LifecyclePurgeDisabled(PURGE_DISABLED_MESSAGE))
 
 
 def _preview(
@@ -186,8 +198,10 @@ def _purge_preview(
     response.headers["Cache-Control"] = "no-store"
     _require_purge_enabled()
     try:
+        require_fresh_exact_admin(db, user.id)
         target = _target(db, target_type, target_id)
         plan = plan_lifecycle(db, target_type, target_id, LifecycleOperation.PURGE, user.id)
+        name = _target_name(db, target_type, target)
         issued = issue_challenge(
             db,
             user.id,
@@ -200,7 +214,8 @@ def _purge_preview(
             impact=plan.response(),
             token=issued.token,
             expires_at=issued.expires_at,
-            confirmation_name=str(getattr(target, _CONFIRMATION_FIELDS[target_type])),
+            confirmation_name=name,
+            last_successful_backup_at=last_successful_backup_at(db),
         )
     except LifecycleError as error:
         raise _error_response(error) from error
@@ -218,6 +233,7 @@ def _purge(
     _require_purge_enabled()
     _confirmation_name(db, target_type, target_id, payload.confirmation_name)
     try:
+        require_fresh_exact_admin(db, user.id)
         target = _target(db, target_type, target_id)
         if not target.is_deleted:
             raise LifecyclePurgePreconditionError("Target must be closed before it can be purged")
@@ -240,6 +256,8 @@ def _purge(
             user.email,
             payload.password,
         )
+        _require_purge_enabled()
+        require_fresh_exact_admin(db, user.id)
         plan = plan_lifecycle(db, target_type, target_id, LifecycleOperation.PURGE, user.id)
         if plan.impact_digest != challenge.impact_digest:
             db.rollback()

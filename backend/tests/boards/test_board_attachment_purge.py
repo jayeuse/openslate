@@ -80,7 +80,7 @@ def test_board_purge_blocks_unpurged_file_then_deletes_purged_file_and_detached_
         path,
         json={
             "token": preview.json()["token"],
-            "confirmation_name": str(board.id),
+            "confirmation_name": board.name,
             "password": password,
         },
     )
@@ -118,6 +118,7 @@ def test_unlinked_board_file_admin_can_preview_and_confirm_purge(
         return SimpleNamespace(lifecycle_purge_enabled=True)
 
     monkeypatch.setattr("app.systems.platform.files.lifecycle_router.get_settings", enabled)
+    monkeypatch.setattr("app.systems.platform.files.board_router.get_settings", enabled)
     monkeypatch.setattr("app.systems.platform.files.purge.get_settings", enabled)
     app = FastAPI()
     app.include_router(board_file_router, prefix="/api")
@@ -139,7 +140,7 @@ def test_unlinked_board_file_admin_can_preview_and_confirm_purge(
             path,
             json={
                 "token": preview.json()["token"],
-                "confirmation_name": str(file.id),
+                "confirmation_name": file.filename,
                 "password": password,
             },
         )

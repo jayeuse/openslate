@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 import {
   assertLifecyclePurgePreviewFor,
   assertLifecyclePurgeResultFor,
@@ -153,7 +153,6 @@ export async function previewRecordPurge(
     { method: "POST", cache: "no-store" },
   );
   assertLifecyclePurgePreviewFor(preview, "record", recordId);
-  if (preview.confirmation_name !== recordId) throw new ApiContractError();
   return preview;
 }
 
@@ -163,7 +162,6 @@ export async function purgeRecord(
 ): Promise<z.output<typeof lifecyclePurgeResultSchema>> {
   const recordId = uuidSchema.parse(rawRecordId);
   const input = lifecyclePurgeInputSchema.parse(rawInput);
-  if (input.confirmationName !== recordId) throw new ApiContractError();
   const result = await apiFetch(
     `${recordPath(recordId)}/purge`,
     lifecyclePurgeResultSchema,

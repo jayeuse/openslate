@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { ApiContractError, ApiError } from "../../../src/lib/api";
-import { lifecycleErrorMessage } from "../../../src/lib/lifecycle";
+import {
+  lifecycleErrorMessage,
+  lifecyclePurgeInputSchema,
+  lifecyclePurgePreviewSchema,
+} from "../../../src/lib/lifecycle";
 
 const recordId = "00000000-0000-4000-8000-000000000015";
 const actorId = "00000000-0000-4000-8000-000000000001";
@@ -39,10 +43,54 @@ const preview = {
   impact,
   token: "synthetic-record-challenge",
   expires_at: "2026-09-25T00:00:00Z",
-  confirmation_name: recordId,
+  confirmation_name: "Supplier review ".repeat(20).trim(),
+  last_successful_backup_at: "2026-09-23T18:30:00Z",
 };
 
+test("purge contract accepts exact long names and nullable backup metadata for every target", () => {
+  for (const target_type of ["record", "report", "board_event"]) {
+    expect(
+      lifecyclePurgePreviewSchema.safeParse({
+        ...preview,
+        impact: { ...impact, target_type },
+        last_successful_backup_at: null,
+      }).success,
+    ).toBe(true);
+  }
+  expect(
+    lifecyclePurgeInputSchema.safeParse({
+      token: preview.token,
+      confirmationName: preview.confirmation_name,
+      password: "synthetic-test-passphrase",
+    }).success,
+  ).toBe(true);
+});
+
+test("purge contract refuses missing or malformed backup metadata", () => {
+  const { last_successful_backup_at: ignored, ...missingBackup } = preview;
+  void ignored;
+  expect(
+    lifecyclePurgePreviewSchema.safeParse({
+      ...missingBackup,
+      confirmation_name: "Supplier review",
+    }).success,
+  ).toBe(false);
+  expect(
+    lifecyclePurgePreviewSchema.safeParse({
+      ...preview,
+      confirmation_name: "Supplier review",
+      last_successful_backup_at: "not a timestamp",
+    }).success,
+  ).toBe(false);
+});
+
 test("shared lifecycle failures describe any purge target without exposing server detail", () => {
+  expect(
+    lifecycleErrorMessage(
+      new ApiError(403, "Private server detail", undefined, "purge_disabled"),
+      "Unable to delete.",
+    ),
+  ).toBe("Permanent delete is turned off for this installation.");
   for (const [code, message] of [
     [
       "purge_requires_closed",
@@ -88,7 +136,7 @@ test("record purge uses the lifecycle route DTO and rejects mismatched targets",
     await expect(
       api.purgeRecord(recordId, {
         token: preview.token,
-        confirmationName: recordId,
+        confirmationName: preview.confirmation_name,
         password: "synthetic-test-passphrase",
       }),
     ).resolves.toMatchObject({ impact, operation_id: null });
@@ -102,7 +150,7 @@ test("record purge uses the lifecycle route DTO and rejects mismatched targets",
         method: "POST",
         body: JSON.stringify({
           token: preview.token,
-          confirmation_name: recordId,
+          confirmation_name: preview.confirmation_name,
           password: "synthetic-test-passphrase",
         }),
       },

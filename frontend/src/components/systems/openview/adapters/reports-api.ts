@@ -7,6 +7,16 @@ import {
   type ApiRequestInit,
 } from "@/lib/api";
 import {
+  assertLifecyclePurgePreviewFor,
+  assertLifecyclePurgeResultFor,
+  lifecyclePurgeInputSchema,
+  lifecyclePurgePreviewSchema,
+  lifecyclePurgeResultSchema,
+  type LifecyclePurgeInput,
+  type LifecyclePurgePreview,
+  type LifecyclePurgeResult,
+} from "@/lib/lifecycle";
+import {
   isReadRequest,
   openViewReadFetch,
   trackOpenViewRead,
@@ -730,4 +740,40 @@ export function getOpenViewReportConflict(
       ? {}
       : { currentRevision: parsed.data.current_revision }),
   };
+}
+
+export async function previewReportPurge(
+  rawReportId: string,
+): Promise<LifecyclePurgePreview> {
+  const reportId = uuidSchema.parse(rawReportId);
+  const preview = await apiFetch(
+    `/reports/${encodeURIComponent(reportId)}/purge/preview`,
+    lifecyclePurgePreviewSchema,
+    { method: "POST", cache: "no-store" },
+  );
+  assertLifecyclePurgePreviewFor(preview, "report", reportId);
+  return preview;
+}
+
+export async function purgeReport(
+  rawReportId: string,
+  rawInput: LifecyclePurgeInput,
+): Promise<LifecyclePurgeResult> {
+  const reportId = uuidSchema.parse(rawReportId);
+  const input = lifecyclePurgeInputSchema.parse(rawInput);
+  const result = await apiFetch(
+    `/reports/${encodeURIComponent(reportId)}/purge`,
+    lifecyclePurgeResultSchema,
+    {
+      method: "POST",
+      cache: "no-store",
+      body: JSON.stringify({
+        token: input.token,
+        confirmation_name: input.confirmationName,
+        password: input.password,
+      }),
+    },
+  );
+  assertLifecyclePurgeResultFor(result, "report", reportId);
+  return result;
 }

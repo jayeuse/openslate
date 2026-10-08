@@ -66,7 +66,14 @@ export type Relationship = BaseEntity & {
   hidden_reasons: RelationshipHiddenReason[];
 };
 export type LifecycleTargetType =
-  "department" | "module" | "field" | "record" | "file" | "board";
+  | "department"
+  | "module"
+  | "field"
+  | "record"
+  | "file"
+  | "board"
+  | "report"
+  | "board_event";
 export type LifecycleOperation = "close" | "purge" | "reopen";
 export type LifecycleBlockerCode =
   | "closed_ancestor"
@@ -165,6 +172,9 @@ export type LifecyclePreviewResponse = {
   token: string;
   expires_at: string;
   confirmation_name: string;
+};
+export type LifecyclePurgePreviewResponse = LifecyclePreviewResponse & {
+  last_successful_backup_at: string | null;
 };
 export type LifecycleMutationResponse = {
   impact: LifecycleImpact;

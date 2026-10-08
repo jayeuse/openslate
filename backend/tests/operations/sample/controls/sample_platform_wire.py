@@ -209,6 +209,7 @@ class PlatformWire:
             row = self.records.get(key)
             if path.endswith("/purge/preview"):
                 assert row and row["is_deleted"]
+                module = self.lifecycle.live[row["module_id"]]
                 n = self.pending_reviews.get(key, 0)
                 self.pending_reviews[key] = n + 1
                 blockers = (
@@ -231,7 +232,7 @@ class PlatformWire:
                     200,
                     json={
                         "token": token,
-                        "confirmation_name": key,
+                        "confirmation_name": row["data"][module["title_field_id"]],
                         "expires_at": "2026-10-03T01:00:00Z",
                         "impact": {
                             "target_type": "record",
@@ -248,7 +249,9 @@ class PlatformWire:
                 )
             if path.endswith("/purge"):
                 assert set(body) == {"token", "confirmation_name", "password"}
-                assert self.tokens.pop(body["token"]) == body["confirmation_name"] == key
+                assert self.tokens.pop(body["token"]) == key
+                module = self.lifecycle.live[row["module_id"]]
+                assert body["confirmation_name"] == row["data"][module["title_field_id"]]
                 assert body["password"] == "fixture-admin-password"
                 self.purges += 1
                 if self.fault != "purge_remains":

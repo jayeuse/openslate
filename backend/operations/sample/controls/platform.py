@@ -12,7 +12,8 @@ import httpx
 from app.systems.access.users.schemas import UserPreferencesResponse
 from app.systems.sandbox.records.import_router import RecordImportResponse
 from operations.sample.blueprint import SampleDataset
-from operations.sample.controls.openview_mutations import _delete_record, _purge_control_record
+from operations.sample.controls.openview_mutations import _delete_record
+from operations.sample.controls.openview_purge import _purge_control_record
 from operations.sample.controls.platform_verification import search_page_contains_target
 from operations.sample.controls.platform_verification import validate_platform_page as _page
 from operations.sample.controls.sandbox import fixture_values

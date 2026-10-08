@@ -53,7 +53,7 @@ The Sandbox is where an administrator designs the organization: departments, mod
 | Lifecycle | `lifecycle`, `LifecycleOperation` | The controlled close, reopen, and purge of a department, module, field, record, file, or Board. | Internal |
 | Close | `close` | Stop new work on a department, module, or field but keep its data. Close needs the typed name and a password challenge. | Customer |
 | Reopen | `reopen` | Undo a close. Only Sandbox lifecycle items use "reopen"; other items use "restore". | Customer |
-| Purge | `purge`, "Permanently delete", `LIFECYCLE_PURGE_ENABLED` | Remove an item and its owned data for good. Purge is off by default. Records support purge but not close. | Customer ("Permanently delete") |
+| Purge | `purge`, "Permanently delete", `LIFECYCLE_PURGE_ENABLED` | Remove an item and its owned data for good. Purge is enabled in new-installation examples; existing installations keep their required setting. Records support purge but not close. | Customer ("Permanently delete") |
 | Impact | `impact`, `impact_digest`, `confirmation_name` | The preview of what a lifecycle action or publish changes. The request must send the digest back so that the server knows the person saw the current impact. | Internal |
 | Password challenge | `LifecycleConfirmationChallenge` | A one-time check of the administrator password before a destructive action. Supabase Auth verifies the password; the challenge does not start an application session. | Internal |
 

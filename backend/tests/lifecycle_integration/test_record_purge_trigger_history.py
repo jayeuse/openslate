@@ -113,7 +113,7 @@ class HistoryApi:
             f"/api/records/{record.id}/purge",
             {
                 "token": review["token"],
-                "confirmation_name": str(record.id),
+                "confirmation_name": review["confirmation_name"],
                 "password": token_urlsafe(32),
             },
         )

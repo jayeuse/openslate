@@ -8,6 +8,7 @@ from operations.sample.controls.openview_mutations import (
     _record_lifecycle_control,
     _relationship_delete_control,
 )
+from operations.sample.controls.openview_purge import execute_report_purge
 from operations.sample.controls.openview_queries import (
     QUERY_ROUTES,
     control_modules,
@@ -54,6 +55,10 @@ _MUTATION_ROUTES = frozenset(
         ("PATCH", "/api/reports/{report_id}"),
         ("GET", "/api/reports/{report_id}/schedule"),
         ("PATCH", "/api/reports/{report_id}/schedule"),
+        ("POST", "/api/reports"),
+        ("DELETE", "/api/reports/{report_id}"),
+        ("POST", "/api/reports/{report_id}/purge/preview"),
+        ("POST", "/api/reports/{report_id}/purge"),
     }
 )
 CONTROL_ROUTES = QUERY_ROUTES | _MUTATION_ROUTES
@@ -174,6 +179,17 @@ def plan_openview_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         raise ValueError("OpenView record lifecycle control needs a module manager")
     actions.extend(
         (
+            _action(
+                "report_purge",
+                "admin",
+                "control:report_purge",
+                {
+                    "source_report_key": logical_report,
+                    "module_key": source.key,
+                    "temporary_name": f"{report_name[:60].rstrip()} disposal review",
+                },
+                {"report_physically_absent": True, "authored_source_preserved": True},
+            ),
             _action(
                 "record_lifecycle",
                 lifecycle_actor,
@@ -358,4 +374,6 @@ def execute_openview_control(
         return _record_lifecycle_control(action, dataset, context, on_substep=on_substep)
     if operation == "relationship_delete":
         return _relationship_delete_control(action, dataset, context, on_substep=on_substep)
+    if operation == "report_purge":
+        return execute_report_purge(action, context, on_substep=on_substep)
     raise SamplePhaseActionError("Unsupported OpenView control action", step=action.key)

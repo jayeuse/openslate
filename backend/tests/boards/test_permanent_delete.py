@@ -201,7 +201,7 @@ def test_board_purge_preview_requires_admin_toggle_and_closed_board_and_lists_al
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "no-store"
     payload = response.json()
-    assert payload["confirmation_name"] == str(board.id)
+    assert payload["confirmation_name"] == board.name
     assert payload["impact"]["actor_id"] == str(admin.id)
     assert payload["impact"]["target_type"] == "board"
     assert {(row["entity_type"], row["entity_id"]) for row in payload["impact"]["rows"]} == {
@@ -214,7 +214,8 @@ def test_board_purge_preview_requires_admin_toggle_and_closed_board_and_lists_al
     assert "Private post working body" not in response.text
     assert "Private published body" not in response.text
     assert "Private archived body" not in response.text
-    assert "Archive me" not in response.text
+    # The authorized administrator receives the typed name, while the impact stays opaque.
+    assert "Archive me" not in str(payload["impact"])
 
     board.status = "active"
     board.is_deleted = True
@@ -250,7 +251,7 @@ def test_confirmed_board_purge_deletes_its_children_but_preserves_sources_and_au
         path,
         json={
             "token": preview.json()["token"],
-            "confirmation_name": str(board.id),
+            "confirmation_name": board.name,
             "password": password,
         },
     )
@@ -291,7 +292,7 @@ def test_board_purge_rejects_drift_after_password_without_partial_deletion(
 
     response = client.post(
         path,
-        json={"token": token, "confirmation_name": str(board.id), "password": password},
+        json={"token": token, "confirmation_name": board.name, "password": password},
     )
 
     assert response.status_code == 409
@@ -326,7 +327,7 @@ def test_board_purge_rejects_new_published_revision_after_preview(
 
     denied = client.post(
         path,
-        json={"token": token, "confirmation_name": str(board.id), "password": password},
+        json={"token": token, "confirmation_name": board.name, "password": password},
     )
 
     assert denied.status_code == 409
@@ -350,13 +351,13 @@ def test_board_purge_rejects_wrong_confirmation_and_target_bound_token(
     token = client.post(f"/api/boards/{board.id}/purge/preview").json()["token"]
     wrong_name = client.post(
         f"/api/boards/{board.id}/purge",
-        json={"token": token, "confirmation_name": str(other.id), "password": password},
+        json={"token": token, "confirmation_name": other.name, "password": password},
     )
     assert wrong_name.status_code == 422
     assert wrong_name.json()["detail"]["code"] == "confirmation_name_mismatch"
     wrong_target = client.post(
         f"/api/boards/{other.id}/purge",
-        json={"token": token, "confirmation_name": str(other.id), "password": password},
+        json={"token": token, "confirmation_name": other.name, "password": password},
     )
     assert wrong_target.status_code == 403
     assert wrong_target.json()["detail"]["code"] == "challenge_binding_mismatch"
@@ -364,7 +365,7 @@ def test_board_purge_rejects_wrong_confirmation_and_target_bound_token(
     db.commit()
     wrong_actor = _client(db, another_admin).post(
         f"/api/boards/{board.id}/purge",
-        json={"token": token, "confirmation_name": str(board.id), "password": password},
+        json={"token": token, "confirmation_name": board.name, "password": password},
     )
     assert wrong_actor.status_code == 403
     assert wrong_actor.json()["detail"]["code"] == "challenge_binding_mismatch"
@@ -397,7 +398,7 @@ def test_board_purge_rolls_back_child_deletes_on_commit_failure(
     monkeypatch.setattr(lifecycle_router, "verify_challenge", fail_after_password)
     failed = client.post(
         path,
-        json={"token": token, "confirmation_name": str(board.id), "password": password},
+        json={"token": token, "confirmation_name": board.name, "password": password},
     )
     assert failed.status_code == 409
     assert failed.json()["detail"]["code"] == "board_purge_conflict"
@@ -426,7 +427,7 @@ def test_board_purge_rechecks_fresh_admin_after_password_step_up(
 
     denied = _client(db, admin).post(
         path,
-        json={"token": token, "confirmation_name": str(board.id), "password": password},
+        json={"token": token, "confirmation_name": board.name, "password": password},
     )
 
     assert denied.status_code == 403

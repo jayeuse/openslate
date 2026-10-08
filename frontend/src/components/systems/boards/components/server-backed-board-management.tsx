@@ -14,6 +14,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { lifecycleErrorMessage } from "@/lib/lifecycle";
+import type { WorkspaceRegion } from "@/lib/date-time";
 import { cn } from "@/lib/utils";
 import { reportDone } from "@/lib/feedback";
 import { LifecyclePurgeReview } from "@/components/systems/shared/lifecycle-purge-review";
@@ -42,6 +43,7 @@ import { getMyBoardAccess } from "../adapters/board-tools-api";
 import {
   subscribeWorkspaceLifecycleSettings,
   workspaceLifecycleQueryOptions,
+  workspaceCalendarQueryOptions,
 } from "../../manage/adapters/workspace-api";
 import { ServerBackedBoardGroups } from "./server-backed-board-groups";
 import { ConfirmAction } from "./ui";
@@ -216,6 +218,7 @@ type DisplayProps = {
   purgePreviewLoading?: boolean;
   purgeReviewAgain?: boolean;
   purgePreview?: BoardPurgePreview | null;
+  region?: WorkspaceRegion;
   purgeConfirmationName?: string;
   purgePassword?: string;
   onChangePurgeConfirmationName?: (value: string) => void;
@@ -241,6 +244,7 @@ export function ServerBoardManagementDisplay({
   purgePreviewLoading = false,
   purgeReviewAgain = false,
   purgePreview = null,
+  region,
   purgeConfirmationName = "",
   purgePassword = "",
   onChangePurgeConfirmationName = () => undefined,
@@ -558,7 +562,10 @@ export function ServerBoardManagementDisplay({
                         className:
                           "border-border space-y-4 rounded-lg border p-4",
                       },
-                      e(LifecyclePurgeReview, { impact: purgePreview.impact }),
+                      e(LifecyclePurgeReview, {
+                        preview: purgePreview,
+                        region,
+                      }),
                       purgePreview.impact.blockers.length > 0
                         ? null
                         : e(
@@ -573,12 +580,12 @@ export function ServerBoardManagementDisplay({
                             e(
                               "p",
                               { className: "text-sm", role: "status" },
-                              "Type the exact Board ID and enter your administrator password to continue.",
+                              "Type the exact Board name and enter your administrator password to continue.",
                             ),
                             e(
                               "p",
                               { className: "text-sm" },
-                              e("span", null, "Board ID: "),
+                              e("span", null, "Board name: "),
                               e(
                                 "code",
                                 { className: "break-all" },
@@ -594,7 +601,7 @@ export function ServerBoardManagementDisplay({
                                   htmlFor: `${id}-purge-confirmation`,
                                   className: "text-sm font-medium",
                                 },
-                                "Type the Board ID",
+                                "Type the Board name",
                               ),
                               e("input", {
                                 id: `${id}-purge-confirmation`,
@@ -733,6 +740,10 @@ function ManagementInstance(props: Props) {
     incomingBoard?.status === "archived";
   const workspace = useQuery({
     ...workspaceLifecycleQueryOptions(),
+    enabled: readPurgeSetting,
+  });
+  const region = useQuery({
+    ...workspaceCalendarQueryOptions(),
     enabled: readPurgeSetting,
   });
   const purgeEnabled = workspace.isSuccess && workspace.data.purge_enabled;
@@ -1301,6 +1312,7 @@ function ManagementInstance(props: Props) {
             purgePreviewLoading={purgePreviewLoading}
             purgeReviewAgain={purgeReviewAgain}
             purgePreview={purgePreview}
+            region={region.data}
             purgeConfirmationName={purgeConfirmationName}
             purgePassword={purgePassword}
             onChangePurgeConfirmationName={setPurgeConfirmationName}
