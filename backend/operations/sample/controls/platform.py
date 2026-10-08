@@ -16,6 +16,7 @@ from operations.sample.controls.openview_purge import _purge_control_record
 from operations.sample.controls.platform_export import verify_export_response, workspace_date
 from operations.sample.controls.platform_verification import search_page_contains_target
 from operations.sample.controls.platform_verification import validate_platform_page as _page
+from operations.sample.controls.record_batch import round_trip_records
 from operations.sample.controls.sandbox import fixture_values
 from operations.sample.packs.phase_types import PhaseAction, PhaseJsonValue
 from operations.sample.phases.actions import (
@@ -98,7 +99,7 @@ def plan_platform_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
 EVIDENCE_KEYS = tuple(
     "step actor_key actor_id method path expected_status status_code request_id".split()
 )
-READ_CHECKS = dict(zip(OPERATIONS, (2, 9, 6, 1, 3), strict=True))
+READ_CHECKS = dict(zip(OPERATIONS, (2, 9, 12, 1, 3), strict=True))
 
 
 def _fail(message: str, step: str) -> NoReturn:
@@ -307,6 +308,12 @@ class _Run:
             self.record(key, f"read_import_{key}")
 
     def export_cleanup(self, timezone: str) -> None:
+        round_trip_records(
+            self.context,
+            RECORD_KEYS,
+            self.get,
+            lambda step, body: self.request("POST", "/api/records/batch-update", step, body=body),
+        )
         expected = {
             _mapped_id(self.context, "platform_records", key, step="export_csv"): self.facts[
                 "cells"

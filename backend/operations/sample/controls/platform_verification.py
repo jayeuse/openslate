@@ -131,6 +131,15 @@ def verify_platform_evidence(
                 step = f"search_{kind}" if index == 0 else f"search_{kind}_page_{index * 10}"
                 add(step, "GET", "/api/search")
     elif operation == OPERATIONS[2]:
+        for key in RECORD_KEYS:
+            add(f"batch_before_{key}", "GET", f"/api/records/{records[key]}")
+        add("batch_update_records", "POST", "/api/records/batch-update")
+        for key in RECORD_KEYS:
+            add(f"batch_updated_{key}", "GET", f"/api/records/{records[key]}")
+        add("batch_partial_records", "POST", "/api/records/batch-update")
+        for key in RECORD_KEYS:
+            add(f"batch_partial_{key}", "GET", f"/api/records/{records[key]}")
+        add("batch_restore_records", "POST", "/api/records/batch-update")
         add("export_csv", "POST", "/api/records/export")
         add("export_xlsx", "POST", "/api/records/export")
         for key in RECORD_KEYS:

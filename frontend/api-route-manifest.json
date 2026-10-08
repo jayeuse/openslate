@@ -871,6 +871,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "updateOpenViewRecordMoves",
+    "method": "POST",
+    "path": "/api/records/batch-update"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
     "function": "createOpenViewRecord",
     "method": "POST",
     "path": "/api/records"

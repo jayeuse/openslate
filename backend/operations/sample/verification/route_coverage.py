@@ -20,6 +20,7 @@ Route = tuple[str, str]
 # must acquire an executor and verification before it can be added here.
 SEEDER_ROUTES: frozenset[Route] = frozenset(
     {
+        ("POST", "/api/records/batch-update"),
         ("POST", "/api/auth/mfa/factors"),
         ("POST", "/api/auth/mfa/factors/{factor_id}/verification"),
         ("DELETE", "/api/auth/mfa/factors/{factor_id}"),

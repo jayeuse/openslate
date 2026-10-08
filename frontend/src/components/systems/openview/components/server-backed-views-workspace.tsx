@@ -35,7 +35,9 @@ import {
 import { queryOpenViewWindowRecords } from "../adapters/window-api";
 import { authMeOptions } from "../adapters/openview-queries";
 import { isCalendarDateField } from "./live-calendar";
-import { LiveKanban } from "./live-kanban";
+import { LiveKanban, type PendingRecordMove } from "./live-kanban";
+import { updateOpenViewRecordMoves } from "../adapters/records-api";
+import { serverFieldMessage } from "../domain/record-form";
 import { LiveCalendar } from "./live-calendar";
 import { LiveTimeline } from "./live-timeline";
 import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
@@ -374,6 +376,18 @@ export default function ServerBackedViewsWorkspace({
   const [pendingNavigation, setPendingNavigation] =
     useState<PendingNavigation>(null);
   const [pendingAction, setPendingAction] = useState("");
+  const [recordMoves, setRecordMoves] = useState<
+    Map<string, PendingRecordMove>
+  >(() => new Map());
+  const recordMovesRef = useRef(recordMoves);
+  const savingRecordMoves = useRef(false);
+  const hasRecordMoves = recordMoves.size > 0;
+  useEffect(() => {
+    if (!hasRecordMoves && pendingAction !== "save-moves") return;
+    const preventUnload = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", preventUnload);
+    return () => window.removeEventListener("beforeunload", preventUnload);
+  }, [hasRecordMoves, pendingAction]);
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
   const [saveOpen, setSaveOpen] = useState(false);
@@ -1410,7 +1424,8 @@ export default function ServerBackedViewsWorkspace({
       });
       startNavigation(() => router.push(href, { scroll: false }));
     };
-    if (dirty) setPendingNavigation({ href, resume, discardDraft: true });
+    if (dirty || hasRecordMoves)
+      setPendingNavigation({ href, resume, discardDraft: true });
     else resume();
   };
 
@@ -1522,8 +1537,8 @@ export default function ServerBackedViewsWorkspace({
 
   const navigationGuard = useCallback(
     (href: string, resume: () => void) => {
-      if (pendingAction) return false;
-      if (!dirty) return true;
+      if (pendingAction || savingRecordMoves.current) return false;
+      if (!dirty && !hasRecordMoves) return true;
       if (
         typeof window !== "undefined" &&
         new URL(href, window.location.origin).href === window.location.href
@@ -1532,12 +1547,12 @@ export default function ServerBackedViewsWorkspace({
       setPendingNavigation({ href, resume, discardDraft: true });
       return false;
     },
-    [dirty, pendingAction, setPendingNavigation],
+    [dirty, hasRecordMoves, pendingAction, setPendingNavigation],
   );
   useWorkspaceNavigationGuard(navigationGuard);
 
   const confirmDraftDiscard = (resume: () => void) => {
-    if (!dirtyRef.current) {
+    if (!dirtyRef.current && recordMovesRef.current.size === 0) {
       resume();
       return;
     }
@@ -1546,6 +1561,138 @@ export default function ServerBackedViewsWorkspace({
       resume,
       discardDraft: false,
     });
+  };
+
+  const replaceRecordMoves = (moves: Map<string, PendingRecordMove>) => {
+    recordMovesRef.current = moves;
+    setRecordMoves(moves);
+  };
+
+  const stageRecordMove = (
+    record: OpenViewRecord,
+    field: OpenViewDataSourceField,
+    value: string | boolean | null,
+    targetLabel: string,
+  ) => {
+    if (
+      !canWriteRecords ||
+      pendingAction ||
+      savingRecordMoves.current ||
+      record.isDeleted ||
+      record.moduleId !== moduleId ||
+      field.moduleId !== moduleId ||
+      !["select", "user", "boolean"].includes(field.type)
+    )
+      return;
+    const existing = recordMovesRef.current.get(record.id);
+    if (existing && existing.fieldId !== field.id) {
+      setActionError(
+        "This record already has a move in another field. Save or discard that move first.",
+      );
+      return;
+    }
+    const original = existing?.original ?? {
+      ...record,
+      data: { ...record.data },
+      displayValues: { ...record.displayValues },
+    };
+    const moves = new Map(recordMovesRef.current);
+    if ((original.data[field.id] ?? null) === value) moves.delete(record.id);
+    else {
+      if (!existing && moves.size >= 100) {
+        setActionError(
+          "You can move up to 100 records at a time. Save or discard the current moves first.",
+        );
+        return;
+      }
+      moves.set(record.id, { fieldId: field.id, value, original, targetLabel });
+    }
+    replaceRecordMoves(moves);
+    setActionError("");
+    setNotice("");
+  };
+
+  const saveRecordMoves = async () => {
+    if (
+      !moduleId ||
+      !canWriteRecords ||
+      pendingAction ||
+      savingRecordMoves.current ||
+      recordMovesRef.current.size === 0
+    )
+      return;
+    const submitted = new Map(recordMovesRef.current);
+    if (
+      [...submitted.values()].some(
+        (move) => move.original.moduleId !== moduleId,
+      )
+    ) {
+      setActionError(
+        "These unsaved moves belong to another data source. Discard them before moving records here.",
+      );
+      return;
+    }
+    savingRecordMoves.current = true;
+    setPendingAction("save-moves");
+    setActionError("");
+    setNotice("");
+    try {
+      const results = await updateOpenViewRecordMoves({
+        moduleId,
+        items: [...submitted].map(([recordId, move]) => ({
+          recordId,
+          fieldId: move.fieldId,
+          value: move.value,
+          revision: move.original.updatedAt,
+        })),
+      });
+      const remaining = new Map(submitted);
+      let saved = 0;
+      let forbidden = false;
+      for (const result of results) {
+        if (result.status === "updated") {
+          remaining.delete(result.record_id);
+          saved += 1;
+          continue;
+        }
+        const move = submitted.get(result.record_id);
+        if (!move) continue;
+        const error =
+          result.status === "stale"
+            ? "Changed by someone else — review"
+            : result.status === "forbidden"
+              ? "You no longer have permission to move this record."
+              : result.errors
+                  .map((issue) => serverFieldMessage(issue.message))
+                  .join(" ") ||
+                "This move cannot be saved. Review the field value.";
+        remaining.set(result.record_id, {
+          ...move,
+          status: result.status,
+          error,
+        });
+        forbidden ||= result.status === "forbidden";
+      }
+      replaceRecordMoves(remaining);
+      setRecordChanges((current) => current + 1);
+      setNotice(
+        `Saved ${saved} ${saved === 1 ? "move" : "moves"}.${remaining.size ? ` ${remaining.size} ${remaining.size === 1 ? "move needs" : "moves need"} review.` : ""}`,
+      );
+      if (forbidden) await identity.refetch();
+    } catch (error: unknown) {
+      setActionError(
+        `Your moves could not be confirmed. ${apiErrorMessage(error, "Moves could not be saved.")} Your unsaved moves are kept.`,
+      );
+      // An unavailable or uncorrelated response can follow a committed write.
+      // Refresh authoritative results without changing the pending revisions.
+      if (!(error instanceof ApiError) || error.status >= 500)
+        setRecordChanges((current) => current + 1);
+      if (error instanceof ApiError && error.status === 403)
+        await identity.refetch();
+    } finally {
+      savingRecordMoves.current = false;
+      setPendingAction("");
+    }
   };
 
   const updateDraft = (update: (current: SavedDraft) => SavedDraft) => {
@@ -2266,7 +2413,7 @@ export default function ServerBackedViewsWorkspace({
                       section: "views",
                       module: next,
                     }) as Route;
-                    if (dirty)
+                    if (dirty || hasRecordMoves)
                       setPendingNavigation({
                         href,
                         resume: () => router.push(href),
@@ -2493,6 +2640,41 @@ export default function ServerBackedViewsWorkspace({
             <Alert role="alert" variant="destructive">
               {actionError}
             </Alert>
+          ) : null}
+          {hasRecordMoves ? (
+            <section
+              aria-label="Unsaved record moves"
+              className="bg-card border-card-edge flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius)] border p-4"
+            >
+              <p className="text-sm">
+                {recordMoves.size} unsaved{" "}
+                {recordMoves.size === 1 ? "move" : "moves"}. Save to update the
+                records.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  className="min-h-11"
+                  disabled={!canWriteRecords || Boolean(pendingAction)}
+                  onClick={() => void saveRecordMoves()}
+                >
+                  Save changes ({recordMoves.size})
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={Boolean(pendingAction)}
+                  onClick={() => {
+                    replaceRecordMoves(new Map());
+                    setActionError("");
+                    setNotice("Record moves were discarded.");
+                  }}
+                >
+                  Discard
+                </Button>
+              </div>
+            </section>
           ) : null}
 
           <LoadingRegion
@@ -2997,8 +3179,11 @@ export default function ServerBackedViewsWorkspace({
                             moduleId={moduleId}
                             definition={normalizedDraftDefinition}
                             refreshKey={recordInvalidation}
-                            groupByFieldId={groupByField.id}
-                            groupByFieldType={groupByField.type}
+                            groupByField={groupByField}
+                            canWrite={canWriteRecords}
+                            movesPending={Boolean(pendingAction)}
+                            pendingMoves={recordMoves}
+                            onMoveRecord={stageRecordMove}
                             fields={cardFields}
                             primaryFieldId={draft.presentation.primaryFieldId}
                             secondaryFieldId={
@@ -3630,11 +3815,14 @@ export default function ServerBackedViewsWorkspace({
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>
-                  Discard unsaved view changes?
+                  {hasRecordMoves
+                    ? "Discard unsaved changes?"
+                    : "Discard unsaved view changes?"}
                 </AlertDialogTitle>
                 <AlertDialogDescription>
-                  Your current view draft has unsaved changes. Continuing will
-                  discard them.
+                  {hasRecordMoves
+                    ? `You have ${recordMoves.size} unsaved ${recordMoves.size === 1 ? "move" : "moves"}.${dirty ? " Your current view draft also has unsaved changes." : ""} Continuing will discard them.`
+                    : "Your current view draft has unsaved changes. Continuing will discard them."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -3656,6 +3844,7 @@ export default function ServerBackedViewsWorkspace({
                     const transition = pendingNavigation;
                     if (!transition) return;
                     if (transition.discardDraft) setDraftState(null);
+                    replaceRecordMoves(new Map());
                     setPendingNavigation(null);
                     startNavigation(transition.resume);
                   }}

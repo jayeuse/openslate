@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiContractError, ApiError, apiFetch } from "@/lib/api";
 import {
   assertLifecyclePurgePreviewFor,
   assertLifecyclePurgeResultFor,
@@ -129,6 +129,93 @@ export function updateOpenViewRecord(input: {
     headers: { "If-Match": `"${input.revision}"` },
     body: JSON.stringify({ data: input.data }),
   });
+}
+
+const recordMoveSchema = z
+  .object({
+    recordId: uuidSchema,
+    revision: z.iso.datetime({ offset: true }),
+    fieldId: uuidSchema,
+    value: z.union([z.string(), z.boolean(), z.null()]),
+  })
+  .strict();
+const batchResultSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("updated"),
+      record_id: uuidSchema,
+      record: recordSchema,
+    })
+    .strict(),
+  z.object({ status: z.literal("stale"), record_id: uuidSchema }).strict(),
+  z
+    .object({
+      status: z.literal("invalid"),
+      record_id: uuidSchema,
+      errors: z.array(
+        z
+          .object({
+            code: z.string(),
+            field_id: uuidSchema.nullable(),
+            message: z.string(),
+          })
+          .strict(),
+      ),
+      truncated: z.boolean(),
+    })
+    .strict(),
+  z.object({ status: z.literal("forbidden"), record_id: uuidSchema }).strict(),
+]);
+
+export type OpenViewRecordMove = z.input<typeof recordMoveSchema>;
+export type OpenViewRecordMoveResult = z.output<typeof batchResultSchema>;
+
+/** Saves only each selected field, against the revision seen before the move. */
+export async function updateOpenViewRecordMoves(input: {
+  moduleId: string;
+  items: readonly OpenViewRecordMove[];
+}): Promise<OpenViewRecordMoveResult[]> {
+  const moduleId = uuidSchema.parse(input.moduleId);
+  const items = z.array(recordMoveSchema).min(1).max(100).parse(input.items);
+  const requested = new Map(items.map((item) => [item.recordId, item]));
+  if (requested.size !== items.length) throw new ApiContractError();
+  const response = await apiFetch(
+    "/records/batch-update",
+    z
+      .object({
+        results: z.array(batchResultSchema).max(100),
+      })
+      .strict(),
+    {
+      method: "POST",
+      body: JSON.stringify({
+        module_id: moduleId,
+        items: items.map(({ recordId, fieldId, ...item }) => ({
+          record_id: recordId,
+          field_id: fieldId,
+          ...item,
+        })),
+      }),
+    },
+  );
+  const returned = new Set(response.results.map((result) => result.record_id));
+  if (
+    response.results.length !== items.length ||
+    returned.size !== requested.size
+  )
+    throw new ApiContractError();
+  for (const result of response.results) {
+    const item = requested.get(result.record_id);
+    if (
+      !item ||
+      (result.status === "updated" &&
+        (result.record.id !== item.recordId ||
+          result.record.moduleId !== moduleId ||
+          result.record.data[item.fieldId] !== item.value))
+    )
+      throw new ApiContractError();
+  }
+  return response.results;
 }
 
 export async function deleteOpenViewRecord(recordId: string): Promise<void> {

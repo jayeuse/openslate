@@ -16,6 +16,7 @@ from app.systems.sandbox.records.importing import creation_schema_digest
 from app.systems.sandbox.records.query_schemas import RecordQuery
 from tests.operations.sample.controls.sample_lifecycle_wire import _LifecycleWire
 from tests.operations.sample.controls.sample_platform_export import export_response
+from tests.operations.sample.controls.sample_record_batch import batch_response
 from tests.operations.sample.controls.test_sample_control_sandbox import ADMIN_ID, _login_response
 
 
@@ -71,7 +72,7 @@ class PlatformWire:
         return {
             **row,
             "created_at": "2026-10-03T00:00:00Z",
-            "updated_at": "2026-10-03T00:00:00Z",
+            "updated_at": row.get("updated_at", "2026-10-03T00:00:00Z"),
             "deleted_at": "2026-10-03T00:00:00Z" if row["is_deleted"] else None,
             "performed_by": ADMIN_ID,
             "display_values": {},
@@ -101,6 +102,8 @@ class PlatformWire:
     def request(self, request):
         path, method = request.url.path, request.method
         body = json.loads(request.content) if request.content else None
+        if path == "/api/records/batch-update":
+            return batch_response(self, request)
         if path == "/api/records/import":
             parsed = RecordImportRequest.model_validate(body)
             assert parsed.module_id == UUID(
@@ -140,6 +143,7 @@ class PlatformWire:
                         "module_id": str(parsed.module_id),
                         "data": data,
                         "is_deleted": False,
+                        "updated_at": "2026-10-03T00:00:00+00:00",
                     }
                     self.created.append(key)
                 rows.append(
