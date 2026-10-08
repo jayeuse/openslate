@@ -6,6 +6,8 @@ Status: approved for delegation. The owner answered the Tier 2 questions on 2026
 
 Amended 2026-10-08 after the first run stopped with 5 of 33 slices done. The amendment adds decisions D21–D26, section 11.8 (implementer decisions), and section 11.9 (resume order), and changes section 11.6. Two plan defects caused most blocks: sample executors were scheduled last although an existing guard requires them with each route, and the block rule did not let the implementer settle routine contract details.
 
+Final acceptance ownership: the owner performs S32, S33, and fixes found during that acceptance. The implementation agent completes every code slice and S31, including D21 executors and per-slice checks, then hands off under section 11.10. The substantive S32/S33 requirements remain unchanged.
+
 The evidence comes from static reads of the source at the base revision. Nothing was executed. Section 9 lists the claims that are not tested yet.
 
 ## 1. Intent
@@ -842,7 +844,7 @@ The order stays: Tier 2, then OpenComms, then the work after OpenComms. The work
 
 - Work in the main checkout on one branch, `codex/system-completion-tier-2`, made from `main` at `9e732b84` or later. Do not use a worktree.
 - Make one commit for each slice. Use a Conventional Commit message, for example `feat(records): add batch update route`.
-- Do not push, open a pull request, or rewrite history. Run the canonical pre-push gate once at the final checkpoint, without pushing. A push needs the owner's approval.
+- Do not push, open a pull request, or rewrite history. The owner performs S32 and S33, including the canonical pre-push gate once without pushing. The implementation agent must not execute those final acceptance stages. A push needs the owner's approval.
 - Keep the scope to this plan. The plan approves the listed migrations, endpoints, dependencies (XlsxWriter, `@dnd-kit/core`), and schema changes. Anything else needs the owner's approval.
 - Section 7 is binding. For a detail that section 7 does not settle, apply section 11.8. A slice is blocked only when section 11.8 does not let you decide.
 - Keep Comms working. Do not edit `frontend/src/components/systems/comms/**`, except where a slice names a Comms file.
@@ -850,7 +852,7 @@ The order stays: Tier 2, then OpenComms, then the work after OpenComms. The work
 - Write one migration for each slice that changes the schema. Run `uv run alembic upgrade head` and `uv run alembic check`.
 - After a route change, regenerate `contracts/openapi.json` and update `frontend/api-route-manifest.json`.
 - Use the skills named in root `AGENTS.md`: `sdd-workflow` at each slice start, `tdd-workflow` before behavior changes, `verification-loop` for checks, `fastapi-api-design` for each new route, `postgres-patterns` for each migration, `query-cache-patterns` for TanStack Query work, `react-frontend-patterns` for UI, and `webapp-security-review` for S03, S10, S15, S17, S20, and S24.
-- Record the run in `.agent-runtime/system-completion-tier-2.md` (template: `.agents/orchestration/RUN.md`). Update it after each slice.
+- Record the run in `.agent-runtime/system-completion-tier-2.md` (template: `.agents/orchestration/RUN.md`). Update it after each slice. Keep per-slice tests and focused checks; moving S32/S33 ownership does not skip those checks. Record out-of-slice failures under "Known issues for acceptance" instead of fixing them.
 
 ### 11.2 Definition of done for one slice
 
@@ -901,23 +903,23 @@ Do the slices in this order. A slice starts only when the slices it depends on a
 | S29 | Dashboard grid, widget edit, saved-chart widgets | W12f | S12, S26, S27 |
 | S30 | Board widget editor and one chart renderer | W12g | S26, S27 |
 | S31 | Documentation update (D19) | W1b | all code slices |
-| S32 | Run the Harbor Small and School Small profiles with the executors that earlier slices added (D20, D21) | 11.6 | all code slices |
-| S33 | Review the full branch diff, run the pre-push gate without pushing, and write the final report | 11.7 | all |
+| S32 | Owner: run the Harbor Small and School Small profiles with the executors that earlier slices added (D20, D21) | 11.6 | all code slices |
+| S33 | Owner: review the full branch diff, run the pre-push gate without pushing, and write the final acceptance report | 11.7 | all |
 
 Out of scope for this run: OpenComms and everything in section 10.
 
 ### 11.4 When to stop
 
-Keep working until every slice is committed or blocked. Do not stop to report progress, and do not ask for confirmation between slices.
+Keep working until every code slice and S31 is committed or blocked. S32 and S33 belong to the owner and are not implementation-agent work. Do not stop to report progress, and do not ask for confirmation between slices.
 
-**Fix these yourself. They are never a reason to stop:**
+**Fix these yourself within the active slice. They are never a reason to stop:**
 
 - A process that you started holds a port or a lock.
 - A dev server, the API, or a test server does not start.
 - A dependency is missing from `node_modules` or the uv environment.
 - A test is flaky, or a check fails.
 
-Diagnose the cause, then fix it. Try at least three different fixes. Record each attempt in the run record.
+Diagnose the cause, then fix it within the active slice. Try at least three different fixes. Record each attempt in the run record. Do not fix failures outside that slice; record the failing command, file:line, and evidence under "Known issues for acceptance" for the owner.
 
 **Block one slice.** A slice is blocked when one of these occurs:
 
@@ -929,7 +931,7 @@ Record the blocked slice, with its evidence, in the run record. Then continue wi
 
 **Stop the whole run only when one of these occurs:**
 
-- No ready slice remains: every remaining slice is blocked or depends on a blocked slice.
+- No ready code slice or S31 remains: every remaining assigned slice is blocked or depends on a blocked slice, or all assigned work is complete. Write the section 11.10 handoff; do not advance into owner-owned S32/S33.
 - The Docker daemon or the Supabase stack is down, and `./scripts/dev.py db` does not recover it.
 - Required credentials or secrets are missing.
 - The next step needs an action that root `AGENTS.md` reserves for the owner: data deletion, volume reset, discarding user edits, rewriting history, or a push.
@@ -952,7 +954,7 @@ Wrong: `next dev on 3000 still running; started Playwright; lock error; stopped 
 
 ### 11.6 Sample run coverage
 
-Each slice that adds a frontend-called route also adds its sample executor and its `SEEDER_ROUTES` entry, in the same commit (D21). The route-coverage guard then passes at every slice. S32 runs the two live Small profiles with all of these executors.
+Each slice that adds a frontend-called route also adds its sample executor and its `SEEDER_ROUTES` entry, in the same commit (D21). The route-coverage guard then passes at every slice. At S32, the owner runs the two live Small profiles with all of these executors. The implementation agent must not run either profile or the guarded reset.
 
 The executors cover the routes that Tier 2 adds, through the same APIs as the UI:
 
@@ -965,11 +967,13 @@ The executors cover the routes that Tier 2 adds, through the same APIs as the UI
 - version prune,
 - the report and event purge routes.
 
-Each covered operation needs an executor and a check of its status, response shape, and end state. Do not count audit rows. Run the two Small profiles separately, with the guarded reset between them. Standard stays outside this run.
+Each covered operation needs an executor and a check of its status, response shape, and end state. Do not count audit rows. At S32, the owner runs the two Small profiles separately, with the guarded reset between them. Standard stays outside this run.
 
 Keep credentials and passphrases private. Do not fabricate request journals or audit rows, and do not insert sample data directly into the database.
 
-### 11.7 Final verification
+### 11.7 Final verification (owner-owned S33)
+
+The owner performs this full-branch review and final gate, and owns fixes found during final acceptance. The implementation agent must not run `scripts/prepush.py`, the full coverage gate, fullstack or smoke suites, or the full-branch review. Per-slice focused tests, static checks, and independent slice reviews remain required.
 
 Use the hardware-appropriate rules from Tier 1 section 11.7:
 
@@ -1017,7 +1021,24 @@ Resume in this order:
 2. S08 first. It repairs the posts feed.
 3. S03. Apply `.agent-runtime/system-completion-tier-2/S03/parked-work/full.patch` with `git apply --3way`. Regenerate `contracts/openapi.json` and `frontend/api-route-manifest.json` from the current code; do not keep the parked copies of these generated files. Add the purge executors (D21). Rerun the S03 focused tests and the route-coverage guard before you claim them green.
 4. S12, S13, S15, S25, and S18 are independent of each other. Do them next, in any order. For S12, apply its parked work the same way and use the D23 budget.
-5. Then follow the dependencies in section 11.3.
+5. Then follow the dependencies in section 11.3 through the remaining code slices and S31. Hand off under section 11.10 before owner-owned S32 and S33.
 
 Do not reuse evidence from parked work. Rerun the checks on the reconciled code.
 
+### 11.10 Handoff to acceptance
+
+The owner performs S32, S33, and fixes found at that stage. The implementation agent completes every code slice and S31, including D21 sample executors, the route-coverage guard, and each slice's focused tests, static checks, screenshots and independent review. Do not weaken or delete S32/S33 requirements.
+
+Do not repair a failure outside the active slice. Add it to "Known issues for acceptance" in `.agent-runtime/system-completion-tier-2.md`, with the failing command, file:line and evidence. Preserve an honest distinction between completed slice checks and deferred final acceptance.
+
+When no code slice or S31 remains to do, write a "Handoff to acceptance" checkpoint containing:
+
+- branch and HEAD;
+- the commit for each finished slice;
+- blocked slices with evidence;
+- implementation decisions made under section 11.8;
+- known issues for acceptance;
+- parked work that was never reconciled;
+- checks deferred to S32 and S33.
+
+Stop every Next and test server the agent started. Leave the development Supabase stack and API running. Commit only the assigned slice work and leave the working tree clean; preserve any unresolved task work with its evidence rather than discarding it. The final message is the handoff summary, not a release-readiness claim. Do not execute the Small profiles, guarded reset, pre-push/full coverage/fullstack/smoke gates, or full-branch review on the owner's behalf.
