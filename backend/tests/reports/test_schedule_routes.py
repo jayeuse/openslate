@@ -123,6 +123,7 @@ def test_create_read_revision_and_strict_contract(
         body = created.json()
         assert body["report_id"] == str(report.id)
         assert body["revision"] == 1
+        assert body["last_run"] is None
         assert body["local_time"] == "02:30"
         assert body["next_due_at"] == "2026-03-08T07:30:00Z"
         assert client.get(path).json() == body
@@ -244,6 +245,7 @@ def test_edit_cancels_pending_and_running_work_and_rejects_stale_revision(
     db.refresh(pending)
     db.refresh(running)
     assert pending.state == running.state == WorkState.CANCELED
+    assert pending.finished_at == running.finished_at == now
     assert pending.lease_token is None and running.lease_token is None
     assert pending.lease_expires_at is None and running.lease_expires_at is None
     assert not complete_report_work(db, WorkClaim(running.id, former_lease), uuid7(), now=now)
@@ -429,3 +431,51 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
                         cleanup.flush()
                 cleanup.commit()
         engine.dispose()
+
+
+def test_last_run_uses_latest_begun_or_terminal_occurrence_and_preserves_legacy_nulls(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    owner = _actor(db, {"records.read": True, "records.write": True})
+    report, _ = _report(db, owner)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    path = f"/api/reports/{report.id}/schedule"
+    with _client(db, owner) as client:
+        assert client.post(path, json=_daily(enabled=False)).status_code == 201
+        legacy = ScheduledWork(
+            report_id=report.id, scheduled_for=now, next_attempt_at=now,
+            state="failed", attempt_count=5, failure_code="attempts_exhausted",
+        )
+        untouched = ScheduledWork(
+            report_id=report.id, scheduled_for=now + timedelta(days=1),
+            next_attempt_at=now + timedelta(days=1),
+        )
+        db.add_all((legacy, untouched))
+        db.flush()
+        summary = client.get(path).json()["last_run"]
+        assert summary == {
+            "state": "failed", "finished_at": None,
+            "failure_label": "The job failed after five attempts.",
+        }
+        begun = ScheduledWork(
+            report_id=report.id, scheduled_for=now + timedelta(hours=1),
+            next_attempt_at=now + timedelta(hours=1, seconds=2),
+            state="pending", attempt_count=1, last_attempt_started_at=now + timedelta(hours=1),
+            failure_code="run_failed",
+        )
+        db.add(begun)
+        db.flush()
+        summary = client.get(path).json()["last_run"]
+        assert summary["state"] == "pending" and summary["finished_at"] is None
+        begun.attempt_count = 0
+        begun.failure_code = None
+        db.flush()
+        assert client.get(path).json()["last_run"] == {
+            "state": "pending", "finished_at": None, "failure_label": None,
+        }
+        # Retrying an older occurrence does not displace the latest occurrence.
+        legacy.last_attempt_started_at = now + timedelta(days=2)
+        legacy.failure_code = "unrecognized_code"
+        db.flush()
+        assert client.get(path).json()["last_run"]["state"] == "pending"

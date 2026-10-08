@@ -85,11 +85,13 @@ def _finalize_claim(
             .execution_options(populate_existing=True)
         )
         source = report_source(db, report, lock=True)
-        work = _locked_claim(db, claim, _current(now))
+        current = _current(now)
+        work = _locked_claim(db, claim, current)
         if work is None or work.report_id != report_id:
             return None
         if source is None or report is None:
             work.state = WorkState.CANCELED
+            work.finished_at = current
             work.failure_code = "source_unavailable"
             work.lease_token = None
             work.lease_expires_at = None

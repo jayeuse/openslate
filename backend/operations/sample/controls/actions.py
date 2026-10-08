@@ -57,6 +57,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample.controls.boards import plan_board_controls
     from operations.sample.controls.files import plan_file_controls
     from operations.sample.controls.host_delivery import plan_host_controls
+    from operations.sample.controls.jobs import plan_job_controls
     from operations.sample.controls.manage import plan_manage_controls
     from operations.sample.controls.mfa import plan_mfa_controls
     from operations.sample.controls.notifications import plan_notification_controls
@@ -77,6 +78,17 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         )
         + 1
     )
+    prepare, observe, recover = plan_job_controls(dataset)
+    lifecycle = []
+    for row in sandbox[split:]:
+        operation = row.values["operation"]
+        if operation == "close_field":
+            lifecycle.append(prepare)
+        lifecycle.append(row)
+        if operation == "close_field":
+            lifecycle.append(observe)
+        elif operation == "reopen_field":
+            lifecycle.append(recover)
 
     return (
         *plan_account_controls(dataset),
@@ -87,7 +99,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         *plan_access_controls(dataset),
         *sandbox[:split],
         *platform[:3],
-        *sandbox[split:],
+        *lifecycle,
         *platform[3:],
         *_audit_actions(dataset),
         *plan_read_reviews(dataset),
@@ -301,6 +313,7 @@ def execute_control_action(
     from operations.sample.controls.backups import execute_backup_control
     from operations.sample.controls.boards import execute_board_control
     from operations.sample.controls.files import FILE_OPERATIONS, execute_file_control
+    from operations.sample.controls.jobs import execute_job_control
     from operations.sample.controls.manage import execute_manage_control
     from operations.sample.controls.mfa import execute_mfa_control
     from operations.sample.controls.notifications import execute_notification_control
@@ -331,6 +344,7 @@ def execute_control_action(
         "account_controls": execute_account_control,
         "manage_controls": execute_manage_control,
         "backup_controls": execute_backup_control,
+        "jobs_controls": execute_job_control,
         "platform_controls": execute_platform_control,
         "board_controls": execute_board_control,
         "openview_controls": execute_openview_control,

@@ -79,11 +79,13 @@ def claim_due_post_work(
     for work in rows:
         if work.attempt_count >= MAX_ATTEMPTS:
             work.state = WorkState.FAILED
+            work.finished_at = current
             work.failure_code = "attempts_exhausted"
             work.lease_token = None
             work.lease_expires_at = None
             continue
         work.state = WorkState.RUNNING
+        work.last_attempt_started_at = current
         work.attempt_count += 1
         work.lease_token = uuid7()
         work.lease_expires_at = current + LEASE_DURATION
@@ -106,8 +108,9 @@ def _locked_claim(db: Session, claim: WorkClaim, now: datetime) -> ScheduledWork
     )
 
 
-def _cancel(work: ScheduledWork, reason: str) -> None:
+def _cancel(work: ScheduledWork, reason: str, *, now: datetime) -> None:
     work.state = WorkState.CANCELED
+    work.finished_at = now
     work.failure_code = reason
     work.lease_token = None
     work.lease_expires_at = None
@@ -198,7 +201,7 @@ def finalize_post_claim(
         or actor is None
         or actor.id != work.scheduling_actor_id
     ):
-        _cancel(work, "source_unavailable")
+        _cancel(work, "source_unavailable", now=current)
         return None
     # A prior publication with this key cannot be the output of a still-running
     # work row: successful publication and work completion commit atomically.
@@ -211,7 +214,7 @@ def finalize_post_claim(
         )
         is not None
     ):
-        _cancel(work, "publication_key_conflict")
+        _cancel(work, "publication_key_conflict", now=current)
         return None
     revision = publish_locked(
         db,
@@ -226,6 +229,7 @@ def finalize_post_claim(
     )
     db.flush()
     work.state = WorkState.SUCCEEDED
+    work.finished_at = current
     work.publication_result_id = revision.id
     work.failure_code = None
     work.lease_token = None
@@ -242,6 +246,7 @@ def fail_post_work(db: Session, claim: WorkClaim, *, now: datetime | None = None
         return False
     if work.attempt_count >= MAX_ATTEMPTS:
         work.state = WorkState.FAILED
+        work.finished_at = current
         work.failure_code = "attempts_exhausted"
     else:
         work.state = WorkState.PENDING

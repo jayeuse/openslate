@@ -180,6 +180,14 @@ def verify_request_evidence(
 ) -> None:
     from operations.sample.verification.route_coverage import SEEDER_ROUTES, route_template
 
+    if action.kind == "jobs_controls":
+        from operations.sample.controls.jobs_verification import verify_job_evidence
+
+        verify_job_evidence(
+            dataset, manifest, action, result, admin_id, seen_request_ids, observed, issues
+        )
+        return
+
     evidence_rows = result.get("request_evidence")
     if not isinstance(evidence_rows, list):
         issues.append("A sample control result has invalid request evidence")

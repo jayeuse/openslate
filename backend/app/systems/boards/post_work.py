@@ -3,6 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.systems.boards.post_models import BoardPost
 from app.systems.platform.scheduling.models import (
     InAppNotification,
@@ -15,6 +16,7 @@ from app.systems.platform.scheduling.models import (
 def cancel_post_work(db: Session, item: BoardPost) -> None:
     """Invalidate outstanding work after the caller locked Board then post."""
 
+    current = utc_now()
     outstanding = db.scalars(
         select(ScheduledWork)
         .where(
@@ -28,6 +30,7 @@ def cancel_post_work(db: Session, item: BoardPost) -> None:
     )
     for work in outstanding:
         work.state = WorkState.CANCELED
+        work.finished_at = current
         work.failure_code = "schedule_changed"
         work.lease_token = None
         work.lease_expires_at = None

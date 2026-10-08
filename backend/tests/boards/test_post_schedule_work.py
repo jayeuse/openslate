@@ -123,6 +123,8 @@ def test_schedule_creates_one_due_work_and_supersede_cancels_the_old_occurrence(
     assert len(rows) == 2
     assert [row.state for row in rows] == [WorkState.CANCELED, WorkState.PENDING]
     assert rows[0].failure_code == "schedule_changed"
+    assert rows[0].finished_at is not None
+    assert rows[0].last_attempt_started_at is None
     assert rows[1].source_revision == second["post_revision"] == 3
     assert rows[1].scheduled_for == second_time
 
@@ -151,6 +153,8 @@ def test_mutating_scheduled_post_resolves_pending_work(
         assert row.publication_result_id is not None
         assert row.scheduled_for <= datetime.now(UTC)
     assert row.lease_token is None and row.lease_expires_at is None
+    assert row.finished_at is not None
+    assert row.last_attempt_started_at is None
 
 
 def test_stale_schedule_denial_does_not_create_or_cancel_work(

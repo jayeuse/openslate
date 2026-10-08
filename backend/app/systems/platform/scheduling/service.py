@@ -151,12 +151,14 @@ def claim_due_work(
     for work in rows:
         if work.attempt_count >= MAX_ATTEMPTS:
             work.state = WorkState.FAILED
+            work.finished_at = current
             work.failure_code = "attempts_exhausted"
             work.lease_token = None
             work.lease_expires_at = None
             _notify_failed_report(db, work)
             continue
         work.state = WorkState.RUNNING
+        work.last_attempt_started_at = current
         work.attempt_count += 1
         work.lease_token = uuid7()
         work.lease_expires_at = current + LEASE_DURATION
@@ -200,6 +202,7 @@ def complete_report_work(
         return False
     if report is None or source is None:
         work.state = WorkState.CANCELED
+        work.finished_at = current
         work.failure_code = "source_unavailable"
         work.lease_token = None
         work.lease_expires_at = None
@@ -213,6 +216,7 @@ def complete_report_work(
     ):
         raise ValueError("Report run does not match the scheduled occurrence")
     work.state = WorkState.SUCCEEDED
+    work.finished_at = current
     work.run_id = run.id
     work.failure_code = None
     work.lease_token = None
@@ -248,6 +252,7 @@ def fail_report_work(db: Session, claim: WorkClaim, *, now: datetime | None = No
         return False
     if work.attempt_count >= MAX_ATTEMPTS:
         work.state = WorkState.FAILED
+        work.finished_at = current
         work.failure_code = "attempts_exhausted"
     else:
         work.state = WorkState.PENDING
