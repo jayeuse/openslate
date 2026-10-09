@@ -243,7 +243,7 @@ test("revision conflict keeps text visible but blocks an unreviewed overwrite", 
     },
   });
   expect(html).toContain("My competing edit");
-  expect(html).toContain("This draft changed elsewhere");
+  expect(html).toContain("Changed by someone else — review latest");
   expect(html).toContain("Discard changes");
   expect(html).toMatch(/disabled=""[^>]*>Save draft/);
 });

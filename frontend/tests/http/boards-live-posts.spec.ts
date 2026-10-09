@@ -5,7 +5,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../../src/lib/api";
 import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
-import { installOpenViewEventSource } from "./helpers/openview-event-source";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
 import type { BoardPostPage } from "../../src/components/systems/boards/adapters/board-posts-api";
 import { ServerBoardPostReaderContent } from "../../src/components/systems/boards/components/server-board-post-feed-display";
 import {
@@ -1946,6 +1949,7 @@ async function installS05PostApi(page: Page, manage = true) {
     },
     setWorking(post: Record<string, unknown>) {
       working = post;
+      boardRevision = Number(post.board_revision ?? boardRevision);
     },
     setPublished(post: Record<string, unknown>) {
       published = [post];
@@ -1955,6 +1959,73 @@ async function installS05PostApi(page: Page, manage = true) {
     },
   };
 }
+
+test("S11 matching post burst refreshes the bounded feed without wrong-scope reads or reload", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const api = await installS05PostApi(page);
+  api.setPublished(browserPost);
+  const reads: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      request.method() === "GET" &&
+      url.pathname === `/api/boards/${boardId}/posts` &&
+      url.searchParams.get("view") === "published"
+    )
+      reads.push(url.search);
+  });
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const feed = page.getByRole("region", { name: "Published posts" });
+  await expect(
+    feed.getByRole("heading", { name: browserPost.title, exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    document.documentElement.dataset.s11Document = "retained";
+  });
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  const before = reads.length;
+  for (const data of [
+    { entity: "board_posts", board_id: otherBoardId },
+    { entity: "board_posts", board_id: "invalid" },
+    { entity: "board_posts" },
+    { entity: "board_posts", board_id: boardId, module_id: otherBoardId },
+    { entity: "boards", board_id: otherBoardId },
+  ] as Record<string, string>[])
+    await sendOpenViewEvent(page, "invalidate", data);
+  await page.clock.runFor(301);
+  expect(reads).toHaveLength(before);
+  api.setPublished({
+    ...browserPost,
+    title: "Remote safety notice",
+    publication_number: 2,
+  });
+  for (let index = 0; index < 3; index += 1)
+    await sendOpenViewEvent(page, "invalidate", {
+      entity: "board_posts",
+      board_id: boardId,
+    });
+  await page.clock.runFor(299);
+  expect(reads).toHaveLength(before);
+  await page.clock.runFor(2);
+  await expect
+    .poll(async () => {
+      await page.clock.runFor(1);
+      return feed
+        .getByRole("heading", { name: "Remote safety notice", exact: true })
+        .count();
+    })
+    .toBe(1);
+  expect(reads).toHaveLength(before + 1);
+  expect(new URLSearchParams(reads.at(-1)).get("limit")).toBe("25");
+  expect(new URLSearchParams(reads.at(-1)).get("offset")).toBe("0");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-s11-document",
+    "retained",
+  );
+  expect(api.writes).toHaveLength(0);
+});
 
 async function s05Capture(page: Page, name: string, anchor?: Locator) {
   if (!process.env.OPENVIEW_CAPTURE_DIR) return;
@@ -2003,6 +2074,489 @@ const s05Draft = {
   pinned: true,
   expires_at: "2035-06-02T04:30:00Z",
 };
+
+for (const dirty of [false, true]) {
+  test(`S11 newer selected post ${dirty ? "retains the complete dirty draft with a review notice" : "updates a clean draft"}`, async ({
+    page,
+  }) => {
+    const api = await installS05PostApi(page);
+    api.setWorking({
+      ...s05Draft,
+      links: [{ label: "Original guide", url: "https://example.org/original" }],
+    });
+    await page.clock.setFixedTime(new Date("2035-06-01T00:00:00Z"));
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    const editor = await openS05Drafts(page);
+    await editor
+      .getByRole("button", { name: s05Draft.title, exact: true })
+      .click();
+    await expect(editor.getByLabel("Title", { exact: true })).toHaveValue(
+      s05Draft.title,
+    );
+    if (dirty) {
+      await editor
+        .getByLabel("Title", { exact: true })
+        .fill("My local safety draft");
+      await editor
+        .getByLabel("Message", { exact: true })
+        .fill("Retain this local message");
+      await editor
+        .getByLabel("External link 1 label", { exact: true })
+        .fill("My local guide");
+      await editor
+        .getByLabel("Expires on", { exact: true })
+        .fill("2035-06-03T10:30");
+    }
+    api.setWorking({
+      ...s05Draft,
+      title: "Remote working draft",
+      body: "Remote message",
+      pinned: false,
+      expires_at: null,
+      post_revision: 3,
+      board_revision: 5,
+      links: [{ label: "Remote guide", url: "https://example.org/remote" }],
+    });
+    await sendOpenViewEvent(page, "invalidate", {
+      entity: "board_posts",
+      board_id: boardId,
+    });
+    if (dirty) {
+      const notice = editor.getByText(
+        "Changed by someone else — review latest",
+        { exact: true },
+      );
+      await expect(notice).toBeVisible();
+      await expect(editor.getByLabel("Title", { exact: true })).toHaveValue(
+        "My local safety draft",
+      );
+      await expect(editor.getByLabel("Message", { exact: true })).toHaveValue(
+        "Retain this local message",
+      );
+      await expect(
+        editor.getByLabel("External link 1 label", { exact: true }),
+      ).toHaveValue("My local guide");
+      await expect(
+        editor.getByRole("checkbox", { name: "Pin to top" }),
+      ).toBeChecked();
+      await expect(
+        editor.getByLabel("Expires on", { exact: true }),
+      ).toHaveValue("2035-06-03T10:30");
+      await expect(
+        editor.getByRole("button", { name: "Save draft", exact: true }),
+      ).toBeDisabled();
+      await s05Capture(page, "s11-dirty-post", notice);
+    } else {
+      await expect(editor.getByLabel("Title", { exact: true })).toHaveValue(
+        "Remote working draft",
+      );
+      await expect(editor.getByLabel("Message", { exact: true })).toHaveValue(
+        "Remote message",
+      );
+      await expect(
+        editor.getByRole("checkbox", { name: "Pin to top" }),
+      ).not.toBeChecked();
+      await expect(
+        editor.getByText("Changed by someone else — review latest", {
+          exact: true,
+        }),
+      ).toHaveCount(0);
+    }
+    expect(api.writes).toHaveLength(0);
+  });
+}
+
+test("S11 post invalidation preserves the held Save owner while its feed updates", async ({
+  page,
+}) => {
+  const api = await installS05PostApi(page);
+  api.setWorking(s05Draft);
+  api.setPublished(browserPost);
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    `**/api/boards/${boardId}/posts/${postId}`,
+    async (route) => {
+      if (route.request().method() === "PATCH") await held;
+      return route.fallback();
+    },
+  );
+  await page.clock.setFixedTime(new Date("2035-06-01T00:00:00Z"));
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const editor = await openS05Drafts(page);
+  await editor
+    .getByRole("button", { name: s05Draft.title, exact: true })
+    .click();
+  await editor
+    .getByLabel("Message", { exact: true })
+    .fill("Pending local save");
+  try {
+    await editor
+      .getByRole("button", { name: "Save draft", exact: true })
+      .click();
+    await expect(
+      editor.getByRole("button", { name: "Working…", exact: true }),
+    ).toBeDisabled();
+    api.setPublished({ ...browserPost, title: "Live notice during Save" });
+    await sendOpenViewEvent(page, "invalidate", {
+      entity: "board_posts",
+      board_id: boardId,
+    });
+    await expect(
+      page.getByRole("heading", {
+        name: "Live notice during Save",
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toHaveCount(1);
+    await expect(
+      editor.getByRole("button", { name: "Working…", exact: true }),
+    ).toBeDisabled();
+    await expect(editor.getByLabel("Message", { exact: true })).toHaveValue(
+      "Pending local save",
+    );
+    release();
+    await expect(
+      editor.getByText("Draft saved.", { exact: true }),
+    ).toBeVisible();
+    expect(api.writes).toHaveLength(1);
+  } finally {
+    release();
+  }
+});
+
+test("S11 lifecycle updates its current list without losing a held Unpublish owner", async ({
+  page,
+}) => {
+  const api = await installS05PostApi(page);
+  api.setPublished(browserPost);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await page.getByRole("button", { name: "Manage posts", exact: true }).click();
+  const manager = page.getByRole("dialog", {
+    name: "Manage posts",
+    exact: true,
+  });
+  api.setPublished({ ...browserPost, title: "Remote published post" });
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "board_posts",
+    board_id: boardId,
+  });
+  await expect(
+    manager.getByRole("button", {
+      name: "Unpublish post Remote published post",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await manager
+    .getByRole("button", {
+      name: "Unpublish post Remote published post",
+      exact: true,
+    })
+    .click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Unpublish post?",
+    exact: true,
+  });
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    `**/api/boards/${boardId}/posts/${postId}/unpublish`,
+    async (route) => {
+      await held;
+      return route.fallback();
+    },
+  );
+  try {
+    await confirmation
+      .getByRole("button", { name: "Unpublish post", exact: true })
+      .click();
+    api.setPublished({ ...browserPost, title: "Feed update during Unpublish" });
+    await sendOpenViewEvent(page, "invalidate", {
+      entity: "board_posts",
+      board_id: boardId,
+    });
+    await expect(
+      page
+        .getByRole("region", {
+          name: "Published posts",
+          exact: true,
+          includeHidden: true,
+        })
+        .getByRole("heading", {
+          name: "Feed update during Unpublish",
+          exact: true,
+          includeHidden: true,
+        }),
+    ).toHaveCount(1);
+    await expect(
+      confirmation.getByRole("button", { name: "Unpublish post", exact: true }),
+    ).toBeDisabled();
+    release();
+    await expect(
+      manager.getByText("Post unpublished.", { exact: true }),
+    ).toBeVisible();
+    expect(api.writes).toHaveLength(1);
+    expect(api.writes[0]?.body).toEqual({
+      board_revision: 4,
+      post_revision: 9,
+    });
+  } finally {
+    release();
+  }
+});
+
+for (const phase of ["timer", "read"] as const) {
+  test(`S11 Board switch cancels the old ${phase} without refreshing or restoring its feed`, async ({
+    page,
+  }, testInfo) => {
+    const startedAt = Date.now();
+    const metadata: {
+      kind: "request" | "response";
+      elapsedMs: number;
+      method: string;
+      path: string;
+      query: [string, string][];
+      status?: number;
+    }[] = [];
+    const requestMetadata = (urlString: string, method: string) => {
+      const url = new URL(urlString);
+      if (
+        url.pathname !== "/api/boards" &&
+        !url.pathname.startsWith(`/api/boards/${boardId}`) &&
+        !url.pathname.startsWith(`/api/boards/${otherBoardId}`)
+      )
+        return null;
+      const keys = new Set([
+        "limit",
+        "offset",
+        "sort_by",
+        "sort_order",
+        "view",
+        "search",
+        "author_id",
+        "ids",
+      ]);
+      return {
+        elapsedMs: Date.now() - startedAt,
+        method,
+        path: url.pathname,
+        query: [...url.searchParams.entries()].filter(([key]) => keys.has(key)),
+      };
+    };
+    page.on("request", (request) => {
+      const safe = requestMetadata(request.url(), request.method());
+      if (safe) metadata.push({ kind: "request", ...safe });
+    });
+    page.on("response", (response) => {
+      const safe = requestMetadata(response.url(), response.request().method());
+      if (safe)
+        metadata.push({ kind: "response", ...safe, status: response.status() });
+    });
+    const persistMetadata = async () => {
+      const path = testInfo.outputPath(`s11-${phase}-board-network.json`);
+      await writeFile(path, JSON.stringify(metadata, null, 2));
+      await testInfo.attach(`s11-${phase}-board-network`, {
+        path,
+        contentType: "application/json",
+      });
+    };
+    await page.clock.install();
+    const api = await installS05PostApi(page);
+    api.setPublished(browserPost);
+    const partner = {
+      ...browserBoard,
+      id: otherBoardId,
+      name: "Partner Board",
+      level: "manage",
+    };
+    const partnerPost = {
+      ...browserPost,
+      board_id: otherBoardId,
+      id: "00000000-0000-4000-8000-000000000098",
+      title: "Partner update",
+    };
+    await page.route(
+      (url) => url.pathname === "/api/boards",
+      (route) =>
+        route.fulfill({
+          json: {
+            items: [{ ...browserBoard, level: "manage" }, partner],
+            pagination: {
+              limit: 25,
+              offset: 0,
+              count: 2,
+              total: 2,
+              has_more: false,
+            },
+          },
+        }),
+    );
+    await page.route(`**/api/boards/${otherBoardId}**`, (route) => {
+      const url = new URL(route.request().url());
+      const prefix = `/api/boards/${otherBoardId}`;
+      if (url.pathname === prefix) return route.fulfill({ json: partner });
+      if (url.pathname === `${prefix}/my-access`)
+        return route.fulfill({
+          json: { level: "manage", read: true, write: true, manage: true },
+        });
+      if (url.pathname === `${prefix}/post-authors`)
+        return route.fulfill({
+          json: {
+            items: [{ id: authorId, label: "Avery" }],
+            pagination: {
+              limit: Number(url.searchParams.get("limit") ?? 25),
+              offset: Number(url.searchParams.get("offset") ?? 0),
+              count: 1,
+              total: 1,
+              has_more: false,
+            },
+          },
+        });
+      const items =
+        url.pathname.endsWith("/posts") &&
+        url.searchParams.get("view") === "published"
+          ? [partnerPost]
+          : [];
+      return route.fulfill({ json: { ...wirePage(items), board_revision: 4 } });
+    });
+    let oldReads = 0;
+    let partnerReads = 0;
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (
+        url.pathname === `/api/boards/${boardId}/posts` &&
+        url.searchParams.get("view") === "published"
+      )
+        oldReads += 1;
+      if (
+        url.pathname === `/api/boards/${otherBoardId}/posts` &&
+        url.searchParams.get("view") === "published"
+      )
+        partnerReads += 1;
+    });
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    await expect(
+      page.getByRole("heading", { name: browserPost.title, exact: true }),
+    ).toBeVisible();
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    if (phase === "read")
+      await page.route(
+        (url) =>
+          url.pathname === `/api/boards/${boardId}/posts` &&
+          url.searchParams.get("view") === "published",
+        async (route) => {
+          await held;
+          return route.fallback();
+        },
+      );
+    api.setPublished({ ...browserPost, title: "Old Board private update" });
+    const entered =
+      phase === "read"
+        ? page.waitForRequest(
+            (request) =>
+              new URL(request.url()).pathname ===
+                `/api/boards/${boardId}/posts` &&
+              new URL(request.url()).searchParams.get("view") === "published",
+          )
+        : null;
+    await sendOpenViewEvent(page, "invalidate", {
+      entity: "board_posts",
+      board_id: boardId,
+    });
+    if (entered) {
+      await page.clock.runFor(301);
+      await entered;
+    }
+    const beforeSwitch = oldReads;
+    try {
+      await page
+        .getByRole("button", { name: "Switch board", exact: true })
+        .click();
+      await page.clock.runFor(20);
+      await page.getByRole("combobox", { name: "Board", exact: true }).click();
+      await page.clock.runFor(20);
+      await page.getByRole("option", { name: /Partner Board/ }).click();
+      await expect(
+        page.getByRole("button", { name: "Switch board", exact: true }),
+      ).toContainText("Partner Board");
+      const partnerReply = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === `/api/boards/${otherBoardId}/posts` &&
+          url.searchParams.get("view") === "published"
+        );
+      });
+      const partnerAuthorsReply = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname ===
+          `/api/boards/${otherBoardId}/post-authors`,
+      );
+      await page.getByRole("link", { name: "Posts", exact: true }).click();
+      await page
+        .getByRole("region", { name: "Post search and filters", exact: true })
+        .waitFor({ state: "visible" });
+      await expect
+        .poll(async () => {
+          await page.clock.runFor(0);
+          return metadata.some(
+            (item) =>
+              item.kind === "response" &&
+              item.path === `/api/boards/${otherBoardId}/post-authors`,
+          );
+        })
+        .toBe(true);
+      await (await partnerAuthorsReply).finished();
+      await page.clock.runFor(0);
+      await partnerReply;
+      const feed = page.getByRole("region", {
+        name: "Published posts",
+        exact: true,
+      });
+      const partnerBefore = partnerReads;
+      const completed =
+        phase === "read"
+          ? page.waitForResponse(
+              (response) =>
+                new URL(response.url()).pathname ===
+                  `/api/boards/${boardId}/posts` &&
+                new URL(response.url()).searchParams.get("view") ===
+                  "published",
+            )
+          : null;
+      release();
+      if (completed) await completed;
+      await page.clock.runFor(301);
+      await expect
+        .poll(async () => {
+          await page.clock.runFor(1);
+          return feed
+            .getByRole("heading", { name: "Partner update", exact: true })
+            .count();
+        })
+        .toBe(1);
+      expect(oldReads).toBe(beforeSwitch);
+      expect(partnerReads).toBe(partnerBefore);
+      await expect(
+        feed.getByRole("heading", { name: "Partner update", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Old Board private update", { exact: true }),
+      ).toHaveCount(0);
+      expect(api.writes).toHaveLength(0);
+    } finally {
+      release();
+      await persistMetadata();
+    }
+  });
+}
 
 test.describe("S05 local post expiry", () => {
   test.use({ timezoneId: "Asia/Manila" });

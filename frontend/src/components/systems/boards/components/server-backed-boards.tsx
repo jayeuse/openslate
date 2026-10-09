@@ -49,7 +49,11 @@ import {
 } from "@/components/ui/popover";
 import { SearchSelect } from "@/components/ui/search-select";
 import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
-import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
+import {
+  subscribeWorkspaceInvalidations,
+  type WorkspaceInvalidation,
+} from "../../shared/adapters/invalidation-events";
+import { useInvalidationRefresh } from "../../shared/adapters/use-invalidation-refresh";
 import {
   Sheet,
   SheetContent,
@@ -357,6 +361,28 @@ function ServerBackedBoardsContent() {
   const identity = useQuery(authMeOptions());
   const isAdmin = identity.data?.role === "admin";
   const board = resource.selectedBoard;
+  const boardId = board?.id ?? null;
+  const invalidatesPosts = useCallback(
+    (event: WorkspaceInvalidation) =>
+      event.type === "invalidate" &&
+      event.boardId === boardId &&
+      event.entity === "board_posts",
+    [boardId],
+  );
+  const postsLiveKey = useInvalidationRefresh(boardId, invalidatesPosts);
+  const [manualLiveKey, setManualLiveKey] = useState(0);
+  const refreshBoard = useCallback(() => {
+    resource.refresh();
+    setManualLiveKey((value) => value + 1);
+  }, [resource.refresh]);
+  const invalidatesEvents = useCallback(
+    (event: WorkspaceInvalidation) =>
+      event.type === "invalidate" &&
+      event.boardId === boardId &&
+      (event.entity === "board_events" || event.entity === "boards"),
+    [boardId],
+  );
+  const eventsLiveKey = useInvalidationRefresh(boardId, invalidatesEvents);
   const canManage = board?.level === "manage";
   const activityOpen = isSelectedBoardActivityOpen(
     activitySelection,
@@ -776,7 +802,7 @@ function ServerBackedBoardsContent() {
                 aria-label="Refresh"
                 title="Refresh board"
                 onClick={() => {
-                  resource.refresh();
+                  refreshBoard();
                   if (regionActive) refreshWorkspaceCalendar();
                 }}
               >
@@ -866,7 +892,7 @@ function ServerBackedBoardsContent() {
         open={managementMode === "create"}
         onOpenChange={(open) => setManagementMode(open ? "create" : null)}
         onCreated={(created) => {
-          resource.refresh();
+          refreshBoard();
           navigateToBoard(created);
         }}
       />
@@ -879,7 +905,7 @@ function ServerBackedBoardsContent() {
           board={board}
           onUpdated={(updated) => {
             resource.applyBoardMutation(updated);
-            resource.refresh();
+            refreshBoard();
           }}
           onAccessDenied={() => {
             closeActivity();
@@ -897,7 +923,7 @@ function ServerBackedBoardsContent() {
               closePostManager();
               setBrowsing(false);
               router.push(href, { scroll: false });
-              resource.refresh();
+              refreshBoard();
             };
             if (requestNavigation(href, resume)) resume();
           }}
@@ -928,7 +954,7 @@ function ServerBackedBoardsContent() {
               board={board}
               refreshKey={resource.detail.sequence}
               onBoardCreated={(created) => {
-                resource.refresh();
+                refreshBoard();
                 navigateToBoard(created);
               }}
               onAccessDenied={(boardId) => {
@@ -957,7 +983,7 @@ function ServerBackedBoardsContent() {
               <Button
                 variant="outline"
                 className="min-h-11"
-                onClick={resource.refresh}
+                onClick={refreshBoard}
               >
                 Retry
               </Button>
@@ -973,7 +999,7 @@ function ServerBackedBoardsContent() {
               <Button
                 variant="outline"
                 className="min-h-11"
-                onClick={resource.refresh}
+                onClick={refreshBoard}
               >
                 Retry
               </Button>
@@ -1004,7 +1030,7 @@ function ServerBackedBoardsContent() {
               <Button
                 variant="outline"
                 className="min-h-11"
-                onClick={resource.refresh}
+                onClick={refreshBoard}
               >
                 <RefreshCw data-icon="inline-start" /> Retry Board
               </Button>
@@ -1056,6 +1082,7 @@ function ServerBackedBoardsContent() {
                 onRetryWorkspaceDate={() => void workspaceCalendar.refetch()}
                 boardId={board.id}
                 boardActive={board.status === "active"}
+                liveKey={eventsLiveKey + manualLiveKey}
                 refreshKey={resource.detail.sequence}
                 onDraftStateChange={onCalendarDraftStateChange}
                 selectedEventId={searchParams.get("event")}
@@ -1091,8 +1118,8 @@ function ServerBackedBoardsContent() {
                       boardId={board.id}
                       boardRevision={board.revision}
                       boardStatus={board.status}
-                      refreshKey={resource.detail.sequence}
-                      onPublished={() => resource.refresh()}
+                      refreshKey={postsLiveKey + manualLiveKey}
+                      onPublished={() => refreshBoard()}
                       onDraftStateChange={onPostDraftStateChange}
                     />
                   </div>
@@ -1101,7 +1128,7 @@ function ServerBackedBoardsContent() {
                   key={board.id}
                   region={workspaceCalendar.data}
                   boardId={board.id}
-                  refreshKey={resource.detail.sequence}
+                  refreshKey={postsLiveKey + manualLiveKey}
                   selectedPostId={searchParams.get("post")}
                   onSelectPost={(postId) => selectBoardContent("post", postId)}
                 />
@@ -1128,8 +1155,8 @@ function ServerBackedBoardsContent() {
                         key={`lifecycle:${board.id}`}
                         boardId={board.id}
                         boardStatus={board.status}
-                        refreshKey={resource.detail.sequence}
-                        onChanged={() => resource.refresh()}
+                        refreshKey={postsLiveKey + manualLiveKey}
+                        onChanged={() => refreshBoard()}
                         onAccessDenied={(boardId) => {
                           if (board.id !== boardId) return;
                           closePostManager();
@@ -1168,7 +1195,7 @@ function ServerBackedBoardsContent() {
                 <ServerBackedBoardWidgets
                   key={board.id}
                   boardId={board.id}
-                  refreshKey={resource.detail.sequence}
+                  refreshKey={manualLiveKey}
                 />
               </div>
             )}
@@ -1269,8 +1296,8 @@ function ServerBackedBoardsContent() {
                     boardId={board.id}
                     boardActive={board.status === "active"}
                     refreshKey={resource.detail.sequence}
-                    onChanged={resource.refresh}
-                    onBoardRefresh={resource.refresh}
+                    onChanged={refreshBoard}
+                    onBoardRefresh={refreshBoard}
                     onAccessDenied={(boardId) => {
                       if (board.id !== boardId) return;
                       closeWidgets();

@@ -219,7 +219,12 @@ export function ServerBoardPostEditorDisplay({
       ? createElement(
           "p",
           { role: "alert", className: "text-muted-foreground text-sm" },
-          "This draft changed elsewhere. Your text, links, pin and expiry are kept. Copy them if needed, then discard changes and choose the latest draft.",
+          createElement(
+            "span",
+            { className: "block font-medium" },
+            "Changed by someone else — review latest",
+          ),
+          "Your text, links, pin and expiry are kept. Copy them if needed, then discard changes and choose the latest draft.",
         )
       : null,
     view.notice

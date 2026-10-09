@@ -5,6 +5,7 @@ import {
 } from "./helpers/openview-event-source";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
 import type {
   BoardEventOccurrencePage,
   BoardEventPage,
@@ -181,6 +182,289 @@ async function installSelectedEventApi(
     });
   });
 }
+
+async function installS11EventApi(browser: Page) {
+  await installOpenViewEventSource(browser);
+  await installSelectedEventApi(browser);
+  await browser.route("**/api/users/*/preferences", (route) =>
+    route.fulfill({
+      json: {
+        user_id: new URL(route.request().url()).pathname.split("/")[3],
+        theme: "light",
+        appearance: { motion: "reduce", keyboard_shortcuts: true },
+      },
+    }),
+  );
+  let saved = {
+    ...selectedEventWire,
+    start_date: "2026-09-14",
+    end_date: "2026-09-16",
+  };
+  const reads: string[] = [];
+  const writes: string[] = [];
+  await browser.route("**/api/boards**", (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const prefix = `/api/boards/${boardId}`;
+    if (request.method() !== "GET") {
+      writes.push(url.pathname);
+      return route.fulfill({
+        status: 409,
+        json: { detail: "Unexpected write" },
+      });
+    }
+    reads.push(url.pathname);
+    const board = {
+      id: boardId,
+      scope: "project",
+      department_id: null,
+      name: "Calendar board",
+      description: "Current calendar",
+      status: "active",
+      revision: saved.board_revision,
+      level: "manage",
+      created_at: saved.created_at,
+      updated_at: saved.updated_at,
+    };
+    const pagination = {
+      limit: 25,
+      offset: 0,
+      count: 1,
+      total: 1,
+      has_more: false,
+    };
+    if (url.pathname === "/api/boards")
+      return route.fulfill({ json: { items: [board], pagination } });
+    if (url.pathname === prefix) return route.fulfill({ json: board });
+    if (url.pathname === `${prefix}/my-access`)
+      return route.fulfill({
+        json: { level: "manage", read: true, write: true, manage: true },
+      });
+    if (url.pathname === `${prefix}/events/${eventId}`)
+      return route.fulfill({ json: saved });
+    if (url.pathname === `${prefix}/events/occurrences`)
+      return route.fulfill({
+        json: {
+          items: [
+            {
+              id: `${eventId}:2026-09-14`,
+              event_id: eventId,
+              date: "2026-09-14",
+              start: "2026-09-14",
+              end: "2026-09-16",
+              event: saved,
+            },
+          ],
+          pagination: { ...pagination, limit: 100 },
+          board_revision: saved.board_revision,
+        },
+      });
+    return route.fallback();
+  });
+  return {
+    reads,
+    writes,
+    change() {
+      saved = {
+        ...saved,
+        title: "Remote event title",
+        details: "Remote planning details",
+        revision: 2,
+        board_revision: 2,
+      };
+    },
+  };
+}
+
+for (const dirty of [false, true]) {
+  test(`S11 event invalidation ${dirty ? "retains the dirty event and offers review latest" : "updates the clean event editor"}`, async ({
+    page: browser,
+  }) => {
+    const api = await installS11EventApi(browser);
+    await browser.goto(`/boards?board=${boardId}&section=calendar`);
+    await browser.getByText("View event", { exact: true }).click();
+    await browser
+      .getByRole("button", {
+        name: `Edit ${selectedEventWire.title}`,
+        exact: true,
+      })
+      .click();
+    const title = browser.getByLabel("Event title", { exact: true });
+    await expect(title).toHaveValue(selectedEventWire.title);
+    if (dirty) {
+      await title.fill("My local event title");
+      await browser
+        .getByLabel("Details", { exact: true })
+        .fill("My complete local planning draft");
+      await browser
+        .getByLabel("Location", { exact: true })
+        .fill("Local room 42");
+    }
+    api.change();
+    await sendOpenViewEvent(browser, "invalidate", {
+      entity: "board_events",
+      board_id: boardId,
+    });
+    if (dirty) {
+      await expect(
+        browser.getByText("Changed by someone else — review latest", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(title).toHaveValue("My local event title");
+      await expect(browser.getByLabel("Details", { exact: true })).toHaveValue(
+        "My complete local planning draft",
+      );
+      await expect(browser.getByLabel("Location", { exact: true })).toHaveValue(
+        "Local room 42",
+      );
+      await expect(
+        browser.getByRole("button", { name: "Save event", exact: true }),
+      ).toBeDisabled();
+      await browser
+        .getByText("Review the latest saved event", { exact: true })
+        .click();
+      await expect(
+        browser
+          .getByRole("definition")
+          .filter({ hasText: "Remote planning details" }),
+      ).toBeVisible();
+      if (process.env.OPENVIEW_CAPTURE_DIR) {
+        await browser.addStyleTag({
+          content: "nextjs-portal { display: none !important; }",
+        });
+        await browser.evaluate(() => document.fonts.ready);
+        const notice = browser.getByText(
+          "Changed by someone else — review latest",
+          { exact: true },
+        );
+        const originalViewport = browser.viewportSize();
+        for (const mode of ["light", "dark"] as const) {
+          await browser.evaluate(applyAppearancePreferences, {
+            mode,
+            reduceMotion: true,
+          });
+          for (const viewport of [
+            { width: 1440, height: 900 },
+            { width: 390, height: 844 },
+          ]) {
+            await browser.setViewportSize(viewport);
+            await notice.evaluate((element) =>
+              element.scrollIntoView({
+                block: "center",
+                behavior: "instant",
+              }),
+            );
+            await expect(notice).toBeInViewport();
+            expect(
+              await browser.evaluate(
+                () => document.documentElement.scrollWidth <= innerWidth,
+              ),
+            ).toBe(true);
+            await browser.screenshot({
+              path: `${process.env.OPENVIEW_CAPTURE_DIR}/s11-dirty-event-${mode}-${viewport.width}x${viewport.height}.png`,
+              animations: "disabled",
+              fullPage: false,
+            });
+          }
+        }
+        if (originalViewport) await browser.setViewportSize(originalViewport);
+        const latest = browser.getByRole("button", {
+          name: "Load latest event and discard my draft",
+          exact: true,
+        });
+        await latest.focus();
+        await expect(latest).toBeFocused();
+        await latest.press("Enter");
+        await expect(title).toHaveValue("Remote event title");
+      }
+    } else {
+      await expect(title).toHaveValue("Remote event title");
+      await expect(browser.getByLabel("Details", { exact: true })).toHaveValue(
+        "Remote planning details",
+      );
+      await expect(
+        browser.getByText("Changed by someone else — review latest", {
+          exact: true,
+        }),
+      ).toHaveCount(0);
+    }
+    expect(api.writes).toHaveLength(0);
+    expect(
+      api.reads.filter((path) => path.endsWith(`/events/${eventId}`)).length,
+    ).toBeGreaterThan(0);
+    await expect(
+      browser.getByRole("heading", { name: "September 2026", exact: true }),
+    ).toBeVisible();
+  });
+}
+
+test("S11 an old live event refusal cannot close a newly created local draft", async ({
+  page: browser,
+}) => {
+  const api = await installS11EventApi(browser);
+  await browser.goto(`/boards?board=${boardId}&section=calendar`);
+  await browser.getByText("View event", { exact: true }).click();
+  await browser
+    .getByRole("button", {
+      name: `Edit ${selectedEventWire.title}`,
+      exact: true,
+    })
+    .click();
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await browser.route(
+    `**/api/boards/${boardId}/events/${eventId}`,
+    async (route) => {
+      await held;
+      return route.fulfill({
+        status: 403,
+        json: { detail: "Old event is unavailable" },
+      });
+    },
+  );
+  try {
+    const entered = browser.waitForRequest(
+      (request) =>
+        new URL(request.url()).pathname ===
+        `/api/boards/${boardId}/events/${eventId}`,
+    );
+    api.change();
+    await sendOpenViewEvent(browser, "invalidate", {
+      entity: "board_events",
+      board_id: boardId,
+    });
+    await entered;
+    await browser.getByRole("button", { name: "Cancel", exact: true }).click();
+    await browser
+      .getByRole("button", { name: "New event", exact: true })
+      .click();
+    await browser
+      .getByLabel("Event title", { exact: true })
+      .fill("My new local event");
+    const completed = browser.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+        `/api/boards/${boardId}/events/${eventId}`,
+    );
+    release();
+    await completed;
+    await expect(
+      browser.getByLabel("Event title", { exact: true }),
+    ).toHaveValue("My new local event");
+    await expect(
+      browser.getByText(
+        "This event or Board is no longer available. The editor was closed.",
+        { exact: true },
+      ),
+    ).toHaveCount(0);
+    expect(api.writes).toHaveLength(0);
+  } finally {
+    release();
+  }
+});
 
 test.describe("Boards workspace regional dates", () => {
   test.use({ locale: "en-US", timezoneId: "UTC" });

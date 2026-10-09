@@ -172,6 +172,31 @@ export function useServerBoardPostLifecycle({
   const loadSequence = useRef(0);
   const mutationSequence = useRef(0);
   const operationPendingRef = useRef(false);
+  const ownerScope = useRef(scope);
+  const deferredReload = useRef(false);
+  const mounted = useRef(false);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      loadSequence.current += 1;
+      mutationSequence.current += 1;
+      operationPendingRef.current = false;
+    };
+  }, []);
+
+  function flushDeferredReload() {
+    if (
+      deferredReload.current &&
+      mounted.current &&
+      ownerScope.current === scope &&
+      !operationPendingRef.current
+    ) {
+      deferredReload.current = false;
+      setRetryKey((value) => value + 1);
+    }
+  }
   const onAccessDeniedRef = useRef(onAccessDenied);
 
   useEffect(() => {
@@ -179,9 +204,17 @@ export function useServerBoardPostLifecycle({
   }, [onAccessDenied]);
 
   useEffect(() => {
+    if (ownerScope.current === scope && operationPendingRef.current) {
+      deferredReload.current = true;
+      return;
+    }
+    if (ownerScope.current !== scope) {
+      ownerScope.current = scope;
+      mutationSequence.current += 1;
+      operationPendingRef.current = false;
+    }
+    deferredReload.current = false;
     const request = ++loadSequence.current;
-    mutationSequence.current += 1;
-    operationPendingRef.current = false;
     if (!active) {
       setState({ ...emptyState(key, false, selectedView), status: "ready" });
       return () => {
@@ -238,8 +271,6 @@ export function useServerBoardPostLifecycle({
     })();
     return () => {
       loadSequence.current += 1;
-      mutationSequence.current += 1;
-      operationPendingRef.current = false;
     };
   }, [active, boardId, key, offset, refreshKey, scope, selectedView]);
 
@@ -334,8 +365,10 @@ export function useServerBoardPostLifecycle({
     } catch (error) {
       failAction(key, operation, error);
     } finally {
-      if (operation === mutationSequence.current)
+      if (operation === mutationSequence.current) {
         operationPendingRef.current = false;
+        flushDeferredReload();
+      }
     }
   }
 
@@ -399,8 +432,10 @@ export function useServerBoardPostLifecycle({
       } catch (error) {
         failAction(key, operation, error);
       } finally {
-        if (operation === mutationSequence.current)
+        if (operation === mutationSequence.current) {
           operationPendingRef.current = false;
+          flushDeferredReload();
+        }
       }
     })();
   }

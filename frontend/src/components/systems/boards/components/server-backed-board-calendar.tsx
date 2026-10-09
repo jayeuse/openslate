@@ -164,6 +164,7 @@ export function canEditBoardEvent(
 export function ServerBackedBoardCalendar({
   boardId,
   refreshKey,
+  liveKey,
   workspaceCalendar,
   workspaceDateError,
   onRetryWorkspaceDate,
@@ -174,6 +175,7 @@ export function ServerBackedBoardCalendar({
 }: {
   boardId: string;
   refreshKey: number;
+  liveKey: number;
   workspaceCalendar: WorkspaceCalendarSettings | undefined;
   workspaceDateError: boolean;
   onRetryWorkspaceDate: () => void;
@@ -237,6 +239,13 @@ export function ServerBackedBoardCalendar({
   const [accessVersion, setAccessVersion] = useState(0);
   const [blockedBoardId, setBlockedBoardId] = useState<string | null>(null);
   const [draft, setDraft] = useState<BoardEventDraft | null>(null);
+  const [draftBase, setDraftBase] = useState<BoardEvent | null>(null);
+  const liveDraft = useRef<{
+    draft: BoardEventDraft | null;
+    base: BoardEvent | null;
+  }>({ draft: null, base: null });
+  const consumedLiveKey = useRef<string | null>(null);
+  const liveDraftRequest = useRef(0);
   const [pending, setPending] = useState(false);
   const [attachmentPending, setAttachmentPending] = useState(false);
   const attachmentPendingRef = useRef(false);
@@ -264,7 +273,7 @@ export function ServerBackedBoardCalendar({
   const selectedCalendarDate =
     selectedDate ?? workspaceToday ?? calendarWindow?.start ?? "";
   const { state, retry, invalidate, loadMore, isLoadingMore, loadMoreError } =
-    useServerBoardEvents(boardId, calendarWindow, refreshKey, search);
+    useServerBoardEvents(boardId, calendarWindow, liveKey, search);
   const invalidateRef = useRef(invalidate);
   const accessKey = `${boardId}:${refreshKey}:${boardActive}:${isPurgeAdmin}:${accessVersion}`;
   const currentAccess =
@@ -286,7 +295,7 @@ export function ServerBackedBoardCalendar({
     !accessDenied &&
     currentAccess?.manage === true &&
     (boardActive || isPurgeAdmin);
-  const archivedKey = `${boardId}:${refreshKey}:${archivedOffset}:${archivedVersion}`;
+  const archivedKey = `${boardId}:${liveKey}:${archivedOffset}:${archivedVersion}`;
   const archivedPage =
     canBrowseArchived &&
     archivedState?.key === archivedKey &&
@@ -294,7 +303,127 @@ export function ServerBackedBoardCalendar({
       ? archivedState.page
       : null;
   const activeDraft = canEdit && draft?.boardId === boardId ? draft : null;
-  const myEventsKey = `${boardId}:${refreshKey}:${myEventsOffset}:${myEventsRetry}`;
+  const myEventsKey = `${boardId}:${liveKey}:${myEventsOffset}:${myEventsRetry}`;
+
+  useEffect(() => {
+    liveDraft.current = { draft, base: draftBase };
+  }, [draft, draftBase]);
+
+  useEffect(() => {
+    if (pending || attachmentPending || recordLinkPending) return;
+    const signal = `${viewerId}:${boardId}:${liveKey}`;
+    if (consumedLiveKey.current === signal) return;
+    consumedLiveKey.current = signal;
+    const selected = liveDraft.current.draft;
+    if (
+      !viewerId ||
+      !boardActive ||
+      !selected?.eventId ||
+      selected.boardId !== boardId
+    )
+      return;
+    const request = ++liveDraftRequest.current;
+    void Promise.all([
+      readBoardEvent(boardId, selected.eventId),
+      readBoard(boardId),
+    ])
+      .then(([event, board]) => {
+        const current = liveDraft.current;
+        if (
+          request !== liveDraftRequest.current ||
+          !current.draft ||
+          current.draft.eventId !== selected.eventId ||
+          current.draft.eventRevision !== selected.eventRevision
+        )
+          return;
+        if (
+          event.id !== selected.eventId ||
+          event.boardId !== boardId ||
+          board.id !== boardId ||
+          event.boardRevision !== board.revision
+        ) {
+          setEditorError(
+            "Could not verify the latest event. Your draft is retained; try again.",
+          );
+          return;
+        }
+        if (event.revision < (current.draft.eventRevision ?? 0)) return;
+        if (event.revision === current.draft.eventRevision) {
+          setDraft((value) =>
+            value?.eventId === event.id
+              ? { ...value, boardRevision: board.revision }
+              : value,
+          );
+          return;
+        }
+        const original = current.base && boardEventDraftFromEvent(current.base);
+        const dirty =
+          original === null ||
+          JSON.stringify({
+            ...current.draft,
+            boardRevision: 0,
+            eventRevision: 0,
+          }) !==
+            JSON.stringify({ ...original, boardRevision: 0, eventRevision: 0 });
+        if (dirty || event.archived || board.status !== "active") {
+          setConflict({
+            eventId: event.id,
+            status: "ready",
+            latest: {
+              boardId: board.id,
+              boardRevision: board.revision,
+              boardActive: board.status === "active",
+              event,
+            },
+          });
+        } else {
+          setDraft(boardEventDraftFromEvent(event));
+          setDraftBase(event);
+          setConflict(null);
+        }
+      })
+      .catch((failure: unknown) => {
+        const current = liveDraft.current.draft;
+        if (
+          request !== liveDraftRequest.current ||
+          current?.eventId !== selected.eventId ||
+          current.eventRevision !== selected.eventRevision
+        )
+          return;
+        if (
+          failure instanceof ApiError &&
+          [401, 403, 404].includes(failure.status)
+        ) {
+          setDraft(null);
+          setDraftBase(null);
+          setConflict(null);
+          invalidateRef.current();
+          setEditorError(
+            "This event or Board is no longer available. The editor was closed.",
+          );
+        } else {
+          setConflict({
+            eventId: selected.eventId,
+            status: "needs-check",
+            latest: null,
+          });
+          setEditorError(
+            "Could not check the latest version. Your draft is retained; try again.",
+          );
+        }
+      });
+    return () => {
+      liveDraftRequest.current += 1;
+    };
+  }, [
+    liveKey,
+    boardId,
+    viewerId,
+    boardActive,
+    pending,
+    attachmentPending,
+    recordLinkPending,
+  ]);
 
   useEffect(() => {
     if (!viewerId || selectedEventId === null || accessDenied) {
@@ -423,6 +552,7 @@ export function ServerBackedBoardCalendar({
 
   useEffect(() => {
     setDraft(null);
+    setDraftBase(null);
     attachmentPendingRef.current = false;
     recordLinkPendingRef.current = false;
     setAttachmentPending(false);
@@ -1025,6 +1155,7 @@ export function ServerBackedBoardCalendar({
       ...boardEventDraftFromEvent(event),
       boardRevision: latest.boardRevision,
     });
+    setDraftBase(event);
     setConflict(null);
     setEditorError(null);
   }
@@ -1062,6 +1193,7 @@ export function ServerBackedBoardCalendar({
 
     setConflict(null);
     setDraft(boardEventDraftFromEvent(event));
+    setDraftBase(event);
   }
 
   function canArchiveEvent(event: BoardEvent): boolean {
@@ -1408,7 +1540,7 @@ export function ServerBackedBoardCalendar({
         <Alert variant="destructive">
           <div className="flex min-w-0 flex-col gap-3">
             <p className="font-medium">
-              The saved version changed. Your draft is still here.
+              Changed by someone else — review latest
             </p>
             {conflict.status === "needs-check" && (
               <Button
@@ -1582,6 +1714,7 @@ export function ServerBackedBoardCalendar({
 
               setConflict(null);
               setDraft(boardEventDraftFromEvent(event));
+              setDraftBase(event);
             }}
             onPrevious={() =>
               setMyEventsOffset((value) => Math.max(0, value - 25))

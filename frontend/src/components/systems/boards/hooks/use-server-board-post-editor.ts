@@ -77,6 +77,7 @@ export function useServerBoardPostEditor({
   const loadSequence = useRef(0);
   const mutationSequence = useRef(0);
   const operationPendingRef = useRef(false);
+  const deferredReload = useRef(false);
   const attachmentPendingRef = useRef(false);
   const recordLinkPendingRef = useRef(false);
   const mountedRef = useRef(false);
@@ -106,9 +107,33 @@ export function useServerBoardPostEditor({
     };
   }, []);
 
+  function flushDeferredReload() {
+    if (
+      deferredReload.current &&
+      mountedRef.current &&
+      activeKeyRef.current === key &&
+      !operationPendingRef.current &&
+      !attachmentPendingRef.current &&
+      !recordLinkPendingRef.current
+    ) {
+      deferredReload.current = false;
+      setRetryKey((value) => value + 1);
+    }
+  }
+
   useEffect(() => {
-    const request = ++loadSequence.current;
     const switched = activeKeyRef.current !== key;
+    if (
+      !switched &&
+      (operationPendingRef.current ||
+        attachmentPendingRef.current ||
+        recordLinkPendingRef.current)
+    ) {
+      deferredReload.current = true;
+      return;
+    }
+    deferredReload.current = false;
+    const request = ++loadSequence.current;
     activeKeyRef.current = key;
     if (switched) {
       selectedRef.current = null;
@@ -408,8 +433,10 @@ export function useServerBoardPostEditor({
         previous.key === key ? editorFailure(previous, error) : previous,
       );
     } finally {
-      if (operation === mutationSequence.current)
+      if (operation === mutationSequence.current) {
         operationPendingRef.current = false;
+        flushDeferredReload();
+      }
     }
   }
 
@@ -514,8 +541,10 @@ export function useServerBoardPostEditor({
         };
       });
     } finally {
-      if (operation === mutationSequence.current)
+      if (operation === mutationSequence.current) {
         operationPendingRef.current = false;
+        flushDeferredReload();
+      }
     }
   }
 
@@ -585,8 +614,10 @@ export function useServerBoardPostEditor({
         previous.key === key ? editorFailure(previous, error) : previous,
       );
     } finally {
-      if (operation === mutationSequence.current)
+      if (operation === mutationSequence.current) {
         operationPendingRef.current = false;
+        flushDeferredReload();
+      }
     }
   }
 
@@ -677,8 +708,10 @@ export function useServerBoardPostEditor({
         previous.key === key ? editorFailure(previous, error) : previous,
       );
     } finally {
-      if (operation === mutationSequence.current)
+      if (operation === mutationSequence.current) {
         operationPendingRef.current = false;
+        flushDeferredReload();
+      }
     }
   }
 
@@ -740,8 +773,10 @@ export function useServerBoardPostEditor({
         previous.key === key ? editorFailure(previous, error) : previous,
       );
     } finally {
-      if (operation === mutationSequence.current)
+      if (operation === mutationSequence.current) {
         operationPendingRef.current = false;
+        flushDeferredReload();
+      }
     }
   }
 
@@ -774,6 +809,7 @@ export function useServerBoardPostEditor({
 
   function setAttachmentPending(pending: boolean) {
     attachmentPendingRef.current = pending;
+    if (!pending) flushDeferredReload();
     setState((previous) =>
       previous.key === key
         ? { ...previous, attachmentPending: pending }
@@ -783,6 +819,7 @@ export function useServerBoardPostEditor({
 
   function setRecordLinkPending(pending: boolean) {
     recordLinkPendingRef.current = pending;
+    if (!pending) flushDeferredReload();
     setState((previous) =>
       previous.key === key
         ? { ...previous, recordLinkPending: pending }

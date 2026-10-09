@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
 import { ApiError } from "../../src/lib/api";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
@@ -269,7 +270,7 @@ test("existing Board management requires server-confirmed manage access", () => 
 test("revision conflict retains the draft and blocks unreviewed overwrite", () => {
   const html = markup({ ...baseView, conflict: true });
   expect(html).toContain("Keep my draft");
-  expect(html).toContain("Board changed elsewhere");
+  expect(html).toContain("Changed by someone else — review latest");
   expect(html).toContain("Refresh latest Board");
   expect(html).toMatch(/disabled=""[^>]*>Save changes/);
 });
@@ -978,7 +979,251 @@ async function installFileManagement(page: Page, startArchived = false) {
     wrongBoard() {
       malformedFile = true;
     },
+    archiveRemote() {
+      file = { ...file, is_deleted: true };
+    },
+    purgeRemote() {
+      file = { ...file, is_deleted: true, state: "purged" };
+    },
+    renameRemote() {
+      currentBoard.name = "Remote Dispatch";
+      currentBoard.revision += 1;
+    },
   };
+}
+
+test("S11 another Board invalidation refreshes the current bounded selector search in place", async ({
+  page,
+}) => {
+  await installFileManagement(page);
+  const otherId = "00000000-0000-4000-8000-000000000099";
+  let name = "Dispatch partner";
+  const queries: URLSearchParams[] = [];
+  await page.route(
+    (url) => url.pathname === "/api/boards",
+    (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      queries.push(params);
+      return route.fulfill({
+        json: {
+          items: [
+            {
+              id: otherId,
+              scope: "project",
+              department_id: null,
+              name,
+              description: "",
+              status: "active",
+              revision: 1,
+              level: "manage",
+              created_at: board.createdAt,
+              updated_at: board.updatedAt,
+            },
+          ],
+          pagination: {
+            limit: 25,
+            offset: 0,
+            count: 1,
+            total: 1,
+            has_more: false,
+          },
+        },
+      });
+    },
+  );
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await page.getByRole("button", { name: "Switch board", exact: true }).click();
+  await page.getByLabel("Search accessible Boards").fill("Dispatch");
+  await page
+    .getByRole("button", { name: "Search boards", exact: true })
+    .click();
+  await expect.poll(() => queries.at(-1)?.get("search")).toBe("Dispatch");
+  const before = queries.length;
+  name = "Remote dispatch partner";
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "boards",
+    board_id: otherId,
+  });
+  await expect.poll(() => queries.length).toBe(before + 1);
+  expect(queries.at(-1)?.get("search")).toBe("Dispatch");
+  expect(queries.at(-1)?.get("limit")).toBe("25");
+  expect(queries.at(-1)?.get("offset")).toBe("0");
+  expect(queries.at(-1)?.get("status")).toBe("active");
+  await expect(page.getByLabel("Search accessible Boards")).toHaveValue(
+    "Dispatch",
+  );
+  await page.getByRole("combobox", { name: "Board", exact: true }).click();
+  await expect(
+    page.getByRole("option", { name: /Remote dispatch partner/ }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`board=${boardId}`));
+});
+
+test("S11 live unattached-file list and Board metadata retain the management draft", async ({
+  page,
+}) => {
+  const api = await installFileManagement(page);
+  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+    .click();
+  const manage = page.getByRole("dialog", { name: "Manage Board" });
+  await expect(
+    manage.getByRole("button", {
+      name: `Archive ${controlFile.filename}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await manage
+    .getByLabel("Board name", { exact: true })
+    .fill("My local Board name");
+  api.archiveRemote();
+  await sendOpenViewEvent(page, "invalidate", { entity: "files" });
+  await expect(
+    manage.getByText("No unattached files on this page.", { exact: true }),
+  ).toBeVisible();
+  await expect(manage.getByLabel("Board name", { exact: true })).toHaveValue(
+    "My local Board name",
+  );
+  api.renameRemote();
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "boards",
+    board_id: boardId,
+  });
+  await expect(
+    manage.getByText("Changed by someone else — review latest", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(manage.getByLabel("Board name", { exact: true })).toHaveValue(
+    "My local Board name",
+  );
+  expect(api.writes).toHaveLength(0);
+});
+
+for (const changed of [false, true]) {
+  test(`S11 fresh file read ${changed ? "invalidates a held preview after remote purge" : "preserves an unchanged review and gates confirmation while loading"}`, async ({
+    page,
+  }) => {
+    const api = await installFileManagement(page);
+    api.archiveRemote();
+    if (process.env.OPENVIEW_CAPTURE_DIR)
+      await page.route("**/api/users/*/preferences", (route) =>
+        route.fulfill({
+          json: {
+            user_id: new URL(route.request().url()).pathname.split("/")[3],
+            theme: "light",
+            appearance: { motion: "reduce", keyboard_shortcuts: true },
+          },
+        }),
+      );
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    if (changed)
+      await page.route(
+        `**/api/boards/${boardId}/files/${controlFileId}/purge/preview`,
+        async (route) => {
+          await held;
+          return route.fallback();
+        },
+      );
+    await page.goto(`/boards?board=${boardId}&section=overview`);
+    await page.getByRole("button", { name: "Board menu", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+      .click();
+    const manage = page.getByRole("dialog", { name: "Manage Board" });
+    await manage.getByLabel("File status").selectOption("only");
+    await manage
+      .getByRole("button", {
+        name: `Permanently delete ${controlFile.filename}`,
+        exact: true,
+      })
+      .click();
+    const review = page.getByRole("dialog", {
+      name: "Permanently delete file?",
+    });
+    try {
+      if (changed) {
+        await expect(
+          review.getByText("Preparing review…", { exact: true }),
+        ).toBeVisible();
+        api.purgeRemote();
+        const read = page.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname === `/api/boards/${boardId}/files`,
+        );
+        await sendOpenViewEvent(page, "invalidate", { entity: "files" });
+        await read;
+        await expect(
+          manage.getByText("Permanently deleted", { exact: true }),
+        ).toHaveCount(1);
+        await expect(review).toBeHidden();
+        release();
+        await expect(manage.getByLabel("File status")).toBeEnabled();
+        await expect(review).toBeHidden();
+      } else {
+        await review
+          .getByLabel("Type the file name")
+          .fill(controlFile.filename);
+        if (process.env.OPENVIEW_CAPTURE_DIR) {
+          await page.addStyleTag({
+            content: "nextjs-portal { display: none !important; }",
+          });
+          await page.evaluate(() => document.fonts.ready);
+          for (const mode of ["light", "dark"] as const) {
+            await page.evaluate(applyAppearancePreferences, {
+              mode,
+              reduceMotion: true,
+            });
+            await captureOpenViewReview(page, `s11-file-review-${mode}`, {
+              beforeScreenshot: async () => {
+                await expect(review).toBeInViewport();
+                expect(
+                  await page.evaluate(
+                    () => document.documentElement.scrollWidth <= innerWidth,
+                  ),
+                ).toBe(true);
+              },
+            });
+          }
+        }
+        await review
+          .getByLabel("Administrator password")
+          .fill("synthetic-file-password");
+        const confirm = review.getByRole("button", {
+          name: "Confirm permanent deletion",
+          exact: true,
+        });
+        await expect(confirm).toBeEnabled();
+        await page.route(
+          (url) => url.pathname === `/api/boards/${boardId}/files`,
+          async (route) => {
+            await held;
+            return route.fallback();
+          },
+        );
+        const read = page.waitForRequest(
+          (request) =>
+            new URL(request.url()).pathname === `/api/boards/${boardId}/files`,
+        );
+        await sendOpenViewEvent(page, "invalidate", { entity: "files" });
+        await read;
+        await expect(confirm).toBeDisabled();
+        release();
+        await expect(confirm).toBeEnabled();
+        await expect(review.getByLabel("Type the file name")).toHaveValue(
+          controlFile.filename,
+        );
+      }
+      expect(api.purgeAttempts).toBe(0);
+    } finally {
+      release();
+    }
+  });
 }
 
 for (const startArchived of [false, true]) {

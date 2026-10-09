@@ -17,6 +17,8 @@ import { lifecycleErrorMessage } from "@/lib/lifecycle";
 import type { WorkspaceRegion } from "@/lib/date-time";
 import { cn } from "@/lib/utils";
 import { reportDone } from "@/lib/feedback";
+import type { WorkspaceInvalidation } from "../../shared/adapters/invalidation-events";
+import { useInvalidationRefresh } from "../../shared/adapters/use-invalidation-refresh";
 import { LifecyclePurgeReview } from "@/components/systems/shared/lifecycle-purge-review";
 import { Button } from "@/components/ui/button";
 import {
@@ -461,7 +463,12 @@ export function ServerBoardManagementDisplay({
             e(
               "p",
               null,
-              "Board changed elsewhere. Your draft is kept, but saving is paused until you review the latest Board.",
+              e(
+                "span",
+                { className: "block font-medium" },
+                "Changed by someone else — review latest",
+              ),
+              "Your draft is kept, but saving is paused until you review the latest Board.",
             ),
             view.latestReady && board
               ? e(
@@ -817,6 +824,12 @@ function ManagementInstance(props: Props) {
   const onAccessDenied = props.mode === "manage" ? props.onAccessDenied : null;
 
   const clearPurgeReview = useCallback(() => {
+    if (previewRequest.current !== null) {
+      actionRequest.current += 1;
+      previewRequest.current = null;
+      pendingRef.current = false;
+      setPending(false);
+    }
     setPurgePreview(null);
     setPurgeFile(null);
     setPurgeTarget(null);
@@ -963,7 +976,26 @@ function ManagementInstance(props: Props) {
     props.isAdmin === true &&
     board?.status === "active" &&
     access === "ready";
-  const filesKey = `${board?.id}:${fileStatus}:${fileOffset}:${fileRefresh}`;
+  const acceptsFileInvalidation = useCallback(
+    (event: WorkspaceInvalidation) =>
+      event.type === "invalidate" &&
+      (event.entity === "files" ||
+        (event.entity === "boards" && event.boardId === board?.id)),
+    [board?.id],
+  );
+  const fileLiveKey = useInvalidationRefresh(
+    filesEnabled ? (board?.id ?? null) : null,
+    acceptsFileInvalidation,
+  );
+  const filesKey = `${board?.id}:${fileStatus}:${fileOffset}:${fileRefresh}:${fileLiveKey}`;
+  useEffect(() => {
+    if (!purgeFile || filePage?.key !== filesKey) return;
+    const current = filePage.page.items.find(
+      (file) => file.id === purgeFile.id,
+    );
+    if (!current || JSON.stringify(current) !== JSON.stringify(purgeFile))
+      clearPurgeReview();
+  }, [filePage, filesKey, purgeFile, clearPurgeReview]);
   useEffect(() => {
     if (!filesEnabled || !board || deniedRef.current) {
       setFilePage(null);
@@ -1117,6 +1149,9 @@ function ManagementInstance(props: Props) {
 
   async function confirmFilePurge() {
     if (
+      fileLoading ||
+      fileError !== null ||
+      filePage?.key !== filesKey ||
       !filesEnabled ||
       deniedRef.current ||
       !board ||
@@ -1872,6 +1907,9 @@ function ManagementInstance(props: Props) {
                     type="submit"
                     disabled={
                       pending ||
+                      fileLoading ||
+                      fileError !== null ||
+                      filePage?.key !== filesKey ||
                       purgeConfirmationName !==
                         purgePreview.confirmation_name ||
                       !purgePassword ||
