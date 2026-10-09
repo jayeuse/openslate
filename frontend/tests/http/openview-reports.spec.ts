@@ -86,6 +86,11 @@ async function installReportsApi(
     /** The user's level on the Report department; the default manages it. */
     level?: "read" | "manage";
     savedSchedule?: boolean;
+    lastRun?: {
+      state: "pending" | "running" | "succeeded" | "failed" | "canceled";
+      finished_at: string | null;
+      failure_label: string | null;
+    } | null;
     /** The account role; the default is a member. */
     role?: "admin" | "member";
     /** Add a module (and a Report on it) that the member can only read. */
@@ -349,6 +354,7 @@ async function installReportsApi(
                 weekday: 0,
                 month_day: null,
                 next_due_at: "2026-09-28T01:00:00Z",
+                last_run: options.lastRun ?? null,
                 created_at: timestamp,
                 updated_at: timestamp,
               },
@@ -376,6 +382,7 @@ async function installReportsApi(
           weekday: null,
           month_day: null,
           next_due_at: "2026-09-25T01:00:00Z",
+          last_run: null,
           created_at: timestamp,
           updated_at: timestamp,
         }),
@@ -2048,4 +2055,109 @@ test("S04 member may restore an archived Report but cannot permanently delete it
     }),
   ).toHaveCount(0);
   expect(api.purges).toBe(0);
+});
+
+test.describe("S14 Report last-run summary", () => {
+  test.use({ timezoneId: "America/Los_Angeles" });
+  for (const state of ["none", "failed", "running"] as const) {
+    test(`S14 ${state} last run is server-authored, regional and preserves schedule policy`, async ({
+      page,
+    }) => {
+      if (process.env.OPENVIEW_CAPTURE_DIR) {
+        const theme =
+          process.env.S14_CAPTURE_THEME === "dark" ? "dark" : "light";
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.emulateMedia({
+          colorScheme: theme,
+          reducedMotion: "reduce",
+        });
+        await page.route("**/api/users/*/preferences", (route) =>
+          route.fulfill({
+            json: {
+              user_id: userId,
+              theme,
+              appearance: { motion: "reduce", keyboard_shortcuts: true },
+            },
+          }),
+        );
+      }
+      const reader = state === "failed";
+      const api = await installReportsApi(page, false, report, {
+        savedSchedule: true,
+        level: reader ? "read" : "manage",
+        lastRun:
+          state === "none"
+            ? null
+            : {
+                state,
+                finished_at: state === "failed" ? timestamp : null,
+                failure_label: state === "failed" ? "Source unavailable" : null,
+              },
+      });
+      await page.goto("/openview?section=reports");
+      await page
+        .getByRole("button", {
+          name: /^Operations review(?: Field operations)?$/,
+        })
+        .click();
+      await page.getByRole("tab", { name: "Schedule", exact: true }).click();
+      if (state === "none")
+        await expect(
+          page.getByText("Last run: No runs yet", { exact: true }),
+        ).toBeVisible();
+      else {
+        const summary = page.getByRole("status", {
+          name: "Last scheduled run",
+          exact: true,
+        });
+        await expect(summary).toContainText(
+          state === "failed" ? "Failed" : "Running",
+        );
+        if (state === "failed") {
+          await expect(summary).toContainText(/Sep 24, 2026.*8:00\sAM/);
+          await expect(summary).toContainText("Source unavailable");
+          await expect(
+            page.getByRole("button", { name: "Save schedule", exact: true }),
+          ).toHaveCount(0);
+        } else await expect(summary).toContainText("Finish time not recorded");
+      }
+      if (!reader) {
+        await page.getByLabel("Local time").fill("16:25");
+        await page
+          .getByRole("tab", { name: "Saved outputs", exact: true })
+          .click();
+        await page.getByRole("tab", { name: "Schedule", exact: true }).click();
+        await expect(page.getByLabel("Local time")).toHaveValue("16:25");
+      }
+      expect(api.counts().scheduleWrites).toBe(0);
+      if (state === "failed") {
+        const theme =
+          process.env.S14_CAPTURE_THEME === "dark" ? "dark" : "light";
+        await captureOpenViewReview(page, `s14-report-last-run-${theme}`, {
+          beforeScreenshot: async (capture) => {
+            // Exclude Next's development overlay from opt-in product captures.
+            await capture.addStyleTag({
+              content: "nextjs-portal { display: none !important; }",
+            });
+            await expect(capture.locator("html")).toHaveClass(
+              theme === "dark" ? /dark/ : /^(?!.*dark)/,
+            );
+            await capture.evaluate(async () => {
+              await document.fonts.ready;
+              await new Promise<void>((resolve) =>
+                requestAnimationFrame(() =>
+                  requestAnimationFrame(() => resolve()),
+                ),
+              );
+            });
+            expect(
+              await capture.evaluate(
+                () => document.documentElement.scrollWidth <= window.innerWidth,
+              ),
+            ).toBe(true);
+          },
+        });
+      }
+    });
+  }
 });

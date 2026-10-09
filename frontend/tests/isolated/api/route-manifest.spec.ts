@@ -73,6 +73,134 @@ test("route discovery keeps adapter identity while resolving shared path helpers
   );
 });
 
+test("encoded route segments are parameters while unencoded kinds stay unresolved", () => {
+  const encoded = fixture(`
+export function retryJob(target: { kind: string; id: string }) {
+  const kind = z.string().min(1).parse(target.kind);
+  return apiFetch(\`/jobs/\${encodeURIComponent(kind)}/\${target.id}/retry\`, schema, { method: "POST" });
+}
+`);
+  expect(encoded.diagnostics).toEqual([]);
+  expect(encoded.routes.map((route) => [route.method, route.path])).toEqual([
+    ["POST", "/api/jobs/{param}/{param}/retry"],
+  ]);
+  const raw = fixture(`
+export function retryJob(kind: string, id: string) {
+  return apiFetch(\`/jobs/\${kind}/\${id}/retry\`, schema, { method: "POST" });
+}
+`);
+  expect(raw.diagnostics.join("\n")).toContain(
+    "unresolved dynamic path interpolation",
+  );
+  expect(raw.routes).toEqual([]);
+});
+
+const untrustedEncoders = [
+  [
+    "qualified property",
+    "",
+    "helper: { encodeURIComponent: (value: string) => string }",
+    "",
+    "helper.encodeURIComponent(kind)",
+  ],
+  [
+    "computed property",
+    "",
+    "helper: { encodeURIComponent: (value: string) => string }",
+    "",
+    'helper["encodeURIComponent"](kind)',
+  ],
+  [
+    "parameter alias",
+    "",
+    "encodeURIComponent: (value: string) => string",
+    "",
+    "encodeURIComponent(kind)",
+  ],
+  [
+    "destructured parameter",
+    "",
+    "{ encodeURIComponent }: Encoder",
+    "",
+    "encodeURIComponent(kind)",
+  ],
+  [
+    "local alias",
+    "",
+    "encoder: (value: string) => string",
+    "const encodeURIComponent = encoder;",
+    "encodeURIComponent(kind)",
+  ],
+  [
+    "uninitialized local",
+    "",
+    "",
+    "let encodeURIComponent: (value: string) => string;",
+    "encodeURIComponent(kind)",
+  ],
+  [
+    "imported alias",
+    'import { encodeURIComponent } from "unknown-encoder";',
+    "",
+    "",
+    "encodeURIComponent(kind)",
+  ],
+  [
+    "module alias",
+    "const encodeURIComponent = unknownEncoder;",
+    "",
+    "",
+    "encodeURIComponent(kind)",
+  ],
+] as const;
+
+for (const [
+  label,
+  moduleBinding,
+  parameter,
+  localBinding,
+  expression,
+] of untrustedEncoders) {
+  test(`untrusted encoder ${label} stays unresolved`, () => {
+    const result = fixture(`${moduleBinding}
+export function retryJob(kind: string, id: string${parameter ? `, ${parameter}` : ""}) {
+  ${localBinding}
+  return apiFetch(\`/jobs/\${${expression}}/\${id}/retry\`, schema, { method: "POST" });
+}`);
+    expect(result.routes).toEqual([]);
+    expect(result.diagnostics.join("\n")).toContain(
+      "unresolved dynamic path interpolation",
+    );
+  });
+}
+
+test("untrusted encoder in nested lexical scope stays unresolved", () => {
+  const result = fixture(`
+export function retryJob(kind: string, id: string) {
+  function send(encodeURIComponent: (value: string) => string) {
+    return apiFetch(\`/jobs/\${encodeURIComponent(kind)}/\${id}/retry\`, schema, { method: "POST" });
+  }
+  return send(unknownEncoder);
+}`);
+  expect(result.routes).toEqual([]);
+  expect(result.diagnostics.join("\n")).toContain(
+    "unresolved dynamic path interpolation",
+  );
+});
+
+test("builtin encoding survives unrelated function shadows and known value helpers", () => {
+  const result = fixture(`
+function unrelated(encodeURIComponent: (value: string) => string) { return encodeURIComponent("unused"); }
+function encodedKind(kind: string) { return encodeURIComponent(kind); }
+export function retryJob(kind: string, id: string) {
+  return apiFetch(\`/jobs/\${encodedKind(kind)}/\${id}/retry\`, schema, { method: "POST" });
+}`);
+  expect(result.diagnostics).toEqual([]);
+  expect(result.routes.map((route) => [route.method, route.path])).toEqual([
+    ["POST", "/api/jobs/{param}/{param}/retry"],
+  ]);
+});
+
 test("two-argument schedule wrappers keep the request method from the init argument", () => {
   const result = fixture(`
 async function safeScheduleJson(path: string, init: ApiRequestInit) {

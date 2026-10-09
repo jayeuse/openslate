@@ -111,6 +111,20 @@ const wireScheduleSchema = z
     weekday: weekdaySchema.nullable(),
     month_day: monthDaySchema.nullable(),
     next_due_at: utcTimestampSchema.nullable(),
+    last_run: z
+      .object({
+        state: z.enum([
+          "pending",
+          "running",
+          "succeeded",
+          "failed",
+          "canceled",
+        ]),
+        finished_at: utcTimestampSchema.nullable(),
+        failure_label: z.string().nullable(),
+      })
+      .strict()
+      .nullable(),
     created_at: utcTimestampSchema,
     updated_at: utcTimestampSchema,
   })
@@ -138,6 +152,14 @@ const wireScheduleSchema = z
     weekday: schedule.weekday,
     monthDay: schedule.month_day,
     nextDueAt: schedule.next_due_at,
+    lastRun:
+      schedule.last_run === null
+        ? null
+        : {
+            state: schedule.last_run.state,
+            finishedAt: schedule.last_run.finished_at,
+            failureLabel: schedule.last_run.failure_label,
+          },
     createdAt: schedule.created_at,
     updatedAt: schedule.updated_at,
   }));

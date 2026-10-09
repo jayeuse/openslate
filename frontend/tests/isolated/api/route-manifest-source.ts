@@ -243,6 +243,56 @@ function calleeName(expression: ts.Expression): string | null {
   return null;
 }
 
+function bindsEncoder(name: ts.BindingName): boolean {
+  return ts.isIdentifier(name)
+    ? name.text === "encodeURIComponent"
+    : name.elements.some(
+        (element) => ts.isBindingElement(element) && bindsEncoder(element.name),
+      );
+}
+
+function encoderBindingIn(root: ts.Node): boolean {
+  const visit = (node: ts.Node): boolean => {
+    if (
+      (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
+      bindsEncoder(node.name)
+    )
+      return true;
+    if (
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isEnumDeclaration(node) ||
+        ts.isModuleDeclaration(node) ||
+        ts.isImportClause(node) ||
+        ts.isImportSpecifier(node) ||
+        ts.isNamespaceImport(node) ||
+        ts.isImportEqualsDeclaration(node)) &&
+      node.name &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "encodeURIComponent"
+    )
+      return true;
+    if (node !== root && isFunctionLike(node)) return false;
+    return ts.forEachChild(node, visit) ?? false;
+  };
+  return visit(root);
+}
+
+function encoderIsShadowed(
+  call: ts.CallExpression,
+  includeModule: boolean,
+): boolean {
+  for (let node: ts.Node | undefined = call.parent; node; node = node.parent) {
+    if (
+      (isFunctionLike(node) || (includeModule && ts.isSourceFile(node))) &&
+      encoderBindingIn(node)
+    )
+      return true;
+  }
+  return false;
+}
+
 function localFunctions(
   modules: Map<string, ts.SourceFile>,
 ): Map<string, Map<string, FunctionDescriptor>> {
@@ -556,6 +606,12 @@ function evalValue(
     ];
   if (ts.isCallExpression(expression)) {
     const name = calleeName(expression.expression);
+    if (
+      name === "encodeURIComponent" &&
+      (!ts.isIdentifier(expression.expression) ||
+        encoderIsShadowed(expression, false))
+    )
+      return [dynamic(name)];
     if (name && functions.has(name)) {
       const args = expression.arguments.map((argument) => {
         const values = evalValue(argument, scope, seen, functions, diagnostics);
@@ -571,10 +627,23 @@ function evalValue(
       );
     }
     if (
-      name === "parse" ||
-      name === "encodeURIComponent" ||
-      name === "String"
+      name === "encodeURIComponent" &&
+      expression.arguments.length === 1 &&
+      !encoderIsShadowed(expression, true)
     ) {
+      return evalValue(
+        expression.arguments[0]!,
+        scope,
+        seen,
+        functions,
+        diagnostics,
+      ).map((value) =>
+        typeof value === "object" && value !== null && value.kind === "dynamic"
+          ? dynamic(value.label, true)
+          : value,
+      );
+    }
+    if (name === "parse" || name === "String") {
       const values = expression.arguments.flatMap((argument) =>
         evalValue(argument, scope, seen, functions, diagnostics),
       );

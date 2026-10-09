@@ -16,7 +16,12 @@ import {
   type WorkspaceLogoListInput,
 } from "./workspace-logo-api";
 import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
-import { ApiContractError } from "@/lib/api";
+import { ApiContractError, ApiError } from "@/lib/api";
+import {
+  listManageJobs,
+  type ManageJobsRequest,
+  type ManageJobIdentity,
+} from "./jobs-api";
 import {
   getManageAuditLog,
   getManageAuditOptions,
@@ -76,6 +81,9 @@ export const manageKeys = {
   auditDetail: (id: string) => ["manage", "audit-logs", "detail", id] as const,
   auditExport: (request: Omit<ManageAuditListRequest, "limit" | "offset">) =>
     ["manage", "audit-logs", "export", request] as const,
+  jobs: () => ["manage", "jobs"] as const,
+  jobsList: (request: ManageJobsRequest) =>
+    ["manage", "jobs", request] as const,
   maintenance: () => ["manage", "maintenance"] as const,
   backupStatus: () => ["manage", "maintenance", "backup-status"] as const,
   backups: () => ["manage", "maintenance", "backups"] as const,
@@ -263,4 +271,70 @@ export function prefetchManageAudit(client: QueryClient): Promise<void> {
     ),
     client.prefetchQuery(manageAuditOptionsOptions()),
   ]).then(() => undefined);
+}
+
+export type ManageJobsRecovery = ManageJobIdentity & {
+  key?: string;
+  readFirst: boolean;
+  confirmed: boolean;
+};
+const jobsDeniedClients = new WeakSet<QueryClient>();
+const jobsReadEpochs = new WeakMap<QueryClient, number>();
+const jobsRecoveries = new WeakMap<QueryClient, ManageJobsRecovery>();
+export const isManageJobsDenied = (client: QueryClient): boolean =>
+  jobsDeniedClients.has(client);
+export function fenceManageJobsReads(client: QueryClient): void {
+  jobsReadEpochs.set(client, (jobsReadEpochs.get(client) ?? 0) + 1);
+}
+export function setManageJobsDenied(
+  client: QueryClient,
+  denied: boolean,
+): void {
+  if (denied) {
+    jobsDeniedClients.add(client);
+    fenceManageJobsReads(client);
+  } else jobsDeniedClients.delete(client);
+}
+export const getManageJobsRecovery = (
+  client: QueryClient,
+): ManageJobsRecovery | null => jobsRecoveries.get(client) ?? null;
+export function setManageJobsRecovery(
+  client: QueryClient,
+  recovery: ManageJobsRecovery | null,
+): void {
+  if (recovery) jobsRecoveries.set(client, recovery);
+  else jobsRecoveries.delete(client);
+}
+export const manageJobsListOptions = (
+  request: ManageJobsRequest,
+  client: QueryClient,
+) =>
+  queryOptions({
+    queryKey: manageKeys.jobsList(request),
+    queryFn: async ({ signal }) => {
+      const epoch = jobsReadEpochs.get(client) ?? 0;
+      let result;
+      try {
+        result = await listManageJobs({ ...request, signal });
+      } catch (error) {
+        if (
+          !signal.aborted &&
+          epoch === (jobsReadEpochs.get(client) ?? 0) &&
+          error instanceof ApiError &&
+          error.status === 403
+        )
+          setManageJobsDenied(client, true);
+        throw error;
+      }
+      if (signal.aborted || epoch !== (jobsReadEpochs.get(client) ?? 0))
+        throw new DOMException("Jobs read was superseded", "AbortError");
+      return result;
+    },
+    retry: false,
+  });
+export function prefetchManageJobs(client: QueryClient): Promise<void> {
+  if (isManageJobsDenied(client)) return Promise.resolve();
+  return client.prefetchQuery(
+    manageJobsListOptions({ limit: 10, offset: 0 }, client),
+  );
 }

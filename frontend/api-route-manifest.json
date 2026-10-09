@@ -720,6 +720,18 @@
     "path": "/api/backups/status"
   },
   {
+    "adapter": "frontend/src/components/systems/manage/adapters/jobs-api.ts",
+    "function": "listManageJobs",
+    "method": "GET",
+    "path": "/api/jobs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/jobs-api.ts",
+    "function": "retryManageJob",
+    "method": "POST",
+    "path": "/api/jobs/{param}/{param}/retry"
+  },
+  {
     "adapter": "frontend/src/components/systems/manage/adapters/workspace-api.ts",
     "function": "getManageWorkspace",
     "method": "GET",

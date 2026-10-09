@@ -91,6 +91,7 @@ const workspaceNavigationDefinitions = [
       { id: "organization", label: "Organization" },
       { id: "backup", label: "Backup" },
       { id: "audit", label: "Audit" },
+      { id: "jobs", label: "Jobs" },
       { id: "updates", label: "Updates & licensing" },
     ],
   },
@@ -148,8 +149,11 @@ export function accessNavigationFor(
 function visibleItems(
   definition: WorkspaceNavigationDefinition,
   access: AccessNavigation,
+  jobsAdmitted: boolean,
 ): readonly { id: string; label: string }[] {
   const items = definition.items;
+  if (definition.id === "manage")
+    return items.filter((item) => item.id !== "jobs" || jobsAdmitted);
   if (definition.id !== "access" || access === "all") return items;
   if (access === "groups") return items.filter((item) => item.id === "groups");
   return [];
@@ -252,15 +256,18 @@ export function getWorkspaceNavigation(
   pathname: string,
   searchParams: URLSearchParams,
   access: AccessNavigation,
+  jobsAdmitted = false,
 ): readonly WorkspaceNavigationGroup[] {
   return workspaceNavigationDefinitions.flatMap((definition) => {
-    const items = visibleItems(definition, access).map((item) => ({
-      ...item,
-      href: href(
-        definition.pathname,
-        paramsFor(definition, item.id, pathname, searchParams),
-      ),
-    }));
+    const items = visibleItems(definition, access, jobsAdmitted).map(
+      (item) => ({
+        ...item,
+        href: href(
+          definition.pathname,
+          paramsFor(definition, item.id, pathname, searchParams),
+        ),
+      }),
+    );
     if (items.length === 0) return [];
     // The workspace link opens its default section, or the first section
     // this person sees when the default is hidden.
@@ -295,9 +302,13 @@ export function getWorkspaceLocation(
   );
   if (!definition) return null;
   const sectionId = sectionFor(definition, searchParams, hash, access);
-  const group = getWorkspaceNavigation(pathname, searchParams, access).find(
-    (candidate) => candidate.id === definition.id,
-  );
+  // A current URL's breadcrumb names its section; it does not admit a menu or read.
+  const group = getWorkspaceNavigation(
+    pathname,
+    searchParams,
+    access,
+    definition.id === "manage" && sectionId === "jobs",
+  ).find((candidate) => candidate.id === definition.id);
   const section = group?.items.find((item) => item.id === sectionId);
   if (!group || !section) return null;
   return {

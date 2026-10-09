@@ -20,6 +20,10 @@ import {
   getWorkspaceAppearance,
   updateManageWorkspace,
 } from "../../../src/components/systems/manage/adapters/workspace-api";
+import {
+  listManageJobs,
+  retryManageJob,
+} from "../../../src/components/systems/manage/adapters/jobs-api";
 import { describeContracts } from "./openapi-contract";
 
 const auditId = "00000000-0000-4000-8000-000000000001";
@@ -51,7 +55,51 @@ const version = {
 // Currency is an ISO 4217 code.
 const workspace = { currency: "PHP" };
 
+// Jobs link values are application-relative; scheduled receipts retain kind/id.
+const contractJob = {
+  kind: "report-run",
+  id: auditId,
+  subject_label: "Contract Report",
+  subject_link: "/openview?section=reports",
+  state: "pending",
+  scheduled_for: "2026-10-01T00:00:00Z",
+  last_attempt_at: null,
+  next_attempt_at: "2026-10-01T00:00:00Z",
+  attempts: 0,
+  failure_code: null,
+  failure_label: null,
+  can_retry: false,
+};
+
 describeContracts("Manage", [
+  {
+    name: "listManageJobs",
+    run: () =>
+      listManageJobs({
+        kind: "report-run",
+        state: "pending",
+        limit: 10,
+        offset: 0,
+      }),
+    // The standard page must describe the returned complete bounded page.
+    responses: {
+      "GET /api/jobs": {
+        items: [contractJob],
+        pagination: {
+          limit: 10,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    },
+  },
+  {
+    name: "retryManageJob",
+    run: () => retryManageJob({ kind: "report-run", id: auditId }),
+    responses: { "POST /api/jobs/{kind}/{job_id}/retry": contractJob },
+  },
   { name: "getWorkspaceAppearance", run: () => getWorkspaceAppearance() },
   {
     name: "listManageAuditLogs",

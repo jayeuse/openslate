@@ -375,6 +375,38 @@ export function ReportScheduleControls({
                   : "No next run is scheduled."}
               </p>
             )}
+            {schedule?.lastRun ? (
+              <p
+                role="status"
+                aria-label="Last scheduled run"
+                className="text-sm"
+              >
+                Last run:{" "}
+                {schedule.lastRun.state.charAt(0).toUpperCase() +
+                  schedule.lastRun.state.slice(1)}
+                {" · "}
+                {schedule.lastRun.finishedAt ? (
+                  <time dateTime={schedule.lastRun.finishedAt}>
+                    {region
+                      ? formatWorkspaceDateTime(
+                          schedule.lastRun.finishedAt,
+                          region,
+                          { dateStyle: "medium", timeStyle: "short" },
+                        )
+                      : "Date unavailable"}
+                  </time>
+                ) : (
+                  "Finish time not recorded"
+                )}
+                {schedule.lastRun.failureLabel ? (
+                  <> · {schedule.lastRun.failureLabel}</>
+                ) : null}
+              </p>
+            ) : (
+              <p className="text-muted-foreground text-sm">
+                Last run: No runs yet
+              </p>
+            )}
             {!canManage ? (
               <div className="text-muted-foreground space-y-1 text-sm">
                 <p>
