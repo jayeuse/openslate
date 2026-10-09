@@ -48,19 +48,25 @@ def test_nested_lock_timeout_retains_the_previous_item_write(integration_db, own
         engine.dispose()
 
 
+@pytest.mark.parametrize("compound", [False, True])
 def test_batch_refreshes_revision_after_the_same_module_record_lock_order(
     policy_world,
     owned_ids,
     monkeypatch,
+    compound,
 ):
     from threading import Event
 
     import app.systems.sandbox.records.batch_router as batch_router
 
     world = policy_world
-    module = _seed_committed_module(owned_ids, fields=(("Title", FieldType.TEXT, 0, False, {}),))
+    module = _seed_committed_module(
+        owned_ids,
+        fields=(("Title", FieldType.TEXT, 0, False, {}), ("End", FieldType.TEXT, 1, False, {})),
+    )
     key = str(module.fields["Title"])
-    record_id = _seed_committed_record(owned_ids, module.module_id, {key: "Before"})
+    end = str(module.fields["End"])
+    record_id = _seed_committed_record(owned_ids, module.module_id, {key: "Before", end: "Keep"})
     engine = guarded_create_engine(_database_url())
     attempted = Event()
     original = batch_router._lock_active_module
@@ -73,22 +79,27 @@ def test_batch_refreshes_revision_after_the_same_module_record_lock_order(
     try:
         with Session(engine) as before:
             revision = before.get(Record, record_id).updated_at.isoformat()
-        payload = {
-            "module_id": str(module.module_id),
-            "items": [
-                {
-                    "record_id": str(record_id),
-                    "revision": revision,
-                    "field_id": key,
-                    "value": "Must not overwrite",
-                }
-            ],
+        command = {
+            "record_id": str(record_id),
+            "revision": revision,
+            "field_id": key,
+            "value": "Must not overwrite",
         }
+        if compound:
+            command = {
+                "record_id": str(record_id),
+                "revision": revision,
+                "changes": [
+                    {"field_id": key, "value": "Refused"},
+                    {"field_id": end, "value": "Refused end"},
+                ],
+            }
+        payload = {"module_id": str(module.module_id), "items": [command]}
         with AuditSession(engine) as holder:
             _set_request(holder, uuid7(), "/api/test/concurrent-record-writer")
             assert lock_row(holder, Module, module.module_id)
             record = lock_row(holder, Record, record_id)
-            record.data = {key: "Concurrent write"}
+            record.data = {key: "Concurrent write", end: "Concurrent end"}
             holder.flush()
             with ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(
@@ -103,6 +114,9 @@ def test_batch_refreshes_revision_after_the_same_module_record_lock_order(
         assert response.status_code == 200, response.text
         assert response.json()["results"] == [{"record_id": str(record_id), "status": "stale"}]
         with Session(engine) as db:
-            assert db.get(Record, record_id).data == {key: "Concurrent write"}
+            assert db.get(Record, record_id).data == {
+                key: "Concurrent write",
+                end: "Concurrent end",
+            }
     finally:
         engine.dispose()

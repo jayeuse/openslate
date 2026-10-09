@@ -1,4 +1,4 @@
-"""Single-field record updates with independent item savepoints."""
+"""Explicit single/compound record updates with independent item savepoints."""
 
 from typing import Annotated
 
@@ -27,6 +27,7 @@ from app.systems.sandbox.records.router import (
 from app.systems.sandbox.records.schemas import (
     RecordBatchFieldError,
     RecordBatchForbidden,
+    RecordBatchInput,
     RecordBatchInvalid,
     RecordBatchItem,
     RecordBatchResponse,
@@ -39,10 +40,16 @@ from app.systems.sandbox.records.schemas import (
 router = APIRouter(prefix="/records", tags=["records"])
 
 
-def _invalid_item(item: RecordBatchItem, code: str, message: str) -> RecordBatchInvalid:
+def _invalid_item(item: RecordBatchInput, code: str, message: str) -> RecordBatchInvalid:
     return RecordBatchInvalid(
         record_id=item.record_id,
-        errors=[RecordBatchFieldError(code=code, field_id=item.field_id, message=message)],
+        errors=[
+            RecordBatchFieldError(
+                code=code,
+                field_id=item.field_id if isinstance(item, RecordBatchItem) else None,
+                message=message,
+            )
+        ],
     )
 
 
@@ -50,7 +57,7 @@ def _update_item(
     db: Session,
     user: User,
     payload: RecordBatchUpdate,
-    item: RecordBatchItem,
+    item: RecordBatchInput,
     fields: list[Field],
     resolver: FieldDisplayResolver,
 ) -> RecordBatchResult:
@@ -64,7 +71,12 @@ def _update_item(
                 raise HTTPException(status_code=409, detail="Record is deleted")
             _require_current_revision(record, item.revision.isoformat())
             previous = dict(record.data)
-            requested = {**previous, str(item.field_id): item.value}
+            changes = (
+                {str(item.field_id): item.value}
+                if isinstance(item, RecordBatchItem)
+                else {str(change.field_id): change.value for change in item.changes}
+            )
+            requested = {**previous, **changes}
             record.data = _merge_patch_data(db, payload.module_id, previous, requested, fields)
             enqueue_record_event(db, record, previous=previous)
             notify_record_assignments(db, record, previous=previous, fields=fields)

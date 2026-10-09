@@ -10217,6 +10217,56 @@
         "title": "RecordAssignmentNotificationResponse",
         "type": "object"
       },
+      "RecordBatchChange": {
+        "additionalProperties": false,
+        "properties": {
+          "field_id": {
+            "format": "uuid",
+            "title": "Field Id",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/JsonValue"
+          }
+        },
+        "required": [
+          "field_id",
+          "value"
+        ],
+        "title": "RecordBatchChange",
+        "type": "object"
+      },
+      "RecordBatchChangesItem": {
+        "additionalProperties": false,
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/RecordBatchChange"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Changes",
+            "type": "array"
+          },
+          "record_id": {
+            "format": "uuid",
+            "title": "Record Id",
+            "type": "string"
+          },
+          "revision": {
+            "format": "date-time",
+            "title": "Revision",
+            "type": "string"
+          }
+        },
+        "required": [
+          "record_id",
+          "revision",
+          "changes"
+        ],
+        "title": "RecordBatchChangesItem",
+        "type": "object"
+      },
       "RecordBatchFieldError": {
         "properties": {
           "code": {
@@ -10395,7 +10445,14 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/RecordBatchItem"
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RecordBatchItem"
+                },
+                {
+                  "$ref": "#/components/schemas/RecordBatchChangesItem"
+                }
+              ]
             },
             "maxItems": 100,
             "title": "Items",

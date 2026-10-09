@@ -31,13 +31,11 @@ class RecordResponse(RecordCreate):
     model_config = ConfigDict(from_attributes=True)
 
 
-class RecordBatchItem(BaseModel):
+class _RecordBatchIdentity(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     record_id: UUID
     revision: AwareDatetime
-    field_id: UUID
-    value: JsonValue
 
     @field_validator("revision", mode="before")
     @classmethod
@@ -47,11 +45,37 @@ class RecordBatchItem(BaseModel):
         return value
 
 
+class RecordBatchItem(_RecordBatchIdentity):
+    field_id: UUID
+    value: JsonValue
+
+
+class RecordBatchChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field_id: UUID
+    value: JsonValue
+
+
+class RecordBatchChangesItem(_RecordBatchIdentity):
+    changes: list[RecordBatchChange] = Field(min_length=1, max_length=2)
+
+    @field_validator("changes")
+    @classmethod
+    def distinct_fields(cls, changes: list[RecordBatchChange]) -> list[RecordBatchChange]:
+        if len({change.field_id for change in changes}) != len(changes):
+            raise ValueError("Changes must target distinct fields")
+        return changes
+
+
+RecordBatchInput = RecordBatchItem | RecordBatchChangesItem
+
+
 class RecordBatchUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     module_id: UUID
-    items: list[RecordBatchItem] = Field(max_length=100)
+    items: list[RecordBatchInput] = Field(max_length=100)
 
 
 class RecordBatchUpdated(BaseModel):

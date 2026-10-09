@@ -564,13 +564,13 @@ Pain point: this slice touches sign-in invariants in eight places. Solution: do 
 
 #### W10a. Batch update route (D10)
 
-1. Add `POST /records/batch-update`. The body is `{module_id, items: [{record_id, revision, field_id, value}]}`, with at most 100 items.
+1. Add `POST /records/batch-update`, with the outer body `{module_id, items}` and at most 100 items. Preserve the existing `{record_id, revision, field_id, value}` item for single-field callers. S19 adds an opt-in `{record_id, revision, changes: [{field_id, value}]}` item containing one or two distinct field changes for the same record; reject empty, oversized, duplicate-field, or mixed forms. Both forms retain one original revision and one item result.
 2. For each item, in its own savepoint:
    1. Load the record with write access.
    2. Check the revision. A mismatch returns `stale` for that item.
-   3. Merge the single field change into the stored data on the server. The client never sends the full record.
-   4. Validate with `validate_record_mutation`.
-   5. Save, enqueue the record event, and notify assignments, as PATCH does.
+   3. Merge only the explicit field change or changes into the stored data on the server. An opt-in multi-field item combines both changes before validation and keeps them in the same item savepoint. A failure changes neither field. The client never sends the full record.
+   4. Validate the combined result with `validate_record_mutation`.
+   5. Save once, enqueue the record event, and notify assignments, as PATCH does.
 3. Return one result per item: `updated` with the new record, `stale`, `invalid` with the field error, or `forbidden`.
 4. A failed item never rolls back another item.
 5. Review the contract with the `fastapi-api-design` skill. Regenerate `contracts/openapi.json`.
@@ -579,7 +579,7 @@ Pain point: this slice touches sign-in invariants in eight places. Solution: do 
 #### W10b. Frontend foundation
 
 1. Add `@dnd-kit/core`. It has pointer, touch, and keyboard sensors, and screen-reader announcements.
-2. Lift the pending moves into `server-backed-views-workspace.tsx`, as a map from record ID to `{field_id, value, original}`. Kanban, Calendar, and Timeline receive it as a prop. Filter changes remount these components, so the state must live above them.
+2. Lift the pending moves into `server-backed-views-workspace.tsx`, keyed by record ID with the original record and revision. Preserve the single-field form for Kanban, Calendar, and Timeline end-only resize. S19 retains a Timeline start/end shift as one move with two explicit changes, one original revision, and one Save count. Kanban, Calendar, and Timeline receive this state as a prop; filter changes remount these components, so it must live above them.
 3. Add "Save changes (N)" and "Discard" to the toolbar when moves are pending.
 4. **Guard.** Extend the existing views guard (`:1474-1489`) and `confirmDraftDiscard` (`:1491-1501`) to include pending moves. Do not register a second guard. The dialog text names the kind of unsaved work: "You have 3 unsaved moves."
 5. Add a `beforeunload` handler while moves are pending, like `server-backed-boards.tsx:484`.
@@ -595,7 +595,7 @@ Pain point: this slice touches sign-in invariants in eight places. Solution: do 
 #### W10d. Calendar and Timeline
 
 1. **Calendar.** Day cells are drop targets. For a `date` field, set the new date. For a `datetime` field, keep the time of day in the workspace timezone and convert to UTC. Undated records in the side list can be dropped onto a day.
-2. **Timeline.** Make the bar interactive. Moving it shifts start and end by the same number of days. A handle on the end resizes the end only. The keyboard path uses the "Move to…" menu.
+2. **Timeline.** Make the bar interactive. Moving it shifts start and end by the same number of days and saves both atomically through the opt-in batch item in D10; never use sequential writes, duplicate record items, or full-record PATCH as a workaround. A handle on the end resizes the end only through the existing single-field form. The keyboard path uses the "Move to…" menu. Preserve the existing navigation guard, partial-failure UI, uncertain-result read refresh, and no automatic write retry.
 
 #### W10e. Results
 
@@ -785,7 +785,7 @@ The owner answered the Tier 2 questions on 2026-10-08. Rows marked "Owner" are t
 | D7 | Widget sizes | S, M, L for both Dashboards and Boards. Board `half` → M, `full` → L. | Owner + Default | S26 |
 | D8 | Live-update delivery | Boards: scoped to Board readers (`board_ids` on `EventViewer`). Dashboards: opaque entity-only event to all authenticated people. | Default | S10 |
 | D9 | Live-update behavior | Lists update in place. Open editors keep the text and show "Changed by someone else — review latest". | Owner | S11, S12 |
-| D10 | Drag-edit save path | New `POST /records/batch-update`, at most 100 items, one savepoint per item, server-side single-field merge | Default | S17 |
+| D10 | Drag-edit save path | Existing `POST /records/batch-update`, at most 100 items, one revision check/savepoint/result per item. Preserve single-field callers; S19 adds an opt-in form with up to two explicit distinct field changes merged and validated atomically. A failed item changes neither field; other items may succeed. Keep authorization, outer transaction, audit/event/assignment behavior and existing bounds. No new endpoint or full-record replacement. | Default; atomic Timeline extension approved by owner on 2026-10-09 | S17, S19 |
 | D11 | Drag-edit scope | Batch, then Save. Partial success with per-card conflict flags. Kanban lanes for `select`, `user`, `boolean` only. Timeline move and end resize. `@dnd-kit/core`. "Move to…" menu as the non-drag path. | Owner + Default | S17–S19 |
 | D12 | Export access and formats | Any module reader. CSV and Excel through XlsxWriter. Record each export. Options: title and details, columns, accent, banded rows, totals, record ID (off). | Owner + Default | S15, S16 |
 | D13 | Profile route | `/profile`. Account and Appearance redirect to it. | Default | S21 |
@@ -894,7 +894,7 @@ Do the slices in this order. A slice starts only when the slices it depends on a
 | S16 | Export dialog in OpenView; Platform export update | W9b | S09, S15 |
 | S17 | Batch update route (D10) | W10a | – |
 | S18 | Drag foundation and Kanban (D11) | W10b, W10c | S17 |
-| S19 | Calendar and Timeline drag, results | W10d, W10e | S18 |
+| S19 | Calendar and Timeline drag, results; atomic two-field batch item extension | W10a, W10b, W10d, W10e, D10 | S18 |
 | S20 | Profile backend: columns, appearance keys, profile route, avatar, person card route | W7a | S03 |
 | S21 | `/profile` page, redirects, personal formatting, start page, MFA for members (D13, D14) | W7b | S02, S20 |
 | S22 | Person card in People, posts, assignees, events, search (D15) | W7c | S08, S21 |

@@ -35,7 +35,13 @@ import {
 import { queryOpenViewWindowRecords } from "../adapters/window-api";
 import { authMeOptions } from "../adapters/openview-queries";
 import { isCalendarDateField } from "./live-calendar";
-import { LiveKanban, type PendingRecordMove } from "./live-kanban";
+import { LiveKanban } from "./live-kanban";
+import {
+  recordMoveChanges,
+  sameRecordMoveValue,
+  type PendingRecordMove,
+  type RecordMoveCommand,
+} from "../domain/record-moves";
 import { updateOpenViewRecordMoves } from "../adapters/records-api";
 import { serverFieldMessage } from "../domain/record-form";
 import { LiveCalendar } from "./live-calendar";
@@ -399,6 +405,7 @@ export default function ServerBackedViewsWorkspace({
   >(() => new Map());
   const recordMovesRef = useRef(recordMoves);
   const savingRecordMoves = useRef(false);
+  const recordMoveRequest = useRef(0);
   const hasRecordMoves = recordMoves.size > 0;
   useEffect(() => {
     if (!hasRecordMoves && pendingAction !== "save-moves") return;
@@ -547,6 +554,20 @@ export default function ServerBackedViewsWorkspace({
       : null;
   // The server checks every change; these only decide which controls show.
   const canWriteRecords = recordLevel === "write" || recordLevel === "manage";
+  useEffect(() => {
+    // A receipt belongs to the authority/source that submitted it. Refusal or
+    // an account/source transition permanently invalidates that attempt.
+    recordMoveRequest.current += 1;
+    return () => {
+      recordMoveRequest.current += 1;
+    };
+  }, [
+    moduleId,
+    verifiedUserId,
+    canWriteRecords,
+    exportAccessDenied,
+    interactionSuspended,
+  ]);
   // Record history is for administrators and managers of the department.
   const canReadRecordHistory = Boolean(
     source && openViewLevel(identity.data, source.departmentId) === "manage",
@@ -1620,18 +1641,51 @@ export default function ServerBackedViewsWorkspace({
     value: string | boolean | null,
     targetLabel: string,
   ) => {
+    stageMove(
+      record,
+      { kind: "single", fieldId: field.id, value },
+      targetLabel,
+      [field.id],
+      false,
+    );
+  };
+
+  const stageMove = (
+    record: OpenViewRecord,
+    command: RecordMoveCommand,
+    targetLabel: string,
+    fieldIds: readonly string[],
+    dates = true,
+  ) => {
+    const changes = recordMoveChanges(command);
     if (
       !canWriteRecords ||
+      interactionSuspended ||
+      exportAccessDenied ||
       pendingAction ||
       savingRecordMoves.current ||
       record.isDeleted ||
       record.moduleId !== moduleId ||
-      field.moduleId !== moduleId ||
-      !["select", "user", "boolean"].includes(field.type)
+      changes.some((change) => {
+        const field = activeFields.get(change.fieldId);
+        return (
+          !field ||
+          field.moduleId !== moduleId ||
+          !fieldIds.includes(field.id) ||
+          !(
+            dates ? ["date", "datetime"] : ["select", "user", "boolean"]
+          ).includes(field.type)
+        );
+      })
     )
       return;
     const existing = recordMovesRef.current.get(record.id);
-    if (existing && existing.fieldId !== field.id) {
+    if (
+      existing &&
+      recordMoveChanges(existing).some(
+        (change) => !fieldIds.includes(change.fieldId),
+      )
+    ) {
       setActionError(
         "This record already has a move in another field. Save or discard that move first.",
       );
@@ -1643,7 +1697,22 @@ export default function ServerBackedViewsWorkspace({
       displayValues: { ...record.displayValues },
     };
     const moves = new Map(recordMovesRef.current);
-    if ((original.data[field.id] ?? null) === value) moves.delete(record.id);
+    const combined = new Map(
+      (existing ? recordMoveChanges(existing) : []).map((change) => [
+        change.fieldId,
+        change,
+      ]),
+    );
+    changes.forEach((change) => combined.set(change.fieldId, change));
+    const changed = [...combined.values()].filter(
+      (change) =>
+        !sameRecordMoveValue(
+          original.data[change.fieldId],
+          change.value,
+          activeFields.get(change.fieldId)?.type,
+        ),
+    );
+    if (changed.length === 0) moves.delete(record.id);
     else {
       if (!existing && moves.size >= 100) {
         setActionError(
@@ -1651,7 +1720,12 @@ export default function ServerBackedViewsWorkspace({
         );
         return;
       }
-      moves.set(record.id, { fieldId: field.id, value, original, targetLabel });
+      if (changed.length > 2) return;
+      const next: RecordMoveCommand =
+        changed.length === 1
+          ? { kind: "single", ...changed[0] }
+          : { kind: "compound", changes: [changed[0], changed[1]] };
+      moves.set(record.id, { ...next, original, targetLabel });
     }
     replaceRecordMoves(moves);
     setActionError("");
@@ -1662,6 +1736,8 @@ export default function ServerBackedViewsWorkspace({
     if (
       !moduleId ||
       !canWriteRecords ||
+      interactionSuspended ||
+      exportAccessDenied ||
       pendingAction ||
       savingRecordMoves.current ||
       recordMovesRef.current.size === 0
@@ -1679,6 +1755,7 @@ export default function ServerBackedViewsWorkspace({
       return;
     }
     savingRecordMoves.current = true;
+    const request = ++recordMoveRequest.current;
     setPendingAction("save-moves");
     setActionError("");
     setNotice("");
@@ -1687,12 +1764,14 @@ export default function ServerBackedViewsWorkspace({
         moduleId,
         items: [...submitted].map(([recordId, move]) => ({
           recordId,
-          fieldId: move.fieldId,
-          value: move.value,
+          ...(move.kind === "single"
+            ? { fieldId: move.fieldId, value: move.value }
+            : { changes: [...move.changes] }),
           revision: move.original.updatedAt,
         })),
       });
       const remaining = new Map(submitted);
+      if (request !== recordMoveRequest.current) return;
       let saved = 0;
       let forbidden = false;
       for (const result of results) {
@@ -1726,6 +1805,7 @@ export default function ServerBackedViewsWorkspace({
       );
       if (forbidden) await identity.refetch();
     } catch (error: unknown) {
+      if (request !== recordMoveRequest.current) return;
       setActionError(
         `Your moves could not be confirmed. ${apiErrorMessage(error, "Moves could not be saved.")} Your unsaved moves are kept.`,
       );
@@ -3279,6 +3359,14 @@ export default function ServerBackedViewsWorkspace({
                             refreshKey={recordInvalidation}
                             scale={draft.presentation.scale}
                             dateField={calendarDateField}
+                            canWrite={
+                              canWriteRecords &&
+                              !interactionSuspended &&
+                              !exportAccessDenied
+                            }
+                            movesPending={Boolean(pendingAction)}
+                            pendingMoves={recordMoves}
+                            onMoveDates={stageMove}
                             titleField={liveTitleField}
                             detailFields={liveDetailFields}
                             onOpenRecord={openRecordFromResults}
@@ -3299,6 +3387,14 @@ export default function ServerBackedViewsWorkspace({
                             dateRange={draft.presentation.dateRange}
                             refreshKey={recordInvalidation}
                             startField={timelineStartField}
+                            canWrite={
+                              canWriteRecords &&
+                              !interactionSuspended &&
+                              !exportAccessDenied
+                            }
+                            movesPending={Boolean(pendingAction)}
+                            pendingMoves={recordMoves}
+                            onMoveDates={stageMove}
                             endField={timelineEndField}
                             deadlineField={timelineDeadlineField}
                             progressField={timelineProgressField}

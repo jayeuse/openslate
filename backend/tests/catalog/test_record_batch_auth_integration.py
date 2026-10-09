@@ -16,22 +16,31 @@ pytestmark = pytest.mark.integration
 pytest_plugins = ("tests.catalog.dynamic_field_support", "tests.auth.session_policy_support")
 
 
+@pytest.mark.parametrize("compound", [False, True])
 def test_registered_batch_requires_signed_live_identity_and_current_write_authority(
     policy_world,
     owned_ids,
+    compound,
 ):
     world = policy_world
-    module = _seed_committed_module(owned_ids, fields=(("Title", FieldType.TEXT, 0, False, {}),))
+    module = _seed_committed_module(
+        owned_ids,
+        fields=(("Title", FieldType.TEXT, 0, False, {}), ("Other", FieldType.TEXT, 1, False, {})),
+    )
     key = str(module.fields["Title"])
-    record_id = _seed_committed_record(owned_ids, module.module_id, {key: "Before"})
+    other = str(module.fields["Other"])
+    record_id = _seed_committed_record(owned_ids, module.module_id, {key: "Before", other: "Keep"})
     with Session(world.owner) as db:
         revision = db.get(Record, record_id).updated_at.isoformat()
-    payload = {
-        "module_id": str(module.module_id),
-        "items": [
-            {"record_id": str(record_id), "revision": revision, "field_id": key, "value": "Saved"}
-        ],
-    }
+    command = {"record_id": str(record_id), "revision": revision, "field_id": key, "value": "Saved"}
+    if compound:
+        command = {
+            "record_id": str(record_id),
+            "revision": revision,
+            "changes": [{"field_id": key, "value": "Saved"}, {"field_id": other, "value": "Moved"}],
+        }
+    payload = {"module_id": str(module.module_id), "items": [command]}
+    expected = {key: "Saved", other: "Moved" if compound else "Keep"}
     try:
         for headers in (
             {},
@@ -49,13 +58,14 @@ def test_registered_batch_requires_signed_live_identity_and_current_write_author
         )
         assert denied.status_code == 403, denied.text
         with Session(world.owner) as db:
+            assert db.get(Record, record_id).data == {key: "Before", other: "Keep"}
             db.get(User, world.actor_id).role = "admin"
             db.commit()
         saved = world.client.post(
             "/api/records/batch-update", headers=world.headers(), json=payload
         )
         assert saved.status_code == 200, saved.text
-        assert saved.json()["results"][0]["record"]["data"] == {key: "Saved"}
+        assert saved.json()["results"][0]["record"]["data"] == expected
         with Session(world.owner) as db:
             db.get(IdentitySession, world.session_ids[0]).revoked_at = world.clock
             db.commit()
@@ -64,7 +74,7 @@ def test_registered_batch_requires_signed_live_identity_and_current_write_author
         )
         assert revoked.status_code == 401, revoked.text
         with Session(world.owner) as db:
-            assert db.get(Record, record_id).data == {key: "Saved"}
+            assert db.get(Record, record_id).data == expected
     finally:
         # The auth fixture owns the actor/session; owned_ids cleanup owns this graph.
         # Remove any successful outbox row even when an assertion fails.

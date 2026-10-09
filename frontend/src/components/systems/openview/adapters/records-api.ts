@@ -139,6 +139,32 @@ const recordMoveSchema = z
     value: z.union([z.string(), z.boolean(), z.null()]),
   })
   .strict();
+const compoundRecordMoveSchema = z
+  .object({
+    recordId: uuidSchema,
+    revision: z.iso.datetime({ offset: true }),
+    changes: z
+      .array(
+        z
+          .object({
+            fieldId: uuidSchema,
+            value: z.union([z.string(), z.boolean(), z.null()]),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(2),
+  })
+  .strict()
+  .refine(
+    (item) =>
+      new Set(item.changes.map((change) => change.fieldId)).size ===
+      item.changes.length,
+  );
+const recordMoveInputSchema = z.union([
+  recordMoveSchema,
+  compoundRecordMoveSchema,
+]);
 const batchResultSchema = z.discriminatedUnion("status", [
   z
     .object({
@@ -167,7 +193,7 @@ const batchResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("forbidden"), record_id: uuidSchema }).strict(),
 ]);
 
-export type OpenViewRecordMove = z.input<typeof recordMoveSchema>;
+export type OpenViewRecordMove = z.input<typeof recordMoveInputSchema>;
 export type OpenViewRecordMoveResult = z.output<typeof batchResultSchema>;
 
 /** Saves only each selected field, against the revision seen before the move. */
@@ -176,7 +202,11 @@ export async function updateOpenViewRecordMoves(input: {
   items: readonly OpenViewRecordMove[];
 }): Promise<OpenViewRecordMoveResult[]> {
   const moduleId = uuidSchema.parse(input.moduleId);
-  const items = z.array(recordMoveSchema).min(1).max(100).parse(input.items);
+  const items = z
+    .array(recordMoveInputSchema)
+    .min(1)
+    .max(100)
+    .parse(input.items);
   const requested = new Map(items.map((item) => [item.recordId, item]));
   if (requested.size !== items.length) throw new ApiContractError();
   const response = await apiFetch(
@@ -190,10 +220,17 @@ export async function updateOpenViewRecordMoves(input: {
       method: "POST",
       body: JSON.stringify({
         module_id: moduleId,
-        items: items.map(({ recordId, fieldId, ...item }) => ({
-          record_id: recordId,
-          field_id: fieldId,
-          ...item,
+        items: items.map((item) => ({
+          record_id: item.recordId,
+          revision: item.revision,
+          ...("changes" in item
+            ? {
+                changes: item.changes.map(({ fieldId, value }) => ({
+                  field_id: fieldId,
+                  value,
+                })),
+              }
+            : { field_id: item.fieldId, value: item.value }),
         })),
       }),
     },
@@ -211,7 +248,11 @@ export async function updateOpenViewRecordMoves(input: {
       (result.status === "updated" &&
         (result.record.id !== item.recordId ||
           result.record.moduleId !== moduleId ||
-          result.record.data[item.fieldId] !== item.value))
+          result.record.isDeleted ||
+          result.record.deletedAt !== null ||
+          ("changes" in item ? item.changes : [item]).some(
+            (change) => result.record.data[change.fieldId] !== change.value,
+          )))
     )
       throw new ApiContractError();
   }

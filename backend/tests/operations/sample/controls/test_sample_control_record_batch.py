@@ -25,9 +25,12 @@ class BatchWire(PlatformWire):
         super().__init__(dataset)
         self.batch_fault = fault
         self.batches, self.batch_results, self.batch_states = [], [], []
+        self.export_states = []
 
     def request(self, request):
         if request.url.path != BATCH_PATH:
+            if request.url.path == "/api/records/export":
+                self.export_states.append(copy.deepcopy(self.records))
             response = super().request(request)
             if (
                 self.batches
@@ -38,6 +41,16 @@ class BatchWire(PlatformWire):
             ):
                 body = response.json()
                 body["data"][str(self.fields()[1].id)] = "Unconfirmed readback"
+                return httpx.Response(200, json=body)
+            if (
+                len(self.batches) == 1
+                and request.method == "GET"
+                and request.url.path == f"/api/records/{self.created[1]}"
+                and self.batch_fault in {"compound_readback_title", "compound_readback_value"}
+            ):
+                body = response.json()
+                index = 0 if self.batch_fault.endswith("title") else 1
+                body["data"][str(self.fields()[index].id)] = "Unconfirmed compound readback"
                 return httpx.Response(200, json=body)
             return response
         body = json.loads(request.content)
@@ -65,6 +78,11 @@ class BatchWire(PlatformWire):
                 result["results"][0]["record"]["module_id"] = str(uuid4())
             elif self.batch_fault == "non_target":
                 result["results"][0]["record"]["data"][str(self.fields()[0].id)] = "Changed title"
+            elif self.batch_fault in {"compound_title", "compound_value"}:
+                index = 0 if self.batch_fault.endswith("title") else 1
+                result["results"][1]["record"]["data"][str(self.fields()[index].id)] = (
+                    "Half applied"
+                )
             elif self.batch_fault == "unchanged_revision":
                 result["results"][0]["record"]["updated_at"] = self.batch_states[0][
                     self.created[0]
@@ -88,6 +106,8 @@ class BatchWire(PlatformWire):
                 self.records[self.created[0]]["data"][str(self.fields()[1].id)] = (
                     "Stale item changed"
                 )
+            elif self.batch_fault == "stale_title_changed":
+                self.records[self.created[0]]["data"][str(self.fields()[0].id)] = "Stale title"
         elif index == 3:
             if self.batch_fault == "restore_status":
                 result["results"][1] = {"status": "stale", "record_id": self.created[1]}
@@ -95,6 +115,10 @@ class BatchWire(PlatformWire):
                 result["results"][1]["record"]["data"][str(self.fields()[1].id)] = "Not restored"
             elif self.batch_fault == "restore_state":
                 self.records[self.created[1]]["data"][str(self.fields()[1].id)] = "Not restored"
+            elif self.batch_fault == "restore_title":
+                result["results"][1]["record"]["data"][str(self.fields()[0].id)] = "Not restored"
+            elif self.batch_fault == "restore_title_state":
+                self.records[self.created[1]]["data"][str(self.fields()[0].id)] = "Not restored"
         self.batch_results.append(copy.deepcopy(result))
         return httpx.Response(200, headers=response.headers, json=result)
 
@@ -126,28 +150,120 @@ def test_batch_control_updates_partially_conflicts_and_restores_before_export_an
     result, context = _execute(tmp_path, monkeypatch, wire)
     assert len(wire.batches) == 3
     assert result["outcome"] == "completed" and result["read_checks"] == 12
-    fields = wire.fields()
+    title, field = (str(row.id) for row in wire.fields())
     for body in wire.batches:
         assert set(body) == {"module_id", "items"}
         assert [item["record_id"] for item in body["items"]] == wire.created
-        assert all(
-            set(item) == {"record_id", "revision", "field_id", "value"} for item in body["items"]
-        )
-        assert all(item["field_id"] == str(fields[1].id) for item in body["items"])
-    first, partial, restore = wire.batches
-    assert partial["items"][0]["revision"] == first["items"][0]["revision"]
-    assert partial["items"][1]["revision"] != first["items"][1]["revision"]
+    originals = wire.batch_states[0]
+    first_id, second_id = wire.created
+    expected_commands = [
+        [
+            {"field_id": field, "value": originals[first_id]["data"][field] + "\nBatch review"},
+            {
+                "changes": [
+                    {
+                        "field_id": title,
+                        "value": originals[second_id]["data"][title] + " — Batch review",
+                    },
+                    {
+                        "field_id": field,
+                        "value": originals[second_id]["data"][field] + "\nBatch review",
+                    },
+                ]
+            },
+        ],
+        [
+            {
+                "changes": [
+                    {
+                        "field_id": title,
+                        "value": originals[first_id]["data"][title] + " — Partial review",
+                    },
+                    {
+                        "field_id": field,
+                        "value": originals[first_id]["data"][field] + "\nPartial review",
+                    },
+                ]
+            },
+            {"field_id": field, "value": originals[second_id]["data"][field] + "\nPartial review"},
+        ],
+        [
+            {"field_id": field, "value": originals[first_id]["data"][field]},
+            {
+                "changes": [
+                    {"field_id": title, "value": originals[second_id]["data"][title]},
+                    {"field_id": field, "value": originals[second_id]["data"][field]},
+                ]
+            },
+        ],
+    ]
+    module = originals[first_id]["module_id"]
+    for batch_index, (body, commands) in enumerate(
+        zip(wire.batches, expected_commands, strict=True)
+    ):
+        observed = copy.deepcopy(body)
+        for command in observed["items"]:
+            command["revision"] = datetime.fromisoformat(command["revision"])
+        assert observed == {
+            "module_id": module,
+            "items": [
+                {
+                    "record_id": identifier,
+                    "revision": datetime.fromisoformat(
+                        originals[identifier]["updated_at"]
+                        if batch_index == 1 and index == 0
+                        else wire.batch_states[batch_index][identifier]["updated_at"]
+                    ),
+                    **commands[index],
+                }
+                for index, identifier in enumerate(wire.created)
+            ],
+        }
     assert [row["status"] for row in wire.batch_results[1]["results"]] == ["stale", "updated"]
-    for index, identifier in enumerate(wire.created):
-        original = wire.batch_states[0][identifier]
-        assert datetime.fromisoformat(first["items"][index]["revision"]) == datetime.fromisoformat(
-            original["updated_at"]
-        )
-        assert restore["items"][index]["value"] == original["data"][str(fields[1].id)]
-        assert all(
-            state[identifier]["data"][str(fields[0].id)] == original["data"][str(fields[0].id)]
-            for state in wire.batch_states
-        )
+    assert wire.batch_states[2][first_id] == wire.batch_states[1][first_id]
+    assert wire.batch_states[1][first_id]["data"] == {
+        **originals[first_id]["data"],
+        field: originals[first_id]["data"][field] + "\nBatch review",
+    }
+    assert wire.batch_states[1][second_id]["data"] == {
+        **originals[second_id]["data"],
+        title: originals[second_id]["data"][title] + " — Batch review",
+        field: originals[second_id]["data"][field] + "\nBatch review",
+    }
+    assert wire.batch_states[2][second_id]["data"] == {
+        **originals[second_id]["data"],
+        title: originals[second_id]["data"][title] + " — Batch review",
+        field: originals[second_id]["data"][field] + "\nPartial review",
+    }
+    for saved in wire.batch_results[2]["results"]:
+        assert saved["record"]["data"] == originals[saved["record_id"]]["data"]
+    assert len(wire.export_states) == 2
+    for exported in wire.export_states:
+        assert {key: row["data"] for key, row in exported.items()} == {
+            key: row["data"] for key, row in originals.items()
+        }
+    query = {
+        "module_id": module,
+        "definition": {
+            "version": 1,
+            "columns": [
+                {"field_id": title, "expected_type": "text"},
+                {"field_id": field, "expected_type": "long_text"},
+            ],
+            "filters": [],
+            "logic": "and",
+            "sort": [],
+            "deleted": "exclude",
+            "search": None,
+            "search_fields": [],
+        },
+    }
+    queries = [
+        json.loads(request.content)
+        for request in wire.requests
+        if request.url.path == "/api/records/query"
+    ]
+    assert queries and all(body == query for body in queries)
     assert wire.records == {} and wire.purges == 2
     assert {
         json.loads(request.content)["format"]
@@ -184,6 +300,10 @@ def test_batch_control_updates_partially_conflicts_and_restores_before_export_an
         "foreign_record",
         "wrong_module",
         "non_target",
+        "compound_title",
+        "compound_value",
+        "compound_readback_title",
+        "compound_readback_value",
         "unchanged_revision",
         "naive_revision",
         "unexpected_status",
@@ -192,9 +312,12 @@ def test_batch_control_updates_partially_conflicts_and_restores_before_export_an
         "readback_data",
         "stale_as_updated",
         "stale_changed",
+        "stale_title_changed",
         "restore_status",
         "restore_data",
         "restore_state",
+        "restore_title",
+        "restore_title_state",
     ),
 )
 def test_batch_control_refuses_unconfirmed_outcomes_without_retry_or_purge(
@@ -207,7 +330,7 @@ def test_batch_control_refuses_unconfirmed_outcomes_without_retry_or_purge(
         _execute(tmp_path, monkeypatch, wire)
     assert len(wire.batches) == (
         2
-        if fault in {"stale_as_updated", "stale_changed"}
+        if fault in {"stale_as_updated", "stale_changed", "stale_title_changed"}
         else 3
         if fault.startswith("restore_")
         else 1
@@ -217,6 +340,6 @@ def test_batch_control_refuses_unconfirmed_outcomes_without_retry_or_purge(
         request.method == "DELETE" and request.url.path.startswith("/api/records/")
         for request in wire.requests
     )
-    if fault != "restore_state":
+    if fault not in {"restore_state", "restore_title_state"}:
         assert not any(request.url.path == "/api/records/export" for request in wire.requests)
     assert "private-canary" not in str(caught.value)

@@ -1,4 +1,4 @@
-"""API-only single-field round trip on the two owned Platform import records."""
+"""API-only legacy/compound round trip on two owned Platform import records."""
 
 import copy
 import json
@@ -10,6 +10,9 @@ import httpx
 from pydantic import ValidationError
 
 from app.systems.sandbox.records.schemas import (
+    RecordBatchChange,
+    RecordBatchChangesItem,
+    RecordBatchInput,
     RecordBatchItem,
     RecordBatchResponse,
     RecordBatchUpdate,
@@ -54,6 +57,7 @@ def round_trip_records(
             or record.is_deleted
             or record.updated_at.utcoffset() is None
             or not isinstance(record.data.get(field), str)
+            or not isinstance(record.data.get(title), str)
         ):
             raise SamplePhaseActionError(
                 "Batch record identity, state or revision differs", step=step
@@ -72,10 +76,10 @@ def round_trip_records(
     def validate_updated(
         record: RecordResponse,
         before: RecordResponse,
-        value: str,
+        changes: Mapping[str, str],
         step: str,
     ) -> None:
-        expected = {**copy.deepcopy(before.data), field: value}
+        expected = {**copy.deepcopy(before.data), **changes}
         if (
             record.id != before.id
             or str(record.module_id) != module
@@ -91,25 +95,37 @@ def round_trip_records(
     def batch(
         step: str,
         before: Mapping[str, RecordResponse],
-        values: Mapping[str, str],
+        changes: Mapping[str, Mapping[str, str]],
         statuses: tuple[str, str],
         *,
         stale_first: bool = False,
     ) -> dict[str, RecordResponse]:
-        payload = RecordBatchUpdate(
-            module_id=UUID(module),
-            items=[
-                RecordBatchItem(
+        commands: list[RecordBatchInput] = []
+        for index, identifier in enumerate(identifiers):
+            revision = (
+                originals[identifier].updated_at
+                if stale_first and index == 0
+                else before[identifier].updated_at
+            )
+            requested = changes[identifier]
+            if len(requested) == 1:
+                command: RecordBatchInput = RecordBatchItem(
                     record_id=UUID(identifier),
-                    revision=originals[identifier].updated_at
-                    if stale_first and index == 0
-                    else before[identifier].updated_at,
+                    revision=revision,
                     field_id=UUID(field),
-                    value=values[identifier],
+                    value=requested[field],
                 )
-                for index, identifier in enumerate(identifiers)
-            ],
-        )
+            else:
+                command = RecordBatchChangesItem(
+                    record_id=UUID(identifier),
+                    revision=revision,
+                    changes=[
+                        RecordBatchChange(field_id=UUID(key), value=value)
+                        for key, value in requested.items()
+                    ],
+                )
+            commands.append(command)
+        payload = RecordBatchUpdate(module_id=UUID(module), items=commands)
         response = post(step, payload.model_dump(mode="json"))
         body = _read_json(response, step=step)
         controls = {
@@ -140,7 +156,7 @@ def round_trip_records(
             if item.status != status or set(raw[identifier]) != allowed:
                 raise SamplePhaseActionError("Batch item outcome differs from its plan", step=step)
             if isinstance(item, RecordBatchUpdated):
-                validate_updated(item.record, before[identifier], values[identifier], step)
+                validate_updated(item.record, before[identifier], changes[identifier], step)
                 updated[identifier] = item.record
         return updated
 
@@ -162,20 +178,33 @@ def round_trip_records(
             observed[identifier] = record
         return observed
 
+    first, second = identifiers
     changed = {
-        identifier: str(originals[identifier].data[field]) + "\nBatch review"
-        for identifier in identifiers
+        first: {field: str(originals[first].data[field]) + "\nBatch review"},
+        second: {
+            title: str(originals[second].data[title]) + " — Batch review",
+            field: str(originals[second].data[field]) + "\nBatch review",
+        },
     }
     updated = read_back(
         "batch_updated", batch("batch_update_records", originals, changed, ("updated", "updated"))
     )
     partial = {
-        identifier: str(originals[identifier].data[field]) + "\nPartial review"
-        for identifier in identifiers
+        first: {
+            title: str(originals[first].data[title]) + " — Partial review",
+            field: str(originals[first].data[field]) + "\nPartial review",
+        },
+        second: {field: str(originals[second].data[field]) + "\nPartial review"},
     }
     current = read_back(
         "batch_partial",
         batch("batch_partial_records", updated, partial, ("stale", "updated"), stale_first=True),
     )
-    restored = {identifier: str(originals[identifier].data[field]) for identifier in identifiers}
+    restored = {
+        first: {field: str(originals[first].data[field])},
+        second: {
+            title: str(originals[second].data[title]),
+            field: str(originals[second].data[field]),
+        },
+    }
     batch("batch_restore_records", current, restored, ("updated", "updated"))

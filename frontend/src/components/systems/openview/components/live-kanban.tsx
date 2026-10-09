@@ -41,20 +41,12 @@ import type {
 import { openViewRecordFieldValue } from "../domain/record-display";
 import { selectOptions } from "../domain/record-form";
 import type { RecordInspectionPage } from "./live-record-inspector";
+import type { PendingRecordMove } from "../domain/record-moves";
 
 const GROUP_PAGE_SIZE = 12;
 const RECORD_PAGE_SIZE = 25;
 
 type GroupedPage = Awaited<ReturnType<typeof queryOpenViewGroupedRecords>>;
-
-export type PendingRecordMove = {
-  fieldId: string;
-  value: string | boolean | null;
-  original: OpenViewRecord;
-  targetLabel: string;
-  status?: "stale" | "invalid" | "forbidden";
-  error?: string;
-};
 
 type MoveTarget = {
   value: string | boolean | null;
