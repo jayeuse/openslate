@@ -65,7 +65,8 @@ const widget = {
   chart_id: chartId,
   config: null,
 };
-// The same rules for the portable bundle, which names fields instead of ids.
+// The portable count-all bundle stays valid with both generated nullable modes.
+// Dedicated Board portability regressions cover non-null numeric/primitive metrics.
 const bundle = {
   kind: "openslate-board",
   version: 3,
@@ -77,7 +78,8 @@ const bundle = {
           filters: [
             { expected_type: "text", operator: "contains", value: "pump" },
           ],
-          metric: { expected_type: "number" },
+          aggregation: "count",
+          metric: null,
         },
       },
     ],

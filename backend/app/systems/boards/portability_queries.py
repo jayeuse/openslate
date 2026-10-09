@@ -279,6 +279,7 @@ def portable_config(
             fields=[_portable_reference(ref, module_id, fields) for ref in config.fields],
             filters=[_portable_predicate(ref, module_id, fields) for ref in config.filters],
             logic=config.logic,
+            aggregation=config.aggregation,
             metric=_portable_reference(config.metric, module_id, fields) if config.metric else None,
             visualization=config.visualization,
             size=size,
@@ -308,6 +309,7 @@ def inline_config(
             fields=[_field_reference(ref, module_id, fields) for ref in config.fields],
             filters=[_filter(ref, module_id, fields) for ref in config.filters],
             logic=config.logic,
+            aggregation=config.aggregation,
             metric=_field_reference(config.metric, module_id, fields) if config.metric else None,
             visualization=config.visualization,
         )

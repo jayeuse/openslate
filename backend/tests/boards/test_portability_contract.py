@@ -18,6 +18,8 @@ from app.systems.boards.portability import (
     parse_portable_board,
     resolve_portable_board,
 )
+from app.systems.boards.portability_queries import portable_config
+from app.systems.boards.widget_schemas import BoardWidgetConfig
 from app.systems.manage.audit.models import AuditLog
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
@@ -138,6 +140,110 @@ def test_v3_structure_resolves_exact_active_names_types_without_mutating() -> No
     db.add.assert_not_called()
     db.flush.assert_not_called()
     db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("aggregation", "metric_type", "expected"),
+    [
+        (None, None, "count"),
+        (None, "decimal", "sum"),
+        ("average", "decimal", "average"),
+        ("distinct", "text", "distinct"),
+    ],
+)
+def test_v3_legacy_aggregation_codecs_preserve_meaning_and_named_references(
+    aggregation: str | None, metric_type: str | None, expected: str
+) -> None:
+    department, module, fields = _catalog()
+    measure = Field(
+        id=uuid7(),
+        module_id=module.id,
+        name="Measure",
+        type=metric_type or "decimal",
+        is_deleted=False,
+        config={},
+        position=2,
+    )
+    fields.append(measure)
+    live = {
+        "fields": [{"field_id": fields[0].id, "expected_type": "text"}],
+        "filters": [
+            {
+                "field_id": fields[1].id,
+                "expected_type": "select",
+                "operator": "eq",
+                "value": fields[1].config["options"][0]["id"],
+            }
+        ],
+        "logic": "or",
+        "metric": {"field_id": measure.id, "expected_type": metric_type} if metric_type else None,
+        "visualization": "pie",
+        "refresh": "five-minutes",
+    }
+    if aggregation is not None:
+        live["aggregation"] = aggregation
+    config = BoardWidgetConfig.model_validate(live)
+    exported = portable_config(config, module.id, {field.id: field for field in fields}, "S", True)
+    wanted = {
+        "fields": [{"name": "Label", "expected_type": "text"}],
+        "filters": [
+            {
+                "name": "Status",
+                "expected_type": "select",
+                "operator": "eq",
+                "value": "Open",
+            }
+        ],
+        "logic": "or",
+        "aggregation": expected,
+        "metric": {"name": "Measure", "expected_type": metric_type} if metric_type else None,
+        "visualization": "pie",
+        "size": "S",
+        "refresh": "five-minutes",
+        "pinned": True,
+    }
+    assert exported.model_dump(mode="json") == wanted
+
+    bundle = _bundle()
+    bundle["configuration"]["widgets"][0]["config"] = exported.model_dump(mode="json")
+    if aggregation is None:
+        # Old version-3 files omit this field; import must retain the old projection.
+        del bundle["configuration"]["widgets"][0]["config"]["aggregation"]
+    db = _database([department], [module], fields)
+    resolved = resolve_portable_board(db, parse_portable_board(_bytes(bundle))).widgets[0]
+
+    assert resolved.size == "S" and resolved.pinned is True
+    assert resolved.chart_id is None and resolved.module_id == module.id
+    assert resolved.config.model_dump(mode="json", exclude={"refresh"}) == config.model_dump(
+        mode="json", exclude={"refresh"}
+    )
+    assert resolved.config.refresh == "manual"
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("aggregation", "metric_type"),
+    [
+        (None, None),
+        ("count", "number"),
+        ("sum", None),
+        ("min", "date"),
+        ("max", "datetime"),
+        ("distinct", None),
+    ],
+)
+def test_v3_legacy_aggregation_rejects_invalid_measure_pairs(
+    aggregation: str | None, metric_type: str | None
+) -> None:
+    bundle = _bundle()
+    config = bundle["configuration"]["widgets"][0]["config"]
+    config["aggregation"] = aggregation
+    config["metric"] = {"name": "Measure", "expected_type": metric_type} if metric_type else None
+
+    with pytest.raises(PortabilityError) as error:
+        parse_portable_board(_bytes(bundle))
+    assert error.value.code == "board_bundle_invalid"
 
 
 @pytest.mark.parametrize("extra", ["id", "audience", "grants", "files", "placements"])

@@ -85,6 +85,7 @@ class PortableWidgetConfig(BaseModel):
     fields: list[PortableFieldReference] = Field(max_length=24)
     filters: list[PortableQueryFilter] = Field(max_length=8)
     logic: Literal["and", "or"]
+    aggregation: Literal["count", "sum", "average", "min", "max", "distinct"] = "count"
     metric: PortableFieldReference | None
     visualization: Literal["bar", "line", "pie"]
     size: Literal["S", "M", "L", "half", "full"]
@@ -92,15 +93,17 @@ class PortableWidgetConfig(BaseModel):
     pinned: StrictBool
 
     @model_validator(mode="after")
-    def distinct_fields_and_numeric_metric(self) -> Self:
+    def distinct_fields_and_valid_metric(self) -> Self:
         if len({field.name for field in self.fields}) != len(self.fields):
             raise ValueError("Widget fields must be distinct")
-        if self.metric and self.metric.expected_type not in {
-            FieldType.NUMBER,
-            FieldType.DECIMAL,
-            FieldType.INTEGER,
-        }:
-            raise ValueError("Widget metric must be numeric")
+        if "aggregation" not in self.model_fields_set:
+            self.aggregation = "sum" if self.metric is not None else "count"
+        AggregateRequest(
+            module_id=UUID(int=0),
+            definition=QueryDefinition(),
+            aggregation=self.aggregation,
+            measure=_placeholder(self.metric),
+        )
         return self
 
 

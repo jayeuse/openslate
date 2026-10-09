@@ -50,6 +50,71 @@ def test_widget_schema_rejects_untyped_sources_audiences_and_repeated_fields() -
         BoardWidgetSpec.model_validate(repeated)
 
 
+@pytest.mark.parametrize(
+    ("aggregation", "metric_type", "expected"),
+    [
+        (None, None, "count"),
+        (None, "decimal", "sum"),
+        ("count", None, "count"),
+        ("sum", "number", "sum"),
+        ("average", "decimal", "average"),
+        ("min", "int", "min"),
+        ("max", "number", "max"),
+        ("distinct", "text", "distinct"),
+    ],
+)
+def test_legacy_widget_aggregation_preserves_missing_meaning_and_explicit_metrics(
+    aggregation: str | None, metric_type: str | None, expected: str
+) -> None:
+    module_id, field_id = uuid7(), uuid7()
+    payload = _widget(module_id, field_id)
+    config = payload["config"]
+    config["metric"] = (  # type: ignore[index]
+        {"field_id": str(uuid7()), "expected_type": metric_type} if metric_type else None
+    )
+    if aggregation is not None:
+        config["aggregation"] = aggregation  # type: ignore[index]
+
+    accepted = BoardWidgetSpec.model_validate(payload).model_dump(mode="json")
+
+    assert accepted["config"] == {
+        **config,
+        "version": 1,
+        "logic": "and",
+        "aggregation": expected,
+        "visualization": "bar",
+        "refresh": "manual",
+    }
+
+
+@pytest.mark.parametrize(
+    ("aggregation", "metric_type"),
+    [
+        (None, None),
+        ("median", "decimal"),
+        ("count", "number"),
+        ("sum", None),
+        ("sum", "text"),
+        ("average", "boolean"),
+        ("min", "date"),
+        ("max", "datetime"),
+        ("distinct", None),
+        ("distinct", "relationship"),
+    ],
+)
+def test_legacy_widget_aggregation_rejects_invalid_measure_pairs(
+    aggregation: str | None, metric_type: str | None
+) -> None:
+    payload = _widget(uuid7(), uuid7())
+    payload["config"]["aggregation"] = aggregation  # type: ignore[index]
+    payload["config"]["metric"] = (  # type: ignore[index]
+        {"field_id": str(uuid7()), "expected_type": metric_type} if metric_type else None
+    )
+
+    with pytest.raises(ValidationError):
+        BoardWidgetSpec.model_validate(payload)
+
+
 def _source(db: Session, *readers) -> tuple[Module, Field]:
     department = add_department(db)
     module = add_module(db, department, "Requests")

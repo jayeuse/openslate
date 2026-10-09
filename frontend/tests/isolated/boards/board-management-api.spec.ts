@@ -399,6 +399,52 @@ test("downloads exact validated v3 bytes and the fixed safe filename", async () 
   }
 });
 
+for (const [aggregation, metric] of [
+  ["average", { name: "Amount", expected_type: "decimal" }],
+  ["distinct", { name: "Label", expected_type: "text" }],
+] as const) {
+  test(`S30 portable legacy ${aggregation} imports and downloads exact named bytes`, async () => {
+    const explicit = structuredClone(bundle);
+    const config = {
+      ...explicit.configuration.widgets[0]!.config,
+      aggregation,
+      metric,
+    };
+    const document = {
+      ...explicit,
+      configuration: {
+        ...explicit.configuration,
+        widgets: [{ ...explicit.configuration.widgets[0]!, config }],
+      },
+    };
+    const bytes = JSON.stringify(document, null, 2);
+    const mock = installFetch(() => jsonResponse(boardResponse(), 201));
+    try {
+      await importBoardConfiguration(new Blob([bytes]));
+      expect(await (mock.requests[0]!.init!.body as Blob).text()).toBe(bytes);
+    } finally {
+      mock.restore();
+    }
+    const download = installFetch(
+      () =>
+        new Response(bytes, {
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Disposition":
+              'attachment; filename="board-configuration.json"',
+          },
+        }),
+    );
+    try {
+      const result = await downloadBoardConfiguration(boardId);
+      expect(result.bundle).toEqual(document);
+      expect(await result.blob.text()).toBe(bytes);
+    } finally {
+      download.restore();
+    }
+  });
+}
+
 test("portable Board fields accept User references but not installation-specific User values", async () => {
   const userBundle = {
     ...bundle,

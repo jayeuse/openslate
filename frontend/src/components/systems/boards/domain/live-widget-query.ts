@@ -79,7 +79,9 @@ function aggregateBase(widget: BoardWidget, config: BoardLegacyWidgetConfig) {
   return {
     moduleId: widget.moduleId,
     definition: definitionFor(widget, config),
-    aggregation: config.metric === null ? ("count" as const) : ("sum" as const),
+    aggregation:
+      config.aggregation ??
+      (config.metric === null ? ("count" as const) : ("sum" as const)),
     ...(config.metric === null ? {} : { measure: { ...config.metric } }),
   };
 }

@@ -118,13 +118,19 @@ const wireFilterSchema = z
 
 function validConfig(config: {
   fields: Array<{ fieldId: string }>;
+  aggregation?: "count" | "sum" | "average" | "min" | "max" | "distinct";
   metric: { expectedType: z.output<typeof fieldTypeSchema> } | null;
 }): boolean {
+  const aggregation =
+    config.aggregation ?? (config.metric === null ? "count" : "sum");
   return (
     new Set(config.fields.map((field) => field.fieldId)).size ===
       config.fields.length &&
-    (config.metric === null ||
-      ["number", "decimal", "int"].includes(config.metric.expectedType))
+    (aggregation === "count"
+      ? config.metric === null
+      : config.metric !== null &&
+        (aggregation === "distinct" ||
+          ["number", "decimal", "int"].includes(config.metric.expectedType)))
   );
 }
 
@@ -134,6 +140,9 @@ const inputConfigSchema = z
     fields: z.array(inputFieldSchema).max(24).default([]),
     filters: z.array(inputFilterSchema).max(8).default([]),
     logic: z.enum(["and", "or"]).default("and"),
+    aggregation: z
+      .enum(["count", "sum", "average", "min", "max", "distinct"])
+      .optional(),
     metric: inputFieldSchema.nullable().default(null),
     visualization: z.enum(["bar", "line", "pie"]).default("bar"),
     refresh: z.enum(["manual", "one-minute", "five-minutes"]).optional(),
@@ -146,6 +155,9 @@ const wireConfigSchema = z
     fields: z.array(wireFieldSchema).max(24),
     filters: z.array(wireFilterSchema).max(8),
     logic: z.enum(["and", "or"]),
+    aggregation: z
+      .enum(["count", "sum", "average", "min", "max", "distinct"])
+      .optional(),
     metric: wireFieldSchema.nullable(),
     visualization: z.enum(["bar", "line", "pie"]),
     refresh: z.enum(["manual", "one-minute", "five-minutes"]),
@@ -376,6 +388,9 @@ function serializeWidget(widget: z.output<typeof inputWidgetSchema>) {
                 value: filter.value ?? null,
               })),
               metric: config.metric && serializeField(config.metric),
+              aggregation:
+                config.aggregation ??
+                (config.metric === null ? "count" : "sum"),
               logic: config.logic,
               visualization: config.visualization,
             }

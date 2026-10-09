@@ -34,6 +34,7 @@ export function OpenViewChartPreview({
   type,
   valueLabel,
   showLabels = true,
+  showPoints = showLabels,
   showLegend = true,
   allowDecimals = true,
   className = "border-border/70 bg-muted/15 h-[20rem] w-full rounded-[var(--radius)] border p-3",
@@ -46,6 +47,7 @@ export function OpenViewChartPreview({
   type: "bar" | "line" | "pie";
   valueLabel: string;
   showLabels?: boolean;
+  showPoints?: boolean;
   showLegend?: boolean;
   allowDecimals?: boolean;
   className?: string;
@@ -95,6 +97,7 @@ export function OpenViewChartPreview({
           {showLegend ? <Legend content={<ChartLegendContent />} /> : null}
           <Bar
             dataKey="value"
+            isAnimationActive={false}
             radius={[barRadius, barRadius, 0, 0]}
             maxBarSize={maxBarSize}
           >
@@ -122,12 +125,13 @@ export function OpenViewChartPreview({
           {showLegend ? <Legend content={<ChartLegendContent />} /> : null}
           <Line
             dataKey="value"
+            isAnimationActive={false}
             connectNulls={false}
             type="monotone"
             stroke="var(--color-value)"
             strokeWidth={3}
             dot={
-              showLabels
+              showPoints
                 ? {
                     r: 5,
                     fill: "var(--color-value)",
@@ -149,6 +153,7 @@ export function OpenViewChartPreview({
           ) : null}
           <Pie
             data={points}
+            isAnimationActive={false}
             dataKey="value"
             nameKey="label"
             innerRadius={pieInnerRadius}

@@ -3095,8 +3095,11 @@ test("E evidence paired Board and Dashboard follow one Chart revision without so
     await expect(
       page.getByRole("cell", { name: "Original shared Chart", exact: true }),
     ).toBeVisible();
+    // The inner value list excludes chart axes in the outer widget list and
+    // remains addressable while the management dialog hides background roles.
+    const boardValues = boardPage.locator("ol ol");
     await expect(
-      boardPage.getByText("Original shared Chart", { exact: true }),
+      boardValues.getByText("Original shared Chart", { exact: true }),
     ).toBeVisible();
     const settings = await openDashboardSettingsDialog(page);
     await settings
@@ -3146,9 +3149,9 @@ test("E evidence paired Board and Dashboard follow one Chart revision without so
       page.getByRole("cell", { name: "9", exact: true }),
     ).toBeVisible();
     await expect(
-      boardPage.getByText("Revised shared Chart", { exact: true }),
+      boardValues.getByText("Revised shared Chart", { exact: true }),
     ).toBeVisible();
-    await expect(boardPage.getByText("9", { exact: true })).toBeVisible();
+    await expect(boardValues.getByText("9", { exact: true })).toBeVisible();
     await expect(
       page.getByRole("heading", {
         name: "Independent Dashboard draft",

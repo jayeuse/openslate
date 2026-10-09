@@ -6,7 +6,6 @@ import type {
   BoardWidgetPage,
 } from "../../../src/components/systems/boards/adapters/board-widgets-api";
 import {
-  createSummaryWidgetInput,
   draftFromBoardWidget,
   updateInputForWidgetDraft,
   loadWidgetManagementSnapshot,
@@ -21,6 +20,7 @@ import {
   cancelWidgetEdit,
   notifyIfBoardViewLost,
 } from "../../../src/components/systems/boards/hooks/use-board-widget-management";
+import { blankWidgetCreation } from "../../../src/components/systems/boards/domain/widget-editor";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const moduleId = "00000000-0000-4000-8000-000000000002";
@@ -56,16 +56,6 @@ function widget(): BoardWidget & {
     updatedAt: timestamp,
   };
 }
-
-test("new summary widget has no audience and starts unpinned", () => {
-  const input = createSummaryWidgetInput("  Open requests  ", moduleId);
-  expect(input).not.toHaveProperty("audience");
-  expect(input.name).toBe("Open requests");
-  expect(input.widgetType).toBe("summary");
-  expect(input.pinned).toBe(false);
-  expect(input.size).toBe("M");
-  expect(input.config).not.toHaveProperty("refresh");
-});
 
 test("settings edits keep unrelated config exactly", () => {
   const source = widget();
@@ -161,7 +151,7 @@ test("Board switch and denial clear widget metadata and drafts", () => {
       },
     },
     draft,
-    summary: { name: "Draft summary", moduleId },
+    creation: { ...blankWidgetCreation(), name: "Draft widget" },
     pending: false,
     conflict: false,
     archiveLocked: false,
@@ -172,11 +162,11 @@ test("Board switch and denial clear widget metadata and drafts", () => {
   const switched = beginWidgetManagerState(ready, userId);
   expect(switched.snapshot).toBeNull();
   expect(switched.draft).toBeNull();
-  expect(switched.summary).toEqual({ name: "", moduleId: "" });
+  expect(switched.creation).toEqual(blankWidgetCreation());
   const denied = deniedWidgetManagerState(boardId);
   expect(denied.snapshot).toBeNull();
   expect(denied.draft).toBeNull();
-  expect(denied.summary.name).toBe("");
+  expect(denied.creation.name).toBe("");
 });
 
 test("widget denial revokes parent Board only after independent VIEW loss confirmation", async () => {

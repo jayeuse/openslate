@@ -167,7 +167,10 @@ def test_project_board_access_uses_admin_revisioned_group_replace(tmp_path: Path
     ]
 
 
-def test_board_population_writes_standalone_widget_presentation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("with_numeric", [True, False])
+def test_board_population_writes_standalone_widget_presentation(
+    tmp_path: Path, with_numeric: bool
+) -> None:
     module_id = "00000000-0000-7000-8000-000000000020"
     title_id = "00000000-0000-7000-8000-000000000021"
     amount_id = "00000000-0000-7000-8000-000000000022"
@@ -175,11 +178,20 @@ def test_board_population_writes_standalone_widget_presentation(tmp_path: Path) 
         {"field_id": title_id, "expected_type": "text"},
         {"field_id": amount_id, "expected_type": "number"},
     ]
+    if not with_numeric:
+        refs = refs[:1]
     expected = (
-        ("summary", "Operations snapshot", "M", None, "bar"),
-        ("workload", "Status breakdown", "M", None, "bar"),
-        ("records", "Recent records", "L", None, "bar"),
-        ("chart", "Trend chart", "M", refs[1], "line"),
+        ("summary", "Operations snapshot", "M", None, "count", "bar"),
+        ("workload", "Status breakdown", "M", None, "count", "bar"),
+        ("records", "Recent records", "L", None, "count", "bar"),
+        (
+            "chart",
+            "Trend chart",
+            "M",
+            refs[1] if with_numeric else None,
+            "sum" if with_numeric else "count",
+            "line",
+        ),
     )
     revision = 7
     saved: list[dict[str, Any]] = []
@@ -193,7 +205,7 @@ def test_board_population_writes_standalone_widget_presentation(tmp_path: Path) 
             return httpx.Response(200, json={"id": BOARD_ID, "revision": revision})
         assert (request.method, request.url.path) == ("POST", f"/api/boards/{BOARD_ID}/widgets")
         BoardWidgetWrite.model_validate_json(request.content, strict=True)
-        kind, name, size, metric, visualization = expected[len(saved)]
+        kind, name, size, metric, aggregation, visualization = expected[len(saved)]
         wanted = {
             "name": name,
             "widget_type": kind,
@@ -206,6 +218,7 @@ def test_board_population_writes_standalone_widget_presentation(tmp_path: Path) 
                 "fields": refs,
                 "filters": [],
                 "logic": "and",
+                "aggregation": aggregation,
                 "metric": metric,
                 "visualization": visualization,
                 "refresh": "manual",
@@ -258,7 +271,7 @@ def test_board_population_writes_standalone_widget_presentation(tmp_path: Path) 
                         "type": "number",
                         "position": 1,
                     },
-                ]
+                ][: 2 if with_numeric else 1]
             },
             get_pack("harbor"),
         )

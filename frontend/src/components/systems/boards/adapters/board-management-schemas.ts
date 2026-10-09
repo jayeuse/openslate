@@ -103,6 +103,9 @@ const widgetConfigSchema = z
     fields: z.array(fieldSchema).max(24),
     filters: z.array(filterSchema).max(8),
     logic: z.enum(["and", "or"]),
+    aggregation: z
+      .enum(["count", "sum", "average", "min", "max", "distinct"])
+      .optional(),
     metric: fieldSchema.nullable(),
     visualization: z.enum(["bar", "line", "pie"]),
     size: z.enum(["S", "M", "L", "half", "full"]),
@@ -118,11 +121,13 @@ const widgetConfigSchema = z
       context.addIssue({ code: "custom", message: "Duplicate widget fields" });
     }
     if (
-      config.metric &&
-      !["number", "decimal", "int"].includes(config.metric.expected_type)
-    ) {
-      context.addIssue({ code: "custom", message: "Metric must be numeric" });
-    }
+      !namedMeasureIsValid({
+        aggregation:
+          config.aggregation ?? (config.metric === null ? "count" : "sum"),
+        measure: config.metric,
+      })
+    )
+      context.addIssue({ code: "custom", message: "Invalid named measure" });
   });
 const namedSortSchema = fieldSchema
   .extend({ direction: z.enum(["asc", "desc"]).default("asc") })

@@ -187,6 +187,7 @@ def _make_widgets(
                     "fields": refs,
                     "filters": [],
                     "logic": "and",
+                    "aggregation": "sum" if widget_type == "chart" and numeric else "count",
                     "metric": numeric if widget_type == "chart" else None,
                     "visualization": "bar" if widget_type != "chart" else "line",
                     "refresh": "manual",

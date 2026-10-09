@@ -2322,6 +2322,19 @@
       "BoardWidgetConfig": {
         "additionalProperties": false,
         "properties": {
+          "aggregation": {
+            "default": "count",
+            "enum": [
+              "count",
+              "sum",
+              "average",
+              "min",
+              "max",
+              "distinct"
+            ],
+            "title": "Aggregation",
+            "type": "string"
+          },
           "fields": {
             "items": {
               "$ref": "#/components/schemas/app__systems__sandbox__records__query_schemas__FieldReference"
@@ -8931,6 +8944,19 @@
       "PortableWidgetConfig": {
         "additionalProperties": false,
         "properties": {
+          "aggregation": {
+            "default": "count",
+            "enum": [
+              "count",
+              "sum",
+              "average",
+              "min",
+              "max",
+              "distinct"
+            ],
+            "title": "Aggregation",
+            "type": "string"
+          },
           "fields": {
             "items": {
               "$ref": "#/components/schemas/PortableFieldReference"

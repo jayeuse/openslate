@@ -5,6 +5,7 @@ import { getBoardWorkspaceToday } from "../adapters/board-workspace-date-api";
 import type { OpenViewRecord } from "../../openview/adapters/views-api";
 import type { OpenViewAggregateSnapshotResult } from "../../openview/adapters/analytics-api";
 import { collapseBoardWidgetPie } from "../domain/live-widget-query";
+import { OpenViewChartPreview } from "../../openview/components/chart-preview";
 import {
   useLiveBoardWidgets,
   type LiveWidgetItem,
@@ -161,7 +162,13 @@ function groupContent(item: LiveWidgetItem): ReactNode {
     );
   const values = items.map((entry) => numericValue(entry.value));
   const hasNegative = values.some((value) => value !== null && value < 0);
-  const max = Math.max(...values.map((value) => value ?? 0));
+  const hasUnchartableValue = items.some(
+    (entry, index) => entry.value !== null && values[index] === null,
+  );
+  const finite = values.filter((value): value is number => value !== null);
+  const safeRange = Number.isFinite(
+    Math.max(0, ...finite) - Math.min(0, ...finite),
+  );
   return createElement(
     "div",
     { className: "space-y-3" },
@@ -175,17 +182,32 @@ function groupContent(item: LiveWidgetItem): ReactNode {
         ? "Negative values cannot be shown as bars. Exact values are listed below."
         : "Exact values are listed below; bar lengths are approximate.",
     ),
-    items.some((entry, index) => entry.value !== null && values[index] === null)
+    hasUnchartableValue || !safeRange
       ? createElement(
           "p",
           { className: "text-muted-foreground text-sm" },
           "Some values are too large to chart. Exact values remain below.",
         )
       : null,
+    !hasNegative && !hasUnchartableValue && safeRange && finite.length > 0
+      ? createElement(OpenViewChartPreview, {
+          type: "bar",
+          valueLabel: "Value",
+          showLabels: false,
+          showLegend: false,
+          className: "h-52 w-full min-w-0",
+          allowDecimals: true,
+          data: items.map((entry, index) => ({
+            key: `board-point-${index}`,
+            label: entry.label,
+            value: values[index],
+          })),
+        })
+      : null,
     createElement(
       "ol",
       { className: "space-y-3" },
-      ...items.map((entry, index) =>
+      ...items.map((entry) =>
         createElement(
           "li",
           { key: entry.key ?? "unspecified", className: "min-w-0" },
@@ -205,21 +227,6 @@ function groupContent(item: LiveWidgetItem): ReactNode {
               entry.value === null ? "—" : String(entry.value),
             ),
           ),
-          values[index] === null || hasNegative
-            ? null
-            : createElement(
-                "div",
-                {
-                  "aria-hidden": "true",
-                  className: "bg-muted mt-1 h-2 overflow-hidden rounded-full",
-                },
-                createElement("div", {
-                  className: "bg-chart-1 h-full rounded-full",
-                  style: {
-                    width: `${max === 0 ? 0 : ((values[index] ?? 0) / max) * 100}%`,
-                  },
-                }),
-              ),
         ),
       ),
     ),
@@ -321,20 +328,23 @@ function pieContent(item: LiveWidgetItem): ReactNode {
           )
         : nativeSnapshotValues(item.data.result),
     );
-  let position = 0;
-  const stops = projection.points.map((point, index) => {
-    const start = position;
-    position += total === 0 ? 0 : (point.value / total) * 100;
-    return `${colors[index % colors.length]} ${start}% ${position}%`;
-  });
   return createElement(
     "div",
     { className: "flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center" },
     total > 0
-      ? createElement("div", {
-          "aria-hidden": "true",
-          className: "mx-auto aspect-square w-36 shrink-0 rounded-full sm:mx-0",
-          style: { backgroundImage: `conic-gradient(${stops.join(", ")})` },
+      ? createElement(OpenViewChartPreview, {
+          type: "pie",
+          valueLabel: "Value",
+          showLabels: false,
+          showLegend: false,
+          className: "h-52 w-full min-w-0 sm:w-1/2",
+          pieInnerRadius: 44,
+          pieOuterRadius: 76,
+          data: projection.points.map((point, index) => ({
+            key: `board-point-${index}`,
+            label: point.label,
+            value: point.value,
+          })),
         })
       : null,
     createElement(
@@ -371,7 +381,18 @@ function pieContent(item: LiveWidgetItem): ReactNode {
                 createElement(
                   "span",
                   { className: "font-medium tabular-nums" },
-                  String(point.value),
+                  point.key === "rollup:other"
+                    ? String(point.value)
+                    : String(
+                        item.data?.kind === "snapshot"
+                          ? (item.data.result.items.find(
+                              (entry) =>
+                                (entry.key === null
+                                  ? "group:null"
+                                  : `group:value:${entry.key}`) === point.key,
+                            )?.value ?? point.value)
+                          : point.value,
+                      ),
                 ),
               ),
             ),
@@ -410,24 +431,6 @@ function lineContent(item: LiveWidgetItem): ReactNode {
   );
   const canDraw =
     finite.length > 0 && !hasUnchartableValue && Number.isFinite(range);
-  const points = values.map((value, index) =>
-    value === null
-      ? null
-      : {
-          key: items[index].key ?? String(index),
-          x: items.length === 1 ? 160 : 8 + (index / (items.length - 1)) * 304,
-          y: 152 - ((value - min) / range) * 144,
-        },
-  );
-  const segments: NonNullable<(typeof points)[number]>[][] = [];
-  let segment: NonNullable<(typeof points)[number]>[] = [];
-  for (const point of points) {
-    if (point === null) segment = [];
-    else {
-      if (segment.length === 0) segments.push(segment);
-      segment.push(point);
-    }
-  }
   return createElement(
     "div",
     { className: "min-w-0 space-y-3" },
@@ -437,35 +440,20 @@ function lineContent(item: LiveWidgetItem): ReactNode {
       `${items.length} ${bucket}${items.length === 1 ? "" : "s"} shown. Exact values are listed below; the line is approximate.`,
     ),
     canDraw
-      ? createElement(
-          "svg",
-          {
-            "aria-hidden": "true",
-            className: "h-36 w-full min-w-0",
-            viewBox: "0 0 320 160",
-            preserveAspectRatio: "none",
-          },
-          ...segments.map((segment) =>
-            createElement("polyline", {
-              key: "segment:" + segment[0].key,
-              fill: "none",
-              stroke: "var(--chart-1)",
-              strokeWidth: 3,
-              points: segment.map(({ x, y }) => `${x},${y}`).join(" "),
-            }),
-          ),
-          ...points
-            .filter((point) => point !== null)
-            .map(({ x, y, key }) =>
-              createElement("circle", {
-                key,
-                cx: x,
-                cy: y,
-                r: 3,
-                fill: "var(--chart-1)",
-              }),
-            ),
-        )
+      ? createElement(OpenViewChartPreview, {
+          type: "line",
+          valueLabel: "Value",
+          showLabels: false,
+          showPoints: true,
+          showLegend: false,
+          className: "h-52 w-full min-w-0",
+          allowDecimals: true,
+          data: items.map((entry, index) => ({
+            key: `board-point-${index}`,
+            label: entry.label,
+            value: values[index],
+          })),
+        })
       : createElement(
           "p",
           { className: "text-muted-foreground text-sm" },

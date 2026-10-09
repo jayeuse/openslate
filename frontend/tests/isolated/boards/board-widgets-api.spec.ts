@@ -178,6 +178,7 @@ test("widget create, patch, duplicate, reorder and delete send revisioned contra
           fields: config.fields,
           filters: [],
           logic: "and",
+          aggregation: "count",
           metric: null,
           visualization: "bar",
         },

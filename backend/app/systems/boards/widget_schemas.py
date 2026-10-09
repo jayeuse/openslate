@@ -13,8 +13,12 @@ from app.systems.openview.dashboards.schemas import (
     DashboardWidgetConfig,
     _configuration_matches_widget,
 )
-from app.systems.sandbox.fields.models import FieldType
-from app.systems.sandbox.records.query_schemas import FieldReference, QueryFilter
+from app.systems.sandbox.records.query_schemas import (
+    AggregateRequest,
+    FieldReference,
+    QueryDefinition,
+    QueryFilter,
+)
 
 
 class BoardWidgetConfig(BaseModel):
@@ -24,6 +28,7 @@ class BoardWidgetConfig(BaseModel):
     fields: list[FieldReference] = Field(default_factory=list, max_length=24)
     filters: list[QueryFilter] = Field(default_factory=list, max_length=8)
     logic: Literal["and", "or"] = "and"
+    aggregation: Literal["count", "sum", "average", "min", "max", "distinct"] = "count"
     metric: FieldReference | None = None
     visualization: Literal["bar", "line", "pie"] = "bar"
     refresh: Literal["manual", "one-minute", "five-minutes"] = "manual"
@@ -32,12 +37,15 @@ class BoardWidgetConfig(BaseModel):
     def validate_references(self) -> Self:
         if len({item.field_id for item in self.fields}) != len(self.fields):
             raise ValueError("Widget fields must be distinct")
-        if self.metric and self.metric.expected_type not in {
-            FieldType.NUMBER,
-            FieldType.DECIMAL,
-            FieldType.INTEGER,
-        }:
-            raise ValueError("Widget metric must be numeric")
+        if "aggregation" not in self.model_fields_set:
+            # Pre-aggregation JSON retains its count/sum projection without a backfill.
+            self.aggregation = "sum" if self.metric is not None else "count"
+        AggregateRequest(
+            module_id=UUID(int=0),
+            definition=QueryDefinition(),
+            aggregation=self.aggregation,
+            measure=self.metric,
+        )
         return self
 
 
