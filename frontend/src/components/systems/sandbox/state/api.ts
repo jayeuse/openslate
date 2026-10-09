@@ -5,12 +5,12 @@ import {
   trackSandboxHistoryVersion,
 } from "./sandbox-history-access";
 import {
-  parseSandboxDocument,
   parseSandboxDocumentForApi,
   SANDBOX_DOCUMENT_SCHEMA_VERSION,
   type SandboxFieldValue,
   type SandboxDocumentV4,
 } from "../domain/document";
+import { parseSandboxExportDocument } from "../domain/document-parser";
 
 export type SandboxValidationIssue = {
   code: string;
@@ -773,7 +773,7 @@ export async function exportSandboxBundle(
     if (error instanceof Error && error.name === "AbortError") throw error;
     throw new ApiContractError();
   }
-  const parsed = parseSandboxDocument(text);
+  const parsed = parseSandboxExportDocument(text);
   if (!parsed.ok) throw new ApiContractError();
   return { document: parsed.document, filename: exportFilename(response) };
 }

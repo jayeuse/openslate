@@ -1,4 +1,8 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, test, type Locator, type Page } from "./helpers/test";
+
+import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
+import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import { installOpenViewEventSource } from "./helpers/openview-event-source";
 
 import {
   DAY,
@@ -1063,4 +1067,216 @@ test("13b: an accepted person edit returns an out-of-range last page to current 
   await expect(
     page.getByRole("table", { name: "People", exact: true }).getByRole("row"),
   ).toHaveCount(11);
+});
+
+async function prepareS05PeopleAppearance(page: Page) {
+  await installOpenViewEventSource(page);
+  await page.route(`**/api/users/${ids.rosa}/preferences`, (route) =>
+    route.fulfill({
+      json: {
+        user_id: ids.rosa,
+        theme: "light",
+        appearance: { motion: "reduce", keyboard_shortcuts: true },
+      },
+    }),
+  );
+  await page.route("**/api/workspace/appearance", (route) =>
+    route.fulfill({ json: { theme: "slate" } }),
+  );
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill({
+      json: {
+        id: ids.inventory,
+        display_name: "OpenSlate",
+        legal_name: null,
+        description: null,
+        contact_email: null,
+        contact_phone: null,
+        postal_address: null,
+        logo_file_id: null,
+        locale: "en-PH",
+        timezone: "Asia/Manila",
+        mark: "OS",
+        currency: "PHP",
+        week_start: "monday",
+        business_hours: "09:00–18:00",
+        theme: "slate",
+        revision: 1,
+        today: "2026-10-09",
+        purge_enabled: false,
+        invitation_expiry_days: 7,
+        guest_duration_days: 45,
+      },
+    }),
+  );
+}
+
+async function captureS05People(page: Page, name: string, anchor: Locator) {
+  if (!process.env.OPENVIEW_CAPTURE_DIR) return;
+  await page.addStyleTag({
+    content: "nextjs-portal { display: none !important; }",
+  });
+  await page.evaluate(() => document.fonts.ready);
+  for (const mode of ["light", "dark"] as const) {
+    await page.evaluate(applyAppearancePreferences, {
+      mode,
+      reduceMotion: true,
+    });
+    await captureOpenViewReview(page, `s05-invitation-${name}-${mode}`, {
+      beforeScreenshot: async () => {
+        await anchor.scrollIntoViewIfNeeded();
+        await expect(anchor).toBeInViewport();
+        await expect(page.locator("html")).toHaveAttribute(
+          "data-motion",
+          "reduced",
+        );
+      },
+    });
+  }
+}
+
+for (const failure of [0, 503]) {
+  test(`S05 unsent invitation finishes through direct user response with ${failure ? "recoverable failure" : "pending protection"}`, async ({
+    page,
+  }) => {
+    const api = await mockPeopleApi(page);
+    await prepareS05PeopleAppearance(page);
+    const path = `/api/auth/invitations/${ids.cy}/reconcile`;
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    api.on("POST", path, async (route) => {
+      await held;
+      if (failure) {
+        await route.fulfill({
+          status: failure,
+          json: { detail: "Email service unavailable" },
+        });
+        return;
+      }
+      const current = api.users.get(ids.cy)!;
+      const sent = { ...current, invitation_sent_at: "2035-06-01T00:00:00Z" };
+      api.users.set(ids.cy, sent);
+      await route.fulfill({ json: sent });
+    });
+    await page.goto(`/access?view=people&user=${ids.cy}`);
+    const sheet = panel(page, "cy");
+    await expect(
+      sheet.getByRole("button", {
+        name: "Finish sending invitation",
+        exact: true,
+      }),
+    ).toBeVisible();
+    if (!failure)
+      await captureS05People(
+        page,
+        "unsent",
+        sheet.getByRole("button", {
+          name: "Finish sending invitation",
+          exact: true,
+        }),
+      );
+    await sheet
+      .getByRole("button", { name: "Finish sending invitation", exact: true })
+      .click();
+    const confirmation = page.getByRole("alertdialog", {
+      name: "Finish sending the invitation?",
+      exact: true,
+    });
+    await expect(confirmation).toContainText("cy@example.com");
+    const requested = page.waitForRequest(
+      (request) => new URL(request.url()).pathname === path,
+    );
+    await confirmation
+      .getByRole("button", { name: "Finish sending", exact: true })
+      .click();
+    await requested;
+    await expect(
+      confirmation.getByRole("button", { name: "Working…", exact: true }),
+    ).toBeDisabled();
+    release();
+    if (failure) {
+      await expect(confirmation.getByRole("alert")).toBeVisible();
+      await expect(confirmation).toBeVisible();
+      await captureS05People(page, "failure", confirmation.getByRole("alert"));
+      expect(api.users.get(ids.cy)?.invitation_sent_at).toBeNull();
+      await confirmation
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
+      await expect(
+        sheet.getByRole("button", {
+          name: "Finish sending invitation",
+          exact: true,
+        }),
+      ).toBeVisible();
+    } else {
+      await expect(confirmation).toBeHidden();
+      await expect(
+        sheet.getByRole("button", { name: "Resend invitation", exact: true }),
+      ).toBeVisible();
+      await expect(
+        sheet.getByRole("button", { name: "Revoke invitation", exact: true }),
+      ).toBeVisible();
+      await captureS05People(
+        page,
+        "sent",
+        sheet.getByRole("button", { name: "Resend invitation", exact: true }),
+      );
+      await expect(
+        sheet.getByRole("button", {
+          name: "Finish sending invitation",
+          exact: true,
+        }),
+      ).toHaveCount(0);
+    }
+    expect(api.sent("POST", path)).toHaveLength(1);
+  });
+}
+
+test("S05 reconcile is offered only for nondeleted pending unsent people", async ({
+  page,
+}) => {
+  const api = await mockPeopleApi(page);
+  for (const fields of [
+    { id: ids.ben, status: "active" as const, invitation_sent_at: null },
+    { id: ids.cy, status: "pending" as const, invitation_sent_at: created },
+    {
+      id: ids.eli,
+      status: "disabled" as const,
+      is_deleted: true,
+      deleted_at: created,
+      invitation_sent_at: null,
+    },
+  ]) {
+    const current = api.users.get(fields.id)!;
+    api.users.set(fields.id, { ...current, ...fields });
+    await page.goto(`/access?view=people&user=${fields.id}`);
+    const sheet = panel(
+      page,
+      fields.id === ids.ben
+        ? "Ben Cruz"
+        : fields.id === ids.cy
+          ? "cy"
+          : "Eli Tan",
+    );
+    await expect(sheet).toBeVisible();
+    await expect(
+      sheet.getByRole("button", {
+        name:
+          fields.id === ids.ben
+            ? "Disable"
+            : fields.id === ids.cy
+              ? "Resend invitation"
+              : "Restore",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Finish sending invitation",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+  }
 });

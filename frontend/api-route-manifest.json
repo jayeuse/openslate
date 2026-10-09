@@ -169,6 +169,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/access/state/api.ts",
+    "function": "reconcileAccessInvitation",
+    "method": "POST",
+    "path": "/api/auth/invitations/{param}/reconcile"
+  },
+  {
+    "adapter": "frontend/src/components/systems/access/state/api.ts",
     "function": "replaceAccessGroupAccess",
     "method": "PUT",
     "path": "/api/access/groups/{param}/access"

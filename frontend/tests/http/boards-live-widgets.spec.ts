@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/test";
+import { installOpenViewEventSource } from "./helpers/openview-event-source";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../../src/lib/api";
@@ -943,4 +944,142 @@ test("negative group values keep exact text without misleading positive bar leng
   expect(html).toContain(">5<");
   expect(html).toContain(">-5<");
   expect(html).not.toContain("bg-chart-1 h-full");
+});
+
+test("S05 widget create and edit omit refresh even when the server returns a legacy interval", async ({
+  page,
+}) => {
+  await installOpenViewEventSource(page);
+  const actor = "00000000-0000-4000-8000-000000000007";
+  let revision = 4;
+  let widgets: Record<string, unknown>[] = [];
+  const writes: Record<string, unknown>[] = [];
+  const board = {
+    id: boardId,
+    scope: "project",
+    department_id: null,
+    name: "Operations board",
+    description: "Synthetic S05 widget controls",
+    status: "active",
+    revision,
+    level: "manage",
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  const list = (items: unknown[], limit = 25) => ({
+    items,
+    pagination: {
+      limit,
+      offset: 0,
+      count: items.length,
+      total: items.length,
+      has_more: false,
+    },
+  });
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname;
+    const reply = (json: unknown, status = 200) =>
+      route.fulfill({ status, json });
+    if (path === "/api/auth/session")
+      return reply({
+        authenticated: true,
+        user_id: actor,
+        setup_required: false,
+      });
+    if (path === "/api/auth/me")
+      return reply({ id: actor, role: "admin", access: [] });
+    if (path === "/api/views/data-sources")
+      return reply(
+        list(
+          [
+            {
+              id: moduleId,
+              name: "Service requests",
+              department_id: otherBoardId,
+              title_field_id: null,
+            },
+          ],
+          25,
+        ),
+      );
+    if (path === "/api/boards") return reply(list([{ ...board, revision }]));
+    if (path === `/api/boards/${boardId}`) return reply({ ...board, revision });
+    if (path === `/api/boards/${boardId}/my-access`)
+      return reply({ level: "manage", read: true, write: true, manage: true });
+    if (path === `/api/boards/${boardId}/widgets` && request.method() === "GET")
+      return reply({
+        ...list(widgets, Number(url.searchParams.get("limit") ?? 12)),
+        board_revision: revision,
+      });
+    if (
+      path === `/api/boards/${boardId}/widgets` ||
+      path === `/api/boards/${boardId}/widgets/${widgetId}`
+    ) {
+      const input = request.postDataJSON() as {
+        widget: {
+          name: string;
+          widget_type: string;
+          module_id: string;
+          config: Record<string, unknown>;
+        };
+        revision: number;
+      };
+      writes.push(input.widget.config);
+      revision += 1;
+      const returned = {
+        ...wireWidget,
+        ...input.widget,
+        updated_at: "2035-06-01T00:00:00Z",
+        config: { ...input.widget.config, refresh: "five-minutes" },
+      };
+      widgets = [returned];
+      return reply(
+        { widget: returned, board_revision: revision },
+        request.method() === "POST" ? 201 : 200,
+      );
+    }
+    if (path === "/api/records/query")
+      return reply({ columns: [], rows: [], count: 3, has_more: false });
+    return route.fallback();
+  });
+  await page.goto(`/boards?board=${boardId}`);
+  await page
+    .getByRole("button", { name: "Manage widgets", exact: true })
+    .click();
+  const manager = page.getByRole("region", {
+    name: "Manage Board widgets",
+    exact: true,
+  });
+  await manager
+    .getByLabel("Widget name", { exact: true })
+    .fill("Open requests");
+  await manager
+    .getByLabel("Active record source", { exact: true })
+    .selectOption(moduleId);
+  await manager
+    .getByRole("button", { name: "Add summary widget", exact: true })
+    .click();
+  await expect(
+    manager.getByRole("heading", { name: "Open requests", exact: true }),
+  ).toBeVisible();
+  expect(writes[0]).not.toHaveProperty("refresh");
+  await manager
+    .getByRole("button", { name: "Edit Open requests settings", exact: true })
+    .click();
+  await manager
+    .getByLabel("Widget name", { exact: true })
+    .first()
+    .fill("Updated requests");
+  await manager
+    .getByRole("button", { name: "Save settings", exact: true })
+    .click();
+  await expect(
+    manager.getByRole("heading", { name: "Updated requests", exact: true }),
+  ).toBeVisible();
+  expect(writes[1]).not.toHaveProperty("refresh");
+  await expect(
+    manager.getByRole("heading", { name: "Updated requests", exact: true }),
+  ).toBeVisible();
 });

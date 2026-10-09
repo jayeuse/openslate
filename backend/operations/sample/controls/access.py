@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from app.systems.access.users.schemas import UserResponse
 from operations.sample.blueprint import SampleDataset
+from operations.sample.controls.access_verification import _pending_invitation
 from operations.sample.controls.access_verification import (
     verify_access_controls as verify_access_controls,
 )
@@ -32,6 +34,7 @@ CONTROL_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("DELETE", "/api/users/{user_id}"),
         ("POST", "/api/users/{user_id}/restore"),
         ("POST", "/api/auth/invitations/{user_id}/resend"),
+        ("POST", "/api/auth/invitations/{user_id}/reconcile"),
         ("DELETE", "/api/auth/invitations/{user_id}"),
         ("GET", "/api/users/{user_id}"),
         ("GET", "/api/users/{user_id}/access"),
@@ -156,6 +159,24 @@ def plan_access_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             expected_status=204,
             expected_end_state={"status": "pending", "invitation_sent": False},
         ),
+        _make_action(
+            key="controls:access:reconcile_invitation",
+            kind="access_controls",
+            target_key=pending_key,
+            operation="reconcile_invitation",
+            values={},
+            expected_status=200,
+            expected_end_state={"status": "pending", "invitation_sent": True},
+        ),
+        _make_action(
+            key="controls:access:revoke_reconciled_invitation",
+            kind="access_controls",
+            target_key=pending_key,
+            operation="revoke_invitation",
+            values={},
+            expected_status=204,
+            expected_end_state={"status": "pending", "invitation_sent": False},
+        ),
     )
 
 
@@ -273,6 +294,7 @@ def _group_action(
 
 def _user_action(
     action: PhaseAction,
+    dataset: SampleDataset,
     context: PhaseExecutionContext,
     evidence: list[dict[str, object]],
     mappings: list[dict[str, str]],
@@ -344,51 +366,82 @@ def _user_action(
                 "Restored guest did not match its plan", step="restore_guest"
             )
         return _result(action, context, evidence, mappings)
-    if operation == "resend_invitation":
+    if operation in {"resend_invitation", "reconcile_invitation", "revoke_invitation"}:
+        person = next(
+            (p for p in dataset.organization.actors.people if p.key == action.target_key), None
+        )
+        if (
+            action.actor_key != "admin"
+            or person is None
+            or person.role != "member"
+            or person.status != "pending"
+        ):
+            raise SamplePhaseActionError("Planned pending invitation is invalid", step=action.key)
+        after_sent = operation != "revoke_invitation"
+        root = f"/api/auth/invitations/{user_id}"
+        path = f"{root}/{operation.removesuffix('_invitation')}" if after_sent else root
+
+        def checked(raw: object, *, sent: bool) -> UserResponse:
+            profile = _pending_invitation(raw, user_id, person.email, person.username, sent=sent)
+            if profile is None:
+                raise SamplePhaseActionError(
+                    "Pending invitation did not match its plan", step=str(operation)
+                )
+            return profile
+
+        before = checked(
+            _request_object(
+                action,
+                context,
+                evidence,
+                actor_key=action.actor_key,
+                path=f"/api/users/{user_id}",
+                step=f"read_before_{operation}",
+                on_substep=on_substep,
+            ),
+            sent=operation != "reconcile_invitation",
+        )
         response = _request(
             action,
             context,
             evidence,
             actor_key=action.actor_key,
-            method="POST",
-            path=f"/api/auth/invitations/{user_id}/resend",
-            step="resend_invitation",
+            method="POST" if after_sent else "DELETE",
+            path=path,
+            step=str(operation),
             expected=action.expected_status,
             on_substep=on_substep,
-            json_body={},
+            json_body={} if after_sent else None,
             primary_entity_type="users",
             primary_entity_id=user_id,
             primary_action="update",
             expected_audit_rows=1,
         )
-        body = _read_json(response, step="resend_invitation")
-        user = body.get("user")
-        if (
-            not isinstance(user, dict)
-            or user.get("id") != user_id
-            or user.get("status") != "pending"
-        ):
-            raise SamplePhaseActionError(
-                "Resent invitation did not match its plan", step="resend_invitation"
-            )
-        return _result(action, context, evidence, mappings)
-    if operation == "revoke_invitation":
-        _request(
+        if after_sent:
+            body = _read_json(response, step=str(operation))
+            checked(body.get("user") if operation == "resend_invitation" else body, sent=True)
+        after = checked(
+            _request_object(
+                action,
+                context,
+                evidence,
+                actor_key=action.actor_key,
+                path=f"/api/users/{user_id}",
+                step=f"read_after_{operation}",
+                on_substep=on_substep,
+            ),
+            sent=after_sent,
+        )
+        return _result(
             action,
             context,
             evidence,
-            actor_key=action.actor_key,
-            method="DELETE",
-            path=f"/api/auth/invitations/{user_id}",
-            step="revoke_invitation",
-            expected=action.expected_status,
-            on_substep=on_substep,
-            primary_entity_type="users",
-            primary_entity_id=user_id,
-            primary_action="update",
-            expected_audit_rows=1,
+            mappings,
+            extra={
+                "invitation_before": before.model_dump(mode="json"),
+                "invitation_after": after.model_dump(mode="json"),
+            },
         )
-        return _result(action, context, evidence, mappings)
     raise SamplePhaseActionError("Unsupported planned Access user operation", step=action.key)
 
 
@@ -400,7 +453,6 @@ def execute_access_control(
     on_substep: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
     """Execute one planned Access action through authenticated UI APIs."""
-    del dataset
     if action.kind != "access_controls":
         raise SamplePhaseActionError("Unsupported planned Access control", step=action.key)
     evidence: list[dict[str, object]] = []
@@ -411,4 +463,4 @@ def execute_access_control(
         "delete_temporary_group",
     }:
         return _group_action(action, context, evidence, mappings, on_substep=on_substep)
-    return _user_action(action, context, evidence, mappings, on_substep=on_substep)
+    return _user_action(action, dataset, context, evidence, mappings, on_substep=on_substep)

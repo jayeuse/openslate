@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "./helpers/test";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   initialDesign,
@@ -31,6 +31,7 @@ type SandboxOptions = {
   publicationDelay?: Promise<void>;
   issues?: Array<{ code: string; message: string; targetId: string | null }>;
   versionMutationDelay?: Promise<void>;
+  versionListDelay?: Promise<void>;
   capacityMetadata?: Record<string, unknown>;
   versionListFailure?: number;
   pruneDelay?: Promise<void>;
@@ -204,6 +205,7 @@ async function openAuthenticatedSandbox(
     });
   });
   await page.route("**/api/sandbox/versions?*", async (route) => {
+    await options.versionListDelay;
     if (pruned) await options.pruneReadbackDelay;
     if (options.versionListFailure || (pruned && pruneReadbackFailure))
       return route.fulfill({
@@ -5864,4 +5866,637 @@ test("History older off-page metadata cannot restore a target marked missing by 
     .soft(secondChoice.getByRole("option", missingOption))
     .toHaveCount(0);
   await expect(page.getByText("Private missing-version canary")).toHaveCount(0);
+});
+
+test("S05 export history uses complete global total and downloads both boolean variants", async ({
+  page,
+}) => {
+  await prepareS06Review(page);
+  const versions = Array.from({ length: 28 }, (_, index) => ({
+    ...historyVersionFixture(
+      index + 1,
+      index === 0 ? "Needle checkpoint" : `Export version ${index + 1}`,
+      index < 20 ? "checkpoint" : "published",
+    ),
+    createdAt: "2026-10-01T10:00:00Z",
+  }));
+  const document = sandboxDocumentFromDesign(configuredSandboxDesign);
+  const snapshots = versions.map((version) => ({
+    id: version.id,
+    label: version.label,
+    kind: version.kind,
+    document: {
+      design: document.design,
+      triggers: document.triggers,
+      scenarios: document.scenarios,
+    },
+    published: version.kind === "published",
+    date: version.createdAt,
+  }));
+  const exports: string[] = [];
+  let writes = 0;
+  page.on("request", (request) => {
+    if (
+      new URL(request.url()).pathname.startsWith("/api/sandbox/") &&
+      ["POST", "PUT", "PATCH", "DELETE"].includes(request.method())
+    )
+      writes += 1;
+  });
+  await page.route("**/api/sandbox/export?*", (route) => {
+    const include = new URL(route.request().url()).searchParams.get(
+      "includeVersions",
+    );
+    exports.push(include ?? "missing");
+    return route.fulfill({
+      contentType: "application/json",
+      headers: {
+        "Content-Disposition":
+          'attachment; filename="owned-sandbox-history.json"',
+      },
+      json:
+        include === "true" ? { ...document, versions: snapshots } : document,
+    });
+  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { versions },
+  );
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const timeline = page.getByRole("region", {
+    name: "Version timeline",
+    exact: true,
+  });
+  await timeline.getByLabel("Find a version").fill("Needle");
+  await expect(timeline).toContainText("1 saved version");
+  await page
+    .getByRole("button", { name: "More Sandbox actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Import or export", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Import or export",
+    exact: true,
+  });
+  const include = dialog.getByRole("checkbox", {
+    name: "Include version history",
+    exact: true,
+  });
+  await expect(include).toBeVisible();
+  await expect(include).not.toBeChecked();
+  await expect(
+    dialog.getByText("28 saved versions", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText("Imported versions count toward the 50-version limit.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const [without] = await Promise.all([
+    page.waitForEvent("download"),
+    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+  ]);
+  expect(without.suggestedFilename()).toBe("owned-sandbox-history.json");
+  const withoutPath = await without.path();
+  if (!withoutPath) throw new Error("A completed download is required");
+  const withoutHistory: unknown = JSON.parse(
+    await readFile(withoutPath, "utf8"),
+  );
+  expect(withoutHistory).toEqual(document);
+  expect(withoutHistory).not.toHaveProperty("versions");
+  await include.check();
+  await captureS06Review(page, "s05-export-history");
+  const [withHistory] = await Promise.all([
+    page.waitForEvent("download"),
+    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+  ]);
+  expect(withHistory.suggestedFilename()).toBe("owned-sandbox-history.json");
+  const withPath = await withHistory.path();
+  if (!withPath) throw new Error("A completed download is required");
+  const exported: unknown = JSON.parse(await readFile(withPath, "utf8"));
+  expect(exported).toEqual({ ...document, versions: snapshots });
+  expect(exported).toHaveProperty("versions", snapshots);
+  expect(exports).toEqual(["false", "true"]);
+  expect(writes).toBe(0);
+  expect(sandbox.documentWrites()).toBe(0);
+  expect(sandbox.document()).toEqual(document);
+});
+
+test("S05 export count loads without guessing or enabling a premature export", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const delay = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    versions: capacityVersions(1),
+    versionListDelay: delay,
+  });
+  await page
+    .getByRole("button", { name: "More Sandbox actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Import or export", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Import or export",
+    exact: true,
+  });
+  try {
+    await expect(
+      dialog.getByText("Loading version count…", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Export JSON", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      dialog.getByText("0 saved versions", { exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    release();
+  }
+  await expect(
+    dialog.getByText("2 saved versions", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+  ).toBeEnabled();
+});
+
+test("S05 export count failure stays unavailable until an authoritative Retry", async ({
+  page,
+}) => {
+  const options = {
+    versions: capacityVersions(1),
+    versionListFailure: 503 as number | undefined,
+  };
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, options);
+  await page
+    .getByRole("button", { name: "More Sandbox actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Import or export", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Import or export",
+    exact: true,
+  });
+  await expect(
+    dialog.getByText("Version count is unavailable.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText("0 saved versions", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+  ).toBeDisabled();
+  options.versionListFailure = undefined;
+  await dialog
+    .getByRole("button", { name: "Retry version count", exact: true })
+    .click();
+  await expect(
+    dialog.getByText("2 saved versions", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+  ).toBeEnabled();
+});
+
+for (const failure of ["unavailable", "malformed"] as const) {
+  test(`S05 ${failure} export keeps history selection and produces no download`, async ({
+    page,
+  }) => {
+    let downloads = 0;
+    const requests: string[] = [];
+    page.on("download", () => {
+      downloads += 1;
+    });
+    await page.route("**/api/sandbox/export?*", (route) => {
+      requests.push(
+        new URL(route.request().url()).searchParams.get("includeVersions") ??
+          "missing",
+      );
+      return route.fulfill(
+        failure === "unavailable"
+          ? { status: 503, json: { detail: "Private export canary" } }
+          : { json: { kind: "not-sandbox" } },
+      );
+    });
+    const sandbox = await openAuthenticatedSandbox(
+      page,
+      configuredSandboxDesign,
+      { versions: capacityVersions(1) },
+    );
+    await page
+      .getByRole("button", { name: "More Sandbox actions", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Import or export", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", {
+      name: "Import or export",
+      exact: true,
+    });
+    const include = dialog.getByRole("checkbox", {
+      name: "Include version history",
+      exact: true,
+    });
+    await expect(include).toBeVisible();
+    await include.check();
+    await dialog
+      .getByRole("button", { name: "Export JSON", exact: true })
+      .click();
+    await expect(
+      dialog.getByText("Export could not be completed. Try again.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(include).toBeChecked();
+    await expect(
+      dialog.getByRole("button", { name: "Export JSON", exact: true }),
+    ).toBeEnabled();
+    expect(downloads).toBe(0);
+    expect(requests).toEqual(["true"]);
+    expect(sandbox.documentWrites()).toBe(0);
+    await expect(page.getByText("Private export canary")).toHaveCount(0);
+  });
+}
+
+test("S05 pending export is single and cancellation refuses its late download", async ({
+  page,
+}) => {
+  let release!: () => void;
+  let finished = false;
+  let requests = 0;
+  let downloads = 0;
+  const delay = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const document = sandboxDocumentFromDesign(configuredSandboxDesign);
+  const bundle = {
+    ...document,
+    versions: capacityVersions(1).map((version) => ({
+      id: version.id,
+      label: version.label,
+      kind: version.kind,
+      document: {
+        design: document.design,
+        triggers: document.triggers,
+        scenarios: document.scenarios,
+      },
+      published: version.kind === "published",
+      date: version.createdAt,
+    })),
+  };
+  page.on("download", () => {
+    downloads += 1;
+  });
+  await page.route("**/api/sandbox/export?*", async (route) => {
+    requests += 1;
+    await delay;
+    await route.fulfill({ json: bundle });
+    finished = true;
+  });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    versions: capacityVersions(1),
+  });
+  await page
+    .getByRole("button", { name: "More Sandbox actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Import or export", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Import or export",
+    exact: true,
+  });
+  const include = dialog.getByRole("checkbox", {
+    name: "Include version history",
+    exact: true,
+  });
+  await expect(include).toBeVisible();
+  await include.check();
+  await dialog
+    .getByRole("button", { name: "Export JSON", exact: true })
+    .click();
+  try {
+    await expect.poll(() => requests).toBe(1);
+    await expect(
+      dialog.getByRole("button", { name: "Exporting…", exact: true }),
+    ).toBeDisabled();
+    await expect(include).toBeDisabled();
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(dialog).toBeHidden();
+  } finally {
+    release();
+  }
+  await expect.poll(() => finished).toBe(true);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+  );
+  expect(downloads).toBe(0);
+  expect(requests).toBe(1);
+  await page
+    .getByRole("button", { name: "More Sandbox actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Import or export", exact: true })
+    .click();
+  await expect(include).toBeChecked();
+  await expect(
+    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+  ).toBeEnabled();
+});
+
+for (const transition of ["unmount", "account"] as const) {
+  test(`S05 export ignores a late result after ${transition} transition`, async ({
+    page,
+  }) => {
+    let release!: () => void;
+    let finished = false;
+    let started = false;
+    let downloads = 0;
+    const delay = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const document = sandboxDocumentFromDesign(configuredSandboxDesign);
+    const bundle = {
+      ...document,
+      versions: capacityVersions(1).map((version) => ({
+        id: version.id,
+        label: version.label,
+        kind: version.kind,
+        document: {
+          design: document.design,
+          triggers: document.triggers,
+          scenarios: document.scenarios,
+        },
+        published: version.kind === "published",
+        date: version.createdAt,
+      })),
+    };
+    page.on("download", () => {
+      downloads += 1;
+    });
+    await page.route("**/api/sandbox/export?*", async (route) => {
+      started = true;
+      await delay;
+      await route.fulfill({ json: bundle });
+      finished = true;
+    });
+    await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+      versions: capacityVersions(1),
+    });
+    if (transition === "unmount") {
+      await page
+        .getByRole("link", { name: "Search workspace", exact: true })
+        .click();
+      await expect(page).toHaveURL(/\/platform/);
+      const build = page.getByRole("link", { name: "Build", exact: true });
+      if (!(await build.isVisible()))
+        await page
+          .getByRole("button", { name: "Sandbox", exact: true })
+          .click();
+      await build.click();
+      await expect(
+        page.getByRole("heading", { name: "Sandbox", exact: true }),
+      ).toBeVisible();
+    }
+    await page
+      .getByRole("button", { name: "More Sandbox actions", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Import or export", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", {
+      name: "Import or export",
+      exact: true,
+    });
+    await expect(
+      dialog.getByRole("checkbox", {
+        name: "Include version history",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await dialog
+      .getByRole("checkbox", { name: "Include version history", exact: true })
+      .check();
+    await dialog
+      .getByRole("button", { name: "Export JSON", exact: true })
+      .click();
+    try {
+      await expect.poll(() => started).toBe(true);
+      if (transition === "unmount") {
+        await page.goBack();
+        await expect(page).toHaveURL(/\/platform/);
+      } else {
+        const userB = "00000000-0000-4000-8000-000000000002";
+        await page.route("**/api/auth/session", (route) =>
+          route.fulfill({
+            json: {
+              authenticated: true,
+              user_id: userB,
+              setup_required: false,
+            },
+          }),
+        );
+        await page.route("**/api/auth/me", (route) =>
+          route.fulfill({ json: { id: userB, role: "admin", access: [] } }),
+        );
+        await page.evaluate(() =>
+          window.dispatchEvent(new FocusEvent("focus")),
+        );
+        await expect(dialog).toBeHidden();
+        await page
+          .getByRole("button", { name: "More Sandbox actions", exact: true })
+          .click();
+        await page
+          .getByRole("menuitem", { name: "Import or export", exact: true })
+          .click();
+        await expect(
+          dialog.getByRole("checkbox", {
+            name: "Include version history",
+            exact: true,
+          }),
+        ).not.toBeChecked();
+      }
+    } finally {
+      release();
+    }
+    await expect.poll(() => finished).toBe(true);
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+    expect(downloads).toBe(0);
+  });
+}
+
+test("S05 export accepts 50 mutable snapshots plus a publication as complete downloadable history", async ({
+  page,
+}) => {
+  await prepareS06Review(page);
+  const captureDirectory = process.env.S06_CAPTURE_DIR;
+  let releaseCapture!: () => void;
+  const captureDelay = captureDirectory
+    ? new Promise<void>((resolve) => {
+        releaseCapture = resolve;
+      })
+    : Promise.resolve();
+  const versions = capacityVersions(50);
+  const document = sandboxDocumentFromDesign(configuredSandboxDesign);
+  const bundle = {
+    ...document,
+    versions: versions.map((version) => ({
+      id: version.id,
+      label: version.label,
+      kind: version.kind,
+      document: {
+        design: document.design,
+        triggers: document.triggers,
+        scenarios: document.scenarios,
+      },
+      published: version.kind === "published",
+      date: version.createdAt,
+    })),
+  };
+  let requests = 0;
+  await page.route("**/api/sandbox/export?*", async (route) => {
+    requests += 1;
+    expect(
+      new URL(route.request().url()).searchParams.get("includeVersions"),
+    ).toBe("true");
+    await captureDelay;
+    return route.fulfill({
+      headers: {
+        "Content-Disposition": 'attachment; filename="owned-history-51.json"',
+      },
+      json: bundle,
+    });
+  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { versions },
+  );
+  await page
+    .getByRole("button", { name: "More Sandbox actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Import or export", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Import or export",
+    exact: true,
+  });
+  await expect(
+    dialog.getByText("51 saved versions", { exact: true }),
+  ).toBeVisible();
+  await dialog
+    .getByRole("checkbox", { name: "Include version history", exact: true })
+    .check();
+  await captureS06Review(page, "s05-export-history-ready");
+  if (captureDirectory) {
+    await dialog
+      .getByRole("button", { name: "Export JSON", exact: true })
+      .click();
+    try {
+      await expect(
+        dialog.getByRole("button", { name: "Exporting…", exact: true }),
+      ).toBeDisabled();
+      await captureS06Review(page, "s05-export-history-pending");
+    } catch (error) {
+      releaseCapture();
+      throw error;
+    }
+  }
+  const completedDownload = page.waitForEvent("download", { timeout: 5_000 });
+  if (captureDirectory) releaseCapture();
+  else
+    await dialog
+      .getByRole("button", { name: "Export JSON", exact: true })
+      .click();
+  const download = await completedDownload;
+  expect(download.suggestedFilename()).toBe("owned-history-51.json");
+  const path = await download.path();
+  if (!path) throw new Error("A completed history download is required");
+  const actualBytes = await readFile(path);
+  if (captureDirectory) {
+    await mkdir(captureDirectory, { recursive: true });
+    await writeFile(
+      join(
+        captureDirectory,
+        `downloaded-history-51-${process.env.S06_CAPTURE_THEME === "dark" ? "dark" : "light"}.json`,
+      ),
+      actualBytes,
+    );
+  }
+  const downloaded: unknown = JSON.parse(actualBytes.toString("utf8"));
+  expect(downloaded).toEqual(bundle);
+  expect(downloaded).toHaveProperty("versions", bundle.versions);
+  expect(bundle.versions).toHaveLength(51);
+  expect(requests).toBe(1);
+  expect(sandbox.documentWrites()).toBe(0);
+});
+
+test("S05 import admission still refuses more than 50 snapshots before any write", async ({
+  page,
+}) => {
+  const versions = capacityVersions(50);
+  const document = sandboxDocumentFromDesign(configuredSandboxDesign);
+  const bundle = {
+    ...document,
+    versions: versions.map((version) => ({
+      id: version.id,
+      label: version.label,
+      kind: version.kind,
+      document: {
+        design: document.design,
+        triggers: document.triggers,
+        scenarios: document.scenarios,
+      },
+      published: version.kind === "published",
+      date: version.createdAt,
+    })),
+  };
+  let imports = 0;
+  await page.route("**/api/sandbox/imports", (route) => {
+    imports += 1;
+    return route.fulfill({ status: 500, json: {} });
+  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { versions },
+  );
+  await page
+    .getByRole("button", { name: "More Sandbox actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Import or export", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Import or export",
+    exact: true,
+  });
+  const [chooser] = await Promise.all([
+    page.waitForEvent("filechooser"),
+    dialog.getByRole("button", { name: "Choose JSON", exact: true }).click(),
+  ]);
+  await chooser.setFiles({
+    name: "owned-history-51.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(bundle)),
+  });
+  await expect(
+    dialog.getByText("Version limit exceeded", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Import draft", exact: true }),
+  ).toHaveCount(0);
+  expect(imports).toBe(0);
+  expect(sandbox.documentWrites()).toBe(0);
 });

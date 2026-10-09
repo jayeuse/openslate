@@ -256,7 +256,8 @@ def _bundle_from_board(
     resolved = resolve_portable_board(db, bundle)
     if any(
         mapped.module_id != original.module_id
-        or mapped.config.model_dump(mode="json") != configs[original.id].model_dump(mode="json")
+        or mapped.config.model_dump(mode="json", exclude={"refresh"})
+        != configs[original.id].model_dump(mode="json", exclude={"refresh"})
         for mapped, original in zip(resolved.widgets, widgets, strict=True)
     ):
         raise _source_unavailable()
@@ -282,7 +283,7 @@ def _create_project_board(db: Session, bundle: PortableBoardBundle) -> Board:
                     name=spec.name,
                     widget_type=spec.widget_type,
                     module_id=spec.module_id,
-                    config=spec.config.model_dump(mode="json"),
+                    config=spec.config.model_dump(mode="json", exclude={"refresh"}),
                 )
             )
         db.commit()

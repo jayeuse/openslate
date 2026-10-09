@@ -211,6 +211,20 @@ export function restoreAccessUser(
   });
 }
 
+/** Complete a pending invitation that has not yet been sent. */
+export async function reconcileAccessInvitation(
+  userId: string,
+  options: RequestOptions = {},
+): Promise<AccessUser> {
+  const user = await apiFetch(
+    `/auth/invitations/${encodeURIComponent(userId)}/reconcile`,
+    userSchema,
+    { method: "POST", body: JSON.stringify({}), signal: options.signal },
+  );
+  if (user.id !== userId) throw new ApiContractError();
+  return user;
+}
+
 /** Request another Supabase invitation email. */
 export function resendAccessInvitation(
   userId: string,

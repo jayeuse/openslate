@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../../src/lib/api";
 import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import { installOpenViewEventSource } from "./helpers/openview-event-source";
 import type { BoardPostPage } from "../../src/components/systems/boards/adapters/board-posts-api";
 import { ServerBoardPostReaderContent } from "../../src/components/systems/boards/components/server-board-post-feed-display";
 import {
@@ -1778,3 +1779,546 @@ test("a transient label refresh retains the current byline and retries its bound
   await expect(feed.getByText("Avery renamed", { exact: true })).toBeVisible();
   await expect(page.getByText("Avery", { exact: true })).toHaveCount(0);
 });
+
+// S05 uses the existing rendered Board and a stateful client boundary. The
+// editable parent can be scheduled while the independently displayed version
+// remains published; revisions always come from the current server read.
+async function installS05PostApi(page: Page, manage = true) {
+  await installOpenViewEventSource(page);
+  const reader = await installPostBrowserApi(page);
+  reader.setViewerId(authorId);
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill({
+      json: {
+        id: "00000000-0000-4000-8000-000000000102",
+        display_name: "OpenSlate",
+        legal_name: null,
+        description: null,
+        contact_email: null,
+        contact_phone: null,
+        postal_address: null,
+        logo_file_id: null,
+        locale: "en-US",
+        timezone: "UTC",
+        mark: "OS",
+        currency: "PHP",
+        week_start: "monday",
+        business_hours: "09:00–18:00",
+        theme: "slate",
+        revision: 1,
+        today: "2035-06-01",
+        purge_enabled: false,
+      },
+    }),
+  );
+  let boardRevision = 4;
+  let working: Record<string, unknown> | null = null;
+  let published: Record<string, unknown>[] = [];
+  let failure = 0;
+  let manageStatus = "scheduled";
+  const writes: {
+    method: string;
+    path: string;
+    body: Record<string, unknown>;
+  }[] = [];
+  const prefix = `/api/boards/${boardId}`;
+  await page.route(`**/api/users/${authorId}/preferences`, (route) =>
+    route.fulfill({
+      json: {
+        user_id: authorId,
+        theme: "light",
+        appearance: { motion: "reduce", keyboard_shortcuts: true },
+      },
+    }),
+  );
+  await page.route("**/api/boards**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname;
+    const reply = (json: unknown, status = 200) =>
+      route.fulfill({ status, json });
+    const board = {
+      ...browserBoard,
+      revision: boardRevision,
+      level: manage ? "manage" : "write",
+    };
+    if (path === "/api/boards")
+      return reply({
+        items: [board],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      });
+    if (path === prefix) return reply(board);
+    if (path === `${prefix}/my-access`)
+      return reply({ level: board.level, read: true, write: true, manage });
+    if (path === `${prefix}/posts` && request.method() === "GET") {
+      const view = url.searchParams.get("view");
+      const items = view === "published" ? published : working ? [working] : [];
+      return reply({ ...wirePage(items), board_revision: boardRevision });
+    }
+    if (path === `${prefix}/posts/${postId}/manage-state`)
+      return reply({
+        id: postId,
+        status: manageStatus,
+        post_revision: 9,
+        board_revision: boardRevision,
+        published_before: true,
+      });
+    if (path === `${prefix}/posts/${postId}` && request.method() === "GET")
+      return reply(
+        url.searchParams.get("view") === "published" ? published[0] : working,
+      );
+    if (path.endsWith("/attachments") || path.endsWith("/record-links"))
+      return reply({
+        items: [],
+        limit: Number(url.searchParams.get("limit") ?? 25),
+        offset: Number(url.searchParams.get("offset") ?? 0),
+        has_more: false,
+      });
+    if (
+      ["POST", "PATCH"].includes(request.method()) &&
+      path.startsWith(`${prefix}/posts`)
+    ) {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      writes.push({ method: request.method(), path, body });
+      if (failure)
+        return reply(
+          {
+            detail: {
+              code: failure === 409 ? "stale_post_revision" : "post_expired",
+              message: "Unavailable",
+            },
+          },
+          failure,
+        );
+      boardRevision += 1;
+      if (path.endsWith("/unpublish")) {
+        published = [];
+        working = {
+          ...browserPost,
+          author_id: authorId,
+          status: "draft",
+          publication_number: null,
+          published_at: null,
+          publish_at: null,
+          post_revision: 10,
+          board_revision: boardRevision,
+        };
+      } else {
+        working = {
+          ...browserPost,
+          author_id: authorId,
+          status: "draft",
+          publication_number: null,
+          published_at: null,
+          publish_at: null,
+          pinned: false,
+          ...working,
+          ...body,
+          id: postId,
+          board_id: boardId,
+          post_revision: Number(working?.post_revision ?? 0) + 1,
+          board_revision: boardRevision,
+          updated_at: "2035-06-01T00:00:00Z",
+        };
+        delete working.boardRevision;
+      }
+      return reply(
+        {
+          id: postId,
+          post_revision: working?.post_revision,
+          board_revision: boardRevision,
+        },
+        request.method() === "POST" && path === `${prefix}/posts` ? 201 : 200,
+      );
+    }
+    return route.fallback();
+  });
+  return {
+    writes,
+    setFailure(status: number) {
+      failure = status;
+    },
+    setWorking(post: Record<string, unknown>) {
+      working = post;
+    },
+    setPublished(post: Record<string, unknown>) {
+      published = [post];
+    },
+    setManageStatus(status: "draft" | "scheduled") {
+      manageStatus = status;
+    },
+  };
+}
+
+async function s05Capture(page: Page, name: string, anchor?: Locator) {
+  if (!process.env.OPENVIEW_CAPTURE_DIR) return;
+  await page.addStyleTag({
+    content: "nextjs-portal { display: none !important; }",
+  });
+  await page.evaluate(() => document.fonts.ready);
+  for (const mode of ["light", "dark"] as const) {
+    await page.evaluate(applyAppearancePreferences, {
+      mode,
+      reduceMotion: true,
+    });
+    await captureOpenViewReview(page, `s05-${name}-${mode}`, {
+      beforeScreenshot: async () => {
+        if (anchor) {
+          await anchor.evaluate((element) =>
+            element.scrollIntoView({ block: "center", behavior: "instant" }),
+          );
+          await expect(anchor).toBeInViewport();
+        }
+        await expect(page.locator("html")).toHaveAttribute(
+          "data-motion",
+          "reduced",
+        );
+      },
+    });
+  }
+}
+
+async function openS05Drafts(page: Page) {
+  await page.getByRole("button", { name: "More post actions" }).click();
+  await page.getByRole("menuitem", { name: "Edit drafts" }).click();
+  return page.getByRole("dialog", { name: "Post editor" });
+}
+
+const s05Draft = {
+  ...browserPost,
+  author_id: authorId,
+  title: "Pinned working draft",
+  body: "Original working text",
+  status: "draft",
+  publish_at: null,
+  published_at: null,
+  publication_number: null,
+  post_revision: 2,
+  pinned: true,
+  expires_at: "2035-06-02T04:30:00Z",
+};
+
+test.describe("S05 local post expiry", () => {
+  test.use({ timezoneId: "Asia/Manila" });
+  test("S05 manager creates, reloads, edits and clears pin and local expiry", async ({
+    page,
+  }) => {
+    const api = await installS05PostApi(page);
+    await page.clock.setFixedTime(new Date("2035-06-01T00:00:00Z"));
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    await page.getByRole("button", { name: "New post", exact: true }).click();
+    const editor = page.getByRole("dialog", { name: "Post editor" });
+    await editor
+      .getByLabel("Title", { exact: true })
+      .fill("Pinned working draft");
+    await editor
+      .getByLabel("Message", { exact: true })
+      .fill("Original working text");
+    await editor.getByRole("checkbox", { name: "Pin to top" }).check();
+    await editor
+      .getByLabel("Expires on", { exact: true })
+      .fill("2035-06-02T12:30");
+    await expect(editor).toContainText("Asia/Manila");
+    await editor
+      .getByRole("button", { name: "Save draft", exact: true })
+      .click();
+    await expect(
+      editor.getByText("Draft saved.", { exact: true }),
+    ).toBeVisible();
+    expect(api.writes[0]?.body).toMatchObject({
+      pinned: true,
+      expires_at: "2035-06-02T04:30:00.000Z",
+    });
+    await editor.getByRole("button", { name: "Close", exact: true }).click();
+    await page.reload();
+    const reopened = await openS05Drafts(page);
+    await reopened
+      .getByRole("button", { name: "Pinned working draft", exact: true })
+      .click();
+    await expect(
+      reopened.getByRole("checkbox", { name: "Pin to top" }),
+    ).toBeChecked();
+    await expect(
+      reopened.getByLabel("Expires on", { exact: true }),
+    ).toHaveValue("2035-06-02T12:30");
+    await s05Capture(
+      page,
+      "post-editor",
+      reopened.getByLabel("Expires on", { exact: true }),
+    );
+    await reopened.getByRole("checkbox", { name: "Pin to top" }).uncheck();
+    await reopened.getByLabel("Expires on", { exact: true }).fill("");
+    await reopened
+      .getByRole("button", { name: "Save draft", exact: true })
+      .click();
+    await expect(
+      reopened.getByText("Draft saved.", { exact: true }),
+    ).toBeVisible();
+    expect(api.writes[1]?.body).toMatchObject({
+      pinned: false,
+      expires_at: null,
+    });
+    await expect(
+      reopened.getByLabel("Expires on", { exact: true }),
+    ).toHaveValue("");
+  });
+  test("S05 nonmanager preserves an existing pin while editing their own post", async ({
+    page,
+  }) => {
+    const api = await installS05PostApi(page, false);
+    api.setWorking(s05Draft);
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    const editor = await openS05Drafts(page);
+    await editor
+      .getByRole("button", { name: s05Draft.title, exact: true })
+      .click();
+    await expect(
+      editor.getByRole("checkbox", { name: "Pin to top" }),
+    ).toHaveCount(0);
+    await editor.getByLabel("Message", { exact: true }).fill("Own edited text");
+    await editor
+      .getByRole("button", { name: "Save draft", exact: true })
+      .click();
+    await expect(
+      editor.getByText("Draft saved.", { exact: true }),
+    ).toBeVisible();
+    expect(api.writes[0]?.body).not.toHaveProperty("pinned");
+    expect(api.writes[0]?.body).not.toHaveProperty("expires_at");
+  });
+  for (const failure of [409, 503]) {
+    test(`S05 pin and expiry survive save refusal ${failure} and draft refresh`, async ({
+      page,
+    }) => {
+      const api = await installS05PostApi(page);
+      api.setWorking(s05Draft);
+      api.setFailure(failure);
+      await page.goto(`/boards?board=${boardId}&section=posts`);
+      const editor = await openS05Drafts(page);
+      await editor
+        .getByRole("button", { name: s05Draft.title, exact: true })
+        .click();
+      await editor.getByRole("checkbox", { name: "Pin to top" }).uncheck();
+      await editor
+        .getByLabel("Expires on", { exact: true })
+        .fill("2035-06-03T12:30");
+      await editor
+        .getByRole("button", { name: "Save draft", exact: true })
+        .click();
+      await expect(editor.getByRole("alert").first()).toBeVisible();
+      await editor
+        .getByRole("button", { name: "Refresh posts", exact: true })
+        .click();
+      await expect(
+        editor.getByLabel("Expires on", { exact: true }),
+      ).toHaveValue("2035-06-03T12:30");
+      await expect(
+        editor.getByRole("checkbox", { name: "Pin to top" }),
+      ).not.toBeChecked();
+      await expect(
+        editor.getByRole("button", { name: "New post", exact: true }),
+      ).toBeDisabled();
+      await expect(
+        editor.getByText("Draft saved.", { exact: true }),
+      ).toHaveCount(0);
+    });
+  }
+  test("S05 schedule at expiry is refused and expired publication failure retains the draft", async ({
+    page,
+  }) => {
+    const api = await installS05PostApi(page);
+    api.setWorking(s05Draft);
+    await page.clock.setFixedTime(new Date("2035-06-01T00:00:00Z"));
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    const editor = await openS05Drafts(page);
+    await editor
+      .getByRole("button", { name: s05Draft.title, exact: true })
+      .click();
+    await editor
+      .getByLabel("Publication date and time")
+      .fill("2035-06-02T12:30");
+    await editor
+      .getByRole("button", { name: "Schedule publication", exact: true })
+      .click();
+    await expect(
+      editor.getByText("Choose a publication time before this post expires."),
+    ).toBeVisible();
+    expect(api.writes).toHaveLength(0);
+    await editor.getByLabel("Publication date and time").fill("");
+    api.setFailure(422);
+    await editor
+      .getByRole("button", { name: "Publish now", exact: true })
+      .click();
+    await expect(editor.getByRole("alert").first()).toBeVisible();
+    await expect(editor.getByLabel("Expires on", { exact: true })).toHaveValue(
+      "2035-06-02T12:30",
+    );
+    await expect(
+      editor.getByText("Published successfully.", { exact: true }),
+    ).toHaveCount(0);
+  });
+});
+
+test.describe("S05 unavailable local expiry", () => {
+  test.use({ timezoneId: "America/New_York" });
+  test("S05 skipped local clock time has a linked error and sends no save", async ({
+    page,
+  }) => {
+    const api = await installS05PostApi(page);
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    await page.getByRole("button", { name: "New post", exact: true }).click();
+    const editor = page.getByRole("dialog", { name: "Post editor" });
+    await editor
+      .getByLabel("Title", { exact: true })
+      .fill("Clock change draft");
+    await editor
+      .getByLabel("Message", { exact: true })
+      .fill("Keep these unsaved fields.");
+    const expiry = editor.getByLabel("Expires on", { exact: true });
+    await expiry.fill("2035-03-11T02:30");
+    await editor
+      .getByRole("button", { name: "Save draft", exact: true })
+      .click();
+    await expect(expiry).toHaveAttribute("aria-invalid", "true");
+    const errorId = await expiry.getAttribute("aria-describedby");
+    expect(errorId).toContain("board-post-expiry-error");
+    await expect(
+      editor.getByText(
+        "Choose a valid local expiry time. Clock changes can make some local times unavailable.",
+      ),
+    ).toBeVisible();
+    expect(api.writes).toHaveLength(0);
+  });
+});
+
+test("S05 source-returned expired publication shows expiry in the feed and reader", async ({
+  page,
+}) => {
+  const api = await installS05PostApi(page);
+  await page.clock.setFixedTime(new Date("2035-06-03T00:00:00Z"));
+  api.setPublished({ ...browserPost, expires_at: "2035-06-02T04:30:00Z" });
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const feed = page.getByRole("region", {
+    name: "Published posts",
+    exact: true,
+  });
+  await expect(feed.getByText("Expired", { exact: true })).toBeVisible();
+  await expect(feed.getByText(/Expired on.*Jun 2, 2035/)).toBeVisible();
+  await s05Capture(page, "expired-feed");
+  await feed.getByRole("button", { name: "Open post", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: browserPost.title }),
+  ).toContainText(/Expired on.*Jun 2, 2035/);
+});
+
+for (const replacement of ["draft", "scheduled"] as const) {
+  test(`S05 manager unpublishes the displayed version with a ${replacement} replacement`, async ({
+    page,
+  }) => {
+    const api = await installS05PostApi(page);
+    api.setPublished(browserPost);
+    api.setManageStatus(replacement);
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    await page
+      .getByRole("button", { name: "Manage posts", exact: true })
+      .click();
+    const manager = page.getByRole("dialog", {
+      name: "Manage posts",
+      exact: true,
+    });
+    await manager
+      .getByRole("button", {
+        name: `Unpublish post ${browserPost.title}`,
+        exact: true,
+      })
+      .click();
+    const confirmation = page.getByRole("alertdialog", {
+      name: "Unpublish post?",
+      exact: true,
+    });
+    await expect(confirmation).toContainText("scheduled replacement");
+    await s05Capture(page, "unpublish-confirmation");
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route(
+      `**/api/boards/${boardId}/posts/${postId}/unpublish`,
+      async (route) => {
+        await held;
+        await route.fallback();
+      },
+    );
+    const entered = page.waitForRequest(
+      `**/api/boards/${boardId}/posts/${postId}/unpublish`,
+    );
+    await confirmation
+      .getByRole("button", { name: "Unpublish post", exact: true })
+      .click();
+    await entered;
+    await expect(
+      confirmation.getByRole("button", { name: "Unpublish post", exact: true }),
+    ).toBeDisabled();
+    release();
+    await expect(
+      manager.getByText("Post unpublished.", { exact: true }),
+    ).toBeVisible();
+    expect(api.writes).toHaveLength(1);
+    expect(api.writes[0]?.body).toEqual({
+      board_revision: 4,
+      post_revision: 9,
+    });
+    await expect(
+      manager.getByRole("button", {
+        name: `Unpublish post ${browserPost.title}`,
+        exact: true,
+      }),
+    ).toHaveCount(0);
+  });
+}
+for (const failure of [409, 403, 503]) {
+  test(`S05 unpublish refusal ${failure} never claims success`, async ({
+    page,
+  }) => {
+    const api = await installS05PostApi(page);
+    api.setPublished(browserPost);
+    api.setFailure(failure);
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    await page
+      .getByRole("button", { name: "Manage posts", exact: true })
+      .click();
+    const manager = page.getByRole("dialog", {
+      name: "Manage posts",
+      exact: true,
+    });
+    await manager
+      .getByRole("button", {
+        name: `Unpublish post ${browserPost.title}`,
+        exact: true,
+      })
+      .click();
+    await page
+      .getByRole("alertdialog", { name: "Unpublish post?", exact: true })
+      .getByRole("button", { name: "Unpublish post", exact: true })
+      .click();
+    await expect(
+      manager.getByText(
+        failure === 403
+          ? "Post management is unavailable for your current access."
+          : failure === 409
+            ? "This post changed elsewhere. Refresh posts before trying again."
+            : "Post request failed. Try again.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(
+      manager.getByText("Post unpublished.", { exact: true }),
+    ).toHaveCount(0);
+    expect(api.writes).toHaveLength(1);
+  });
+}

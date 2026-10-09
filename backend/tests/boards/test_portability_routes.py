@@ -123,8 +123,10 @@ def test_import_and_duplicate_are_administrator_only() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("refresh", ("manual", "one-minute", "five-minutes"))
 def test_import_creates_a_project_board_and_widgets_in_one_audited_transaction(
     integration_owner_db: Session,
+    refresh: str,
 ) -> None:
     db = integration_owner_db
     administrator, other = admin(db), member(db)
@@ -132,7 +134,9 @@ def test_import_creates_a_project_board_and_widgets_in_one_audited_transaction(
     db.commit()
     set_audit_actor(db, administrator.id)
 
-    response = _upload(client(db, administrator, router), _bundle(department))
+    bundle = _bundle(department)
+    bundle["configuration"]["widgets"][0]["config"]["refresh"] = refresh
+    response = _upload(client(db, administrator, router), bundle)
 
     assert response.status_code == 201, response.text
     board_id = UUID(response.json()["id"])
@@ -143,6 +147,7 @@ def test_import_creates_a_project_board_and_widgets_in_one_audited_transaction(
     widgets = db.scalars(select(BoardWidget).where(BoardWidget.board_id == board_id)).all()
     assert len(widgets) == 1
     assert widgets[0].module_id == module.id
+    assert "refresh" not in widgets[0].config
     assert widgets[0].config["fields"] == [{"field_id": str(field.id), "expected_type": "text"}]
     assert (
         db.scalar(
@@ -161,8 +166,10 @@ def test_import_creates_a_project_board_and_widgets_in_one_audited_transaction(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("refresh", ("manual", "one-minute", "five-minutes"))
 def test_managers_export_and_administrators_duplicate_every_widget(
     integration_owner_db: Session,
+    refresh: str,
 ) -> None:
     db = integration_owner_db
     administrator, manager, writer, outsider = admin(db), member(db), member(db), member(db)
@@ -189,6 +196,7 @@ def test_managers_export_and_administrators_duplicate_every_widget(
     grant(db, board, [writer], AccessLevel.WRITE)
     for position, name in enumerate(("First", "Second")):
         config = _config(field)
+        config["refresh"] = refresh
         config["fields"].append({"field_id": str(assignee_field.id), "expected_type": "user"})
         config["filters"] = [
             {
@@ -228,6 +236,9 @@ def test_managers_export_and_administrators_duplicate_every_widget(
     assert exported.headers["Cache-Control"] == "private, no-store"
     payload = exported.json()
     assert payload["version"] == 3
+    assert all(
+        widget["config"]["refresh"] == refresh for widget in payload["configuration"]["widgets"]
+    )
     assert set(payload["configuration"]) == {"name", "description", "widgets"}
     assert [widget["name"] for widget in payload["configuration"]["widgets"]] == [
         "First",
@@ -254,6 +265,11 @@ def test_managers_export_and_administrators_duplicate_every_widget(
     assert copied_board.scope == "project"
     copied = db.scalars(select(BoardWidget).where(BoardWidget.board_id == duplicate_id)).all()
     assert sorted(item.name for item in copied) == ["First", "Second"]
+    assert all("refresh" not in item.config for item in copied)
+    assert all(
+        item.config["refresh"] == refresh
+        for item in db.scalars(select(BoardWidget).where(BoardWidget.board_id == board.id))
+    )
     assert all(item.config["filters"][0]["value"] == option_id for item in copied)
     assert all(
         item.config["fields"][1]

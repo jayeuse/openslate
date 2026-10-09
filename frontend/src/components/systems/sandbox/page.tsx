@@ -1236,6 +1236,7 @@ export default function SandboxPage() {
               Review &amp; Publish
             </Button>
             <SandboxHeaderActions
+              versionsRefreshKey={versionsRefreshKey}
               versionCapacity={versionCapacity}
               pending={
                 loading ||

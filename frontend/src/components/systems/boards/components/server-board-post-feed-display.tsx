@@ -44,6 +44,15 @@ function postSummary(body: string): string {
   return `${characters.slice(0, SUMMARY_LIMIT).join("").trimEnd()}…`;
 }
 
+function expiryLabel(
+  timestamp: string,
+  region: WorkspaceRegion | undefined,
+  now: number,
+): string {
+  const expired = Date.parse(timestamp) <= now;
+  return `${expired ? "Expired" : "Expires"} on ${publishedLabel(timestamp, region)}`;
+}
+
 export function ServerBoardPostReaderContent({ post }: { post: BoardPost }) {
   return createElement(
     "div",
@@ -137,6 +146,8 @@ export function ServerBoardPostReader({
   onRetry?: () => void;
   finalFocus?: DialogContentProps["finalFocus"];
 }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => setNow(Date.now()), [post]);
   if (!post && !loading && !error) return null;
 
   const metadata = post
@@ -150,6 +161,13 @@ export function ServerBoardPostReader({
             )
           : null,
         post.pinned ? createElement("span", { key: "pinned" }, "Pinned") : null,
+        post.expiresAt
+          ? createElement(
+              "time",
+              { key: "expiry", dateTime: post.expiresAt },
+              expiryLabel(post.expiresAt, region, now),
+            )
+          : null,
         post.edited
           ? createElement(
               "button",
@@ -251,6 +269,8 @@ export function ServerBoardPostFeedDisplay({
   onReadPost?: (postId: string) => void;
   onHistoryAuthorChange?: (authorId: string | null) => void;
 }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => setNow(Date.now()), [page]);
   const [readerPostId, setReaderPostId] = useState<string | null>(null);
   const readerPost =
     page.items.find(
@@ -402,6 +422,23 @@ export function ServerBoardPostFeedDisplay({
                                 className: "mr-1 size-4",
                               }),
                               "Edited",
+                            )
+                          : null,
+                        item.expiresAt && Date.parse(item.expiresAt) <= now
+                          ? createElement(
+                              Badge,
+                              { variant: "secondary" },
+                              "Expired",
+                            )
+                          : null,
+                        item.expiresAt
+                          ? createElement(
+                              "time",
+                              {
+                                dateTime: item.expiresAt,
+                                className: "text-muted-foreground text-sm",
+                              },
+                              expiryLabel(item.expiresAt, region, now),
                             )
                           : null,
                       ),

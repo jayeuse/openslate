@@ -288,7 +288,6 @@ def resolve_portable_board(db: Session, bundle: PortableBoardBundle) -> Resolved
                 ),
                 visualization=widget.config.visualization,
                 size=widget.config.size,
-                refresh=widget.config.refresh,
                 pinned=widget.config.pinned,
             )
             widgets.append(

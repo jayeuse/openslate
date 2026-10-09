@@ -774,6 +774,25 @@ export async function mockAccessApi(
         json: { user: invited, delivery: "email" },
       });
     }
+    const reconcile = /^\/api\/auth\/invitations\/([^/]+)\/reconcile$/.exec(
+      path,
+    );
+    if (reconcile && method === "POST") {
+      const user = users.get(reconcile[1]);
+      if (
+        !user ||
+        user.is_deleted ||
+        user.status !== "pending" ||
+        user.invitation_sent_at !== null
+      )
+        return route.fulfill({
+          status: 409,
+          json: { detail: "Invitation unavailable" },
+        });
+      const sent = { ...user, invitation_sent_at: at(0), updated_at: at(0) };
+      users.set(user.id, sent);
+      return route.fulfill({ json: sent });
+    }
     const userMatch = /^\/api\/users\/([^/]+)(\/.*)?$/.exec(path);
     if (userMatch) {
       const [, id, rest = ""] = userMatch;

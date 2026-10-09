@@ -131,6 +131,63 @@ def test_managers_change_tiles_that_every_reader_sees(integration_owner_db: Sess
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("operation", ("create", "update", "duplicate"))
+def test_widget_writes_omit_refresh_and_preserve_the_live_response(
+    integration_owner_db: Session, operation: str
+) -> None:
+    db = integration_owner_db
+    manager = member(db)
+    board = project_board(db)
+    grant(db, board, [manager], AccessLevel.MANAGE)
+    module, field = _source(db, manager)
+    legacy_config = {
+        **_widget(module.id, field.id)["config"],
+        "refresh": "five-minutes",
+    }
+    source = BoardWidget(
+        board_id=board.id,
+        position=0,
+        name="Legacy requests",
+        widget_type="records",
+        module_id=module.id,
+        config=legacy_config,
+    )
+    db.add(source)
+    db.commit()
+    source_id = source.id
+    set_audit_actor(db, manager.id)
+    api = client(db, manager, router)
+    root = f"/api/boards/{board.id}/widgets"
+    payload = {"revision": board.revision, "widget": _widget(module.id, field.id)}
+    if operation == "create":
+        response = api.post(root, json=payload)
+    elif operation == "update":
+        payload["widget"]["config"]["refresh"] = "one-minute"
+        response = api.patch(f"{root}/{source_id}", json=payload)
+    else:
+        response = api.post(f"{root}/{source_id}/duplicate", json={"revision": board.revision})
+    assert response.status_code == (200 if operation == "update" else 201), response.text
+    returned = response.json()["widget"]
+    stored = db.get(BoardWidget, UUID(returned["id"]))
+    assert stored is not None
+    db.refresh(stored)
+    assert "refresh" not in stored.config
+    assert stored.config["fields"] == [{"field_id": str(field.id), "expected_type": "text"}]
+    assert returned["config"]["refresh"] == "manual"
+    if operation != "update":
+        db.refresh(source)
+        assert source.config == legacy_config
+    shown = api.get(root)
+    assert shown.status_code == 200
+    assert (
+        next(item for item in shown.json()["items"] if item["id"] == returned["id"])["config"][
+            "refresh"
+        ]
+        == "manual"
+    )
+
+
+@pytest.mark.integration
 def test_board_widgets_reject_invalid_sources_archives_and_limit(
     integration_owner_db: Session,
 ) -> None:

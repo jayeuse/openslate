@@ -109,6 +109,8 @@ class SandboxControlWire(VersionPruneWire):
         self.controls_started = False
         self.tests, self.created_test_ids = {}, []
         self.control_checkpoint_id, self.import_checkpoint_id = None, None
+        self.history_mode, self.history_export_calls = False, 0
+        self.history_export_state = None
 
     def prepare(self, context, journal_path):
         client = context.clients["admin"]
@@ -124,6 +126,8 @@ class SandboxControlWire(VersionPruneWire):
         self.controls_started = True
 
     def begin_action(self, action):
+        if action.values["operation"] == "export_import_document":
+            self.history_mode = True
         if action.values["operation"] in OPERATIONS:
             self.lifecycle.fault = self.control_fault
 
@@ -181,6 +185,71 @@ class SandboxControlWire(VersionPruneWire):
             return httpx.Response(200, json=self.tests[path.rsplit("/", 1)[1]])
         return None
 
+    def _history_export(self, request):
+        flag = request.url.params.get("includeVersions")
+        assert flag in {"true", "false"}
+        if flag == "false":
+            return None
+        self.history_export_calls += 1
+        self.history_export_state = (
+            copy.deepcopy(self.document),
+            self.revision,
+            copy.deepcopy(self.versions),
+        )
+        body = copy.deepcopy(self.document)
+        body["versions"] = [
+            {
+                "id": row["id"],
+                "label": row["label"],
+                "kind": row["kind"],
+                "document": {
+                    k: copy.deepcopy(v)
+                    for k, v in row["document"].items()
+                    if k not in {"kind", "schemaVersion"}
+                },
+                "published": row["kind"] == "published",
+                "date": row["createdAt"],
+                "note": row["note"],
+            }
+            for row in sorted(self.active(), key=lambda row: row["sequence"])
+        ]
+        fault = self.control_fault
+        versions = body["versions"]
+        if fault == "history_export_503":
+            return httpx.Response(503, json={"detail": "Unavailable"})
+        if fault == "history_export_missing":
+            body.pop("versions")
+        if fault == "history_export_null":
+            body["versions"] = None
+        if fault == "history_export_duplicate":
+            versions.append(copy.deepcopy(versions[0]))
+        if fault == "history_export_omitted":
+            versions.pop()
+        if fault == "history_export_foreign":
+            versions[0]["id"] = str(uuid4())
+        if fault == "history_export_order":
+            versions.reverse()
+        if fault == "history_export_label":
+            versions[0]["label"] = "Different history label"
+        if fault == "history_export_note":
+            versions[0]["note"] = "Different history note"
+        if fault == "history_export_published":
+            versions[0]["published"] = not versions[0]["published"]
+        if fault == "history_export_date":
+            versions[0]["date"] = "2035-01-01T00:00:00Z"
+        if fault == "history_export_invalid_date":
+            versions[0]["date"] = "not-a-date"
+        if fault == "history_export_snapshot":
+            versions[0]["document"]["design"]["departments"][0]["name"] = "Different snapshot"
+        if fault == "history_export_document":
+            body["design"]["departments"][0]["name"] = "Different current document"
+        if fault == "history_export_revision_race":
+            self.revision += 1
+        if fault == "history_export_history_race":
+            self.active()[0].update(note="Concurrent note", metadataRevision=2)
+        self.last_history_export = copy.deepcopy(body)
+        return httpx.Response(200, json=body)
+
     def route(self, request, request_id):
         method, path = request.method, request.url.path
         tests = self._tests(request)
@@ -188,6 +257,10 @@ class SandboxControlWire(VersionPruneWire):
             return tests
         if not self.controls_started:
             return super().route(request, request_id)
+        if self.history_mode and path == "/api/sandbox/export" and method == "GET":
+            exported = self._history_export(request)
+            if exported is not None:
+                return exported
         before_ids = {row["id"] for row in self.versions}
         lifecycle_response = self.lifecycle.handle(request)
         if lifecycle_response is not None:

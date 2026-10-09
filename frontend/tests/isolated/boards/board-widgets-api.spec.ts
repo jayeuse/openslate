@@ -169,7 +169,16 @@ test("widget create, patch, duplicate, reorder and delete send revisioned contra
         name: "Requests",
         widget_type: "records",
         module_id: moduleId,
-        config,
+        config: {
+          version: 1,
+          fields: config.fields,
+          filters: [],
+          logic: "and",
+          metric: null,
+          visualization: "bar",
+          size: "half",
+          pinned: false,
+        },
       },
     });
     expect(JSON.parse(String(mock.requests[2]?.init?.body))).toEqual({

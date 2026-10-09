@@ -40,6 +40,8 @@ const baseView: PostEditorView = {
   hasMore: false,
   selected: draft,
   form: {
+    pinned: false,
+    expiresLocal: "",
     title: draft.title,
     body: draft.body,
     links: [],
@@ -49,6 +51,7 @@ const baseView: PostEditorView = {
   scheduleLocal: "2035-06-01T12:30",
   deviceTimeZone: "Asia/Manila",
   scheduleError: null,
+  expiryError: null,
   conflict: false,
   pending: false,
   error: null,
@@ -134,6 +137,8 @@ test("scheduled drafts offer revision-safe rescheduling and cancellation", () =>
     drafts: [scheduled],
     selected: scheduled,
     form: {
+      pinned: false,
+      expiresLocal: "",
       title: scheduled.title,
       body: scheduled.body,
       links: [],
@@ -207,6 +212,8 @@ test("unsaved text cannot be displaced by switching drafts without an explicit d
     ...baseView,
     dirty: true,
     form: {
+      pinned: false,
+      expiresLocal: "",
       title: "Unsaved change",
       body: draft.body,
       links: [],
@@ -228,6 +235,8 @@ test("revision conflict keeps text visible but blocks an unreviewed overwrite", 
     dirty: true,
     conflict: true,
     form: {
+      pinned: false,
+      expiresLocal: "",
       title: "My competing edit",
       body: draft.body,
       links: [],
@@ -281,6 +290,8 @@ test("draft editor exposes bounded external-link editing and published links", (
     ...baseView,
     selected: { ...draft, links: linked },
     form: {
+      pinned: false,
+      expiresLocal: "",
       title: draft.title,
       body: draft.body,
       links: linked,

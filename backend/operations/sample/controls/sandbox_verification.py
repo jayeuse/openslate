@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from typing import Any, cast
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleClient
 from operations.sample.controls.sandbox import (
@@ -126,6 +128,13 @@ def verify_sandbox_controls(
     round_trip = results.get(import_action.key, {}) if import_action is not None else {}
     if round_trip.get("document_round_trip") is not True:
         issues.append("Sandbox export and import did not preserve the document")
+
+    from operations.sample.controls.sandbox_export import validate_history_export_reads
+
+    try:
+        validate_history_export_reads(round_trip.get("history_export_reads"), admin_id)
+    except (ValidationError, ValueError, TypeError, KeyError):
+        issues.append("Sandbox history export read proof was missing or changed")
 
     version_ids: dict[str, str] = {}
     for operation, key in (

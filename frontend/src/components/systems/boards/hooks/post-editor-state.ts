@@ -10,6 +10,8 @@ export type PostEditorForm = {
   title: string;
   body: string;
   links: BoardPost["links"];
+  pinned: boolean;
+  expiresLocal: string;
 };
 
 export type PostEditorState = {
@@ -29,6 +31,7 @@ export type PostEditorState = {
   notice: string | null;
   scheduleLocal: string;
   scheduleError: string | null;
+  expiryError: string | null;
 };
 
 export type PostScheduleTimeResult =
@@ -59,31 +62,30 @@ export function emptyState(
     notice: null,
     scheduleLocal: "",
     scheduleError: null,
+    expiryError: null,
   };
 }
 
-export function postLocalScheduleValue(item: BoardPost | null): string {
-  if (item?.status !== "scheduled" || item.publishAt === null) return "";
-  const date = new Date(item.publishAt);
+function localTimeValue(timestamp: string | null): string {
+  if (timestamp === null) return "";
+  const date = new Date(timestamp);
   if (!Number.isFinite(date.getTime())) return "";
   const pad = (value: number) => String(value).padStart(2, "0");
   const seconds = date.getSeconds() === 0 ? "" : `:${pad(date.getSeconds())}`;
   return `${String(date.getFullYear()).padStart(4, "0")}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}${seconds}`;
 }
 
-export function postScheduleTimeToUtc(
-  value: string,
-  now: number = Date.now(),
-  expiresAt: string | null = null,
-): PostScheduleTimeResult {
-  if (!value) return { ok: false, reason: "required" };
+export function postLocalScheduleValue(item: BoardPost | null): string {
+  return item?.status === "scheduled" ? localTimeValue(item.publishAt) : "";
+}
+
+function localTime(value: string): Date | null {
   const parts =
     /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(
       value,
     );
   const date = new Date(value);
-  if (!parts || !Number.isFinite(date.getTime()))
-    return { ok: false, reason: "invalid" };
+  if (!parts || !Number.isFinite(date.getTime())) return null;
   const [, year, month, day, hour, minute, second = "0", fraction = ""] = parts;
   const milliseconds = Number(fraction.padEnd(3, "0") || "0");
   if (
@@ -95,7 +97,25 @@ export function postScheduleTimeToUtc(
     date.getSeconds() !== Number(second) ||
     date.getMilliseconds() !== milliseconds
   )
-    return { ok: false, reason: "invalid" };
+    return null;
+  return date;
+}
+
+export function postExpiryTimeToUtc(value: string): string | null {
+  if (!value) return null;
+  const date = localTime(value);
+  if (!date) throw new Error("Invalid local expiry time");
+  return date.toISOString();
+}
+
+export function postScheduleTimeToUtc(
+  value: string,
+  now: number = Date.now(),
+  expiresAt: string | null = null,
+): PostScheduleTimeResult {
+  if (!value) return { ok: false, reason: "required" };
+  const date = localTime(value);
+  if (!date) return { ok: false, reason: "invalid" };
   if (date.getTime() <= now) return { ok: false, reason: "past" };
   const expiration = expiresAt === null ? Number.NaN : Date.parse(expiresAt);
   if (Number.isFinite(expiration) && date.getTime() >= expiration)
@@ -173,6 +193,8 @@ export function formFor(item: BoardPost): PostEditorForm {
     title: item.title,
     body: item.body,
     links: item.links.map((link) => ({ ...link })),
+    pinned: item.pinned,
+    expiresLocal: localTimeValue(item.expiresAt),
   };
 }
 
@@ -242,7 +264,9 @@ export function dirty(
   return (
     form.title !== original.title ||
     form.body !== original.body ||
-    !linksEqual(form.links, original.links)
+    !linksEqual(form.links, original.links) ||
+    form.pinned !== original.pinned ||
+    form.expiresLocal !== original.expiresLocal
   );
 }
 
@@ -261,6 +285,7 @@ export function postPatchForForm(
   selected: BoardPost,
   form: PostEditorForm,
   boardRevision: number,
+  canManage = false,
 ): BoardPostPatchInput {
   if (selected.postRevision === null) throw new Error("Not an editable draft");
   return {
@@ -269,6 +294,12 @@ export function postPatchForForm(
     title: form.title,
     body: form.body,
     ...(!linksEqual(form.links, selected.links) ? { links: form.links } : {}),
+    ...(canManage && form.pinned !== selected.pinned
+      ? { pinned: form.pinned }
+      : {}),
+    ...(form.expiresLocal !== localTimeValue(selected.expiresAt)
+      ? { expiresAt: postExpiryTimeToUtc(form.expiresLocal) }
+      : {}),
   };
 }
 

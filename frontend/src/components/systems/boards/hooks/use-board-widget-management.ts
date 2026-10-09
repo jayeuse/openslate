@@ -51,7 +51,6 @@ export function createSummaryWidgetInput(
       metric: null,
       visualization: "bar",
       size: "half",
-      refresh: "manual",
       pinned: false,
     },
   };
@@ -86,15 +85,17 @@ export function updateInputForWidgetDraft(
   draft: WidgetSettingsDraft,
 ): BoardWidgetInput {
   if (!sameWidgetVersion(widget, draft.source)) throw new ApiContractError();
+  const config: BoardWidgetInput["config"] = {
+    ...widget.config,
+    size: draft.size,
+    pinned: draft.pinned,
+  };
+  delete config.refresh;
   return {
     name: draft.name.trim(),
     widgetType: widget.widgetType,
     moduleId: widget.moduleId,
-    config: {
-      ...widget.config,
-      size: draft.size,
-      pinned: draft.pinned,
-    },
+    config,
   };
 }
 

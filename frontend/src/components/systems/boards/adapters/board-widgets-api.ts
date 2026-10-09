@@ -132,7 +132,7 @@ const inputConfigSchema = z
     metric: inputFieldSchema.nullable().default(null),
     visualization: z.enum(["bar", "line", "pie"]).default("bar"),
     size: z.enum(["half", "full"]).default("half"),
-    refresh: z.enum(["manual", "one-minute", "five-minutes"]).default("manual"),
+    refresh: z.enum(["manual", "one-minute", "five-minutes"]).optional(),
     pinned: z.boolean().default(false),
   })
   .strict()
@@ -314,7 +314,7 @@ function serializeWidget(widget: z.output<typeof inputWidgetSchema>) {
     widget_type: widget.widgetType,
     module_id: widget.moduleId,
     config: {
-      ...widget.config,
+      version: widget.config.version,
       fields: widget.config.fields.map(serializeField),
       filters: widget.config.filters.map((filter) => ({
         ...serializeField(filter),
@@ -322,6 +322,10 @@ function serializeWidget(widget: z.output<typeof inputWidgetSchema>) {
         value: filter.value ?? null,
       })),
       metric: widget.config.metric && serializeField(widget.config.metric),
+      logic: widget.config.logic,
+      visualization: widget.config.visualization,
+      size: widget.config.size,
+      pinned: widget.config.pinned,
     },
   };
 }

@@ -157,7 +157,7 @@ def _write(widget: BoardWidget, payload: BoardWidgetSpec) -> None:
     widget.name = payload.name
     widget.widget_type = payload.widget_type
     widget.module_id = payload.module_id
-    widget.config = payload.config.model_dump(mode="json")
+    widget.config = payload.config.model_dump(mode="json", exclude={"refresh"})
 
 
 def _commit(db: Session) -> None:
@@ -213,7 +213,7 @@ def create_board_widget(
         name=payload.widget.name,
         widget_type=payload.widget.widget_type,
         module_id=payload.widget.module_id,
-        config=payload.widget.config.model_dump(mode="json"),
+        config=payload.widget.config.model_dump(mode="json", exclude={"refresh"}),
     )
     db.add(widget)
     board.revision += 1
@@ -278,7 +278,7 @@ def duplicate_board_widget(
         name=source.name,
         widget_type=source.widget_type,
         module_id=source.module_id,
-        config=dict(source.config),
+        config={key: value for key, value in source.config.items() if key != "refresh"},
     )
     db.add(duplicate)
     board.revision += 1

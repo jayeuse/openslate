@@ -47,6 +47,8 @@ const ready: PostEditorState = {
   boardRevision: 2,
   selected: draft,
   form: {
+    pinned: false,
+    expiresLocal: "",
     title: "Unsaved title",
     body: "Unsaved body",
     links: [],
@@ -60,6 +62,7 @@ const ready: PostEditorState = {
   notice: null,
   scheduleLocal: "",
   scheduleError: null,
+  expiryError: null,
 };
 
 test("Board switch and permission denial clear all private editor content", () => {
@@ -99,7 +102,13 @@ test("revision conflict retains unsaved text and prevents false success", () => 
 test("a draft update never sends an audience", () => {
   const patch = postPatchForForm(
     draft,
-    { title: "Updated", body: "Changed body", links: [] },
+    {
+      title: "Updated",
+      body: "Changed body",
+      links: [],
+      pinned: false,
+      expiresLocal: "",
+    },
     6,
   );
   expect(patch).toEqual({
@@ -114,6 +123,8 @@ test("post links validate before save and omit untouched links from text-only ed
   const original = [{ label: "Runbook", url: "https://example.test/runbook" }];
   const linked = { ...draft, links: original };
   const form = {
+    pinned: false,
+    expiresLocal: "",
     title: "New title",
     body: draft.body,
     links: [...original],
@@ -195,6 +206,8 @@ test("a concurrent schedule edit conflicts without replacing the local time sele
     ...ready,
     selected,
     form: {
+      pinned: false,
+      expiresLocal: "",
       title: selected.title,
       body: selected.body,
       links: [],
@@ -298,6 +311,8 @@ test("clean refresh adopts the concurrent post edit and its revisions", () => {
     ...ready,
     pending: false,
     form: {
+      pinned: false,
+      expiresLocal: "",
       title: draft.title,
       body: draft.body,
       links: [],

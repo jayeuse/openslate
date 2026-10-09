@@ -1,7 +1,7 @@
 "use client";
 
 import type { Route } from "next";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -26,6 +26,7 @@ import {
 } from "../helpers/people";
 import {
   deleteAccessUser,
+  reconcileAccessInvitation,
   resendAccessInvitation,
   restoreAccessUser,
   revokeAccessInvitation,
@@ -35,7 +36,13 @@ import {
 import { ActionError } from "./editor-conflicts";
 
 type AccountAction =
-  "resend" | "revoke" | "disable" | "enable" | "delete" | "restore";
+  | "reconcile"
+  | "resend"
+  | "revoke"
+  | "disable"
+  | "enable"
+  | "delete"
+  | "restore";
 
 type ActionCopy = {
   button: string;
@@ -49,6 +56,15 @@ type ActionCopy = {
 function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
   const name = personName(person);
   switch (action) {
+    case "reconcile":
+      return {
+        button: "Finish sending invitation",
+        title: "Finish sending the invitation?",
+        description: `Complete the pending invitation for ${person.email}. They will receive an invitation email.`,
+        confirm: "Finish sending",
+        done: "Invitation sent",
+        destructive: false,
+      };
     case "resend":
       return {
         button: "Resend invitation",
@@ -111,6 +127,8 @@ function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
 
 function run(action: AccountAction, person: AccessUser): Promise<unknown> {
   switch (action) {
+    case "reconcile":
+      return reconcileAccessInvitation(person.id);
     case "resend":
       return resendAccessInvitation(person.id);
     case "revoke":
@@ -129,7 +147,10 @@ function run(action: AccountAction, person: AccessUser): Promise<unknown> {
 /** The account actions the backend accepts for a person in this state. */
 function availableActions(person: AccessUser, self: boolean): AccountAction[] {
   if (person.is_deleted) return person.status === "pending" ? [] : ["restore"];
-  if (person.status === "pending") return ["resend", "revoke"];
+  if (person.status === "pending")
+    return person.invitation_sent_at === null
+      ? ["reconcile"]
+      : ["resend", "revoke"];
   if (self) return [];
   return person.status === "disabled"
     ? ["enable", "delete"]
@@ -152,26 +173,48 @@ export function PersonAccount({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [now] = useState(() => Date.now());
+  const mounted = useRef(false);
+  const pendingRef = useRef(false);
   const actions = availableActions(person, self);
   const copy = action ? actionCopy(action, person) : null;
   const state = personState(person, now);
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   async function confirm() {
-    if (!action || !copy || pending) return;
+    if (
+      !action ||
+      !copy ||
+      pending ||
+      pendingRef.current ||
+      !actions.includes(action)
+    )
+      return;
+    pendingRef.current = true;
     setPending(true);
     setError("");
     try {
       await run(action, person);
+      if (!mounted.current) return;
       toast.add({ title: copy.done, type: "success" });
       setAction(null);
     } catch (caught) {
+      if (!mounted.current) return;
       setError(
         peopleErrorMessage(caught, "The change could not be made. Try again."),
       );
     } finally {
-      setPending(false);
-      // A refused change may mean this person changed elsewhere.
-      void afterAccessUserChange(client);
+      pendingRef.current = false;
+      if (mounted.current) {
+        setPending(false);
+        // A refused change may mean this person changed elsewhere.
+        void afterAccessUserChange(client);
+      }
     }
   }
 
@@ -268,7 +311,9 @@ export function PersonAccount({
               ? "This invitation was revoked. Invite this email address again to give them access."
               : "This account is deleted."
             : person.status === "pending"
-              ? "The invitation has not been accepted yet."
+              ? person.invitation_sent_at === null
+                ? "The invitation has not been sent yet. Finish sending it to give this person their invitation link."
+                : "The invitation has not been accepted yet."
               : self
                 ? "This is your account. Another administrator can disable or delete it."
                 : state.id === "expired"
@@ -286,6 +331,7 @@ export function PersonAccount({
                   key={item}
                   variant={itemCopy.destructive ? "outline" : "secondary"}
                   className="min-h-11 w-full sm:w-auto"
+                  disabled={pending}
                   onClick={() => {
                     setError("");
                     setAction(item);

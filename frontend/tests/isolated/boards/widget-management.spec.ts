@@ -58,6 +58,7 @@ test("new summary widget has no audience and starts unpinned", () => {
   expect(input.name).toBe("Open requests");
   expect(input.widgetType).toBe("summary");
   expect(input.config.pinned).toBe(false);
+  expect(input.config).not.toHaveProperty("refresh");
 });
 
 test("settings edits keep unrelated config exactly", () => {
@@ -71,7 +72,12 @@ test("settings edits keep unrelated config exactly", () => {
   const input = updateInputForWidgetDraft(source, draft);
   expect(input).not.toHaveProperty("audience");
   expect(input.config).toEqual({
-    ...source.config,
+    version: 1,
+    fields: [],
+    filters: [],
+    logic: "and",
+    metric: null,
+    visualization: "bar",
     size: "full",
     pinned: true,
   });

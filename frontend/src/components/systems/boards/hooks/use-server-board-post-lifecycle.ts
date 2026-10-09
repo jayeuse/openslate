@@ -8,6 +8,7 @@ import {
   deleteBoardPost,
   listBoardPosts,
   restoreBoardPost,
+  unpublishBoardPost,
   type BoardPost,
   type BoardPostView,
 } from "../adapters/board-posts-api";
@@ -113,7 +114,15 @@ export function prepareBoardPostLifecycleAction(
     (item.postRevision !== null && item.postRevision !== state.postRevision)
   )
     return null;
-  if (kind === "archive") {
+  if (kind === "unpublish") {
+    if (
+      item.status !== "published" ||
+      item.publicationNumber === null ||
+      !state.publishedBefore ||
+      state.status === "archived"
+    )
+      return null;
+  } else if (kind === "archive") {
     if (
       item.status === "archived" ||
       state.status === "archived" ||
@@ -273,7 +282,14 @@ export function useServerBoardPostLifecycle({
     operation: number,
   ): Promise<void> {
     try {
-      if (action.kind === "archive")
+      if (action.kind === "unpublish")
+        await unpublishBoardPost(
+          action.boardId,
+          action.postId,
+          action.boardRevision,
+          action.postRevision,
+        );
+      else if (action.kind === "archive")
         await archiveBoardPost(
           action.boardId,
           action.postId,
@@ -303,11 +319,13 @@ export function useServerBoardPostLifecycle({
           ? {
               ...emptyState(key, active, selectedView),
               notice:
-                action.kind === "archive"
-                  ? "Post archived."
-                  : action.kind === "restore"
-                    ? "Post restored."
-                    : "Draft deleted.",
+                action.kind === "unpublish"
+                  ? "Post unpublished."
+                  : action.kind === "archive"
+                    ? "Post archived."
+                    : action.kind === "restore"
+                      ? "Post restored."
+                      : "Draft deleted.",
             }
           : previous,
       );
