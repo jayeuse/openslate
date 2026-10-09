@@ -1,4 +1,5 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import {
   Suspense,
@@ -417,6 +418,7 @@ function ServerBackedBoardsContent() {
     refetchInterval: regionActive && section === "calendar" ? 60_000 : false,
   });
   const queryClient = useQueryClient();
+  const displayRegion = useDisplayRegion(workspaceCalendar.data);
   const refreshWorkspaceCalendar = useCallback(() => {
     const queryKey = workspaceCalendarQueryOptions().queryKey;
     const cold = queryClient
@@ -1126,7 +1128,7 @@ function ServerBackedBoardsContent() {
                 </div>
                 <ServerBackedBoardPosts
                   key={board.id}
-                  region={workspaceCalendar.data}
+                  region={displayRegion}
                   boardId={board.id}
                   refreshKey={postsLiveKey + manualLiveKey}
                   selectedPostId={searchParams.get("post")}
@@ -1225,7 +1227,7 @@ function ServerBackedBoardsContent() {
                 {activityOpen && (
                   <ServerBackedBoardActivity
                     key={board.id}
-                    region={workspaceCalendar.data}
+                    region={displayRegion}
                     boardId={board.id}
                     refreshKey={resource.detail.sequence}
                     onAccessDenied={closeActivity}

@@ -1,4 +1,5 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import {
   useCallback,
@@ -106,6 +107,7 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
     ...workspaceCalendarQueryOptions(),
     enabled: admitted,
   });
+  const displayRegion = useDisplayRegion(calendar.data);
   const storeRecovery = useCallback(
     (value: ManageJobsRecovery | null) => {
       setManageJobsRecovery(client, value);
@@ -305,8 +307,8 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
   function time(value: string | null, empty: string) {
     return value ? (
       <time dateTime={value}>
-        {calendar.data
-          ? formatWorkspaceDateTime(value, calendar.data, {
+        {displayRegion
+          ? formatWorkspaceDateTime(value, displayRegion, {
               dateStyle: "medium",
               timeStyle: "short",
             })

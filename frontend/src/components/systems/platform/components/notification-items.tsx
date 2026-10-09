@@ -1,4 +1,5 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -283,8 +284,9 @@ export function NotificationItems({
     ...manageWorkspaceOptions(),
     enabled: !suspended,
   });
-  const format: DateFormat = workspace.data
-    ? { state: "ready", region: workspace.data }
+  const displayRegion = useDisplayRegion(workspace.data);
+  const format: DateFormat = displayRegion
+    ? { state: "ready", region: displayRegion }
     : { state: workspace.isError ? "error" : "pending" };
   return (
     <ul className="divide-y" aria-label="Notifications">

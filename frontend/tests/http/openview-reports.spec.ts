@@ -6,6 +6,8 @@ import {
   type Route,
 } from "./helpers/test";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import { readFile } from "node:fs/promises";
+import { profilePreferences } from "./helpers/profile-api";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";
@@ -523,6 +525,140 @@ test.describe("Reports in a non-UTC browser timezone", () => {
       csvReads: 1,
     });
   });
+});
+
+test("S21 Report metadata follows personal display while schedule inputs and frozen CSV remain unchanged", async ({
+  page,
+}, testInfo) => {
+  await installReportsApi(page, false, report, {
+    ownerRunCount: 1,
+    savedSchedule: true,
+    lastRun: {
+      state: "succeeded",
+      finished_at: "2026-09-24T00:00:00Z",
+      failure_label: null,
+    },
+  });
+  const scheduleWrites: unknown[] = [];
+  const savedSchedule = {
+    id: scheduleId,
+    report_id: reportId,
+    revision: 1,
+    enabled: true,
+    cadence: "weekly",
+    timezone_name: "Asia/Manila",
+    local_time: "09:00",
+    weekday: 0,
+    month_day: null,
+    next_due_at: "2026-09-28T01:00:00Z",
+    last_run: {
+      state: "succeeded",
+      finished_at: "2026-09-24T00:00:00Z",
+      failure_label: null,
+    },
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  await page.route(`**/api/reports/${reportId}/schedule`, (route) => {
+    if (route.request().method() === "PATCH") {
+      const body: unknown = route.request().postDataJSON();
+      scheduleWrites.push(body);
+      if (typeof body !== "object" || body === null)
+        throw new Error("Invalid schedule command");
+      Object.assign(savedSchedule, body, { revision: 2 });
+    }
+    return route.fulfill({ json: savedSchedule });
+  });
+  await page.route(`**/api/users/${userId}/preferences`, (route) =>
+    route.fulfill({
+      json: profilePreferences(userId, {
+        timezone: "America/Los_Angeles",
+        date_format: "ymd",
+        time_format: "24h",
+        week_start: "sunday",
+      }),
+    }),
+  );
+  // One captured text column, matching the run's Asset heading and row count.
+  // Date-like cell text is server-owned output, never personally reformatted.
+  const snapshotCsv = '"Asset"\r\n"2026-09-24 08:00 · 2026-09-24"\r\n';
+  await page.route(`**/api/reports/${reportId}/runs/${runId}`, (route) =>
+    route.fulfill({ json: run }),
+  );
+  const outputRequests: { path: string; search: string; method: string }[] = [];
+  await page.route(`**/api/reports/${reportId}/runs/${runId}/csv`, (route) => {
+    const url = new URL(route.request().url());
+    outputRequests.push({
+      path: url.pathname,
+      search: url.search,
+      method: route.request().method(),
+    });
+    return route.fulfill({
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="report-${runId}.csv"`,
+      },
+      body: snapshotCsv,
+    });
+  });
+  await page.goto(`/openview?section=reports&report=${reportId}&run=${runId}`);
+  const selected = page.getByRole("region", {
+    name: "Selected output",
+    exact: true,
+  });
+  await expect(selected).toContainText("2026-09-23");
+  await expect(selected).toContainText("17:00");
+  await expect(selected).toContainText("Recipe version 1");
+  await expect(selected).toContainText("1 row");
+  await page.getByRole("tab", { name: "Schedule", exact: true }).click();
+  const lastRun = page.getByRole("status", {
+    name: "Last scheduled run",
+    exact: true,
+  });
+  await expect(lastRun).toContainText("2026-09-23");
+  await expect(lastRun).toContainText("17:00");
+  await page
+    .getByRole("checkbox", { name: "Enable scheduled runs", exact: true })
+    .check();
+  await page.getByLabel("Local time", { exact: true }).fill("10:30");
+  await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue(
+    "Asia/Manila",
+  );
+  await expect(page.getByLabel("Weekday", { exact: true })).toHaveValue("0");
+  await page
+    .getByRole("button", { name: "Save schedule", exact: true })
+    .click();
+  await expect(
+    page.getByText("Schedule saved and enabled.", { exact: true }),
+  ).toBeVisible();
+  expect(scheduleWrites).toHaveLength(1);
+  expect(scheduleWrites[0]).toMatchObject({
+    enabled: true,
+    cadence: "weekly",
+    revision: 1,
+    weekday: 0,
+    local_time: "10:30",
+    timezone_name: "Asia/Manila",
+  });
+  expect(savedSchedule).toMatchObject({
+    revision: 2,
+    weekday: 0,
+    local_time: "10:30",
+    timezone_name: "Asia/Manila",
+  });
+  const downloaded = page.waitForEvent("download");
+  await selected.getByRole("button", { name: /Download CSV/ }).click();
+  const download = await downloaded;
+  const path = testInfo.outputPath("s21-frozen-report.csv");
+  await download.saveAs(path);
+  expect(await readFile(path, "utf8")).toBe(snapshotCsv);
+  expect(outputRequests).toEqual([
+    {
+      path: `/api/reports/${reportId}/runs/${runId}/csv`,
+      search: "",
+      method: "GET",
+    },
+  ]);
 });
 
 test("connected Reports expose only authorized shared-run metadata to a reader", async ({

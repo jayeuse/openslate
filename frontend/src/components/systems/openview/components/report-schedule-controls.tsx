@@ -1,4 +1,5 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -150,7 +151,9 @@ export function ReportScheduleControls({
   disabled,
   disabledReason,
 }: ReportScheduleControlsProps) {
-  const region = useQuery(workspaceCalendarQueryOptions()).data;
+  const region = useDisplayRegion(
+    useQuery(workspaceCalendarQueryOptions()).data,
+  );
   const [loadVersion, setLoadVersion] = useState(0);
   const [loadState, setLoadState] = useState<
     "loading" | "ready" | "denied" | "failed"

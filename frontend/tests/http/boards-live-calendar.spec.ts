@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./helpers/test";
+import { profilePreferences } from "./helpers/profile-api";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -469,93 +470,147 @@ test("S11 an old live event refusal cannot close a newly created local draft", a
 test.describe("Boards workspace regional dates", () => {
   test.use({ locale: "en-US", timezoneId: "UTC" });
 
-  test("calendar localizes dates without shifting all-day dates or replacing the event timezone", async ({
-    page: browser,
-  }) => {
-    await installSelectedEventApi(browser);
-    await browser.route("**/api/workspace", (route) =>
-      route.fulfill({
-        json: {
-          display_name: "OpenSlate",
-          mark: "OS",
-          logo_file_id: null,
-          revision: 1,
-          today: "2026-09-14",
-          week_start: "monday",
-          locale: "fr-FR",
-          timezone: "America/Los_Angeles",
-        },
-      }),
-    );
-    const timedId = "00000000-0000-4000-8000-000000000099";
-    const items = [
-      {
-        id: `${eventId}:2026-09-14`,
-        event_id: eventId,
-        date: "2026-09-14",
-        start: "2026-09-14",
-        end: "2026-09-16",
-        event: {
-          ...selectedEventWire,
-          title: "Regional all-day event",
-          start_date: "2026-09-14",
-          end_date: "2026-09-16",
-        },
-      },
-      {
-        id: `${timedId}:2026-09-14T01:00:00Z`,
-        event_id: timedId,
-        date: "2026-09-14",
-        start: "2026-09-14T01:00:00Z",
-        end: "2026-09-14T02:00:00Z",
-        event: {
-          ...selectedEventWire,
-          id: timedId,
-          title: "Regional timed event",
-          all_day: false,
-          start_date: null,
-          end_date: null,
-          start_at: "2026-09-14T01:00:00Z",
-          end_at: "2026-09-14T02:00:00Z",
-          timezone_name: "Asia/Manila",
-        },
-      },
-    ];
-    await browser.route(
-      `**/api/boards/${boardId}/events/occurrences?**`,
-      (route) =>
-        route.fulfill({
-          json: {
-            items,
-            pagination: {
-              limit: 100,
-              offset: 0,
-              count: 2,
-              total: 2,
-              has_more: false,
+  for (const personal of [false, true]) {
+    test(
+      personal
+        ? "S21 Boards personal week and clock format preserve all-day dates, event zone and query windows"
+        : "calendar localizes dates without shifting all-day dates or replacing the event timezone",
+      async ({ page: browser }) => {
+        await installSelectedEventApi(browser);
+        if (personal) {
+          await browser.setViewportSize({ width: 1440, height: 900 });
+          await browser.route(`**/api/users/${authorId}/preferences`, (route) =>
+            route.fulfill({
+              json: profilePreferences(authorId, {
+                timezone: "Asia/Tokyo",
+                date_format: "ymd",
+                time_format: "12h",
+                week_start: "sunday",
+              }),
+            }),
+          );
+        }
+        const windows: { start: string | null; end: string | null }[] = [];
+        browser.on("request", (request) => {
+          const url = new URL(request.url());
+          if (url.pathname.endsWith("/events/occurrences"))
+            windows.push({
+              start: url.searchParams.get("window_start"),
+              end: url.searchParams.get("window_end"),
+            });
+        });
+        await browser.route("**/api/workspace", (route) =>
+          route.fulfill({
+            json: {
+              display_name: "OpenSlate",
+              mark: "OS",
+              logo_file_id: null,
+              revision: 1,
+              today: "2026-09-14",
+              week_start: "monday",
+              locale: "fr-FR",
+              timezone: "America/Los_Angeles",
             },
-            board_revision: 1,
+          }),
+        );
+        const timedId = "00000000-0000-4000-8000-000000000099";
+        const items = [
+          {
+            id: `${eventId}:2026-09-14`,
+            event_id: eventId,
+            date: "2026-09-14",
+            start: "2026-09-14",
+            end: "2026-09-16",
+            event: {
+              ...selectedEventWire,
+              title: "Regional all-day event",
+              start_date: "2026-09-14",
+              end_date: "2026-09-16",
+            },
           },
-        }),
+          {
+            id: `${timedId}:2026-09-14T01:00:00Z`,
+            event_id: timedId,
+            date: "2026-09-14",
+            start: "2026-09-14T01:00:00Z",
+            end: "2026-09-14T02:00:00Z",
+            event: {
+              ...selectedEventWire,
+              id: timedId,
+              title: "Regional timed event",
+              all_day: false,
+              start_date: null,
+              end_date: null,
+              start_at: "2026-09-14T01:00:00Z",
+              end_at: "2026-09-14T02:00:00Z",
+              timezone_name: "Asia/Manila",
+            },
+          },
+        ];
+        await browser.route(
+          `**/api/boards/${boardId}/events/occurrences?**`,
+          (route) =>
+            route.fulfill({
+              json: {
+                items,
+                pagination: {
+                  limit: 100,
+                  offset: 0,
+                  count: 2,
+                  total: 2,
+                  has_more: false,
+                },
+                board_revision: 1,
+              },
+            }),
+        );
+        await browser.goto(`/boards?board=${boardId}&section=calendar`);
+        await expect(
+          browser.getByRole("heading", { name: "septembre 2026", exact: true }),
+        ).toBeVisible();
+        const day = browser.getByRole("button", {
+          name: /View lun\. 14 sept\./,
+        });
+        await expect(day).toHaveAttribute("aria-current", "date");
+        await day.click();
+        await expect(
+          browser.getByText("All day · lun. 14 sept.–mer. 16 sept.", {
+            exact: true,
+          }),
+        ).toBeVisible();
+        await expect(
+          browser.getByText(
+            personal
+              ? /lun\. 14 sept\..*9:00\sAM.*lun\. 14 sept\..*10:00\sAM.*Asia\/Manila/
+              : /lun\. 14 sept\..*0?9:00.*lun\. 14 sept\..*10:00.*Asia\/Manila/,
+          ),
+        ).toBeVisible();
+        if (personal) {
+          const calendar = browser.getByRole("region", {
+            name: "septembre 2026 calendar",
+            exact: true,
+          });
+          await expect(
+            calendar.getByText(/^(dim\.|lun\.|mar\.|mer\.|jeu\.|ven\.|sam\.)$/),
+          ).toHaveText([
+            "dim.",
+            "lun.",
+            "mar.",
+            "mer.",
+            "jeu.",
+            "ven.",
+            "sam.",
+          ]);
+        }
+        expect(windows.length).toBeGreaterThan(0);
+        expect(
+          windows.every(
+            ({ start, end }) => start === "2026-09-01" && end === "2026-09-30",
+          ),
+        ).toBe(true);
+      },
     );
-    await browser.goto(`/boards?board=${boardId}&section=calendar`);
-    await expect(
-      browser.getByRole("heading", { name: "septembre 2026", exact: true }),
-    ).toBeVisible();
-    const day = browser.getByRole("button", { name: /View lun\. 14 sept\./ });
-    await expect(day).toHaveAttribute("aria-current", "date");
-    await day.click();
-    await expect(
-      browser.getByText("All day · lun. 14 sept.–mer. 16 sept.", {
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(
-      browser.getByText(
-        /lun\. 14 sept\..*0?9:00.*lun\. 14 sept\..*10:00.*Asia\/Manila/,
-      ),
-    ).toBeVisible();
-  });
+  }
 });
 
 test.describe("organization calendar week start", () => {

@@ -1,4 +1,5 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import {
   useCallback,
@@ -521,6 +522,7 @@ export default function ServerBackedViewsWorkspace({
   )?.id;
   const identity = useQuery(authMeOptions());
   const workspaceCalendar = useQuery(workspaceCalendarQueryOptions());
+  const displayRegion = useDisplayRegion(workspaceCalendar.data);
   const queryClient = useQueryClient();
   useEffect(() => {
     const queryKey = workspaceCalendarQueryOptions().queryKey;
@@ -3313,7 +3315,7 @@ export default function ServerBackedViewsWorkspace({
                       ) : activeLayout === "kanban" ? (
                         groupByField && moduleId ? (
                           <LiveKanban
-                            region={workspaceCalendar.data}
+                            region={displayRegion}
                             key={
                               moduleId +
                               ":" +
@@ -3458,7 +3460,7 @@ export default function ServerBackedViewsWorkspace({
                         </Empty>
                       ) : (
                         <LiveRecordResults
-                          region={workspaceCalendar.data}
+                          region={displayRegion}
                           title={activeSaved?.name ?? "Unsaved view"}
                           scopeLabel={
                             generalGroupedView && generalSelectedGroup
@@ -3640,7 +3642,7 @@ export default function ServerBackedViewsWorkspace({
                     </DialogHeader>
                     <div className="min-h-0 flex-1 overflow-y-auto">
                       <LiveRecordInspector
-                        region={workspaceCalendar.data}
+                        region={displayRegion}
                         actions={recordEditing ? null : inspectionActions}
                         record={linkedRecord}
                         recordLoading={linkedRecordLoading}

@@ -1,4 +1,5 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import { useMemo, useRef, useState } from "react";
 import {
@@ -204,7 +205,7 @@ function intervalPosition(
 }
 
 export function LiveTimeline({
-  region,
+  region: workspaceRegion,
   moduleId,
   definition,
   dateRange,
@@ -297,14 +298,24 @@ export function LiveTimeline({
     windowDates.start,
   ]);
   const { result, loading, error } = useWindowPage(request, retry + refreshKey);
+  const region = useDisplayRegion(workspaceRegion);
   const timezone = result?.timezone ?? null;
+  const windowRegion = useDisplayRegion(
+    workspaceRegion
+      ? { ...workspaceRegion, timezone: timezone ?? workspaceRegion.timezone }
+      : undefined,
+  );
   const moveTimezone =
     timezone ??
     (startField.type === "date" && endField.type === "date"
-      ? (region?.timezone ?? null)
+      ? (workspaceRegion?.timezone ?? null)
       : null);
   const canMove =
-    canWrite && !loading && !error && Boolean(result) && Boolean(region);
+    canWrite &&
+    !loading &&
+    !error &&
+    Boolean(result) &&
+    Boolean(workspaceRegion);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, {
@@ -317,7 +328,7 @@ export function LiveTimeline({
     offset,
     refreshKey,
     timezone,
-    region,
+    workspaceRegion,
     canMove,
     movesPending,
   ]);
@@ -635,6 +646,7 @@ export function LiveTimeline({
                             startField.type,
                             timezone,
                             region?.locale,
+                            windowRegion,
                           )}
                           {" – "}
                           {formatWindowDate(
@@ -642,6 +654,7 @@ export function LiveTimeline({
                             endField.type,
                             timezone,
                             region?.locale,
+                            windowRegion,
                           )}
                         </p>
                       ) : (
@@ -657,6 +670,7 @@ export function LiveTimeline({
                             deadlineField.type,
                             timezone,
                             region?.locale,
+                            windowRegion,
                           )}
                         </p>
                       ) : null}
@@ -730,6 +744,7 @@ export function LiveTimeline({
                               "date",
                               timezone,
                               region?.locale,
+                              windowRegion,
                             )}
                           </span>
                           <span>
@@ -738,6 +753,7 @@ export function LiveTimeline({
                               "date",
                               timezone,
                               region?.locale,
+                              windowRegion,
                             )}
                           </span>
                         </div>
@@ -759,7 +775,7 @@ export function LiveTimeline({
                           }
                           label={
                             position
-                              ? `${title} interval, ${formatWindowDate(startValue, startField.type, timezone, region?.locale)} to ${formatWindowDate(endValue, endField.type, timezone, region?.locale)}`
+                              ? `${title} interval, ${formatWindowDate(startValue, startField.type, timezone, region?.locale, windowRegion)} to ${formatWindowDate(endValue, endField.type, timezone, region?.locale, windowRegion)}`
                               : `${title} interval dates unavailable`
                           }
                         />

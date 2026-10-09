@@ -4,6 +4,7 @@ import type { ReactNode, RefObject } from "react";
 import { MfaPresentation, useMfaFlow } from "@/components/mfa-flow";
 import { useQuery } from "@tanstack/react-query";
 import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import { Alert } from "@/components/ui/alert";
 import {
@@ -147,6 +148,7 @@ export function AccessMfaDialog({ opener }: AccessMfaDialogProps) {
     ...workspaceCalendarQueryOptions(),
     enabled: flow.open && flow.mode === "workspace",
   });
+  const displayRegion = useDisplayRegion(region.data);
   // Visibility changes belong to the AppPage identity gate, not cancellation.
   // Only actual dialog dismissal or leaving Access removes owned setup.
   return (
@@ -169,7 +171,7 @@ export function AccessMfaDialog({ opener }: AccessMfaDialogProps) {
             if you need to recover your account.
           </DialogDescription>
         </DialogHeader>
-        <MfaPresentation flow={flow} region={region.data} />
+        <MfaPresentation flow={flow} region={displayRegion} />
       </DialogContent>
     </Dialog>
   );

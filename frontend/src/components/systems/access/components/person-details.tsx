@@ -1,4 +1,5 @@
 "use client";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 
 import { useCallback, useId, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -91,6 +92,7 @@ export function PersonDetails({
   listFresh: boolean;
 }) {
   const id = useId();
+  const region = useWorkspaceDisplayRegion();
   const client = useQueryClient();
   const signedInId = useVerifiedWorkspaceUserId();
   const [stored] = useState(() => readPersonDraft(signedInId));
@@ -167,7 +169,7 @@ export function PersonDetails({
       return match ? personName(match) : value ? "Unavailable" : "";
     }
     if (field === "expires_on")
-      return value ? formatDate(endOfDateInput(value)) : "";
+      return value ? formatDate(endOfDateInput(value), region) : "";
     return value;
   }
 

@@ -73,6 +73,32 @@ test("route discovery keeps adapter identity while resolving shared path helpers
   );
 });
 
+test("route discovery admits only the exact private Profile adapter outside systems", () => {
+  const adapter = "frontend/src/components/profile/adapters/profile-api.ts";
+  const source = `
+export function readSelf() { return apiFetch("/auth/me", schema); }
+export function saveSelf() { return apiFetch("/auth/me/profile", schema, { method: "PATCH" }); }
+export function readAvatar(userId: string) {
+  return apiRequest(\`/users/\${encodeURIComponent(userId)}/avatar\`, { cache: "no-store" });
+}
+`;
+  const admitted = discoverRoutesInSources([{ file: adapter, source }]);
+  expect(admitted.diagnostics).toEqual([]);
+  expect(admitted.routes.map(signature)).toEqual([
+    `${adapter} readAvatar GET /api/users/{param}/avatar`,
+    `${adapter} readSelf GET /api/auth/me`,
+    `${adapter} saveSelf PATCH /api/auth/me/profile`,
+  ]);
+  for (const file of [
+    "frontend/src/components/profile/adapters/unrelated-api.ts",
+    "frontend/src/components/unrelated/adapters/profile-api.ts",
+  ]) {
+    const refused = discoverRoutesInSources([{ file, source }]);
+    expect(refused.routes).toEqual([]);
+    expect(refused.diagnostics.join("\n")).toContain("unowned request call");
+  }
+});
+
 test("encoded route segments are parameters while unencoded kinds stay unresolved", () => {
   const encoded = fixture(`
 export function retryJob(target: { kind: string; id: string }) {

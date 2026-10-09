@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import { expect, test, type Route, type Page } from "./helpers/test";
 import { mockMfa } from "./helpers/mfa";
+import { profilePreferences, profileSelf } from "./helpers/profile-api";
 
 const ACTOR_ID = "00000000-0000-4000-8000-000000000201";
 const NULL_LABEL_ACTOR_ID = "00000000-0000-4000-8000-000000000202";
@@ -1263,70 +1264,124 @@ test("Audit search waits for typing to settle before sending its server query", 
   ).toEqual(["delete"]);
 });
 
-test("Audit date filters use workspace-local day bounds across a daylight-saving change", async ({
-  page,
-}) => {
-  await page.route("**/api/workspace", (route) =>
-    route.fulfill({
-      json: {
-        id: fixtureId(77),
-        display_name: "Harbor workspace",
-        legal_name: null,
-        description: null,
-        contact_email: null,
-        contact_phone: null,
-        postal_address: null,
-        locale: "en-US",
-        timezone: "America/New_York",
-        logo_file_id: null,
-        mark: "RS",
-        currency: "PHP",
-        week_start: "monday",
-        business_hours: "09:00–18:00",
-        theme: "slate",
-        revision: 4,
-      },
-    }),
-  );
-  const logs = makeAuditLogs(5);
-  const localDayRows = [
-    ["2026-03-08T04:59:59.999Z", "Before local day"],
-    ["2026-03-08T05:00:00.000Z", "At local day start"],
-    ["2026-03-08T07:00:00.000Z", "After clock change"],
-    ["2026-03-09T03:59:59.999Z", "At local day end"],
-    ["2026-03-09T04:00:00.000Z", "After local day"],
-  ] as const;
-  logs.forEach((log, index) => {
-    log.created_at = localDayRows[index]![0];
-    log.after = { name: localDayRows[index]![1] };
-  });
-  const api = createAuditRoute(logs);
-  await page.route("**/api/audit-logs**", (route) => api.handle(route));
-  await page.goto("/manage?view=audit");
-  const table = page.getByRole("table", {
-    name: "Activity history table",
-    exact: true,
-  });
-  await expect(table).toBeVisible();
-  await page.getByRole("button", { name: "More filters" }).click();
-  await page.getByLabel("From", { exact: true }).fill("2026-03-08");
-  await page.getByLabel("To", { exact: true }).fill("2026-03-08");
+for (const personal of [false, true]) {
+  test(
+    personal
+      ? "S21 Audit personal display preserves workspace DST day bounds and server CSV"
+      : "Audit date filters use workspace-local day bounds across a daylight-saving change",
+    async ({ page }, testInfo) => {
+      await page.clock.setFixedTime(new Date("2026-03-10T12:00:00Z"));
+      if (personal) {
+        const userId = "00000000-0000-4000-8000-000000000101";
+        await page.route("**/api/auth/me", (route) =>
+          route.fulfill({ json: profileSelf(userId, "admin") }),
+        );
+        await page.route(`**/api/users/${userId}/preferences`, (route) =>
+          route.fulfill({
+            json: profilePreferences(userId, {
+              timezone: "America/Los_Angeles",
+              date_format: "ymd",
+              time_format: "24h",
+            }),
+          }),
+        );
+      }
+      await page.route("**/api/workspace", (route) =>
+        route.fulfill({
+          json: {
+            id: fixtureId(77),
+            display_name: "Harbor workspace",
+            legal_name: null,
+            description: null,
+            contact_email: null,
+            contact_phone: null,
+            postal_address: null,
+            locale: "en-US",
+            timezone: "America/New_York",
+            logo_file_id: null,
+            mark: "RS",
+            currency: "PHP",
+            week_start: "monday",
+            business_hours: "09:00–18:00",
+            theme: "slate",
+            revision: 4,
+          },
+        }),
+      );
+      const logs = makeAuditLogs(5);
+      const localDayRows = [
+        ["2026-03-08T04:59:59.999Z", "Before local day"],
+        ["2026-03-08T05:00:00.000Z", "At local day start"],
+        ["2026-03-08T07:00:00.000Z", "After clock change"],
+        ["2026-03-09T03:59:59.999Z", "At local day end"],
+        ["2026-03-09T04:00:00.000Z", "After local day"],
+      ] as const;
+      logs.forEach((log, index) => {
+        log.created_at = localDayRows[index]![0];
+        log.after = { name: localDayRows[index]![1] };
+      });
+      const api = createAuditRoute(logs);
+      await page.route("**/api/audit-logs**", (route) => api.handle(route));
+      await page.goto("/manage?view=audit");
+      const table = page.getByRole("table", {
+        name: "Activity history table",
+        exact: true,
+      });
+      await expect(table).toBeVisible();
+      await page.getByRole("button", { name: "More filters" }).click();
+      await page.getByLabel("From", { exact: true }).fill("2026-03-08");
+      await page.getByLabel("To", { exact: true }).fill("2026-03-08");
 
-  await expect
-    .poll(() => api.requests.at(-1)?.searchParams.get("created_after"))
-    .toBe("2026-03-08T05:00:00.000Z");
-  await expect
-    .poll(() => api.requests.at(-1)?.searchParams.get("created_before"))
-    .toBe("2026-03-09T03:59:59.999Z");
-  await expect(
-    page.getByText("Showing 1–3 of 3", { exact: true }),
-  ).toBeVisible();
-  await expect(table).toContainText("At local day start");
-  await expect(table).toContainText("After clock change");
-  await expect(table).toContainText("At local day end");
-  await expect(table).not.toContainText("Before local day");
-  await expect(table).not.toContainText("After local day");
-});
+      await expect
+        .poll(() => api.requests.at(-1)?.searchParams.get("created_after"))
+        .toBe("2026-03-08T05:00:00.000Z");
+      await expect
+        .poll(() => api.requests.at(-1)?.searchParams.get("created_before"))
+        .toBe("2026-03-09T03:59:59.999Z");
+      await expect(
+        page.getByText("Showing 1–3 of 3", { exact: true }),
+      ).toBeVisible();
+      await expect(table).toContainText("At local day start");
+      await expect(table).toContainText("After clock change");
+      await expect(table).toContainText("At local day end");
+      await expect(table).not.toContainText("Before local day");
+      await expect(table).not.toContainText("After local day");
+      if (personal) {
+        const row = table
+          .getByRole("row")
+          .filter({ hasText: "At local day start" });
+        await expect(row).toContainText("2026-03-07");
+        await expect(row).toContainText("21:00");
+        await page
+          .getByRole("button", { name: "Export audit preview", exact: true })
+          .click();
+        const preview = page.getByRole("dialog", {
+          name: "Audit export preview",
+          exact: true,
+        });
+        await expect(preview).toContainText("3 filtered entries");
+        const downloaded = page.waitForEvent("download");
+        await preview
+          .getByRole("button", { name: "Download CSV", exact: true })
+          .click();
+        const download = await downloaded;
+        const path = testInfo.outputPath("s21-audit-workspace-day.csv");
+        await download.saveAs(path);
+        const csv = await readFile(path, "utf8");
+        expect(csv).toContain('"2026-03-08T05:00:00.000Z"');
+        expect(csv).toContain('"2026-03-09T03:59:59.999Z"');
+        expect(csv).not.toContain("2026-03-07");
+        expect(api.exports).toHaveLength(1);
+        expect(api.exports[0]?.searchParams.get("created_after")).toBe(
+          "2026-03-08T05:00:00.000Z",
+        );
+        expect(api.exports[0]?.searchParams.get("created_before")).toBe(
+          "2026-03-09T03:59:59.999Z",
+        );
+      }
+    },
+  );
+}
 
 test("Audit export uses the last settled search while a newer search is debouncing", async ({
   page,

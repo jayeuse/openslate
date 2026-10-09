@@ -1,4 +1,6 @@
 "use client";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
+import { formatDateTime } from "../helpers/people";
 
 import {
   Info,
@@ -103,6 +105,7 @@ export function SecurityPanel({
   onRetry,
   actions,
 }: SecurityPanelProps) {
+  const region = useWorkspaceDisplayRegion();
   const response = sessions.status === "loading" ? undefined : sessions.page;
   const page: PageResult<AccessAdminSession> | undefined = response
     ? {
@@ -142,10 +145,7 @@ export function SecurityPanel({
     onRequestChange({ ...defaultAccessSessionsRequest, limit: request.limit });
   }
   function refreshedAt(value: string) {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    }).format(new Date(value));
+    return formatDateTime(value, region);
   }
 
   const columns: DataTableColumn<AccessAdminSession>[] = [

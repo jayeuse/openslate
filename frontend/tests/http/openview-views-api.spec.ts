@@ -6,6 +6,7 @@ import {
   type Route,
 } from "./helpers/test";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import { profilePreferences } from "./helpers/profile-api";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -1821,6 +1822,7 @@ async function installViewsApi(
   });
   return {
     workspace,
+    windowRows,
     failWorkspaceRead: (failed: boolean) => {
       workspaceFailure = failed;
     },
@@ -4546,6 +4548,225 @@ test.describe("OpenView workspace regional dates", () => {
       mode: "timeline",
       from_date: "2026-08-25",
       to_date: "2026-09-15",
+    });
+  });
+
+  test("S21 Calendar personal dates and week start change presentation only, retaining workspace grouping and requests", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.clock.setFixedTime(new Date("2026-09-01T12:00:00Z"));
+    const api = await installViewsApi(page, {
+      initialLayout: "calendar",
+      disableInitialSearch: true,
+      calendarDateTimeValue: "2026-09-01T00:30:00Z",
+      initialPresentation: { date_range: "week", scale: "month" },
+    });
+    Object.assign(api.workspace, {
+      locale: "en-US",
+      timezone: "Asia/Manila",
+      today: "2026-09-01",
+      week_start: "monday",
+    });
+    let preferences = profilePreferences(userId, {
+      timezone: "America/Los_Angeles",
+      date_format: "ymd",
+      time_format: "24h",
+      week_start: "monday",
+    });
+    await page.route(`**/api/users/${userId}/preferences`, (route) =>
+      route.fulfill({ json: preferences }),
+    );
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    const calendar = page.getByRole("region", {
+      name: "September 2026 calendar",
+      exact: true,
+    });
+    await expect(calendar).toBeVisible();
+    // Aug 31 in the personal zone still belongs to the response's Sep 1 group.
+    const workspaceDay = calendar.getByRole("group", {
+      name: "Move to 2026-09-01",
+      exact: true,
+    });
+    const record = workspaceDay.getByRole("button", {
+      name: "Open record: Window equipment 01",
+      exact: true,
+    });
+    await expect(record).toContainText("2026-08-31");
+    await expect(record).toContainText("17:30");
+    await expect(
+      page.getByText(/Workspace timezone: Asia\/Manila/),
+    ).toBeVisible();
+    await expect(
+      calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
+    ).toHaveText(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+    expect(api.windowQueryRequests.at(-1)).toMatchObject({
+      mode: "calendar",
+      scope: "window",
+      date_field: { field_id: calendarDateFieldId, expected_type: "datetime" },
+      from_date: "2026-08-31",
+      to_date: "2026-09-06",
+      limit: 25,
+      offset: 0,
+    });
+    const windowReads = api.windowQueryRequests.length;
+    // Use the incumbent cross-tab signal to obtain a confirmed preference
+    // read without leaving Calendar or changing its query/workspace data.
+    preferences = profilePreferences(userId, {
+      timezone: "America/Los_Angeles",
+      date_format: "ymd",
+      time_format: "24h",
+      week_start: "sunday",
+    });
+    await page.evaluate(() =>
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "openslate-theme" }),
+      ),
+    );
+    await expect(
+      calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
+    ).toHaveText(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
+    await expect(record).toContainText("2026-08-31");
+    expect(api.windowQueryRequests).toHaveLength(windowReads);
+    await expect(page.getByLabel("Window starts", { exact: true })).toHaveValue(
+      "2026-08-31",
+    );
+    await expect(page.getByLabel("Window ends", { exact: true })).toHaveValue(
+      "2026-09-06",
+    );
+    const batches: {
+      module_id: string;
+      items: {
+        record_id: string;
+        revision: string;
+        field_id: string;
+        value: string;
+      }[];
+    }[] = [];
+    await page.route("**/api/records/batch-update", (route) => {
+      expect(route.request().method()).toBe("POST");
+      const body = route.request().postDataJSON() as (typeof batches)[number];
+      batches.push(body);
+      const results = body.items.map((item) => {
+        const row = api.windowRows.find(({ id }) => id === item.record_id);
+        if (!row) throw new Error("Unknown move target");
+        if (item.revision !== row.updated_at)
+          return { record_id: item.record_id, status: "stale" };
+        Object.assign(row.data, { [item.field_id]: item.value });
+        row.updated_at = "2026-09-23T00:01:00Z";
+        return {
+          record_id: row.id,
+          status: "updated",
+          record: structuredClone(row),
+        };
+      });
+      return route.fulfill({ json: { results } });
+    });
+    const moveCard = workspaceDay.getByRole("article").filter({
+      has: page.getByRole("button", {
+        name: "Open record: Window equipment 01",
+        exact: true,
+      }),
+    });
+    await moveCard
+      .getByRole("button", { name: "Move to…", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Move date…", exact: true })
+      .click();
+    const move = page.getByRole("dialog", {
+      name: "Move Window equipment 01",
+      exact: true,
+    });
+    // The move starts on the workspace day, not the personal Aug 31 label.
+    await expect(move.getByLabel("Move date", { exact: true })).toHaveValue(
+      "2026-09-01",
+    );
+    await move.getByLabel("Move date", { exact: true }).fill("2026-09-02");
+    await move.getByRole("button", { name: "Stage move", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Save changes (1)", exact: true })
+      .click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Saved 1 move." }),
+    ).toBeVisible();
+    expect(batches).toEqual([
+      {
+        module_id: moduleId,
+        items: [
+          {
+            record_id: "00000000-0000-4000-8000-000000000200",
+            revision: "2026-09-23T00:00:00Z",
+            field_id: calendarDateFieldId,
+            value: "2026-09-02T00:30:00Z",
+          },
+        ],
+      },
+    ]);
+    expect(api.windowRows[0]?.data[calendarDateFieldId]).toBe(
+      "2026-09-02T00:30:00Z",
+    );
+    await expect(
+      calendar
+        .getByRole("group", { name: "Move to 2026-09-02", exact: true })
+        .getByRole("button", {
+          name: "Open record: Window equipment 01",
+          exact: true,
+        }),
+    ).toContainText("2026-09-01");
+  });
+
+  test("S21 Timeline personal formatting preserves date-only days and the workspace window", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, {
+      initialLayout: "timeline",
+      disableInitialSearch: true,
+      initialPresentation: {
+        timeline_deadline_field_id: timelineTimestampDeadlineFieldId,
+      },
+    });
+    Object.assign(api.workspace, { locale: "en-US", timezone: "Asia/Manila" });
+    await page.route(`**/api/users/${userId}/preferences`, (route) =>
+      route.fulfill({
+        json: profilePreferences(userId, {
+          timezone: "America/Los_Angeles",
+          date_format: "ymd",
+          time_format: "24h",
+        }),
+      }),
+    );
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    await page.getByLabel("Window starts", { exact: true }).fill("2026-09-01");
+    await page.getByLabel("Window ends", { exact: true }).fill("2026-09-30");
+    const intervals = page.getByRole("list", {
+      name: "Timeline intervals",
+      exact: true,
+    });
+    const row = intervals
+      .getByRole("listitem")
+      .filter({ hasText: "Window equipment 01" });
+    await expect(row).toContainText("2026-08-29");
+    await expect(row).toContainText("2026-09-04");
+    // Sep 6 18:30 UTC is Sep 7 02:30 in the response zone, Sep 6 11:30
+    // in the personal zone; date-only interval endpoints never shift.
+    await expect(row).toContainText("2026-09-06");
+    await expect(row).toContainText("11:30");
+    await expect(
+      page.getByText(/Workspace timezone: Asia\/Manila/).first(),
+    ).toBeVisible();
+    expect(api.windowQueryRequests.at(-1)).toMatchObject({
+      mode: "timeline",
+      from_date: "2026-09-01",
+      to_date: "2026-09-30",
+      scope: "window",
+      start_field: { field_id: timelineStartFieldId, expected_type: "date" },
+      end_field: { field_id: timelineEndFieldId, expected_type: "date" },
+      offset: 0,
     });
   });
 

@@ -1,4 +1,6 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
+import { formatWorkspaceDateTime } from "@/lib/date-time";
 
 import {
   Activity,
@@ -417,18 +419,13 @@ export default function ManageAudit({
     ...manageAuditOptionsOptions(appliedEntitySearch),
     enabled: historyActive && !auditDenied && !workspaceSuspended,
   });
-  const activityDateFormatter = workspaceQuery.data
-    ? new Intl.DateTimeFormat(workspaceQuery.data.locale, {
-        dateStyle: "medium",
-        timeStyle: "short",
-        timeZone: workspaceQuery.data.timezone,
-      })
-    : null;
+  const displayRegion = useDisplayRegion(workspaceQuery.data);
   const formatActivityDate = (value: string) =>
-    activityDateFormatter?.format(new Date(value)) ??
-    (workspaceQuery.isPending
-      ? "Loading date format…"
-      : "Date format unavailable");
+    displayRegion
+      ? formatWorkspaceDateTime(value, displayRegion)
+      : workspaceQuery.isPending
+        ? "Loading date format…"
+        : "Date format unavailable";
   const exportQuery = useQuery({
     ...manageAuditExportOptions(exportRequest ?? { sortOrder: "desc" }),
     enabled:

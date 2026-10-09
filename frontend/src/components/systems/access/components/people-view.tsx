@@ -24,6 +24,7 @@ import {
   TablePagination,
 } from "@/components/ui/table-pagination";
 import { ApiError } from "@/lib/api";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 
 import {
   directoryPageOptions,
@@ -108,17 +109,21 @@ function lastSeen(person: AccessDirectoryUser) {
 }
 
 function StatusBadges({ row }: { row: DirectoryRow }) {
+  const region = useWorkspaceDisplayRegion();
   return (
     <span className="flex flex-wrap items-center gap-1.5">
       <Badge variant={row.state.tone}>{row.state.label}</Badge>
       {row.state.expiresSoon ? (
-        <Badge variant="warning">Ends {formatDate(row.user.expires_at)}</Badge>
+        <Badge variant="warning">
+          Ends {formatDate(row.user.expires_at, region)}
+        </Badge>
       ) : null}
     </span>
   );
 }
 
 function MfaObservation({ person }: { person: AccessDirectoryUser }) {
+  const region = useWorkspaceDisplayRegion();
   return (
     <span className="flex min-w-0 flex-col items-start gap-1">
       <Badge
@@ -134,7 +139,7 @@ function MfaObservation({ person }: { person: AccessDirectoryUser }) {
         <span className="text-muted-foreground text-xs">
           Recorded{" "}
           <time dateTime={person.mfa_observed_at}>
-            {formatDateTime(person.mfa_observed_at)}
+            {formatDateTime(person.mfa_observed_at, region)}
           </time>
         </span>
       ) : null}
@@ -149,10 +154,11 @@ function RecordedHistory({
   value: string | null;
   empty: string;
 }) {
+  const region = useWorkspaceDisplayRegion();
   return value === null ? (
     <span className="text-muted-foreground">{empty}</span>
   ) : (
-    <time dateTime={value}>{formatDateTime(value)}</time>
+    <time dateTime={value}>{formatDateTime(value, region)}</time>
   );
 }
 

@@ -1,4 +1,5 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import {
@@ -319,6 +320,7 @@ function LibraryContents({
   const files = useQuery(libraryFilesOptions(department.id, criteria));
   const denied = useQuery(libraryRefusalOptions(department.id)).data;
   const workspace = useQuery(manageWorkspaceOptions());
+  const displayRegion = useDisplayRegion(workspace.data);
   const pending = useQuery<UploadCheck | null>({
     queryKey: uploadKey(department.id),
     queryFn: async () => null,
@@ -702,9 +704,9 @@ function LibraryContents({
   const metadata = (file: LibraryFile) => {
     const uploader = labels[file.creatorId];
     let added = "Date format unavailable";
-    if (workspace.data) {
+    if (displayRegion) {
       try {
-        added = formatWorkspaceDateTime(file.createdAt, workspace.data, {
+        added = formatWorkspaceDateTime(file.createdAt, displayRegion, {
           dateStyle: "medium",
           timeStyle: "short",
         });

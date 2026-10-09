@@ -1,4 +1,8 @@
 "use client";
+import {
+  useDisplayRegion,
+  useDisplayWeekStart,
+} from "@/components/use-display-region";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
@@ -218,12 +222,13 @@ export function formatWindowDate(
   expectedType: "date" | "datetime",
   timezone: string | null,
   locale: string | undefined,
+  displayRegion?: WorkspaceRegion,
 ): string {
   if (typeof value !== "string") return "—";
   if (!locale) return "Date unavailable";
   const day = dateInTimezone(value, expectedType, timezone);
   if (!day) return "Date unavailable";
-  const region = { locale, timezone: timezone ?? "UTC" };
+  const region = displayRegion ?? { locale, timezone: timezone ?? "UTC" };
   const dayLabel = formatWorkspaceDate(day, region);
   if (expectedType === "date") return dayLabel;
   const instant = recordDateTimeInstant(value);
@@ -1038,7 +1043,7 @@ export function LiveCalendar(props: LiveCalendarProps) {
 }
 
 function ResolvedLiveCalendar({
-  region,
+  region: workspaceRegion,
   moduleId,
   definition,
   dateRange,
@@ -1061,6 +1066,8 @@ function ResolvedLiveCalendar({
   settingsError: boolean;
   onRetrySettings: () => void;
 }) {
+  const region = useDisplayRegion(workspaceRegion) ?? workspaceRegion;
+  const displayWeekStart = useDisplayWeekStart(weekStart);
   const scale = savedScale ?? "month";
   const [windowDates, setWindowDates] = useState(() =>
     initialDateWindow(dateRange, weekStart),
@@ -1168,8 +1175,14 @@ function ResolvedLiveCalendar({
     }
   }, [dateRange, weekStart]);
   const timezone = result?.timezone ?? null;
+  // The server response owns this window's operating zone. Personal display
+  // may override it, but inherited timestamps keep the response-zone fallback.
+  const windowRegion = useDisplayRegion({
+    ...workspaceRegion,
+    timezone: timezone ?? workspaceRegion.timezone,
+  });
   const moveTimezone =
-    timezone ?? (dateField.type === "date" ? region.timezone : null);
+    timezone ?? (dateField.type === "date" ? workspaceRegion.timezone : null);
   const canMove =
     canWrite && !loading && !error && Boolean(result) && !settingsError;
   const sensors = useSensors(
@@ -1182,7 +1195,7 @@ function ResolvedLiveCalendar({
     baseKey,
     refreshKey,
     timezone,
-    region.timezone,
+    workspaceRegion.timezone,
     canMove,
     movesPending,
     undatedKey,
@@ -1496,8 +1509,10 @@ function ResolvedLiveCalendar({
                 Date.UTC(yearValue, monthValue, 0),
               ).getUTCDate();
               const leadingDays =
-                (firstDay.getUTCDay() + (weekStart === "monday" ? 6 : 0)) % 7;
-              const firstWeekday = weekStart === "monday" ? 5 : 4;
+                (firstDay.getUTCDay() +
+                  (displayWeekStart === "monday" ? 6 : 0)) %
+                7;
+              const firstWeekday = displayWeekStart === "monday" ? 5 : 4;
               const weekdays = Array.from({ length: 7 }, (_, index) =>
                 formatWorkspaceDate(
                   `2026-01-${String(firstWeekday + index).padStart(2, "0")}`,
@@ -1570,6 +1585,7 @@ function ResolvedLiveCalendar({
                                     dateField.type,
                                     timezone,
                                     region.locale,
+                                    windowRegion,
                                   )}
                                 </h4>
                               ) : null}
@@ -1636,6 +1652,7 @@ function ResolvedLiveCalendar({
                                                 dateField.type,
                                                 timezone,
                                                 region.locale,
+                                                windowRegion,
                                               )}
                                             </span>
                                           </Button>
@@ -1794,6 +1811,7 @@ function ResolvedLiveCalendar({
                                   dateField.type,
                                   timezone,
                                   region.locale,
+                                  windowRegion,
                                 )}
                               </time>
                             ) : null}

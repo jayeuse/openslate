@@ -705,13 +705,13 @@ function AppSidebarFooter({
         <SidebarMenuItem>
           <SidebarMenuButton
             type="button"
-            aria-label={collapsed ? "Appearance" : undefined}
-            title={collapsed ? "Appearance" : undefined}
-            onClick={() => navigate("/settings/appearance")}
+            aria-label={collapsed ? "Your profile" : undefined}
+            title={collapsed ? "Your profile" : undefined}
+            onClick={() => navigate("/profile")}
           >
             <Settings className="size-4 shrink-0" aria-hidden="true" />
             <span className={cn("truncate", collapsed && "sr-only")}>
-              Appearance
+              Your profile
             </span>
           </SidebarMenuButton>
         </SidebarMenuItem>
@@ -771,13 +771,13 @@ function AppHeaderActions({
             <DropdownMenuItem
               render={
                 <GuardedWorkspaceLink
-                  href={"/platform?section=account" as Route}
+                  href={"/profile" as Route}
                   onAcceptedNavigate={() => onAccountOpenChange(false)}
                 />
               }
             >
               <UserCircle aria-hidden="true" />
-              Account settings
+              Your profile
             </DropdownMenuItem>
             <DropdownMenuItem onClick={requestLogout}>
               <LogOut aria-hidden="true" />

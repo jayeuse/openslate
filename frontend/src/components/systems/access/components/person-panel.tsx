@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { X } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
@@ -48,6 +49,7 @@ export function PersonPanel({
   onClose: () => void;
 }) {
   const signedInId = useVerifiedWorkspaceUserId();
+  const region = useWorkspaceDisplayRegion();
   const { hasUnsavedDraft, hasPendingOperation, discardUnsavedDrafts } =
     useAccessDraftNavigation();
   const [blocked, setBlocked] = useState(false);
@@ -91,7 +93,7 @@ export function PersonPanel({
                   <Badge variant={row.state.tone}>{row.state.label}</Badge>
                   {row.state.expiresSoon ? (
                     <Badge variant="warning">
-                      Ends {formatDate(person.expires_at)}
+                      Ends {formatDate(person.expires_at, region)}
                     </Badge>
                   ) : null}
                 </div>

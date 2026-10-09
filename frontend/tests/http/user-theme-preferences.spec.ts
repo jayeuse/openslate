@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "./helpers/test";
+import { profileSelf } from "./helpers/profile-api";
 
 const userA = "00000000-0000-4000-8000-000000000001";
 const userB = "00000000-0000-4000-8000-000000000002";
@@ -33,7 +34,7 @@ async function installIdentity(
     });
   });
   await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: user, role, access: [] } }),
+    route.fulfill({ json: profileSelf(user, role) }),
   );
   await page.route("**/api/auth/sessions", (route) =>
     route.fulfill({ json: [] }),
@@ -90,12 +91,15 @@ async function installIdentity(
 async function openAccount(page: Page) {
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Account settings", exact: true })
+    .getByRole("menuitem", { name: "Your profile", exact: true })
     .click();
   await expect(
-    page.getByRole("combobox", { name: "Theme", exact: true }),
+    page.getByRole("region", { name: "Look & behavior", exact: true }),
   ).toBeVisible();
 }
+
+const look = (page: Page) =>
+  page.getByRole("region", { name: "Look & behavior", exact: true });
 
 const light = (page: Page) =>
   page.getByRole("radio", { name: "Light", exact: true });
@@ -146,18 +150,18 @@ test("a cold preference load is disabled, fails visibly, and retries without cha
     await requested;
     await expect(dark(page)).toBeDisabled();
     await expect(
-      page.getByText("Loading preferences…", { exact: true }),
+      look(page).getByText("Loading preferences…", { exact: true }),
     ).toBeVisible();
     gate.release();
     await expect(
-      page.getByText("Preferences could not be loaded. Try again.", {
+      look(page).getByText("Preferences could not be loaded. Try again.", {
         exact: true,
       }),
     ).toBeVisible();
     await expect(page.getByText("Private upstream diagnostic")).toHaveCount(0);
     const beforeRetry = reads;
     recovered = true;
-    await page
+    await look(page)
       .getByRole("button", { name: "Retry preferences", exact: true })
       .click();
     await expect(dark(page)).toBeChecked();
@@ -197,7 +201,7 @@ test("a cold preference load is disabled, fails visibly, and retries without cha
   }
 });
 
-test("Appearance and Account share only confirmed theme saves, preserve route changes and reload", async ({
+test("legacy Appearance and Your profile share only confirmed theme saves, preserve route changes and reload", async ({
   page,
 }) => {
   await installIdentity(page, "member");
@@ -244,23 +248,31 @@ test("Appearance and Account share only confirmed theme saves, preserve route ch
     await expect(dark(page)).toBeDisabled();
     await expect(page.locator("html")).not.toHaveClass(/dark/);
     await openAccount(page);
-    const control = page.getByRole("combobox", { name: "Theme", exact: true });
-    await expect(control).toHaveValue("light");
+    // The Profile route now owns a pending-navigation guard. Section anchors
+    // still keep the incumbent controls mounted while the save is in flight.
+    await expect(page).toHaveURL(/\/profile#look$/);
+    await page
+      .getByRole("navigation", { name: "Profile sections", exact: true })
+      .getByRole("link", { name: "Sign-in & security", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/profile#security$/);
+    const control = dark(page);
+    await expect(light(page)).toBeChecked();
     await expect(control).toBeDisabled();
     await expect(
-      page.getByText("Saving preferences…", { exact: true }),
+      look(page).getByText("Saving preferences…", { exact: true }),
     ).toBeVisible();
     gate.release();
-    await expect(control).toHaveValue("dark");
+    await expect(control).toBeChecked();
     await expect(control).toBeEnabled();
     await expect(page.locator("html")).toHaveClass(/dark/);
     expect(writes).toEqual([{ theme: "dark" }]);
-    await control.selectOption("light");
-    await expect(control).toHaveValue("light");
+    await light(page).click();
+    await expect(light(page)).toBeChecked();
     await expect(control).toBeEnabled();
     await expect(page.locator("html")).not.toHaveClass(/dark/);
-    await control.selectOption("dark");
-    await expect(control).toHaveValue("dark");
+    await control.click();
+    await expect(control).toBeChecked();
     await expect(control).toBeEnabled();
     await expect(page.locator("html")).toHaveClass(/dark/);
     expect(writes).toEqual([
@@ -283,7 +295,9 @@ test("Appearance and Account share only confirmed theme saves, preserve route ch
       .poll(() => page.evaluate(() => localStorage.getItem("openslate-motion")))
       .toBeNull();
     await expect(page.locator("html")).not.toHaveAttribute("data-motion");
-    await page.getByRole("button", { name: "Appearance", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
     await expect(dark(page)).toBeChecked();
     await page.reload();
     await expect(dark(page)).toBeChecked();
@@ -325,7 +339,7 @@ test("a failed save retains the confirmed mode and Retry reloads without repeati
   await expect(light(page)).toBeChecked();
   await dark(page).click();
   await expect(
-    page.getByText(
+    look(page).getByText(
       "Preferences could not be saved. Retry to reload your saved preferences.",
       { exact: true },
     ),
@@ -334,7 +348,7 @@ test("a failed save retains the confirmed mode and Retry reloads without repeati
   await expect(page.locator("html")).not.toHaveClass(/dark/);
   await expect(page.getByText("Theme saved.", { exact: true })).toHaveCount(0);
   const beforeRetry = reads;
-  await page
+  await look(page)
     .getByRole("button", { name: "Retry preferences", exact: true })
     .click();
   await expect(dark(page)).toBeEnabled();
@@ -392,7 +406,10 @@ for (const fault of ["identity", "denied", "unauthorized"] as const) {
     await expect(light(page)).toBeChecked();
     await expect(page.locator("html")).not.toHaveClass(/dark/);
     await expect(
-      page.getByRole("button", { name: "Retry preferences", exact: true }),
+      look(page).getByRole("button", {
+        name: "Retry preferences",
+        exact: true,
+      }),
     ).toBeVisible();
     expect(writes).toBe(1);
   });
@@ -460,7 +477,6 @@ for (const delayed of ["GET", "PATCH"] as const) {
         await dark(page).click();
         await requested;
       } else await expect.poll(() => oldRequests).toBeGreaterThan(0);
-      const startedOldRequests = oldRequests;
       identity.setUser(userB);
       const nextRead = page.waitForResponse(
         (response) =>
@@ -469,12 +485,14 @@ for (const delayed of ["GET", "PATCH"] as const) {
       await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
       await nextRead;
       await expect(light(page)).toBeChecked();
+      // Strict Mode can start and cancel the initial cold GET twice. Fence
+      // the replay assertion at the verified new-account boundary, not midway
+      // through the old account's mount.
+      const startedOldRequests = oldRequests;
       gate.release();
       await answered.promise;
       await openAccount(page);
-      await expect(
-        page.getByRole("combobox", { name: "Theme", exact: true }),
-      ).toHaveValue("light");
+      await expect(light(page)).toBeChecked();
       await expect(page.locator("html")).not.toHaveClass(/dark/);
       expect(oldRequests).toBe(startedOldRequests);
       if (delayed === "PATCH") expect(oldRequests).toBe(1);
@@ -484,12 +502,13 @@ for (const delayed of ["GET", "PATCH"] as const) {
   });
 }
 
-test("Account has working theme preferences without language and presence stubs", async ({
+test("legacy Account opens Profile with working color preferences without language and presence stubs", async ({
   page,
 }) => {
   await installIdentity(page);
   await page.goto("/platform?section=account");
-  const theme = page.getByRole("combobox", { name: "Theme", exact: true });
+  await expect(page).toHaveURL(/\/profile#security$/);
+  const theme = dark(page);
   await expect(theme).toBeEnabled();
   await expect(
     page.getByRole("combobox", { name: "Display language", exact: true }),
@@ -498,7 +517,8 @@ test("Account has working theme preferences without language and presence stubs"
     page.getByRole("combobox", { name: "My presence", exact: true }),
   ).toHaveCount(0);
   await expect(page.getByText("Team presence", { exact: true })).toHaveCount(0);
-  await theme.selectOption("dark");
+  await theme.click();
+  await expect(theme).toBeChecked();
   await expect(page.locator("html")).toHaveClass(/dark/);
   await expect(page.getByText("Morgan Kim", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Your status:")).toHaveCount(0);
@@ -538,7 +558,10 @@ for (const fault of ["malformed", "identity"] as const) {
     });
     await page.goto("/settings/appearance");
     await expect(
-      page.getByRole("button", { name: "Retry preferences", exact: true }),
+      look(page).getByRole("button", {
+        name: "Retry preferences",
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(page.locator("html")).not.toHaveClass(/dark/);
     await expect(dark(page)).toBeDisabled();
@@ -546,7 +569,7 @@ for (const fault of ["malformed", "identity"] as const) {
       await expect.poll(() => identity.checks).toBeGreaterThan(1);
     const beforeRetry = reads;
     recovered = true;
-    await page
+    await look(page)
       .getByRole("button", { name: "Retry preferences", exact: true })
       .click();
     await expect(dark(page)).toBeChecked();
@@ -617,7 +640,9 @@ test("confirmed theme saves preserve applied motion and organization look when b
     await expect(
       page.getByText("Organization settings saved.", { exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Appearance", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
     await expect(light(page)).toBeChecked();
     const motion = page.getByRole("switch", { name: "Reduce motion" });
     await motion.click();
@@ -706,7 +731,7 @@ test("additive regional appearance remains display-only while partial theme and 
   await page.goto("/settings/appearance");
   await expect(light(page)).toBeChecked();
   await expect(dark(page)).toBeEnabled();
-  await expect(page).toHaveURL(/\/settings\/appearance$/);
+  await expect(page).toHaveURL(/\/profile#look$/);
   await dark(page).click();
   await expect(dark(page)).toBeChecked();
   await page.getByRole("switch", { name: "Reduce motion" }).click();
@@ -727,7 +752,7 @@ test("additive regional appearance remains display-only while partial theme and 
   await expect(
     page.getByRole("switch", { name: "Reduce motion" }),
   ).toBeChecked();
-  await expect(page).toHaveURL(/\/settings\/appearance$/);
+  await expect(page).toHaveURL(/\/profile#look$/);
 });
 
 test("System follows OS color without writes and explicit color stays fixed", async ({
@@ -797,7 +822,7 @@ for (const malformed of [
     await page.goto("/settings/appearance");
     await expect(dark(page)).toBeDisabled();
     await expect(
-      page.getByRole("alert").filter({ hasText: "could not be loaded" }),
+      look(page).getByRole("alert").filter({ hasText: "could not be loaded" }),
     ).toContainText("could not be loaded");
     await expect(page.locator("html")).not.toHaveClass(/dark/);
   });
@@ -1115,12 +1140,15 @@ test("Retry keeps account controls locked until its authoritative read completes
     await page.goto("/settings/appearance");
     await expect(light(page)).toBeChecked();
     await dark(page).click();
-    await page
+    await look(page)
       .getByRole("button", { name: "Retry preferences", exact: true })
       .click();
     await started.promise;
     await expect(
-      page.getByRole("button", { name: "Retry preferences", exact: true }),
+      look(page).getByRole("button", {
+        name: "Retry preferences",
+        exact: true,
+      }),
     ).toBeHidden();
     await expect(dark(page)).toBeDisabled();
     await expect(

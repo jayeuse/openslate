@@ -290,7 +290,7 @@ test("active parsing recognizes defaults and invalid section values without mark
   ).toBe(true);
 });
 
-test("Platform highlights legacy account and notification links until an explicit section takes precedence", () => {
+test("Platform has no Account child and still highlights notifications with explicit section precedence", () => {
   expect(
     isWorkspaceNavigationItemActive(
       "platform",
@@ -299,7 +299,7 @@ test("Platform highlights legacy account and notification links until an explici
       new URLSearchParams(),
       "#account",
     ),
-  ).toBe(true);
+  ).toBe(false);
   expect(
     isWorkspaceNavigationItemActive(
       "platform",
@@ -424,6 +424,7 @@ test("the current navigation key follows the route and its section", () => {
   expect(key("/sandbox", "section=history")).toBe("sandbox:history");
   expect(key("/sandbox")).toBe("sandbox:build");
   expect(key("/comms")).toBe("comms");
-  expect(key("/settings/appearance")).toBe("appearance");
+  expect(key("/settings/appearance")).toBe("profile");
+  expect(key("/profile")).toBe("profile");
   expect(key("/login")).toBeNull();
 });

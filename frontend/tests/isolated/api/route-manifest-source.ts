@@ -212,6 +212,7 @@ function isAdapterSource(file: string): boolean {
     file === "frontend/src/lib/auth-api.ts" ||
     file === "frontend/src/lib/mfa-api.ts" ||
     file === "frontend/src/lib/user-theme-preferences.ts" ||
+    file === "frontend/src/components/profile/adapters/profile-api.ts" ||
     file === "frontend/src/components/systems/sandbox/state/lifecycle-api.ts"
   );
 }

@@ -24,6 +24,7 @@ const routeLabels: Record<string, string> = {
   "/access": "Access",
   "/comms": "OpenComms",
   "/settings/appearance": "Appearance",
+  "/profile": "Profile",
 };
 
 // Links in the header bar keep a 24px target.

@@ -1,4 +1,5 @@
 "use client";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 
 import { useCallback, useId, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -91,6 +92,7 @@ export function InvitePersonDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const id = useId();
+  const region = useWorkspaceDisplayRegion();
   const client = useQueryClient();
   const settings = useQuery({ ...invitationSettingsOptions(), enabled: open });
   const [form, setForm] = useState<InviteForm>(emptyForm);
@@ -302,7 +304,7 @@ export function InvitePersonDialog({
                   value={days}
                   description={
                     guestEnds
-                      ? `Access ends ${formatDate(guestEnds)}.`
+                      ? `Access ends ${formatDate(guestEnds, region)}.`
                       : settings.isPending
                         ? "Loading the default length…"
                         : `From ${GUEST_DAYS_MIN} to ${GUEST_DAYS_MAX} days.`

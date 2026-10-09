@@ -1,4 +1,5 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import {
   useCallback,
@@ -507,6 +508,7 @@ export function SecurityEventsView({
     ...workspaceCalendarQueryOptions(),
     enabled: active && admitted,
   }).data;
+  const displayRegion = useDisplayRegion(region);
   const uuidError =
     filters.person && !z.uuid().safeParse(filters.person).success
       ? "Enter a valid person ID."
@@ -1050,13 +1052,13 @@ export function SecurityEventsView({
                           <EventTime
                             className="text-muted-foreground block text-sm"
                             value={event.occurred_at}
-                            region={region}
+                            region={displayRegion}
                           />
                         </div>
                         <Button
                           variant="outline"
                           className="min-h-11 w-full shrink-0 sm:w-auto"
-                          aria-label={`Details for ${eventName(event)} at ${localTime(event.occurred_at, region)}`}
+                          aria-label={`Details for ${eventName(event)} at ${localTime(event.occurred_at, displayRegion)}`}
                           onClick={(opener) =>
                             void loadDetail(event.id, opener)
                           }
@@ -1151,7 +1153,7 @@ export function SecurityEventsView({
                 <SecurityEventFacts
                   event={detail.event}
                   names={names}
-                  region={region}
+                  region={displayRegion}
                   disabled={pending}
                   onPersonFilter={(person) => {
                     if (pending) return;

@@ -1,4 +1,8 @@
 "use client";
+import {
+  useDisplayRegion,
+  useDisplayWeekStart,
+} from "@/components/use-display-region";
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -206,6 +210,10 @@ export function ServerBackedBoardCalendar({
     error: string | null;
   } | null>(null);
   const workspaceToday = workspaceCalendar?.today ?? null;
+  const displayRegion = useDisplayRegion(workspaceCalendar);
+  const displayWeekStart = useDisplayWeekStart(
+    workspaceCalendar?.week_start ?? "monday",
+  );
   const [month, setMonth] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [view, setView] = useState<CalendarView>("month");
@@ -1232,7 +1240,7 @@ export function ServerBackedBoardCalendar({
     if (!calendarPage || !calendarWindow) return null;
     return (
       <ServerBoardCalendarDisplay
-        region={workspaceCalendar}
+        region={displayRegion}
         page={calendarPage}
         window={calendarWindow}
         date={date}
@@ -1271,7 +1279,7 @@ export function ServerBackedBoardCalendar({
               </DialogTitle>
               <DialogDescription>
                 {selectedEvent
-                  ? boardEventTimeLabel(selectedEvent, workspaceCalendar)
+                  ? boardEventTimeLabel(selectedEvent, displayRegion)
                   : accessDenied
                     ? "This event is unavailable or you no longer have access."
                     : (currentSelectedDetail?.error ?? "Loading the event.")}
@@ -1706,7 +1714,7 @@ export function ServerBackedBoardCalendar({
         myEventsState?.key === myEventsKey &&
         myEventsState.page && (
           <MyEventsDisplay
-            region={workspaceCalendar}
+            region={displayRegion}
             page={myEventsState.page}
             onEdit={(event) => {
               if (!mayEditEvent(event)) return;
@@ -1794,12 +1802,12 @@ export function ServerBackedBoardCalendar({
                 {view === "month" ? (
                   workspaceCalendar ? (
                     <MonthGrid
-                      region={workspaceCalendar}
+                      region={displayRegion ?? workspaceCalendar}
                       window={calendarWindow}
                       page={calendarPage}
                       selectedDate={selectedCalendarDate}
                       today={workspaceToday}
-                      weekStart={workspaceCalendar.week_start}
+                      weekStart={displayWeekStart}
                       onSelect={setSelectedDate}
                     />
                   ) : null
@@ -1952,7 +1960,7 @@ export function ServerBackedBoardCalendar({
             <div className="mt-4 space-y-4">
               <LifecyclePurgeReview
                 preview={purgePreview}
-                region={workspaceCalendar}
+                region={displayRegion}
               />
               {purgePreview.impact.blockers.length === 0 && (
                 <form

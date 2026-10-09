@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "./helpers/test";
 import { person } from "./helpers/access-api";
+import { profilePreferences } from "./helpers/profile-api";
 import { deferredMfaResponse, mfaUserA, mfaUserB } from "./helpers/mfa";
 import {
   eventOperationId,
@@ -132,6 +133,47 @@ test("Events mixed nullable feed and details explain representative and partial 
   expect(state.security.writes).toEqual([]);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
+});
+
+test("S21 security event personal display preserves UTC diagnostics and workspace filter bounds", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  state.events = [securityEvent(0, { occurred_at: "2026-10-01T00:30:00Z" })];
+  await page.route(`**/api/users/${mfaUserA}/preferences`, (route) =>
+    route.fulfill({
+      json: profilePreferences(mfaUserA, {
+        timezone: "America/Los_Angeles",
+        date_format: "ymd",
+        time_format: "24h",
+      }),
+    }),
+  );
+  await openFeed(page);
+  await expect(eventRows(page)).toContainText("2026-09-30");
+  await expect(eventRows(page)).toContainText("17:30");
+  const machineTime = eventRows(page).locator(
+    'time[datetime="2026-10-01T00:30:00Z"]',
+  );
+  await expect(machineTime).toHaveAttribute("title", /12:30.*UTC$/);
+  const dialog = await details(page, "Sign-in accepted");
+  await expect(dialog).toContainText("2026-09-30");
+  await expect(dialog).toContainText("17:30");
+  await page.keyboard.press("Escape");
+  const controls = await filters(page);
+  await controls.getByLabel("From", { exact: true }).fill("2026-10-01");
+  await controls.getByLabel("Through", { exact: true }).fill("2026-10-01");
+  await expect
+    .poll(() => Object.fromEntries(state.reads.at(-1) ?? []))
+    .toMatchObject({
+      occurred_after: "2026-09-30T16:00:00Z",
+      occurred_before: "2026-10-01T16:00:00Z",
+      offset: "0",
+    });
+  await expect(eventRows(page)).toContainText("sign-in was accepted");
+  await expect(machineTime).toHaveAttribute("datetime", "2026-10-01T00:30:00Z");
+  expect(state.commands).toEqual([]);
+  expect(state.security.writes).toEqual([]);
 });
 
 test("Events filters serialize workspace-local day bounds and person values before server paging and reset offset", async ({

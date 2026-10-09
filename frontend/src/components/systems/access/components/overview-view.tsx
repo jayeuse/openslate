@@ -1,4 +1,5 @@
 "use client";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 
 import { useId, useState, type FormEvent, type ReactNode } from "react";
 import type { Route } from "next";
@@ -155,6 +156,7 @@ function HealthSkeleton() {
  * each linked to the filtered list, and the invitation settings.
  */
 export function OverviewView() {
+  const region = useWorkspaceDisplayRegion();
   const settingsTitleId = useId();
   const administrators = useQuery(
     userListOptions("exclude", {
@@ -412,7 +414,7 @@ export function OverviewView() {
                               <p className="text-muted-foreground text-xs">
                                 As of{" "}
                                 <time dateTime={summary.data.as_of}>
-                                  {formatDateTime(summary.data.as_of)}
+                                  {formatDateTime(summary.data.as_of, region)}
                                 </time>
                               </p>
                               {card.count > 0 ? (

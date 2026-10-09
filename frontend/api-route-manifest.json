@@ -1,5 +1,41 @@
 [
   {
+    "adapter": "frontend/src/components/profile/adapters/profile-api.ts",
+    "function": "readOwnAvatar",
+    "method": "GET",
+    "path": "/api/auth/me"
+  },
+  {
+    "adapter": "frontend/src/components/profile/adapters/profile-api.ts",
+    "function": "readOwnAvatar",
+    "method": "GET",
+    "path": "/api/users/{param}/avatar"
+  },
+  {
+    "adapter": "frontend/src/components/profile/adapters/profile-api.ts",
+    "function": "readProfileSelf",
+    "method": "GET",
+    "path": "/api/auth/me"
+  },
+  {
+    "adapter": "frontend/src/components/profile/adapters/profile-api.ts",
+    "function": "reserveAvatar",
+    "method": "POST",
+    "path": "/api/files"
+  },
+  {
+    "adapter": "frontend/src/components/profile/adapters/profile-api.ts",
+    "function": "saveProfile",
+    "method": "PATCH",
+    "path": "/api/auth/me/profile"
+  },
+  {
+    "adapter": "frontend/src/components/profile/adapters/profile-api.ts",
+    "function": "uploadAvatar",
+    "method": "PUT",
+    "path": "/api/files/{param}/content"
+  },
+  {
     "adapter": "frontend/src/components/systems/access/adapters/security-api.ts",
     "function": "endAccessSession",
     "method": "DELETE",

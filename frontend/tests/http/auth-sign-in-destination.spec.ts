@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "./helpers/test";
 import { sandboxDocumentFromDesign } from "../helpers/sandbox-fixtures";
 import { initialDesign } from "../../src/components/systems/sandbox/domain/model";
+import { regionalDefaults } from "./helpers/profile-api";
 
 const userId = "00000000-0000-4000-8000-000000000301";
 const moduleId = "00000000-0000-4000-8000-000000000302";
@@ -16,6 +17,18 @@ async function installDestination(
   authenticated = false,
 ) {
   let signedIn = authenticated;
+  const identity = {
+    id: userId,
+    role: "admin" as "admin" | "member" | "guest",
+    access: [] as {
+      department_id: string;
+      module_id: string | null;
+      level: "manage";
+    }[],
+  };
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({ json: identity }),
+  );
   const dataSourceRequests: string[] = [];
   const sandboxProbes: string[] = [];
   await page.route("**/api/auth/login", (route) => {
@@ -35,7 +48,7 @@ async function installDestination(
         signedIn
           ? {
               authenticated: true,
-              user_id: userId,
+              user_id: identity.id,
               setup_required: setupRequired,
             }
           : { authenticated: false },
@@ -114,7 +127,7 @@ async function installDestination(
           },
     ),
   );
-  return { dataSourceRequests, sandboxProbes };
+  return { dataSourceRequests, sandboxProbes, identity };
 }
 
 async function signInWith(
@@ -173,6 +186,149 @@ test("a sign-in that needs account setup explains it and skips the catalog check
   ).toBeVisible();
   await expect(page).toHaveURL(/\/login$/);
   expect(dataSourceRequests).toEqual([]);
+});
+
+for (const [preferred, expected] of [
+  ["boards", "/boards"],
+  ["comms", "/comms"],
+  ["openview", "/openview"],
+  ["manage", "/manage"],
+  ["platform", "/platform"],
+  ["sandbox", "/sandbox"],
+  ["access", "/access"],
+] as const) {
+  test(`preferred landing ${preferred} opens an admitted route without rewriting preferences`, async ({
+    page,
+  }) => {
+    const fixture = await installDestination(page, "some", false, true, true);
+    if (["manage", "platform", "boards", "comms"].includes(preferred))
+      fixture.identity.role = "guest";
+    let writes = 0;
+    await page.route("**/api/users/*/preferences", (route) => {
+      if (route.request().method() !== "GET") writes += 1;
+      return route.fulfill({
+        json: {
+          user_id: fixture.identity.id,
+          theme: "light",
+          appearance: {
+            motion: "system",
+            keyboard_shortcuts: true,
+            ...regionalDefaults,
+            start_page: preferred,
+          },
+        },
+      });
+    });
+    await page.goto("/login");
+    await expect(page).toHaveURL(new RegExp(`${expected}$`));
+    expect(writes).toBe(0);
+    if (preferred === "sandbox") expect(fixture.sandboxProbes).toHaveLength(1);
+  });
+}
+
+test("preferred Access sends a member manager to Groups rather than administrator controls", async ({
+  page,
+}) => {
+  const fixture = await installDestination(page, "some", false, false, true);
+  fixture.identity.role = "member";
+  fixture.identity.access = [
+    { department_id: departmentId, module_id: null, level: "manage" },
+  ];
+  await page.route("**/api/users/*/preferences", (route) =>
+    route.fulfill({
+      json: {
+        user_id: userId,
+        theme: "light",
+        appearance: {
+          motion: "system",
+          keyboard_shortcuts: true,
+          ...regionalDefaults,
+          start_page: "access",
+        },
+      },
+    }),
+  );
+  await page.goto("/login");
+  await expect(page).toHaveURL(/\/access\?view=groups$/);
+});
+
+for (const failure of [
+  "sandbox-denied",
+  "access-hidden",
+  "preference-unavailable",
+  "unknown-route",
+  "wrong-owner",
+] as const) {
+  test(`preferred landing ${failure} falls back without deleting the stored choice`, async ({
+    page,
+  }) => {
+    const fixture = await installDestination(page, "some", false, false, true);
+    fixture.identity.role = "member";
+    const preference =
+      failure === "sandbox-denied"
+        ? "sandbox"
+        : failure === "unknown-route"
+          ? "https://untrusted.example"
+          : "access";
+    let writes = 0;
+    await page.route("**/api/users/*/preferences", (route) => {
+      if (route.request().method() !== "GET") writes += 1;
+      return route.fulfill({
+        status: failure === "preference-unavailable" ? 503 : 200,
+        json: {
+          user_id: failure === "wrong-owner" ? departmentId : userId,
+          theme: "light",
+          appearance: {
+            motion: "system",
+            keyboard_shortcuts: true,
+            ...regionalDefaults,
+            start_page: preference,
+          },
+        },
+      });
+    });
+    await page.goto("/login");
+    await expect(page).toHaveURL(/\/openview$/);
+    expect(writes).toBe(0);
+  });
+}
+
+test("preferred landing refuses a held prior-account response against a fresh identity", async ({
+  page,
+}) => {
+  const fixture = await installDestination(page, "some", false, false, true);
+  const gate = deferred();
+  const begun = deferred();
+  await page.route("**/api/users/*/preferences", async (route) => {
+    const owner = new URL(route.request().url()).pathname.split("/")[3];
+    if (owner === userId) {
+      begun.release();
+      await gate.promise;
+    }
+    await route
+      .fulfill({
+        json: {
+          user_id: owner,
+          theme: "light",
+          appearance: {
+            motion: "system",
+            keyboard_shortcuts: true,
+            ...regionalDefaults,
+            start_page: owner === userId ? "platform" : "automatic",
+          },
+        },
+      })
+      .catch(() => {});
+  });
+  try {
+    await page.goto("/login");
+    await begun.promise;
+    fixture.identity.id = departmentId;
+    gate.release();
+    await expect(page).toHaveURL(/\/openview$/);
+  } finally {
+    gate.release();
+  }
 });
 
 const loginFailures = [

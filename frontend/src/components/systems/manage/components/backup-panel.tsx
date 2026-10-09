@@ -1,4 +1,5 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import {
   useEffect,
@@ -79,7 +80,7 @@ export function formatBackupTime(
 }
 
 export function useWorkspaceRegion(): WorkspaceRegion | undefined {
-  return useQuery(manageWorkspaceOptions()).data;
+  return useDisplayRegion(useQuery(manageWorkspaceOptions()).data);
 }
 
 /** A secret field with a visibility toggle that keeps its own label. */
