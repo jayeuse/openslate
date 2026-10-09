@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ApiContractError } from "@/lib/api";
 import { SlidersHorizontal } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
@@ -44,12 +45,19 @@ import {
 } from "../adapters/views-api";
 import type { AppliedSnapshot } from "./chart-snapshot-results";
 import { ChartSourceEditor } from "./chart-editor/chart-source-editor";
-import { getOpenViewChart, chartMatchesWidget } from "../adapters/charts-api";
+import {
+  getOpenViewChart,
+  readOpenViewChart,
+  chartMatchesWidget,
+  type SavedChart,
+} from "../adapters/charts-api";
 import type { OpenViewDashboardChartConfig } from "../adapters/dashboards-api";
 import { ChartFormSkeleton } from "./openview-skeletons";
 import { ChartSnapshotResults } from "./chart-snapshot-results";
+import { SavedChartManagement } from "./saved-chart-management";
 import {
   aggregationLabel,
+  chartEditorDraftFrom,
   compileChartEditorDraft,
   editorField,
   newChartEditorDraft,
@@ -78,6 +86,20 @@ type PageExtension<T> = {
 
 export default function ServerBackedCharts() {
   const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
+  const urlChart = searchParams.get("chart");
+  const [selectedSavedId, setSelectedSavedId] = useState<string | null>(null);
+  const [openedChart, setOpenedChart] = useState<SavedChart | null>(null);
+  const [openedMetadata, setOpenedMetadata] = useState<{
+    source: OpenViewDataSource;
+    fields: OpenViewDataSourceField[];
+  } | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState("");
+  const [persistenceBusy, setPersistenceBusy] = useState(false);
+  const openSequence = useRef(0);
+  const loadedSavedId = useRef<string | null>(null);
+  const consumedUrlChart = useRef<string | null | undefined>(undefined);
   // A refusal of any cached OpenView read hides them all (openview-access.ts).
   const accessDenied = useOpenViewAccessDenied();
   const sourcesQuery = useQuery(catalogFirstPageOptions());
@@ -110,6 +132,7 @@ export default function ServerBackedCharts() {
   const appliedRef = useRef<AppliedSnapshot | null>(null);
   const appliedRequestSequence = useRef(0);
   const appliedChartId = useRef<string | null>(null);
+  const appliedEditedChartId = useRef<string | null>(null);
   const pendingChartId = useRef<string | null>(null);
   const consumedInvalidationRevision = useRef(0);
 
@@ -127,9 +150,15 @@ export default function ServerBackedCharts() {
   const sourcesLoadError = sourcesQuery.isFetching ? null : sourcesQuery.error;
   const sourcesDenied =
     accessDenied || isAuthorizationDenied(sourcesQuery.error);
-  const sources = sourcesDenied
+  const catalogSources = sourcesDenied
     ? []
     : [...(sourcesBase?.items ?? []), ...(sourcesMore?.items ?? [])];
+  const sources =
+    !sourcesDenied &&
+    openedMetadata &&
+    !catalogSources.some((source) => source.id === openedMetadata.source.id)
+      ? [...catalogSources, openedMetadata.source]
+      : catalogSources;
   const sourcesHasMore = sourcesDenied
     ? false
     : sourcesMore
@@ -148,7 +177,6 @@ export default function ServerBackedCharts() {
         )
       : "";
 
-  // Chart settings are not saved: they last while this page is open.
   const moduleId = editorDraft?.moduleId ?? sources[0]?.id ?? "";
 
   // Fields of the chosen data source: the cached first page plus loaded pages.
@@ -167,10 +195,22 @@ export default function ServerBackedCharts() {
   const fieldsDenied =
     accessDenied ||
     (Boolean(moduleId) && isAuthorizationDenied(fieldsQuery.error));
-  const fields = fieldsDenied
+  const catalogFields = fieldsDenied
     ? []
     : [...(fieldsBase?.items ?? []), ...(fieldsMore?.items ?? [])];
-  const fieldsReady = Boolean(fieldsBase) && !fieldsDenied;
+  const fields =
+    !fieldsDenied && openedMetadata?.source.id === moduleId
+      ? [
+          ...catalogFields,
+          ...openedMetadata.fields.filter(
+            (field) =>
+              !catalogFields.some((current) => current.id === field.id),
+          ),
+        ]
+      : catalogFields;
+  const fieldsReady =
+    (Boolean(fieldsBase) || openedMetadata?.source.id === moduleId) &&
+    !fieldsDenied;
   const fieldsHasMore = fieldsMore
     ? fieldsMore.hasMore
     : (fieldsBase?.pagination.hasMore ?? false);
@@ -194,6 +234,10 @@ export default function ServerBackedCharts() {
   const readDenied = sourcesDenied || fieldsDenied;
   useEffect(() => {
     if (!readDenied) return;
+    openSequence.current += 1;
+    setOpening(false);
+    setOpenedChart(null);
+    setOpenedMetadata(null);
     appliedRequestSequence.current += 1;
     pendingChartId.current = null;
     setQueryLoading(false);
@@ -201,6 +245,111 @@ export default function ServerBackedCharts() {
     appliedRef.current = null;
     setQueryError(AUTHORIZATION_ERROR);
   }, [readDenied]);
+
+  function replaceChartUrl(id: string | null) {
+    consumedUrlChart.current = id;
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("chart", id);
+    else url.searchParams.delete("chart");
+    window.history.replaceState(
+      null,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }
+  const openSavedChart = useCallback(
+    async (id: string, preserveDraft = false) => {
+      preserveDraft = preserveDraft && loadedSavedId.current === id;
+      const sequence = ++openSequence.current;
+      setSelectedSavedId(id);
+      setOpening(true);
+      setOpenError("");
+      if (!preserveDraft) {
+        setOpenedChart(null);
+        setOpenedMetadata(null);
+        appliedRequestSequence.current += 1;
+        pendingChartId.current = null;
+        setApplied(null);
+        appliedRef.current = null;
+        setQueryLoading(false);
+        replaceChartUrl(id);
+      }
+      try {
+        const chart = await readOpenViewChart(id);
+        if (sequence !== openSequence.current) return false;
+        if (
+          !chartMatchesWidget(chart, "chart") ||
+          !("chartType" in chart.config)
+        )
+          throw new ApiContractError();
+        const request = chart.config.query;
+        const source = await getOpenViewDataSource(request.moduleId);
+        if (sequence !== openSequence.current) return false;
+        const definition = request.definition;
+        const references = new Map(
+          [
+            ...(request.mode === "date_series"
+              ? [request.dateField]
+              : [request.dimension]),
+            ...(request.measure ? [request.measure] : []),
+            ...(request.mode === "groups" && request.dateField
+              ? [request.dateField]
+              : []),
+            ...definition.columns,
+            ...definition.filters,
+            ...definition.sort,
+            ...definition.searchFields,
+          ].map((ref) => [ref.fieldId, ref]),
+        );
+        const fields: OpenViewDataSourceField[] = [];
+        for (const ref of references.values()) {
+          const field = await getOpenViewDataSourceField(
+            request.moduleId,
+            ref.fieldId,
+          );
+          if (sequence !== openSequence.current) return false;
+          if (field.type !== ref.expectedType) throw new ApiContractError();
+          fields.push(field);
+        }
+        if (sequence !== openSequence.current) return false;
+        setOpenedChart(chart);
+        setOpenedMetadata({ source, fields });
+        loadedSavedId.current = id;
+        if (!preserveDraft) {
+          setEditorDraft(
+            chartEditorDraftFrom({ widgetType: "chart", config: chart.config }),
+          );
+          setChartId(null);
+          setRefusedChartId(null);
+        }
+        return true;
+      } catch {
+        if (sequence !== openSequence.current) return false;
+        setOpenedChart(null);
+        setOpenedMetadata(null);
+        setOpenError(
+          "Saved chart is unavailable. Your draft is retained; retry to check current access.",
+        );
+        return false;
+      } finally {
+        if (sequence === openSequence.current) setOpening(false);
+      }
+    },
+    [],
+  );
+  useEffect(() => {
+    if (consumedUrlChart.current === urlChart) return;
+    consumedUrlChart.current = urlChart;
+    if (urlChart) void openSavedChart(urlChart);
+    else {
+      openSequence.current += 1;
+      setSelectedSavedId(null);
+      setOpenedChart(null);
+      setOpenedMetadata(null);
+      setOpening(false);
+      setOpenError("");
+    }
+  }, [urlChart, openSavedChart]);
 
   // Applied snapshots are not cached reads; they refresh through this
   // counter. The catalog and fields refresh through OpenViewQuerySync.
@@ -228,7 +377,11 @@ export default function ServerBackedCharts() {
     !fieldsError &&
     (chartConfig || chartId) &&
     (!chartId || chartId !== refusedChartId) &&
-    !queryLoading,
+    !queryLoading &&
+    !opening &&
+    !persistenceBusy &&
+    !openError &&
+    !openedChart?.isDeleted,
   );
 
   const draftSignature = JSON.stringify({ inline: editorValue, chartId });
@@ -250,6 +403,8 @@ export default function ServerBackedCharts() {
   useEffect(
     () => () => {
       appliedRequestSequence.current += 1;
+      openSequence.current += 1;
+      consumedUrlChart.current = undefined;
     },
     [],
   );
@@ -269,42 +424,49 @@ export default function ServerBackedCharts() {
       if (!chartMatchesWidget(chart, "chart") || !("chartType" in chart.config))
         throw new ApiContractError();
       const config = chart.config;
-      const request = config.query;
-      const dimension =
-        request.mode === "date_series" ? request.dateField : request.dimension;
-      const measure = request.aggregation === "count" ? null : request.measure;
-      if (request.aggregation !== "count" && !measure)
-        throw new ApiContractError();
-      // Resolve only the referenced labels through the existing by-ID reads;
-      // neither the inline catalog nor a paged catalog is this source's metadata.
-      const source = await getOpenViewDataSource(request.moduleId);
-      if (sequence !== appliedRequestSequence.current) return null;
-      const references = new Map(
-        [dimension, ...(measure ? [measure] : [])].map((ref) => [
-          ref.fieldId,
-          ref,
-        ]),
-      );
-      const names = new Map<string, string>();
-      for (const ref of references.values()) {
-        const field = await getOpenViewDataSourceField(
-          request.moduleId,
-          ref.fieldId,
-        );
-        if (sequence !== appliedRequestSequence.current) return null;
-        if (field.type !== ref.expectedType) throw new ApiContractError();
-        names.set(ref.fieldId, field.name);
-      }
-      return {
-        config,
-        sourceName: source.name,
-        labelName: names.get(dimension.fieldId)!,
-        valueName: measure ? names.get(measure.fieldId)! : "Records",
-      };
+      return await currentChartLabels(config, sequence);
     } catch (error) {
       if (sequence === appliedRequestSequence.current) setRefusedChartId(id);
       throw error;
     }
+  }
+
+  async function currentChartLabels(
+    config: OpenViewDashboardChartConfig,
+    sequence: number,
+  ) {
+    const request = config.query;
+    const dimension =
+      request.mode === "date_series" ? request.dateField : request.dimension;
+    const measure = request.aggregation === "count" ? null : request.measure;
+    if (request.aggregation !== "count" && !measure)
+      throw new ApiContractError();
+    // Resolve only the referenced labels through the existing by-ID reads;
+    // neither the inline catalog nor a paged catalog is this source's metadata.
+    const source = await getOpenViewDataSource(request.moduleId);
+    if (sequence !== appliedRequestSequence.current) return null;
+    const references = new Map(
+      [dimension, ...(measure ? [measure] : [])].map((ref) => [
+        ref.fieldId,
+        ref,
+      ]),
+    );
+    const names = new Map<string, string>();
+    for (const ref of references.values()) {
+      const field = await getOpenViewDataSourceField(
+        request.moduleId,
+        ref.fieldId,
+      );
+      if (sequence !== appliedRequestSequence.current) return null;
+      if (field.type !== ref.expectedType) throw new ApiContractError();
+      names.set(ref.fieldId, field.name);
+    }
+    return {
+      config,
+      sourceName: source.name,
+      labelName: names.get(dimension.fieldId)!,
+      valueName: measure ? names.get(measure.fieldId)! : "Records",
+    };
   }
 
   async function loadMoreSources() {
@@ -383,7 +545,9 @@ export default function ServerBackedCharts() {
     try {
       const resolved = chartId
         ? await currentChartConfig(chartId, requestSequence)
-        : null;
+        : openedChart && chartConfig
+          ? await currentChartLabels(chartConfig, requestSequence)
+          : null;
       const config = chartId ? resolved?.config : chartConfig;
       if (!config || requestSequence !== appliedRequestSequence.current) return;
       const request = config.query;
@@ -405,6 +569,7 @@ export default function ServerBackedCharts() {
           : (editorField(request.measure ?? null, moduleFields)?.name ??
             "Value"));
       appliedChartId.current = chartId;
+      appliedEditedChartId.current = openedChart?.id ?? null;
       setApplied({
         result,
         request,
@@ -418,7 +583,7 @@ export default function ServerBackedCharts() {
       setTablePage(0);
     } catch (error) {
       if (requestSequence !== appliedRequestSequence.current) return;
-      if (isAuthorizationDenied(error) || chartId) {
+      if (isAuthorizationDenied(error) || chartId || openedChart) {
         setApplied(null);
         appliedRef.current = null;
         setQueryError(AUTHORIZATION_ERROR);
@@ -455,7 +620,16 @@ export default function ServerBackedCharts() {
     void (async () => {
       const resolved = sourceId
         ? await currentChartConfig(sourceId, requestSequence)
-        : null;
+        : appliedEditedChartId.current
+          ? await currentChartLabels(
+              {
+                version: 1,
+                query: current.request,
+                chartType: current.chartType,
+              },
+              requestSequence,
+            )
+          : null;
       if (requestSequence !== appliedRequestSequence.current) return null;
       const request = resolved?.config.query ?? current.request;
       return {
@@ -488,7 +662,11 @@ export default function ServerBackedCharts() {
       })
       .catch((error: unknown) => {
         if (requestSequence !== appliedRequestSequence.current) return;
-        if (isAuthorizationDenied(error) || sourceId) {
+        if (
+          isAuthorizationDenied(error) ||
+          sourceId ||
+          appliedEditedChartId.current
+        ) {
           setApplied(null);
           appliedRef.current = null;
           setQueryError(AUTHORIZATION_ERROR);
@@ -531,6 +709,44 @@ export default function ServerBackedCharts() {
         </div>
       </header>
 
+      <SavedChartManagement
+        opened={readDenied ? null : openedChart}
+        selectedId={selectedSavedId}
+        input={
+          chartId === null &&
+          !sourcesLoading &&
+          !sourcesError &&
+          !fieldsLoading &&
+          !fieldsError
+            ? compiled
+            : null
+        }
+        sourceId={chartId}
+        departmentId={
+          sources.find((source) => source.id === moduleId)?.departmentId
+        }
+        scope={JSON.stringify([draftSignature, selectedSavedId])}
+        blocked={readDenied}
+        loading={opening}
+        error={openError}
+        onOpen={openSavedChart}
+        onBusy={setPersistenceBusy}
+        onSaved={(chart) => {
+          setOpenedChart(chart);
+          setSelectedSavedId(chart.id);
+          loadedSavedId.current = chart.id;
+          setOpenError("");
+          replaceChartUrl(chart.id);
+        }}
+        onArchived={(id) => {
+          if (selectedSavedId !== id) return;
+          setOpenedChart(null);
+          setSelectedSavedId(null);
+          setOpenError("");
+          replaceChartUrl(null);
+        }}
+      />
+
       <LoadingRegion
         loading={chartSetupColdLoad}
         label="Loading the authorized data-source catalog…"
@@ -555,11 +771,28 @@ export default function ServerBackedCharts() {
           }}
           value={{ inline: editorValue, chartId }}
           onChange={(value) => {
+            if (
+              value.inline.moduleId !== moduleId ||
+              value.chartId !== chartId
+            ) {
+              openSequence.current += 1;
+              setOpenedChart(null);
+              setSelectedSavedId(null);
+              setOpenedMetadata(null);
+              setOpenError("");
+              setOpening(false);
+              replaceChartUrl(null);
+            }
             setRefusedChartId(null);
             setEditorDraft(value.inline);
             setChartId(value.chartId);
           }}
-          disabled={queryLoading}
+          disabled={
+            queryLoading ||
+            opening ||
+            persistenceBusy ||
+            Boolean(openedChart?.isDeleted)
+          }
           onUnavailable={withdrawSource}
           actions={{
             retryCatalog: () => {

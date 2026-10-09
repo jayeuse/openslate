@@ -829,15 +829,51 @@
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/charts-api.ts",
+    "function": "archiveOpenViewChart",
+    "method": "DELETE",
+    "path": "/api/charts/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/charts-api.ts",
+    "function": "createOpenViewChart",
+    "method": "POST",
+    "path": "/api/charts"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/charts-api.ts",
     "function": "getOpenViewChart",
     "method": "GET",
     "path": "/api/charts/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/charts-api.ts",
+    "function": "getOpenViewChartUsage",
+    "method": "GET",
+    "path": "/api/charts/{param}/usage"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/charts-api.ts",
     "function": "listOpenViewCharts",
     "method": "GET",
     "path": "/api/charts"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/charts-api.ts",
+    "function": "readOpenViewChart",
+    "method": "GET",
+    "path": "/api/charts/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/charts-api.ts",
+    "function": "restoreOpenViewChart",
+    "method": "POST",
+    "path": "/api/charts/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/charts-api.ts",
+    "function": "updateOpenViewChart",
+    "method": "PATCH",
+    "path": "/api/charts/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",

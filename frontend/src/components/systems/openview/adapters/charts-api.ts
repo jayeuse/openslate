@@ -4,8 +4,10 @@ import { listSchema } from "./views-schemas";
 import { openViewReadFetch } from "./openview-access";
 import {
   dashboardWidgetWireConfigSchema,
+  serializeDashboardWidgetConfig,
   type OpenViewDashboardWidgetType,
 } from "./dashboards-api";
+import type { InlineChartEditorValue } from "../domain/chart-query";
 
 const uuid = z.string().uuid();
 const timestamp = z.iso.datetime({ offset: true });
@@ -72,6 +74,7 @@ const chartListRequestSchema = z
     offset: z.number().int().min(0).default(0),
     search: z.string().trim().max(100).default(""),
     moduleId: uuid.optional(),
+    deleted: z.enum(["exclude", "include", "only"]).default("exclude"),
   })
   .strict();
 
@@ -82,6 +85,7 @@ export async function listOpenViewCharts(
     offset?: number;
     search?: string;
     moduleId?: string;
+    deleted?: "exclude" | "include" | "only";
     signal?: AbortSignal;
   } = {},
 ) {
@@ -92,7 +96,7 @@ export async function listOpenViewCharts(
     offset: String(request.offset),
     sort_by: "name",
     sort_order: "asc",
-    deleted: "exclude",
+    deleted: request.deleted,
   });
   if (request.search) parameters.set("search", request.search);
   if (request.moduleId) parameters.set("module_id", request.moduleId);
@@ -110,7 +114,8 @@ export async function listOpenViewCharts(
     new Set(page.items.map((chart) => chart.id)).size !== page.items.length ||
     page.items.some(
       (chart) =>
-        chart.isDeleted ||
+        (request.deleted === "exclude" && chart.isDeleted) ||
+        (request.deleted === "only" && !chart.isDeleted) ||
         (request.moduleId && chart.moduleId !== request.moduleId),
     )
   )
@@ -123,6 +128,22 @@ export async function getOpenViewChart(
   id: string,
   signal?: AbortSignal,
 ): Promise<SavedChart> {
+  const chart = await readOpenViewChart(id, signal);
+  if (chart.isDeleted)
+    throw new ApiError(
+      404,
+      "Saved Chart is unavailable",
+      undefined,
+      "chart_source_unavailable",
+    );
+  return chart;
+}
+
+/** Management can read an archived object, but it can never run as a source. */
+export async function readOpenViewChart(
+  id: string,
+  signal?: AbortSignal,
+): Promise<SavedChart> {
   const requested = uuid.parse(id);
   try {
     const chart = await apiFetch(`/charts/${requested}`, chartSchema, {
@@ -131,13 +152,6 @@ export async function getOpenViewChart(
     });
     signal?.throwIfAborted();
     if (chart.id !== requested) throw new ApiContractError();
-    if (chart.isDeleted)
-      throw new ApiError(
-        404,
-        "Saved Chart is unavailable",
-        undefined,
-        "chart_source_unavailable",
-      );
     return chart;
   } catch (error) {
     if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
@@ -150,6 +164,139 @@ export async function getOpenViewChart(
     }
     throw error;
   }
+}
+
+const chartName = z.string().trim().min(1).max(120);
+const revisionSchema = z.number().int().min(1);
+function definitionBody(input: InlineChartEditorValue) {
+  const config = serializeDashboardWidgetConfig(input.widgetType, input.config);
+  return {
+    chart_type:
+      input.widgetType === "chart" ? input.config.chartType : input.widgetType,
+    query: config.query,
+  };
+}
+
+export async function createOpenViewChart(
+  name: string,
+  input: InlineChartEditorValue,
+) {
+  const body = {
+    module_id: uuid.parse(input.config.query.moduleId),
+    name: chartName.parse(name),
+    ...definitionBody(input),
+  };
+  const chart = await apiFetch("/charts", chartSchema, {
+    method: "POST",
+    body: JSON.stringify(body),
+    refreshOnUnauthorized: false,
+  });
+  if (
+    chart.isDeleted ||
+    chart.moduleId !== body.module_id ||
+    chart.name !== body.name ||
+    chart.chartType !== body.chart_type
+  )
+    throw new ApiContractError();
+  return chart;
+}
+
+export async function updateOpenViewChart(
+  id: string,
+  revision: number,
+  name: string,
+  input: InlineChartEditorValue,
+) {
+  const requested = uuid.parse(id);
+  const body = {
+    revision: revisionSchema.parse(revision),
+    name: chartName.parse(name),
+    ...definitionBody(input),
+  };
+  const chart = await apiFetch(`/charts/${requested}`, chartSchema, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+    refreshOnUnauthorized: false,
+  });
+  if (
+    chart.id !== requested ||
+    chart.isDeleted ||
+    chart.moduleId !== input.config.query.moduleId ||
+    chart.revision < revision ||
+    chart.name !== body.name ||
+    chart.chartType !== body.chart_type
+  )
+    throw new ApiContractError();
+  return chart;
+}
+
+export async function archiveOpenViewChart(id: string, revision: number) {
+  return apiFetch(
+    `/charts/${uuid.parse(id)}?revision=${revisionSchema.parse(revision)}`,
+    z.null(),
+    { method: "DELETE", refreshOnUnauthorized: false },
+  );
+}
+
+export async function restoreOpenViewChart(id: string, revision: number) {
+  const requested = uuid.parse(id);
+  const chart = await apiFetch(`/charts/${requested}/restore`, chartSchema, {
+    method: "POST",
+    body: JSON.stringify({ revision: revisionSchema.parse(revision) }),
+    refreshOnUnauthorized: false,
+  });
+  if (chart.id !== requested || chart.isDeleted || chart.revision <= revision)
+    throw new ApiContractError();
+  return chart;
+}
+
+const usageItemSchema = z
+  .object({
+    kind: z.enum(["board", "dashboard"]),
+    id: uuid,
+    name: z.string().min(1),
+  })
+  .strict();
+const usageSchema = listSchema(usageItemSchema)
+  .extend({ has_restricted_usage: z.boolean() })
+  .transform(({ has_restricted_usage, ...page }) => ({
+    ...page,
+    hasRestrictedUsage: has_restricted_usage,
+  }));
+export type ChartUsage = z.output<typeof usageSchema>;
+
+export function chartArchiveUsage(error: unknown): ChartUsage | null {
+  if (
+    !(error instanceof ApiError) ||
+    error.status !== 409 ||
+    error.code !== "chart_in_use"
+  )
+    return null;
+  const detail = z.object({ usage: usageSchema }).safeParse(error.details);
+  return detail.success ? detail.data.usage : null;
+}
+
+export async function getOpenViewChartUsage(
+  id: string,
+  offset = 0,
+  signal?: AbortSignal,
+) {
+  const page = await apiFetch(
+    `/charts/${uuid.parse(id)}/usage?${new URLSearchParams({ limit: "25", offset: String(z.number().int().min(0).parse(offset)), sort_by: "name", sort_order: "asc" })}`,
+    usageSchema,
+    { signal, cache: "no-store" },
+  );
+  signal?.throwIfAborted();
+  if (
+    page.pagination.offset !== offset ||
+    page.pagination.count !== page.items.length ||
+    page.pagination.total < offset + page.items.length ||
+    (page.pagination.hasMore && !page.items.length) ||
+    new Set(page.items.map((item) => `${item.kind}:${item.id}`)).size !==
+      page.items.length
+  )
+    throw new ApiContractError();
+  return page;
 }
 
 export function chartMatchesWidget(

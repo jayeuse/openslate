@@ -42,8 +42,8 @@ export const openViewKeys = {
   all: ["openview"] as const,
   catalog: ["openview", "catalog"] as const,
   chartLists: ["openview", "catalog", "charts"] as const,
-  chartList: (search: string, moduleId?: string) =>
-    ["openview", "catalog", "charts", { search, moduleId }] as const,
+  chartList: (search: string, moduleId?: string, deleted = "exclude") =>
+    ["openview", "catalog", "charts", { search, moduleId, deleted }] as const,
   /** The first catalog batch; Views loads more only on request. */
   boundedCatalog: () => ["openview", "catalog", "bounded"] as const,
   /** The first catalog page (Charts and Reports load more on request). */
@@ -218,10 +218,15 @@ export const catalogFirstPageOptions = () =>
       listOpenViewDataSources({ limit: CATALOG_PAGE_SIZE, offset: 0 }),
   });
 
-export const chartListOptions = (search: string, moduleId?: string) =>
+export const chartListOptions = (
+  search: string,
+  moduleId?: string,
+  deleted: "exclude" | "include" | "only" = "exclude",
+) =>
   queryOptions({
-    queryKey: openViewKeys.chartList(search, moduleId),
-    queryFn: ({ signal }) => listOpenViewCharts({ search, moduleId, signal }),
+    queryKey: openViewKeys.chartList(search, moduleId, deleted),
+    queryFn: ({ signal }) =>
+      listOpenViewCharts({ search, moduleId, deleted, signal }),
   });
 
 export const fieldsFirstPageOptions = (moduleId: string) =>
@@ -353,6 +358,7 @@ export function invalidatesRecords(entity: string): boolean {
 
 /** The cached reads that depend on one invalidated entity. */
 export function openViewKeysForEntity(entity: string): QueryKey[] {
+  if (entity === "charts") return [openViewKeys.chartLists];
   const fileKeys =
     entity === "files" ||
     entity === "records" ||
