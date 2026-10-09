@@ -1,6 +1,6 @@
 "use client";
 
-import type { Dispatch, SetStateAction } from "react";
+import { useId, type Dispatch, type SetStateAction } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -101,6 +101,7 @@ export function DashboardWidgetResults({
   setTablePage,
   setTablePageSize,
 }: DashboardWidgetResultsProps) {
+  const headingId = useId();
   const config = snapshot?.data.config ?? widget.config ?? null;
   const aggregateQuery =
     config !== null && aggregateDefinition(config.query) ? config.query : null;
@@ -170,14 +171,14 @@ export function DashboardWidgetResults({
 
   return (
     <section
-      aria-labelledby="dashboard-widget-preview"
+      aria-labelledby={headingId}
       className="border-border flex min-w-0 flex-col gap-4 border-t pt-5"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2
             data-slot="section-title"
-            id="dashboard-widget-preview"
+            id={headingId}
             className="text-lg font-semibold"
           >
             {title}

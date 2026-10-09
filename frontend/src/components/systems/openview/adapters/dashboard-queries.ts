@@ -6,7 +6,10 @@ import {
   listOpenViewDashboards,
   type OpenViewDashboardWidgetInput,
 } from "./dashboards-api";
-import { queryOpenViewAggregateSnapshot } from "./analytics-api";
+import {
+  queryOpenViewAggregateSnapshot,
+  queryOpenViewAggregateSnapshots,
+} from "./analytics-api";
 import { queryOpenViewRecords } from "./views-api";
 import { ApiContractError } from "@/lib/api";
 import {
@@ -19,6 +22,7 @@ import {
   configSignature,
   type DashboardWidgetData,
   type DraftWidget,
+  type SnapshotState,
 } from "../domain/dashboard-draft";
 
 export const dashboardKeys = {
@@ -67,12 +71,11 @@ export function dashboardSnapshotSignature(
     : signature;
 }
 
-export const dashboardSnapshotOptions = (
+export const dashboardRecordSnapshotOptions = (
   dashboardId: string,
   widget: DraftWidget | undefined,
   page: number,
   pageSize: number,
-  interval: number | false,
 ) =>
   queryOptions<DashboardWidgetData>({
     queryKey: [
@@ -85,32 +88,59 @@ export const dashboardSnapshotOptions = (
     // A visibility transition must not commit or repeat a canceled hidden read.
     staleTime: Infinity,
     enabled: Boolean(dashboardId && widget),
-    refetchIntervalInBackground: false,
-    refetchInterval: (candidate) => {
-      if (interval === false || candidate.state.fetchStatus !== "idle")
-        return false;
-      const finished = Math.max(
-        candidate.state.dataUpdatedAt,
-        candidate.state.errorUpdatedAt,
-      );
-      // Query restarts its interval when the fetch settles. Returning from a
-      // short pause keeps that same deadline rather than starting a new one.
-      return Math.max(1, interval - (finished ? Date.now() - finished : 0));
-    },
     queryFn: ({ signal }) => {
       if (!widget) throw new Error("Choose a saved Dashboard widget.");
       return queryDashboardWidgetData(widget, page, pageSize, signal);
     },
   });
 
-/** Both persisted results and a real, unpersisted dialog draft use this read.
- * No Dashboard or widget identity is fabricated to enable a saved-only hook. */
-export async function queryDashboardWidgetData(
+export const dashboardAggregateSnapshotOptions = (
+  dashboardId: string,
+  widgets: DraftWidget[],
+) =>
+  queryOptions<SnapshotState[]>({
+    // Inline cohorts refresh when an included module changes. A referenced
+    // Chart can move source, so its current authority must be checked for any
+    // module invalidation. Results remain correlated by stable widget key.
+    queryKey: [
+      ...dashboardKeys.dashboardSnapshots(dashboardId),
+      widgets.some((widget) => widget.chartId != null)
+        ? ""
+        : [...new Set(widgets.map((widget) => widget.config?.query.moduleId))],
+      "aggregate",
+      widgets.map((widget) => [widget.key, configSignature(widget)]),
+    ],
+    staleTime: Infinity,
+    queryFn: async ({ signal }) => {
+      const definitions = await Promise.all(
+        widgets.map((widget) =>
+          resolveDashboardWidgetDefinition(widget, signal),
+        ),
+      );
+      signal.throwIfAborted();
+      const queries = definitions.map(({ config }) => {
+        if (!("mode" in config.query)) throw new ApiContractError();
+        return config.query;
+      });
+      const batch = await queryOpenViewAggregateSnapshots(queries);
+      signal.throwIfAborted();
+      return widgets.map((widget, index) => ({
+        widgetKey: widget.key,
+        configSignature: configSignature(widget),
+        data: {
+          ...definitions[index],
+          kind: "aggregate",
+          result: batch.items[index],
+        },
+      }));
+    },
+  });
+
+/** Fresh source authority is shared by grid reads, editor opening and previews. */
+export async function resolveDashboardWidgetDefinition(
   widget: OpenViewDashboardWidgetInput,
-  page: number,
-  pageSize: number,
   signal: AbortSignal,
-): Promise<DashboardWidgetData> {
+) {
   let config = widget.config;
   let sourceStamp = JSON.stringify(widget);
   let sourceName: string | null = null;
@@ -124,7 +154,19 @@ export async function queryDashboardWidgetData(
   }
   signal.throwIfAborted();
   if (!config) throw new ApiContractError();
-  const resolved = { config, sourceStamp, sourceName };
+  return { config, sourceStamp, sourceName };
+}
+
+/** Both persisted results and a real, unpersisted dialog draft use this read.
+ * No Dashboard or widget identity is fabricated to enable a saved-only hook. */
+export async function queryDashboardWidgetData(
+  widget: OpenViewDashboardWidgetInput,
+  page: number,
+  pageSize: number,
+  signal: AbortSignal,
+): Promise<DashboardWidgetData> {
+  const resolved = await resolveDashboardWidgetDefinition(widget, signal);
+  const { config } = resolved;
   let data: DashboardWidgetData;
   if (widget.widgetType === "records") {
     if ("mode" in config.query) throw new ApiContractError();

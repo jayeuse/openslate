@@ -1,24 +1,24 @@
 "use client";
 
 import {
-  aggregationLabel,
   changeChartEditorWidgetType,
   editorFieldReference,
   newChartEditorDraft,
   isCategoricalField,
   type ChartSourceDraft,
 } from "../domain/chart-query";
-import { ChartSourceEditor } from "./chart-editor/chart-source-editor";
-import { OpenViewChartPreview } from "./chart-preview";
-import { openViewRecordFieldValue } from "../domain/record-display";
-import { queryDashboardWidgetData } from "../adapters/dashboard-queries";
+import { DashboardWidgetEditor } from "./dashboard-widget-editor";
+import {
+  queryDashboardWidgetData,
+  resolveDashboardWidgetDefinition,
+} from "../adapters/dashboard-queries";
 import { getOpenViewChart, chartMatchesWidget } from "../adapters/charts-api";
 import { ApiContractError, ApiError } from "@/lib/api";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
-import { ChevronDown, MoreHorizontal, Plus, RefreshCw } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -37,6 +37,7 @@ import { SearchSelect } from "@/components/ui/search-select";
 import {
   useOpenViewDepartmentNames,
   useOpenViewDepartmentPicker,
+  useOpenViewSource,
 } from "../hooks/use-openview-catalog";
 import {
   Dialog,
@@ -69,13 +70,12 @@ import {
   restoreOpenViewDashboard,
   updateOpenViewDashboard,
   type OpenViewDashboard,
-  type OpenViewDashboardChartConfig,
   type OpenViewDashboardWidgetInput,
   type OpenViewDashboardRefreshCadence,
-  type OpenViewDashboardWidgetType,
-  type OpenViewDashboardWidget,
+  type OpenViewDashboardWidgetSize,
 } from "../adapters/dashboards-api";
 import {
+  getOpenViewDataSourceField,
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
   type OpenViewDataSource,
@@ -83,84 +83,20 @@ import {
 } from "../adapters/views-api";
 import { parseOpenViewUrl, serializeOpenViewUrl } from "../domain/model";
 import {
-  DASHBOARD_PAGE_SIZE,
   draftWidgetsFrom,
   inputWidgets,
   type DraftWidget,
   type DashboardWidgetData,
+  dashboardWidgetEditorDraft,
 } from "../domain/dashboard-draft";
-import { DashboardWidgetResults } from "./dashboard-widget-results";
+import { DashboardWidgetGrid } from "./dashboard-widget-grid";
 import { useDashboardResource } from "../hooks/use-dashboard-resource";
-import { useDashboardSnapshot } from "../hooks/use-dashboard-snapshot";
 
 type PendingNavigation = {
   href: string;
   resume: () => void;
 } | null;
 type DashboardDialogKind = "new" | "settings" | null;
-
-function widgetTitle(
-  widget: OpenViewDashboardWidget | DraftWidget,
-  fieldsByModule: Record<string, OpenViewDataSourceField[]>,
-  resolvedName?: string | null,
-): string {
-  if (widget.chartId != null) return resolvedName ?? "Saved Chart";
-  if (widget.config == null) return "Saved Chart";
-  if (widget.widgetType === "records") {
-    const fieldId = widget.config.query.definition.columns[0]?.fieldId;
-    const field = fieldId
-      ? fieldsByModule[widget.config.query.moduleId]?.find(
-          (candidate) => candidate.id === fieldId,
-        )
-      : undefined;
-    return field ? `Records showing ${field.name}` : "Live records";
-  }
-  if (widget.widgetType === "summary" || widget.widgetType === "workload") {
-    const { query } = widget.config;
-    const field = fieldsByModule[query.moduleId]?.find(
-      (candidate) => candidate.id === query.dimension.fieldId,
-    );
-    return widget.widgetType === "summary"
-      ? `${query.aggregation === "count" ? "Total records" : aggregationLabel(query.aggregation)} by ${field?.name ?? "selected field"}`
-      : `Workload by ${field?.name ?? "selected field"}`;
-  }
-  const { query } = widget.config;
-  const { aggregation } = query;
-  const operation = aggregationLabel(aggregation);
-  const measureFieldId = query.measure?.fieldId;
-  const measure = measureFieldId
-    ? fieldsByModule[query.moduleId]?.find(
-        (candidate) => candidate.id === measureFieldId,
-      )
-    : undefined;
-  const measureLabel = measureFieldId
-    ? ` of ${measure?.name ?? "selected measure"}`
-    : "";
-  if (query.mode === "date_series")
-    return `${operation}${measureLabel} over time`;
-  const field = fieldsByModule[query.moduleId]?.find(
-    (candidate) =>
-      candidate.id ===
-      (
-        query as Extract<
-          OpenViewDashboardChartConfig["query"],
-          { mode: "groups" }
-        >
-      ).dimension.fieldId,
-  );
-  return `${operation}${measureLabel} by ${field?.name ?? "selected field"}`;
-}
-
-function lastValidDashboardPage(
-  currentPage: number,
-  itemCount: number,
-  pageSize: number,
-): number {
-  return Math.min(
-    currentPage,
-    Math.max(0, Math.ceil(itemCount / pageSize) - 1),
-  );
-}
 
 export default function ServerBackedDashboards() {
   const pathname = usePathname();
@@ -189,7 +125,11 @@ export default function ServerBackedDashboards() {
   const [refreshCadence, setRefreshCadence] =
     useState<OpenViewDashboardRefreshCadence>("manual");
   const [draftWidgets, setDraftWidgets] = useState<DraftWidget[]>([]);
-  const [activeWidgetKey, setActiveWidgetKey] = useState("");
+  const [editingWidgetKey, setEditingWidgetKey] = useState<string | null>(null);
+  const [builderSize, setBuilderSize] =
+    useState<OpenViewDashboardWidgetSize>("M");
+  const editorRead = useRef<AbortController | null>(null);
+  const [editorLoading, setEditorLoading] = useState(false);
   const [savePending, setSavePending] = useState(false);
   const [duplicatePending, setDuplicatePending] = useState(false);
   const [archivePending, setArchivePending] = useState(false);
@@ -215,6 +155,29 @@ export default function ServerBackedDashboards() {
     chartId: null,
   });
   const builderModuleId = builder.inline.moduleId;
+  const builderSource = useOpenViewSource(catalogSources, builderModuleId);
+  const builderReferenceIds =
+    editingWidgetKey === null
+      ? ""
+      : [
+          ...new Set(
+            [
+              ...builder.inline.definition.columns,
+              ...builder.inline.definition.sort,
+              ...builder.inline.definition.searchFields,
+              ...builder.inline.filters,
+              ...(builder.inline.mode === "records"
+                ? []
+                : [
+                    builder.inline.measure,
+                    builder.inline.dateField,
+                    ...(builder.inline.mode === "groups"
+                      ? [builder.inline.dimension]
+                      : []),
+                  ].filter((reference) => reference !== null)),
+            ].map((reference) => reference.fieldId),
+          ),
+        ].join(",");
   const freshBuilderModule = useRef("");
   const [builderFieldsLoading, setBuilderFieldsLoading] = useState(false);
   const [builderPending, setBuilderPending] = useState(false);
@@ -224,8 +187,6 @@ export default function ServerBackedDashboards() {
     data: DashboardWidgetData;
   } | null>(null);
   const builderRead = useRef<AbortController | null>(null);
-  const [tablePage, setTablePage] = useState(0);
-  const [tablePageSize, setTablePageSize] = useState(DASHBOARD_PAGE_SIZE);
   const fieldRequestSequence = useRef(0);
   const restorePendingRef = useRef("");
   const skipRouteLoadForId = useRef("");
@@ -278,6 +239,7 @@ export default function ServerBackedDashboards() {
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     const sequence = ++fieldRequestSequence.current;
     setFieldsLoadingMore(false);
     if (!builderModuleId) {
@@ -293,11 +255,25 @@ export default function ServerBackedDashboards() {
       limit: 100,
       offset: 0,
     })
-      .then((page) => {
+      .then(async (page) => {
+        // An existing query can reference fields outside this bounded page.
+        // Resolve only those IDs; never crawl or silently replace the query.
+        const referenced = await Promise.all(
+          builderReferenceIds
+            .split(",")
+            .filter((id) => id && !page.items.some((field) => field.id === id))
+            .map((id) =>
+              getOpenViewDataSourceField(
+                builderModuleId,
+                id,
+                controller.signal,
+              ),
+            ),
+        );
         if (!active || fieldRequestSequence.current !== sequence) return;
         setFieldsByModule((current) => ({
           ...current,
-          [builderModuleId]: page.items,
+          [builderModuleId]: [...page.items, ...referenced],
         }));
         setFieldOffset(page.items.length);
         setFieldsHasMore(page.pagination.hasMore);
@@ -331,8 +307,9 @@ export default function ServerBackedDashboards() {
       });
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [builderModuleId, catalogRetry]);
+  }, [builderModuleId, builderReferenceIds, catalogRetry]);
 
   useEffect(() => {
     if (!routeDashboardId) {
@@ -346,17 +323,10 @@ export default function ServerBackedDashboards() {
     setSelectedDashboard(null);
     setDashboardName("");
     setDraftWidgets([]);
-    setActiveWidgetKey("");
     setDashboardError("");
     setNotice("");
   }, [routeDashboardId]);
 
-  const activeWidget = draftWidgets.find(
-    (widget) => widget.key === activeWidgetKey,
-  );
-  const activePersistedWidget = selectedDashboard?.widgets.find(
-    (widget) => widget.id === activeWidgetKey,
-  );
   const widgetsChanged = selectedDashboard
     ? JSON.stringify(inputWidgets(draftWidgetsFrom(selectedDashboard))) !==
       JSON.stringify(inputWidgets(draftWidgets))
@@ -413,32 +383,6 @@ export default function ServerBackedDashboards() {
         ),
       );
   }, [resource.detail.error, resource.detail.isFetching]);
-  const {
-    snapshot: visibleSnapshot,
-    loading: snapshotLoading,
-    error: snapshotError,
-    refresh: refreshActiveSnapshot,
-  } = useDashboardSnapshot(
-    selectedDashboard,
-    routeDashboardId,
-    activeWidget,
-    Boolean(activePersistedWidget),
-    draftDirty,
-    tablePage,
-    tablePageSize,
-  );
-  useEffect(() => {
-    if (visibleSnapshot?.data.kind === "aggregate")
-      setTablePage((current) =>
-        lastValidDashboardPage(
-          current,
-          visibleSnapshot.data.kind === "aggregate"
-            ? visibleSnapshot.data.result.items.length
-            : 0,
-          tablePageSize,
-        ),
-      );
-  }, [visibleSnapshot?.data, tablePageSize]);
   const firstDashboardId = dashboards[0]?.id;
   useEffect(() => {
     if (firstDashboardSettled.current || dashboardListLoading || showArchived)
@@ -508,6 +452,11 @@ export default function ServerBackedDashboards() {
   const departmentSources = catalogSources.filter(
     (source) => source.departmentId === draftDepartmentId,
   );
+  if (
+    builderSource?.departmentId === draftDepartmentId &&
+    !departmentSources.some((source) => source.id === builderSource.id)
+  )
+    departmentSources.push(builderSource);
   const navigationGuard = useCallback(
     (href: string, resume: () => void) => {
       if (savePending || duplicatePending || archivePending || restorePendingId)
@@ -536,13 +485,6 @@ export default function ServerBackedDashboards() {
     ],
   );
   useWorkspaceNavigationGuard(navigationGuard);
-  const activeTitle = activeWidget
-    ? widgetTitle(
-        activeWidget,
-        fieldsByModule,
-        visibleSnapshot?.data.sourceName,
-      )
-    : "";
   const builderSignature = JSON.stringify(builder);
   const [refusedBuilderChartId, setRefusedBuilderChartId] = useState<
     string | null
@@ -568,30 +510,15 @@ export default function ServerBackedDashboards() {
   }, [withdrawBuilderPreview]);
 
   useEffect(() => {
-    setTablePage(0);
-  }, [activeWidgetKey]);
-
-  useEffect(() => {
-    let active = true;
-    const moduleId =
-      activeWidget?.config?.query.moduleId ??
-      visibleSnapshot?.data.config.query.moduleId;
-    if (!moduleId || fieldsByModule[moduleId]) return;
-    void listOpenViewDataSourceFields(moduleId, { limit: 100, offset: 0 })
-      .then((page) => {
-        if (active)
-          setFieldsByModule((current) => ({
-            ...current,
-            [moduleId]: page.items,
-          }));
-      })
-      .catch(() => {
-        // The chart remains usable; its table still shows the authorized values.
-      });
-    return () => {
-      active = false;
-    };
-  }, [activeWidget, fieldsByModule, visibleSnapshot?.data.config]);
+    if (!widgetDialogOpen) {
+      editorRead.current?.abort();
+      setEditorLoading(false);
+    }
+  }, [widgetDialogOpen]);
+  useEffect(
+    () => () => editorRead.current?.abort(),
+    [routeDashboardId, accessDenied],
+  );
 
   function updateDashboardUrl(id?: string) {
     if (!id) setRouteClearPending(Boolean(routeDashboardId));
@@ -626,7 +553,6 @@ export default function ServerBackedDashboards() {
     setDashboardName(dashboard.name);
     setRefreshCadence(dashboard.refreshCadence);
     setDraftWidgets(widgets);
-    setActiveWidgetKey(widgets[0]?.key ?? "");
     selectBuilderModule(widgets[0]?.config?.query.moduleId ?? "");
   }
 
@@ -642,7 +568,6 @@ export default function ServerBackedDashboards() {
       setDashboardName("");
       setRefreshCadence("manual");
       setDraftWidgets([]);
-      setActiveWidgetKey("");
       updateDashboardUrl();
     }
     setNotice("");
@@ -657,7 +582,6 @@ export default function ServerBackedDashboards() {
       setDashboardName("");
       setRefreshCadence("manual");
       setDraftWidgets([]);
-      setActiveWidgetKey("");
     }
     dashboardBeforeNew.current = null;
     setDashboardDialogKind(null);
@@ -674,8 +598,82 @@ export default function ServerBackedDashboards() {
     updateDashboardUrl(dashboardId);
   }
 
+  function beginAddWidget(saved: boolean) {
+    editorRead.current?.abort();
+    setEditorLoading(false);
+    setEditingWidgetKey(null);
+    setBuilderSize("M");
+    const moduleId = departmentSources[0]?.id ?? "";
+    freshBuilderModule.current = moduleId;
+    setBuilder({
+      inline: newChartEditorDraft(moduleId, fieldsByModule[moduleId] ?? []),
+      chartId: saved ? "" : null,
+    });
+    setRefusedBuilderChartId(null);
+    setWidgetDialogOpen(true);
+  }
+
+  async function beginEditWidget(widget: DraftWidget) {
+    if (
+      !canManageDashboard ||
+      savePending ||
+      duplicatePending ||
+      selectedDashboard?.isDeleted
+    )
+      return;
+    editorRead.current?.abort();
+    setEditingWidgetKey(widget.key);
+    setBuilderSize(widget.size ?? "M");
+    setBuilder({
+      inline: widget.config
+        ? dashboardWidgetEditorDraft(widget, widget.config)
+        : changeChartEditorWidgetType(
+            newChartEditorDraft("", []),
+            widget.widgetType,
+            [],
+          ),
+      chartId: widget.chartId ?? null,
+    });
+    setRefusedBuilderChartId(null);
+    setWidgetDialogOpen(true);
+    setEditorLoading(true);
+    setBuilderError("");
+    const controller = new AbortController();
+    editorRead.current = controller;
+    try {
+      const resolved = await resolveDashboardWidgetDefinition(
+        widget,
+        controller.signal,
+      );
+      controller.signal.throwIfAborted();
+      setBuilder({
+        inline: dashboardWidgetEditorDraft(widget, resolved.config),
+        chartId: widget.chartId ?? null,
+      });
+      // Read current field metadata, even when the previous dialog used this module.
+      setCatalogRetry((value) => value + 1);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        if (widget.chartId) setRefusedBuilderChartId(widget.chartId);
+        setBuilderError(
+          apiErrorMessage(
+            error,
+            "This widget cannot be edited right now. Your Dashboard draft is retained; retry the widget.",
+          ),
+        );
+      }
+    } finally {
+      if (!controller.signal.aborted) setEditorLoading(false);
+    }
+  }
+
   async function submitBuilderWidget(input: OpenViewDashboardWidgetInput) {
-    if (builderPending || draftWidgets.length >= 12) return;
+    if (
+      builderPending ||
+      editorLoading ||
+      (editingWidgetKey === null && draftWidgets.length >= 12)
+    )
+      return;
     const controller = new AbortController();
     builderRead.current?.abort();
     builderRead.current = controller;
@@ -688,9 +686,18 @@ export default function ServerBackedDashboards() {
           throw new ApiContractError();
       }
       controller.signal.throwIfAborted();
-      const next: DraftWidget = { ...input, key: crypto.randomUUID() };
-      setDraftWidgets((current) => [...current, next]);
-      setActiveWidgetKey(next.key);
+      const next: DraftWidget = {
+        ...input,
+        size: builderSize,
+        key: editingWidgetKey ?? crypto.randomUUID(),
+      };
+      setDraftWidgets((current) =>
+        editingWidgetKey === null
+          ? [...current, next]
+          : current.map((widget) =>
+              widget.key === editingWidgetKey ? next : widget,
+            ),
+      );
       setNotice("");
       setWidgetDialogOpen(false);
     } catch (error) {
@@ -709,7 +716,8 @@ export default function ServerBackedDashboards() {
   }
 
   async function previewBuilder(input: OpenViewDashboardWidgetInput) {
-    if (builderPending || accessDenied || document.hidden) return;
+    if (builderPending || editorLoading || accessDenied || document.hidden)
+      return;
     const controller = new AbortController();
     builderRead.current?.abort();
     builderRead.current = controller;
@@ -758,7 +766,6 @@ export default function ServerBackedDashboards() {
       setDashboardName("");
       setRefreshCadence("manual");
       setDraftWidgets([]);
-      setActiveWidgetKey("");
       updateDashboardUrl();
     }
   }
@@ -798,7 +805,13 @@ export default function ServerBackedDashboards() {
       if (fieldRequestSequence.current !== sequence) return;
       setFieldsByModule((current) => ({
         ...current,
-        [moduleId]: [...(current[moduleId] ?? []), ...page.items],
+        [moduleId]: [
+          ...(current[moduleId] ?? []),
+          ...page.items.filter(
+            (field) =>
+              !current[moduleId]?.some((existing) => existing.id === field.id),
+          ),
+        ],
       }));
       setFieldOffset(offset + page.items.length);
       setFieldsHasMore(page.pagination.hasMore);
@@ -816,7 +829,6 @@ export default function ServerBackedDashboards() {
   function removeWidget(key: string) {
     const next = draftWidgets.filter((widget) => widget.key !== key);
     setDraftWidgets(next);
-    if (activeWidgetKey === key) setActiveWidgetKey(next[0]?.key ?? "");
   }
 
   function moveWidget(key: string, direction: -1 | 1) {
@@ -964,7 +976,6 @@ export default function ServerBackedDashboards() {
       setDashboardName("");
       setRefreshCadence("manual");
       setDraftWidgets([]);
-      setActiveWidgetKey("");
       refreshDashboardList();
       setNotice("Dashboard archived.");
       updateDashboardUrl();
@@ -1121,7 +1132,6 @@ export default function ServerBackedDashboards() {
               // widget whose refusal may have set the latch.
               refreshDashboardList();
               retryCatalog();
-              refreshActiveSnapshot();
             }}
           >
             Retry
@@ -1218,17 +1228,6 @@ export default function ServerBackedDashboards() {
             </div>
 
             <div className="flex min-w-0 flex-wrap items-end gap-2">
-              {activePersistedWidget && !selectedDashboard?.isDeleted ? (
-                <Button
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={snapshotLoading}
-                  onClick={refreshActiveSnapshot}
-                >
-                  <RefreshCw data-icon="inline-start" aria-hidden="true" />
-                  {snapshotLoading ? "Refreshing…" : "Refresh now"}
-                </Button>
-              ) : null}
               {draftDirty && canManageDashboard ? (
                 <Button
                   className="min-h-11"
@@ -1417,215 +1416,28 @@ export default function ServerBackedDashboards() {
             </Button>
           ) : null}
 
-          <div className="border-border bg-card grid min-w-0 grid-cols-1 overflow-hidden rounded-[var(--radius)] border lg:grid-cols-[minmax(15rem,0.72fr)_minmax(0,1.8fr)]">
-            <aside
-              aria-labelledby="dashboard-widgets"
-              className="border-border flex min-w-0 flex-col gap-3 p-4 lg:border-r"
-            >
-              <div className="flex items-baseline justify-between gap-2">
-                <h2
-                  id="dashboard-widgets"
-                  data-slot="section-title"
-                  className="text-lg font-semibold"
-                >
-                  Widgets
-                </h2>
-                <p role="status" className="text-muted-foreground text-sm">
-                  {draftWidgets.length} of 12 widgets
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                className={canManageDashboard ? "min-h-11 w-full" : "hidden"}
-                disabled={
-                  selectedDashboard?.isDeleted ||
-                  draftWidgets.length >= 12 ||
-                  duplicatePending ||
-                  savePending ||
-                  Boolean(restorePendingId)
-                }
-                onClick={() => setWidgetDialogOpen(true)}
-              >
-                <Plus data-icon="inline-start" aria-hidden="true" />
-                Add widget
-              </Button>
-
-              {draftWidgets.length ? (
-                <ol className="flex min-w-0 flex-col gap-2">
-                  {draftWidgets.map((widget, index) => {
-                    const currentConfig =
-                      widget.config ??
-                      (widget.key === activeWidget?.key
-                        ? visibleSnapshot?.data.config
-                        : null);
-                    const title = widgetTitle(
-                      widget,
-                      fieldsByModule,
-                      widget.key === activeWidget?.key
-                        ? visibleSnapshot?.data.sourceName
-                        : null,
-                    );
-                    const kind =
-                      widget.widgetType === "chart"
-                        ? currentConfig !== null &&
-                          currentConfig !== undefined &&
-                          "chartType" in currentConfig
-                          ? (currentConfig.chartType === "line"
-                              ? "Line"
-                              : currentConfig.chartType === "pie"
-                                ? "Pie"
-                                : "Bar") + " chart"
-                          : "Saved Chart"
-                        : widget.widgetType === "summary"
-                          ? "Summary"
-                          : widget.widgetType === "workload"
-                            ? "Workload"
-                            : "Records";
-                    const viewLabel =
-                      widget.widgetType === "chart"
-                        ? "chart"
-                        : widget.widgetType === "records"
-                          ? "records"
-                          : widget.widgetType;
-                    const persisted = selectedDashboard?.widgets.some(
-                      (candidate) => candidate.id === widget.key,
-                    );
-                    const unavailable =
-                      !canManageDashboard ||
-                      savePending ||
-                      duplicatePending ||
-                      archivePending ||
-                      Boolean(restorePendingId) ||
-                      Boolean(selectedDashboard?.isDeleted);
-                    return (
-                      <li
-                        key={widget.key}
-                        className={
-                          activeWidgetKey === widget.key
-                            ? "bg-accent/50 flex min-w-0 items-start gap-1 rounded-[var(--radius)] p-1"
-                            : "flex min-w-0 items-start gap-1 rounded-[var(--radius)] p-1"
-                        }
-                      >
-                        <Button
-                          type="button"
-                          variant={
-                            activeWidgetKey === widget.key
-                              ? "secondary"
-                              : "ghost"
-                          }
-                          className="h-auto min-h-12 min-w-0 flex-1 flex-col items-start justify-center gap-0.5 overflow-hidden py-2 text-left"
-                          aria-label={
-                            "View " +
-                            viewLabel +
-                            " " +
-                            (index + 1) +
-                            ": " +
-                            title
-                          }
-                          aria-pressed={activeWidgetKey === widget.key}
-                          onClick={() => setActiveWidgetKey(widget.key)}
-                        >
-                          <span className="w-full truncate">{title}</span>
-                          <span className="text-muted-foreground w-full truncate text-xs">
-                            {persisted ? kind : kind + " · Unsaved"}
-                          </span>
-                        </Button>
-                        {canManageDashboard ? (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger
-                              render={
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-11 shrink-0"
-                                  aria-label={"Widget options: " + title}
-                                  disabled={unavailable}
-                                />
-                              }
-                            >
-                              <MoreHorizontal aria-hidden="true" />
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                className="min-h-11"
-                                disabled={index === 0 || unavailable}
-                                onClick={() => moveWidget(widget.key, -1)}
-                              >
-                                Move up
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="min-h-11"
-                                disabled={
-                                  index === draftWidgets.length - 1 ||
-                                  unavailable
-                                }
-                                onClick={() => moveWidget(widget.key, 1)}
-                              >
-                                Move down
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                className="min-h-11"
-                                variant="destructive"
-                                disabled={unavailable}
-                                onClick={() => removeWidget(widget.key)}
-                              >
-                                Remove widget
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        ) : null}
-                      </li>
-                    );
-                  })}
-                </ol>
-              ) : (
-                <p className="text-muted-foreground py-2 text-sm">
-                  Add a widget to see one current result at a time. New widgets
-                  load after you save this Dashboard.
-                </p>
-              )}
-            </aside>
-
-            <div className="min-w-0 p-4 sm:p-5">
-              {dashboardLoading ? (
-                <p role="status" className="text-muted-foreground text-sm">
-                  Loading Dashboard…
-                </p>
-              ) : activeWidget ? (
-                <DashboardWidgetResults
-                  widget={activeWidget}
-                  title={activeTitle}
-                  persisted={Boolean(activePersistedWidget)}
-                  snapshot={visibleSnapshot}
-                  snapshotLoading={snapshotLoading}
-                  snapshotError={snapshotError}
-                  tablePage={tablePage}
-                  tablePageSize={tablePageSize}
-                  fieldsByModule={fieldsByModule}
-                  onRefresh={refreshActiveSnapshot}
-                  setTablePage={setTablePage}
-                  setTablePageSize={setTablePageSize}
-                />
-              ) : (
-                <section className="flex min-h-64 min-w-0 flex-col justify-center gap-2">
-                  <h2 data-slot="empty-title" className="text-lg font-semibold">
-                    {selectedDashboard
-                      ? "No widgets in this Dashboard"
-                      : "Select a Dashboard to begin"}
-                  </h2>
-                  <p className="text-muted-foreground max-w-xl text-sm">
-                    {selectedDashboard
-                      ? selectedDashboard.isDeleted
-                        ? "Restore this Dashboard to add or change widgets."
-                        : "Add a widget to load its current result from OpenView."
-                      : "Choose a Dashboard from a department you can read."}
-                  </p>
-                </section>
-              )}
-            </div>
-          </div>
+          <DashboardWidgetGrid
+            key={selectedDashboard?.id ?? "draft"}
+            dashboard={
+              selectedDashboard?.id === routeDashboardId
+                ? selectedDashboard
+                : null
+            }
+            widgets={draftWidgets}
+            dirty={draftDirty}
+            loading={dashboardLoading}
+            canManage={canManageDashboard}
+            pending={
+              savePending ||
+              duplicatePending ||
+              archivePending ||
+              Boolean(restorePendingId)
+            }
+            onAdd={beginAddWidget}
+            onEdit={(widget) => void beginEditWidget(widget)}
+            onMove={moveWidget}
+            onRemove={removeWidget}
+          />
 
           <Dialog
             open={dashboardDialogKind !== null}
@@ -1776,265 +1588,68 @@ export default function ServerBackedDashboards() {
             </DialogContent>
           </Dialog>
 
-          <Dialog open={widgetDialogOpen} onOpenChange={setWidgetDialogOpen}>
-            <DialogContent className="max-w-3xl">
-              <DialogHeader>
-                <DialogTitle>Add widget</DialogTitle>
-                <DialogDescription>
-                  Preview one result without saving. Add it to your draft, then
-                  save the Dashboard when ready.
-                </DialogDescription>
-              </DialogHeader>
-              <Field>
-                <FieldLabel htmlFor="dashboard-widget-type">
-                  Widget type
-                </FieldLabel>
-                <Select
-                  id="dashboard-widget-type"
-                  className="min-h-11"
-                  value={builder.inline.widgetType}
-                  disabled={builderPending}
-                  onValueChange={(type) =>
-                    setBuilder({
-                      ...builder,
-                      chartId: builder.chartId === null ? null : "",
-                      inline: changeChartEditorWidgetType(
-                        builder.inline,
-                        type as OpenViewDashboardWidgetType,
-                        fieldsByModule[builderModuleId] ?? [],
-                      ),
-                    })
-                  }
-                >
-                  <option value="summary">Summary</option>
-                  <option value="workload">Workload</option>
-                  <option value="records">Record list</option>
-                  <option value="chart">Chart</option>
-                </Select>
-              </Field>
-              {widgetDialogOpen ? (
-                <ChartSourceEditor
-                  refusedChartId={refusedBuilderChartId}
-                  onRetrySource={() => setRefusedBuilderChartId(null)}
-                  value={builder}
-                  disabled={builderPending || savePending || duplicatePending}
-                  onChange={(next) => {
-                    setRefusedBuilderChartId(null);
-                    if (next.inline.moduleId !== builderModuleId)
-                      freshBuilderModule.current = next.inline.moduleId;
-                    setBuilder(next);
-                  }}
-                  onUnavailable={withdrawBuilderPreview}
-                  catalog={{
-                    sources: departmentSources,
-                    sourcesLoading: false,
-                    sourcesError: "",
-                    sourcesHasMore: catalogSourcesHasMore,
-                    fields: fieldsByModule[builderModuleId] ?? [],
-                    fieldsLoading: builderFieldsLoading,
-                    fieldsError: catalogError,
-                    fieldsHasMore,
-                    metadataError: "",
-                    metadataRetryTarget: null,
-                    metadataLoading: catalogLoadingMore || fieldsLoadingMore,
-                    sourceName:
-                      catalogSources.find(
-                        (source) => source.id === builderModuleId,
-                      )?.name ?? "Data source",
-                  }}
-                  actions={{
-                    retryCatalog,
-                    retryFields: retryCatalog,
-                    loadMoreSources,
-                    loadMoreFields,
-                  }}
-                >
-                  {(input, sourceStamp) => (
-                    <>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11 self-start"
-                        disabled={!input || builderPending}
-                        onClick={() => {
-                          if (input) void previewBuilder(input);
-                        }}
-                      >
-                        {builderPending ? "Loading preview…" : "Preview widget"}
-                      </Button>
-                      {builderError ? (
-                        <Alert role="alert" variant="destructive">
-                          {builderError}
-                        </Alert>
-                      ) : null}
-                      {builderPreview?.signature === builderSignature &&
-                      (builder.chartId === null ||
-                        builderPreview.data.sourceStamp === sourceStamp) ? (
-                        <div
-                          className="space-y-3"
-                          aria-label="Draft widget preview"
-                        >
-                          <p className="text-muted-foreground text-sm">
-                            Read-only draft preview. No widget has been saved.
-                          </p>
-                          {builderPreview.data.kind === "aggregate" ? (
-                            <>
-                              {"chartType" in builderPreview.data.config ? (
-                                <OpenViewChartPreview
-                                  type={builderPreview.data.config.chartType}
-                                  data={builderPreview.data.result.items.map(
-                                    (item) => ({
-                                      key: item.key ?? "null",
-                                      label: item.label,
-                                      value:
-                                        item.value === null
-                                          ? null
-                                          : Number(item.value),
-                                    }),
-                                  )}
-                                  valueLabel={
-                                    "mode" in builderPreview.data.config.query
-                                      ? aggregationLabel(
-                                          builderPreview.data.config.query
-                                            .aggregation,
-                                        )
-                                      : "Value"
-                                  }
-                                />
-                              ) : null}
-                              <div className="overflow-x-auto">
-                                <table
-                                  aria-label="Draft preview values"
-                                  className="w-full text-sm"
-                                >
-                                  <thead>
-                                    <tr>
-                                      <th className="p-2 text-left">
-                                        Group or period
-                                      </th>
-                                      <th className="p-2 text-right">Value</th>
-                                      <th className="p-2 text-right">
-                                        Record count
-                                      </th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {builderPreview.data.result.items.map(
-                                      (item) => (
-                                        <tr key={item.key ?? "null"}>
-                                          <td className="p-2">{item.label}</td>
-                                          <td className="p-2 text-right">
-                                            {item.value ?? "—"}
-                                          </td>
-                                          <td className="p-2 text-right">
-                                            {item.recordCount}
-                                          </td>
-                                        </tr>
-                                      ),
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <p>
-                                {builderPreview.data.result.pagination.total}{" "}
-                                matching records
-                              </p>
-                              <div className="overflow-x-auto">
-                                <table
-                                  aria-label="Draft preview records"
-                                  className="w-full text-sm"
-                                >
-                                  <thead>
-                                    <tr>
-                                      {builderPreview.data.config.query.definition.columns.map(
-                                        (ref) => (
-                                          <th
-                                            key={ref.fieldId}
-                                            scope="col"
-                                            className="p-2 text-left"
-                                          >
-                                            {fieldsByModule[
-                                              builderPreview.data.config.query
-                                                .moduleId
-                                            ]?.find(
-                                              (field) =>
-                                                field.id === ref.fieldId &&
-                                                field.type === ref.expectedType,
-                                            )?.name ?? "Unavailable field"}
-                                          </th>
-                                        ),
-                                      )}
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {builderPreview.data.result.items.map(
-                                      (record) => (
-                                        <tr key={record.id}>
-                                          {builderPreview.data.config.query.definition.columns.map(
-                                            (ref) => (
-                                              <td
-                                                key={ref.fieldId}
-                                                className="p-2"
-                                              >
-                                                {String(
-                                                  openViewRecordFieldValue(
-                                                    record,
-                                                    {
-                                                      id: ref.fieldId,
-                                                      type: ref.expectedType,
-                                                    },
-                                                  ) ?? "—",
-                                                )}
-                                              </td>
-                                            ),
-                                          )}
-                                        </tr>
-                                      ),
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      ) : null}
-                      <DialogFooter>
-                        <Button
-                          variant="outline"
-                          className="min-h-11"
-                          onClick={() => setWidgetDialogOpen(false)}
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          className="min-h-11"
-                          disabled={
-                            !input ||
-                            builderPending ||
-                            draftWidgets.length >= 12 ||
-                            duplicatePending ||
-                            savePending ||
-                            Boolean(restorePendingId)
-                          }
-                          onClick={() => {
-                            if (input) void submitBuilderWidget(input);
-                          }}
-                        >
-                          Add widget
-                        </Button>
-                      </DialogFooter>
-                    </>
-                  )}
-                </ChartSourceEditor>
-              ) : null}
-              <p role="status" className="text-muted-foreground text-sm">
-                {draftWidgets.length} of 12 widgets used.
-              </p>
-            </DialogContent>
-          </Dialog>
+          <DashboardWidgetEditor
+            open={widgetDialogOpen}
+            onOpenChange={setWidgetDialogOpen}
+            editing={editingWidgetKey !== null}
+            value={builder}
+            size={builderSize}
+            onSizeChange={setBuilderSize}
+            onTypeChange={(type) =>
+              setBuilder({
+                ...builder,
+                chartId: builder.chartId === null ? null : "",
+                inline: changeChartEditorWidgetType(
+                  builder.inline,
+                  type,
+                  fieldsByModule[builderModuleId] ?? [],
+                ),
+              })
+            }
+            onChange={(next) => {
+              setRefusedBuilderChartId(null);
+              if (next.inline.moduleId !== builderModuleId)
+                freshBuilderModule.current = next.inline.moduleId;
+              setBuilder(next);
+            }}
+            busy={builderPending}
+            sourceLoading={editorLoading}
+            disabled={
+              savePending || duplicatePending || Boolean(restorePendingId)
+            }
+            widgetCount={draftWidgets.length}
+            refusedChartId={refusedBuilderChartId}
+            onRetrySource={() => setRefusedBuilderChartId(null)}
+            onUnavailable={withdrawBuilderPreview}
+            error={builderError}
+            preview={builderPreview}
+            onPreview={(input) => void previewBuilder(input)}
+            onApply={(input) => void submitBuilderWidget(input)}
+            fieldsByModule={fieldsByModule}
+            catalog={{
+              sources: departmentSources,
+              sourcesLoading: false,
+              sourcesError: "",
+              sourcesHasMore: catalogSourcesHasMore,
+              fields: fieldsByModule[builderModuleId] ?? [],
+              fieldsLoading: builderFieldsLoading,
+              fieldsError: catalogError,
+              fieldsHasMore,
+              metadataError: "",
+              metadataRetryTarget: null,
+              metadataLoading: catalogLoadingMore || fieldsLoadingMore,
+              sourceName:
+                departmentSources.find(
+                  (source) => source.id === builderModuleId,
+                )?.name ?? "Data source",
+            }}
+            actions={{
+              retryCatalog,
+              retryFields: retryCatalog,
+              loadMoreSources,
+              loadMoreFields,
+            }}
+          />
         </>
       )}
 
@@ -2094,7 +1709,6 @@ export default function ServerBackedDashboards() {
                 setDashboardName("");
                 setRefreshCadence("manual");
                 setDraftWidgets([]);
-                setActiveWidgetKey("");
                 navigation.resume();
               }}
             >

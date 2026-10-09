@@ -6,6 +6,9 @@ import type {
 } from "../adapters/dashboards-api";
 import type { OpenViewPage, OpenViewRecord } from "../adapters/views-api";
 import type { OpenViewAggregateSnapshotResult } from "../adapters/analytics-api";
+import { serializeDashboardWidgetConfig } from "../adapters/dashboards-api";
+import { chartEditorDraftFrom, type ChartEditorDraft } from "./chart-query";
+import { ApiContractError } from "@/lib/api";
 
 export const DASHBOARD_PAGE_SIZE = 25;
 
@@ -32,7 +35,9 @@ export function draftWidgetFrom(widget: OpenViewDashboardWidget): DraftWidget {
   return { ...widget, key: widget.id };
 }
 export function draftWidgetsFrom(dashboard: OpenViewDashboard): DraftWidget[] {
-  return dashboard.widgets.map(draftWidgetFrom);
+  return [...dashboard.widgets]
+    .sort((a, b) => a.position - b.position)
+    .map(draftWidgetFrom);
 }
 export function inputWidgets(
   widgets: DraftWidget[],
@@ -80,20 +85,36 @@ export function configSignature(
   return widget
     ? JSON.stringify({
         widgetType: widget.widgetType,
-        config: widget.config,
+        config: widget.config
+          ? serializeDashboardWidgetConfig(widget.widgetType, widget.config)
+          : null,
         chartId: widget.chartId ?? null,
-        size: widget.size ?? "M",
         ...(widget.widgetType === "records" ? { page } : {}),
       })
     : "";
 }
 
-export function lastValidTablePage(
-  currentPage: number,
-  itemCount: number,
-): number {
-  return Math.min(
-    currentPage,
-    Math.max(0, Math.ceil(itemCount / DASHBOARD_PAGE_SIZE) - 1),
-  );
+/** Presentation changes do not change the live query or its paging identity. */
+export function dashboardWidgetEditorDraft(
+  widget: DraftWidget,
+  config: OpenViewDashboardWidgetConfig,
+): ChartEditorDraft {
+  const query = config.query;
+  if (widget.widgetType === "chart" && "chartType" in config)
+    return chartEditorDraftFrom({ widgetType: "chart", config });
+  if (
+    (widget.widgetType === "summary" || widget.widgetType === "workload") &&
+    "mode" in query &&
+    query.mode === "groups"
+  )
+    return chartEditorDraftFrom({
+      widgetType: widget.widgetType,
+      config: { version: 1, query },
+    });
+  if (widget.widgetType === "records" && !("mode" in query))
+    return chartEditorDraftFrom({
+      widgetType: "records",
+      config: { version: 1, query },
+    });
+  throw new ApiContractError();
 }

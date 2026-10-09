@@ -131,13 +131,16 @@ export function useDashboardResource(
         if (everyModule || modules.size) {
           const affected = new Set(modules);
           const every = everyModule;
-          refresh(
-            dashboardKeys.snapshots,
-            (query) =>
+          refresh(dashboardKeys.snapshots, (query) => {
+            const sources = query.queryKey[4];
+            return (
               every ||
-              !query.queryKey[4] ||
-              affected.has(String(query.queryKey[4])),
-          );
+              !sources ||
+              (Array.isArray(sources)
+                ? sources.some((moduleId) => affected.has(String(moduleId)))
+                : affected.has(String(sources)))
+            );
+          });
         }
       }
       all = metadata = everyModule = false;
