@@ -972,6 +972,12 @@
     "path": "/api/records/batch-update"
   },
   {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-export-api.ts",
+    "function": "exportOpenViewRecords",
+    "method": "POST",
+    "path": "/api/records/export"
+  },
+  {
     "adapter": "frontend/src/components/systems/openview/adapters/report-schedule-api.ts",
     "function": "createOpenViewReportSchedule",
     "method": "POST",

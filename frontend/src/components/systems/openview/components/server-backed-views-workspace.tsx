@@ -118,6 +118,13 @@ import {
 } from "./live-record-inspector";
 import { LiveRecordResults } from "./live-record-results";
 import { RecordCreateDialog } from "./record-create-dialog";
+import { ExportDialog } from "./export-dialog";
+import { useOpenViewAccessDenied } from "../adapters/openview-access";
+import {
+  useVerifiedWorkspaceUserId,
+  useWorkspaceInteractionSuspended,
+} from "../../shared/runtime/workspace-identity";
+import { reportDone } from "@/lib/feedback";
 import { SavedViewColumnControls } from "./saved-view-column-controls";
 import { SavedViewFilterControls } from "./saved-view-filter-controls";
 import { SavedViewAdvancedControls } from "./saved-view-advanced-controls";
@@ -324,6 +331,17 @@ export default function ServerBackedViewsWorkspace({
   const requestedRecord = searchParams.get("record");
   const requestedChanges = searchParams.get(TEMPORARY_VIEW_PARAM);
   const resource = useServerViewsResource(requestedModule);
+  const verifiedUserId = useVerifiedWorkspaceUserId();
+  const interactionSuspended = useWorkspaceInteractionSuspended();
+  const exportAccessDenied = useOpenViewAccessDenied();
+  const exportButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [exportContext, setExportContext] = useState<{
+    key: string;
+    moduleId: string;
+    viewId: string | null;
+    definition: OpenViewQueryDefinition;
+    fields: OpenViewDataSourceField[];
+  } | null>(null);
   const {
     catalog,
     catalogHasMore,
@@ -1099,6 +1117,34 @@ export default function ServerBackedViewsWorkspace({
         ...visibleFields.filter((field) => field.id !== pinnedField.id),
       ]
     : visibleFields;
+  const exportContextKey = JSON.stringify({
+    moduleId,
+    draftKey,
+    viewId: activeSaved?.id ?? null,
+    verifiedUserId,
+  });
+  const canExport = Boolean(
+    moduleId &&
+    source &&
+    currentWorkspace &&
+    identity.isSuccess &&
+    identity.data.id === verifiedUserId &&
+    recordLevel &&
+    !invalidLink &&
+    !incompleteFilters &&
+    !fieldMetadataError &&
+    !selectedFields.error &&
+    !selectedFields.pending &&
+    !moduleLoading &&
+    !interactionSuspended &&
+    !exportAccessDenied,
+  );
+  useEffect(() => {
+    // A lost source or read permission ends this export context permanently.
+    // A subsequent retry requires a new explicit Export action.
+    if (exportContext && (!canExport || exportContext.key !== exportContextKey))
+      setExportContext(null);
+  }, [canExport, exportContext, exportContextKey]);
   const presentationVisibleFields = isCardPresentation
     ? visibleFields.filter((field) => !cardHeaderFieldIds.has(field.id))
     : tableFields;
@@ -2741,6 +2787,25 @@ export default function ServerBackedViewsWorkspace({
                       </p>
                     ) : null}
                     <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        ref={exportButtonRef}
+                        type="button"
+                        variant="outline"
+                        className="min-h-11"
+                        disabled={!canExport}
+                        onClick={() => {
+                          if (!canExport || !moduleId) return;
+                          setExportContext({
+                            key: exportContextKey,
+                            moduleId,
+                            viewId: activeSaved?.id ?? null,
+                            definition: normalizedDraftDefinition,
+                            fields: tableFields,
+                          });
+                        }}
+                      >
+                        Export
+                      </Button>
                       {dirty ? (
                         <Button
                           type="button"
@@ -3529,6 +3594,23 @@ export default function ServerBackedViewsWorkspace({
                     )}
                   </DialogContent>
                 </Dialog>
+                {exportContext &&
+                exportContext.key === exportContextKey &&
+                canExport ? (
+                  <ExportDialog
+                    moduleId={exportContext.moduleId}
+                    viewId={exportContext.viewId}
+                    definition={exportContext.definition}
+                    fields={exportContext.fields}
+                    returnFocus={exportButtonRef}
+                    onClose={() => setExportContext(null)}
+                    onDownloaded={() => {
+                      setExportContext(null);
+                      setNotice("Export downloaded.");
+                      reportDone("Export downloaded.");
+                    }}
+                  />
+                ) : null}
                 {moduleId && canWriteRecords ? (
                   <RecordCreateDialog
                     open={createRecordOpen}
