@@ -564,6 +564,468 @@ async function openEvidenceSettings(page: Page, name: string) {
   });
 }
 
+async function installS27BoardFields(page: Page) {
+  await page.route(`**/api/views/data-sources/${moduleId}/fields?*`, (route) =>
+    route.fulfill({
+      json: evidencePage(
+        [
+          {
+            id: fieldId,
+            module_id: moduleId,
+            name: "Category",
+            type: "text",
+            required: false,
+            config: {},
+            position: 0,
+          },
+          {
+            id: evidenceMeasureId,
+            module_id: moduleId,
+            name: "Amount",
+            type: "decimal",
+            required: false,
+            config: {},
+            position: 1,
+          },
+        ],
+        100,
+      ),
+    }),
+  );
+}
+
+test("S27 Board query editing preserves full definition and outer name module size and pin", async ({
+  page,
+}) => {
+  const api = await installEvidenceBoardApi(page, evidenceWidget("inline"));
+  await installS27BoardFields(page);
+  await installEvidenceSnapshot(page);
+  await page.goto(`/boards?board=${boardId}`);
+  const settings = await openEvidenceSettings(page, "Retained Board query");
+  await settings.getByLabel("Measure", { exact: true }).selectOption("min");
+  if (process.env.OPENVIEW_CAPTURE_DIR) {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.addStyleTag({
+      content: "nextjs-portal { display: none !important; }",
+    });
+    const options = {
+      beforeScreenshot: async (
+        capture: Page,
+        viewport: { width: number; height: number },
+      ) => {
+        await expect
+          .poll(() =>
+            capture.evaluate(() => document.documentElement.scrollWidth),
+          )
+          .toBeLessThanOrEqual(viewport.width);
+        if (viewport.width === 390) {
+          await settings
+            .getByText("Chart source", { exact: true })
+            .evaluate((element) => element.scrollIntoView({ block: "start" }));
+        } else {
+          await settings
+            .getByRole("heading", { name: "Widget settings", exact: true })
+            .scrollIntoViewIfNeeded();
+        }
+        await expect(
+          settings.getByLabel("Measure", { exact: true }),
+        ).toHaveValue("min");
+      },
+    };
+    await captureOpenViewReview(page, "s27-board-dialog-light", options);
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    await captureOpenViewReview(page, "s27-board-dialog-dark", options);
+  }
+  await settings
+    .getByLabel("Widget name", { exact: true })
+    .fill("Minimum retained query");
+  await settings.getByLabel("Size", { exact: true }).selectOption("L");
+  await settings.getByLabel("Pin this widget", { exact: true }).check();
+  await settings
+    .getByRole("button", { name: "Save settings", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("region", { name: "Manage Board widgets", exact: true })
+      .getByRole("button", {
+        name: "Edit Minimum retained query settings",
+        exact: true,
+      }),
+  ).toBeEnabled();
+  await expect(settings).toBeHidden();
+  expect(api.writes).toEqual([
+    {
+      method: "PATCH",
+      path: `/api/boards/${boardId}/widgets/${widgetId}`,
+      body: {
+        revision: 1,
+        widget: {
+          name: "Minimum retained query",
+          widget_type: "chart",
+          module_id: moduleId,
+          size: "L",
+          pinned: true,
+          chart_id: null,
+          config: {
+            version: 1,
+            chart_type: "bar",
+            query: { ...evidenceQuery, aggregation: "min" },
+          },
+        },
+      },
+    },
+  ]);
+});
+
+test("S27 correction F2 later field-page denial hides all catalog names but retains the typed Board query until fresh recovery", async ({
+  page,
+}) => {
+  const api = await installEvidenceBoardApi(page, evidenceWidget("inline"));
+  await installEvidenceSnapshot(page);
+  await page.route("**/api/views/data-sources?*", (route) =>
+    route.fulfill({
+      json: evidencePage(
+        [
+          {
+            id: moduleId,
+            department_id: otherBoardId,
+            name: "Private catalog source",
+            title_field_id: null,
+          },
+        ],
+        100,
+      ),
+    }),
+  );
+  let refused = false;
+  let deniedReads = 0;
+  await page.route(
+    `**/api/views/data-sources/${moduleId}/fields?*`,
+    (route) => {
+      if (
+        new URL(route.request().url()).searchParams.get("offset") !== "0" &&
+        refused
+      ) {
+        deniedReads += 1;
+        return route.fulfill({
+          status: 403,
+          json: { detail: "Private fields denial" },
+        });
+      }
+      return route.fulfill({
+        json: {
+          items: [
+            {
+              id: fieldId,
+              module_id: moduleId,
+              name: "Private dimension label",
+              type: "text",
+              required: false,
+              position: 0,
+              config: {},
+            },
+            {
+              id: evidenceMeasureId,
+              module_id: moduleId,
+              name: "Private measure label",
+              type: "decimal",
+              required: false,
+              position: 1,
+              config: {},
+            },
+          ],
+          pagination: {
+            limit: 100,
+            offset: 0,
+            count: 2,
+            total: 3,
+            has_more: true,
+          },
+        },
+      });
+    },
+  );
+  await page.goto(`/boards?board=${boardId}`);
+  const settings = await openEvidenceSettings(page, "Retained Board query");
+  await settings
+    .getByLabel("Widget name", { exact: true })
+    .fill("Typed local widget name");
+  await settings.getByLabel("Measure", { exact: true }).selectOption("min");
+  await settings
+    .getByRole("button", { name: "Filters (1)", exact: true })
+    .click();
+  await page
+    .getByLabel("Filter 1 value", { exact: true })
+    .fill("typed critical query");
+  await page.keyboard.press("Escape");
+  const manager = page.getByRole("region", {
+    name: "Manage Board widgets",
+    exact: true,
+  });
+  for (const name of [
+    "Private catalog source",
+    "Private dimension label",
+    "Private measure label",
+  ])
+    await expect(manager).toContainText(name);
+  refused = true;
+  await settings
+    .getByRole("button", { name: "Load more fields", exact: true })
+    .click();
+  await expect.poll(() => deniedReads).toBe(1);
+  for (const name of [
+    "Private catalog source",
+    "Private dimension label",
+    "Private measure label",
+    "Private fields denial",
+  ])
+    await expect(manager).not.toContainText(name);
+  await expect(settings.getByLabel("Widget name", { exact: true })).toHaveValue(
+    "Typed local widget name",
+  );
+  await expect(
+    settings.getByRole("button", { name: "Save settings", exact: true }),
+  ).toBeDisabled();
+  expect(api.writes).toEqual([]);
+  if (process.env.OPENVIEW_CAPTURE_DIR) {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.addStyleTag({
+      content: "nextjs-portal { display: none !important; }",
+    });
+    const options = {
+      beforeScreenshot: async (
+        capture: Page,
+        viewport: { width: number; height: number },
+      ) => {
+        await capture
+          .getByRole("dialog", { name: "Manage Board widgets", exact: true })
+          .getByLabel("Chart source", { exact: true })
+          .scrollIntoViewIfNeeded();
+        await expect
+          .poll(() =>
+            capture.evaluate(() => document.documentElement.scrollWidth),
+          )
+          .toBeLessThanOrEqual(viewport.width);
+        await expect(
+          settings.getByRole("button", { name: "Save settings", exact: true }),
+        ).toBeDisabled();
+        for (const name of [
+          "Private catalog source",
+          "Private dimension label",
+          "Private measure label",
+        ])
+          await expect(manager).not.toContainText(name);
+      },
+    };
+    await captureOpenViewReview(
+      page,
+      "s27-correction-board-refusal-light",
+      options,
+    );
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    await captureOpenViewReview(
+      page,
+      "s27-correction-board-refusal-dark",
+      options,
+    );
+  }
+  refused = false;
+  await settings
+    .getByRole("button", { name: "Retry fields", exact: true })
+    .click();
+  await expect(settings.getByLabel("Data source", { exact: true })).toHaveValue(
+    moduleId,
+  );
+  await expect(settings.getByLabel("Group by", { exact: true })).toHaveValue(
+    fieldId,
+  );
+  await expect(
+    settings.getByLabel("Numeric measure", { exact: true }),
+  ).toHaveValue(evidenceMeasureId);
+  await expect(settings.getByLabel("Measure", { exact: true })).toHaveValue(
+    "min",
+  );
+  await settings
+    .getByRole("button", { name: "Filters (1)", exact: true })
+    .click();
+  await expect(page.getByLabel("Filter 1 value", { exact: true })).toHaveValue(
+    "typed critical query",
+  );
+  await page.keyboard.press("Escape");
+  await expect(
+    settings.getByRole("button", { name: "Save settings", exact: true }),
+  ).toBeEnabled();
+  expect(api.writes).toEqual([]);
+});
+
+test("S27 Board saved picker later-page denial withdraws cached names until the list is retried", async ({
+  page,
+}) => {
+  const api = await installEvidenceBoardApi(page, evidenceWidget("inline"));
+  await installS27BoardFields(page);
+  await installEvidenceSnapshot(page);
+  let refused = false;
+  let deniedReads = 0;
+  await page.route("**/api/charts?*", (route) => {
+    const offset = Number(
+      new URL(route.request().url()).searchParams.get("offset"),
+    );
+    if (offset && refused) {
+      deniedReads += 1;
+      return route.fulfill({
+        status: 403,
+        json: { detail: "Private page refusal" },
+      });
+    }
+    return route.fulfill({
+      json: {
+        items: [evidenceChart()],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 2,
+          has_more: true,
+        },
+      },
+    });
+  });
+  await page.route(`**/api/charts/${evidenceChartId}`, (route) =>
+    route.fulfill({ json: evidenceChart() }),
+  );
+  await page.goto(`/boards?board=${boardId}`);
+  const settings = await openEvidenceSettings(page, "Retained Board query");
+  await settings
+    .getByLabel("Chart source", { exact: true })
+    .selectOption("saved");
+  await settings
+    .getByRole("combobox", { name: "Saved Chart", exact: true })
+    .click();
+  await page
+    .getByRole("option", { name: "Private source name", exact: true })
+    .click();
+  await expect(
+    settings.getByRole("button", { name: "Save settings", exact: true }),
+  ).toBeEnabled();
+  await expect(page.getByPlaceholder("Search…", { exact: true })).toHaveCount(
+    0,
+  );
+  await settings
+    .getByRole("combobox", { name: "Saved Chart", exact: true })
+    .click();
+  refused = true;
+  await page.getByRole("button", { name: "Load more", exact: true }).click();
+  await expect.poll(() => deniedReads).toBe(1);
+  await expect(
+    page.getByText("Private source name", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Private page refusal", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    settings.getByRole("button", { name: "Save settings", exact: true }),
+  ).toBeDisabled();
+  await expect(settings.getByLabel("Widget name", { exact: true })).toHaveValue(
+    "Retained Board query",
+  );
+  expect(api.writes).toEqual([]);
+  refused = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    page.getByRole("option", { name: "Private source name", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("option", { name: "Private source name", exact: true })
+    .click();
+  await expect(
+    settings.getByRole("button", { name: "Save settings", exact: true }),
+  ).toBeEnabled();
+  expect(api.writes).toEqual([]);
+});
+
+test("S27 Board inline to saved source stores only the reference and reauthorizes before writing", async ({
+  page,
+}) => {
+  const api = await installEvidenceBoardApi(page, evidenceWidget("inline"));
+  await installS27BoardFields(page);
+  await installEvidenceSnapshot(page);
+  await page.route("**/api/charts?*", (route) =>
+    route.fulfill({ json: evidencePage([evidenceChart()], 25) }),
+  );
+  let chartReads = 0;
+  let refused = false;
+  await page.route(`**/api/charts/${evidenceChartId}`, (route) => {
+    chartReads += 1;
+    return refused
+      ? route.fulfill({
+          status: 404,
+          json: { detail: "Private saved source refusal" },
+        })
+      : route.fulfill({ json: evidenceChart() });
+  });
+  await page.goto(`/boards?board=${boardId}`);
+  const settings = await openEvidenceSettings(page, "Retained Board query");
+  await settings
+    .getByLabel("Chart source", { exact: true })
+    .selectOption("saved");
+  await settings
+    .getByRole("combobox", { name: "Saved Chart", exact: true })
+    .click();
+  await page
+    .getByRole("option", { name: "Private source name", exact: true })
+    .click();
+  await expect(
+    settings.getByText("Checking the current saved Chart…", { exact: true }),
+  ).toHaveCount(0);
+  await expect.poll(() => chartReads).toBe(1);
+  refused = true;
+  await settings
+    .getByRole("button", { name: "Save settings", exact: true })
+    .click();
+  await expect(
+    settings.getByText("Private source name", { exact: true }),
+  ).toHaveCount(0);
+  await expect(settings.getByLabel("Widget name", { exact: true })).toHaveValue(
+    "Retained Board query",
+  );
+  expect(api.writes).toEqual([]);
+  refused = false;
+  await settings
+    .getByRole("button", { name: "Retry saved Chart", exact: true })
+    .click();
+  await settings
+    .getByRole("button", { name: "Save settings", exact: true })
+    .click();
+  await expect(settings).toBeHidden();
+  await expect(
+    page
+      .getByRole("region", { name: "Manage Board widgets", exact: true })
+      .getByRole("button", {
+        name: "Edit Retained Board query settings",
+        exact: true,
+      }),
+  ).toBeEnabled();
+  expect(chartReads).toBeGreaterThanOrEqual(2);
+  expect(api.writes).toEqual([
+    {
+      method: "PATCH",
+      path: `/api/boards/${boardId}/widgets/${widgetId}`,
+      body: {
+        revision: 1,
+        widget: {
+          name: "Retained Board query",
+          widget_type: "chart",
+          module_id: moduleId,
+          size: "M",
+          pinned: false,
+          chart_id: evidenceChartId,
+          config: null,
+        },
+      },
+    },
+  ]);
+});
+
 for (const source of ["inline", "reference"] as const) {
   test(`E evidence Board ${source} settings save reload duplicate and reorder preserve the complete source`, async ({
     page,

@@ -1,7 +1,11 @@
 "use client";
 
 import { queryOptions } from "@tanstack/react-query";
-import { getOpenViewDashboard, listOpenViewDashboards } from "./dashboards-api";
+import {
+  getOpenViewDashboard,
+  listOpenViewDashboards,
+  type OpenViewDashboardWidgetInput,
+} from "./dashboards-api";
 import { queryOpenViewAggregateSnapshot } from "./analytics-api";
 import { queryOpenViewRecords } from "./views-api";
 import { ApiContractError } from "@/lib/api";
@@ -93,40 +97,55 @@ export const dashboardSnapshotOptions = (
       // short pause keeps that same deadline rather than starting a new one.
       return Math.max(1, interval - (finished ? Date.now() - finished : 0));
     },
-    queryFn: async ({ signal }): Promise<DashboardWidgetData> => {
+    queryFn: ({ signal }) => {
       if (!widget) throw new Error("Choose a saved Dashboard widget.");
-      let config = widget.config;
-      let sourceStamp = configSignature(widget);
-      let sourceName: string | null = null;
-      if (widget.chartId != null) {
-        const chart = await getOpenViewChart(widget.chartId, signal);
-        if (!chartMatchesWidget(chart, widget.widgetType))
-          throw new ApiContractError();
-        config = chart.config;
-        sourceStamp = chartSourceStamp(chart);
-        sourceName = chart.name;
-      }
-      signal.throwIfAborted();
-      if (!config) throw new ApiContractError();
-      const resolved = { config, sourceStamp, sourceName };
-      if (widget.widgetType === "records") {
-        if ("mode" in config.query) throw new ApiContractError();
-        return {
-          ...resolved,
-          kind: "records",
-          result: await queryOpenViewRecords({
-            moduleId: config.query.moduleId,
-            definition: config.query.definition,
-            limit: pageSize,
-            offset: page * pageSize,
-          }),
-        };
-      }
-      if (!("mode" in config.query)) throw new ApiContractError();
-      return {
-        ...resolved,
-        kind: "aggregate",
-        result: await queryOpenViewAggregateSnapshot(config.query),
-      };
+      return queryDashboardWidgetData(widget, page, pageSize, signal);
     },
   });
+
+/** Both persisted results and a real, unpersisted dialog draft use this read.
+ * No Dashboard or widget identity is fabricated to enable a saved-only hook. */
+export async function queryDashboardWidgetData(
+  widget: OpenViewDashboardWidgetInput,
+  page: number,
+  pageSize: number,
+  signal: AbortSignal,
+): Promise<DashboardWidgetData> {
+  let config = widget.config;
+  let sourceStamp = JSON.stringify(widget);
+  let sourceName: string | null = null;
+  if (widget.chartId != null) {
+    const chart = await getOpenViewChart(widget.chartId, signal);
+    if (!chartMatchesWidget(chart, widget.widgetType))
+      throw new ApiContractError();
+    config = chart.config;
+    sourceStamp = chartSourceStamp(chart);
+    sourceName = chart.name;
+  }
+  signal.throwIfAborted();
+  if (!config) throw new ApiContractError();
+  const resolved = { config, sourceStamp, sourceName };
+  let data: DashboardWidgetData;
+  if (widget.widgetType === "records") {
+    if ("mode" in config.query) throw new ApiContractError();
+    data = {
+      ...resolved,
+      kind: "records",
+      result: await queryOpenViewRecords({
+        moduleId: config.query.moduleId,
+        definition: config.query.definition,
+        limit: pageSize,
+        offset: page * pageSize,
+      }),
+    };
+  } else {
+    if (!("mode" in config.query)) throw new ApiContractError();
+    data = {
+      ...resolved,
+      kind: "aggregate",
+      result: await queryOpenViewAggregateSnapshot(config.query),
+    };
+  }
+  signal.throwIfAborted();
+  return data;
+}

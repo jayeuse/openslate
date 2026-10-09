@@ -6,7 +6,21 @@ import { Input } from "@/components/ui/input";
 import {
   canMutateBoardWidgets,
   useBoardWidgetManagement,
+  widgetQueryUnchanged,
 } from "../hooks/use-board-widget-management";
+import { useQuery } from "@tanstack/react-query";
+import { ChartSourceEditor } from "../../openview/components/chart-editor/chart-source-editor";
+import { compileChartEditorDraft } from "../../openview/domain/chart-query";
+import { useOpenViewAccessDenied } from "../../openview/adapters/openview-access";
+import {
+  fieldsFirstPageOptions,
+  extendsRead,
+  readStamp,
+} from "../../openview/adapters/openview-queries";
+import {
+  listOpenViewDataSourceFields,
+  type OpenViewDataSourceField,
+} from "../../openview/adapters/views-api";
 import { ConfirmAction } from "./ui";
 
 export function ServerBoardWidgetManagement({
@@ -42,11 +56,55 @@ export function ServerBoardWidgetManagement({
   const sizeId = useId();
   const pinnedId = useId();
   const { state, sources } = manager;
+  const queryReadDenied = useOpenViewAccessDenied();
+  const visibleSources = queryReadDenied ? [] : sources.items;
   const snapshot = state.status === "ready" ? state.snapshot : null;
   const canEdit = boardActive && !!snapshot?.access.manage;
   const busy = state.pending || state.status === "loading";
   const canMutate = canMutateBoardWidgets(state, boardActive);
   const mutationBlocked = busy || !canMutate;
+  const queryModule =
+    state.draft?.query?.chartId === null ? state.draft.source.moduleId : "";
+  const fieldsQuery = useQuery(fieldsFirstPageOptions(queryModule));
+  const [moreFields, setMoreFields] = useState<{
+    moduleId: string;
+    readAt: number;
+    items: OpenViewDataSourceField[];
+    hasMore: boolean;
+  } | null>(null);
+  const [fieldsError, setFieldsError] = useState("");
+  const [fieldsPending, setFieldsPending] = useState(false);
+  const [refusedChartId, setRefusedChartId] = useState<string | null>(null);
+  const extension =
+    moreFields?.moduleId === queryModule &&
+    extendsRead(moreFields.readAt, fieldsQuery)
+      ? moreFields
+      : null;
+  const queryFields =
+    queryReadDenied || fieldsQuery.error
+      ? []
+      : [...(fieldsQuery.data?.items ?? []), ...(extension?.items ?? [])];
+  async function loadMoreFields() {
+    if (fieldsPending || !queryModule) return;
+    setFieldsPending(true);
+    setFieldsError("");
+    try {
+      const page = await listOpenViewDataSourceFields(queryModule, {
+        limit: 100,
+        offset: queryFields.length,
+      });
+      setMoreFields({
+        moduleId: queryModule,
+        readAt: readStamp(fieldsQuery),
+        items: [...(extension?.items ?? []), ...page.items],
+        hasMore: page.pagination.hasMore,
+      });
+    } catch {
+      setFieldsError("More fields could not be loaded. Retry fields.");
+    } finally {
+      setFieldsPending(false);
+    }
+  }
 
   useEffect(() => {
     setRemoving(null);
@@ -59,7 +117,10 @@ export function ServerBoardWidgetManagement({
 
   function onSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    manager.saveSettings();
+    if (state.draft?.query && queryReadDenied) return;
+    manager.saveSettings(queryFields, () =>
+      setRefusedChartId(state.draft?.query?.chartId ?? null),
+    );
   }
 
   return (
@@ -221,7 +282,7 @@ export function ServerBoardWidgetManagement({
         </ol>
       )}
 
-      {canEdit && state.draft && (
+      {canEdit && state.draft ? (
         <form
           data-slot="card"
           onSubmit={onSave}
@@ -284,6 +345,69 @@ export function ServerBoardWidgetManagement({
             />
             Pin this widget
           </label>
+          {state.draft.query ? (
+            <ChartSourceEditor
+              refusedChartId={refusedChartId}
+              onRetrySource={() => setRefusedChartId(null)}
+              value={state.draft.query}
+              onChange={(query) => {
+                setRefusedChartId(null);
+                manager.changeDraft({ query });
+              }}
+              disabled={mutationBlocked}
+              restrictModule
+              catalog={{
+                sources: visibleSources.filter(
+                  (source) => source.id === state.draft?.source.moduleId,
+                ),
+                sourcesLoading: sources.status === "loading",
+                sourcesError: queryReadDenied
+                  ? "The source catalog is unavailable. Retry fields or catalog."
+                  : (sources.error ?? ""),
+                sourcesHasMore: false,
+                fields: queryFields,
+                fieldsLoading: fieldsQuery.isPending && !!queryModule,
+                fieldsError:
+                  queryReadDenied || fieldsQuery.error
+                    ? "The field catalog is unavailable. Retry fields."
+                    : fieldsError,
+                fieldsHasMore:
+                  !queryReadDenied &&
+                  (extension?.hasMore ??
+                    fieldsQuery.data?.pagination.hasMore ??
+                    false),
+                metadataError: "",
+                metadataRetryTarget: null,
+                metadataLoading: fieldsPending,
+                sourceName:
+                  visibleSources.find(
+                    (source) => source.id === state.draft?.source.moduleId,
+                  )?.name ?? "Record source",
+              }}
+              actions={{
+                retryCatalog: manager.reload,
+                retryFields: () => {
+                  setFieldsError("");
+                  void fieldsQuery.refetch();
+                },
+                loadMoreSources: manager.loadMoreSources,
+                loadMoreFields,
+              }}
+            >
+              {() => null}
+            </ChartSourceEditor>
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              Legacy widget instructions are retained unchanged. A count-all
+              Summary stays count-all; these settings do not convert it to a
+              grouped query.
+            </p>
+          )}
+          {state.error ? (
+            <p role="alert" className="text-destructive text-sm">
+              {state.error}
+            </p>
+          ) : null}
           {state.conflict && (
             <p role="alert" className="text-destructive text-sm">
               This widget changed after you opened settings. Your draft is
@@ -294,7 +418,19 @@ export function ServerBoardWidgetManagement({
             <Button
               type="submit"
               className="min-h-11"
-              disabled={mutationBlocked || !state.draft.name.trim()}
+              disabled={
+                mutationBlocked ||
+                !state.draft.name.trim() ||
+                (!!state.draft.query && queryReadDenied) ||
+                (!!state.draft.query &&
+                  !widgetQueryUnchanged(state.draft) &&
+                  (state.draft.query.chartId !== null
+                    ? !state.draft.query.chartId
+                    : !compileChartEditorDraft(
+                        state.draft.query.inline,
+                        queryFields,
+                      )))
+              }
             >
               Save settings
             </Button>
@@ -309,7 +445,7 @@ export function ServerBoardWidgetManagement({
             </Button>
           </div>
         </form>
-      )}
+      ) : null}
 
       {canEdit && (
         <form
@@ -348,7 +484,9 @@ export function ServerBoardWidgetManagement({
               data-slot="select"
               id={moduleId}
               value={
-                sources.items.some((item) => item.id === state.summary.moduleId)
+                visibleSources.some(
+                  (item) => item.id === state.summary.moduleId,
+                )
                   ? state.summary.moduleId
                   : ""
               }
@@ -360,7 +498,7 @@ export function ServerBoardWidgetManagement({
               className="border-input bg-card text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2"
             >
               <option value="">Choose an active source</option>
-              {sources.items.map((source) => (
+              {visibleSources.map((source) => (
                 <option value={source.id} key={source.id}>
                   {source.name}
                 </option>
@@ -376,12 +514,12 @@ export function ServerBoardWidgetManagement({
                 {sources.error}
               </p>
             )}
-            {sources.status === "ready" && sources.items.length === 0 && (
+            {sources.status === "ready" && visibleSources.length === 0 && (
               <p className="text-muted-foreground text-sm">
                 No active record sources are available.
               </p>
             )}
-            {sources.hasMore && (
+            {sources.hasMore && !queryReadDenied && (
               <Button
                 type="button"
                 variant="outline"
@@ -400,7 +538,7 @@ export function ServerBoardWidgetManagement({
               mutationBlocked ||
               sources.status !== "ready" ||
               !state.summary.name.trim() ||
-              !sources.items.some(
+              !visibleSources.some(
                 (source) => source.id === state.summary.moduleId,
               )
             }

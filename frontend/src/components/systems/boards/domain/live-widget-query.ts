@@ -10,6 +10,7 @@ import type {
   OpenViewAggregateSnapshotResult,
 } from "../../openview/adapters/analytics-api";
 import type { OpenViewQueryDefinition } from "../../openview/adapters/views-api";
+import { CATEGORICAL_TYPES } from "../../openview/domain/chart-query";
 
 type RecordRequest = {
   moduleId: string;
@@ -52,14 +53,6 @@ export type BoardWidgetQueryPlan =
       request: OpenViewAggregateSnapshotRequest;
     };
 
-const categoricalTypes = new Set([
-  "text",
-  "long_text",
-  "email",
-  "url",
-  "boolean",
-  "select",
-]);
 const millisecondsPerDay = 86_400_000;
 const pieVisibleGroups = 8;
 
@@ -159,7 +152,7 @@ export function buildBoardWidgetQueryPlan(
     };
   }
 
-  if (!categoricalTypes.has(dimension.expectedType)) {
+  if (!CATEGORICAL_TYPES.has(dimension.expectedType)) {
     return { kind: "unavailable", reason: "unsupported-dimension" };
   }
   if (widget.widgetType === "chart" && config.visualization === "pie") {

@@ -1167,6 +1167,406 @@ async function selectDashboard(page: Page, id: string) {
   await page.getByLabel("Dashboard", { exact: true }).selectOption(id);
 }
 
+test("S27 Dashboard previews an unsaved monthly draft and saves the exact inline instructions only on request", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page);
+  const bodies: unknown[] = [];
+  await page.route("**/api/records/aggregate-snapshot", (route) => {
+    bodies.push(route.request().postDataJSON());
+    return route.fulfill({
+      json: {
+        items: [
+          ...[
+            "2025-01-01",
+            "2025-02-01",
+            "2025-03-01",
+            "2025-04-01",
+            "2025-05-01",
+            "2025-06-01",
+            "2025-07-01",
+            "2025-08-01",
+            "2025-09-01",
+            "2025-10-01",
+            "2025-11-01",
+            "2025-12-01",
+            "2026-01-01",
+          ].map((key, index) => ({
+            key,
+            label: key,
+            value: index === 0 ? 12.5 : null,
+            record_count: index === 0 ? 92 : 0,
+          })),
+        ],
+        pagination: {
+          limit: 13,
+          offset: 0,
+          count: 13,
+          total: 13,
+          has_more: false,
+        },
+      },
+    });
+  });
+  await page.goto("/openview?section=dashboards");
+  await startNewDashboardDraft(page, "Monthly review");
+  const dialog = await openAddWidgetDialog(page);
+  await dialog
+    .getByLabel("Data source", { exact: true })
+    .selectOption(moduleId);
+  await dialog.getByLabel("Chart type", { exact: true }).selectOption("line");
+  await dialog.getByLabel("Measure", { exact: true }).selectOption("min");
+  await dialog
+    .getByLabel("Numeric measure", { exact: true })
+    .selectOption(amountFieldId);
+  await dialog
+    .getByLabel("Calendar bucket", { exact: true })
+    .selectOption("month");
+  await dialog
+    .getByRole("button", { name: "Date window", exact: true })
+    .click();
+  await page.getByLabel("From date", { exact: true }).fill("2025-01-15");
+  await page.getByLabel("To date", { exact: true }).fill("2026-01-20");
+  await page.keyboard.press("Escape");
+  await dialog
+    .getByRole("button", { name: "Preview widget", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("table", { name: "Draft preview values", exact: true }),
+  ).toContainText("12.5");
+  if (process.env.OPENVIEW_CAPTURE_DIR) {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.addStyleTag({
+      content: "nextjs-portal { display: none !important; }",
+    });
+    const options = {
+      beforeScreenshot: async (
+        capture: Page,
+        viewport: { width: number; height: number },
+      ) => {
+        await expect
+          .poll(() =>
+            capture.evaluate(() => document.documentElement.scrollWidth),
+          )
+          .toBeLessThanOrEqual(viewport.width);
+        if (viewport.width === 390) {
+          await dialog
+            .getByText("Measure", { exact: true })
+            .evaluate((element) => element.scrollIntoView({ block: "start" }));
+        } else {
+          await dialog
+            .getByRole("heading", { name: "Add widget", exact: true })
+            .scrollIntoViewIfNeeded();
+        }
+        await expect(
+          dialog.getByLabel("Calendar bucket", { exact: true }),
+        ).toHaveValue("month");
+      },
+    };
+    await captureOpenViewReview(page, "s27-dashboard-dialog-light", options);
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    await captureOpenViewReview(page, "s27-dashboard-dialog-dark", options);
+  }
+  expect(api.writes).toEqual([]);
+  const expected = {
+    mode: "date_series",
+    module_id: moduleId,
+    definition: queryDefinition,
+    aggregation: "min",
+    measure: { field_id: amountFieldId, expected_type: "decimal" },
+    date_field: { field_id: dateFieldId, expected_type: "date" },
+    from_date: "2025-01-15",
+    to_date: "2026-01-20",
+    bucket: "month",
+  };
+  expect(bodies).toEqual([expected]);
+  await addWidgetFromDialog(dialog);
+  expect(api.writes).toEqual([]);
+  await page
+    .getByRole("button", { name: "Save Dashboard", exact: true })
+    .click();
+  await expect(
+    page.getByText("Dashboard saved.", { exact: true }),
+  ).toBeVisible();
+  expect(api.writes[0]?.body?.widgets).toEqual([
+    {
+      widget_type: "chart",
+      size: "M",
+      chart_id: null,
+      config: { version: 1, chart_type: "line", query: expected },
+    },
+  ]);
+});
+
+test("S27 Dashboard records editor preserves ordered columns filters search sort and lifecycle grammar", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page);
+  await page.goto("/openview?section=dashboards");
+  await startNewDashboardDraft(page, "Filtered records");
+  const dialog = await openAddWidgetDialog(page);
+  await dialog
+    .getByLabel("Data source", { exact: true })
+    .selectOption(moduleId);
+  await dialog
+    .getByLabel("Widget type", { exact: true })
+    .selectOption("records");
+  await dialog
+    .getByRole("button", { name: "Records options", exact: true })
+    .click();
+  await page.getByLabel("Include Category", { exact: true }).check();
+  await page.getByLabel("Include Region", { exact: true }).check();
+  await page
+    .getByRole("button", { name: "Move Region earlier", exact: true })
+    .click();
+  await page.getByLabel("Record search", { exact: true }).fill("pump");
+  await page.getByLabel("Search Category", { exact: true }).check();
+  await page
+    .getByLabel("Record lifecycle", { exact: true })
+    .selectOption("include");
+  await page
+    .getByLabel("Sort field", { exact: true })
+    .selectOption(amountFieldId);
+  await page.getByLabel("Sort direction", { exact: true }).selectOption("desc");
+  await page.keyboard.press("Escape");
+  await dialog
+    .getByRole("button", { name: "Filters (0)", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Add filter", exact: true }).click();
+  await page
+    .getByLabel("Filter 1 value", { exact: true })
+    .selectOption(categoryChoices[0].id);
+  await page.keyboard.press("Escape");
+  await dialog
+    .getByRole("button", { name: "Preview widget", exact: true })
+    .click();
+  await expect(
+    dialog.getByText("2 matching records", { exact: true }),
+  ).toBeVisible();
+  const preview = dialog.getByRole("table", {
+    name: "Draft preview records",
+    exact: true,
+  });
+  await expect(preview.getByRole("columnheader")).toHaveText([
+    "Region",
+    "Category",
+  ]);
+  await expect(preview).toContainText("Repair");
+  await expect(preview).toContainText("Inspection");
+  expect(api.writes).toEqual([]);
+  const expected = {
+    version: 1,
+    logic: "and",
+    columns: [
+      { field_id: regionFieldId, expected_type: "select" },
+      { field_id: categoryFieldId, expected_type: "select" },
+    ],
+    filters: [
+      {
+        field_id: categoryFieldId,
+        expected_type: "select",
+        operator: "eq",
+        value: categoryChoices[0].id,
+      },
+    ],
+    sort: [
+      { field_id: amountFieldId, expected_type: "decimal", direction: "desc" },
+    ],
+    deleted: "include",
+    search: "pump",
+    search_fields: [{ field_id: categoryFieldId, expected_type: "select" }],
+  };
+  expect(api.recordQueries).toEqual([
+    { module_id: moduleId, definition: expected, limit: 5, offset: 0 },
+  ]);
+  await addWidgetFromDialog(dialog);
+  await page
+    .getByRole("button", { name: "Save Dashboard", exact: true })
+    .click();
+  await expect(
+    page.getByText("Dashboard saved.", { exact: true }),
+  ).toBeVisible();
+  expect(api.writes[0]?.body?.widgets).toEqual([
+    {
+      widget_type: "records",
+      size: "M",
+      chart_id: null,
+      config: {
+        version: 1,
+        query: { module_id: moduleId, definition: expected },
+      },
+    },
+  ]);
+});
+
+test("S27 Dashboard cancel fences a late preview without saving or adding a widget", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page);
+  await page.goto("/openview?section=dashboards");
+  await startNewDashboardDraft(page, "Retained draft");
+  const dialog = await openAddWidgetDialog(page);
+  await dialog
+    .getByLabel("Data source", { exact: true })
+    .selectOption(moduleId);
+  await dialog
+    .getByLabel("Group by", { exact: true })
+    .selectOption(categoryFieldId);
+  const held = api.holdNextSnapshot();
+  await dialog
+    .getByRole("button", { name: "Preview widget", exact: true })
+    .click();
+  await held.started;
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  held.release();
+  const reopened = await openAddWidgetDialog(page);
+  await expect(
+    reopened.getByRole("table", { name: "Draft preview values", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    reopened.getByText("0 of 12 widgets used.", { exact: true }),
+  ).toBeVisible();
+  expect(api.writes).toEqual([]);
+});
+
+test("S27 Dashboard saved picker preview refuses a changed source and saves reference-only after recovery", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page);
+  const chartId = "00000000-0000-4000-8000-000000000699";
+  const chart = {
+    id: chartId,
+    department_id: departmentId,
+    module_id: moduleId,
+    name: "Private reusable Chart",
+    chart_type: "bar",
+    query: {
+      mode: "groups",
+      module_id: moduleId,
+      definition: queryDefinition,
+      aggregation: "count",
+      measure: null,
+      dimension: { field_id: categoryFieldId, expected_type: "select" },
+    },
+    revision: 1,
+    is_deleted: false,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  let refused = false;
+  await page.route("**/api/charts?*", (route) =>
+    route.fulfill({
+      json: {
+        items: [chart],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    }),
+  );
+  await page.route(`**/api/charts/${chartId}`, (route) =>
+    refused
+      ? route.fulfill({ status: 404, json: { detail: "Private refusal" } })
+      : route.fulfill({ json: chart }),
+  );
+  let resultReads = 0;
+  await page.route("**/api/records/aggregate-snapshot", (route) => {
+    resultReads += 1;
+    return route.fulfill({
+      json: {
+        items: [
+          {
+            key: "private",
+            label: "Private draft result",
+            value: 3,
+            record_count: 3,
+          },
+        ],
+        pagination: {
+          limit: 1,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    });
+  });
+  await page.goto("/openview?section=dashboards");
+  await startNewDashboardDraft(page, "Reusable review");
+  const dialog = await openAddWidgetDialog(page);
+  await dialog
+    .getByLabel("Chart source", { exact: true })
+    .selectOption("saved");
+  await dialog
+    .getByRole("combobox", { name: "Saved Chart", exact: true })
+    .click();
+  await page
+    .getByRole("option", { name: "Private reusable Chart", exact: true })
+    .click();
+  await dialog
+    .getByRole("button", { name: "Preview widget", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("table", { name: "Draft preview values", exact: true }),
+  ).toContainText("Private draft result");
+  expect(api.writes).toEqual([]);
+  refused = true;
+  await dialog
+    .getByRole("button", { name: "Preview widget", exact: true })
+    .click();
+  await expect(
+    dialog.getByText("Private reusable Chart", { exact: true }),
+  ).toHaveCount(0);
+  expect(resultReads).toBe(1);
+  refused = false;
+  await dialog
+    .getByRole("button", { name: "Retry saved Chart", exact: true })
+    .click();
+  await dialog
+    .getByRole("button", { name: "Preview widget", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("table", { name: "Draft preview values", exact: true }),
+  ).toContainText("Private draft result");
+  refused = true;
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "charts",
+    module_id: moduleId,
+  });
+  await expect(
+    dialog.getByText("Private draft result", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    dialog.getByText("Private reusable Chart", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    dialog.getByText("Private refusal", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Preview widget", exact: true }),
+  ).toBeDisabled();
+  expect(resultReads).toBe(2);
+  refused = false;
+  await dialog
+    .getByRole("button", { name: "Retry saved Chart", exact: true })
+    .click();
+  await addWidgetFromDialog(dialog);
+  await page
+    .getByRole("button", { name: "Save Dashboard", exact: true })
+    .click();
+  await expect(
+    page.getByText("Dashboard saved.", { exact: true }),
+  ).toBeVisible();
+  expect(api.writes[0]?.body?.widgets).toEqual([
+    { widget_type: "chart", size: "M", chart_id: chartId, config: null },
+  ]);
+});
+
 test("S26 Dashboard preserves a saved Chart reference and L size through settings save and reload", async ({
   page,
 }) => {
@@ -2045,7 +2445,7 @@ test("Dashboard invalidation retains a dirty name cadence and widgets until disc
   await settings.getByLabel("Refresh cadence").selectOption("five-minutes");
   await finishDashboardDialog(settings);
   const add = await openAddWidgetDialog(page);
-  await add.getByLabel("Group records by").selectOption(regionFieldId);
+  await add.getByLabel("Group by", { exact: true }).selectOption(regionFieldId);
   await addWidgetFromDialog(add);
   await expect(
     page.getByText("2 of 12 widgets", { exact: true }),
@@ -2182,14 +2582,16 @@ test("department Dashboard supports mobile keyboard-only controls and survives r
   const addDialog = page.getByRole("dialog", { name: "Add widget" });
   await expect(addDialog).toBeVisible();
   const moduleSelect = addDialog.getByLabel("Data source");
-  await expect(moduleSelect).toBeFocused();
+  await expect(
+    addDialog.getByLabel("Widget type", { exact: true }),
+  ).toBeFocused();
   await tabTo(page, moduleSelect);
   await expectVisibleKeyboardFocus(moduleSelect);
   await expect(moduleSelect).toContainText("Equipment");
   await page.keyboard.press("e");
   await expect(moduleSelect).toHaveValue(moduleId);
 
-  const dimension = addDialog.getByLabel("Group records by");
+  const dimension = addDialog.getByLabel("Group by", { exact: true });
   await expect(dimension).toHaveValue(categoryFieldId);
   await tabTo(page, dimension);
   await expectVisibleKeyboardFocus(dimension);
@@ -2286,9 +2688,9 @@ test("new Dashboard and widget dialogs keep configuration local until Dashboard 
   const addWidgetDialog = page.getByRole("dialog", { name: "Add widget" });
   await expect(addWidgetDialog).toBeVisible();
   await addWidgetDialog.getByLabel("Data source").selectOption(moduleId);
-  await expect(addWidgetDialog.getByLabel("Group records by")).toHaveValue(
-    categoryFieldId,
-  );
+  await expect(
+    addWidgetDialog.getByLabel("Group by", { exact: true }),
+  ).toHaveValue(categoryFieldId);
   expect(api.snapshots).toHaveLength(0);
   await addWidgetDialog
     .getByRole("button", { name: "Add widget", exact: true })
@@ -2386,10 +2788,14 @@ test("department Dashboard saves ordered charts and reloads only the selected co
 
   let addDialog = await openAddWidgetDialog(page);
   await addDialog.getByLabel("Data source").selectOption(moduleId);
-  await addDialog.getByLabel("Group records by").selectOption(categoryFieldId);
+  await addDialog
+    .getByLabel("Group by", { exact: true })
+    .selectOption(categoryFieldId);
   await addWidgetFromDialog(addDialog);
   addDialog = await openAddWidgetDialog(page);
-  await addDialog.getByLabel("Group records by").selectOption(regionFieldId);
+  await addDialog
+    .getByLabel("Group by", { exact: true })
+    .selectOption(regionFieldId);
   await addWidgetFromDialog(addDialog);
   await expect(
     page.getByText("2 of 12 widgets", { exact: true }),
@@ -2399,7 +2805,9 @@ test("department Dashboard saves ordered charts and reloads only the selected co
     .click();
   await page.getByRole("menuitem", { name: "Move up" }).click();
   addDialog = await openAddWidgetDialog(page);
-  await addDialog.getByLabel("Group records by").selectOption(categoryFieldId);
+  await addDialog
+    .getByLabel("Group by", { exact: true })
+    .selectOption(categoryFieldId);
   await addWidgetFromDialog(addDialog);
   await expect(page.getByText("3 of 12 widgets")).toBeVisible();
   await page
@@ -2543,12 +2951,16 @@ test("department Dashboard builder saves Count over time and reloads the complet
     exact: true,
   });
   await expect(addLineChart).toBeDisabled();
-  const dateField = addDialog.getByLabel("Date field");
+  const dateField = addDialog.getByLabel("Group by", { exact: true });
   await expect(dateField).toContainText("Occurred on");
   await expect(dateField).toContainText("Updated at");
   await dateField.selectOption(datetimeFieldId);
-  await addDialog.getByLabel("Start date").fill("2024-02-28");
-  await addDialog.getByLabel("End date").fill("2024-03-01");
+  await addDialog
+    .getByRole("button", { name: "Date window", exact: true })
+    .click();
+  await page.getByLabel("From date", { exact: true }).fill("2024-02-28");
+  await page.getByLabel("To date", { exact: true }).fill("2024-03-01");
+  await page.keyboard.press("Escape");
   await expect(addLineChart).toBeEnabled();
   await addWidgetFromDialog(addDialog);
   await expect(page.getByText("1 of 12 widgets")).toBeVisible();
@@ -2626,7 +3038,7 @@ test("Dashboard bar builder requires and saves a typed numeric measure for Sum",
   await startNewDashboardDraft(page, "Equipment totals");
   const addDialog = await openAddWidgetDialog(page);
   await addDialog.getByLabel("Data source").selectOption(moduleId);
-  await addDialog.getByLabel("Aggregation").selectOption("sum");
+  await addDialog.getByLabel("Measure", { exact: true }).selectOption("sum");
   const addChart = addDialog.getByRole("button", {
     name: "Add widget",
     exact: true,
@@ -2703,12 +3115,12 @@ test("department Dashboard Pie builder saves Sum and reloads its preview and com
   const addDialog = await openAddWidgetDialog(page);
   await addDialog.getByLabel("Data source").selectOption(moduleId);
   await addDialog.getByLabel("Chart type").selectOption("pie");
-  await addDialog.getByLabel("Aggregation").selectOption("sum");
+  await addDialog.getByLabel("Measure", { exact: true }).selectOption("sum");
   const addPieChart = addDialog.getByRole("button", {
     name: "Add widget",
     exact: true,
   });
-  await expect(addDialog.getByLabel("Group records by")).toBeVisible();
+  await expect(addDialog.getByLabel("Group by", { exact: true })).toBeVisible();
   await expect(addDialog.getByLabel("Date field")).toHaveCount(0);
   await expect(addDialog.getByLabel("Start date")).toHaveCount(0);
   await expect(addPieChart).toBeDisabled();
@@ -2793,7 +3205,9 @@ test("Dashboard line builder requires and saves a typed numeric measure for Aver
   const addDialog = await openAddWidgetDialog(page);
   await addDialog.getByLabel("Data source").selectOption(moduleId);
   await addDialog.getByLabel("Chart type").selectOption("line");
-  await addDialog.getByLabel("Aggregation").selectOption("average");
+  await addDialog
+    .getByLabel("Measure", { exact: true })
+    .selectOption("average");
   const addLineChart = addDialog.getByRole("button", {
     name: "Add widget",
     exact: true,
@@ -2802,9 +3216,15 @@ test("Dashboard line builder requires and saves a typed numeric measure for Aver
   await expect(measure).toHaveValue("");
   await expect(addLineChart).toBeDisabled();
   await measure.selectOption(scoreFieldId);
-  await addDialog.getByLabel("Date field").selectOption(dateFieldId);
-  await addDialog.getByLabel("Start date").fill("2024-03-01");
-  await addDialog.getByLabel("End date").fill("2024-03-02");
+  await addDialog
+    .getByLabel("Group by", { exact: true })
+    .selectOption(dateFieldId);
+  await addDialog
+    .getByRole("button", { name: "Date window", exact: true })
+    .click();
+  await page.getByLabel("From date", { exact: true }).fill("2024-03-01");
+  await page.getByLabel("To date", { exact: true }).fill("2024-03-02");
+  await page.keyboard.press("Escape");
   await expect(addLineChart).toBeEnabled();
   await addWidgetFromDialog(addDialog);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
@@ -2874,13 +3294,16 @@ test("line chart builder blocks missing, reversed, and overlong date ranges", as
     name: "Add widget",
     exact: true,
   });
-  const dateField = addDialog.getByLabel("Date field");
+  const dateField = addDialog.getByLabel("Group by", { exact: true });
   await expect(dateField).toContainText("Occurred on");
   await expect(addLineChart).toBeDisabled();
 
   await dateField.selectOption(dateFieldId);
-  const startDate = addDialog.getByLabel("Start date");
-  const endDate = addDialog.getByLabel("End date");
+  await addDialog
+    .getByRole("button", { name: "Date window", exact: true })
+    .click();
+  const startDate = page.getByLabel("From date", { exact: true });
+  const endDate = page.getByLabel("To date", { exact: true });
   await startDate.fill("2024-02-29");
   await expect(addLineChart).toBeDisabled();
   await endDate.fill("2024-02-29");
@@ -2891,6 +3314,7 @@ test("line chart builder blocks missing, reversed, and overlong date ranges", as
   await expect(addLineChart).toBeEnabled();
   await endDate.fill("2025-03-01");
   await expect(addLineChart).toBeDisabled();
+  await page.keyboard.press("Escape");
   await dateField.selectOption("");
   await expect(addLineChart).toBeDisabled();
   await expect(
@@ -3159,7 +3583,7 @@ test("the categorical Count builder excludes numeric and date fields", async ({
   const addDialog = await openAddWidgetDialog(page);
   await addDialog.getByLabel("Data source").selectOption(moduleId);
 
-  const dimension = addDialog.getByLabel("Group records by");
+  const dimension = addDialog.getByLabel("Group by", { exact: true });
   await expect(dimension.getByRole("option", { name: "Category" })).toHaveCount(
     1,
   );
@@ -3315,7 +3739,7 @@ test("a delayed field page cannot corrupt pagination after switching modules", a
 
   const addDialog = await openAddWidgetDialog(page);
   await addDialog.getByLabel("Data source").selectOption(moduleId);
-  const dimension = addDialog.getByLabel("Group records by");
+  const dimension = addDialog.getByLabel("Group by", { exact: true });
   await expect(dimension.getByRole("option", { name: "Category" })).toHaveCount(
     1,
   );
@@ -3365,28 +3789,38 @@ test("department Dashboard saves and reloads all four live widget types", async 
   let addDialog = await openAddWidgetDialog(page);
   await addDialog.getByLabel("Data source").selectOption(moduleId);
   await addDialog.getByLabel("Widget type").selectOption("summary");
-  await addDialog.getByLabel("Group records by").selectOption(categoryFieldId);
+  await addDialog
+    .getByLabel("Group by", { exact: true })
+    .selectOption(categoryFieldId);
   await addWidgetFromDialog(addDialog);
 
   addDialog = await openAddWidgetDialog(page);
   await addDialog.getByLabel("Data source").selectOption(moduleId);
   await addDialog.getByLabel("Widget type").selectOption("workload");
-  await addDialog.getByLabel("Aggregation").selectOption("sum");
+  await addDialog.getByLabel("Measure", { exact: true }).selectOption("sum");
   await addDialog.getByLabel("Numeric measure").selectOption(amountFieldId);
-  await addDialog.getByLabel("Group records by").selectOption(regionFieldId);
+  await addDialog
+    .getByLabel("Group by", { exact: true })
+    .selectOption(regionFieldId);
   await addWidgetFromDialog(addDialog);
 
   addDialog = await openAddWidgetDialog(page);
   await addDialog.getByLabel("Data source").selectOption(moduleId);
   await addDialog.getByLabel("Widget type").selectOption("records");
-  await addDialog.getByLabel("Display field").selectOption(categoryFieldId);
+  await addDialog
+    .getByRole("button", { name: "Records options", exact: true })
+    .click();
+  await page.getByLabel("Include Category", { exact: true }).check();
+  await page.keyboard.press("Escape");
   await addWidgetFromDialog(addDialog);
 
   addDialog = await openAddWidgetDialog(page);
   await addDialog.getByLabel("Data source").selectOption(moduleId);
   await addDialog.getByLabel("Widget type").selectOption("chart");
-  await addDialog.getByLabel("Aggregation").selectOption("count");
-  await addDialog.getByLabel("Group records by").selectOption(categoryFieldId);
+  await addDialog.getByLabel("Measure", { exact: true }).selectOption("count");
+  await addDialog
+    .getByLabel("Group by", { exact: true })
+    .selectOption(categoryFieldId);
   await addWidgetFromDialog(addDialog);
   await expect(
     page.getByText("4 of 12 widgets", { exact: true }),
@@ -3496,7 +3930,11 @@ test("saved Record widget shows values for a field beyond the first catalog page
   await addDialog.getByLabel("Data source").selectOption(moduleId);
   await addDialog.getByLabel("Widget type").selectOption("records");
   await addDialog.getByRole("button", { name: "Load more fields" }).click();
-  await addDialog.getByLabel("Display field").selectOption(laterFieldId);
+  await addDialog
+    .getByRole("button", { name: "Records options", exact: true })
+    .click();
+  await page.getByLabel("Include Later field", { exact: true }).check();
+  await page.keyboard.press("Escape");
   await addWidgetFromDialog(addDialog);
   await page.getByRole("button", { name: "Save Dashboard" }).click();
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));

@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { getAuthMe } from "@/lib/auth-api";
+import { listOpenViewCharts } from "./charts-api";
 import {
   getOpenViewDepartment,
   listOpenViewDepartments,
@@ -40,6 +41,9 @@ export const CATALOG_PAGE_SIZE = 100;
 export const openViewKeys = {
   all: ["openview"] as const,
   catalog: ["openview", "catalog"] as const,
+  chartLists: ["openview", "catalog", "charts"] as const,
+  chartList: (search: string, moduleId?: string) =>
+    ["openview", "catalog", "charts", { search, moduleId }] as const,
   /** The first catalog batch; Views loads more only on request. */
   boundedCatalog: () => ["openview", "catalog", "bounded"] as const,
   /** The first catalog page (Charts and Reports load more on request). */
@@ -212,6 +216,12 @@ export const catalogFirstPageOptions = () =>
     queryKey: openViewKeys.catalogFirstPage(),
     queryFn: () =>
       listOpenViewDataSources({ limit: CATALOG_PAGE_SIZE, offset: 0 }),
+  });
+
+export const chartListOptions = (search: string, moduleId?: string) =>
+  queryOptions({
+    queryKey: openViewKeys.chartList(search, moduleId),
+    queryFn: ({ signal }) => listOpenViewCharts({ search, moduleId, signal }),
   });
 
 export const fieldsFirstPageOptions = (moduleId: string) =>

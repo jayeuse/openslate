@@ -1,6 +1,19 @@
 "use client";
 
-import { aggregationLabel } from "../domain/chart-query";
+import {
+  aggregationLabel,
+  changeChartEditorWidgetType,
+  editorFieldReference,
+  newChartEditorDraft,
+  isCategoricalField,
+  type ChartSourceDraft,
+} from "../domain/chart-query";
+import { ChartSourceEditor } from "./chart-editor/chart-source-editor";
+import { OpenViewChartPreview } from "./chart-preview";
+import { openViewRecordFieldValue } from "../domain/record-display";
+import { queryDashboardWidgetData } from "../adapters/dashboard-queries";
+import { getOpenViewChart, chartMatchesWidget } from "../adapters/charts-api";
+import { ApiContractError, ApiError } from "@/lib/api";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -56,9 +69,8 @@ import {
   restoreOpenViewDashboard,
   updateOpenViewDashboard,
   type OpenViewDashboard,
-  type OpenViewDashboardAggregateConfig,
   type OpenViewDashboardChartConfig,
-  type OpenViewDashboardRecordsConfig,
+  type OpenViewDashboardWidgetInput,
   type OpenViewDashboardRefreshCadence,
   type OpenViewDashboardWidgetType,
   type OpenViewDashboardWidget,
@@ -68,7 +80,6 @@ import {
   listOpenViewDataSources,
   type OpenViewDataSource,
   type OpenViewDataSourceField,
-  type OpenViewQueryDefinition,
 } from "../adapters/views-api";
 import { parseOpenViewUrl, serializeOpenViewUrl } from "../domain/model";
 import {
@@ -76,25 +87,12 @@ import {
   draftWidgetsFrom,
   inputWidgets,
   type DraftWidget,
+  type DashboardWidgetData,
 } from "../domain/dashboard-draft";
 import { DashboardWidgetResults } from "./dashboard-widget-results";
 import { useDashboardResource } from "../hooks/use-dashboard-resource";
 import { useDashboardSnapshot } from "../hooks/use-dashboard-snapshot";
 
-const CATEGORICAL_FIELD_TYPES = new Set([
-  "text",
-  "long_text",
-  "email",
-  "url",
-  "select",
-  "boolean",
-]);
-const NUMERIC_FIELD_TYPES = new Set(["int", "number", "decimal"]);
-const DATE_RANGE_DAY_MS = 86_400_000;
-
-type BuilderChartType = OpenViewDashboardChartConfig["chartType"];
-type BuilderAggregation =
-  OpenViewDashboardAggregateConfig["query"]["aggregation"];
 type PendingNavigation = {
   href: string;
   resume: () => void;
@@ -151,37 +149,6 @@ function widgetTitle(
       ).dimension.fieldId,
   );
   return `${operation}${measureLabel} by ${field?.name ?? "selected field"}`;
-}
-
-function isCategoricalField(field: OpenViewDataSourceField): boolean {
-  return CATEGORICAL_FIELD_TYPES.has(field.type);
-}
-
-function isDateField(
-  field: OpenViewDataSourceField,
-): field is OpenViewDataSourceField & { type: "date" | "datetime" } {
-  return field.type === "date" || field.type === "datetime";
-}
-
-function inclusiveDateRangeDays(
-  fromDate: string,
-  toDate: string,
-): number | null {
-  const parseDate = (value: string): number | null => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-    const date = new Date(`${value}T00:00:00.000Z`);
-    if (
-      !Number.isFinite(date.getTime()) ||
-      date.toISOString().slice(0, 10) !== value
-    ) {
-      return null;
-    }
-    return date.getTime();
-  };
-  const from = parseDate(fromDate);
-  const to = parseDate(toDate);
-  if (from === null || to === null || to < from) return null;
-  return Math.floor((to - from) / DATE_RANGE_DAY_MS) + 1;
 }
 
 function lastValidDashboardPage(
@@ -243,19 +210,20 @@ export default function ServerBackedDashboards() {
   const [fieldsHasMore, setFieldsHasMore] = useState(false);
   const [fieldsLoadingMore, setFieldsLoadingMore] = useState(false);
   const [catalogRetry, setCatalogRetry] = useState(0);
-  const [builderModuleId, setBuilderModuleId] = useState("");
-  const [builderWidgetType, setBuilderWidgetType] =
-    useState<OpenViewDashboardWidgetType>("chart");
-  const [builderChartType, setBuilderChartType] =
-    useState<BuilderChartType>("bar");
-  const [builderAggregation, setBuilderAggregation] =
-    useState<BuilderAggregation>("count");
-  const [builderDimensionId, setBuilderDimensionId] = useState("");
-  const [builderRecordFieldId, setBuilderRecordFieldId] = useState("");
-  const [builderMeasureId, setBuilderMeasureId] = useState("");
-  const [builderDateFieldId, setBuilderDateFieldId] = useState("");
-  const [builderFromDate, setBuilderFromDate] = useState("");
-  const [builderToDate, setBuilderToDate] = useState("");
+  const [builder, setBuilder] = useState<ChartSourceDraft>({
+    inline: newChartEditorDraft("", []),
+    chartId: null,
+  });
+  const builderModuleId = builder.inline.moduleId;
+  const freshBuilderModule = useRef("");
+  const [builderFieldsLoading, setBuilderFieldsLoading] = useState(false);
+  const [builderPending, setBuilderPending] = useState(false);
+  const [builderError, setBuilderError] = useState("");
+  const [builderPreview, setBuilderPreview] = useState<{
+    signature: string;
+    data: DashboardWidgetData;
+  } | null>(null);
+  const builderRead = useRef<AbortController | null>(null);
   const [tablePage, setTablePage] = useState(0);
   const [tablePageSize, setTablePageSize] = useState(DASHBOARD_PAGE_SIZE);
   const fieldRequestSequence = useRef(0);
@@ -313,9 +281,6 @@ export default function ServerBackedDashboards() {
     const sequence = ++fieldRequestSequence.current;
     setFieldsLoadingMore(false);
     if (!builderModuleId) {
-      setBuilderDimensionId("");
-      setBuilderRecordFieldId("");
-      setBuilderDateFieldId("");
       setFieldsHasMore(false);
       setFieldOffset(0);
       return;
@@ -323,6 +288,7 @@ export default function ServerBackedDashboards() {
     setCatalogError("");
     setFieldsHasMore(false);
     setFieldOffset(0);
+    setBuilderFieldsLoading(true);
     void listOpenViewDataSourceFields(builderModuleId, {
       limit: 100,
       offset: 0,
@@ -335,24 +301,33 @@ export default function ServerBackedDashboards() {
         }));
         setFieldOffset(page.items.length);
         setFieldsHasMore(page.pagination.hasMore);
-        const categoricalFields = page.items.filter(isCategoricalField);
-        const queryableFields = page.items;
-        setBuilderDimensionId((current) =>
-          categoricalFields.some((field) => field.id === current)
-            ? current
-            : (categoricalFields[0]?.id ?? ""),
-        );
-        setBuilderRecordFieldId((current) =>
-          queryableFields.some((field) => field.id === current)
-            ? current
-            : (queryableFields[0]?.id ?? ""),
-        );
+        if (freshBuilderModule.current === builderModuleId) {
+          freshBuilderModule.current = "";
+          const first = page.items.find(isCategoricalField);
+          setBuilder((current) =>
+            current.inline.moduleId === builderModuleId &&
+            current.inline.mode === "groups" &&
+            !current.inline.dimension &&
+            first
+              ? {
+                  ...current,
+                  inline: {
+                    ...current.inline,
+                    dimension: editorFieldReference(first),
+                  },
+                }
+              : current,
+          );
+        }
+        setBuilderFieldsLoading(false);
       })
       .catch((error: unknown) => {
-        if (active && fieldRequestSequence.current === sequence)
+        if (active && fieldRequestSequence.current === sequence) {
+          setBuilderFieldsLoading(false);
           setCatalogError(
             apiErrorMessage(error, "The field catalog could not be loaded."),
           );
+        }
       });
     return () => {
       active = false;
@@ -568,66 +543,29 @@ export default function ServerBackedDashboards() {
         visibleSnapshot?.data.sourceName,
       )
     : "";
-  const builderIsDateSeries =
-    builderWidgetType === "chart" && builderChartType === "line";
-  const builderFields = (fieldsByModule[builderModuleId] ?? []).filter(
-    isCategoricalField,
-  );
-  const builderRecordFields = fieldsByModule[builderModuleId] ?? [];
-  const builderNumericFields = (fieldsByModule[builderModuleId] ?? []).filter(
-    (field) =>
-      builderAggregation === "distinct" || NUMERIC_FIELD_TYPES.has(field.type),
-  );
-  const builderMeasure = builderNumericFields.find(
-    (field) => field.id === builderMeasureId,
-  );
-  const builderMeasureValid =
-    builderAggregation === "count" || Boolean(builderMeasure);
-  const builderDateFields = (fieldsByModule[builderModuleId] ?? []).filter(
-    isDateField,
-  );
-  const builderDateField = builderDateFields.find(
-    (field) => field.id === builderDateFieldId,
-  );
-  const builderDateRangeDays = inclusiveDateRangeDays(
-    builderFromDate,
-    builderToDate,
-  );
-  const builderDateRangeValid =
-    builderDateRangeDays !== null && builderDateRangeDays <= 366;
-  const builderDimensionValid = builderFields.some(
-    (field) => field.id === builderDimensionId,
-  );
-  const builderRecordField = builderRecordFields.find(
-    (field) => field.id === builderRecordFieldId,
-  );
-  const builderCanAddWidget =
-    builderWidgetType === "records"
-      ? Boolean(builderModuleId && builderRecordField)
-      : builderWidgetType === "summary"
-        ? Boolean(builderModuleId && builderDimensionValid)
-        : builderWidgetType === "workload"
-          ? Boolean(
-              builderModuleId && builderDimensionValid && builderMeasureValid,
-            )
-          : builderIsDateSeries
-            ? Boolean(
-                builderModuleId &&
-                builderDateField &&
-                builderDateRangeValid &&
-                builderMeasureValid,
-              )
-            : Boolean(
-                builderModuleId && builderDimensionValid && builderMeasureValid,
-              );
-  const builderDateRangeDescription =
-    !builderFromDate || !builderToDate
-      ? "Choose an inclusive start and end date spanning 1 to 366 days."
-      : builderDateRangeDays === null
-        ? "The end date must be on or after the start date."
-        : builderDateRangeDays > 366
-          ? "The inclusive date range cannot exceed 366 days."
-          : `Both dates are included (${builderDateRangeDays} ${builderDateRangeDays === 1 ? "day" : "days"}).`;
+  const builderSignature = JSON.stringify(builder);
+  const [refusedBuilderChartId, setRefusedBuilderChartId] = useState<
+    string | null
+  >(null);
+  useEffect(() => {
+    builderRead.current?.abort();
+    setBuilderPending(false);
+    setBuilderPreview(null);
+    setBuilderError("");
+    return () => builderRead.current?.abort();
+  }, [builderSignature, widgetDialogOpen, routeDashboardId, accessDenied]);
+  const withdrawBuilderPreview = useCallback(() => {
+    builderRead.current?.abort();
+    setBuilderPending(false);
+    setBuilderPreview(null);
+  }, []);
+  useEffect(() => {
+    const suspend = () => {
+      if (document.hidden) withdrawBuilderPreview();
+    };
+    document.addEventListener("visibilitychange", suspend);
+    return () => document.removeEventListener("visibilitychange", suspend);
+  }, [withdrawBuilderPreview]);
 
   useEffect(() => {
     setTablePage(0);
@@ -669,7 +607,11 @@ export default function ServerBackedDashboards() {
     setFieldsLoadingMore(false);
     setFieldOffset(0);
     setFieldsHasMore(false);
-    setBuilderModuleId(moduleId);
+    freshBuilderModule.current = moduleId;
+    setBuilder({
+      inline: newChartEditorDraft(moduleId, fieldsByModule[moduleId] ?? []),
+      chartId: null,
+    });
   }
 
   function retryCatalog() {
@@ -732,17 +674,76 @@ export default function ServerBackedDashboards() {
     updateDashboardUrl(dashboardId);
   }
 
-  function submitBuilderWidget() {
-    if (!builderCanAddWidget || draftWidgets.length >= 12) return;
-    if (builderWidgetType === "records") addRecordsWidget();
-    else if (
-      builderWidgetType === "summary" ||
-      builderWidgetType === "workload"
-    )
-      addGroupedAggregateWidget();
-    else if (builderIsDateSeries) addLineChart();
-    else addGroupedChart();
-    setWidgetDialogOpen(false);
+  async function submitBuilderWidget(input: OpenViewDashboardWidgetInput) {
+    if (builderPending || draftWidgets.length >= 12) return;
+    const controller = new AbortController();
+    builderRead.current?.abort();
+    builderRead.current = controller;
+    setBuilderPending(true);
+    setBuilderError("");
+    try {
+      if (input.chartId != null) {
+        const chart = await getOpenViewChart(input.chartId, controller.signal);
+        if (!chartMatchesWidget(chart, input.widgetType))
+          throw new ApiContractError();
+      }
+      controller.signal.throwIfAborted();
+      const next: DraftWidget = { ...input, key: crypto.randomUUID() };
+      setDraftWidgets((current) => [...current, next]);
+      setActiveWidgetKey(next.key);
+      setNotice("");
+      setWidgetDialogOpen(false);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        if (input.chartId) setRefusedBuilderChartId(input.chartId);
+        setBuilderError(
+          apiErrorMessage(
+            error,
+            "Saved Chart is unavailable. Retry or choose another source.",
+          ),
+        );
+      }
+    } finally {
+      if (!controller.signal.aborted) setBuilderPending(false);
+    }
+  }
+
+  async function previewBuilder(input: OpenViewDashboardWidgetInput) {
+    if (builderPending || accessDenied || document.hidden) return;
+    const controller = new AbortController();
+    builderRead.current?.abort();
+    builderRead.current = controller;
+    setBuilderPending(true);
+    setBuilderError("");
+    setBuilderPreview(null);
+    try {
+      const data = await queryDashboardWidgetData(
+        input,
+        0,
+        5,
+        controller.signal,
+      );
+      controller.signal.throwIfAborted();
+      setBuilderPreview({ signature: builderSignature, data });
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        if (
+          input.chartId &&
+          (error instanceof ApiContractError ||
+            (error instanceof ApiError &&
+              error.code === "chart_source_unavailable"))
+        )
+          setRefusedBuilderChartId(input.chartId);
+        setBuilderError(
+          apiErrorMessage(
+            error,
+            "Preview is unavailable. Your draft is retained; retry.",
+          ),
+        );
+      }
+    } finally {
+      if (!controller.signal.aborted) setBuilderPending(false);
+    }
   }
 
   function toggleArchivedList() {
@@ -810,202 +811,6 @@ export default function ServerBackedDashboards() {
       if (fieldRequestSequence.current === sequence)
         setFieldsLoadingMore(false);
     }
-  }
-
-  function addGroupedChart() {
-    if (builderWidgetType !== "chart" || builderChartType === "line") return;
-    const field = (fieldsByModule[builderModuleId] ?? []).find(
-      (candidate) =>
-        candidate.id === builderDimensionId && isCategoricalField(candidate),
-    );
-    const measure = builderAggregation === "count" ? undefined : builderMeasure;
-    if (
-      !field ||
-      (builderAggregation !== "count" && !measure) ||
-      draftWidgets.length >= 12
-    ) {
-      return;
-    }
-    const definition: OpenViewQueryDefinition = {
-      version: 1,
-      logic: "and",
-      columns: [],
-      filters: [],
-      sort: [],
-      deleted: "exclude",
-      search: null,
-      searchFields: [],
-    };
-    const config: OpenViewDashboardChartConfig = {
-      version: 1,
-      chartType: builderChartType,
-      query: {
-        mode: "groups",
-        moduleId: builderModuleId,
-        definition,
-        aggregation: builderAggregation,
-        ...(measure
-          ? {
-              measure: {
-                fieldId: measure.id,
-                expectedType: measure.type,
-              },
-            }
-          : {}),
-        dimension: { fieldId: field.id, expectedType: field.type },
-      },
-    };
-    const next: DraftWidget = {
-      key: crypto.randomUUID(),
-      widgetType: "chart",
-      config,
-    };
-    setDraftWidgets((current) => [...current, next]);
-    setActiveWidgetKey(next.key);
-    setNotice("");
-  }
-
-  function addLineChart() {
-    if (builderWidgetType !== "chart") return;
-    const field = builderDateFields.find(
-      (candidate) => candidate.id === builderDateFieldId,
-    );
-    const measure = builderAggregation === "count" ? undefined : builderMeasure;
-    const rangeDays = inclusiveDateRangeDays(builderFromDate, builderToDate);
-    if (
-      !field ||
-      (builderAggregation !== "count" && !measure) ||
-      rangeDays === null ||
-      rangeDays < 1 ||
-      rangeDays > 366 ||
-      draftWidgets.length >= 12
-    ) {
-      return;
-    }
-    const definition: OpenViewQueryDefinition = {
-      version: 1,
-      logic: "and",
-      columns: [],
-      filters: [],
-      sort: [],
-      deleted: "exclude",
-      search: null,
-      searchFields: [],
-    };
-    const config: OpenViewDashboardChartConfig = {
-      version: 1,
-      chartType: "line",
-      query: {
-        mode: "date_series",
-        moduleId: builderModuleId,
-        definition,
-        aggregation: builderAggregation,
-        ...(measure
-          ? {
-              measure: {
-                fieldId: measure.id,
-                expectedType: measure.type,
-              },
-            }
-          : {}),
-        dateField: { fieldId: field.id, expectedType: field.type },
-        fromDate: builderFromDate,
-        toDate: builderToDate,
-      },
-    };
-    const next: DraftWidget = {
-      key: crypto.randomUUID(),
-      widgetType: "chart",
-      config,
-    };
-    setDraftWidgets((current) => [...current, next]);
-    setActiveWidgetKey(next.key);
-    setNotice("");
-  }
-
-  function addGroupedAggregateWidget() {
-    if (builderWidgetType !== "summary" && builderWidgetType !== "workload")
-      return;
-    const field = (fieldsByModule[builderModuleId] ?? []).find(
-      (candidate) =>
-        candidate.id === builderDimensionId && isCategoricalField(candidate),
-    );
-    const aggregation =
-      builderWidgetType === "summary" ? "count" : builderAggregation;
-    const measure = aggregation === "count" ? undefined : builderMeasure;
-    if (
-      !field ||
-      (aggregation !== "count" && !measure) ||
-      draftWidgets.length >= 12
-    )
-      return;
-    const config: OpenViewDashboardAggregateConfig = {
-      version: 1,
-      query: {
-        mode: "groups",
-        moduleId: builderModuleId,
-        definition: {
-          version: 1,
-          logic: "and",
-          columns: [],
-          filters: [],
-          sort: [],
-          deleted: "exclude",
-          search: null,
-          searchFields: [],
-        },
-        aggregation,
-        ...(measure
-          ? {
-              measure: {
-                fieldId: measure.id,
-                expectedType: measure.type,
-              },
-            }
-          : {}),
-        dimension: { fieldId: field.id, expectedType: field.type },
-      },
-    };
-    const next: DraftWidget = {
-      key: crypto.randomUUID(),
-      widgetType: builderWidgetType,
-      config,
-    };
-    setDraftWidgets((current) => [...current, next]);
-    setActiveWidgetKey(next.key);
-    setNotice("");
-  }
-
-  function addRecordsWidget() {
-    const field = builderRecordFields.find(
-      (candidate) => candidate.id === builderRecordFieldId,
-    );
-    if (builderWidgetType !== "records" || !field || draftWidgets.length >= 12)
-      return;
-    const config: OpenViewDashboardRecordsConfig = {
-      version: 1,
-      query: {
-        moduleId: builderModuleId,
-        definition: {
-          version: 1,
-          logic: "and",
-          columns: [{ fieldId: field.id, expectedType: field.type }],
-          filters: [],
-          sort: [],
-          deleted: "exclude",
-          search: null,
-          searchFields: [],
-        },
-      },
-    };
-    const next: DraftWidget = {
-      key: crypto.randomUUID(),
-      widgetType: "records",
-      config,
-    };
-    setDraftWidgets((current) => [...current, next]);
-    setActiveWidgetKey(next.key);
-    setNotice("");
   }
 
   function removeWidget(key: string) {
@@ -1976,357 +1781,258 @@ export default function ServerBackedDashboards() {
               <DialogHeader>
                 <DialogTitle>Add widget</DialogTitle>
                 <DialogDescription>
-                  Choose one live result. A new widget loads only after you save
-                  the Dashboard.
+                  Preview one result without saving. Add it to your draft, then
+                  save the Dashboard when ready.
                 </DialogDescription>
               </DialogHeader>
-
-              <div className="grid min-w-0 gap-4 sm:grid-cols-2">
-                <Field className="min-w-0 sm:col-span-2">
-                  <FieldLabel htmlFor="dashboard-module">
-                    Data source
-                  </FieldLabel>
-                  <Select
-                    id="dashboard-module"
-                    className="min-h-11 w-full"
-                    value={builderModuleId}
-                    disabled={duplicatePending}
-                    onValueChange={(value) => {
-                      selectBuilderModule(value);
-                      setBuilderDateFieldId("");
-                      setBuilderMeasureId("");
-                    }}
-                  >
-                    <option value="">Choose a data source</option>
-                    {departmentSources.map((source) => (
-                      <option key={source.id} value={source.id}>
-                        {source.name}
-                      </option>
-                    ))}
-                  </Select>
-                  {!departmentSources.length && !catalogError ? (
-                    <FieldDescription>
-                      No data sources of this department are available yet.
-                      Retry the catalog if this persists.
-                    </FieldDescription>
-                  ) : null}
-                </Field>
-                <Field className="min-w-0">
-                  <FieldLabel htmlFor="dashboard-widget-type">
-                    Widget type
-                  </FieldLabel>
-                  <Select
-                    id="dashboard-widget-type"
-                    className="min-h-11 w-full"
-                    value={builderWidgetType}
-                    disabled={duplicatePending}
-                    onValueChange={(value) => {
-                      const nextType = value as OpenViewDashboardWidgetType;
-                      setBuilderWidgetType(nextType);
-                      if (nextType === "summary")
-                        setBuilderAggregation("count");
-                    }}
-                  >
-                    <option value="summary">Summary</option>
-                    <option value="workload">Workload</option>
-                    <option value="records">Record list</option>
-                    <option value="chart">Chart</option>
-                  </Select>
-                </Field>
-
-                {builderWidgetType === "chart" ? (
-                  <Field className="min-w-0">
-                    <FieldLabel htmlFor="dashboard-chart-type">
-                      Chart type
-                    </FieldLabel>
-                    <Select
-                      id="dashboard-chart-type"
-                      className="min-h-11 w-full"
-                      value={builderChartType}
-                      disabled={duplicatePending}
-                      onValueChange={(value) => {
-                        setBuilderChartType(value as BuilderChartType);
-                      }}
-                    >
-                      <option value="bar">By category (bar)</option>
-                      <option value="pie">By category (pie)</option>
-                      <option value="line">Over time (line)</option>
-                    </Select>
-                  </Field>
-                ) : null}
-
-                {builderWidgetType === "chart" ||
-                builderWidgetType === "workload" ? (
-                  <Field className="min-w-0">
-                    <FieldLabel htmlFor="dashboard-aggregation">
-                      Aggregation
-                    </FieldLabel>
-                    <Select
-                      id="dashboard-aggregation"
-                      className="min-h-11 w-full"
-                      value={builderAggregation}
-                      disabled={duplicatePending}
-                      onValueChange={(value) => {
-                        setBuilderAggregation(value as BuilderAggregation);
-                      }}
-                    >
-                      <option value="count">Count</option>
-                      <option value="sum">Sum</option>
-                      <option value="average">Average</option>
-                      <option value="min">Minimum</option>
-                      <option value="max">Maximum</option>
-                      <option value="distinct">Distinct</option>
-                    </Select>
-                  </Field>
-                ) : null}
-
-                {(builderWidgetType === "chart" ||
-                  builderWidgetType === "workload") &&
-                builderAggregation !== "count" ? (
-                  <Field className="min-w-0">
-                    <FieldLabel htmlFor="dashboard-measure">
-                      {builderAggregation === "distinct"
-                        ? "Measure field"
-                        : "Numeric measure"}
-                    </FieldLabel>
-                    <Select
-                      id="dashboard-measure"
-                      className="min-h-11 w-full"
-                      value={builderMeasureId}
-                      disabled={
-                        duplicatePending ||
-                        !builderModuleId ||
-                        !builderNumericFields.length
-                      }
-                      onValueChange={(value) => {
-                        setBuilderMeasureId(value);
-                      }}
-                    >
-                      <option value="">
-                        {builderAggregation === "distinct"
-                          ? "Choose a field"
-                          : "Choose a numeric field"}
-                      </option>
-                      {builderNumericFields.map((field) => (
-                        <option key={field.id} value={field.id}>
-                          {field.name}
-                        </option>
-                      ))}
-                    </Select>
-                    {!builderNumericFields.length ? (
-                      <FieldDescription>
-                        Sum and average require a numeric field in this data
-                        source.
-                      </FieldDescription>
-                    ) : null}
-                  </Field>
-                ) : null}
-
-                {builderWidgetType === "records" ? (
-                  <Field className="min-w-0">
-                    <FieldLabel htmlFor="dashboard-record-field">
-                      Display field
-                    </FieldLabel>
-                    <Select
-                      id="dashboard-record-field"
-                      className="min-h-11 w-full"
-                      value={builderRecordFieldId}
-                      disabled={
-                        duplicatePending ||
-                        !builderModuleId ||
-                        !builderRecordFields.length
-                      }
-                      onValueChange={(value) => {
-                        setBuilderRecordFieldId(value);
-                      }}
-                    >
-                      <option value="">Choose a field</option>
-                      {builderRecordFields.map((field) => (
-                        <option key={field.id} value={field.id}>
-                          {field.name}
-                        </option>
-                      ))}
-                    </Select>
-                    <FieldDescription>
-                      The saved query uses this field to display live rows.
-                    </FieldDescription>
-                  </Field>
-                ) : !builderIsDateSeries ? (
-                  <Field className="min-w-0">
-                    <FieldLabel htmlFor="dashboard-dimension">
-                      Group records by
-                    </FieldLabel>
-                    <Select
-                      id="dashboard-dimension"
-                      className="min-h-11 w-full"
-                      value={builderDimensionId}
-                      disabled={
-                        duplicatePending ||
-                        !builderModuleId ||
-                        !builderFields.length
-                      }
-                      onValueChange={(value) => {
-                        setBuilderDimensionId(value);
-                      }}
-                    >
-                      <option value="">Choose a field</option>
-                      {builderFields.map((field) => (
-                        <option key={field.id} value={field.id}>
-                          {field.name}
-                        </option>
-                      ))}
-                    </Select>
-                    <FieldDescription>
-                      {builderWidgetType === "summary"
-                        ? "Counts matching records across the selected groups."
-                        : builderWidgetType === "workload"
-                          ? "Compares the selected aggregate across live record groups."
-                          : "Creates a categorical chart from live records."}
-                    </FieldDescription>
-                    {builderModuleId && !builderFields.length ? (
-                      <FieldDescription>
-                        This data source has no active categorical fields.
-                      </FieldDescription>
-                    ) : null}
-                  </Field>
-                ) : null}
-
-                {builderIsDateSeries ? (
-                  <>
-                    <Field className="min-w-0">
-                      <FieldLabel htmlFor="dashboard-date-field">
-                        Date field
-                      </FieldLabel>
-                      <Select
-                        id="dashboard-date-field"
-                        className="min-h-11 w-full"
-                        value={builderDateFieldId}
-                        disabled={
-                          duplicatePending ||
-                          !builderModuleId ||
-                          !builderDateFields.length
-                        }
-                        onValueChange={(value) => {
-                          setBuilderDateFieldId(value);
+              <Field>
+                <FieldLabel htmlFor="dashboard-widget-type">
+                  Widget type
+                </FieldLabel>
+                <Select
+                  id="dashboard-widget-type"
+                  className="min-h-11"
+                  value={builder.inline.widgetType}
+                  disabled={builderPending}
+                  onValueChange={(type) =>
+                    setBuilder({
+                      ...builder,
+                      chartId: builder.chartId === null ? null : "",
+                      inline: changeChartEditorWidgetType(
+                        builder.inline,
+                        type as OpenViewDashboardWidgetType,
+                        fieldsByModule[builderModuleId] ?? [],
+                      ),
+                    })
+                  }
+                >
+                  <option value="summary">Summary</option>
+                  <option value="workload">Workload</option>
+                  <option value="records">Record list</option>
+                  <option value="chart">Chart</option>
+                </Select>
+              </Field>
+              {widgetDialogOpen ? (
+                <ChartSourceEditor
+                  refusedChartId={refusedBuilderChartId}
+                  onRetrySource={() => setRefusedBuilderChartId(null)}
+                  value={builder}
+                  disabled={builderPending || savePending || duplicatePending}
+                  onChange={(next) => {
+                    setRefusedBuilderChartId(null);
+                    if (next.inline.moduleId !== builderModuleId)
+                      freshBuilderModule.current = next.inline.moduleId;
+                    setBuilder(next);
+                  }}
+                  onUnavailable={withdrawBuilderPreview}
+                  catalog={{
+                    sources: departmentSources,
+                    sourcesLoading: false,
+                    sourcesError: "",
+                    sourcesHasMore: catalogSourcesHasMore,
+                    fields: fieldsByModule[builderModuleId] ?? [],
+                    fieldsLoading: builderFieldsLoading,
+                    fieldsError: catalogError,
+                    fieldsHasMore,
+                    metadataError: "",
+                    metadataRetryTarget: null,
+                    metadataLoading: catalogLoadingMore || fieldsLoadingMore,
+                    sourceName:
+                      catalogSources.find(
+                        (source) => source.id === builderModuleId,
+                      )?.name ?? "Data source",
+                  }}
+                  actions={{
+                    retryCatalog,
+                    retryFields: retryCatalog,
+                    loadMoreSources,
+                    loadMoreFields,
+                  }}
+                >
+                  {(input, sourceStamp) => (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="min-h-11 self-start"
+                        disabled={!input || builderPending}
+                        onClick={() => {
+                          if (input) void previewBuilder(input);
                         }}
                       >
-                        <option value="">Choose a date field</option>
-                        {builderDateFields.map((field) => (
-                          <option key={field.id} value={field.id}>
-                            {field.name}
-                          </option>
-                        ))}
-                      </Select>
-                      <FieldDescription>
-                        Date fields create daily aggregate values.
-                      </FieldDescription>
-                      {builderModuleId && !builderDateFields.length ? (
-                        <FieldDescription>
-                          This data source has no active date or datetime
-                          fields.
-                        </FieldDescription>
+                        {builderPending ? "Loading preview…" : "Preview widget"}
+                      </Button>
+                      {builderError ? (
+                        <Alert role="alert" variant="destructive">
+                          {builderError}
+                        </Alert>
                       ) : null}
-                    </Field>
-                    <Field className="min-w-0">
-                      <FieldLabel htmlFor="dashboard-from-date">
-                        Start date
-                      </FieldLabel>
-                      <Input
-                        id="dashboard-from-date"
-                        type="date"
-                        required
-                        disabled={duplicatePending}
-                        className="min-h-11 w-full"
-                        value={builderFromDate}
-                        aria-describedby="dashboard-date-range-description"
-                        onChange={(event) => {
-                          setBuilderFromDate(event.target.value);
-                        }}
-                      />
-                    </Field>
-                    <Field className="min-w-0">
-                      <FieldLabel htmlFor="dashboard-to-date">
-                        End date
-                      </FieldLabel>
-                      <Input
-                        id="dashboard-to-date"
-                        type="date"
-                        required
-                        disabled={duplicatePending}
-                        className="min-h-11 w-full"
-                        value={builderToDate}
-                        aria-describedby="dashboard-date-range-description"
-                        onChange={(event) => {
-                          setBuilderToDate(event.target.value);
-                        }}
-                      />
-                      <FieldDescription id="dashboard-date-range-description">
-                        {builderDateRangeDescription}
-                      </FieldDescription>
-                    </Field>
-                  </>
-                ) : null}
-              </div>
-
-              {catalogSourcesHasMore ? (
-                <Button
-                  variant="outline"
-                  className="min-h-11 self-start"
-                  disabled={catalogLoadingMore}
-                  onClick={() => void loadMoreSources()}
-                >
-                  {catalogLoadingMore
-                    ? "Loading data sources…"
-                    : "Load more data sources"}
-                </Button>
-              ) : null}
-              {fieldsHasMore ? (
-                <Button
-                  variant="outline"
-                  className="min-h-11 self-start"
-                  disabled={fieldsLoadingMore}
-                  onClick={() => void loadMoreFields()}
-                >
-                  {fieldsLoadingMore ? "Loading fields…" : "Load more fields"}
-                </Button>
-              ) : null}
-              {catalogError ? (
-                <Alert role="alert" variant="destructive">
-                  {catalogError}
-                  <Button
-                    className="mt-3 min-h-11"
-                    variant="outline"
-                    onClick={retryCatalog}
-                  >
-                    Retry catalog
-                  </Button>
-                </Alert>
+                      {builderPreview?.signature === builderSignature &&
+                      (builder.chartId === null ||
+                        builderPreview.data.sourceStamp === sourceStamp) ? (
+                        <div
+                          className="space-y-3"
+                          aria-label="Draft widget preview"
+                        >
+                          <p className="text-muted-foreground text-sm">
+                            Read-only draft preview. No widget has been saved.
+                          </p>
+                          {builderPreview.data.kind === "aggregate" ? (
+                            <>
+                              {"chartType" in builderPreview.data.config ? (
+                                <OpenViewChartPreview
+                                  type={builderPreview.data.config.chartType}
+                                  data={builderPreview.data.result.items.map(
+                                    (item) => ({
+                                      key: item.key ?? "null",
+                                      label: item.label,
+                                      value:
+                                        item.value === null
+                                          ? null
+                                          : Number(item.value),
+                                    }),
+                                  )}
+                                  valueLabel={
+                                    "mode" in builderPreview.data.config.query
+                                      ? aggregationLabel(
+                                          builderPreview.data.config.query
+                                            .aggregation,
+                                        )
+                                      : "Value"
+                                  }
+                                />
+                              ) : null}
+                              <div className="overflow-x-auto">
+                                <table
+                                  aria-label="Draft preview values"
+                                  className="w-full text-sm"
+                                >
+                                  <thead>
+                                    <tr>
+                                      <th className="p-2 text-left">
+                                        Group or period
+                                      </th>
+                                      <th className="p-2 text-right">Value</th>
+                                      <th className="p-2 text-right">
+                                        Record count
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {builderPreview.data.result.items.map(
+                                      (item) => (
+                                        <tr key={item.key ?? "null"}>
+                                          <td className="p-2">{item.label}</td>
+                                          <td className="p-2 text-right">
+                                            {item.value ?? "—"}
+                                          </td>
+                                          <td className="p-2 text-right">
+                                            {item.recordCount}
+                                          </td>
+                                        </tr>
+                                      ),
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <p>
+                                {builderPreview.data.result.pagination.total}{" "}
+                                matching records
+                              </p>
+                              <div className="overflow-x-auto">
+                                <table
+                                  aria-label="Draft preview records"
+                                  className="w-full text-sm"
+                                >
+                                  <thead>
+                                    <tr>
+                                      {builderPreview.data.config.query.definition.columns.map(
+                                        (ref) => (
+                                          <th
+                                            key={ref.fieldId}
+                                            scope="col"
+                                            className="p-2 text-left"
+                                          >
+                                            {fieldsByModule[
+                                              builderPreview.data.config.query
+                                                .moduleId
+                                            ]?.find(
+                                              (field) =>
+                                                field.id === ref.fieldId &&
+                                                field.type === ref.expectedType,
+                                            )?.name ?? "Unavailable field"}
+                                          </th>
+                                        ),
+                                      )}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {builderPreview.data.result.items.map(
+                                      (record) => (
+                                        <tr key={record.id}>
+                                          {builderPreview.data.config.query.definition.columns.map(
+                                            (ref) => (
+                                              <td
+                                                key={ref.fieldId}
+                                                className="p-2"
+                                              >
+                                                {String(
+                                                  openViewRecordFieldValue(
+                                                    record,
+                                                    {
+                                                      id: ref.fieldId,
+                                                      type: ref.expectedType,
+                                                    },
+                                                  ) ?? "—",
+                                                )}
+                                              </td>
+                                            ),
+                                          )}
+                                        </tr>
+                                      ),
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ) : null}
+                      <DialogFooter>
+                        <Button
+                          variant="outline"
+                          className="min-h-11"
+                          onClick={() => setWidgetDialogOpen(false)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          className="min-h-11"
+                          disabled={
+                            !input ||
+                            builderPending ||
+                            draftWidgets.length >= 12 ||
+                            duplicatePending ||
+                            savePending ||
+                            Boolean(restorePendingId)
+                          }
+                          onClick={() => {
+                            if (input) void submitBuilderWidget(input);
+                          }}
+                        >
+                          Add widget
+                        </Button>
+                      </DialogFooter>
+                    </>
+                  )}
+                </ChartSourceEditor>
               ) : null}
               <p role="status" className="text-muted-foreground text-sm">
                 {draftWidgets.length} of 12 widgets used.
               </p>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  className="min-h-11"
-                  onClick={() => setWidgetDialogOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  className="min-h-11"
-                  onClick={submitBuilderWidget}
-                  disabled={
-                    !builderCanAddWidget ||
-                    draftWidgets.length >= 12 ||
-                    duplicatePending ||
-                    savePending ||
-                    Boolean(restorePendingId)
-                  }
-                >
-                  Add widget
-                </Button>
-              </DialogFooter>
             </DialogContent>
           </Dialog>
         </>

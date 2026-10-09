@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { ApiContractError, ApiError, apiFetch } from "@/lib/api";
+import { listSchema } from "./views-schemas";
+import { openViewReadFetch } from "./openview-access";
 import {
   dashboardWidgetWireConfigSchema,
   type OpenViewDashboardWidgetType,
@@ -63,6 +65,58 @@ const chartSchema = z
   });
 
 export type SavedChart = z.output<typeof chartSchema>;
+
+const chartListRequestSchema = z
+  .object({
+    limit: z.number().int().min(1).max(100).default(25),
+    offset: z.number().int().min(0).default(0),
+    search: z.string().trim().max(100).default(""),
+    moduleId: uuid.optional(),
+  })
+  .strict();
+
+/** Picker metadata only. A result or write must resolve its selected ID afresh. */
+export async function listOpenViewCharts(
+  options: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    moduleId?: string;
+    signal?: AbortSignal;
+  } = {},
+) {
+  const { signal, ...input } = options;
+  const request = chartListRequestSchema.parse(input);
+  const parameters = new URLSearchParams({
+    limit: String(request.limit),
+    offset: String(request.offset),
+    sort_by: "name",
+    sort_order: "asc",
+    deleted: "exclude",
+  });
+  if (request.search) parameters.set("search", request.search);
+  if (request.moduleId) parameters.set("module_id", request.moduleId);
+  const page = await openViewReadFetch(
+    `/charts?${parameters}`,
+    listSchema(chartSchema),
+    { signal, cache: "no-store" },
+  );
+  signal?.throwIfAborted();
+  if (
+    page.pagination.offset !== request.offset ||
+    page.pagination.count !== page.items.length ||
+    page.pagination.total < request.offset + page.items.length ||
+    (page.pagination.hasMore && !page.items.length) ||
+    new Set(page.items.map((chart) => chart.id)).size !== page.items.length ||
+    page.items.some(
+      (chart) =>
+        chart.isDeleted ||
+        (request.moduleId && chart.moduleId !== request.moduleId),
+    )
+  )
+    throw new ApiContractError();
+  return page;
+}
 
 /** A detail read is fresh per result request, never an authority-bearing cache. */
 export async function getOpenViewChart(

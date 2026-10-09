@@ -164,6 +164,17 @@ export function ChartSnapshotResults({
     tablePage * tablePageSize,
     (tablePage + 1) * tablePageSize,
   );
+  const bucket =
+    applied.request.mode === "date_series"
+      ? (applied.request.bucket ?? "day")
+      : "day";
+  const period = {
+    day: "daily",
+    week: "weekly",
+    month: "monthly",
+    quarter: "quarterly",
+    year: "yearly",
+  }[bucket];
 
   return (
     <>
@@ -198,7 +209,9 @@ export function ChartSnapshotResults({
           <p className="text-muted-foreground text-sm">
             {chart.data.length} chart points · {applied.result.pagination.total}{" "}
             total{" "}
-            {applied.chartType === "line" ? "daily values" : "aggregate groups"}
+            {applied.chartType === "line"
+              ? `${period} values`
+              : "aggregate groups"}
             . Chart decimal values are numeric approximations; the table and
             exports preserve the returned value strings.
           </p>
@@ -273,7 +286,7 @@ export function ChartSnapshotResults({
             </summary>
             <p className="text-muted-foreground pb-3 text-sm">
               {applied.chartType === "line"
-                ? "Each point represents the selected measure for one day in the applied date window."
+                ? `Each point represents the selected measure for one ${bucket} in the applied date window.`
                 : `Each bar or slice represents a ${applied.labelName.toLowerCase()} group.`}{" "}
               The preview may be limited or approximate. The complete table and
               exports below preserve every returned value and record count.
@@ -289,7 +302,7 @@ export function ChartSnapshotResults({
             <CardDescription>
               {applied.result.pagination.total}{" "}
               {applied.chartType === "line"
-                ? "daily values"
+                ? `${period} values`
                 : "aggregate groups"}{" "}
               · one complete snapshot · no record list is loaded
             </CardDescription>
@@ -372,7 +385,7 @@ export function ChartSnapshotResults({
         </h1>
         <p className="mb-4 text-sm">
           Complete aggregate snapshot: {allRows.length}{" "}
-          {applied.chartType === "line" ? "daily values" : "groups"}.
+          {applied.chartType === "line" ? `${period} values` : "groups"}.
         </p>
         <Table aria-label="Printable complete aggregate data">
           <TableHeader>

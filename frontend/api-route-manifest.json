@@ -834,6 +834,12 @@
     "path": "/api/charts/{param}"
   },
   {
+    "adapter": "frontend/src/components/systems/openview/adapters/charts-api.ts",
+    "function": "listOpenViewCharts",
+    "method": "GET",
+    "path": "/api/charts"
+  },
+  {
     "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
     "function": "archiveOpenViewDashboard",
     "method": "DELETE",

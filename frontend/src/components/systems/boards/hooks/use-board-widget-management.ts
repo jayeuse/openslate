@@ -20,7 +20,19 @@ import type { BoardMyAccess } from "../adapters/board-tools-api";
 import {
   listOpenViewDataSources,
   type OpenViewDataSource,
+  type OpenViewDataSourceField,
 } from "../../openview/adapters/views-api";
+import {
+  chartEditorDraftFrom,
+  changeChartEditorWidgetType,
+  compileChartEditorDraft,
+  newChartEditorDraft,
+  type ChartSourceDraft,
+} from "../../openview/domain/chart-query";
+import {
+  getOpenViewChart,
+  chartMatchesWidget,
+} from "../../openview/adapters/charts-api";
 import { readBoard } from "../adapters/board-management-api";
 
 export type WidgetSettingsDraft = {
@@ -28,6 +40,7 @@ export type WidgetSettingsDraft = {
   name: string;
   size: BoardWidget["size"];
   pinned: boolean;
+  query?: ChartSourceDraft | null;
 };
 
 export type WidgetManagementSnapshot = {
@@ -63,7 +76,58 @@ export function draftFromBoardWidget(widget: BoardWidget): WidgetSettingsDraft {
     name: widget.name,
     size: widget.size,
     pinned: widget.pinned,
+    query: queryDraftFromBoardWidget(widget),
   };
+}
+
+function queryDraftFromBoardWidget(
+  widget: BoardWidget,
+): ChartSourceDraft | null {
+  const config = widget.config;
+  if (widget.chartId !== null)
+    return {
+      chartId: widget.chartId,
+      inline: changeChartEditorWidgetType(
+        newChartEditorDraft(widget.moduleId, []),
+        widget.widgetType,
+        [],
+      ),
+    };
+  if (config === null || "fields" in config) return null;
+  if (widget.widgetType === "chart" && "chartType" in config)
+    return {
+      chartId: null,
+      inline: chartEditorDraftFrom({ widgetType: "chart", config }),
+    };
+  if (widget.widgetType === "records" && !("mode" in config.query))
+    return {
+      chartId: null,
+      inline: chartEditorDraftFrom({
+        widgetType: "records",
+        config: { version: 1, query: config.query },
+      }),
+    };
+  if (
+    (widget.widgetType === "summary" || widget.widgetType === "workload") &&
+    "mode" in config.query &&
+    config.query.mode === "groups"
+  )
+    return {
+      chartId: null,
+      inline: chartEditorDraftFrom({
+        widgetType: widget.widgetType,
+        config: { version: 1, query: config.query },
+      }),
+    };
+  throw new ApiContractError();
+}
+
+export function widgetQueryUnchanged(draft: WidgetSettingsDraft): boolean {
+  return (
+    draft.query === undefined ||
+    JSON.stringify(draft.query) ===
+      JSON.stringify(queryDraftFromBoardWidget(draft.source))
+  );
 }
 
 function sameWidgetVersion(
@@ -87,9 +151,27 @@ function sameWidgetVersion(
 export function updateInputForWidgetDraft(
   widget: BoardWidget,
   draft: WidgetSettingsDraft,
+  fields: OpenViewDataSourceField[] = [],
 ): BoardWidgetInput {
   if (!sameWidgetVersion(widget, draft.source)) throw new ApiContractError();
   let config: BoardWidgetInput["config"] = widget.config;
+  let chartId = widget.chartId;
+  if (draft.query && !widgetQueryUnchanged(draft)) {
+    if (
+      draft.query.inline.moduleId !== widget.moduleId ||
+      draft.query.inline.widgetType !== widget.widgetType
+    )
+      throw new ApiContractError();
+    chartId = draft.query.chartId;
+    if (chartId !== null) {
+      if (!chartId) throw new ApiContractError();
+      config = null;
+    } else {
+      const compiled = compileChartEditorDraft(draft.query.inline, fields);
+      if (!compiled) throw new ApiContractError();
+      config = compiled.config;
+    }
+  }
   if (widget.config !== null && "fields" in widget.config) {
     const { refresh, ...legacy } = widget.config;
     void refresh;
@@ -101,7 +183,7 @@ export function updateInputForWidgetDraft(
     moduleId: widget.moduleId,
     size: draft.size,
     pinned: draft.pinned,
-    chartId: widget.chartId,
+    chartId,
     config,
   };
 }
@@ -155,15 +237,14 @@ export async function saveWidgetDraft(
   boardId: string,
   page: BoardWidgetPage,
   draft: WidgetSettingsDraft,
+  fields: OpenViewDataSourceField[] = [],
+  stillCurrent: () => boolean = () => true,
 ) {
   const current = page.items.find((widget) => widget.id === draft.source.id);
   if (!current) throw new ApiContractError();
-  return updateBoardWidget(
-    boardId,
-    current.id,
-    page.boardRevision,
-    updateInputForWidgetDraft(current, draft),
-  );
+  const input = updateInputForWidgetDraft(current, draft, fields);
+  if (!stillCurrent()) return;
+  return updateBoardWidget(boardId, current.id, page.boardRevision, input);
 }
 
 export async function loadWidgetSourcePage(offset: number) {
@@ -491,7 +572,9 @@ export function useBoardWidgetManagement({
   }
 
   function changeDraft(
-    patch: Partial<Pick<WidgetSettingsDraft, "name" | "size" | "pinned">>,
+    patch: Partial<
+      Pick<WidgetSettingsDraft, "name" | "size" | "pinned" | "query">
+    >,
   ) {
     setState((previous) => ({
       ...previous,
@@ -513,7 +596,10 @@ export function useBoardWidgetManagement({
   }
 
   async function runMutation(
-    action: (snapshot: WidgetManagementSnapshot) => Promise<unknown>,
+    action: (
+      snapshot: WidgetManagementSnapshot,
+      stillCurrent: () => boolean,
+    ) => Promise<unknown>,
     message: string,
     resetSummary = false,
   ) {
@@ -534,7 +620,13 @@ export function useBoardWidgetManagement({
       notice: null,
     }));
     try {
-      await action(initialSnapshot);
+      await action(
+        initialSnapshot,
+        () =>
+          request === sequence.current &&
+          renderedBoard.current === boardId &&
+          activeBoard.current === boardId,
+      );
       submitted = true;
       if (request !== sequence.current) return;
       const snapshot = await loadWidgetManagementSnapshot(boardId);
@@ -557,7 +649,17 @@ export function useBoardWidgetManagement({
       changedRef.current?.();
     } catch (error: unknown) {
       if (request !== sequence.current) return;
-      if (accessLost(error)) {
+      if (
+        error instanceof ApiError &&
+        error.code === "chart_source_unavailable"
+      ) {
+        setState((previous) => ({
+          ...previous,
+          pending: false,
+          error:
+            "Saved Chart is unavailable. Your settings draft is retained; retry or choose another source.",
+        }));
+      } else if (accessLost(error)) {
         sourceSequence.current += 1;
         setSources({ ...emptySources, key: boardId });
         setState(deniedWidgetManagerState(boardId));
@@ -667,7 +769,10 @@ export function useBoardWidgetManagement({
     );
   }
 
-  function saveSettings() {
+  function saveSettings(
+    fields: OpenViewDataSourceField[] = [],
+    onSourceUnavailable?: () => void,
+  ) {
     if (
       !current.draft ||
       !current.draft.name.trim() ||
@@ -675,10 +780,32 @@ export function useBoardWidgetManagement({
     )
       return;
     const draft = current.draft;
-    void runMutation(
-      (snapshot) => saveWidgetDraft(boardId, snapshot.page, draft),
-      "Widget settings saved.",
-    );
+    void runMutation(async (snapshot, stillCurrent) => {
+      const chartId = draft.query ? draft.query.chartId : draft.source.chartId;
+      if (chartId) {
+        try {
+          const chart = await getOpenViewChart(chartId);
+          if (
+            !chartMatchesWidget(
+              chart,
+              draft.source.widgetType,
+              draft.source.moduleId,
+            )
+          )
+            throw new ApiContractError();
+        } catch (error) {
+          if (stillCurrent()) onSourceUnavailable?.();
+          throw error;
+        }
+      }
+      return saveWidgetDraft(
+        boardId,
+        snapshot.page,
+        draft,
+        fields,
+        stillCurrent,
+      );
+    }, "Widget settings saved.");
   }
 
   function duplicate(widgetId: string) {
