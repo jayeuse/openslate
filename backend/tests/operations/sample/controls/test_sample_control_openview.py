@@ -28,6 +28,9 @@ from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseA
 from operations.sample.scenario import build_dataset
 from tests.operations.sample.controls.sample_openview_snapshots import snapshot_response
 from tests.operations.sample.controls.sample_purge_wire import SamplePurgeWire, report_fixture
+from tests.operations.sample.controls.test_sample_control_openview_plan import (
+    INCUMBENT_OPENVIEW_ROUTES,
+)
 
 
 def _uuid(value: str) -> str:
@@ -68,7 +71,11 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
     dataset = build_dataset(
         "small", seed=42, anchor_date=date(2026, 9, 30), organization=get_pack(pack_key)
     )
-    actions = plan_openview_controls(dataset)
+    actions = tuple(
+        action
+        for action in plan_openview_controls(dataset)
+        if action.values["operation"] != "chart_lifecycle"
+    )
     records: dict[str, dict[str, object]] = {}
     seen: list[tuple[str, str]] = []
     counter = 0
@@ -457,7 +464,7 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
             client.close()
 
     matched = set().union(*(_template(method, path, CONTROL_ROUTES) for method, path in seen))
-    assert matched == CONTROL_ROUTES
+    assert matched == INCUMBENT_OPENVIEW_ROUTES
     assert len(results) == len(actions)
     assert all(result["outcome"] == "completed" for result in results)
     assert not records

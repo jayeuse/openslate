@@ -35,6 +35,7 @@ const lifecycleBlockerCodeSchema: z.ZodType<LifecycleBlockerCode> = z.enum([
   "record_close_unsupported",
   "purge_board_dependency",
   "purge_dashboard_dependency",
+  "purge_chart_dependency",
   "purge_report_dependency",
   "purge_report_run_dependency",
   "purge_trigger_dependency",

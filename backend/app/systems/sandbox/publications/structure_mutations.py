@@ -1,5 +1,6 @@
 """Small structural mutation helpers used by the publication transaction."""
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -8,10 +9,33 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.systems.boards.department_boards import sync_department_board
+from app.systems.openview.charts.models import Chart
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.rules import _field_key
+
+
+def sync_module_chart_departments(
+    db: Session, modules: Mapping[str, Module], actor_id: UUID
+) -> None:
+    """Propagate locked Module ownership to all retained Charts without committing."""
+    by_id = {module.id: module for module in modules.values()}
+    if not by_id:
+        return
+    charts = db.scalars(
+        select(Chart)
+        .where(Chart.module_id.in_(by_id))
+        .order_by(Chart.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    for chart in charts:
+        department_id = by_id[chart.module_id].department_id
+        if chart.department_id != department_id:
+            chart.department_id = department_id
+            chart.revision += 1
+            chart.performed_by = actor_id
 
 
 def stage_bound_names_and_positions(

@@ -45,9 +45,7 @@ const config = {
   logic: "and",
   metric: null,
   visualization: "bar",
-  size: "half",
   refresh: "manual",
-  pinned: false,
 };
 
 function widgetResponse(id = widgetId) {
@@ -58,6 +56,9 @@ function widgetResponse(id = widgetId) {
     widget_type: "records",
     module_id: moduleId,
     position: 0,
+    size: "M",
+    pinned: false,
+    chart_id: null,
     config,
     created_at: timestamp,
     updated_at: timestamp,
@@ -169,6 +170,9 @@ test("widget create, patch, duplicate, reorder and delete send revisioned contra
         name: "Requests",
         widget_type: "records",
         module_id: moduleId,
+        size: "M",
+        pinned: false,
+        chart_id: null,
         config: {
           version: 1,
           fields: config.fields,
@@ -176,8 +180,6 @@ test("widget create, patch, duplicate, reorder and delete send revisioned contra
           logic: "and",
           metric: null,
           visualization: "bar",
-          size: "half",
-          pinned: false,
         },
       },
     });

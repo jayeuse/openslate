@@ -133,7 +133,10 @@ export function useDashboardResource(
           const every = everyModule;
           refresh(
             dashboardKeys.snapshots,
-            (query) => every || affected.has(String(query.queryKey[4])),
+            (query) =>
+              every ||
+              !query.queryKey[4] ||
+              affected.has(String(query.queryKey[4])),
           );
         }
       }
@@ -147,7 +150,11 @@ export function useDashboardResource(
         else if (invalidatesRecords(event.entity)) {
           if (event.moduleId) modules.add(event.moduleId);
           else everyModule = true;
-          if (event.entity !== "records" && event.entity !== "relationships")
+          if (
+            event.entity !== "records" &&
+            event.entity !== "relationships" &&
+            event.entity !== "charts"
+          )
             metadata = true;
         } else return;
         if (timer !== undefined) clearTimeout(timer);

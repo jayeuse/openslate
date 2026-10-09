@@ -132,4 +132,9 @@ def verify_openview_controls(
                             issues.append("OpenView batch snapshot outcome is incomplete")
     except (SampleClientError, SampleVerificationError, ValueError):
         issues.append("OpenView final control state could not be read")
+    from operations.sample.controls.charts_verification import verify_chart_controls
+
+    chart_counts, chart_issues = verify_chart_controls(admin, dataset, manifest, admin_id)
+    counts.update(chart_counts)
+    issues.extend(chart_issues)
     return counts, issues

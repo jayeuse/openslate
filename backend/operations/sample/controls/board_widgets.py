@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any, cast
 
+from app.systems.boards.widget_schemas import BoardWidgetMutationResponse, BoardWidgetResponse
 from operations.sample.controls.board_execution import _board_id, _revision
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import (
@@ -31,6 +33,7 @@ BOARD_WIDGET_ROUTES = frozenset(
         ("DELETE", "/api/boards/{board_id}/widgets/{widget_id}"),
     }
 )
+_SOURCE_FIELDS = {"name", "widget_type", "module_id", "config", "chart_id", "size", "pinned"}
 
 
 def _widget_list(
@@ -85,24 +88,20 @@ def execute_board_widget_action(
             widget_id,
             mappings,
         )
-        name, widget_type, module_id, config = (
-            source.get("name"),
-            source.get("widget_type"),
-            source.get("module_id"),
-            source.get("config"),
-        )
-        if (
-            not isinstance(name, str)
-            or not isinstance(widget_type, str)
-            or not isinstance(module_id, str)
-            or not isinstance(config, Mapping)
-        ):
+        try:
+            parsed = BoardWidgetResponse.model_validate_json(json.dumps(source), strict=True)
+        except ValueError:
             raise SamplePhaseActionError(
                 "The copied Board widget is invalid", step="patch_control_widget"
+            ) from None
+        if str(parsed.board_id) != board_id:
+            raise SamplePhaseActionError(
+                "The copied Board widget belongs to another Board", step="patch_control_widget"
             )
         new_name = action.values.get("name")
         if not isinstance(new_name, str) or not new_name:
             raise SamplePhaseActionError("Planned widget name is invalid", step=action.key)
+        wanted = {**parsed.model_dump(mode="json", include=_SOURCE_FIELDS), "name": new_name}
         response = _request(
             action,
             context,
@@ -113,27 +112,25 @@ def execute_board_widget_action(
             step="patch_control_widget",
             expected=200,
             on_substep=on_substep,
-            json_body={
-                "revision": revision,
-                "widget": {
-                    "name": new_name,
-                    "widget_type": widget_type,
-                    "module_id": module_id,
-                    "config": dict(config),
-                },
-            },
+            json_body={"revision": revision, "widget": wanted},
             primary_entity_type="board_widgets",
             primary_entity_id=widget_id,
             primary_action="update",
             expected_audit_rows=1,
             related_entity_types=("boards",),
         )
-        body = _read_json(response, step="patch_control_widget", request_id=_request_id(response))
-        widget = body.get("widget")
+        try:
+            updated = BoardWidgetMutationResponse.model_validate_json(response.content, strict=True)
+        except ValueError:
+            raise SamplePhaseActionError(
+                "Board widget update response was invalid", step="patch_control_widget"
+            ) from None
         if (
-            not isinstance(widget, Mapping)
-            or widget.get("id") != widget_id
-            or widget.get("name") != new_name
+            str(updated.widget.id) != widget_id
+            or str(updated.widget.board_id) != board_id
+            or updated.widget.position != parsed.position
+            or updated.board_revision != revision + 1
+            or updated.widget.model_dump(mode="json", include=_SOURCE_FIELDS) != wanted
         ):
             raise SamplePhaseActionError(
                 "Board widget update did not match", step="patch_control_widget"
@@ -147,6 +144,17 @@ def execute_board_widget_action(
         source_id = _mapped_id(
             context, "control_widgets", source_key, step="duplicate_control_widget"
         )
+        source_row = next((row for row in rows if row.get("id") == source_id), None)
+        try:
+            parsed = BoardWidgetResponse.model_validate_json(json.dumps(source_row), strict=True)
+        except ValueError:
+            raise SamplePhaseActionError(
+                "The source Board widget is invalid", step="duplicate_control_widget"
+            ) from None
+        if str(parsed.board_id) != board_id:
+            raise SamplePhaseActionError(
+                "The source widget belongs to another Board", step="duplicate_control_widget"
+            )
         response = _request(
             action,
             context,
@@ -163,20 +171,22 @@ def execute_board_widget_action(
             expected_audit_rows=1,
             related_entity_types=("boards",),
         )
-        body = _read_json(
-            response, step="duplicate_control_widget", request_id=_request_id(response)
-        )
-        widget = body.get("widget")
-        if not isinstance(widget, Mapping):
+        try:
+            updated = BoardWidgetMutationResponse.model_validate_json(response.content, strict=True)
+        except ValueError:
             raise SamplePhaseActionError(
                 "Board widget duplicate response was invalid", step="duplicate_control_widget"
-            )
-        widget_id = _id(
-            {"widget": widget.get("id")}, "widget", label="widget", step="duplicate_control_widget"
-        )
-        if widget_id == source_id:
+            ) from None
+        widget_id = str(updated.widget.id)
+        if (
+            widget_id in ids
+            or str(updated.widget.board_id) != board_id
+            or updated.board_revision != revision + 1
+            or updated.widget.model_dump(mode="json", include=_SOURCE_FIELDS)
+            != parsed.model_dump(mode="json", include=_SOURCE_FIELDS)
+        ):
             raise SamplePhaseActionError(
-                "Board widget duplicate reused its source", step="duplicate_control_widget"
+                "Board widget duplicate did not match its source", step="duplicate_control_widget"
             )
         evidence[-1]["primary_entity_id"] = widget_id
         _record_mapping(

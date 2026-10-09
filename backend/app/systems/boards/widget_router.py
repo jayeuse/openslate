@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.dependencies import get_current_user
+from app.common.dependencies.auth import CurrentIdentity, get_current_identity
 from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel
@@ -30,7 +31,8 @@ from app.systems.boards.widget_schemas import (
     BoardWidgetSpec,
     BoardWidgetWrite,
 )
-from app.systems.sandbox.modules.models import Module
+from app.systems.openview.charts import service as charts
+from app.systems.openview.dashboards.schemas import DashboardChartConfig
 from app.systems.sandbox.records.query import validate_definition
 from app.systems.sandbox.records.query_schemas import QueryDefinition
 
@@ -41,6 +43,7 @@ def _private_cache(response: Response) -> None:
 
 router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_private_cache)])
 Reader = Annotated[User, Depends(get_current_user)]
+SourceWriter = Annotated[CurrentIdentity, Depends(get_current_identity)]
 Database = Annotated[Session, Depends(get_db)]
 
 WIDGET_LIST_SPEC = ListQuerySpec(
@@ -76,7 +79,9 @@ def _editable(board: Board, revision: int) -> None:
         raise _conflict("board_archived", "Restore the Board before changing widgets")
 
 
-def _active_widgets(db: Session, board_id: UUID, *, lock: bool = False) -> list[BoardWidget]:
+def _active_widgets(
+    db: Session, board_id: UUID, *, lock: bool = False, nowait: bool = False
+) -> list[BoardWidget]:
     statement = (
         select(BoardWidget)
         .where(
@@ -87,8 +92,13 @@ def _active_widgets(db: Session, board_id: UUID, *, lock: bool = False) -> list[
         .order_by(BoardWidget.position, BoardWidget.id)
     )
     if lock:
-        statement = statement.with_for_update().execution_options(populate_existing=True)
-    return list(db.scalars(statement).all())
+        statement = statement.with_for_update(nowait=nowait).execution_options(
+            populate_existing=True
+        )
+        if nowait:
+            statement = statement.order_by(None).order_by(BoardWidget.id)
+    rows = list(db.scalars(statement).all())
+    return sorted(rows, key=lambda item: (item.position, item.id))
 
 
 def _response(widget: BoardWidget) -> BoardWidgetResponse:
@@ -101,7 +111,10 @@ def _response(widget: BoardWidget) -> BoardWidgetResponse:
                 "widget_type": widget.widget_type,
                 "module_id": widget.module_id,
                 "position": widget.position,
-                "config": BoardWidgetConfig.model_validate(widget.config),
+                "config": widget.config,
+                "chart_id": widget.chart_id,
+                "size": widget.size,
+                "pinned": widget.pinned,
                 "created_at": widget.created_at,
                 "updated_at": widget.updated_at,
             }
@@ -110,54 +123,102 @@ def _response(widget: BoardWidget) -> BoardWidgetResponse:
         raise _not_found() from None
 
 
-def _validate_source(db: Session, user: User, widget: BoardWidgetSpec) -> None:
-    module = db.scalar(
-        select(Module.id)
-        .where(
-            Module.id == widget.module_id,
-            Module.is_deleted.is_(False),
-            Module.deleted_at.is_(None),
-        )
-        .with_for_update()
-    )
-    if module is None:
-        raise _conflict("widget_invalid", "The selected module or fields are unavailable")
-    config = widget.config
-    definition = QueryDefinition(columns=config.fields, filters=config.filters, logic=config.logic)
+def _validate_source(db: Session, identity: CurrentIdentity, widget: BoardWidgetSpec) -> User:
     try:
-        fields = validate_definition(
+        _, references, actor = charts.lock_widget_sources(
             db,
-            widget.module_id,
-            definition,
-            extra_references=(config.metric,) if config.metric is not None else (),
-            reader=user,
+            identity,
+            {widget.module_id} if widget.config is not None else set(),
+            {widget.chart_id} if widget.chart_id is not None else set(),
         )
+        if widget.chart_id is not None:
+            chart = references[widget.chart_id]
+            category = (
+                chart.chart_type
+                if chart.chart_type in {"summary", "workload", "records"}
+                else "chart"
+            )
+            if chart.module_id != widget.module_id or category != widget.widget_type:
+                raise charts.invalid_chart()
+        elif isinstance(widget.config, BoardWidgetConfig):
+            config = widget.config
+            definition = QueryDefinition(
+                columns=config.fields, filters=config.filters, logic=config.logic
+            )
+            fields = validate_definition(
+                db,
+                widget.module_id,
+                definition,
+                extra_references=(config.metric,) if config.metric is not None else (),
+                reader=actor,
+            )
+            ids = {
+                item.field_id
+                for item in (
+                    *config.fields,
+                    *config.filters,
+                    *((config.metric,) if config.metric else ()),
+                )
+            }
+            if any(fields[key].is_deleted or fields[key].deleted_at is not None for key in ids):
+                raise charts.invalid_chart()
+        else:
+            normalized = widget.config
+            assert normalized is not None
+            kind = (
+                normalized.chart_type
+                if isinstance(normalized, DashboardChartConfig)
+                else widget.widget_type
+            )
+            charts.validate_query(db, actor, widget.module_id, kind, normalized.query)
+        return actor
     except HTTPException as error:
-        if error.status_code == status.HTTP_409_CONFLICT:
+        if error.status_code == 409:
             raise _conflict(
-                "widget_invalid", "The selected module or fields are unavailable"
+                "widget_invalid", "The selected Chart, module or fields are unavailable"
             ) from error
         raise
-    referenced_ids = {
-        reference.field_id
-        for reference in (
-            *config.fields,
-            *config.filters,
-            *((config.metric,) if config.metric else ()),
-        )
-    }
-    if any(
-        fields[field_id].is_deleted or fields[field_id].deleted_at is not None
-        for field_id in referenced_ids
-    ):
-        raise _conflict("widget_invalid", "The selected module or fields are unavailable")
 
 
 def _write(widget: BoardWidget, payload: BoardWidgetSpec) -> None:
     widget.name = payload.name
     widget.widget_type = payload.widget_type
     widget.module_id = payload.module_id
-    widget.config = payload.config.model_dump(mode="json", exclude={"refresh"})
+    widget.chart_id = payload.chart_id
+    widget.size = payload.size
+    widget.pinned = payload.pinned
+    widget.config = (
+        payload.config.model_dump(mode="json", exclude={"refresh"})
+        if payload.config is not None
+        else None
+    )
+
+
+def _locked_consumer(db: Session, actor: User, board_id: UUID, revision: int) -> Board:
+    # Every source lock was acquired first; never block behind Board→Group writers.
+    board = db.scalar(
+        select(Board)
+        .where(Board.id == board_id, Board.is_deleted.is_(False), Board.deleted_at.is_(None))
+        .with_for_update(nowait=True)
+        .execution_options(populate_existing=True)
+    )
+    if board is None:
+        raise _not_found()
+    board = _board_with_access(db, actor, board_id, AccessLevel.MANAGE)
+    _editable(board, revision)
+    return board
+
+
+def _source_spec(widget: BoardWidget) -> BoardWidgetSpec:
+    return BoardWidgetSpec(
+        name=widget.name,
+        widget_type=widget.widget_type,
+        module_id=widget.module_id,
+        config=widget.config,
+        chart_id=widget.chart_id,
+        size=widget.size,
+        pinned=widget.pinned,
+    )
 
 
 def _commit(db: Session) -> None:
@@ -199,47 +260,56 @@ def list_board_widgets(
     status_code=status.HTTP_201_CREATED,
 )
 def create_board_widget(
-    board_id: UUID, payload: BoardWidgetWrite, user: Reader, db: Database, response: Response
+    board_id: UUID,
+    payload: BoardWidgetWrite,
+    identity: SourceWriter,
+    db: Database,
+    response: Response,
 ) -> BoardWidgetMutationResponse:
-    board = _board_with_access(db, user, board_id, AccessLevel.MANAGE, lock=True)
-    _editable(board, payload.revision)
-    widgets = _active_widgets(db, board.id, lock=True)
-    if len(widgets) >= 12:
-        raise _conflict("widget_limit", "A Board can contain at most 12 widgets")
-    _validate_source(db, user, payload.widget)
-    widget = BoardWidget(
-        board_id=board.id,
-        position=len(widgets),
-        name=payload.widget.name,
-        widget_type=payload.widget.widget_type,
-        module_id=payload.widget.module_id,
-        config=payload.widget.config.model_dump(mode="json", exclude={"refresh"}),
-    )
-    db.add(widget)
-    board.revision += 1
-    _commit(db)
-    db.refresh(widget)
-    response.headers["Location"] = f"/api/boards/{board.id}/widgets/{widget.id}"
-    return BoardWidgetMutationResponse(widget=_response(widget), board_revision=board.revision)
+    with charts.widget_source_transaction(db):
+        board = _board_with_access(db, get_current_user(identity), board_id, AccessLevel.MANAGE)
+        _editable(board, payload.revision)
+        actor = _validate_source(db, identity, payload.widget)
+        board = _locked_consumer(db, actor, board_id, payload.revision)
+        widgets = _active_widgets(db, board.id, lock=True, nowait=True)
+        if len(widgets) >= 12:
+            raise _conflict("widget_limit", "A Board can contain at most 12 widgets")
+        widget = BoardWidget(board_id=board.id, position=len(widgets))
+        _write(widget, payload.widget)
+        db.add(widget)
+        board.revision += 1
+        _commit(db)
+        db.refresh(widget)
+        response.headers["Location"] = f"/api/boards/{board.id}/widgets/{widget.id}"
+        return BoardWidgetMutationResponse(widget=_response(widget), board_revision=board.revision)
 
 
 @router.patch("/{board_id}/widgets/{widget_id}", response_model=BoardWidgetMutationResponse)
 def update_board_widget(
-    board_id: UUID, widget_id: UUID, payload: BoardWidgetWrite, user: Reader, db: Database
+    board_id: UUID, widget_id: UUID, payload: BoardWidgetWrite, identity: SourceWriter, db: Database
 ) -> BoardWidgetMutationResponse:
-    board = _board_with_access(db, user, board_id, AccessLevel.MANAGE, lock=True)
-    _editable(board, payload.revision)
-    widget = next(
-        (item for item in _active_widgets(db, board.id, lock=True) if item.id == widget_id), None
-    )
-    if widget is None:
-        raise _not_found()
-    _validate_source(db, user, payload.widget)
-    _write(widget, payload.widget)
-    board.revision += 1
-    _commit(db)
-    db.refresh(widget)
-    return BoardWidgetMutationResponse(widget=_response(widget), board_revision=board.revision)
+    with charts.widget_source_transaction(db):
+        board = _board_with_access(db, get_current_user(identity), board_id, AccessLevel.MANAGE)
+        _editable(board, payload.revision)
+        if not any(item.id == widget_id for item in _active_widgets(db, board.id)):
+            raise _not_found()
+        actor = _validate_source(db, identity, payload.widget)
+        board = _locked_consumer(db, actor, board_id, payload.revision)
+        widget = next(
+            (
+                item
+                for item in _active_widgets(db, board.id, lock=True, nowait=True)
+                if item.id == widget_id
+            ),
+            None,
+        )
+        if widget is None:
+            raise _not_found()
+        _write(widget, payload.widget)
+        board.revision += 1
+        _commit(db)
+        db.refresh(widget)
+        return BoardWidgetMutationResponse(widget=_response(widget), board_revision=board.revision)
 
 
 @router.post(
@@ -251,41 +321,41 @@ def duplicate_board_widget(
     board_id: UUID,
     widget_id: UUID,
     payload: BoardWidgetRevision,
-    user: Reader,
+    identity: SourceWriter,
     db: Database,
     response: Response,
 ) -> BoardWidgetMutationResponse:
-    board = _board_with_access(db, user, board_id, AccessLevel.MANAGE, lock=True)
-    _editable(board, payload.revision)
-    widgets = _active_widgets(db, board.id, lock=True)
-    source = next((item for item in widgets if item.id == widget_id), None)
-    if source is None:
-        raise _not_found()
-    if len(widgets) >= 12:
-        raise _conflict("widget_limit", "A Board can contain at most 12 widgets")
-    source_spec = BoardWidgetSpec.model_validate(
-        {
-            "name": source.name,
-            "widget_type": source.widget_type,
-            "module_id": source.module_id,
-            "config": source.config,
-        }
-    )
-    _validate_source(db, user, source_spec)
-    duplicate = BoardWidget(
-        board_id=board.id,
-        position=len(widgets),
-        name=source.name,
-        widget_type=source.widget_type,
-        module_id=source.module_id,
-        config={key: value for key, value in source.config.items() if key != "refresh"},
-    )
-    db.add(duplicate)
-    board.revision += 1
-    _commit(db)
-    db.refresh(duplicate)
-    response.headers["Location"] = f"/api/boards/{board.id}/widgets/{duplicate.id}"
-    return BoardWidgetMutationResponse(widget=_response(duplicate), board_revision=board.revision)
+    with charts.widget_source_transaction(db):
+        board = _board_with_access(db, get_current_user(identity), board_id, AccessLevel.MANAGE)
+        _editable(board, payload.revision)
+        discovered = next(
+            (item for item in _active_widgets(db, board.id) if item.id == widget_id), None
+        )
+        if discovered is None:
+            raise _not_found()
+        source_spec = _source_spec(discovered)
+        actor = _validate_source(db, identity, source_spec)
+        board = _locked_consumer(db, actor, board_id, payload.revision)
+        widgets = _active_widgets(db, board.id, lock=True, nowait=True)
+        source = next((item for item in widgets if item.id == widget_id), None)
+        if source is None:
+            raise _not_found()
+        if _source_spec(source) != source_spec:
+            raise _conflict(
+                "widget_invalid", "The source widget changed; reload before duplicating"
+            )
+        if len(widgets) >= 12:
+            raise _conflict("widget_limit", "A Board can contain at most 12 widgets")
+        duplicate = BoardWidget(board_id=board.id, position=len(widgets))
+        _write(duplicate, source_spec)
+        db.add(duplicate)
+        board.revision += 1
+        _commit(db)
+        db.refresh(duplicate)
+        response.headers["Location"] = f"/api/boards/{board.id}/widgets/{duplicate.id}"
+        return BoardWidgetMutationResponse(
+            widget=_response(duplicate), board_revision=board.revision
+        )
 
 
 @router.put("/{board_id}/widgets/order", response_model=BoardWidgetOrderResponse)

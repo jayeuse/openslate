@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from operations.sample.blueprint import SampleDataset
 from operations.sample.board_text import dashboard_name, report_names, view_name
+from operations.sample.controls.charts import (
+    CHART_ROUTES,
+    execute_chart_control,
+    plan_chart_control,
+)
 from operations.sample.controls.openview_mutations import (
     _record_lifecycle_control,
     _relationship_delete_control,
@@ -61,7 +66,7 @@ _MUTATION_ROUTES = frozenset(
         ("POST", "/api/reports/{report_id}/purge"),
     }
 )
-CONTROL_ROUTES = QUERY_ROUTES | _MUTATION_ROUTES
+CONTROL_ROUTES = QUERY_ROUTES | _MUTATION_ROUTES | CHART_ROUTES
 
 
 def _action(
@@ -228,6 +233,7 @@ def plan_openview_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             ),
         )
     )
+    actions.append(plan_chart_control(dataset))
     return tuple(actions)
 
 
@@ -357,6 +363,8 @@ def execute_openview_control(
 ) -> dict[str, object]:
     """Execute one query, reversible edit, or disposable record control action."""
     operation = action.values.get("operation")
+    if operation == "chart_lifecycle":
+        return execute_chart_control(action, dataset, context, on_substep=on_substep)
     if operation in {
         "record_query",
         "grouped_query",

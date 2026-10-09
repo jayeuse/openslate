@@ -18,7 +18,8 @@ from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
-from tests.boards.support import client, grant, member, project_board
+from tests.boards.support import grant, member, project_board
+from tests.charts.widget_reference_support import client
 from tests.rbac.support import add_department, add_module, make_group_access
 
 
@@ -91,7 +92,7 @@ def test_managers_change_tiles_that_every_reader_sees(integration_owner_db: Sess
 
     changed_spec = _widget(module.id, field.id)
     changed_spec["name"] = "Updated requests"
-    changed_spec["config"]["pinned"] = True  # type: ignore[index]
+    changed_spec["pinned"] = True
     assert (
         writers.patch(
             f"{root}/{widget_id}", json={"revision": 2, "widget": changed_spec}

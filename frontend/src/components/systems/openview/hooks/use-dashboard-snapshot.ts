@@ -3,13 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiErrorMessage } from "@/lib/api-errors";
+import { ApiContractError, ApiError } from "@/lib/api";
 import {
   dashboardKeys,
   dashboardSnapshotOptions,
   dashboardSnapshotSignature,
 } from "../adapters/dashboard-queries";
 import type { OpenViewDashboard } from "../adapters/dashboards-api";
-import type { DraftWidget, SnapshotState } from "../domain/dashboard-draft";
+import type {
+  DraftWidget,
+  SnapshotState,
+  DashboardWidgetData,
+} from "../domain/dashboard-draft";
 
 export function useDashboardSnapshot(
   dashboard: OpenViewDashboard | null,
@@ -39,7 +44,7 @@ export function useDashboardSnapshot(
     pageSize,
     automatic ? interval : false,
   );
-  const query = useQuery({ ...options, enabled });
+  const query = useQuery<DashboardWidgetData>({ ...options, enabled });
   const eligibleKey = automatic ? JSON.stringify(options.queryKey) : "";
   const previousEligibleKey = useRef("");
 
@@ -79,8 +84,12 @@ export function useDashboardSnapshot(
     query.refetch,
   ]);
 
+  const refused =
+    query.error instanceof ApiContractError ||
+    (query.error instanceof ApiError &&
+      [401, 403, 404].includes(query.error.status));
   const snapshot: SnapshotState | null =
-    widget && persisted && query.data
+    widget && persisted && query.data && !refused
       ? {
           widgetKey: widget.key,
           configSignature: dashboardSnapshotSignature(widget, page, pageSize),
@@ -95,10 +104,14 @@ export function useDashboardSnapshot(
     loading: enabled && query.isFetching,
     error:
       query.error && !query.isFetching
-        ? apiErrorMessage(
-            query.error,
-            "This Dashboard widget could not be refreshed.",
-          )
+        ? query.error instanceof ApiError &&
+          query.error.code === "chart_source_unavailable" &&
+          query.error.status === 403
+          ? "You do not have access to this data."
+          : apiErrorMessage(
+              query.error,
+              "This Dashboard widget could not be refreshed.",
+            )
         : "",
     refresh,
   };

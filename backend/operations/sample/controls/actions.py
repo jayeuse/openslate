@@ -68,7 +68,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample.controls.reads import plan_read_controls
     from operations.sample.controls.sandbox import plan_sandbox_controls
 
-    sandbox = plan_sandbox_controls(dataset)
+    prune, *sandbox = plan_sandbox_controls(dataset)
     platform = plan_platform_controls(dataset)
     split = (
         next(
@@ -91,6 +91,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             lifecycle.append(recover)
 
     return (
+        prune,
         *plan_account_controls(dataset),
         *plan_mfa_controls(dataset),
         *plan_people_security_controls(dataset),

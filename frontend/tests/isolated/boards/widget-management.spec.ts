@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { ApiError } from "../../../src/lib/api";
 import type {
   BoardWidget,
+  BoardLegacyWidgetConfig,
   BoardWidgetPage,
 } from "../../../src/components/systems/boards/adapters/board-widgets-api";
 import {
@@ -28,7 +29,10 @@ const otherId = "00000000-0000-4000-8000-000000000004";
 const userId = "00000000-0000-4000-8000-000000000005";
 const timestamp = "2026-09-23T00:00:00Z";
 
-function widget(): BoardWidget {
+function widget(): BoardWidget & {
+  config: BoardLegacyWidgetConfig;
+  chartId: null;
+} {
   return {
     id: widgetId,
     boardId,
@@ -36,6 +40,9 @@ function widget(): BoardWidget {
     widgetType: "records",
     moduleId,
     position: 0,
+    size: "M",
+    pinned: false,
+    chartId: null,
     config: {
       version: 1,
       fields: [],
@@ -43,9 +50,7 @@ function widget(): BoardWidget {
       logic: "and",
       metric: null,
       visualization: "bar",
-      size: "half",
       refresh: "manual",
-      pinned: false,
     },
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -57,7 +62,8 @@ test("new summary widget has no audience and starts unpinned", () => {
   expect(input).not.toHaveProperty("audience");
   expect(input.name).toBe("Open requests");
   expect(input.widgetType).toBe("summary");
-  expect(input.config.pinned).toBe(false);
+  expect(input.pinned).toBe(false);
+  expect(input.size).toBe("M");
   expect(input.config).not.toHaveProperty("refresh");
 });
 
@@ -66,7 +72,7 @@ test("settings edits keep unrelated config exactly", () => {
   const draft = {
     ...draftFromBoardWidget(source),
     name: "Updated safety requests",
-    size: "full" as const,
+    size: "L" as const,
     pinned: true,
   };
   const input = updateInputForWidgetDraft(source, draft);
@@ -78,11 +84,43 @@ test("settings edits keep unrelated config exactly", () => {
     logic: "and",
     metric: null,
     visualization: "bar",
-    size: "full",
-    pinned: true,
   });
+  expect(input.size).toBe("L");
+  expect(input.pinned).toBe(true);
+  expect(input.chartId).toBeNull();
   expect(input.moduleId).toBe(moduleId);
   expect(input.widgetType).toBe("records");
+});
+
+test("S26 reference settings preserve the Chart identity with null config and current size pin version", () => {
+  const source: BoardWidget = {
+    ...widget(),
+    chartId: otherId,
+    config: null,
+    size: "S",
+    pinned: true,
+  };
+  const draft = {
+    ...draftFromBoardWidget(source),
+    name: "Preserved source",
+    size: "L" as const,
+    pinned: false,
+  };
+  expect(updateInputForWidgetDraft(source, draft)).toEqual({
+    name: "Preserved source",
+    widgetType: "records",
+    moduleId,
+    size: "L",
+    pinned: false,
+    chartId: otherId,
+    config: null,
+  });
+  for (const changed of [
+    { ...source, chartId: widgetId },
+    { ...source, size: "M" as const },
+    { ...source, pinned: false },
+  ])
+    expect(() => updateInputForWidgetDraft(changed, draft)).toThrow();
 });
 
 test("conflict retains a draft only while its source widget is still visible", () => {
@@ -344,6 +382,9 @@ test("management metadata uses Board access and a complete widget page", async (
             widget_type: "records",
             module_id: moduleId,
             position: 0,
+            size: "M",
+            pinned: false,
+            chart_id: null,
             config: {
               version: 1,
               fields: [],
@@ -351,9 +392,7 @@ test("management metadata uses Board access and a complete widget page", async (
               logic: "and",
               metric: null,
               visualization: "bar",
-              size: "half",
               refresh: "manual",
-              pinned: false,
             },
             created_at: timestamp,
             updated_at: timestamp,
@@ -434,6 +473,9 @@ test("save uses the listed Board revision and sends no audience", async () => {
           widget_type: "records",
           module_id: moduleId,
           position: 0,
+          size: "M",
+          pinned: false,
+          chart_id: null,
           config: {
             version: 1,
             fields: [],
@@ -441,9 +483,7 @@ test("save uses the listed Board revision and sends no audience", async () => {
             logic: "and",
             metric: null,
             visualization: "bar",
-            size: "half",
             refresh: "manual",
-            pinned: false,
           },
           created_at: timestamp,
           updated_at: timestamp,

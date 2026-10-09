@@ -38,6 +38,7 @@ _ADMINISTRATOR_ENTITIES = frozenset(
 _ALL_AUTHENTICATED_ENTITIES = frozenset({"dashboards", "departments", "workspace_profiles"})
 _ENTITY_ONLY_ENTITIES = frozenset(
     {
+        "charts",
         "dashboards",
         "departments",
         "files",
@@ -51,7 +52,7 @@ _ENTITY_ONLY_ENTITIES = frozenset(
 # Events about data inside one module carry that module and reach only an
 # administrator or a subscriber who can read the module.
 MODULE_SCOPED_ENTITIES = frozenset(
-    {"fields", "modules", "records", "relationship_edges", "saved_views"}
+    {"charts", "fields", "modules", "records", "relationship_edges", "saved_views"}
 )
 BOARD_SCOPED_ENTITIES = frozenset({"boards", "board_posts", "board_events", "board_widgets"})
 
@@ -69,6 +70,8 @@ class InvalidationEvent:
     board_id: UUID | None = None
 
     def __post_init__(self) -> None:
+        if self.entity == "charts" and (self.entity_id is not None or self.all_authenticated):
+            raise ValueError("invalid invalidation payload")
         if (
             not _ENTITY_PATTERN.fullmatch(self.entity)
             or self.entity in _PRIVATE_INVALIDATION_ENTITIES

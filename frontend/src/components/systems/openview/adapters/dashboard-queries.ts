@@ -4,6 +4,12 @@ import { queryOptions } from "@tanstack/react-query";
 import { getOpenViewDashboard, listOpenViewDashboards } from "./dashboards-api";
 import { queryOpenViewAggregateSnapshot } from "./analytics-api";
 import { queryOpenViewRecords } from "./views-api";
+import { ApiContractError } from "@/lib/api";
+import {
+  getOpenViewChart,
+  chartMatchesWidget,
+  chartSourceStamp,
+} from "./charts-api";
 import {
   DASHBOARD_PAGE_SIZE,
   configSignature,
@@ -64,10 +70,10 @@ export const dashboardSnapshotOptions = (
   pageSize: number,
   interval: number | false,
 ) =>
-  queryOptions({
+  queryOptions<DashboardWidgetData>({
     queryKey: [
       ...dashboardKeys.dashboardSnapshots(dashboardId),
-      widget?.config.query.moduleId ?? "",
+      widget?.config?.query.moduleId ?? "",
       widget?.key ?? "",
       dashboardSnapshotSignature(widget, page, pageSize),
     ],
@@ -87,21 +93,40 @@ export const dashboardSnapshotOptions = (
       // short pause keeps that same deadline rather than starting a new one.
       return Math.max(1, interval - (finished ? Date.now() - finished : 0));
     },
-    queryFn: async (): Promise<DashboardWidgetData> => {
+    queryFn: async ({ signal }): Promise<DashboardWidgetData> => {
       if (!widget) throw new Error("Choose a saved Dashboard widget.");
-      return widget.widgetType === "records"
-        ? {
-            kind: "records",
-            result: await queryOpenViewRecords({
-              moduleId: widget.config.query.moduleId,
-              definition: widget.config.query.definition,
-              limit: pageSize,
-              offset: page * pageSize,
-            }),
-          }
-        : {
-            kind: "aggregate",
-            result: await queryOpenViewAggregateSnapshot(widget.config.query),
-          };
+      let config = widget.config;
+      let sourceStamp = configSignature(widget);
+      let sourceName: string | null = null;
+      if (widget.chartId != null) {
+        const chart = await getOpenViewChart(widget.chartId, signal);
+        if (!chartMatchesWidget(chart, widget.widgetType))
+          throw new ApiContractError();
+        config = chart.config;
+        sourceStamp = chartSourceStamp(chart);
+        sourceName = chart.name;
+      }
+      signal.throwIfAborted();
+      if (!config) throw new ApiContractError();
+      const resolved = { config, sourceStamp, sourceName };
+      if (widget.widgetType === "records") {
+        if ("mode" in config.query) throw new ApiContractError();
+        return {
+          ...resolved,
+          kind: "records",
+          result: await queryOpenViewRecords({
+            moduleId: config.query.moduleId,
+            definition: config.query.definition,
+            limit: pageSize,
+            offset: page * pageSize,
+          }),
+        };
+      }
+      if (!("mode" in config.query)) throw new ApiContractError();
+      return {
+        ...resolved,
+        kind: "aggregate",
+        result: await queryOpenViewAggregateSnapshot(config.query),
+      };
     },
   });

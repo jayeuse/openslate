@@ -5,6 +5,11 @@ import {
   apiFetch,
   type ApiRequestInit,
 } from "@/lib/api";
+import {
+  dashboardWidgetWireConfigSchema,
+  dashboardWidgetConfigInputSchema,
+  serializeDashboardWidgetConfig,
+} from "../../openview/adapters/dashboards-api";
 
 const uuidSchema = z.string().uuid();
 const timestampSchema = z.iso.datetime({ offset: true });
@@ -131,9 +136,7 @@ const inputConfigSchema = z
     logic: z.enum(["and", "or"]).default("and"),
     metric: inputFieldSchema.nullable().default(null),
     visualization: z.enum(["bar", "line", "pie"]).default("bar"),
-    size: z.enum(["half", "full"]).default("half"),
     refresh: z.enum(["manual", "one-minute", "five-minutes"]).optional(),
-    pinned: z.boolean().default(false),
   })
   .strict()
   .refine(validConfig);
@@ -145,21 +148,48 @@ const wireConfigSchema = z
     logic: z.enum(["and", "or"]),
     metric: wireFieldSchema.nullable(),
     visualization: z.enum(["bar", "line", "pie"]),
-    size: z.enum(["half", "full"]),
     refresh: z.enum(["manual", "one-minute", "five-minutes"]),
-    pinned: z.boolean(),
   })
   .strict()
   .refine(validConfig);
+
+const widgetSizeSchema = z.enum(["S", "M", "L"]);
+function validWidgetSource(widget: {
+  chartId: string | null;
+  config:
+    | { fields: unknown[] }
+    | { query: { moduleId: string; mode?: string }; chartType?: string }
+    | null;
+  widgetType: string;
+  moduleId: string;
+}): boolean {
+  if (widget.config === null) return widget.chartId !== null;
+  if (widget.chartId !== null) return false;
+  if ("fields" in widget.config) return true;
+  const config = widget.config;
+  if (config.query.moduleId !== widget.moduleId) return false;
+  if (widget.widgetType === "chart") return "chartType" in config;
+  if ("chartType" in config) return false;
+  return widget.widgetType === "records"
+    ? !("mode" in config.query)
+    : config.query.mode === "groups";
+}
 
 const inputWidgetSchema = z
   .object({
     name: z.string().trim().min(1).max(80),
     widgetType: z.enum(["summary", "workload", "records", "chart"]),
     moduleId: uuidSchema,
-    config: inputConfigSchema,
+    size: widgetSizeSchema.default("M"),
+    pinned: z.boolean().default(false),
+    chartId: uuidSchema.nullable().default(null),
+    config: z
+      .union([inputConfigSchema, dashboardWidgetConfigInputSchema])
+      .nullable()
+      .default(null),
   })
-  .strict();
+  .strict()
+  .refine(validWidgetSource);
 const wireWidgetSchema = z
   .object({
     id: uuidSchema,
@@ -168,16 +198,30 @@ const wireWidgetSchema = z
     widget_type: z.enum(["summary", "workload", "records", "chart"]),
     module_id: uuidSchema,
     position: z.number().int().min(0).max(11),
-    config: wireConfigSchema,
+    size: widgetSizeSchema,
+    pinned: z.boolean(),
+    chart_id: uuidSchema.nullable(),
+    config: z
+      .union([wireConfigSchema, dashboardWidgetWireConfigSchema])
+      .nullable(),
     created_at: timestampSchema,
     updated_at: timestampSchema,
   })
   .strict()
+  .refine(({ chart_id, module_id, widget_type, config }) =>
+    validWidgetSource({
+      chartId: chart_id,
+      moduleId: module_id,
+      widgetType: widget_type,
+      config,
+    }),
+  )
   .transform(
     ({
       board_id,
       widget_type,
       module_id,
+      chart_id,
       created_at,
       updated_at,
       ...widget
@@ -186,6 +230,7 @@ const wireWidgetSchema = z
       boardId: board_id,
       widgetType: widget_type,
       moduleId: module_id,
+      chartId: chart_id,
       createdAt: created_at,
       updatedAt: updated_at,
     }),
@@ -245,6 +290,7 @@ const orderInputSchema = z
   .refine((ids) => new Set(ids).size === ids.length);
 
 export type BoardWidget = z.output<typeof wireWidgetSchema>;
+export type BoardLegacyWidgetConfig = z.output<typeof wireConfigSchema>;
 export type BoardWidgetInput = z.input<typeof inputWidgetSchema>;
 export type BoardWidgetPage = z.output<typeof listResponseSchema>;
 export type BoardWidgetMutation = z.output<typeof mutationResponseSchema>;
@@ -309,24 +355,31 @@ function serializeField(field: z.output<typeof inputFieldSchema>) {
 }
 
 function serializeWidget(widget: z.output<typeof inputWidgetSchema>) {
+  const config = widget.config;
   return {
     name: widget.name,
     widget_type: widget.widgetType,
     module_id: widget.moduleId,
-    config: {
-      version: widget.config.version,
-      fields: widget.config.fields.map(serializeField),
-      filters: widget.config.filters.map((filter) => ({
-        ...serializeField(filter),
-        operator: filter.operator,
-        value: filter.value ?? null,
-      })),
-      metric: widget.config.metric && serializeField(widget.config.metric),
-      logic: widget.config.logic,
-      visualization: widget.config.visualization,
-      size: widget.config.size,
-      pinned: widget.config.pinned,
-    },
+    size: widget.size,
+    pinned: widget.pinned,
+    chart_id: widget.chartId,
+    config:
+      config === null
+        ? null
+        : "fields" in config
+          ? {
+              version: config.version,
+              fields: config.fields.map(serializeField),
+              filters: config.filters.map((filter) => ({
+                ...serializeField(filter),
+                operator: filter.operator,
+                value: filter.value ?? null,
+              })),
+              metric: config.metric && serializeField(config.metric),
+              logic: config.logic,
+              visualization: config.visualization,
+            }
+          : serializeDashboardWidgetConfig(widget.widgetType, config),
   };
 }
 

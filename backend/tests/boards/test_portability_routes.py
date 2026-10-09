@@ -25,6 +25,7 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from tests.boards.support import admin, client, grant, member, project_board
+from tests.charts.widget_reference_support import client as session_client
 from tests.rbac.support import add_department, add_module, make_user
 
 
@@ -45,9 +46,7 @@ def _config(field: Field) -> dict[str, object]:
         "logic": "and",
         "metric": None,
         "visualization": "bar",
-        "size": "half",
         "refresh": "manual",
-        "pinned": False,
     }
 
 
@@ -136,7 +135,7 @@ def test_import_creates_a_project_board_and_widgets_in_one_audited_transaction(
 
     bundle = _bundle(department)
     bundle["configuration"]["widgets"][0]["config"]["refresh"] = refresh
-    response = _upload(client(db, administrator, router), bundle)
+    response = _upload(session_client(db, administrator, router), bundle)
 
     assert response.status_code == 201, response.text
     board_id = UUID(response.json()["id"])
@@ -155,7 +154,10 @@ def test_import_creates_a_project_board_and_widgets_in_one_audited_transaction(
         )
         == 0
     )
-    assert client(db, other, router).get(f"/api/boards/{board_id}/configuration").status_code == 404
+    assert (
+        session_client(db, other, router).get(f"/api/boards/{board_id}/configuration").status_code
+        == 404
+    )
     audit = db.scalars(
         select(AuditLog).where(AuditLog.entity_id.in_([board_id, widgets[0].id]))
     ).all()
@@ -225,13 +227,20 @@ def test_managers_export_and_administrators_duplicate_every_widget(
     db.commit()
 
     assert (
-        client(db, outsider, router).get(f"/api/boards/{board.id}/configuration").status_code == 404
+        session_client(db, outsider, router)
+        .get(f"/api/boards/{board.id}/configuration")
+        .status_code
+        == 404
     )
     assert (
-        client(db, writer, router).get(f"/api/boards/{board.id}/configuration").status_code == 403
+        session_client(db, writer, router).get(f"/api/boards/{board.id}/configuration").status_code
+        == 403
     )
-    assert client(db, manager, router).post(f"/api/boards/{board.id}/duplicate").status_code == 403
-    exported = client(db, manager, router).get(f"/api/boards/{board.id}/configuration")
+    assert (
+        session_client(db, manager, router).post(f"/api/boards/{board.id}/duplicate").status_code
+        == 403
+    )
+    exported = session_client(db, manager, router).get(f"/api/boards/{board.id}/configuration")
     assert exported.status_code == 200
     assert exported.headers["Cache-Control"] == "private, no-store"
     payload = exported.json()
@@ -257,7 +266,7 @@ def test_managers_export_and_administrators_duplicate_every_widget(
     assert str(field.id) not in exported.text and str(module.id) not in exported.text
 
     set_audit_actor(db, administrator.id)
-    duplicated = client(db, administrator, router).post(f"/api/boards/{board.id}/duplicate")
+    duplicated = session_client(db, administrator, router).post(f"/api/boards/{board.id}/duplicate")
     assert duplicated.status_code == 201
     duplicate_id = UUID(duplicated.json()["id"])
     copied_board = db.get(Board, duplicate_id)
@@ -329,8 +338,8 @@ def test_valued_person_filters_fail_board_bundle_export_and_import(
     before_boards = db.scalar(select(func.count()).select_from(Board))
 
     for response in (
-        client(db, manager, router).get(f"/api/boards/{board.id}/configuration"),
-        client(db, administrator, router).post(f"/api/boards/{board.id}/duplicate"),
+        session_client(db, manager, router).get(f"/api/boards/{board.id}/configuration"),
+        session_client(db, administrator, router).post(f"/api/boards/{board.id}/duplicate"),
     ):
         assert response.status_code == 422, response.text
         assert response.json()["detail"]["code"] == "board_bundle_invalid"
@@ -347,7 +356,7 @@ def test_valued_person_filters_fail_board_bundle_export_and_import(
             "value": str(administrator.id),
         }
     ]
-    imported = _upload(client(db, administrator, router), bundle)
+    imported = _upload(session_client(db, administrator, router), bundle)
     assert imported.status_code == 422, imported.text
     assert imported.json()["detail"]["code"] == "board_bundle_invalid"
     assert "Person filter values cannot be transferred" in imported.json()["detail"]["message"]
@@ -381,7 +390,7 @@ def test_import_and_duplicate_fail_atomically_when_source_changed(
     db.commit()
     set_audit_actor(db, administrator.id)
     before = db.scalar(select(func.count()).select_from(Board))
-    api = client(db, administrator, router)
+    api = session_client(db, administrator, router)
 
     duplicate = api.post(f"/api/boards/{source_board.id}/duplicate")
     assert duplicate.status_code == 409
@@ -406,9 +415,10 @@ def test_import_rolls_back_board_and_widgets_after_commit_conflict(
     def fail_commit() -> None:
         raise IntegrityError("board insert", {}, ValueError("conflict"))
 
+    api = session_client(db, administrator, router)
     with monkeypatch.context() as patch:
         patch.setattr(db, "commit", fail_commit)
-        response = _upload(client(db, administrator, router), _bundle(department))
+        response = _upload(api, _bundle(department))
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "board_import_conflict"
@@ -460,7 +470,7 @@ def test_duplicate_and_import_copy_no_board_files(integration_owner_db: Session)
     db.add(BoardAttachment(board_id=board.id, file_id=file.id, event_id=event.id))
     db.commit()
     set_audit_actor(db, administrator.id)
-    api = client(db, administrator, router)
+    api = session_client(db, administrator, router)
 
     duplicated = api.post(f"/api/boards/{board.id}/duplicate")
     exported = api.get(f"/api/boards/{board.id}/configuration")

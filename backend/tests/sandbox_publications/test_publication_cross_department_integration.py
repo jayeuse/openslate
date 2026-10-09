@@ -1,14 +1,21 @@
 """Publication guarantees for relationships between modules in two departments."""
 
+from uuid import UUID
+
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.systems.manage.audit.models import AuditAction, AuditLog
+from app.systems.openview.charts.models import Chart
+from app.systems.openview.charts.router import router as chart_router
 from app.systems.sandbox.designs.schemas import RelationshipDocument, SandboxDocument
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
+from tests.charts.widget_reference_support import client as identity_client
 from tests.sandbox_publications.support import (
     bound_department,
     bound_field,
@@ -199,3 +206,103 @@ def test_closing_a_target_department_over_a_live_cross_department_link_blocks_li
     assert "department_close_incomplete" not in _blocker_codes(
         integration_owner_db, cross_department
     )
+
+
+def test_publication_moves_active_and_archived_charts_once_and_preserves_saved_queries(
+    integration_owner_db,
+):
+    db = integration_owner_db
+    publisher, document = publish_structure(db)
+    moved_module = bound_module(db, "sample-requests")
+    control_module = bound_module(db, "sample-equipment")
+    destination = bound_department(db, "sample-commercial").id
+    before = {}
+    with identity_client(db, publisher, chart_router) as client:
+        for name, module in (
+            ("Active", moved_module),
+            ("Archived", moved_module),
+            ("Control", control_module),
+        ):
+            response = client.post(
+                "/api/charts",
+                json={
+                    "module_id": str(module.id),
+                    "name": name,
+                    "chart_type": "records",
+                    "query": {
+                        "module_id": str(module.id),
+                        "definition": {"version": 1, "columns": []},
+                    },
+                },
+            )
+            assert response.status_code == 201, response.text
+            saved = response.json()
+            if name == "Archived":
+                assert client.delete(f"/api/charts/{saved['id']}?revision=1").status_code == 204
+                saved = client.get(f"/api/charts/{saved['id']}").json()
+            before[name] = saved
+        deleted_dates = {
+            saved["id"]: db.get(Chart, UUID(saved["id"])).deleted_at for saved in before.values()
+        }
+        moving = document.model_copy(deep=True)
+        _module(moving, "sample-requests").department_id = "sample-commercial"
+        publish_revision(db, publisher, moving, "saved-chart-move")
+        after = {}
+        for name, saved in before.items():
+            response = client.get(f"/api/charts/{saved['id']}")
+            assert response.status_code == 200, response.text
+            after[name] = response.json()
+            assert db.get(Chart, UUID(saved["id"])).deleted_at == deleted_dates[saved["id"]]
+            if name == "Control":
+                assert after[name] == saved
+            else:
+                assert after[name]["department_id"] == str(destination)
+                assert after[name]["revision"] == saved["revision"] + 1
+                for key in (
+                    "id",
+                    "module_id",
+                    "name",
+                    "chart_type",
+                    "query",
+                    "is_deleted",
+                ):
+                    assert after[name][key] == saved[key]
+                logs = list(
+                    db.scalars(
+                        select(AuditLog).where(
+                            AuditLog.entity_type == "charts",
+                            AuditLog.entity_id == saved["id"],
+                            AuditLog.action == AuditAction.UPDATE,
+                        )
+                    )
+                )
+                move_log = next(
+                    row for row in logs if row.after.get("department_id") == str(destination)
+                )
+                assert (
+                    move_log.department_id == destination and move_log.performed_by == publisher.id
+                )
+        stale = client.patch(
+            f"/api/charts/{before['Active']['id']}",
+            json={"revision": before["Active"]["revision"], "name": "Stale owner"},
+        )
+        assert stale.status_code == 409 and stale.json()["detail"]["code"] == "stale_revision"
+        before_logs = list(
+            db.scalars(
+                select(AuditLog.id).where(AuditLog.entity_type == "charts").order_by(AuditLog.id)
+            )
+        )
+        publish_revision(db, publisher, moving, "unchanged-chart-owner")
+        assert (
+            list(
+                db.scalars(
+                    select(AuditLog.id)
+                    .where(AuditLog.entity_type == "charts")
+                    .order_by(AuditLog.id)
+                )
+            )
+            == before_logs
+        )
+        for saved in after.values():
+            assert client.get(f"/api/charts/{saved['id']}").json() == saved
+        assert db.get(Chart, before["Active"]["id"]).department_id == destination

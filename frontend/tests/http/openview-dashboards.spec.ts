@@ -11,6 +11,43 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 
+async function captureS26Dashboard(page: Page, name: string) {
+  await captureOpenViewReview(
+    page,
+    `${name}-${process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light"}`,
+    {
+      beforeScreenshot: async (capture) => {
+        await capture.addStyleTag({
+          content: "nextjs-portal { display: none !important; }",
+        });
+        await expect(capture.locator("html")).toHaveClass(
+          process.env.S26_CAPTURE_THEME === "dark" ? /dark/ : /^(?!.*dark)/,
+        );
+        await capture.evaluate(async () => {
+          await document.fonts.ready;
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          );
+        });
+      },
+    },
+  );
+}
+async function prepareS26DashboardCapture(page: Page) {
+  if (!process.env.OPENVIEW_CAPTURE_DIR) return;
+  const theme = process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light";
+  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+  await page.route("**/api/users/*/preferences", (route) =>
+    route.fulfill({
+      json: {
+        user_id: new URL(route.request().url()).pathname.split("/")[3],
+        theme,
+        appearance: { motion: "reduce", keyboard_shortcuts: true },
+      },
+    }),
+  );
+}
+
 const userId = "00000000-0000-4000-8000-000000000101";
 // The data sources and Dashboards of these tests belong to one department.
 const departmentId = userId;
@@ -51,7 +88,7 @@ const categoryChoices = Array.from({ length: 30 }, (_, index) =>
 );
 
 type FieldReference = { field_id: string; expected_type: string };
-type Aggregation = "count" | "sum" | "average";
+type Aggregation = "count" | "sum" | "average" | "min" | "max" | "distinct";
 type QueryDefinition = {
   version: 1;
   logic: "and";
@@ -85,7 +122,7 @@ type ChartConfig = {
   chart_type: "bar" | "line" | "pie";
   query: GroupQuery | DateSeriesQuery;
 };
-type WidgetInput =
+type InlineWidgetInput =
   | { widget_type: "chart"; config: ChartConfig }
   | {
       widget_type: "summary" | "workload";
@@ -97,6 +134,14 @@ type WidgetInput =
         version: 1;
         query: { module_id: string; definition: QueryDefinition };
       };
+    };
+type WidgetInput =
+  | (InlineWidgetInput & { size?: "S" | "M" | "L"; chart_id?: null })
+  | {
+      widget_type: "summary" | "workload" | "records" | "chart";
+      size: "S" | "M" | "L";
+      chart_id: string;
+      config: null;
     };
 type WidgetWire = WidgetInput & {
   id: string;
@@ -203,6 +248,8 @@ function savedWidget(id: string, position: number, fieldId: string) {
     id,
     position,
     widget_type: "chart" as const,
+    size: "M" as const,
+    chart_id: null,
     config: {
       version: 1 as const,
       chart_type: "bar" as const,
@@ -225,6 +272,8 @@ function savedDateWidget(id: string, position: number) {
     id,
     position,
     widget_type: "chart" as const,
+    size: "M" as const,
+    chart_id: null,
     config: {
       version: 1 as const,
       chart_type: "line" as const,
@@ -246,7 +295,7 @@ function savedDateWidget(id: string, position: number) {
 
 function dashboard(overrides: Partial<DashboardWire> = {}): DashboardWire {
   const widgets = [savedWidget(dashboardWidgetId, 0, categoryFieldId)];
-  return {
+  const value: DashboardWire = {
     id: dashboardId,
     department_id: departmentId,
     position: 0,
@@ -259,6 +308,19 @@ function dashboard(overrides: Partial<DashboardWire> = {}): DashboardWire {
     widgets,
     ...overrides,
   };
+  return {
+    ...value,
+    widgets: value.widgets.map((widget) =>
+      widget.chart_id != null
+        ? {
+            ...widget,
+            size: widget.size ?? "M",
+            chart_id: widget.chart_id,
+            config: null,
+          }
+        : { ...widget, size: widget.size ?? "M", chart_id: null },
+    ),
+  };
 }
 
 function persistedWidgets(widgets: WidgetInput[]): WidgetWire[] {
@@ -268,20 +330,16 @@ function persistedWidgets(widgets: WidgetInput[]): WidgetWire[] {
       position: index,
       created_at: timestamp,
       updated_at: timestamp,
+      size: widget.size ?? "M",
     };
-    switch (widget.widget_type) {
-      case "chart":
-        return { ...metadata, widget_type: "chart", config: widget.config };
-      case "summary":
-      case "workload":
-        return {
-          ...metadata,
-          widget_type: widget.widget_type,
-          config: widget.config,
-        };
-      case "records":
-        return { ...metadata, widget_type: "records", config: widget.config };
-    }
+    if (widget.chart_id != null)
+      return {
+        ...metadata,
+        widget_type: widget.widget_type,
+        chart_id: widget.chart_id,
+        config: null,
+      };
+    return { ...widget, ...metadata, chart_id: null };
   });
 }
 
@@ -1109,6 +1167,839 @@ async function selectDashboard(page: Page, id: string) {
   await page.getByLabel("Dashboard", { exact: true }).selectOption(id);
 }
 
+test("S26 Dashboard preserves a saved Chart reference and L size through settings save and reload", async ({
+  page,
+}) => {
+  const chartId = "00000000-0000-4000-8000-000000000651";
+  const reference: WidgetWire = {
+    id: dashboardWidgetId,
+    position: 0,
+    widget_type: "chart",
+    size: "L",
+    chart_id: chartId,
+    config: null,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  const api = await installDashboardApi(
+    page,
+    dashboard({ widgets: [reference] }),
+  );
+  let reads = 0;
+  const query = savedWidget(dashboardWidgetId, 0, categoryFieldId).config.query;
+  await page.route(`**/api/charts/${chartId}`, (route) => {
+    reads += 1;
+    return route.fulfill({
+      json: {
+        id: chartId,
+        department_id: departmentId,
+        module_id: moduleId,
+        name: "Retained requests",
+        chart_type: "bar",
+        query,
+        revision: 1,
+        is_deleted: false,
+        created_at: timestamp,
+        updated_at: timestamp,
+      },
+    });
+  });
+  await prepareS26DashboardCapture(page);
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  await expect(
+    page.getByRole("heading", { name: "Operations", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("table", { name: /Complete data/ }),
+  ).toBeVisible();
+  await captureS26Dashboard(page, "s26-dashboard-reference");
+  expect(reads).toBeGreaterThan(0);
+  expect(api.snapshots.at(-1)).toEqual({
+    mode: "groups",
+    module_id: moduleId,
+    definition: queryDefinition,
+    aggregation: "count",
+    dimension: { field_id: categoryFieldId, expected_type: "select" },
+  });
+  const dialog = await openDashboardSettingsDialog(page);
+  await dialog.getByLabel("Dashboard name").fill("Preserved reference");
+  await dialog.getByLabel("Refresh cadence").selectOption("five-minutes");
+  await finishDashboardDialog(dialog);
+  await page
+    .getByRole("button", { name: "Save Dashboard", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Preserved reference", exact: true }),
+  ).toBeVisible();
+  expect(api.writes.at(-1)?.body?.widgets).toEqual([
+    { widget_type: "chart", size: "L", chart_id: chartId, config: null },
+  ]);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Preserved reference", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("table", { name: /Complete data/ }),
+  ).toBeVisible();
+  expect(api.writes).toHaveLength(1);
+});
+
+for (const sourceKind of ["inline", "referenced"] as const) {
+  for (const [aggregation, expected] of [
+    ["average", 12.5],
+    ["min", 1.25],
+    ["max", 200.5],
+    ["distinct", 4],
+  ] as const) {
+    test(`S26 ${sourceKind} summary shows exact ${aggregation} values and null without record-count substitution`, async ({
+      page,
+    }) => {
+      const chartId = "00000000-0000-4000-8000-000000000652";
+      const query = {
+        ...savedWidget(dashboardWidgetId, 0, categoryFieldId).config.query,
+        aggregation,
+        measure: { field_id: amountFieldId, expected_type: "decimal" },
+      };
+      const common = {
+        id: dashboardWidgetId,
+        position: 0,
+        widget_type: "summary" as const,
+        size: "M" as const,
+        created_at: timestamp,
+        updated_at: timestamp,
+      };
+      const summary: WidgetWire =
+        sourceKind === "referenced"
+          ? { ...common, chart_id: chartId, config: null }
+          : { ...common, chart_id: null, config: { version: 1, query } };
+      const api = await installDashboardApi(
+        page,
+        dashboard({ widgets: [summary] }),
+      );
+      await page.route(`**/api/charts/${chartId}`, (route) =>
+        route.fulfill({
+          json: {
+            id: chartId,
+            department_id: departmentId,
+            module_id: moduleId,
+            name: "Retained measures",
+            chart_type: "summary",
+            query,
+            revision: 1,
+            is_deleted: false,
+            created_at: timestamp,
+            updated_at: timestamp,
+          },
+        }),
+      );
+      const requests: unknown[] = [];
+      await page.route("**/api/records/aggregate-snapshot", (route) => {
+        requests.push(route.request().postDataJSON());
+        return route.fulfill({
+          json: {
+            items: [
+              {
+                key: "north",
+                label: "North",
+                value: expected,
+                record_count: 127,
+              },
+              { key: "south", label: "South", value: null, record_count: 17 },
+            ],
+            pagination: {
+              limit: 2,
+              offset: 0,
+              count: 2,
+              total: 2,
+              has_more: false,
+            },
+          },
+        });
+      });
+      await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+      const north = page.getByRole("row").filter({
+        has: page.getByRole("cell", { name: "North", exact: true }),
+      });
+      const south = page.getByRole("row").filter({
+        has: page.getByRole("cell", { name: "South", exact: true }),
+      });
+      await expect(
+        north.getByRole("cell", { name: String(expected), exact: true }),
+      ).toBeVisible();
+      await expect(
+        south.getByRole("cell", { name: "—", exact: true }),
+      ).toBeVisible();
+      expect(requests.at(-1)).toEqual(query);
+      expect(api.writes).toEqual([]);
+    });
+  }
+}
+
+for (const fault of [
+  "403",
+  "404",
+  "archived",
+  "wrong-id",
+  "wrong-module",
+  "wrong-family",
+  "malformed",
+] as const) {
+  test(`S26 current Chart ${fault} refuses stale private results and downstream reads`, async ({
+    page,
+  }, testInfo) => {
+    const chartId = "00000000-0000-4000-8000-000000000653";
+    const query = savedWidget(dashboardWidgetId, 0, categoryFieldId).config
+      .query;
+    const api = await installDashboardApi(
+      page,
+      dashboard({
+        widgets: [
+          {
+            id: dashboardWidgetId,
+            position: 0,
+            widget_type: "chart",
+            size: "S",
+            chart_id: chartId,
+            config: null,
+            created_at: timestamp,
+            updated_at: timestamp,
+          },
+        ],
+      }),
+    );
+    let refused = false;
+    let reads = 0;
+    const readOrder: Array<{ operation: string; refused: boolean }> = [];
+    await page.route("**/api/records/aggregate-snapshot", (route) => {
+      readOrder.push({ operation: "snapshot", refused });
+      return route.fallback();
+    });
+    await page.route(`**/api/charts/${chartId}`, (route) => {
+      reads += 1;
+      readOrder.push({ operation: "chart", refused });
+      if (refused && (fault === "403" || fault === "404"))
+        return route.fulfill({
+          status: Number(fault),
+          json: { detail: "Source unavailable" },
+        });
+      const source = {
+        id: chartId,
+        department_id: departmentId,
+        module_id: moduleId,
+        name: "Private retained source",
+        chart_type: "bar",
+        query,
+        revision: 1,
+        is_deleted: false,
+        created_at: timestamp,
+        updated_at: timestamp,
+      };
+      if (refused) {
+        if (fault === "archived") source.is_deleted = true;
+        if (fault === "wrong-id") source.id = secondDashboardWidgetId;
+        if (fault === "wrong-module") source.module_id = secondModuleId;
+        if (fault === "wrong-family")
+          return route.fulfill({
+            json: {
+              ...source,
+              chart_type: "records",
+              query: { module_id: moduleId, definition: queryDefinition },
+            },
+          });
+        if (fault === "malformed")
+          return route.fulfill({
+            json: { ...source, query: { definition: {} } },
+          });
+      }
+      return route.fulfill({ json: source });
+    });
+    await prepareS26DashboardCapture(page);
+    await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+    await expect(
+      page.getByRole("table", { name: /Complete data/ }),
+    ).toBeVisible();
+    await expect.poll(() => api.fieldReads.length).toBeGreaterThan(0);
+    const resyncSnapshot = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          "/api/records/aggregate-snapshot" &&
+        response.request().method() === "POST",
+    );
+    await sendOpenViewEvent(page, "resync");
+    await resyncSnapshot;
+    await expect(
+      page.getByRole("button", { name: "Refresh now", exact: true }),
+    ).toBeEnabled();
+    await expect(
+      page.getByRole("table", { name: /Complete data/ }),
+    ).toBeVisible();
+    const downstream = api.snapshots.length;
+    const fields = api.fieldReads.length;
+    const originalReads = reads;
+    refused = true;
+    await sendOpenViewEvent(page, "invalidate", {
+      entity: "charts",
+      module_id: moduleId,
+    });
+    await expect.poll(() => reads).toBeGreaterThan(originalReads);
+    await expect(
+      page.getByRole("table", { name: /Complete data/ }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("Private retained source", { exact: true }),
+    ).toHaveCount(0);
+    await testInfo.attach("s26-chart-read-order", {
+      body: JSON.stringify({ fault, downstream, fields, readOrder }),
+      contentType: "application/json",
+    });
+    console.info(
+      "S26 chart read order",
+      JSON.stringify({ fault, downstream, fields, readOrder }),
+    );
+    if (fault === "403")
+      await expect(
+        page
+          .getByRole("alert")
+          .filter({ hasText: "You do not have access to this data." }),
+      ).toContainText("You do not have access to this data.");
+    if (fault === "403")
+      await captureS26Dashboard(page, "s26-dashboard-source-denied");
+    expect(api.snapshots).toHaveLength(downstream);
+    expect(api.fieldReads).toHaveLength(fields);
+    expect(api.writes).toEqual([]);
+  });
+}
+
+test("S26 Chart invalidation refreshes its current query while preserving a dirty Dashboard draft", async ({
+  page,
+}) => {
+  const chartId = "00000000-0000-4000-8000-000000000654";
+  const api = await installDashboardApi(
+    page,
+    dashboard({
+      widgets: [
+        {
+          id: dashboardWidgetId,
+          position: 0,
+          widget_type: "chart",
+          size: "L",
+          chart_id: chartId,
+          config: null,
+          created_at: timestamp,
+          updated_at: timestamp,
+        },
+      ],
+    }),
+  );
+  let revision = 1;
+  let queries = 0;
+  const original = savedWidget(dashboardWidgetId, 0, categoryFieldId).config
+    .query;
+  await page.route(`**/api/charts/${chartId}`, (route) =>
+    route.fulfill({
+      json: {
+        id: chartId,
+        department_id: revision === 1 ? departmentId : secondModuleId,
+        module_id: moduleId,
+        name: "Current source",
+        chart_type: "bar",
+        revision,
+        is_deleted: false,
+        query: {
+          ...original,
+          dimension: {
+            field_id: revision === 1 ? categoryFieldId : regionFieldId,
+            expected_type: "select",
+          },
+        },
+        created_at: timestamp,
+        updated_at: timestamp,
+      },
+    }),
+  );
+  await page.route("**/api/records/aggregate-snapshot", (route) => {
+    queries += 1;
+    const request = route.request().postDataJSON() as AggregateRequest;
+    const changed =
+      request.mode === "groups" && request.dimension.field_id === regionFieldId;
+    return route.fulfill({
+      json: {
+        items: [
+          {
+            key: "current",
+            label: changed ? "New region data" : "Original category data",
+            value: changed ? 9 : 3,
+            record_count: changed ? 9 : 3,
+          },
+        ],
+        pagination: {
+          limit: 1,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    });
+  });
+  await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+  await expect(
+    page.getByRole("cell", { name: "Original category data", exact: true }),
+  ).toBeVisible();
+  const settings = await openDashboardSettingsDialog(page);
+  await settings.getByLabel("Dashboard name").fill("Retained typed draft");
+  await settings.getByLabel("Refresh cadence").selectOption("five-minutes");
+  await finishDashboardDialog(settings);
+  revision = 2;
+  const before = queries;
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "charts",
+    module_id: moduleId,
+  });
+  await expect(
+    page.getByRole("cell", { name: "New region data", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Retained typed draft", exact: true }),
+  ).toBeVisible();
+  expect(queries).toBeGreaterThan(before);
+  expect(api.writes).toEqual([]);
+  await page
+    .getByRole("button", { name: "Save Dashboard", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Retained typed draft", exact: true }),
+  ).toBeVisible();
+  expect(api.writes.at(-1)?.body).toMatchObject({
+    name: "Retained typed draft",
+    refresh_cadence: "five-minutes",
+    widgets: [
+      { widget_type: "chart", size: "L", chart_id: chartId, config: null },
+    ],
+  });
+});
+
+test("E evidence paired Board and Dashboard follow one Chart revision without source writes or draft replacement", async ({
+  page,
+  browser,
+  baseURL,
+}, testInfo) => {
+  if (!baseURL) throw new Error("The configured HTTP baseURL is required");
+  const chartId = "00000000-0000-4000-8000-000000000691";
+  const boardId = "00000000-0000-4000-8000-000000000692";
+  const boardWidgetId = "00000000-0000-4000-8000-000000000693";
+  const referenced: WidgetWire = {
+    id: dashboardWidgetId,
+    position: 0,
+    widget_type: "chart",
+    size: "L",
+    chart_id: chartId,
+    config: null,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  const api = await installDashboardApi(
+    page,
+    dashboard({ widgets: [referenced] }),
+  );
+  const boardContext = await browser.newContext({ baseURL, timezoneId: "UTC" });
+  const boardPage = await boardContext.newPage();
+  const boardWrites: unknown[] = [];
+  const chartWrites: string[] = [];
+  const reads: Array<{ consumer: string; revision: number }> = [];
+  const requests: Array<{ consumer: string; body: unknown }> = [];
+  let revision = 1;
+  const original = savedWidget(dashboardWidgetId, 0, categoryFieldId).config
+    .query;
+  const revised = {
+    ...original,
+    dimension: { field_id: regionFieldId, expected_type: "select" as const },
+  };
+  try {
+    await installDashboardApi(boardPage, dashboard({ widgets: [referenced] }));
+    const board = {
+      id: boardId,
+      scope: "project",
+      department_id: null,
+      name: "Paired Board",
+      description: null,
+      status: "active",
+      revision: 1,
+      level: "manage",
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    const widget = {
+      id: boardWidgetId,
+      board_id: boardId,
+      name: "Shared Chart on Board",
+      widget_type: "chart",
+      module_id: moduleId,
+      position: 0,
+      size: "M",
+      pinned: false,
+      chart_id: chartId,
+      config: null,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    const list = (items: unknown[], limit = 12) => ({
+      items,
+      pagination: {
+        limit,
+        offset: 0,
+        count: items.length,
+        total: items.length,
+        has_more: false,
+      },
+    });
+    await boardPage.route("**/api/boards**", (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (route.request().method() !== "GET") {
+        boardWrites.push(route.request().postData());
+        return route.fulfill({ status: 405 });
+      }
+      if (path === "/api/boards")
+        return route.fulfill({ json: list([board], 25) });
+      if (path === `/api/boards/${boardId}`)
+        return route.fulfill({ json: board });
+      if (path === `/api/boards/${boardId}/my-access`)
+        return route.fulfill({
+          json: { read: true, write: true, manage: true, level: "manage" },
+        });
+      if (path === `/api/boards/${boardId}/widgets`)
+        return route.fulfill({
+          json: { ...list([widget]), board_revision: 1 },
+        });
+      return route.fulfill({ status: 404 });
+    });
+    for (const [consumer, target] of [
+      ["Dashboard", page],
+      ["Board", boardPage],
+    ] as const) {
+      await installOpenViewEventSource(target);
+      await target.route("**/api/users/*/preferences", (route) =>
+        route.fulfill({
+          json: {
+            user_id: userId,
+            theme: "light",
+            appearance: { motion: "reduce", keyboard_shortcuts: true },
+          },
+        }),
+      );
+      await target.route("**/api/workspace/appearance", (route) =>
+        route.fulfill({ json: { theme: "slate" } }),
+      );
+      await target.route("**/api/notifications/unread-count", (route) =>
+        route.fulfill({ json: { unread_count: 0 } }),
+      );
+      await target.route("**/api/workspace", (route) =>
+        route.fulfill({
+          json: {
+            id: departmentId,
+            display_name: "OpenSlate",
+            legal_name: null,
+            description: null,
+            contact_email: null,
+            contact_phone: null,
+            postal_address: null,
+            logo_file_id: null,
+            locale: "en-US",
+            timezone: "UTC",
+            mark: "OS",
+            currency: "USD",
+            week_start: "monday",
+            business_hours: "09:00–18:00",
+            theme: "slate",
+            revision: 1,
+            today: "2026-10-09",
+            purge_enabled: true,
+          },
+        }),
+      );
+      await target.route(`**/api/charts/${chartId}`, (route) => {
+        if (route.request().method() !== "GET") {
+          chartWrites.push(`${consumer}:${route.request().method()}`);
+          return route.fulfill({ status: 405 });
+        }
+        reads.push({ consumer, revision });
+        return route.fulfill({
+          json: {
+            id: chartId,
+            department_id: departmentId,
+            module_id: moduleId,
+            name: "One controlled Chart",
+            chart_type: "bar",
+            query: revision === 1 ? original : revised,
+            revision,
+            is_deleted: false,
+            created_at: timestamp,
+            updated_at: timestamp,
+          },
+        });
+      });
+      await target.route("**/api/records/aggregate-snapshot", (route) => {
+        const body = route.request().postDataJSON() as AggregateRequest;
+        requests.push({ consumer, body });
+        const current =
+          body.mode === "groups" && body.dimension.field_id === regionFieldId;
+        return route.fulfill({
+          json: list(
+            [
+              {
+                key: "shared",
+                label: current
+                  ? "Revised shared Chart"
+                  : "Original shared Chart",
+                value: current ? 9 : 3,
+                record_count: 127,
+              },
+            ],
+            1,
+          ),
+        });
+      });
+    }
+    await Promise.all([
+      page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`),
+      boardPage.goto(`/boards?board=${boardId}`),
+    ]);
+    await expect(
+      page.getByRole("cell", { name: "Original shared Chart", exact: true }),
+    ).toBeVisible();
+    await expect(
+      boardPage.getByText("Original shared Chart", { exact: true }),
+    ).toBeVisible();
+    const settings = await openDashboardSettingsDialog(page);
+    await settings
+      .getByLabel("Dashboard name")
+      .fill("Independent Dashboard draft");
+    await settings.getByLabel("Refresh cadence").selectOption("five-minutes");
+    await finishDashboardDialog(settings);
+    await boardPage
+      .getByRole("button", { name: "Manage widgets", exact: true })
+      .click();
+    const manager = boardPage.getByRole("region", {
+      name: "Manage Board widgets",
+      exact: true,
+    });
+    await manager
+      .getByRole("button", {
+        name: "Edit Shared Chart on Board settings",
+        exact: true,
+      })
+      .click();
+    const boardSettings = manager.locator("form").filter({
+      has: boardPage.getByRole("button", {
+        name: "Save settings",
+        exact: true,
+      }),
+    });
+    await boardSettings
+      .getByLabel("Widget name", { exact: true })
+      .fill("Independent Board draft");
+    await boardSettings.getByLabel("Size", { exact: true }).selectOption("S");
+    await boardSettings.getByLabel("Pin this widget", { exact: true }).check();
+    revision = 2;
+    await Promise.all([
+      sendOpenViewEvent(page, "invalidate", {
+        entity: "charts",
+        module_id: moduleId,
+      }),
+      sendOpenViewEvent(boardPage, "invalidate", {
+        entity: "charts",
+        module_id: moduleId,
+      }),
+    ]);
+    await expect(
+      page.getByRole("cell", { name: "Revised shared Chart", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("cell", { name: "9", exact: true }),
+    ).toBeVisible();
+    await expect(
+      boardPage.getByText("Revised shared Chart", { exact: true }),
+    ).toBeVisible();
+    await expect(boardPage.getByText("9", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", {
+        name: "Independent Dashboard draft",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      boardSettings.getByLabel("Widget name", { exact: true }),
+    ).toHaveValue("Independent Board draft");
+    await expect(boardSettings.getByLabel("Size", { exact: true })).toHaveValue(
+      "S",
+    );
+    await expect(
+      boardSettings.getByLabel("Pin this widget", { exact: true }),
+    ).toBeChecked();
+    expect(api.writes).toEqual([]);
+    expect(boardWrites).toEqual([]);
+    expect(chartWrites).toEqual([]);
+    for (const consumer of ["Board", "Dashboard"]) {
+      expect(
+        reads.some((read) => read.consumer === consumer && read.revision === 2),
+      ).toBe(true);
+      expect(
+        requests.filter((read) => read.consumer === consumer).at(-1)?.body,
+      ).toEqual({
+        mode: "groups",
+        module_id: moduleId,
+        aggregation: "count",
+        definition: {
+          version: 1,
+          logic: "and",
+          columns: [],
+          filters: [],
+          sort: [],
+          deleted: "exclude",
+          search: null,
+          search_fields: [],
+        },
+        dimension: { field_id: regionFieldId, expected_type: "select" },
+      });
+    }
+    // Discarding one consumer's draft cannot discard the other consumer's draft.
+    await boardSettings
+      .getByRole("button", { name: "Cancel", exact: true })
+      .click();
+    await boardPage
+      .getByRole("button", { name: "Close widget management", exact: true })
+      .click();
+    await expect(
+      boardPage.getByRole("heading", {
+        name: "Shared Chart on Board",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", {
+        name: "Independent Dashboard draft",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Save Dashboard", exact: true })
+      .click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Dashboard saved." }),
+    ).toBeVisible();
+    expect(api.writes.at(-1)?.body).toMatchObject({
+      name: "Independent Dashboard draft",
+      refresh_cadence: "five-minutes",
+      widgets: [
+        { widget_type: "chart", size: "L", chart_id: chartId, config: null },
+      ],
+    });
+    expect(boardWrites).toEqual([]);
+    expect(chartWrites).toEqual([]);
+  } finally {
+    await testInfo.attach("paired-chart-consumers", {
+      body: JSON.stringify({
+        revision,
+        reads,
+        requests,
+        boardWrites,
+        dashboardWrites: api.writes,
+        chartWrites,
+      }),
+      contentType: "application/json",
+    });
+    await boardContext.close();
+  }
+});
+
+for (const bucket of ["month", "year"] as const) {
+  test(`S26 referenced date series preserves its ${bucket} bucket over more than 366 days`, async ({
+    page,
+  }) => {
+    const chartId = "00000000-0000-4000-8000-000000000655";
+    const query = {
+      mode: "date_series",
+      module_id: moduleId,
+      definition: queryDefinition,
+      aggregation: "sum",
+      measure: { field_id: amountFieldId, expected_type: "decimal" },
+      date_field: { field_id: dateFieldId, expected_type: "date" },
+      from_date: "2020-01-01",
+      to_date: "2022-12-31",
+      bucket,
+    };
+    const api = await installDashboardApi(
+      page,
+      dashboard({
+        widgets: [
+          {
+            id: dashboardWidgetId,
+            position: 0,
+            widget_type: "chart",
+            size: "S",
+            chart_id: chartId,
+            config: null,
+            created_at: timestamp,
+            updated_at: timestamp,
+          },
+        ],
+      }),
+    );
+    await page.route(`**/api/charts/${chartId}`, (route) =>
+      route.fulfill({
+        json: {
+          id: chartId,
+          department_id: departmentId,
+          module_id: moduleId,
+          name: "Long calendar window",
+          chart_type: "line",
+          query,
+          revision: 1,
+          is_deleted: false,
+          created_at: timestamp,
+          updated_at: timestamp,
+        },
+      }),
+    );
+    const calls: unknown[] = [];
+    const dates =
+      bucket === "month"
+        ? Array.from({ length: 36 }, (_, month) =>
+            new Date(Date.UTC(2020, month, 1)).toISOString().slice(0, 10),
+          )
+        : ["2020-01-01", "2021-01-01", "2022-01-01"];
+    await page.route("**/api/records/aggregate-snapshot", (route) => {
+      calls.push(route.request().postDataJSON());
+      return route.fulfill({
+        json: {
+          items: dates.map((day, index) => ({
+            key: day,
+            label: day,
+            value: index === 0 ? null : 8,
+            record_count: index === 0 ? 0 : 2,
+          })),
+          pagination: {
+            limit: dates.length,
+            offset: 0,
+            count: dates.length,
+            total: dates.length,
+            has_more: false,
+          },
+        },
+      });
+    });
+    await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+    await expect(
+      page.getByRole("table", { name: /Complete data/ }),
+    ).toBeVisible();
+    expect(calls.at(-1)).toEqual(query);
+    await expect(
+      page.getByRole("cell", { name: "—", exact: true }),
+    ).toBeVisible();
+    expect(api.writes).toEqual([]);
+  });
+}
+
 test("Dashboard invalidation updates its saved name and widget without reloading", async ({
   page,
 }) => {
@@ -1531,14 +2422,17 @@ test("department Dashboard saves ordered charts and reloads only the selected co
   expect(api.writes[0]?.method).toBe("POST");
   expect(
     api.writes[0]?.body?.widgets?.map((widget) =>
-      widget.widget_type !== "records" && widget.config.query.mode === "groups"
+      widget.widget_type !== "records" &&
+      widget.config !== null &&
+      widget.config !== undefined &&
+      widget.config.query.mode === "groups"
         ? widget.config.query.dimension.field_id
         : null,
     ),
   ).toEqual([regionFieldId, categoryFieldId]);
   expect(
     api.writes[0]?.body?.widgets?.map((widget) =>
-      widget.widget_type === "records" ? null : widget.config.query.measure,
+      widget.widget_type === "records" ? null : widget.config?.query.measure,
     ),
   ).toEqual([null, null]);
   expect(api.snapshots).toHaveLength(1);
@@ -1692,7 +2586,7 @@ test("department Dashboard builder saves Count over time and reloads the complet
   const savedWidget = api.writes[0]?.body?.widgets?.[0];
   expect(
     savedWidget && savedWidget.widget_type !== "records"
-      ? savedWidget.config.query.measure
+      ? savedWidget.config?.query.measure
       : undefined,
   ).toBeNull();
   expect(api.snapshots[0]).toMatchObject({
@@ -1769,6 +2663,8 @@ test("Dashboard bar builder requires and saves a typed numeric measure for Sum",
     widgets: [
       {
         widget_type: "chart",
+        size: "M",
+        chart_id: null,
         config: {
           version: 1,
           chart_type: "bar",
@@ -1841,6 +2737,8 @@ test("department Dashboard Pie builder saves Sum and reloads its preview and com
     widgets: [
       {
         widget_type: "chart",
+        size: "M",
+        chart_id: null,
         config: {
           version: 1,
           chart_type: "pie",
@@ -1925,6 +2823,8 @@ test("Dashboard line builder requires and saves a typed numeric measure for Aver
     widgets: [
       {
         widget_type: "chart",
+        size: "M",
+        chart_id: null,
         config: {
           version: 1,
           chart_type: "line",

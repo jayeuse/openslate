@@ -21,6 +21,7 @@ from app.systems.manage.audit.context import get_audit_context, set_audit_actor
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
+from app.systems.openview.charts.models import Chart
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
 from app.systems.openview.views.models import SavedView
@@ -75,6 +76,7 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("dashboard_widgets", DashboardWidget),
     ("reports", Report),
     ("modules", Module),
+    ("charts", Chart),
     ("report_runs", ReportRun),
     ("fields", Field),
     ("records", Record),
@@ -109,6 +111,7 @@ def _lock_collection(db: Session, model: type[Any], ids: tuple[UUID, ...]) -> No
             "Lifecycle operation is temporarily unavailable while locking its scope"
         ) from error
     if len(locked) != len(ids):
+        db.rollback()
         raise LifecycleUnavailable("Lifecycle operation scope is no longer available")
 
 
@@ -240,6 +243,7 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
         "records": Record,
         "files": File,
         "saved_views": SavedView,
+        "charts": Chart,
         "group_access": GroupAccess,
         "dashboard_widgets": DashboardWidget,
         "dashboards": Dashboard,
@@ -285,6 +289,7 @@ def _purge_instances(db: Session, plan: LifecyclePlan) -> None:
         "saved_views",
         "dashboard_widgets",
         "dashboards",
+        "charts",
         "records",
         "fields",
         "modules",

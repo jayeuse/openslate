@@ -33,6 +33,7 @@ class LifecycleBlockerCode(StrEnum):
     RECORD_CLOSE_UNSUPPORTED = "record_close_unsupported"
     PURGE_BOARD_DEPENDENCY = "purge_board_dependency"
     PURGE_DASHBOARD_DEPENDENCY = "purge_dashboard_dependency"
+    PURGE_CHART_DEPENDENCY = "purge_chart_dependency"
     PURGE_REPORT_DEPENDENCY = "purge_report_dependency"
     PURGE_REPORT_RUN_DEPENDENCY = "purge_report_run_dependency"
     PURGE_EXTERNAL_SCHEMA_DEPENDENCY = "purge_external_schema_dependency"

@@ -39,8 +39,7 @@ const groupId = "00000000-0000-4000-8000-000000000003";
 const userId = "00000000-0000-4000-8000-000000000004";
 const widgetId = "00000000-0000-4000-8000-000000000005";
 const moduleId = "00000000-0000-4000-8000-000000000006";
-const fieldId = "00000000-0000-4000-8000-000000000007";
-const metricFieldId = "00000000-0000-4000-8000-000000000008";
+const chartId = "00000000-0000-4000-8000-000000000009";
 
 // Overrides below keep the frontend's cross-field rules true: echoed ids, a
 // department Board has a department, page counts match the items sent.
@@ -58,13 +57,14 @@ const purgeImpact = {
   // The frontend narrows the digest to the SHA-256 hex the backend emits.
   impact_digest: "a".repeat(64),
 };
-// A widget config the frontend accepts: valid filter operator, numeric metric.
-const wireConfig = {
-  fields: [{ expected_type: "text" }],
-  filters: [{ expected_type: "text", operator: "contains", value: "pump" }],
-  metric: { expected_type: "number" },
+// A referenced source keeps XOR valid in both generated nullable-response modes.
+// The harness deliberately preserves generated nulls rather than replacing them with objects.
+const widget = {
+  board_id: boardId,
+  position: 0,
+  chart_id: chartId,
+  config: null,
 };
-const widget = { board_id: boardId, position: 0, config: wireConfig };
 // The same rules for the portable bundle, which names fields instead of ids.
 const bundle = {
   kind: "openslate-board",
@@ -87,18 +87,10 @@ const widgetInput: BoardWidgetInput = {
   name: "Open work",
   widgetType: "chart",
   moduleId,
-  config: {
-    fields: [{ fieldId, expectedType: "text" }],
-    filters: [
-      { fieldId, expectedType: "text", operator: "contains", value: "pump" },
-    ],
-    logic: "and",
-    metric: { fieldId: metricFieldId, expectedType: "number" },
-    visualization: "bar",
-    size: "half",
-    refresh: "manual",
-    pinned: false,
-  },
+  size: "M",
+  pinned: false,
+  chartId,
+  config: null,
 };
 const bundleFile = new Blob([
   JSON.stringify({

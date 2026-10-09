@@ -335,6 +335,7 @@ export function invalidatesRecords(entity: string): boolean {
   return (
     entity === "records" ||
     entity === "relationships" ||
+    entity === "charts" ||
     CATALOG_ENTITIES.has(entity) ||
     USER_DISPLAY_ENTITIES.has(entity)
   );

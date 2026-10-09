@@ -294,6 +294,13 @@ const wireRecordsConfigSchema = z
   })
   .strict();
 
+/** Complete native inline configurations shared by Dashboard and Board reads. */
+export const dashboardWidgetWireConfigSchema = z.union([
+  wireChartConfigSchema,
+  wireAggregateConfigSchema,
+  wireRecordsConfigSchema,
+]);
+
 const queryBaseInputShape = {
   moduleId: uuidSchema,
   definition: z.unknown(),
@@ -410,28 +417,52 @@ const recordsConfigInputSchema = z
       }),
   })
   .strict();
+export const dashboardWidgetConfigInputSchema = z.union([
+  chartConfigInputSchema,
+  aggregateConfigInputSchema,
+  recordsConfigInputSchema,
+]);
+const widgetSizeSchema = z.enum(["S", "M", "L"]);
+const widgetSourceInputShape = {
+  size: widgetSizeSchema.default("M"),
+  chartId: uuidSchema.nullable().default(null),
+};
+function hasOneWidgetSource(chartId: string | null, config: unknown): boolean {
+  return (chartId === null) !== (config === null);
+}
 const dashboardWidgetInputSchema = z.discriminatedUnion("widgetType", [
   z
-    .object({ widgetType: z.literal("chart"), config: chartConfigInputSchema })
-    .strict(),
+    .object({
+      ...widgetSourceInputShape,
+      widgetType: z.literal("chart"),
+      config: chartConfigInputSchema.nullable().default(null),
+    })
+    .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chartId, widget.config)),
   z
     .object({
+      ...widgetSourceInputShape,
       widgetType: z.literal("summary"),
-      config: aggregateConfigInputSchema,
+      config: aggregateConfigInputSchema.nullable().default(null),
     })
-    .strict(),
+    .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chartId, widget.config)),
   z
     .object({
+      ...widgetSourceInputShape,
       widgetType: z.literal("workload"),
-      config: aggregateConfigInputSchema,
+      config: aggregateConfigInputSchema.nullable().default(null),
     })
-    .strict(),
+    .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chartId, widget.config)),
   z
     .object({
+      ...widgetSourceInputShape,
       widgetType: z.literal("records"),
-      config: recordsConfigInputSchema,
+      config: recordsConfigInputSchema.nullable().default(null),
     })
-    .strict(),
+    .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chartId, widget.config)),
 ]);
 const refreshCadenceSchema = z.enum(["manual", "one-minute", "five-minutes"]);
 const dashboardPositionSchema = z.number().int().min(0).max(10_000);
@@ -487,21 +518,32 @@ const paginationSchema = z
 const wireWidgetBaseShape = {
   id: uuidSchema,
   position: z.number().int().min(0).max(11),
+  size: widgetSizeSchema,
+  chart_id: uuidSchema.nullable(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
 };
 function transformWireWidget<
   Widget extends {
     widget_type: "summary" | "workload" | "records" | "chart";
+    chart_id: string | null;
+    config: unknown;
     created_at: string;
     updated_at: string;
   },
   WidgetType extends "summary" | "workload" | "records" | "chart",
 >(widget: Widget, widgetType: WidgetType) {
-  const { widget_type, created_at, updated_at, ...rest } = widget;
+  const { widget_type, chart_id, config, created_at, updated_at, ...rest } =
+    widget;
   void widget_type;
+  // The preceding source refinement proves this correlation before mapping.
+  const source: DashboardSource<NonNullable<Widget["config"]>> =
+    chart_id === null
+      ? { chartId: null, config: config as NonNullable<Widget["config"]> }
+      : { chartId: chart_id, config: null };
   return {
     ...rest,
+    ...source,
     widgetType,
     createdAt: created_at,
     updatedAt: updated_at,
@@ -512,33 +554,37 @@ const wireWidgetSchema = z.discriminatedUnion("widget_type", [
     .object({
       ...wireWidgetBaseShape,
       widget_type: z.literal("chart"),
-      config: wireChartConfigSchema,
+      config: wireChartConfigSchema.nullable(),
     })
     .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chart_id, widget.config))
     .transform((widget) => transformWireWidget(widget, "chart")),
   z
     .object({
       ...wireWidgetBaseShape,
       widget_type: z.literal("summary"),
-      config: wireAggregateConfigSchema,
+      config: wireAggregateConfigSchema.nullable(),
     })
     .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chart_id, widget.config))
     .transform((widget) => transformWireWidget(widget, "summary")),
   z
     .object({
       ...wireWidgetBaseShape,
       widget_type: z.literal("workload"),
-      config: wireAggregateConfigSchema,
+      config: wireAggregateConfigSchema.nullable(),
     })
     .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chart_id, widget.config))
     .transform((widget) => transformWireWidget(widget, "workload")),
   z
     .object({
       ...wireWidgetBaseShape,
       widget_type: z.literal("records"),
-      config: wireRecordsConfigSchema,
+      config: wireRecordsConfigSchema.nullable(),
     })
     .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chart_id, widget.config))
     .transform((widget) => transformWireWidget(widget, "records")),
 ]);
 const dashboardSchema = z
@@ -638,25 +684,26 @@ export type OpenViewDashboardWidgetConfig =
   | OpenViewDashboardRecordsConfig;
 export type OpenViewDashboardRefreshCadence =
   "manual" | "one-minute" | "five-minutes";
+export type OpenViewDashboardWidgetSize = "S" | "M" | "L";
+type DashboardSource<Config> =
+  { chartId: null; config: Config } | { chartId: string; config: null };
 type OpenViewDashboardWidgetBase = {
   id: string;
   position: number;
+  size: OpenViewDashboardWidgetSize;
   createdAt: string;
   updatedAt: string;
 };
-export type OpenViewDashboardWidget =
-  | (OpenViewDashboardWidgetBase & {
-      widgetType: "chart";
-      config: OpenViewDashboardChartConfig;
-    })
-  | (OpenViewDashboardWidgetBase & {
-      widgetType: "summary" | "workload";
-      config: OpenViewDashboardAggregateConfig;
-    })
-  | (OpenViewDashboardWidgetBase & {
-      widgetType: "records";
-      config: OpenViewDashboardRecordsConfig;
-    });
+export type OpenViewDashboardWidget = OpenViewDashboardWidgetBase &
+  (
+    | ({ widgetType: "chart" } & DashboardSource<OpenViewDashboardChartConfig>)
+    | ({
+        widgetType: "summary" | "workload";
+      } & DashboardSource<OpenViewDashboardAggregateConfig>)
+    | ({
+        widgetType: "records";
+      } & DashboardSource<OpenViewDashboardRecordsConfig>)
+  );
 export type OpenViewDashboard = {
   id: string;
   /** The department that owns the Dashboard; its managers change it. */
@@ -680,19 +727,21 @@ export type OpenViewDashboardPage = {
     hasMore: boolean;
   };
 };
-export type OpenViewDashboardWidgetInput =
-  | {
+type DashboardSourceInput<Config> =
+  { chartId?: null; config: Config } | { chartId: string; config?: null };
+export type OpenViewDashboardWidgetInput = {
+  size?: OpenViewDashboardWidgetSize;
+} & (
+  | ({
       widgetType: "chart";
-      config: OpenViewDashboardChartConfig;
-    }
-  | {
+    } & DashboardSourceInput<OpenViewDashboardChartConfig>)
+  | ({
       widgetType: "summary" | "workload";
-      config: OpenViewDashboardAggregateConfig;
-    }
-  | {
+    } & DashboardSourceInput<OpenViewDashboardAggregateConfig>)
+  | ({
       widgetType: "records";
-      config: OpenViewDashboardRecordsConfig;
-    };
+    } & DashboardSourceInput<OpenViewDashboardRecordsConfig>)
+);
 export type OpenViewDashboardCreateInput = {
   departmentId: string;
   name: string;
@@ -862,26 +911,32 @@ function serializeRecordsConfig(config: unknown) {
   };
 }
 
-function serializeWidgetConfig(
-  widget: z.output<typeof dashboardWidgetInputSchema>,
+/** Serialize the existing native definition; never turn a reference into inline config. */
+export function serializeDashboardWidgetConfig(
+  widgetType: OpenViewDashboardWidgetType,
+  config: unknown,
 ) {
-  switch (widget.widgetType) {
+  switch (widgetType) {
     case "chart":
-      return serializeChartConfig(widget.config);
+      return serializeChartConfig(config);
     case "summary":
     case "workload":
-      return serializeAggregateConfig(widget.config);
+      return serializeAggregateConfig(config);
     case "records":
-      return serializeRecordsConfig(widget.config);
+      return serializeRecordsConfig(config);
   }
 }
-
 function serializeWidgets(
   widgets: z.output<typeof dashboardWidgetInputSchema>[],
 ) {
   return widgets.map((widget) => ({
     widget_type: widget.widgetType,
-    config: serializeWidgetConfig(widget),
+    size: widget.size,
+    chart_id: widget.chartId,
+    config:
+      widget.config === null
+        ? null
+        : serializeDashboardWidgetConfig(widget.widgetType, widget.config),
   }));
 }
 

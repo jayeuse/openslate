@@ -828,6 +828,12 @@
     "path": "/api/records/grouped-query"
   },
   {
+    "adapter": "frontend/src/components/systems/openview/adapters/charts-api.ts",
+    "function": "getOpenViewChart",
+    "method": "GET",
+    "path": "/api/charts/{param}"
+  },
+  {
     "adapter": "frontend/src/components/systems/openview/adapters/dashboards-api.ts",
     "function": "archiveOpenViewDashboard",
     "method": "DELETE",

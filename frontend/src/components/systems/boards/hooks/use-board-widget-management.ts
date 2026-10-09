@@ -26,7 +26,7 @@ import { readBoard } from "../adapters/board-management-api";
 export type WidgetSettingsDraft = {
   source: BoardWidget;
   name: string;
-  size: "half" | "full";
+  size: BoardWidget["size"];
   pinned: boolean;
 };
 
@@ -43,6 +43,9 @@ export function createSummaryWidgetInput(
     name: name.trim(),
     widgetType: "summary",
     moduleId,
+    size: "M",
+    pinned: false,
+    chartId: null,
     config: {
       version: 1,
       fields: [],
@@ -50,8 +53,6 @@ export function createSummaryWidgetInput(
       logic: "and",
       metric: null,
       visualization: "bar",
-      size: "half",
-      pinned: false,
     },
   };
 }
@@ -60,8 +61,8 @@ export function draftFromBoardWidget(widget: BoardWidget): WidgetSettingsDraft {
   return {
     source: widget,
     name: widget.name,
-    size: widget.config.size,
-    pinned: widget.config.pinned,
+    size: widget.size,
+    pinned: widget.pinned,
   };
 }
 
@@ -76,6 +77,9 @@ function sameWidgetVersion(
     current.name === original.name &&
     current.widgetType === original.widgetType &&
     current.moduleId === original.moduleId &&
+    current.chartId === original.chartId &&
+    current.size === original.size &&
+    current.pinned === original.pinned &&
     JSON.stringify(current.config) === JSON.stringify(original.config)
   );
 }
@@ -85,16 +89,19 @@ export function updateInputForWidgetDraft(
   draft: WidgetSettingsDraft,
 ): BoardWidgetInput {
   if (!sameWidgetVersion(widget, draft.source)) throw new ApiContractError();
-  const config: BoardWidgetInput["config"] = {
-    ...widget.config,
-    size: draft.size,
-    pinned: draft.pinned,
-  };
-  delete config.refresh;
+  let config: BoardWidgetInput["config"] = widget.config;
+  if (widget.config !== null && "fields" in widget.config) {
+    const { refresh, ...legacy } = widget.config;
+    void refresh;
+    config = legacy;
+  }
   return {
     name: draft.name.trim(),
     widgetType: widget.widgetType,
     moduleId: widget.moduleId,
+    size: draft.size,
+    pinned: draft.pinned,
+    chartId: widget.chartId,
     config,
   };
 }

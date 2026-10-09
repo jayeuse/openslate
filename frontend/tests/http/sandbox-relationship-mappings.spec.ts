@@ -1473,6 +1473,189 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
   });
 }
 
+test("S26 a retained saved Chart query blocks bound field purge until repaired", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const targetModule = design.modules[0];
+  const field = targetModule?.fields[1];
+  const department = design.departments.find(
+    (item) => item.id === targetModule?.department,
+  );
+  if (!targetModule || !field || !department)
+    throw new Error("A bound primitive field is required");
+  field.closed = true;
+  const liveId = "00000000-0000-4000-8000-000000000591";
+  const chartId = "00000000-0000-4000-8000-000000000592";
+  const liveModuleId = "00000000-0000-4000-8000-000000000593";
+  const liveDepartmentId = "00000000-0000-4000-8000-000000000594";
+  const binding = {
+    kind: "field" as const,
+    sandbox_id: field.id,
+    parent_sandbox_id: targetModule.id,
+    live_id: liveId,
+    is_deleted: true,
+  };
+  let retainedReferences = [liveId];
+  let reviews = 0;
+  const requests: unknown[] = [];
+  const detail = `Repair the retained saved Chart 'Retained workload' query before permanently deleting Field '${field.name}'; archiving the Chart keeps its query`;
+  await page.route(`**/api/fields/${liveId}/purge/preview`, (route) => {
+    reviews += 1;
+    const blocked = retainedReferences.includes(liveId);
+    const impact = lifecycleImpactFixture("field", liveId, "purge");
+    return route.fulfill({
+      json: {
+        impact: {
+          ...impact,
+          rows: blocked
+            ? [
+                ...impact.rows,
+                {
+                  entity_type: "charts",
+                  entity_id: chartId,
+                  is_deleted: true,
+                  deleted_at: "2026-10-01T00:00:00Z",
+                  updated_at: "2026-10-01T00:00:00Z",
+                  state_fingerprint: "retained-chart-query",
+                  byte_count: null,
+                },
+              ]
+            : impact.rows,
+          blockers: blocked
+            ? [
+                {
+                  code: "purge_chart_dependency",
+                  entity_type: "charts",
+                  entity_id: chartId,
+                  detail,
+                  conflicting_entity_type: "fields",
+                  conflicting_entity_id: liveId,
+                  field_id: liveId,
+                  field_name: field.name,
+                  module_id: liveModuleId,
+                  module_name: targetModule.name,
+                  department_id: liveDepartmentId,
+                  department_name: department.name,
+                },
+              ]
+            : [],
+        },
+        token: `owned-chart-review-${reviews}`,
+        expires_at: "2027-10-01T00:00:00Z",
+        confirmation_name: field.name,
+        last_successful_backup_at: null,
+      },
+    });
+  });
+  await page.route(`**/api/fields/${liveId}/purge`, async (route) => {
+    requests.push(route.request().postDataJSON());
+    expect(retainedReferences).toEqual([]);
+    const document = sandbox.document();
+    const current = document.design.modules.find(
+      (item) => item.id === targetModule.id,
+    );
+    if (!current) throw new Error("The owned targetModule disappeared");
+    current.fields = current.fields.filter((item) => item.id !== field.id);
+    sandbox.confirmLiveDocument(document);
+    sandbox.confirmBindings([]);
+    return route.fulfill({
+      json: {
+        impact: lifecycleImpactFixture("field", liveId, "purge"),
+        operation_id: null,
+      },
+    });
+  });
+  if (process.env.OPENVIEW_CAPTURE_DIR) {
+    const theme = process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light";
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+    await page.route("**/api/users/*/preferences", (route) =>
+      route.fulfill({
+        json: {
+          user_id: new URL(route.request().url()).pathname.split("/")[3],
+          theme,
+          appearance: { motion: "reduce", keyboard_shortcuts: true },
+        },
+      }),
+    );
+  }
+  const sandbox = await openAuthenticatedSandbox(page, design, {
+    bindings: [binding],
+  });
+  const settings = page.getByLabel(`${field.name} field settings`, {
+    exact: true,
+  });
+  await settings
+    .getByRole("button", { name: `Show ${field.name} settings`, exact: true })
+    .click();
+  await settings
+    .getByRole("button", { name: "Permanently delete field", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Permanently delete field",
+    exact: true,
+  });
+  await expect(dialog.getByText(detail, { exact: true })).toBeVisible();
+  await expect(dialog).toContainText("1 chart");
+  await expect(
+    dialog.getByRole("button", { name: "Permanently delete", exact: true }),
+  ).toBeDisabled();
+  await captureOpenViewReview(
+    page,
+    `s26-chart-purge-blocked-${process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light"}`,
+    {
+      beforeScreenshot: async (capture) => {
+        await capture.addStyleTag({
+          content: "nextjs-portal { display: none !important; }",
+        });
+        await expect(capture.locator("html")).toHaveClass(
+          process.env.S26_CAPTURE_THEME === "dark" ? /dark/ : /^(?!.*dark)/,
+        );
+        await capture.evaluate(async () => {
+          await document.fonts.ready;
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          );
+        });
+      },
+    },
+  );
+  expect(requests).toEqual([]);
+  expect(sandbox.documentWrites()).toBe(0);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  // Another operator repairs the retained query; this slice has no Chart editor.
+  retainedReferences = [];
+  await settings
+    .getByRole("button", { name: "Permanently delete field", exact: true })
+    .click();
+  await expect(dialog.getByText(detail, { exact: true })).toHaveCount(0);
+  await dialog
+    .getByLabel("Type the field name", { exact: true })
+    .fill(field.name);
+  await dialog
+    .getByLabel("Administrator password", { exact: true })
+    .fill("owned-test-password");
+  await dialog
+    .getByRole("button", { name: "Permanently delete", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  expect(reviews).toBe(2);
+  expect(requests).toEqual([
+    {
+      token: "owned-chart-review-2",
+      confirmation_name: field.name,
+      password: "owned-test-password",
+    },
+  ]);
+  expect(
+    sandbox
+      .document()
+      .design.modules.find((item) => item.id === targetModule.id)
+      ?.fields.some((item) => item.id === field.id),
+  ).toBe(false);
+  expect(sandbox.documentWrites()).toBe(0);
+});
+
 test("the bound department outline reviews blockers and reopens with explicit confirmation", async ({
   page,
 }) => {

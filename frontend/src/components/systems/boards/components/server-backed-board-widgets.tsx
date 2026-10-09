@@ -3,6 +3,7 @@
 import { createElement, useEffect, useState, type ReactNode } from "react";
 import { getBoardWorkspaceToday } from "../adapters/board-workspace-date-api";
 import type { OpenViewRecord } from "../../openview/adapters/views-api";
+import type { OpenViewAggregateSnapshotResult } from "../../openview/adapters/analytics-api";
 import { collapseBoardWidgetPie } from "../domain/live-widget-query";
 import {
   useLiveBoardWidgets,
@@ -29,6 +30,8 @@ function unavailableReason(item: LiveWidgetItem): string {
       return "Choose a field for this widget before its data can be shown.";
     case "unsupported-dimension":
       return "This field type is not supported by this widget.";
+    case "invalid-source":
+      return "Widget data unavailable.";
   }
 }
 
@@ -56,6 +59,8 @@ function displayRecordFieldValue(
 function recordsContent(item: LiveWidgetItem): ReactNode {
   if (item.data?.kind !== "records") return null;
   const { result, fieldNames } = item.data;
+  const fields =
+    item.plan.kind === "records" ? item.plan.request.definition.columns : [];
   if (item.widget.widgetType === "summary")
     return createElement(
       "p",
@@ -71,11 +76,7 @@ function recordsContent(item: LiveWidgetItem): ReactNode {
         "Matching records",
       ),
     );
-  if (
-    item.widget.config.fields.some(
-      (field) => !fieldNames[field.fieldId]?.trim(),
-    )
-  )
+  if (fields.some((field) => !fieldNames[field.fieldId]?.trim()))
     return createElement(
       "p",
       { className: "text-muted-foreground text-sm", role: "alert" },
@@ -107,7 +108,7 @@ function recordsContent(item: LiveWidgetItem): ReactNode {
             { className: "font-medium" },
             `Record ${index + 1}`,
           ),
-          item.widget.config.fields.length === 0
+          fields.length === 0
             ? createElement(
                 "p",
                 { className: "text-muted-foreground text-sm" },
@@ -116,7 +117,7 @@ function recordsContent(item: LiveWidgetItem): ReactNode {
             : createElement(
                 "dl",
                 { className: "mt-1 space-y-1 text-sm" },
-                ...item.widget.config.fields.map((field) =>
+                ...fields.map((field) =>
                   createElement(
                     "div",
                     {
@@ -149,7 +150,8 @@ function numericValue(value: number | string | null): number | null {
 }
 
 function groupContent(item: LiveWidgetItem): ReactNode {
-  if (item.data?.kind !== "aggregate") return null;
+  if (item.data?.kind !== "aggregate" && item.data?.kind !== "snapshot")
+    return null;
   const { items, pagination } = item.data.result;
   if (items.length === 0)
     return createElement(
@@ -224,20 +226,64 @@ function groupContent(item: LiveWidgetItem): ReactNode {
   );
 }
 
+function nativeSnapshotValues(
+  result: OpenViewAggregateSnapshotResult,
+): ReactNode {
+  return createElement(
+    "ol",
+    { className: "space-y-1 text-sm" },
+    ...result.items.map((entry, index) =>
+      createElement(
+        "li",
+        {
+          key: `${entry.key ?? "null"}:${index}`,
+          className: "flex min-w-0 flex-wrap justify-between gap-2",
+        },
+        createElement(
+          "span",
+          { className: "min-w-0 break-words" },
+          entry.label,
+        ),
+        createElement(
+          "span",
+          { className: "font-medium tabular-nums" },
+          entry.value === null ? "—" : String(entry.value),
+        ),
+        createElement(
+          "span",
+          { className: "text-muted-foreground text-xs" },
+          `${entry.recordCount} records`,
+        ),
+      ),
+    ),
+  );
+}
+
 function pieContent(item: LiveWidgetItem): ReactNode {
   if (item.data?.kind !== "snapshot") return null;
-  const projection = collapseBoardWidgetPie(item.data.result);
+  const legacy = item.widget.config !== null && "fields" in item.widget.config;
+  const projection = collapseBoardWidgetPie(item.data.result, legacy);
   if (projection.kind === "unavailable")
     return createElement(
-      "p",
-      { className: "text-muted-foreground text-sm" },
-      "This chart cannot be shown from an incomplete or unrepresentable result.",
+      "div",
+      { className: "space-y-2" },
+      createElement(
+        "p",
+        { className: "text-muted-foreground text-sm" },
+        "This chart cannot be shown from an incomplete or unrepresentable result.",
+      ),
+      legacy ? null : nativeSnapshotValues(item.data.result),
     );
   if (projection.points.length === 0)
     return createElement(
-      "p",
-      { className: "text-muted-foreground text-sm" },
-      "No matching groups. Adjust the widget filters to see results.",
+      "div",
+      { className: "space-y-2" },
+      createElement(
+        "p",
+        { className: "text-muted-foreground text-sm" },
+        "No matching groups. Adjust the widget filters to see results.",
+      ),
+      legacy ? null : nativeSnapshotValues(item.data.result),
     );
   const total = projection.points.reduce((sum, point) => sum + point.value, 0);
   if (!Number.isFinite(total))
@@ -249,29 +295,31 @@ function pieContent(item: LiveWidgetItem): ReactNode {
         null,
         "Values too large to chart. Exact values remain below.",
       ),
-      createElement(
-        "ol",
-        { className: "space-y-1" },
-        ...item.data.result.items.map((entry) =>
-          createElement(
-            "li",
-            {
-              key: entry.key ?? "unspecified",
-              className: "flex min-w-0 justify-between gap-2",
-            },
-            createElement(
-              "span",
-              { className: "min-w-0 break-words" },
-              entry.label,
+      legacy
+        ? createElement(
+            "ol",
+            { className: "space-y-1" },
+            ...item.data.result.items.map((entry) =>
+              createElement(
+                "li",
+                {
+                  key: entry.key ?? "unspecified",
+                  className: "flex min-w-0 justify-between gap-2",
+                },
+                createElement(
+                  "span",
+                  { className: "min-w-0 break-words" },
+                  entry.label,
+                ),
+                createElement(
+                  "span",
+                  { className: "font-medium tabular-nums" },
+                  entry.value === null ? "—" : String(entry.value),
+                ),
+              ),
             ),
-            createElement(
-              "span",
-              { className: "font-medium tabular-nums" },
-              entry.value === null ? "—" : String(entry.value),
-            ),
-          ),
-        ),
-      ),
+          )
+        : nativeSnapshotValues(item.data.result),
     );
   let position = 0;
   const stops = projection.points.map((point, index) => {
@@ -299,46 +347,52 @@ function pieContent(item: LiveWidgetItem): ReactNode {
           ? `${projection.totalGroups} groups; ${projection.rolledUpGroups} included in Other. Chart values are approximate.`
           : `${projection.totalGroups} groups. Chart values are approximate.`,
       ),
-      createElement(
-        "ol",
-        { className: "space-y-1 text-sm" },
-        ...projection.points.map((point, index) =>
-          createElement(
-            "li",
-            {
-              key: point.key,
-              className: "flex min-w-0 flex-wrap justify-between gap-2",
-            },
-            createElement(
-              "span",
-              { className: "flex min-w-0 items-center gap-2 break-words" },
-              createElement("span", {
-                "aria-hidden": "true",
-                className: "size-2.5 shrink-0 rounded-full",
-                style: { backgroundColor: colors[index % colors.length] },
-              }),
-              point.label,
+      legacy
+        ? createElement(
+            "ol",
+            { className: "space-y-1 text-sm" },
+            ...projection.points.map((point, index) =>
+              createElement(
+                "li",
+                {
+                  key: point.key,
+                  className: "flex min-w-0 flex-wrap justify-between gap-2",
+                },
+                createElement(
+                  "span",
+                  { className: "flex min-w-0 items-center gap-2 break-words" },
+                  createElement("span", {
+                    "aria-hidden": "true",
+                    className: "size-2.5 shrink-0 rounded-full",
+                    style: { backgroundColor: colors[index % colors.length] },
+                  }),
+                  point.label,
+                ),
+                createElement(
+                  "span",
+                  { className: "font-medium tabular-nums" },
+                  String(point.value),
+                ),
+              ),
             ),
-            createElement(
-              "span",
-              { className: "font-medium tabular-nums" },
-              String(point.value),
-            ),
-          ),
-        ),
-      ),
+          )
+        : nativeSnapshotValues(item.data.result),
     ),
   );
 }
 
 function lineContent(item: LiveWidgetItem): ReactNode {
   if (item.data?.kind !== "snapshot") return null;
+  const bucket =
+    item.plan.kind === "snapshot" && item.plan.request.mode === "date_series"
+      ? (item.plan.request.bucket ?? "day")
+      : "day";
   const { items, pagination } = item.data.result;
   if (pagination.hasMore || pagination.total !== items.length)
     return createElement(
       "p",
       { className: "text-muted-foreground text-sm" },
-      "The daily chart is incomplete. Refresh to try again.",
+      `The ${bucket === "day" ? "daily" : bucket} chart is incomplete. Refresh to try again.`,
     );
   if (items.length === 0)
     return createElement(
@@ -380,7 +434,7 @@ function lineContent(item: LiveWidgetItem): ReactNode {
     createElement(
       "p",
       { className: "text-muted-foreground text-sm" },
-      `${items.length} ${items.length === 1 ? "day" : "days"} shown. Exact values are listed below; the line is approximate.`,
+      `${items.length} ${bucket}${items.length === 1 ? "" : "s"} shown. Exact values are listed below; the line is approximate.`,
     ),
     canDraw
       ? createElement(
@@ -471,6 +525,11 @@ function widgetContent(item: LiveWidgetItem): ReactNode {
     );
   if (item.plan.kind === "records") return recordsContent(item);
   if (item.plan.kind === "aggregate") return groupContent(item);
+  if (item.plan.kind === "snapshot" && item.plan.widgetType !== "chart")
+    return item.data?.kind === "snapshot"
+      ? nativeSnapshotValues(item.data.result)
+      : null;
+  if (item.plan.visualization === "bar") return groupContent(item);
   return item.plan.visualization === "pie"
     ? pieContent(item)
     : lineContent(item);
@@ -482,7 +541,7 @@ function widgetCard(
   gridColumns: 2 | 3,
 ): ReactNode {
   const fullWidth =
-    item.widget.config.size === "full"
+    item.widget.size === "L"
       ? gridColumns === 3
         ? "lg:col-span-3"
         : "lg:col-span-2"
@@ -504,7 +563,7 @@ function widgetCard(
         { className: "min-w-0 text-base font-semibold break-words" },
         item.widget.name,
       ),
-      item.widget.config.pinned
+      item.widget.pinned
         ? createElement(
             "span",
             {

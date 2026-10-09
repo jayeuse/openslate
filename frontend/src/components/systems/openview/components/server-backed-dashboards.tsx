@@ -104,7 +104,10 @@ type DashboardDialogKind = "new" | "settings" | null;
 function widgetTitle(
   widget: OpenViewDashboardWidget | DraftWidget,
   fieldsByModule: Record<string, OpenViewDataSourceField[]>,
+  resolvedName?: string | null,
 ): string {
+  if (widget.chartId != null) return resolvedName ?? "Saved Chart";
+  if (widget.config == null) return "Saved Chart";
   if (widget.widgetType === "records") {
     const fieldId = widget.config.query.definition.columns[0]?.fieldId;
     const field = fieldId
@@ -120,7 +123,7 @@ function widgetTitle(
       (candidate) => candidate.id === query.dimension.fieldId,
     );
     return widget.widgetType === "summary"
-      ? `Total records by ${field?.name ?? "selected field"}`
+      ? `${query.aggregation === "count" ? "Total records" : aggregationLabel(query.aggregation)} by ${field?.name ?? "selected field"}`
       : `Workload by ${field?.name ?? "selected field"}`;
   }
   const { query } = widget.config;
@@ -380,15 +383,8 @@ export default function ServerBackedDashboards() {
     (widget) => widget.id === activeWidgetKey,
   );
   const widgetsChanged = selectedDashboard
-    ? JSON.stringify(
-        selectedDashboard.widgets.map(({ widgetType, config }) => ({
-          widgetType,
-          config,
-        })),
-      ) !==
-      JSON.stringify(
-        draftWidgets.map(({ widgetType, config }) => ({ widgetType, config })),
-      )
+    ? JSON.stringify(inputWidgets(draftWidgetsFrom(selectedDashboard))) !==
+      JSON.stringify(inputWidgets(draftWidgets))
     : draftWidgets.length > 0;
   const draftDirty = selectedDashboard
     ? dashboardName !== selectedDashboard.name ||
@@ -566,7 +562,11 @@ export default function ServerBackedDashboards() {
   );
   useWorkspaceNavigationGuard(navigationGuard);
   const activeTitle = activeWidget
-    ? widgetTitle(activeWidget, fieldsByModule)
+    ? widgetTitle(
+        activeWidget,
+        fieldsByModule,
+        visibleSnapshot?.data.sourceName,
+      )
     : "";
   const builderIsDateSeries =
     builderWidgetType === "chart" && builderChartType === "line";
@@ -635,7 +635,9 @@ export default function ServerBackedDashboards() {
 
   useEffect(() => {
     let active = true;
-    const moduleId = activeWidget?.config.query.moduleId;
+    const moduleId =
+      activeWidget?.config?.query.moduleId ??
+      visibleSnapshot?.data.config.query.moduleId;
     if (!moduleId || fieldsByModule[moduleId]) return;
     void listOpenViewDataSourceFields(moduleId, { limit: 100, offset: 0 })
       .then((page) => {
@@ -651,7 +653,7 @@ export default function ServerBackedDashboards() {
     return () => {
       active = false;
     };
-  }, [activeWidget, fieldsByModule]);
+  }, [activeWidget, fieldsByModule, visibleSnapshot?.data.config]);
 
   function updateDashboardUrl(id?: string) {
     if (!id) setRouteClearPending(Boolean(routeDashboardId));
@@ -683,7 +685,7 @@ export default function ServerBackedDashboards() {
     setRefreshCadence(dashboard.refreshCadence);
     setDraftWidgets(widgets);
     setActiveWidgetKey(widgets[0]?.key ?? "");
-    selectBuilderModule(widgets[0]?.config.query.moduleId ?? "");
+    selectBuilderModule(widgets[0]?.config?.query.moduleId ?? "");
   }
 
   function beginNewDashboard() {
@@ -1646,14 +1648,29 @@ export default function ServerBackedDashboards() {
               {draftWidgets.length ? (
                 <ol className="flex min-w-0 flex-col gap-2">
                   {draftWidgets.map((widget, index) => {
-                    const title = widgetTitle(widget, fieldsByModule);
+                    const currentConfig =
+                      widget.config ??
+                      (widget.key === activeWidget?.key
+                        ? visibleSnapshot?.data.config
+                        : null);
+                    const title = widgetTitle(
+                      widget,
+                      fieldsByModule,
+                      widget.key === activeWidget?.key
+                        ? visibleSnapshot?.data.sourceName
+                        : null,
+                    );
                     const kind =
                       widget.widgetType === "chart"
-                        ? (widget.config.chartType === "line"
-                            ? "Line"
-                            : widget.config.chartType === "pie"
-                              ? "Pie"
-                              : "Bar") + " chart"
+                        ? currentConfig !== null &&
+                          currentConfig !== undefined &&
+                          "chartType" in currentConfig
+                          ? (currentConfig.chartType === "line"
+                              ? "Line"
+                              : currentConfig.chartType === "pie"
+                                ? "Pie"
+                                : "Bar") + " chart"
+                          : "Saved Chart"
                         : widget.widgetType === "summary"
                           ? "Summary"
                           : widget.widgetType === "workload"

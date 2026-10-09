@@ -67,7 +67,13 @@ class DashboardWidget(BaseModel):
         CheckConstraint(
             "position >= 0 AND position < 12", name="ck_dashboard_widgets_position"
         ),
+        CheckConstraint("size IN ('S', 'M', 'L')", name="ck_dashboard_widgets_size"),
+        CheckConstraint(
+            "(config IS NOT NULL) <> (chart_id IS NOT NULL)",
+            name="ck_dashboard_widgets_query_source",
+        ),
         Index("ix_dashboard_widgets_dashboard_id", "dashboard_id"),
+        Index("ix_dashboard_widgets_chart_id", "chart_id"),
         Index(
             "uq_dashboard_widgets_active_position",
             "dashboard_id",
@@ -84,5 +90,13 @@ class DashboardWidget(BaseModel):
     widget_type: Mapped[str] = mapped_column(
         String(20), default="chart", server_default=text("'chart'"), nullable=False
     )
-    config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    size: Mapped[str] = mapped_column(
+        String(1), default="M", server_default=text("'M'"), nullable=False
+    )
+    chart_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("charts.id", ondelete="RESTRICT"), nullable=True
+    )
+    config: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     dashboard: Mapped[Dashboard] = relationship(back_populates="widgets")

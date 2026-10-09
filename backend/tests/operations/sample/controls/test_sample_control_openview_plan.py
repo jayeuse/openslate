@@ -15,6 +15,38 @@ from operations.sample.packs.registry import get_pack, pack_keys
 from operations.sample.packs.types import SampleProfile
 from operations.sample.scenario import build_dataset
 
+INCUMBENT_OPENVIEW_ROUTES = frozenset(
+    {
+        ("POST", "/api/records/query"),
+        ("POST", "/api/records/grouped-query"),
+        ("POST", "/api/records/window-query"),
+        ("POST", "/api/records/aggregate-query"),
+        ("POST", "/api/records/aggregate-snapshot"),
+        ("POST", "/api/records/aggregate-snapshots"),
+        ("GET", "/api/records/{record_id}"),
+        ("POST", "/api/records"),
+        ("PATCH", "/api/records/{record_id}"),
+        ("DELETE", "/api/records/{record_id}"),
+        ("POST", "/api/records/{record_id}/restore"),
+        ("POST", "/api/records/{record_id}/purge/preview"),
+        ("POST", "/api/records/{record_id}/purge"),
+        ("POST", "/api/relationships"),
+        ("DELETE", "/api/relationships/{relationship_id}"),
+        ("GET", "/api/views/{view_id}"),
+        ("PATCH", "/api/views/{view_id}"),
+        ("GET", "/api/dashboards/{dashboard_id}"),
+        ("PATCH", "/api/dashboards/{dashboard_id}"),
+        ("GET", "/api/reports/{report_id}"),
+        ("PATCH", "/api/reports/{report_id}"),
+        ("GET", "/api/reports/{report_id}/schedule"),
+        ("PATCH", "/api/reports/{report_id}/schedule"),
+        ("POST", "/api/reports"),
+        ("DELETE", "/api/reports/{report_id}"),
+        ("POST", "/api/reports/{report_id}/purge/preview"),
+        ("POST", "/api/reports/{report_id}/purge"),
+    }
+)
+
 
 @pytest.mark.parametrize("pack_key", pack_keys())
 @pytest.mark.parametrize("profile", ("small", "standard"))
@@ -30,6 +62,44 @@ def test_openview_control_plan_is_pack_derived_and_covers_query_and_edit_control
 
     actions = plan_openview_controls(dataset)
     operations = [action.values.get("operation") for action in actions]
+    assert operations == [
+        "record_query",
+        "grouped_query",
+        "window_query",
+        "aggregate_groups",
+        "aggregate_scalar",
+        "aggregate_date_series",
+        "aggregate_snapshot_groups",
+        "aggregate_snapshot_date_series",
+        "aggregate_snapshots",
+        "view_patch",
+        "dashboard_patch",
+        "report_patch",
+        "schedule_patch",
+        "report_purge",
+        "record_lifecycle",
+        "relationship_delete",
+        "chart_lifecycle",
+    ]
+    from operations.sample.controls.openview import CHART_ROUTES, CONTROL_ROUTES
+
+    expected_chart = frozenset(
+        {
+            ("POST", "/api/charts"),
+            ("GET", "/api/charts"),
+            ("GET", "/api/charts/{chart_id}"),
+            ("PATCH", "/api/charts/{chart_id}"),
+            ("GET", "/api/charts/{chart_id}/usage"),
+            ("DELETE", "/api/charts/{chart_id}"),
+            ("POST", "/api/charts/{chart_id}/restore"),
+        }
+    )
+    assert CHART_ROUTES == expected_chart and CHART_ROUTES.isdisjoint(INCUMBENT_OPENVIEW_ROUTES)
+    assert CONTROL_ROUTES == INCUMBENT_OPENVIEW_ROUTES | expected_chart
+    chart = actions[-1]
+    assert chart.actor_key != "admin" and chart.values["department_key"] in dict(
+        dataset.organization.catalog.departments
+    )
 
     assert set(operations) >= {
         "record_query",
@@ -100,7 +170,13 @@ def test_openview_control_plan_is_pack_derived_and_covers_query_and_edit_control
             temporary_names[key].add(name)
 
 
-def test_openview_verifier_checks_actual_authored_dashboard_title(tmp_path: Path) -> None:
+def test_openview_verifier_checks_actual_authored_dashboard_title(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "operations.sample.controls.charts_verification.verify_chart_controls",
+        lambda *args: ({}, []),
+    )
     dataset = build_dataset("small", 290504089, date(2026, 10, 2), organization=get_pack("harbor"))
     _, module, _ = select_openview_target(dataset)
     dashboard_id = str(uuid5(NAMESPACE_URL, "dashboard"))

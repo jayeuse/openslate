@@ -31,6 +31,7 @@ const entityLabels: Record<string, readonly [string, string]> = {
   report_runs: ["report run", "report runs"],
   report_run_rows: ["report result", "report results"],
   dashboard_widgets: ["Dashboard widget", "Dashboard widgets"],
+  charts: ["chart", "charts"],
   record_triggers: ["trigger", "triggers"],
   record_trigger_conditions: ["trigger condition", "trigger conditions"],
   record_trigger_actions: ["trigger action", "trigger actions"],

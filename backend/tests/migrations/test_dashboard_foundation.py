@@ -115,7 +115,7 @@ def _assert_dashboard_schema(connection: Connection) -> None:
         .one()
     )
     assert config_column["udt_name"] == "jsonb"
-    assert config_column["is_nullable"] == "NO"
+    assert config_column["is_nullable"] == "YES"
 
 
 def _assert_dashboard_privileges(connection: Connection) -> None:

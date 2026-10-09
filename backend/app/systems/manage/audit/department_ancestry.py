@@ -15,6 +15,7 @@ from app.systems.boards.models import Board, BoardGroup, BoardScope, BoardWidget
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
+from app.systems.openview.charts.models import Chart
 from app.systems.openview.dashboards.models import Dashboard
 from app.systems.openview.reports.models import Report
 from app.systems.openview.views.models import SavedView
@@ -28,7 +29,7 @@ from app.systems.sandbox.relationships.models import RelationshipEdge
 DepartmentRef = UUID | Department | None
 BoardRef = UUID | Board | None
 
-_MODULE_CHILDREN = (Field, Record, SavedView, Report)
+_MODULE_CHILDREN = (Field, Record, SavedView, Report, Chart)
 _BOARD_CHILDREN = (
     BoardPost,
     BoardEvent,

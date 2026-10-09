@@ -188,6 +188,14 @@ def verify_request_evidence(
         )
         return
 
+    if action.values.get("operation") == "chart_lifecycle":
+        from operations.sample.controls.charts_verification import verify_chart_evidence
+
+        verify_chart_evidence(
+            dataset, manifest, action, result, admin_id, seen_request_ids, observed, issues
+        )
+        return
+
     evidence_rows = result.get("request_evidence")
     if not isinstance(evidence_rows, list):
         issues.append("A sample control result has invalid request evidence")

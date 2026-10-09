@@ -2209,11 +2209,6 @@
               }
             ]
           },
-          "pinned": {
-            "default": false,
-            "title": "Pinned",
-            "type": "boolean"
-          },
           "refresh": {
             "default": "manual",
             "enum": [
@@ -2222,15 +2217,6 @@
               "five-minutes"
             ],
             "title": "Refresh",
-            "type": "string"
-          },
-          "size": {
-            "default": "half",
-            "enum": [
-              "half",
-              "full"
-            ],
-            "title": "Size",
             "type": "string"
           },
           "version": {
@@ -2352,8 +2338,37 @@
             "title": "Board Id",
             "type": "string"
           },
+          "chart_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chart Id"
+          },
           "config": {
-            "$ref": "#/components/schemas/BoardWidgetConfig"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BoardWidgetConfig"
+              },
+              {
+                "$ref": "#/components/schemas/DashboardChartConfig"
+              },
+              {
+                "$ref": "#/components/schemas/DashboardAggregateConfig"
+              },
+              {
+                "$ref": "#/components/schemas/DashboardRecordsConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
           },
           "created_at": {
             "format": "date-time",
@@ -2374,11 +2389,24 @@
             "title": "Name",
             "type": "string"
           },
+          "pinned": {
+            "title": "Pinned",
+            "type": "boolean"
+          },
           "position": {
             "exclusiveMaximum": 12.0,
             "minimum": 0.0,
             "title": "Position",
             "type": "integer"
+          },
+          "size": {
+            "enum": [
+              "S",
+              "M",
+              "L"
+            ],
+            "title": "Size",
+            "type": "string"
           },
           "updated_at": {
             "format": "date-time",
@@ -2403,6 +2431,9 @@
           "widget_type",
           "module_id",
           "position",
+          "size",
+          "pinned",
+          "chart_id",
           "config",
           "created_at",
           "updated_at"
@@ -2436,8 +2467,37 @@
       "BoardWidgetSpec": {
         "additionalProperties": false,
         "properties": {
+          "chart_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chart Id"
+          },
           "config": {
-            "$ref": "#/components/schemas/BoardWidgetConfig"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BoardWidgetConfig"
+              },
+              {
+                "$ref": "#/components/schemas/DashboardChartConfig"
+              },
+              {
+                "$ref": "#/components/schemas/DashboardAggregateConfig"
+              },
+              {
+                "$ref": "#/components/schemas/DashboardRecordsConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
           },
           "module_id": {
             "format": "uuid",
@@ -2448,6 +2508,21 @@
             "maxLength": 80,
             "minLength": 1,
             "title": "Name",
+            "type": "string"
+          },
+          "pinned": {
+            "default": false,
+            "title": "Pinned",
+            "type": "boolean"
+          },
+          "size": {
+            "default": "M",
+            "enum": [
+              "S",
+              "M",
+              "L"
+            ],
+            "title": "Size",
             "type": "string"
           },
           "widget_type": {
@@ -2464,8 +2539,7 @@
         "required": [
           "name",
           "widget_type",
-          "module_id",
-          "config"
+          "module_id"
         ],
         "title": "BoardWidgetSpec",
         "type": "object"
@@ -2558,6 +2632,321 @@
         ],
         "title": "ChannelMessageAction",
         "type": "object"
+      },
+      "ChartCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "chart_type": {
+            "enum": [
+              "bar",
+              "line",
+              "pie",
+              "summary",
+              "workload",
+              "records"
+            ],
+            "title": "Chart Type",
+            "type": "string"
+          },
+          "module_id": {
+            "format": "uuid",
+            "title": "Module Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "date_series": "#/components/schemas/DateSeriesAggregateQuery",
+                    "groups": "#/components/schemas/GroupedAggregateSnapshotQuery"
+                  },
+                  "propertyName": "mode"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/GroupedAggregateSnapshotQuery"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DateSeriesAggregateQuery"
+                  }
+                ]
+              },
+              {
+                "$ref": "#/components/schemas/DashboardRecordsQuery"
+              }
+            ],
+            "title": "Query"
+          }
+        },
+        "required": [
+          "chart_type",
+          "query",
+          "module_id",
+          "name"
+        ],
+        "title": "ChartCreate",
+        "type": "object"
+      },
+      "ChartResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "chart_type": {
+            "enum": [
+              "bar",
+              "line",
+              "pie",
+              "summary",
+              "workload",
+              "records"
+            ],
+            "title": "Chart Type",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "format": "uuid",
+            "title": "Department Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_deleted": {
+            "title": "Is Deleted",
+            "type": "boolean"
+          },
+          "module_id": {
+            "format": "uuid",
+            "title": "Module Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "date_series": "#/components/schemas/DateSeriesAggregateQuery",
+                    "groups": "#/components/schemas/GroupedAggregateSnapshotQuery"
+                  },
+                  "propertyName": "mode"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/GroupedAggregateSnapshotQuery"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DateSeriesAggregateQuery"
+                  }
+                ]
+              },
+              {
+                "$ref": "#/components/schemas/DashboardRecordsQuery"
+              }
+            ],
+            "title": "Query"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chart_type",
+          "query",
+          "id",
+          "department_id",
+          "module_id",
+          "name",
+          "revision",
+          "is_deleted",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ChartResponse",
+        "type": "object"
+      },
+      "ChartRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "ChartRevision",
+        "type": "object"
+      },
+      "ChartSort": {
+        "enum": [
+          "name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ChartSort",
+        "type": "string"
+      },
+      "ChartUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "chart_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "bar",
+                  "line",
+                  "pie",
+                  "summary",
+                  "workload",
+                  "records"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chart Type"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "date_series": "#/components/schemas/DateSeriesAggregateQuery",
+                    "groups": "#/components/schemas/GroupedAggregateSnapshotQuery"
+                  },
+                  "propertyName": "mode"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/GroupedAggregateSnapshotQuery"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DateSeriesAggregateQuery"
+                  }
+                ]
+              },
+              {
+                "$ref": "#/components/schemas/DashboardRecordsQuery"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "ChartUpdate",
+        "type": "object"
+      },
+      "ChartUsageItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "board",
+              "dashboard"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "name"
+        ],
+        "title": "ChartUsageItem",
+        "type": "object"
+      },
+      "ChartUsageResponse": {
+        "properties": {
+          "has_restricted_usage": {
+            "title": "Has Restricted Usage",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChartUsageItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination",
+          "has_restricted_usage"
+        ],
+        "title": "ChartUsageResponse",
+        "type": "object"
+      },
+      "ChartUsageSort": {
+        "enum": [
+          "name"
+        ],
+        "title": "ChartUsageSort",
+        "type": "string"
       },
       "CheckboxFieldConfig": {
         "additionalProperties": false,
@@ -3033,6 +3422,18 @@
         "additionalProperties": false,
         "description": "One persisted live widget without a materialized data snapshot.",
         "properties": {
+          "chart_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chart Id"
+          },
           "config": {
             "anyOf": [
               {
@@ -3043,6 +3444,9 @@
               },
               {
                 "$ref": "#/components/schemas/DashboardRecordsConfig"
+              },
+              {
+                "type": "null"
               }
             ],
             "title": "Config"
@@ -3062,6 +3466,15 @@
             "minimum": 0.0,
             "title": "Position",
             "type": "integer"
+          },
+          "size": {
+            "enum": [
+              "S",
+              "M",
+              "L"
+            ],
+            "title": "Size",
+            "type": "string"
           },
           "updated_at": {
             "format": "date-time",
@@ -3083,6 +3496,8 @@
           "id",
           "position",
           "widget_type",
+          "size",
+          "chart_id",
           "config",
           "created_at",
           "updated_at"
@@ -3094,6 +3509,18 @@
         "additionalProperties": false,
         "description": "One live widget; list order supplies its persisted position.",
         "properties": {
+          "chart_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chart Id"
+          },
           "config": {
             "anyOf": [
               {
@@ -3104,9 +3531,22 @@
               },
               {
                 "$ref": "#/components/schemas/DashboardRecordsConfig"
+              },
+              {
+                "type": "null"
               }
             ],
             "title": "Config"
+          },
+          "size": {
+            "default": "M",
+            "enum": [
+              "S",
+              "M",
+              "L"
+            ],
+            "title": "Size",
+            "type": "string"
           },
           "widget_type": {
             "enum": [
@@ -3120,8 +3560,7 @@
           }
         },
         "required": [
-          "widget_type",
-          "config"
+          "widget_type"
         ],
         "title": "DashboardWidgetSpec",
         "type": "object"
@@ -6411,6 +6850,7 @@
           "record_close_unsupported",
           "purge_board_dependency",
           "purge_dashboard_dependency",
+          "purge_chart_dependency",
           "purge_report_dependency",
           "purge_report_run_dependency",
           "purge_external_schema_dependency",
@@ -7491,6 +7931,46 @@
         "title": "PasswordChangeRequest",
         "type": "object"
       },
+      "PortableAggregateConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "pinned": {
+            "title": "Pinned",
+            "type": "boolean"
+          },
+          "query": {
+            "$ref": "#/components/schemas/PortableGroupedQuery"
+          },
+          "refresh": {
+            "const": "manual",
+            "title": "Refresh",
+            "type": "string"
+          },
+          "size": {
+            "enum": [
+              "S",
+              "M",
+              "L"
+            ],
+            "title": "Size",
+            "type": "string"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "size",
+          "refresh",
+          "pinned",
+          "query"
+        ],
+        "title": "PortableAggregateConfig",
+        "type": "object"
+      },
       "PortableBoardBundle": {
         "additionalProperties": false,
         "properties": {
@@ -7609,6 +8089,134 @@
         "title": "PortableBundle",
         "type": "object"
       },
+      "PortableChartConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "chart_type": {
+            "enum": [
+              "bar",
+              "line",
+              "pie"
+            ],
+            "title": "Chart Type",
+            "type": "string"
+          },
+          "pinned": {
+            "title": "Pinned",
+            "type": "boolean"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortableGroupedQuery"
+              },
+              {
+                "$ref": "#/components/schemas/PortableDateQuery"
+              }
+            ],
+            "title": "Query"
+          },
+          "refresh": {
+            "const": "manual",
+            "title": "Refresh",
+            "type": "string"
+          },
+          "size": {
+            "enum": [
+              "S",
+              "M",
+              "L"
+            ],
+            "title": "Size",
+            "type": "string"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "size",
+          "refresh",
+          "pinned",
+          "chart_type",
+          "query"
+        ],
+        "title": "PortableChartConfig",
+        "type": "object"
+      },
+      "PortableDateQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "aggregation": {
+            "default": "count",
+            "enum": [
+              "count",
+              "sum",
+              "average",
+              "min",
+              "max",
+              "distinct"
+            ],
+            "title": "Aggregation",
+            "type": "string"
+          },
+          "bucket": {
+            "default": "day",
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "quarter",
+              "year"
+            ],
+            "title": "Bucket",
+            "type": "string"
+          },
+          "date_field": {
+            "$ref": "#/components/schemas/PortableFieldReference"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/PortableQueryDefinition"
+          },
+          "from_date": {
+            "format": "date",
+            "title": "From Date",
+            "type": "string"
+          },
+          "measure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortableFieldReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "const": "date_series",
+            "title": "Mode",
+            "type": "string"
+          },
+          "to_date": {
+            "format": "date",
+            "title": "To Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "definition",
+          "mode",
+          "date_field",
+          "from_date",
+          "to_date"
+        ],
+        "title": "PortableDateQuery",
+        "type": "object"
+      },
       "PortableFieldReference": {
         "additionalProperties": false,
         "properties": {
@@ -7627,6 +8235,162 @@
           "expected_type"
         ],
         "title": "PortableFieldReference",
+        "type": "object"
+      },
+      "PortableGroupedQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "aggregation": {
+            "default": "count",
+            "enum": [
+              "count",
+              "sum",
+              "average",
+              "min",
+              "max",
+              "distinct"
+            ],
+            "title": "Aggregation",
+            "type": "string"
+          },
+          "date_field": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortableFieldReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "definition": {
+            "$ref": "#/components/schemas/PortableQueryDefinition"
+          },
+          "dimension": {
+            "$ref": "#/components/schemas/PortableFieldReference"
+          },
+          "from_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Date"
+          },
+          "measure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortableFieldReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "const": "groups",
+            "title": "Mode",
+            "type": "string"
+          },
+          "to_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Date"
+          }
+        },
+        "required": [
+          "definition",
+          "mode",
+          "dimension"
+        ],
+        "title": "PortableGroupedQuery",
+        "type": "object"
+      },
+      "PortableQueryDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/PortableFieldReference"
+            },
+            "maxItems": 100,
+            "title": "Columns",
+            "type": "array"
+          },
+          "deleted": {
+            "default": "exclude",
+            "enum": [
+              "exclude",
+              "include",
+              "only"
+            ],
+            "title": "Deleted",
+            "type": "string"
+          },
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/PortableQueryFilter"
+            },
+            "maxItems": 10,
+            "title": "Filters",
+            "type": "array"
+          },
+          "logic": {
+            "default": "and",
+            "enum": [
+              "and",
+              "or"
+            ],
+            "title": "Logic",
+            "type": "string"
+          },
+          "search": {
+            "anyOf": [
+              {
+                "maxLength": 240,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search"
+          },
+          "search_fields": {
+            "items": {
+              "$ref": "#/components/schemas/PortableFieldReference"
+            },
+            "maxItems": 100,
+            "title": "Search Fields",
+            "type": "array"
+          },
+          "sort": {
+            "items": {
+              "$ref": "#/components/schemas/PortableQuerySort"
+            },
+            "maxItems": 3,
+            "title": "Sort",
+            "type": "array"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "title": "PortableQueryDefinition",
         "type": "object"
       },
       "PortableQueryFilter": {
@@ -7713,6 +8477,88 @@
         "title": "PortableQueryFilter",
         "type": "object"
       },
+      "PortableQuerySort": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "default": "asc",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "expected_type": {
+            "$ref": "#/components/schemas/FieldType"
+          },
+          "name": {
+            "maxLength": 150,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "expected_type"
+        ],
+        "title": "PortableQuerySort",
+        "type": "object"
+      },
+      "PortableRecordsConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "pinned": {
+            "title": "Pinned",
+            "type": "boolean"
+          },
+          "query": {
+            "$ref": "#/components/schemas/PortableRecordsQuery"
+          },
+          "refresh": {
+            "const": "manual",
+            "title": "Refresh",
+            "type": "string"
+          },
+          "size": {
+            "enum": [
+              "S",
+              "M",
+              "L"
+            ],
+            "title": "Size",
+            "type": "string"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "size",
+          "refresh",
+          "pinned",
+          "query"
+        ],
+        "title": "PortableRecordsConfig",
+        "type": "object"
+      },
+      "PortableRecordsQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/PortableQueryDefinition"
+          }
+        },
+        "required": [
+          "definition"
+        ],
+        "title": "PortableRecordsQuery",
+        "type": "object"
+      },
       "PortableVersion": {
         "additionalProperties": false,
         "properties": {
@@ -7778,7 +8624,21 @@
         "additionalProperties": false,
         "properties": {
           "config": {
-            "$ref": "#/components/schemas/PortableWidgetConfig"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortableWidgetConfig"
+              },
+              {
+                "$ref": "#/components/schemas/PortableChartConfig"
+              },
+              {
+                "$ref": "#/components/schemas/PortableAggregateConfig"
+              },
+              {
+                "$ref": "#/components/schemas/PortableRecordsConfig"
+              }
+            ],
+            "title": "Config"
           },
           "name": {
             "maxLength": 80,
@@ -7861,6 +8721,9 @@
           },
           "size": {
             "enum": [
+              "S",
+              "M",
+              "L",
               "half",
               "full"
             ],
@@ -12697,6 +13560,26 @@
           "pagination"
         ],
         "title": "StandardListResponse[BackupRunResponse]",
+        "type": "object"
+      },
+      "StandardListResponse_ChartResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChartResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "StandardListResponse[ChartResponse]",
         "type": "object"
       },
       "StandardListResponse_DashboardResponse_": {
@@ -24176,6 +25059,529 @@
         "summary": "Duplicate Board Widget",
         "tags": [
           "boards"
+        ]
+      }
+    },
+    "/api/charts": {
+      "get": {
+        "operationId": "list_charts",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ChartSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
+          },
+          {
+            "in": "query",
+            "name": "module_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Module Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "department_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Department Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardListResponse_ChartResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Charts",
+        "tags": [
+          "charts"
+        ]
+      },
+      "post": {
+        "operationId": "create_chart",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChartCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Chart",
+        "tags": [
+          "charts"
+        ]
+      }
+    },
+    "/api/charts/{chart_id}": {
+      "delete": {
+        "operationId": "archive_chart",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chart_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Chart Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Revision",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Archive Chart",
+        "tags": [
+          "charts"
+        ]
+      },
+      "get": {
+        "operationId": "read_chart",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chart_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Chart Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Chart",
+        "tags": [
+          "charts"
+        ]
+      },
+      "patch": {
+        "operationId": "update_chart",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chart_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Chart Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChartUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Chart",
+        "tags": [
+          "charts"
+        ]
+      }
+    },
+    "/api/charts/{chart_id}/restore": {
+      "post": {
+        "operationId": "restore_chart",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chart_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Chart Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChartRevision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore Chart",
+        "tags": [
+          "charts"
+        ]
+      }
+    },
+    "/api/charts/{chart_id}/usage": {
+      "get": {
+        "operationId": "read_chart_usage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chart_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Chart Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ChartUsageSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChartUsageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Chart Usage",
+        "tags": [
+          "charts"
         ]
       }
     },

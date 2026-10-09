@@ -2,6 +2,7 @@ import type {
   OpenViewDashboard,
   OpenViewDashboardWidget,
   OpenViewDashboardWidgetInput,
+  OpenViewDashboardWidgetConfig,
 } from "../adapters/dashboards-api";
 import type { OpenViewPage, OpenViewRecord } from "../adapters/views-api";
 import type { OpenViewAggregateSnapshotResult } from "../adapters/analytics-api";
@@ -12,9 +13,14 @@ export type DraftWidget = OpenViewDashboardWidgetInput & {
   key: string;
 };
 
-export type DashboardWidgetData =
+export type DashboardWidgetData = (
   | { kind: "aggregate"; result: OpenViewAggregateSnapshotResult }
-  | { kind: "records"; result: OpenViewPage<OpenViewRecord> };
+  | { kind: "records"; result: OpenViewPage<OpenViewRecord> }
+) & {
+  config: OpenViewDashboardWidgetConfig;
+  sourceStamp: string;
+  sourceName: string | null;
+};
 
 export type SnapshotState = {
   widgetKey: string;
@@ -23,37 +29,46 @@ export type SnapshotState = {
 };
 
 export function draftWidgetFrom(widget: OpenViewDashboardWidget): DraftWidget {
-  switch (widget.widgetType) {
-    case "chart":
-      return { key: widget.id, widgetType: "chart", config: widget.config };
-    case "summary":
-    case "workload":
-      return {
-        key: widget.id,
-        widgetType: widget.widgetType,
-        config: widget.config,
-      };
-    case "records":
-      return { key: widget.id, widgetType: "records", config: widget.config };
-  }
+  return { ...widget, key: widget.id };
 }
-
 export function draftWidgetsFrom(dashboard: OpenViewDashboard): DraftWidget[] {
   return dashboard.widgets.map(draftWidgetFrom);
 }
-
 export function inputWidgets(
   widgets: DraftWidget[],
 ): OpenViewDashboardWidgetInput[] {
   return widgets.map((widget) => {
+    const presentation = { size: widget.size ?? "M" };
+    if (widget.chartId != null)
+      return {
+        ...presentation,
+        widgetType: widget.widgetType,
+        chartId: widget.chartId,
+        config: null,
+      };
     switch (widget.widgetType) {
       case "chart":
-        return { widgetType: "chart", config: widget.config };
+        return {
+          ...presentation,
+          widgetType: "chart",
+          chartId: null,
+          config: widget.config,
+        };
       case "summary":
       case "workload":
-        return { widgetType: widget.widgetType, config: widget.config };
+        return {
+          ...presentation,
+          widgetType: widget.widgetType,
+          chartId: null,
+          config: widget.config,
+        };
       case "records":
-        return { widgetType: "records", config: widget.config };
+        return {
+          ...presentation,
+          widgetType: "records",
+          chartId: null,
+          config: widget.config,
+        };
     }
   });
 }
@@ -66,6 +81,8 @@ export function configSignature(
     ? JSON.stringify({
         widgetType: widget.widgetType,
         config: widget.config,
+        chartId: widget.chartId ?? null,
+        size: widget.size ?? "M",
         ...(widget.widgetType === "records" ? { page } : {}),
       })
     : "";

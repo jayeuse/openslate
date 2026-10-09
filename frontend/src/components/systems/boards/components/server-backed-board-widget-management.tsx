@@ -146,7 +146,7 @@ export function ServerBoardWidgetManagement({
                   <h3 className="font-medium break-words">{widget.name}</h3>
                   <p className="text-muted-foreground text-sm">
                     {widget.widgetType}
-                    {widget.config.pinned ? " · Pinned" : ""}
+                    {widget.pinned ? " · Pinned" : ""}
                   </p>
                 </div>
                 {canEdit && (
@@ -256,16 +256,17 @@ export function ServerBoardWidgetManagement({
               disabled={mutationBlocked}
               onChange={(event) =>
                 manager.changeDraft({
-                  size: event.target.value as "half" | "full",
+                  size: event.target.value as "S" | "M" | "L",
                 })
               }
               className="border-input bg-card text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2"
             >
-              <option value="half">Standard</option>
-              <option value="full">Full width</option>
+              <option value="S">Small</option>
+              <option value="M">Medium</option>
+              <option value="L">Large</option>
             </select>
             <p className="text-muted-foreground text-xs">
-              Standard cards adapt to the available space.
+              Cards adapt to the available space.
             </p>
           </div>
           <label

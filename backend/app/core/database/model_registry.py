@@ -27,6 +27,7 @@ from app.systems.manage.backups.models import (  # noqa: F401
     UpdateStatus,
 )
 from app.systems.manage.workspace.models import WorkspaceProfile  # noqa: F401
+from app.systems.openview.charts.models import Chart  # noqa: F401
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget  # noqa: F401
 from app.systems.openview.reports.models import (  # noqa: F401
     Report,

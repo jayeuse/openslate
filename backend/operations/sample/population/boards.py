@@ -179,6 +179,9 @@ def _make_widgets(
                 "name": name,
                 "widget_type": widget_type,
                 "module_id": _id(module),
+                "size": "L" if widget_type == "records" else "M",
+                "pinned": False,
+                "chart_id": None,
                 "config": {
                     "version": 1,
                     "fields": refs,
@@ -186,9 +189,7 @@ def _make_widgets(
                     "logic": "and",
                     "metric": numeric if widget_type == "chart" else None,
                     "visualization": "bar" if widget_type != "chart" else "line",
-                    "size": "full" if widget_type == "records" else "half",
                     "refresh": "manual",
-                    "pinned": False,
                 },
             }
             saved = _json(

@@ -9,6 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.common.listing import StandardListRequest
 from app.common.listing.schemas import PaginationMetadata
+from app.systems.openview.dashboards.schemas import (
+    DashboardWidgetConfig,
+    _configuration_matches_widget,
+)
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.records.query_schemas import FieldReference, QueryFilter
 
@@ -22,9 +26,7 @@ class BoardWidgetConfig(BaseModel):
     logic: Literal["and", "or"] = "and"
     metric: FieldReference | None = None
     visualization: Literal["bar", "line", "pie"] = "bar"
-    size: Literal["half", "full"] = "half"
     refresh: Literal["manual", "one-minute", "five-minutes"] = "manual"
-    pinned: bool = False
 
     @model_validator(mode="after")
     def validate_references(self) -> Self:
@@ -39,13 +41,30 @@ class BoardWidgetConfig(BaseModel):
         return self
 
 
+BoardInlineConfig = BoardWidgetConfig | DashboardWidgetConfig
+
+
 class BoardWidgetSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     name: str = Field(min_length=1, max_length=80)
     widget_type: Literal["summary", "workload", "records", "chart"]
     module_id: UUID
-    config: BoardWidgetConfig
+    size: Literal["S", "M", "L"] = "M"
+    pinned: bool = False
+    chart_id: UUID | None = None
+    config: BoardInlineConfig | None = None
+
+    @model_validator(mode="after")
+    def validate_source(self) -> Self:
+        if (self.config is None) == (self.chart_id is None):
+            raise ValueError("Exactly one widget config or Chart reference is required")
+        if self.config is not None and not isinstance(self.config, BoardWidgetConfig):
+            if not _configuration_matches_widget(self.widget_type, self.config):
+                raise ValueError("Widget config does not match its type")
+            if self.config.query.module_id != self.module_id:
+                raise ValueError("Widget query must use its selected module")
+        return self
 
 
 class BoardWidgetWrite(BaseModel):
@@ -92,9 +111,23 @@ class BoardWidgetResponse(BaseModel):
     widget_type: Literal["summary", "workload", "records", "chart"]
     module_id: UUID
     position: int = Field(ge=0, lt=12)
-    config: BoardWidgetConfig
+    size: Literal["S", "M", "L"]
+    pinned: bool
+    chart_id: UUID | None
+    config: BoardInlineConfig | None
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def validate_source(self) -> Self:
+        if (self.config is None) == (self.chart_id is None):
+            raise ValueError("Exactly one widget config or Chart reference is required")
+        if self.config is not None and not isinstance(self.config, BoardWidgetConfig):
+            if not _configuration_matches_widget(self.widget_type, self.config):
+                raise ValueError("Widget config does not match its type")
+            if self.config.query.module_id != self.module_id:
+                raise ValueError("Widget query must use its selected module")
+        return self
 
 
 class BoardWidgetMutationResponse(BaseModel):
