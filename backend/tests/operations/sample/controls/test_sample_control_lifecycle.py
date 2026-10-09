@@ -259,7 +259,7 @@ def test_sandbox_controls_use_ui_shapes_and_recreate_exact_test_vectors(
         assert len(imports) == 1 and "versions" not in json.loads(imports[0].content)["bundle"]
         assert counts["sandbox_prune_verified"] == 1
         assert counts["sandbox_prune_versions_removed"] == 49
-        assert counts["sandbox_prune_audit_rows"] == 187
+        assert "sandbox_prune_audit_rows" not in counts
         prune_action = next(
             action for action in actions if action.values["operation"] == "prune_versions"
         )

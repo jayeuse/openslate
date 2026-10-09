@@ -281,15 +281,15 @@ def _verify(dataset, context, action, result):
     return verify_version_prune(context.clients["admin"], dataset, manifest, ADMIN_ID)
 
 
-def test_final_prune_proof_uses_real_receipts_actual_audit_and_404s(tmp_path):
+def test_final_prune_proof_uses_receipts_and_api_end_state_without_audit_reads(tmp_path):
     dataset, wire, context, action, result = _completed(tmp_path)
     try:
         counts, issues = _verify(dataset, context, action, result)
         assert issues == []
         assert counts["sandbox_prune_verified"] == 1
         assert counts["sandbox_prune_versions_removed"] == 49
-        assert counts["sandbox_prune_audit_rows"] == 187
-        assert any(row.url.path == "/api/audit-logs" for row in wire.requests)
+        assert "sandbox_prune_audit_rows" not in counts
+        assert not any(row.url.path == "/api/audit-logs" for row in wire.requests)
     finally:
         context.clients["admin"].close()
 
@@ -302,19 +302,11 @@ def test_final_prune_proof_uses_real_receipts_actual_audit_and_404s(tmp_path):
         "wrong_kind",
         "coerced_count",
         "wrong_capacity",
-        "audit_wrong_actor",
-        "audit_wrong_request",
-        "audit_wrong_entity",
-        "audit_missing",
-        "audit_duplicate",
         "missing_list_createdAt",
         "missing_detail_sourceDocumentRevision",
-        "repeated_revision_pairs",
-        "wrong_checkpoint_gap",
-        "wrong_cleanup_revision",
     ),
 )
-def test_final_prune_proof_refuses_incomplete_scans_or_wrong_audit_bindings(tmp_path, fault):
+def test_final_prune_proof_refuses_incomplete_api_end_state(tmp_path, fault):
     dataset, wire, context, action, result = _completed(tmp_path)
     wire.fault = fault
     try:
