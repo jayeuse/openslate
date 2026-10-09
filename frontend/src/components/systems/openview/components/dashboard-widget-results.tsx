@@ -1,4 +1,5 @@
 "use client";
+import { RecordPersonCard } from "./live-record-cards";
 
 import { useId, type Dispatch, type SetStateAction } from "react";
 import { Alert } from "@/components/ui/alert";
@@ -296,9 +297,11 @@ export function DashboardWidgetResults({
                   <TableRow key={record.id}>
                     {recordsFields.map((field) => (
                       <TableCell key={field.id}>
-                        {displayRecordValue(
-                          openViewRecordFieldValue(record, field),
-                        )}
+                        <RecordPersonCard row={record} field={field}>
+                          {displayRecordValue(
+                            openViewRecordFieldValue(record, field),
+                          )}
+                        </RecordPersonCard>
                       </TableCell>
                     ))}
                   </TableRow>

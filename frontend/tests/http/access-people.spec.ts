@@ -41,7 +41,7 @@ function panel(page: Page, name: string) {
 async function openPerson(page: Page, name: string) {
   await page
     .getByRole("table", { name: "People" })
-    .getByRole("button", { name: new RegExp(`^${name}`) })
+    .getByRole("button", { name: `Manage ${name}`, exact: true })
     .click();
   await expect(panel(page, name)).toBeVisible();
 }
@@ -567,7 +567,7 @@ for (const width of [1440, 390])
     expect(await fits()).toBe(true);
 
     await page
-      .getByRole("button", { name: /^Ben Cruz/ })
+      .getByRole("button", { name: "Manage Ben Cruz", exact: true })
       .filter({ visible: true })
       .click();
     const sheet = panel(page, "Ben Cruz");

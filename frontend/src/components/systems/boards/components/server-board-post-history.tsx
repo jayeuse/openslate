@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ArrowUpRight, X } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
+import { PersonCardPopover } from "@/components/person-card";
 import { Button } from "@/components/ui/button";
 import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import {
@@ -195,10 +196,14 @@ function PostHistoryContent({
                   <time dateTime={item.publishedAt}>
                     {timeLabel(item.publishedAt, region)}
                   </time>
-                  {" · "}
-                  {authorLabels?.[item.authorId] ?? "Author unavailable"}
                 </span>
               </button>
+              <div className="px-3 text-xs">
+                <PersonCardPopover
+                  personId={item.authorId}
+                  label={authorLabels?.[item.authorId] ?? "Author unavailable"}
+                />
+              </div>
             </li>
           );
         })}

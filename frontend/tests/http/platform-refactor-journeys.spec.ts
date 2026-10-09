@@ -894,7 +894,7 @@ test("Administrator people results open the existing People destination and empt
     .getByRole("searchbox", { name: "Search workspace" })
     .fill("operator");
   await expect(
-    page.getByRole("link", { name: "Pump operator operator", exact: true }),
+    page.getByRole("link", { name: "Open Pump operator", exact: true }),
   ).toHaveAttribute("href", `/access?view=people&user=${uuid(1)}`);
   await expect(
     page.getByRole("region", { name: "Records search results" }),

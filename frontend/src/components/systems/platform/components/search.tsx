@@ -5,6 +5,7 @@ import { useQueries } from "@tanstack/react-query";
 import { ArrowUpRight, Search as SearchIcon } from "lucide-react";
 import { SearchField } from "@/components/ui/search-field";
 import { PaginationControls } from "@/components/ui/pagination-controls";
+import { PersonCardPopover } from "@/components/person-card";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { ApiError } from "@/lib/api";
 import { requestSessionRecheck } from "@/lib/auth-api";
@@ -132,7 +133,32 @@ export default function Search({ query, onQueryChange }: SearchProps) {
                         );
                         return (
                           <li key={item.id}>
-                            {href ? (
+                            {kind === "person" ? (
+                              <div className="flex min-h-11 items-center justify-between gap-3 py-3 text-sm">
+                                <div className="min-w-0">
+                                  <PersonCardPopover
+                                    personId={item.id}
+                                    label={item.title}
+                                  />
+                                  <p className="text-muted-foreground text-xs">
+                                    {item.context_label}
+                                  </p>
+                                </div>
+                                {href ? (
+                                  <GuardedWorkspaceLink
+                                    href={href}
+                                    aria-label={`Open ${item.title}`}
+                                    className="text-primary focus-visible:outline-ring inline-flex min-h-11 shrink-0 items-center gap-1 rounded-sm px-2 underline underline-offset-4 focus-visible:outline-2"
+                                  >
+                                    Open{" "}
+                                    <ArrowUpRight
+                                      aria-hidden="true"
+                                      className="size-4"
+                                    />
+                                  </GuardedWorkspaceLink>
+                                ) : null}
+                              </div>
+                            ) : href ? (
                               <GuardedWorkspaceLink
                                 href={href}
                                 className="flex min-h-11 items-center justify-between gap-3 py-3 text-sm hover:underline"

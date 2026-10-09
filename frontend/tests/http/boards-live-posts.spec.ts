@@ -125,6 +125,14 @@ function installFetch(responder: (path: string) => Response) {
   };
 }
 
+function versionRow(history: Locator, number: number) {
+  return history.getByRole("listitem").filter({
+    has: history
+      .page()
+      .getByRole("button", { name: new RegExp(`Version ${number}`) }),
+  });
+}
+
 async function installPostBrowserApi(page: Page) {
   let authorChoices = [{ id: authorId, label: "Avery" }];
   let currentViewerId = viewerId;
@@ -1212,12 +1220,8 @@ test("off-page post authors keep their labels through picker search, reader, and
     name: "Edit history",
     exact: true,
   });
-  await expect(
-    history.getByRole("button", { name: /Version 2/ }),
-  ).toContainText(label);
-  await expect(
-    history.getByRole("button", { name: /Version 1/ }),
-  ).toContainText(label);
+  await expect(versionRow(history, 2)).toContainText(label);
+  await expect(versionRow(history, 1)).toContainText(label);
   await page.keyboard.press("Escape");
 
   api.setPublishedItems([]);
@@ -1306,12 +1310,8 @@ test("local card history keeps its eligible author after a held feed refresh rep
       name: "Edit history",
       exact: true,
     });
-    await expect(
-      history.getByRole("button", { name: /Version 2/ }),
-    ).toContainText("Avery");
-    await expect(
-      history.getByRole("button", { name: /Version 1/ }),
-    ).toContainText("Avery");
+    await expect(versionRow(history, 2)).toContainText("Avery");
+    await expect(versionRow(history, 1)).toContainText("Avery");
     await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
     phases.push({
       event: "local-history-author-visible-before-replacement",
@@ -1352,12 +1352,8 @@ test("local card history keeps its eligible author after a held feed refresh rep
       reads: feedReads,
     });
     await expect(history).toBeVisible();
-    await expect(
-      history.getByRole("button", { name: /Version 2/ }),
-    ).toContainText("Avery");
-    await expect(
-      history.getByRole("button", { name: /Version 1/ }),
-    ).toContainText("Avery");
+    await expect(versionRow(history, 2)).toContainText("Avery");
+    await expect(versionRow(history, 1)).toContainText("Avery");
     await expect(history).not.toContainText("Author unavailable");
     expect(feedReads).toBe(2);
     if (process.env.OPENVIEW_CAPTURE_DIR) {
@@ -1378,9 +1374,7 @@ test("local card history keeps its eligible author after a held feed refresh rep
             `s08-post-author-local-history-${mode}`,
             {
               beforeScreenshot: async () => {
-                const version = history.getByRole("button", {
-                  name: /Version 2/,
-                });
+                const version = versionRow(history, 2);
                 await version.scrollIntoViewIfNeeded();
                 await expect(version).toContainText("Avery");
                 await expect(version.getByText("Avery")).toBeInViewport();

@@ -1,4 +1,5 @@
 "use client";
+import { RecordPersonCard } from "./live-record-cards";
 
 import type { ReactNode } from "react";
 import type { OpenViewGroupSelector } from "../adapters/analytics-api";
@@ -135,7 +136,9 @@ export function LiveRecordInspector({
           >
             <dt className="text-muted-foreground text-sm">{field.name}</dt>
             <dd className="min-w-0 text-sm wrap-anywhere">
-              {readableValue(openViewRecordFieldValue(record, field))}
+              <RecordPersonCard row={record} field={field}>
+                {readableValue(openViewRecordFieldValue(record, field))}
+              </RecordPersonCard>
             </dd>
           </div>
         ))}

@@ -42,6 +42,49 @@ const selfSchema = z
   })
   .strict();
 export type ProfileSelf = z.output<typeof selfSchema>;
+export type PersonCardViewer = {
+  id: string;
+  role: "admin" | "member" | "guest";
+};
+const publicCardSchema = z
+  .object({
+    display_name: z.string().refine((value) => Boolean(value.trim())),
+    job_title: nullableText,
+    avatar_url: nullableText,
+  })
+  .strict();
+const memberCardSchema = publicCardSchema
+  .extend({
+    email: nullableText,
+    phone: nullableText,
+    bio: nullableText,
+  })
+  .strict();
+export type PersonCard = {
+  viewer: PersonCardViewer;
+  targetId: string;
+  data: z.output<typeof publicCardSchema> | z.output<typeof memberCardSchema>;
+};
+
+/** S20 deliberately omits an id: bind this response to its requested target and viewer. */
+export async function getPersonCard(
+  viewer: PersonCardViewer,
+  targetId: string,
+  signal?: AbortSignal,
+): Promise<PersonCard> {
+  uuid.parse(viewer.id);
+  const id = uuid.parse(targetId);
+  const schema = viewer.role === "guest" ? publicCardSchema : memberCardSchema;
+  const data = await apiFetch(`/users/${id}/card`, schema, {
+    signal,
+    cache: "no-store",
+    refreshOnUnauthorized: false,
+  });
+  if (data.avatar_url !== null && data.avatar_url !== `/api/users/${id}/avatar`)
+    throw new ApiContractError();
+  signal?.throwIfAborted();
+  return { viewer: { ...viewer }, targetId: id, data };
+}
 export type IdentityField = "display_name" | "job_title" | "phone" | "bio";
 export const identityLimits = {
   display_name: 200,
@@ -202,8 +245,43 @@ export async function readOwnAvatar(
   signal?: AbortSignal,
 ) {
   uuid.parse(expectedId);
+  const blob = await readAvatarBytes(userId, signal);
+  const self = await readProfileSelf(userId, signal);
+  if (self.avatar_file_id !== expectedId) throw new ApiContractError();
+  signal?.throwIfAborted();
+  return blob;
+}
+
+/** Other-person bytes have a separate current-card guard, never the private self guard. */
+export async function readPersonAvatar(
+  card: { viewer: PersonCardViewer; targetId: string; avatarUrl: string },
+  signal?: AbortSignal,
+) {
+  if (card.avatarUrl !== `/api/users/${uuid.parse(card.targetId)}/avatar`)
+    throw new ApiContractError();
+  const blob = await readAvatarBytes(card.targetId, signal);
+  let current: PersonCard;
+  try {
+    current = await getPersonCard(card.viewer, card.targetId, signal);
+  } catch (error) {
+    signal?.throwIfAborted();
+    return {
+      status: "card-unavailable" as const,
+      error: error instanceof Error ? error : new ApiContractError(),
+    };
+  }
+  signal?.throwIfAborted();
+  return {
+    status: "ready" as const,
+    card: current,
+    blob: current.data.avatar_url === card.avatarUrl ? blob : null,
+  };
+}
+
+async function readAvatarBytes(userId: string, signal?: AbortSignal) {
   const response = await apiRequest(`/users/${uuid.parse(userId)}/avatar`, {
     signal,
+    redirect: "error",
     cache: "no-store",
     refreshOnUnauthorized: false,
   });
@@ -248,8 +326,6 @@ export async function readOwnAvatar(
   } finally {
     reader.releaseLock();
   }
-  const self = await readProfileSelf(userId, signal);
-  if (self.avatar_file_id !== expectedId) throw new ApiContractError();
   signal?.throwIfAborted();
   return new Blob(chunks, { type });
 }

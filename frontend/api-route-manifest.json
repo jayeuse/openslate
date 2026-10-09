@@ -1,6 +1,12 @@
 [
   {
     "adapter": "frontend/src/components/profile/adapters/profile-api.ts",
+    "function": "getPersonCard",
+    "method": "GET",
+    "path": "/api/users/{param}/card"
+  },
+  {
+    "adapter": "frontend/src/components/profile/adapters/profile-api.ts",
     "function": "readOwnAvatar",
     "method": "GET",
     "path": "/api/auth/me"
@@ -10,6 +16,18 @@
     "function": "readOwnAvatar",
     "method": "GET",
     "path": "/api/users/{param}/avatar"
+  },
+  {
+    "adapter": "frontend/src/components/profile/adapters/profile-api.ts",
+    "function": "readPersonAvatar",
+    "method": "GET",
+    "path": "/api/users/{param}/avatar"
+  },
+  {
+    "adapter": "frontend/src/components/profile/adapters/profile-api.ts",
+    "function": "readPersonAvatar",
+    "method": "GET",
+    "path": "/api/users/{param}/card"
   },
   {
     "adapter": "frontend/src/components/profile/adapters/profile-api.ts",

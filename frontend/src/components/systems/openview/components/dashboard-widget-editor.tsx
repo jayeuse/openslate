@@ -1,4 +1,5 @@
 "use client";
+import { RecordPersonCard } from "./live-record-cards";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -265,12 +266,17 @@ function DraftWidgetPreview({
                   <tr key={record.id}>
                     {data.config.query.definition.columns.map((ref) => (
                       <td key={ref.fieldId} className="p-2">
-                        {String(
-                          openViewRecordFieldValue(record, {
-                            id: ref.fieldId,
-                            type: ref.expectedType,
-                          }) ?? "—",
-                        )}
+                        <RecordPersonCard
+                          row={record}
+                          field={{ id: ref.fieldId, type: ref.expectedType }}
+                        >
+                          {String(
+                            openViewRecordFieldValue(record, {
+                              id: ref.fieldId,
+                              type: ref.expectedType,
+                            }) ?? "—",
+                          )}
+                        </RecordPersonCard>
                       </td>
                     ))}
                   </tr>

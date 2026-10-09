@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+import { PersonCardPopover } from "@/components/person-card";
 import type {
   OpenViewDataSourceField,
   OpenViewRecord,
@@ -58,6 +60,29 @@ function recordValue(
     openViewRecordFieldValue(row, field),
     field.type,
     region,
+  );
+}
+
+/** The display label belongs to the authorized row; only its stable USER id is a card target. */
+export function RecordPersonCard({
+  row,
+  field,
+  children,
+}: {
+  row: OpenViewRecord;
+  field: Pick<OpenViewDataSourceField, "id" | "type">;
+  children: ReactNode;
+}) {
+  const id = row.data[field.id];
+  const label = row.displayValues[field.id];
+  return field.type === "user" &&
+    typeof id === "string" &&
+    typeof label === "string" &&
+    label.trim() &&
+    label !== "Unavailable user" ? (
+    <PersonCardPopover personId={id} label={label} />
+  ) : (
+    <>{children}</>
   );
 }
 
@@ -139,16 +164,25 @@ export function LiveRecordCards({
                           : "block truncate"
                       }
                     >
-                      {primaryValue}
+                      {primaryField?.type === "user"
+                        ? "Open record"
+                        : primaryValue}
                     </span>
                   </button>
                 </h3>
+                {primaryField?.type === "user" ? (
+                  <RecordPersonCard row={row} field={primaryField}>
+                    {primaryValue}
+                  </RecordPersonCard>
+                ) : null}
                 {secondaryField ? (
                   <p
                     className={`text-muted-foreground mt-1 text-sm ${wrap ? "break-words" : "truncate whitespace-nowrap"}`}
                   >
                     {secondaryField.name}:{" "}
-                    {recordValue(row, secondaryField, region)}
+                    <RecordPersonCard row={row} field={secondaryField}>
+                      {recordValue(row, secondaryField, region)}
+                    </RecordPersonCard>
                   </p>
                 ) : null}
               </header>
@@ -172,7 +206,9 @@ export function LiveRecordCards({
                           wrap ? "break-words" : "truncate whitespace-nowrap"
                         }
                       >
-                        {recordValue(row, field, region)}
+                        <RecordPersonCard row={row} field={field}>
+                          {recordValue(row, field, region)}
+                        </RecordPersonCard>
                       </dd>
                     </div>
                   ))}

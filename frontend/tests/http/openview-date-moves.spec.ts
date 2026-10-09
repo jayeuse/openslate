@@ -696,6 +696,7 @@ test("S19 Timeline pointer shift uses unclipped dates and its end handle changes
     name: "Resize end: Task 1",
     exact: true,
   });
+  await expect(resize).toBeVisible();
   const resizeBox = await resize.boundingBox();
   const nextTrack = await track.boundingBox();
   await drag(page, resize, {
@@ -724,17 +725,19 @@ test("S19 Calendar drops an undated card on a visible day without an eager read 
   await page
     .getByRole("button", { name: "Show undated move list", exact: true })
     .click();
+  const source = card(page, "Task 3").getByRole("button", {
+    name: "Drag date: Task 3",
+    exact: true,
+  });
+  // The loaded move list shifts the grid. Measure only after its source exists.
+  await expect(source).toBeVisible();
   const target = await page
     .getByRole("group", { name: "Move to 2026-03-09", exact: true })
     .boundingBox();
-  await drag(
-    page,
-    card(page, "Task 3").getByRole("button", {
-      name: "Drag date: Task 3",
-      exact: true,
-    }),
-    { x: target!.x + target!.width / 2, y: target!.y + target!.height / 2 },
-  );
+  await drag(page, source, {
+    x: target!.x + target!.width / 2,
+    y: target!.y + target!.height / 2,
+  });
   await expect(card(page, "Task 3")).toContainText("2026-03-09");
   expect(api.batches).toEqual([]);
   await page.getByRole("button", { name: "Save changes (1)" }).click();

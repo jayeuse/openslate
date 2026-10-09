@@ -1,4 +1,5 @@
 "use client";
+import { RecordPersonCard } from "./live-record-cards";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -219,13 +220,22 @@ function KanbanMemberCards({
                     className="text-primary focus-visible:ring-ring min-h-11 max-w-full min-w-11 text-left underline-offset-4 hover:underline focus-visible:ring-2"
                     onClick={() => onOpenRecord(row.id)}
                   >
-                    <span className="block truncate">{title}</span>
+                    <span className="block truncate">
+                      {primaryField?.type === "user" ? "Open record" : title}
+                    </span>
                   </button>
                 </h3>
+                {primaryField?.type === "user" ? (
+                  <RecordPersonCard row={row} field={primaryField}>
+                    {title}
+                  </RecordPersonCard>
+                ) : null}
                 {secondaryField ? (
                   <p className="text-muted-foreground mt-1 text-sm break-words">
                     {secondaryField.name}:{" "}
-                    {valueText(openViewRecordFieldValue(row, secondaryField))}
+                    <RecordPersonCard row={row} field={secondaryField}>
+                      {valueText(openViewRecordFieldValue(row, secondaryField))}
+                    </RecordPersonCard>
                   </p>
                 ) : null}
               </header>
@@ -237,7 +247,9 @@ function KanbanMemberCards({
                         {field.name}
                       </dt>
                       <dd className="break-words">
-                        {valueText(openViewRecordFieldValue(row, field))}
+                        <RecordPersonCard row={row} field={field}>
+                          {valueText(openViewRecordFieldValue(row, field))}
+                        </RecordPersonCard>
                       </dd>
                     </div>
                   ))}

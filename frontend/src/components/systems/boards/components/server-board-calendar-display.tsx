@@ -3,6 +3,7 @@
 import { createElement, useState, type ReactNode } from "react";
 import { Temporal } from "@js-temporal/polyfill";
 import { Button } from "@/components/ui/button";
+import { PersonCardPopover } from "@/components/person-card";
 import { Card, CardContent } from "@/components/ui/card";
 import type {
   BoardEvent,
@@ -238,6 +239,15 @@ export function ServerBoardEventReaderContent({
   return createElement(
     "div",
     { className: "mt-5 space-y-3" },
+    createElement(
+      "p",
+      { className: "text-muted-foreground text-sm" },
+      "Author: ",
+      createElement(PersonCardPopover, {
+        personId: event.authorId,
+        unavailableLabel: "Author unavailable",
+      }),
+    ),
     details,
     location,
     links,
@@ -362,9 +372,38 @@ export function ServerBoardCalendarDisplay({
                   )
                 : null;
             const contents = compact
-              ? [title, time, location, disclosure]
+              ? [
+                  title,
+                  createElement(
+                    "p",
+                    {
+                      key: "author",
+                      className: "text-muted-foreground text-sm",
+                    },
+                    "Author: ",
+                    createElement(PersonCardPopover, {
+                      personId: item.event.authorId,
+                      unavailableLabel: "Author unavailable",
+                    }),
+                  ),
+                  time,
+                  location,
+                  disclosure,
+                ]
               : [
                   title,
+                  createElement(
+                    "p",
+                    {
+                      key: "author",
+                      className: "text-muted-foreground text-sm",
+                    },
+                    "Author: ",
+                    createElement(PersonCardPopover, {
+                      personId: item.event.authorId,
+                      unavailableLabel: "Author unavailable",
+                    }),
+                  ),
                   editAction,
                   archiveAction,
                   time,

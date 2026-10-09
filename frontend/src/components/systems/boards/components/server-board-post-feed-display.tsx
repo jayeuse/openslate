@@ -3,6 +3,7 @@
 import { createElement, useEffect, useState } from "react";
 import { ArrowUpRight, History, Pin, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { PersonCardPopover } from "@/components/person-card";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -152,7 +153,12 @@ export function ServerBoardPostReader({
 
   const metadata = post
     ? [
-        createElement("span", { key: "author" }, authorLabel),
+        createElement(PersonCardPopover, {
+          key: "author",
+          personId: post.authorId,
+          label: authorLabel,
+          unavailableLabel: "Author unavailable",
+        }),
         post.publishedAt
           ? createElement(
               "time",
@@ -386,7 +392,10 @@ export function ServerBoardPostFeedDisplay({
                         createElement(
                           "span",
                           { className: "text-sm font-medium" },
-                          authorLabel,
+                          createElement(PersonCardPopover, {
+                            personId: item.authorId,
+                            label: authorLabel,
+                          }),
                         ),
                         item.publishedAt
                           ? createElement(

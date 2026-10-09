@@ -1,4 +1,5 @@
 "use client";
+import { RecordPersonCard } from "./live-record-cards";
 import {
   useDisplayRegion,
   useDisplayWeekStart,
@@ -1421,16 +1422,23 @@ function ResolvedLiveCalendar({
                               onClick={() => openRow(row.id, true)}
                             >
                               {titleField
-                                ? recordText(
-                                    row,
-                                    titleField,
-                                    region,
-                                    "Untitled record",
-                                  )
+                                ? titleField.type === "user"
+                                  ? "Open record"
+                                  : recordText(
+                                      row,
+                                      titleField,
+                                      region,
+                                      "Untitled record",
+                                    )
                                 : `Record ${row.id.slice(0, 8)}`}
                             </Button>,
                             true,
                           )}
+                          {titleField?.type === "user" ? (
+                            <RecordPersonCard row={row} field={titleField}>
+                              {recordText(row, titleField, region)}
+                            </RecordPersonCard>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -1630,11 +1638,19 @@ function ResolvedLiveCalendar({
                                             }}
                                           >
                                             <span className="line-clamp-2 break-words">
-                                              {title}
+                                              {titleField?.type === "user"
+                                                ? "Open record"
+                                                : title}
                                             </span>
-                                            {detailFields.length ? (
+                                            {detailFields.filter(
+                                              (field) => field.type !== "user",
+                                            ).length ? (
                                               <span className="text-muted-foreground mt-1 block text-left text-xs">
                                                 {detailFields
+                                                  .filter(
+                                                    (field) =>
+                                                      field.type !== "user",
+                                                  )
                                                   .slice(0, 2)
                                                   .map((field) =>
                                                     recordText(
@@ -1656,6 +1672,36 @@ function ResolvedLiveCalendar({
                                               )}
                                             </span>
                                           </Button>
+                                          {titleField?.type === "user" ? (
+                                            <RecordPersonCard
+                                              row={row}
+                                              field={titleField}
+                                            >
+                                              {title}
+                                            </RecordPersonCard>
+                                          ) : null}
+                                          {detailFields
+                                            .slice(0, 2)
+                                            .filter(
+                                              (field) => field.type === "user",
+                                            )
+                                            .map((field) => (
+                                              <div
+                                                key={field.id}
+                                                className="text-muted-foreground text-xs"
+                                              >
+                                                <RecordPersonCard
+                                                  row={row}
+                                                  field={field}
+                                                >
+                                                  {recordText(
+                                                    row,
+                                                    field,
+                                                    region,
+                                                  )}
+                                                </RecordPersonCard>
+                                              </div>
+                                            ))}
                                         </>,
                                       )}
                                     </li>
@@ -1790,14 +1836,24 @@ function ResolvedLiveCalendar({
                                   });
                                 }}
                               >
-                                {title}
+                                {titleField?.type === "user"
+                                  ? "Open record"
+                                  : title}
                               </button>
+                              {titleField?.type === "user" ? (
+                                <RecordPersonCard row={row} field={titleField}>
+                                  {title}
+                                </RecordPersonCard>
+                              ) : null}
                               {detailFields.map((field) => (
                                 <p
                                   key={field.id}
                                   className="text-muted-foreground text-sm"
                                 >
-                                  {field.name}: {recordText(row, field, region)}
+                                  {field.name}:{" "}
+                                  <RecordPersonCard row={row} field={field}>
+                                    {recordText(row, field, region)}
+                                  </RecordPersonCard>
                                 </p>
                               ))}
                             </div>

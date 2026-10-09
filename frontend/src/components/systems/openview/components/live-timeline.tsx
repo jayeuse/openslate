@@ -1,4 +1,5 @@
 "use client";
+import { RecordPersonCard } from "./live-record-cards";
 import { useDisplayRegion } from "@/components/use-display-region";
 
 import { useMemo, useRef, useState } from "react";
@@ -636,9 +637,14 @@ export function LiveTimeline({
                             });
                           }}
                         >
-                          {title}
+                          {titleField?.type === "user" ? "Open record" : title}
                         </button>
                       </h3>
+                      {titleField?.type === "user" ? (
+                        <RecordPersonCard row={row} field={titleField}>
+                          {title}
+                        </RecordPersonCard>
+                      ) : null}
                       {scope === "window" ? (
                         <p className="text-muted-foreground text-sm">
                           {formatWindowDate(
@@ -705,11 +711,13 @@ export function LiveTimeline({
                           className="text-muted-foreground text-sm"
                         >
                           {field.name}:{" "}
-                          {formatOpenViewFieldValue(
-                            openViewRecordFieldValue(row, field),
-                            field.type,
-                            region,
-                          )}
+                          <RecordPersonCard row={row} field={field}>
+                            {formatOpenViewFieldValue(
+                              openViewRecordFieldValue(row, field),
+                              field.type,
+                              region,
+                            )}
+                          </RecordPersonCard>
                         </p>
                       ))}
                       {canMove ? (

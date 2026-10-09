@@ -15,6 +15,7 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { PersonCardPopover } from "@/components/person-card";
 
 type RecordFormFieldsProps = {
   moduleId: string;
@@ -54,30 +55,41 @@ function PersonSelect({
   const people = useQuery(assignableUsersOptions(moduleId, ""));
   const listed = people.data?.items ?? [];
   const known = !value || listed.some((person) => person.id === value);
+  const selected = !people.isError
+    ? listed.find((person) => person.id === value)
+    : undefined;
   return (
-    <Select
-      id={id}
-      className="min-h-11"
-      value={value}
-      disabled={disabled || people.isPending}
-      aria-invalid={invalid || undefined}
-      aria-describedby={describedBy}
-      onValueChange={onChange}
-    >
-      <option value="">
-        {people.isPending
-          ? "Loading people…"
-          : people.isError
-            ? "People could not be loaded"
-            : "No one"}
-      </option>
-      {known ? null : <option value={value}>Current person</option>}
-      {listed.map((person) => (
-        <option key={person.id} value={person.id}>
-          {person.displayName ?? person.username}
+    <>
+      <Select
+        id={id}
+        className="min-h-11"
+        value={value}
+        disabled={disabled || people.isPending}
+        aria-invalid={invalid || undefined}
+        aria-describedby={describedBy}
+        onValueChange={onChange}
+      >
+        <option value="">
+          {people.isPending
+            ? "Loading people…"
+            : people.isError
+              ? "People could not be loaded"
+              : "No one"}
         </option>
-      ))}
-    </Select>
+        {known ? null : <option value={value}>Current person</option>}
+        {listed.map((person) => (
+          <option key={person.id} value={person.id}>
+            {person.displayName ?? person.username}
+          </option>
+        ))}
+      </Select>
+      {selected ? (
+        <PersonCardPopover
+          personId={selected.id}
+          label={selected.displayName ?? selected.username}
+        />
+      ) : null}
+    </>
   );
 }
 

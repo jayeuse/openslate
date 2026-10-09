@@ -59,7 +59,8 @@ import {
 } from "../hooks/use-access-catalog";
 import { Input } from "@/components/ui/input";
 import { PersonPanel } from "./person-panel";
-import { openRowClassName, RowOpenButton } from "./row-open-button";
+import { openRowClassName } from "./row-open-button";
+import { PersonCardPopover } from "@/components/person-card";
 
 const sortOptions: readonly { value: DirectorySort; label: string }[] = [
   { value: "name", label: "Name" },
@@ -259,11 +260,26 @@ function OpenPersonButton({
   onOpen: (id: string) => void;
 }) {
   return (
-    <RowOpenButton
-      title={row.name}
-      subtitle={row.user.username}
-      onOpen={() => onOpen(row.user.id)}
-    />
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3">
+      <div className="relative z-10 min-w-0">
+        <PersonCardPopover
+          personId={row.user.id}
+          label={row.name}
+          className="text-foreground font-medium no-underline"
+        />
+        <p className="text-muted-foreground text-xs break-words">
+          {row.user.username}
+        </p>
+      </div>
+      <button
+        type="button"
+        aria-label={`Manage ${row.name}`}
+        className="text-primary focus-visible:outline-ring inline-flex min-h-11 items-center rounded-sm px-1 underline underline-offset-4 after:absolute after:inset-0 after:content-[''] focus-visible:outline-2"
+        onClick={() => onOpen(row.user.id)}
+      >
+        Manage
+      </button>
+    </div>
   );
 }
 

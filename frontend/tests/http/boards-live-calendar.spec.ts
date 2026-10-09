@@ -770,8 +770,10 @@ test("URL-selected event retries a failed detail read without changing the calen
     name: "Event unavailable",
   });
   await expect(unavailable).toBeVisible();
+  const retry = unavailable.getByRole("button", { name: "Retry", exact: true });
+  await expect(retry).toBeVisible();
   available = true;
-  await unavailable.getByRole("button", { name: "Retry" }).click();
+  await retry.click();
   await expect(
     browser.getByRole("dialog", { name: selectedEventWire.title }),
   ).toBeVisible();
